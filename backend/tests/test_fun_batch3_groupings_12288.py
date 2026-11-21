@@ -84,7 +84,7 @@ def _sample_batch3_markets() -> list[dict]:
     return rows
 
 
-def test_batch3_definitions_are_preview_with_verified_pd_or_cc0_art_and_no_venue_names() -> None:
+def test_batch3_definitions_are_public_with_verified_pd_or_cc0_art_and_no_venue_names() -> None:
     import json
 
     paths_by_slug = {p.stem: p for p in discover_machinery_candidate_paths()}
@@ -98,7 +98,7 @@ def test_batch3_definitions_are_preview_with_verified_pd_or_cc0_art_and_no_venue
         assert slug in paths_by_slug
         defn = load_machinery_definition(paths_by_slug[slug])
         assert "market_id" not in json.dumps(defn)
-        assert defn["stage"] == "preview"
+        assert defn["stage"] == "public"
         rule = defn["rule"]
         assert rule.get("suppress_card_photo") is True
         assert str(rule.get("card_image_url") or "").startswith("https://thumb.wikimedia.org/")
@@ -113,9 +113,18 @@ def test_batch3_definitions_are_preview_with_verified_pd_or_cc0_art_and_no_venue
             assert venue not in str(sec.get("note") or "").lower()
             assert venue not in str(rule.get("headline_predicate") or "").lower()
 
+    # No other preview set changes stage under 321: A.
+    for preview_slug in (
+        "machinery-long-shots",
+        "machinery-long-awaited",
+        "machinery-space-race",
+        "machinery-taylor-swift",
+    ):
+        assert load_machinery_definition(paths_by_slug[preview_slug])["stage"] == "preview"
+
 
 @pytest.mark.asyncio
-async def test_batch3_four_preview_sets_build_with_parity_non_race_headlines_and_exclusions() -> None:
+async def test_batch3_four_public_sets_build_with_parity_non_race_headlines_and_exclusions() -> None:
     db = {"events": [], "markets": _sample_batch3_markets(), "paired_sets": {}, "market_histories": {}}
     paths_by_slug = {p.stem: p for p in discover_machinery_candidate_paths()}
 
@@ -124,7 +133,7 @@ async def test_batch3_four_preview_sets_build_with_parity_non_race_headlines_and
     s1_prod = build_container_machinery_producer(s1_def)
     s1_res = await produce_container_machinery(db, s1_def, now=NOW)
     assert len(s1_res.members) == 9
-    assert s1_res.machinery_card["stage"] == "preview"
+    assert s1_res.machinery_card["stage"] == "public"
     assert s1_res.machinery_card["item_count"] == 9
     assert s1_res.machinery_card["image_url"] == s1_def["rule"]["card_image_url"]
     assert s1_res.title == (
@@ -144,13 +153,15 @@ async def test_batch3_four_preview_sets_build_with_parity_non_race_headlines_and
     s2_prod = build_container_machinery_producer(s2_def)
     s2_res = await produce_container_machinery(db, s2_def, now=NOW)
     assert len(s2_res.members) == 9
+    assert s2_res.machinery_card["stage"] == "public"
     assert "winner" not in s2_res.title.lower()
     assert "leads" not in s2_res.title.lower()
     assert "race" not in s2_res.title.lower()
     assert "board" not in s2_res.title.lower()
     assert "?" not in s2_res.title
+    assert "topping Rotten Tomatoes" not in s2_res.title
     assert "in Avengers: Doomsday is at 97%" in s2_res.title
-    assert "Dune: Part Three topping Rotten Tomatoes at 84%" in s2_res.title
+    assert "Dune: Part Three out-scoring Avengers on Rotten Tomatoes at 84%" in s2_res.title
     s2_fi = sanitize_discover_feed_item(compose_roundup_feed_item(s2_prod, s2_res))
     s2_cp = compose_roundup_container(s2_prod, s2_res)
     c_p, p_p = _compute_member_number_parity(s2_fi, s2_cp)
@@ -163,6 +174,7 @@ async def test_batch3_four_preview_sets_build_with_parity_non_race_headlines_and
     s3_res = await produce_container_machinery(db, s3_def, now=NOW)
     s3_ids = {m["id"] for m in s3_res.members}
     assert len(s3_ids) == 6
+    assert s3_res.machinery_card["stage"] == "public"
     assert s3_ids.isdisjoint({67804475, 67804474, 67804472})
     assert "winner" not in s3_res.title.lower()
     assert "leads" not in s3_res.title.lower()
@@ -178,17 +190,57 @@ async def test_batch3_four_preview_sets_build_with_parity_non_race_headlines_and
     c_p, p_p = _compute_member_number_parity(s3_fi, s3_cp)
     assert c_p["passes"] is True and p_p["passes"] is True
 
-    # 4. Elon Musk's wildest side quests (6 rows; second trillionaire excluded)
+    # 4. Elon Musk's wildest side quests (6 rows; second trillionaire excluded; per-row with-phrase)
     s4_def = load_machinery_definition(paths_by_slug["machinery-elon-musk-side-quests"])
     s4_prod = build_container_machinery_producer(s4_def)
     s4_res = await produce_container_machinery(db, s4_def, now=NOW)
     s4_ids = {m["id"] for m in s4_res.members}
     assert len(s4_ids) == 6
+    assert s4_res.machinery_card["stage"] == "public"
     assert 52755535 not in s4_ids
-    assert "Visiting Mars in his lifetime" in s4_res.title and "12%" in s4_res.title
+    assert s4_res.title.startswith(
+        "Visiting Mars in his lifetime is the likeliest Elon Musk side quest at 12%, with "
+    )
+    assert "with Buying " not in s4_res.title
+    assert "with Cast " not in s4_res.title
     s4_fi = sanitize_discover_feed_item(compose_roundup_feed_item(s4_prod, s4_res))
     s4_cp = compose_roundup_container(s4_prod, s4_res)
     c_p, p_p = _compute_member_number_parity(s4_fi, s4_cp)
     assert c_p["passes"] is True and p_p["passes"] is True
     for fi in (s1_fi, s2_fi, s3_fi, s4_fi):
         assert all((s.get("data") or {}).get("image_url") is None for s in fi["data"].get("items") or ())
+
+
+@pytest.mark.asyncio
+async def test_musk_set_every_row_has_explicit_with_phrase_keeping_proper_nouns_capitalized() -> None:
+    from app.utils.discover_fun_tags import fun_market_headline_with_phrase
+
+    paths_by_slug = {p.stem: p for p in discover_machinery_candidate_paths()}
+    s4_def = load_machinery_definition(paths_by_slug["machinery-elon-musk-side-quests"])
+    expected_with_phrases = {
+        108218: "visiting Mars in his lifetime",
+        109412: "buying Ryanair",
+        109633: "being cast in the next Superman film",
+        109316: "buying a major sports team before 2027",
+        109490: "being out as Tesla CEO before 2027",
+        109489: "Tesla Optimus released this year",
+    }
+    for mid, phrase in expected_with_phrases.items():
+        assert (
+            fun_market_headline_with_phrase(mid, sub_tag="batch3-elon-musk-side-quests")
+            == phrase
+        )
+        # Put this row in second place and confirm the headline reads naturally after "with ".
+        markets = _sample_batch3_markets()
+        for m in markets:
+            if m["id"] in expected_with_phrases:
+                m["outcomes"][0]["probability"] = 0.01
+        lead_id = 109412 if mid == 108218 else 108218
+        for m in markets:
+            if m["id"] == lead_id:
+                m["outcomes"][0]["probability"] = 0.25
+            elif m["id"] == mid:
+                m["outcomes"][0]["probability"] = 0.10
+        db = {"events": [], "markets": markets, "paired_sets": {}, "market_histories": {}}
+        res = await produce_container_machinery(db, s4_def, now=NOW)
+        assert f", with {phrase} at 10%" in res.title

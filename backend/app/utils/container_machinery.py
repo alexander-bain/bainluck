@@ -1572,26 +1572,40 @@ def _hydrate_market_visual_item(
         )
 
     headline_phrase: Optional[str] = None
+    headline_with_phrase: Optional[str] = None
     if fun_sub_tag:
-        from app.utils.discover_fun_tags import fun_market_headline_phrase
+        from app.utils.discover_fun_tags import (
+            fun_market_headline_phrase,
+            fun_market_headline_with_phrase,
+        )
 
+        lead_ans_clean = (
+            str(outcomes_out[0].get("name") or "").strip().rstrip("?").strip()
+            if outcomes_out
+            else ""
+        )
         raw_phrase = str(fun_market_headline_phrase(mid, sub_tag=fun_sub_tag) or "").strip()
         if raw_phrase:
-            lead_ans_clean = (
-                str(outcomes_out[0].get("name") or "").strip().rstrip("?").strip()
-                if outcomes_out
-                else ""
-            )
             if "{answer}" in raw_phrase:
                 if lead_ans_clean and lead_ans_clean.lower() not in {"yes", "no"}:
                     headline_phrase = raw_phrase.replace("{answer}", lead_ans_clean)
             else:
                 headline_phrase = raw_phrase
+        raw_with_phrase = str(
+            fun_market_headline_with_phrase(mid, sub_tag=fun_sub_tag) or ""
+        ).strip()
+        if raw_with_phrase:
+            if "{answer}" in raw_with_phrase:
+                if lead_ans_clean and lead_ans_clean.lower() not in {"yes", "no"}:
+                    headline_with_phrase = raw_with_phrase.replace("{answer}", lead_ans_clean)
+            else:
+                headline_with_phrase = raw_with_phrase
 
     return {
         "market_id": mid,
         "title": display_title,
         "headline_phrase": headline_phrase,
+        "headline_with_phrase": headline_with_phrase,
         "raw_title": clean_raw_name,
         "is_date_timing_row": is_date_timing_row,
         "href": f"/futures/{mid}",
@@ -3209,7 +3223,8 @@ def _build_dynamic_title_from_set(
                 sec_o = _fav_outcome(sec_bm)
                 if sec_o is not None:
                     sec_t = (
-                        str(sec_bm.get("headline_phrase") or "").strip()
+                        str(sec_bm.get("headline_with_phrase") or "").strip()
+                        or str(sec_bm.get("headline_phrase") or "").strip()
                         or str(sec_bm.get("title") or "").strip()
                     )
                     sec_p = int(sec_o["rendered_percent"])
