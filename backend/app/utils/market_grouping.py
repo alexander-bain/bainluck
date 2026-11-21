@@ -746,6 +746,8 @@ def detect_placement_groups(
               "sources": [str, ...],
             }
         Only tournaments with >= PLACEMENT_GRID_MIN_COLUMNS distinct columns.
+        If the selected outcomes have source marks, each row also carries
+        "source_marks" keyed by the corresponding populated column.
 
     Rows are ordered by the WINNER column descending where it exists, else by
     the strongest value the player carries anywhere in the grid. A player with
@@ -782,7 +784,7 @@ def detect_placement_groups(
             prob = o.get("probability")
             if prob is None:
                 continue
-            entry["players"].setdefault(player, {})[column] = float(prob)
+            entry["players"].setdefault(player, {})[column] = o
 
     result: dict[str, dict] = {}
     for key, entry in by_tournament.items():
@@ -799,19 +801,33 @@ def detect_placement_groups(
         column_keys = [c["key"] for c in ordered_columns]
 
         def _rank(item):
-            _, values = item
-            win = values.get("winner")
-            best = max((v for v in values.values() if v is not None), default=0.0)
+            _, outcomes = item
+            win = outcomes.get("winner")
+            best = max(float(outcome["probability"]) for outcome in outcomes.values())
             # Winner-first, then the strongest number the player carries. A
             # player absent from the winner market still sorts sensibly instead
             # of sinking to the bottom of a grid they lead a column of.
-            return (-(win if win is not None else -1.0), -best)
+            return (-float(win["probability"]) if win is not None else 1.0, -best)
 
-        rows = [
-            {"name": player,
-             "values": {c: values.get(c) for c in column_keys}}
-            for player, values in sorted(entry["players"].items(), key=_rank)
-        ]
+        rows = []
+        for player, outcomes in sorted(entry["players"].items(), key=_rank):
+            row = {
+                "name": player,
+                "values": {
+                    column: float(outcomes[column]["probability"])
+                    if column in outcomes else None
+                    for column in column_keys
+                },
+            }
+            # Each cell keeps the mark from the exact outcome selected for it.
+            marks = {
+                column: outcome["source_mark"]
+                for column, outcome in outcomes.items()
+                if "source_mark" in outcome
+            }
+            if marks:
+                row["source_marks"] = marks
+            rows.append(row)
 
         result[key] = {
             "tournament": entry["tournament"],
@@ -1056,6 +1072,7 @@ def detect_container_field_groups(
                 "name": entity,
                 "probability": float(m["probability"]),
                 "source": m.get("source"),
+                **({"source_mark": m["source_mark"]} if "source_mark" in m else {}),
             }
             for m, entity in zip(priced, entities)
         ]
