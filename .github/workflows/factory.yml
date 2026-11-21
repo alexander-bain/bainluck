@@ -55,3 +55,11 @@ jobs:
           LLM_MODEL_FACTORY_PICTURE: gpt-image-2.6-flare
           FACTORY_MEASURE_PICTURE: ${{ github.event_name == 'workflow_dispatch' && inputs.measure_picture }}
         run: python3 scripts/factory/collect.py --output /tmp/factory.json --publish
+      - name: Keep the measured picture for the receipt
+        if: github.event_name == 'workflow_dispatch' && inputs.measure_picture
+        uses: actions/upload-artifact@v4
+        with:
+          name: factory-measured-picture
+          path: /tmp/factory-measured-picture.webp
+          if-no-files-found: error
+          retention-days: 7

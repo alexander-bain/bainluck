@@ -225,6 +225,8 @@ def metered_picture(snapshot, budget, key, *, sample=False, enabled=DAILY_PICTUR
     )
     if not reservation:
         return None, {**receipt, "status": "no-reservation"}
+    if sample:
+        receipt["month_before_micros"] = reservation[0]["month_micros"]
     try:
         response, request_id = request(payload, key)
         tokens, spent = image_usage(response, spec)
@@ -246,8 +248,7 @@ def metered_picture(snapshot, budget, key, *, sample=False, enabled=DAILY_PICTUR
     try:
         content = picture_bytes(response)
         if sample:
-            # A measurement reserves and reconciles cost only.
-            return None, {**receipt, "status": "measured"}
+            return (record, content), {**receipt, "status": "measured"}
         if check(content):
             return (record, content), {**receipt, "status": "drawn"}
     except (ValueError, KeyError, TypeError, binascii.Error, OSError, subprocess.SubprocessError):
