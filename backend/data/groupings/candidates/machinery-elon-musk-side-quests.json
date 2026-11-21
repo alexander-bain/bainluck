@@ -1,0 +1,67 @@
+{
+  "slug": "machinery-elon-musk-side-quests",
+  "stage": "preview",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_subject",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "ODD · SIDE QUESTS",
+  "name": "Elon Musk's wildest side quests",
+  "category": "entertainment",
+  "tag": "ODD",
+  "section_title": "Side Quests on the Board",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "extra_llm_categories": ["culture", "tech", "politics", "economics"],
+    "card_rows": 3,
+    "card_section_key": "elon_musk_side_quests",
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/69/NASA%27s_SpaceX_Europa_Clipper_Launch_%28KSC-20241014-PH-FMX01_0001%29.jpg/1280px-NASA%27s_SpaceX_Europa_Clipper_Launch_%28KSC-20241014-PH-FMX01_0001%29.jpg",
+    "card_image_alt": "Rocket launch trail ascending from NASA Kennedy Space Center",
+    "card_image_credit": "NASA Kennedy Space Center / Frank Michaux (Public domain, Wikimedia Commons)",
+    "card_image_author": "NASA Kennedy Space Center / Frank Michaux",
+    "card_image_license": "Public domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:NASA%27s_SpaceX_Europa_Clipper_Launch_(KSC-20241014-PH-FMX01_0001).jpg",
+    "headline_predicate": "is the likeliest Elon Musk side quest",
+    "sections": [
+      {
+        "key": "elon_musk_side_quests",
+        "title": "Side Quests on the Board",
+        "item_noun": "quests",
+        "note": "From Mars and Superman to Ryanair and Tesla Optimus — chance each happens.",
+        "atom_query": {
+          "kind": "markets",
+          "market_ids": [
+            109633,
+            109412,
+            109316,
+            108218,
+            109490,
+            109489
+          ],
+          "short_labels": {
+            "109633": "Cast in the next Superman film",
+            "109412": "Buying Ryanair",
+            "109316": "Buying a major sports team before 2027",
+            "108218": "Visiting Mars in his lifetime",
+            "109490": "Out as Tesla CEO before 2027",
+            "109489": "Tesla Optimus released this year"
+          },
+          "shape": "binary",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 10,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3
+        }
+      }
+    ]
+  }
+}

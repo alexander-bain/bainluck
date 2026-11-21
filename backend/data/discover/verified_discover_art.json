@@ -1605,6 +1605,54 @@
       "author": "TVMaze contributors",
       "license": "CC BY-SA 4.0",
       "source_page": "https://www.tvmaze.com/shows/44933/severance"
+    },
+    {
+      "entity_key": "batch3-2026-summed-up",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "How 2026 gets summed up — minimalist vinyl turntable",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fc/Minimal_vinyl_player_%28Unsplash%29.jpg/1280px-Minimal_vinyl_player_%28Unsplash%29.jpg",
+      "credit": "Lee Campbell (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Lee Campbell",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Minimal_vinyl_player_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch3-cast-delayed-cancelled",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Who gets cast, delayed, or cancelled — movie theater seats",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/ce/Movie_theater_seats_%28Unsplash%29.jpg/1280px-Movie_theater_seats_%28Unsplash%29.jpg",
+      "credit": "Elijah Flores (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Elijah Flores",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Movie_theater_seats_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch3-stage-and-cover",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Who gets the stage and the cover — studio condenser microphone",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e8/Silver_and_black_studio_microphone_condenser.jpg/1280px-Silver_and_black_studio_microphone_condenser.jpg",
+      "credit": "Jonathan Velasquez (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Jonathan Velasquez",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Silver_and_black_studio_microphone_condenser.jpg"
+    },
+    {
+      "entity_key": "batch3-elon-musk-side-quests",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Elon Musk's wildest side quests — SpaceX Falcon Heavy launch trail (NASA)",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/69/NASA%27s_SpaceX_Europa_Clipper_Launch_%28KSC-20241014-PH-FMX01_0001%29.jpg/1280px-NASA%27s_SpaceX_Europa_Clipper_Launch_%28KSC-20241014-PH-FMX01_0001%29.jpg",
+      "credit": "NASA Kennedy Space Center / Frank Michaux (Public domain, Wikimedia Commons)",
+      "author": "NASA Kennedy Space Center / Frank Michaux",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:NASA%27s_SpaceX_Europa_Clipper_Launch_(KSC-20241014-PH-FMX01_0001).jpg"
     }
   ]
 }
