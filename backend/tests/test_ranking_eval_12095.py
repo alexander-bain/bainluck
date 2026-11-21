@@ -256,6 +256,10 @@ async def _facts(db, ids):
     return {i: {"movement_24h": 0.02, "updated_at": None} for i in ids}
 
 
+async def _events(db, ids):
+    return {i: {"event_tags": ["stakes:playoff_race", "tier:1"]} for i in ids}
+
+
 class TestSnapshotWriter:
     async def test_off_reads_nothing_and_writes_nothing(self):
         async def boom(*_a):
@@ -267,7 +271,8 @@ class TestSnapshotWriter:
     async def test_one_row_with_the_edition_the_sha_and_retention(self):
         db = FakeDB()
         out = await snapshot_ranking_slate(
-            db, now=NOW, read_deck=_deck([futures(1), event()]), read_pool=_pool, read_facts=_facts, environ=ON,
+            db, now=NOW, read_deck=_deck([futures(1), event()]), read_pool=_pool, read_facts=_facts,
+            read_events=_events, environ=ON,
         )
         assert out["status"] == "ok" and out["slate_id"] == "ae0bc760eb204e34"
         (row,) = db.added

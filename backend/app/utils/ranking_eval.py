@@ -18,6 +18,15 @@ holds the shape, so the feed route can import it with no import cycle.)
 THE RANKER VERSION is the deploy's git sha (:func:`ranker_version`). It rides
 the feed response, the events, and the snapshot.
 
+HOW MANY CARE (#11937, Fable's call 4 of Nov 11). Question 1 of the ranking
+design is answered by the parts the score is built from, not by ``score``:
+each candidate stores ``market_tier`` (a futures market's 1 championship ... 5
+props), ``league_tier`` (the scorer's own league tier: ``get_league_tier`` for a
+game, ``FUTURES_LEAGUE_TIERS`` for a market) and ``stakes`` (the stored
+``stakes:*`` tags the event scorer boosts, read from the row because the card
+carries only inline tags). A bundle stores ``members``: each member's key with
+the same three fields, so a grade on the bundle can be joined to what it holds.
+
 UNKNOWN STAYS UNKNOWN. A feature the system does not hold is ``None``, never a
 zero: 1h and 7d movement are not stored on any market (only
 ``probability_change_24h``), so they are always ``None`` here; a flag that does
@@ -174,17 +183,69 @@ def item_key(item: Mapping[str, Any]) -> Optional[str]:
     return f"{item.get('type') or 'unknown'}:{ident}"
 
 
+def _stakes(tags: Any) -> list[str]:
+    """The ``stakes:*`` tags in a row's stored tag list, sorted (``[]`` when it has
+    none). Callers pass a list only when the row was read; unread is ``None``."""
+    return sorted({t for t in (tags or []) if isinstance(t, str) and t.startswith("stakes:")})
+
+
+def _futures_league_tier(category: Any) -> Optional[int]:
+    """The league tier the futures scorer gives this category (3 when unlisted)."""
+    if not category:
+        return None
+    from app.utils.futures_highlights import FUTURES_LEAGUE_TIERS
+
+    return FUTURES_LEAGUE_TIERS.get(str(category).lower(), 3)
+
+
+def _event_league_tier(sport_key: Any) -> Optional[int]:
+    """The league tier the event scorer gives this sport key."""
+    if not sport_key:
+        return None
+    from app.utils.highlights import get_league_tier
+
+    return get_league_tier(str(sport_key))
+
+
+def _care_parts(
+    kind: str,
+    data: Mapping[str, Any],
+    market_facts: Mapping[int, Mapping[str, Any]] | None,
+    event_facts: Mapping[int, Mapping[str, Any]] | None,
+) -> dict[str, Any]:
+    """``market_tier``, ``league_tier`` and ``stakes`` for one futures or event card."""
+    if kind == "futures":
+        facts = (market_facts or {}).get(data.get("id")) or {}
+        tier = data.get("market_tier") if data.get("market_tier") is not None else facts.get("market_tier")
+        return {
+            "market_tier": int(tier) if isinstance(tier, (int, float)) and not isinstance(tier, bool) else None,
+            "league_tier": _futures_league_tier(data.get("llm_sport_category")),
+            "stakes": _stakes(facts.get("market_tags")) if "market_tags" in facts else None,
+        }
+    if kind == "event":
+        facts = (event_facts or {}).get(data.get("id")) or {}
+        return {
+            "market_tier": None,
+            "league_tier": _event_league_tier(data.get("sport")),
+            "stakes": _stakes(facts.get("event_tags")) if "event_tags" in facts else None,
+        }
+    return {"market_tier": None, "league_tier": None, "stakes": None}
+
+
 def card_features(
     item: Mapping[str, Any],
     *,
     now: datetime,
     market_facts: Mapping[int, Mapping[str, Any]] | None = None,
     key: Optional[str] = None,
+    event_facts: Mapping[int, Mapping[str, Any]] | None = None,
 ) -> Optional[dict[str, Any]]:
     """The features of one served (or scored) card, in one shape for every type.
 
     ``market_facts``: futures id → facts read from the market row
-    (``movement_24h``, ``updated_at``), used where the card payload is silent.
+    (``movement_24h``, ``updated_at``, ``market_tier``, ``market_tags``), used
+    where the card payload is silent. ``event_facts``: event id → the row's
+    stored ``event_tags``.
     ``key`` overrides the card's own identity (``build_slate`` uses it for a
     served card with no id, or one served twice); otherwise a card with no id
     and no key yields None.
@@ -223,6 +284,8 @@ def card_features(
         # legitimate seat; only settled-without-result is a truth-gate failure.
         "shows_result": None,
         "blend_missing": None,
+        **_care_parts(kind, data, market_facts, event_facts),
+        "members": None,
     }
     observed: Optional[datetime] = None
 
@@ -284,6 +347,11 @@ def card_features(
         out["container"] = data.get("story_key")
         observed = _latest(*((m.get("data") or {}).get("price_observed_at") for m in members if isinstance(m, dict)))
         # A bundle shows its members' numbers, not one of its own: n/a, not missing.
+        out["members"] = [
+            {"item_key": item_key(m), **_care_parts(m.get("type") or "unknown", m.get("data") or {}, market_facts, event_facts)}
+            for m in members
+            if isinstance(m, dict) and item_key(m) is not None
+        ]
     elif kind == "tournament":
         golfers = data.get("golfers") or []
         out["title"] = data.get("name")
@@ -337,6 +405,7 @@ def build_slate(
     now: datetime,
     market_facts: Mapping[int, Mapping[str, Any]] | None = None,
     cap: int = MAX_CANDIDATES,
+    event_facts: Mapping[int, Mapping[str, Any]] | None = None,
 ) -> tuple[list[str], list[dict[str, Any]]]:
     """(served order, candidates): every served card first, in served order,
     with ``served_position`` = served index + 1 (no card is skipped); then unserved scored futures with
@@ -359,7 +428,7 @@ def build_slate(
         key = item_key(item) or f"unknown:{index}"
         if key in seen:
             key = f"{key}#{position}"
-        feats = card_features(item, now=now, market_facts=market_facts, key=key)
+        feats = card_features(item, now=now, market_facts=market_facts, key=key, event_facts=event_facts)
         seen.add(key)
         served_order.append(key)
         if len(candidates) < cap:
@@ -367,7 +436,7 @@ def build_slate(
     for item in scored_futures:
         if len(candidates) >= cap:
             break
-        feats = card_features(item, now=now, market_facts=market_facts)
+        feats = card_features(item, now=now, market_facts=market_facts, event_facts=event_facts)
         if feats is None or feats["item_key"] in seen:
             continue
         seen.add(feats["item_key"])
