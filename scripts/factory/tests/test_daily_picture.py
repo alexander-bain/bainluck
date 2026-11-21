@@ -3,6 +3,7 @@ from datetime import datetime, timezone
 import io
 from pathlib import Path
 import sys
+from tempfile import TemporaryDirectory
 import unittest
 from unittest.mock import Mock, patch
 from contextlib import redirect_stdout
@@ -48,13 +49,14 @@ class DailyPictureTests(unittest.TestCase):
         self.assertIn("no lettering", payload["prompt"])
         self.assertNotIn("private title", payload["prompt"])
 
-    def test_measurement_reserves_and_prices_one_image_without_returning_it(self):
+    def test_measurement_reserves_and_prices_one_image_for_the_receipt(self):
         result, receipt = metered_picture(
             self.snapshot, self.budget, "fake", sample=True, request=self.request
         )
-        self.assertIsNone(result)
+        self.assertEqual(result[1], self.image)
         self.assertEqual(receipt["status"], "measured")
         self.assertEqual(receipt["used_micros"], 25_215)
+        self.assertEqual(receipt["month_before_micros"], 0)
         self.assertEqual(receipt["month_cost_usd"], 0.025215)
         self.assertLess(receipt["used_micros"], receipt["reserve_micros"])
         self.assertEqual(self.save.call_count, 2)
@@ -122,19 +124,25 @@ class DailyPictureTests(unittest.TestCase):
         self.assertEqual(receipt["status"], "unpriced")
         self.request.assert_not_called()
 
-    def test_manual_master_measurement_bypasses_collecting_and_publishing(self):
+    def test_manual_master_measurement_saves_only_the_picture_for_the_receipt(self):
         api = Mock()
         api.metrics.return_value = {"github_api_calls": 2}
-        with patch.dict("os.environ", {
-            "FACTORY_MEASURE_PICTURE": "true", "GITHUB_EVENT_NAME": "workflow_dispatch",
-        }), patch("sys.argv", ["collect.py", "--publish", "--output", "/unused"]), patch(
-            "collect.authorize_publication"
-        ) as authorize, patch("collect.GitHub", return_value=api), patch(
-            "collect.read_published", return_value=({"id": 1}, self.snapshot, {})
-        ), patch("collect.metered_picture", return_value=(None, {"status": "measured"})) as measure, patch(
-            "collect.collect"
-        ) as collect_floor, patch("collect.publish_asset") as publish, redirect_stdout(io.StringIO()) as out:
-            main()
+        with TemporaryDirectory() as directory:
+            output = Path(directory) / "factory.json"
+            with patch.dict("os.environ", {
+                "FACTORY_MEASURE_PICTURE": "true", "GITHUB_EVENT_NAME": "workflow_dispatch",
+            }), patch("sys.argv", ["collect.py", "--publish", "--output", str(output)]), patch(
+                "collect.authorize_publication"
+            ) as authorize, patch("collect.GitHub", return_value=api), patch(
+                "collect.read_published", return_value=({"id": 1}, self.snapshot, {})
+            ), patch(
+                "collect.metered_picture", return_value=(({}, self.image), {"status": "measured"})
+            ) as measure, patch("collect.collect") as collect_floor, patch(
+                "collect.publish_asset"
+            ) as publish, redirect_stdout(io.StringIO()) as out:
+                main()
+            self.assertEqual(output.with_name("factory-measured-picture.webp").read_bytes(), self.image)
+            self.assertFalse(output.exists())
         authorize.assert_called_once()
         self.assertTrue(measure.call_args.kwargs["sample"])
         collect_floor.assert_not_called()

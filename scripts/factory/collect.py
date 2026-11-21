@@ -918,8 +918,13 @@ def main():
         key = os.environ.get("OPENAI_API_KEY") if args.publish else None
         budget = ModelBudget((release or {}).get("body") or "", save_meter if release else None)
         if measurement:
-            # No snapshot collection, text requests, or asset publication on this path.
-            _, picture_stats = metered_picture(previous, budget, key, sample=True)
+            # Keep the sample separate from the public snapshot and gallery.
+            picture, picture_stats = metered_picture(previous, budget, key, sample=True)
+            if picture:
+                _, content = picture
+                sample = args.output.with_name("factory-measured-picture.webp")
+                sample.parent.mkdir(parents=True, exist_ok=True)
+                sample.write_bytes(content)
             return
 
         if args.publish:
