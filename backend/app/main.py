@@ -10,6 +10,7 @@ import uuid
 from contextlib import asynccontextmanager
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 import sentry_sdk
 
 # ---------------------------------------------------------------------------
@@ -207,6 +208,7 @@ app.add_middleware(LatencyMiddleware)
 # two-principal contract tests share one decision. Re-exported here for any
 # caller/test that imports it from app.main.
 from app.utils.http_cache_policy import CACHE_RULES, apply_cache_policy  # noqa: E402,F401
+from app.utils.latency_stats import sanitize_user_agent  # noqa: E402
 
 
 @app.middleware("http")
@@ -219,9 +221,25 @@ async def request_timing(request: Request, call_next):
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Response-Time"] = f"{duration_ms:.0f}ms"
     if duration_ms > 1000 and "/admin" not in request.url.path:
-        logger.warning("SLOW %s %s [%s] %dms", request.method, request.url.path, request_id, duration_ms)
+        ua = sanitize_user_agent(request.headers.get("user-agent")) or "-"
+        logger.warning(
+            "SLOW %s %s [%s] %dms ua=%s",
+            request.method,
+            request.url.path,
+            request_id,
+            duration_ms,
+            ua,
+        )
     elif duration_ms > 500 and "/admin" not in request.url.path:
-        logger.info("MODERATE %s %s [%s] %dms", request.method, request.url.path, request_id, duration_ms)
+        ua = sanitize_user_agent(request.headers.get("user-agent")) or "-"
+        logger.info(
+            "MODERATE %s %s [%s] %dms ua=%s",
+            request.method,
+            request.url.path,
+            request_id,
+            duration_ms,
+            ua,
+        )
 
     # Authentication and identity ALWAYS win over latency caching. Protected /
     # personalized / identity-bearing responses become private+no-store; route
@@ -377,3 +395,13 @@ async def root():
         "version": "0.1.0",
         "docs": "/docs",
     }
+
+
+@app.get("/robots.txt", include_in_schema=False)
+async def robots_txt():
+    """Disallow crawlers on the API origin (#13350)."""
+    return PlainTextResponse(
+        "User-agent: *\nDisallow: /\n",
+        media_type="text/plain; charset=utf-8",
+        headers={"Cache-Control": "public, max-age=86400"},
+    )

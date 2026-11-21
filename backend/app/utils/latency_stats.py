@@ -37,6 +37,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from typing import Optional, Sequence
 
 # Absolute floor: one sample can describe no percentile but its own value.
@@ -174,6 +175,19 @@ SLOW_EVENT_MAX_DEFAULT = 500
 # writer is the difference between a rounding error and an eviction event.
 _STAGES_MAX_CHARS = 400
 _PATH_MAX_CHARS = 120
+_UA_MAX_CHARS = 160
+_UA_CTRL_RE = re.compile(r"[\x00-\x1f\x7f]+")
+
+
+def sanitize_user_agent(
+    raw: Optional[str], max_len: int = _UA_MAX_CHARS
+) -> str:
+    """Strip control characters/newlines and bound User-Agent for safe logging."""
+    if not isinstance(raw, str) or max_len <= 0:
+        return ""
+    cleaned = _UA_CTRL_RE.sub(" ", raw)
+    collapsed = " ".join(cleaned.split())
+    return collapsed[:max_len]
 
 
 def dominant_stage(stages: str) -> Optional[tuple[str, float]]:
@@ -213,6 +227,7 @@ def build_slow_event(
     stages: Optional[str] = None,
     rss_mb: Optional[float] = None,
     split: Optional[dict] = None,
+    user_agent: Optional[str] = None,
 ) -> str:
     """Serialise one tail observation for the slow-event ring.
 
@@ -285,6 +300,9 @@ def build_slow_event(
         sql = split.get("max_query_sql")
         if isinstance(sql, str) and sql:
             record["max_query_sql"] = sql[:160]
+    ua = sanitize_user_agent(user_agent)
+    if ua:
+        record["ua"] = ua
     return json.dumps(record, separators=(",", ":"), allow_nan=False)
 
 
