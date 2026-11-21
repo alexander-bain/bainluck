@@ -561,6 +561,16 @@ class TestNearestWrongNeighboursNeverCollapse:
         ]
         assert unambiguous_short_spelling_match("Tigers", ncaab_tigers) is None
 
+    def test_school_word_skipped_club_still_counts_for_ambiguity_paris(self):
+        # Fable verdict on #13293: "Saint" is on _SCHOOL_MODIFIER_WORDS, so
+        # skipping Paris Saint-Germain before counting prefix matches used to
+        # leave Paris FC as a false sole match for "Paris".
+        ligue1_paris = [
+            SimpleNamespace(id=35, name="Paris Saint-Germain", alternate_names=None),
+            SimpleNamespace(id=36, name="Paris FC", alternate_names=None),
+        ]
+        assert unambiguous_short_spelling_match("Paris", ligue1_paris) is None
+
     @pytest.mark.parametrize(
         "short_school,other_school",
         [
@@ -569,6 +579,10 @@ class TestNearestWrongNeighboursNeverCollapse:
             ("Texas", "Texas A&M Aggies"),
             ("Louisiana", "Louisiana Tech Bulldogs"),
             ("Kansas", "Kansas State Wildcats"),
+            # Fable verdict on #13293: school-word test must run at any name length.
+            ("North Dakota", "North Dakota State Bison"),
+            ("North Carolina", "North Carolina State Wolfpack"),
+            ("San Diego", "San Diego State Aztecs"),
         ],
     )
     def test_school_modifier_traps_never_collapse(self, short_school, other_school):

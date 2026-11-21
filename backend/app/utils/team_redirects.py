@@ -185,7 +185,7 @@ def unambiguous_short_spelling_match(
     if len(cand_tokens) == 1 and len(cand_tokens[0]) < 4:
         return None
 
-    prefix_hits: list[Any] = []
+    prefix_candidates: list[tuple[Any, str, list[str]]] = []
     for team in pool:
         t_name = getattr(team, "name", None)
         if not t_name or not distinguishing_tokens_agree(candidate_name, t_name):
@@ -195,19 +195,28 @@ def unambiguous_short_spelling_match(
             continue
         if ex_tokens[: len(cand_tokens)] != cand_tokens:
             continue
-        if len(cand_tokens) == 1:
-            next_tok = ex_tokens[1]
-            if next_tok in _SCHOOL_MODIFIER_WORDS:
-                continue
-            if ex_tokens[1:3] == ["a", "m"]:
-                continue
-        if shared_token_rivals(candidate_name, t_name):
-            continue
-        prefix_hits.append(team)
+        prefix_candidates.append((team, t_name, ex_tokens))
 
-    if len(prefix_hits) == 1:
-        return prefix_hits[0]
-    return None
+    # Ambiguity check BEFORE school-word / rival filtering: a row set aside by
+    # the school-word rule (e.g. "Paris Saint-Germain" alongside "Paris FC" for
+    # "Paris") must still count as a second match rather than disappearing and
+    # turning the remaining club into a false sole match.
+    if len(prefix_candidates) != 1:
+        return None
+
+    team, t_name, ex_tokens = prefix_candidates[0]
+    # School-modifier guard at ANY incoming name length (not only 1-word names),
+    # so "North Dakota" never collapses onto "North Dakota State Bison" and
+    # "North Carolina" never collapses onto "North Carolina State Wolfpack".
+    next_idx = len(cand_tokens)
+    next_tok = ex_tokens[next_idx]
+    if next_tok in _SCHOOL_MODIFIER_WORDS:
+        return None
+    if ex_tokens[next_idx : next_idx + 2] in (["a", "m"], ["a", "t"]):
+        return None
+    if shared_token_rivals(candidate_name, t_name):
+        return None
+    return team
 
 
 async def resolve_retired_team_id(db: Any, team_id: int) -> int:
