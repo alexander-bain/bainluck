@@ -34,8 +34,10 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import os
 import re
+import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -102,11 +104,42 @@ _SCOUT_NON_FUN_HARM_RE = re.compile(
 _SLUG_CLEAN_RE = re.compile(r"[^a-z0-9]+")
 _NORM_TITLE_RE = re.compile(r"[^a-z0-9]+")
 
-_TAG_BATCH_SIZE = 150
+_TAG_BATCH_SIZE = 120
 _DEFAULT_TOKENS_PER_TITLE = 22
+_DEFAULT_TAG_PROMPT_OVERHEAD_PER_BATCH = 900
 _DEFAULT_TAG_OUTPUT_TOKENS_PER_BATCH = 900
-_DEFAULT_SET_INPUT_TOKENS = 18_000
-_DEFAULT_SET_OUTPUT_TOKENS = 8_000
+_TAG_MAX_OUTPUT_TOKENS_PER_BATCH = 4_000
+_DEFAULT_SET_INPUT_TOKENS = 25_000
+_DEFAULT_SET_OUTPUT_TOKENS = 10_000
+
+_SCOUT_BANNED_VOICE_RE = re.compile(r"\b(?:traders?|bets?|betting)\b", re.IGNORECASE)
+_SCOUT_MECHANICAL_FAMILY_RE = re.compile(
+    r"(?:point[\s-]+of[\s-]+sale\s+growth|\bpos\s+growth\b|\bsales\s+growth\b|"
+    r"\bapp\s+downloads?\b|\bdownload\s+counts?\b|"
+    r"\bdownloads?\s+in\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|"
+    r"jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b|"
+    r"\bmonthly\s+(?:sales|revenue|downloads?|installs?)\b)",
+    re.IGNORECASE,
+)
+_SCOUT_POLITICAL_CATEGORIES: frozenset[str] = frozenset(
+    {"politics", "geopolitics", "elections", "government"}
+)
+_SCOUT_POLITICAL_GOVERNANCE_RE = re.compile(
+    r"\b(?:trump\s+administration|cabinet|prime\s+minister|vice\s+president|"
+    r"president\s+of|presidential|senate|congress(?:man|woman)?|"
+    r"house\s+of\s+representatives|governor|mayor|parliament|election|"
+    r"primary|nominee|impeach(?:ment)?|tariffs?|supreme\s+court|referendum|"
+    r"coalition|legislation|government\s+shutdown|"
+    r"(?:out|resign(?:s|ing)?)\s+as\s+(?:prime\s+minister|president|vice\s+president|"
+    r"minister|governor|chancellor|mayor))\b",
+    re.IGNORECASE,
+)
+_SCOUT_POP_CULTURE_CROSSOVER_RE = re.compile(
+    r"\b(?:snl|saturday\s+night\s+live|pope|vatican|aliens?|ufo|"
+    r"taylor\s+swift|miss\s+universe|nobel|elon\s+musk|satoshi|"
+    r"world\s+happiness|time\s+person|mrbeast|spotify|nuclear\s+fusion)\b",
+    re.IGNORECASE,
+)
 
 
 class FunScoutSpendCapExceededError(RuntimeError):
@@ -300,7 +333,7 @@ def estimate_fun_scout_spend(
 
     count = max(0, int(title_count))
     batches = max(1, (count + _TAG_BATCH_SIZE - 1) // _TAG_BATCH_SIZE) if count else 0
-    tag_in = count * max(1, int(tokens_per_title)) + batches * 600
+    tag_in = count * max(1, int(tokens_per_title)) + batches * _DEFAULT_TAG_PROMPT_OVERHEAD_PER_BATCH
     tag_out = batches * _DEFAULT_TAG_OUTPUT_TOKENS_PER_BATCH
     tag_cost = (tag_in * t_spec.input_per_m + tag_out * t_spec.output_per_m) / 1_000_000.0
 
@@ -468,6 +501,502 @@ def dedupe_cross_venue_members(
     return kept, deduped
 
 
+_BLURB_NUMBER_WORDS: dict[str, int] = {
+    "two": 2,
+    "three": 3,
+    "four": 4,
+    "five": 5,
+    "six": 6,
+    "seven": 7,
+    "eight": 8,
+    "nine": 9,
+    "ten": 10,
+}
+_BLURB_LEADING_STARTERS: frozenset[str] = frozenset(
+    {
+        "a",
+        "across",
+        "after",
+        "all",
+        "alongside",
+        "an",
+        "before",
+        "between",
+        "both",
+        "during",
+        "each",
+        "every",
+        "for",
+        "from",
+        "grouped",
+        "in",
+        "near",
+        "next",
+        "on",
+        "over",
+        "point",
+        "read",
+        "rumors",
+        "seeing",
+        "side",
+        "the",
+        "these",
+        "this",
+        "those",
+        "together",
+        "with",
+    }
+)
+_BLURB_GENERIC_PHRASES: frozenset[str] = frozenset(
+    {
+        "all star",
+        "big game",
+        "billboard hot",
+        "box office",
+        "cabinet departures",
+        "fan forum",
+        "first week",
+        "golden globe",
+        "golden globes",
+        "hall of fame",
+        "hot 100",
+        "millennium prize",
+        "mother nature",
+        "new year",
+        "nobel prize",
+        "opening weekend",
+        "point of sale",
+        "prime minister",
+        "rotten tomatoes",
+        "super bowl",
+        "united states",
+        "vice president",
+        "white house",
+        "world cup",
+        "world happiness",
+        "year in search",
+    }
+)
+_BLURB_CONNECTORS: frozenset[str] = frozenset({"of", "the", "in", "and", "vs"})
+_MAP_GENERIC_NON_PLACES: frozenset[str] = frozenset(
+    {
+        "us",
+        "usa",
+        "united states",
+        "america",
+        "atlantic",
+        "pacific",
+        "earth",
+        "world",
+        "global",
+        "planet",
+        "north america",
+        "south america",
+        "europe",
+        "asia",
+        "january",
+        "february",
+        "march",
+        "april",
+        "may",
+        "june",
+        "july",
+        "august",
+        "september",
+        "october",
+        "november",
+        "december",
+        "dec",
+        "jan",
+        "nov",
+    }
+)
+_MAP_KNOWN_PLACES: frozenset[str] = frozenset(
+    {
+        "amsterdam",
+        "arizona",
+        "aspen",
+        "atlanta",
+        "austin",
+        "barcelona",
+        "beijing",
+        "berlin",
+        "big bear",
+        "big sky",
+        "boston",
+        "brazil",
+        "breckenridge",
+        "brooklyn",
+        "california",
+        "canada",
+        "charlotte",
+        "chicago",
+        "china",
+        "colorado",
+        "dallas",
+        "denver",
+        "detroit",
+        "dubai",
+        "florida",
+        "france",
+        "germany",
+        "hong kong",
+        "houston",
+        "india",
+        "italy",
+        "jackson hole",
+        "japan",
+        "killington",
+        "lake tahoe",
+        "las vegas",
+        "london",
+        "los angeles",
+        "madrid",
+        "mammoth",
+        "manhattan",
+        "melbourne",
+        "mexico",
+        "mexico city",
+        "miami",
+        "minneapolis",
+        "montana",
+        "montreal",
+        "nashville",
+        "nevada",
+        "new orleans",
+        "new york",
+        "new york city",
+        "nyc",
+        "orlando",
+        "park city",
+        "paris",
+        "philadelphia",
+        "phoenix",
+        "portland",
+        "rio de janeiro",
+        "rome",
+        "salt lake city",
+        "san diego",
+        "san francisco",
+        "seattle",
+        "seoul",
+        "shanghai",
+        "singapore",
+        "south korea",
+        "spain",
+        "steamboat",
+        "stowe",
+        "sun valley",
+        "sydney",
+        "tahoe",
+        "telluride",
+        "texas",
+        "tokyo",
+        "toronto",
+        "united kingdom",
+        "utah",
+        "vail",
+        "vancouver",
+        "vermont",
+        "washington",
+        "whistler",
+    }
+)
+_MAP_FEATURE_RE = re.compile(
+    r"\b(Lake\s+[A-Z][a-z]+|[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\s+"
+    r"(?:Mountain(?:\s+Resort)?|Ski\s+Resort|Resort|Peak|Lake|River|Valley|Harbor|Bay|Island))\b"
+)
+_MAP_WEATHER_IN_RE = re.compile(
+    r"\b(?:snow|snowfall|rain|rainfall|temperatures?|weather|landfall|flood(?:ing)?|"
+    r"heat\s*wave|freeze)\s+in\s+([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})?)"
+)
+_DROPPED_GENERIC_TOKENS: frozenset[str] = frozenset(
+    {
+        "after",
+        "before",
+        "best",
+        "big",
+        "billion",
+        "day",
+        "dec",
+        "first",
+        "game",
+        "global",
+        "how",
+        "jan",
+        "last",
+        "main",
+        "month",
+        "more",
+        "most",
+        "new",
+        "next",
+        "nov",
+        "open",
+        "score",
+        "season",
+        "set",
+        "show",
+        "the",
+        "top",
+        "tour",
+        "what",
+        "when",
+        "which",
+        "who",
+        "will",
+        "winner",
+        "world",
+        "year",
+    }
+)
+
+
+def _fold_text(text: str) -> str:
+    cleaned = (text or "").replace("\u2019", "'").replace("\u2018", "'")
+    decomposed = unicodedata.normalize("NFKD", cleaned)
+    return "".join(ch for ch in decomposed if not unicodedata.combining(ch)).lower()
+
+
+def _blurb_tokens_present(phrase_tokens: Sequence[str], member_text_folded: str, member_words: set[str]) -> bool:
+    for tok in phrase_tokens:
+        if len(tok) <= 2:
+            if tok not in member_words:
+                return False
+        elif tok not in member_text_folded and tok not in member_words:
+            return False
+    return True
+
+
+def _extract_member_initials(members: Sequence[ScoutMarketRow]) -> set[str]:
+    initials: set[str] = set()
+    for row in members:
+        words = re.findall(r"[A-Za-z][A-Za-z.]*", row.title or "")
+        cap_runs: list[str] = []
+        for w in words:
+            if w[0].isupper():
+                cap_runs.append(w[0].lower())
+            else:
+                if 2 <= len(cap_runs) <= 5:
+                    initials.add("".join(cap_runs))
+                cap_runs = []
+        if 2 <= len(cap_runs) <= 5:
+            initials.add("".join(cap_runs))
+    return initials
+
+
+def check_scout_voice_words(
+    name: str,
+    kicker: str,
+    why_better_together: str,
+    footer: str,
+) -> Optional[str]:
+    """Rule 3.1: Reject betting/gambling voice (`traders`, `bets`, `betting`)."""
+    for field in (name, kicker, why_better_together, footer):
+        match = _SCOUT_BANNED_VOICE_RE.search(field or "")
+        if match:
+            return f"banned_voice_word:{match.group(0).lower()}"
+    return None
+
+
+def check_scout_blurb_matches_members(
+    why_better_together: str,
+    members: Sequence[ScoutMarketRow],
+    dropped_rows: Sequence[tuple[ScoutMarketRow, str]] = (),
+) -> Optional[str]:
+    """Rule 3.2: Blurb mentions only entities/counts present in the surviving set."""
+    blurb_norm = (why_better_together or "").replace("\u2019", "'").replace("\u2018", "'")
+    blurb_folded = _fold_text(blurb_norm)
+    blurb_words = set(re.findall(r"[a-z0-9]+", blurb_folded))
+
+    count_match = re.search(
+        r"\b(?:these|all|the)\s+(two|three|four|five|six|seven|eight|nine|ten|\d+)\s+"
+        r"(?:markets?|questions?)\b",
+        blurb_folded,
+    )
+    if count_match:
+        raw_num = count_match.group(1)
+        stated = _BLURB_NUMBER_WORDS.get(raw_num)
+        if stated is None and raw_num.isdigit():
+            stated = int(raw_num)
+        if stated is not None and stated != len(members):
+            return f"blurb_member_count_mismatch:{stated}!={len(members)}"
+
+    member_text_folded = _fold_text(" ".join(m.title for m in members))
+    member_words = set(re.findall(r"[a-z0-9]+", member_text_folded))
+    member_initials = _extract_member_initials(members)
+
+    # Reject any distinctive entity from a dropped/filtered candidate left in the blurb
+    for dropped_row, _reason in dropped_rows:
+        for cap_word in re.findall(r"\b[A-Z][a-z]{2,}\b", dropped_row.title or ""):
+            folded_tok = _fold_text(cap_word)
+            if (
+                folded_tok in _DROPPED_GENERIC_TOKENS
+                or folded_tok in member_text_folded
+                or folded_tok in member_words
+            ):
+                continue
+            if folded_tok in blurb_words:
+                return f"blurb_mentions_dropped_member:{cap_word}"
+
+    # Split on sentence punctuation and possessives ('s) so "Jordan Peele's Marvel debut"
+    # isolates "Jordan Peele" cleanly instead of merging across the possessive.
+    clauses = re.split(r"[.!?;:\n]+|'s\b", blurb_norm)
+    phrase_re = re.compile(
+        r"\b[A-Z][A-Za-z0-9+&-]+(?:\s+(?:(?:of|the|in|and|vs\.?)\s+)?[A-Z][A-Za-z0-9+&-]+){1,4}\b"
+    )
+    for clause in clauses:
+        for match in phrase_re.finditer(clause):
+            words = match.group(0).split()
+            while len(words) > 1 and _fold_text(words[0]) in _BLURB_LEADING_STARTERS:
+                words.pop(0)
+            if len(words) < 2:
+                continue
+            cleaned = " ".join(words)
+            folded_phrase = _fold_text(cleaned)
+            if folded_phrase in _BLURB_GENERIC_PHRASES:
+                continue
+            sig_tokens = [
+                _fold_text(w.strip(".,\"'()"))
+                for w in words
+                if _fold_text(w.strip(".,\"'()")) not in _BLURB_CONNECTORS
+                and len(w.strip(".,\"'()")) >= 2
+            ]
+            if len(sig_tokens) < 2:
+                continue
+            if not _blurb_tokens_present(sig_tokens, member_text_folded, member_words):
+                return f"blurb_mentions_unlisted_member:{cleaned}"
+
+    # Check single proper names inside 3+ proper-name comma lists (e.g. "Drake, Kendrick, Travis, Ye and Don Toliver")
+    list_re = re.compile(
+        r"\b([A-Z][A-Za-z0-9+&-]+(?:\s+[A-Z][A-Za-z0-9+&-]+)*"
+        r"(?:\s*,\s*(?:the\s+)?[A-Z][A-Za-z0-9+&-]+(?:\s+[A-Z][A-Za-z0-9+&-]+)*)+"
+        r"\s+(?:and|or)\s+(?:the\s+)?[A-Z][A-Za-z0-9+&-]+(?:\s+[A-Z][A-Za-z0-9+&-]+)*)"
+    )
+    for lmatch in list_re.finditer(blurb_norm):
+        items = re.split(r"\s*,\s*|\s+(?:and|or)\s+", lmatch.group(1))
+        if len(items) < 3:
+            continue
+        for item in items:
+            words = item.split()
+            while words and _fold_text(words[0]) in _BLURB_LEADING_STARTERS:
+                words.pop(0)
+            if not words:
+                continue
+            cleaned = " ".join(words)
+            folded_item = _fold_text(cleaned)
+            if folded_item in _BLURB_GENERIC_PHRASES:
+                continue
+            if len(words) == 1:
+                tok = folded_item
+                if (
+                    tok in _DROPPED_GENERIC_TOKENS
+                    or tok in member_words
+                    or tok in member_text_folded
+                    or tok in member_initials
+                ):
+                    continue
+                return f"blurb_mentions_unlisted_member:{cleaned}"
+            sig_tokens = [
+                _fold_text(w.strip(".,\"'()"))
+                for w in words
+                if _fold_text(w.strip(".,\"'()")) not in _BLURB_CONNECTORS
+                and len(w.strip(".,\"'()")) >= 2
+            ]
+            if sig_tokens and not _blurb_tokens_present(sig_tokens, member_text_folded, member_words):
+                return f"blurb_mentions_unlisted_member:{cleaned}"
+
+    return None
+
+
+def _extract_specific_places(title: str) -> set[str]:
+    """Extract specific geographic pin candidates from a market title for `map` validation."""
+    places: set[str] = set()
+    clean_title = (title or "").replace("\u2019", "'")
+    folded = _fold_text(re.sub(r"new\s+york\s+times", " ", _fold_text(clean_title)))
+
+    for feat in _MAP_FEATURE_RE.findall(clean_title):
+        key = _fold_text(feat).strip()
+        if key and key not in _MAP_GENERIC_NON_PLACES:
+            places.add(key)
+
+    for weather_loc in _MAP_WEATHER_IN_RE.findall(clean_title):
+        key = _fold_text(weather_loc).strip()
+        if key and key not in _MAP_GENERIC_NON_PLACES:
+            places.add(key)
+
+    for place in _MAP_KNOWN_PLACES:
+        if re.search(r"\b" + re.escape(place) + r"\b", folded):
+            canonical = "new york" if place in {"nyc", "new york city"} else place
+            places.add(canonical)
+
+    # Collapse overlapping spans (e.g. "big bear" + "big bear mountain resort" -> 1 pin).
+    collapsed: set[str] = set()
+    for p in sorted(places, key=len):
+        if any(existing in p for existing in collapsed):
+            continue
+        collapsed.add(p)
+    return collapsed
+
+
+def check_scout_map_look_places(
+    look: str,
+    members: Sequence[ScoutMarketRow],
+) -> Optional[str]:
+    """Rule 3.3: `look='map'` is permitted only when members are distinct specific places."""
+    if (look or "").strip().lower() != "map":
+        return None
+    members_with_place = 0
+    distinct_places: set[str] = set()
+    for row in members:
+        found = _extract_specific_places(row.title)
+        if found:
+            members_with_place += 1
+            distinct_places.update(found)
+    required_members = max(SCOUT_MIN_LIVE_MEMBERS, math.ceil(len(members) * 0.6))
+    if members_with_place < required_members or len(distinct_places) < SCOUT_MIN_LIVE_MEMBERS:
+        return f"map_look_requires_places:{members_with_place}/{len(members)}"
+    return None
+
+
+def check_scout_no_mechanical_sales_downloads(
+    name: str,
+    why_better_together: str,
+    members: Sequence[ScoutMarketRow],
+) -> Optional[str]:
+    """Rule 3.4: Reject monthly POS/sales-growth and app-download-count families."""
+    for text in [name, why_better_together, *(m.title for m in members)]:
+        if _SCOUT_MECHANICAL_FAMILY_RE.search(text or ""):
+            return "mechanical_sales_or_downloads_family"
+    return None
+
+
+def _is_political_market(row: ScoutMarketRow) -> bool:
+    title = row.title or ""
+    if _SCOUT_POP_CULTURE_CROSSOVER_RE.search(title):
+        return False
+    if _SCOUT_POLITICAL_GOVERNANCE_RE.search(title):
+        return True
+    cat = (row.category or "").strip().lower()
+    return cat in _SCOUT_POLITICAL_CATEGORIES
+
+
+def check_scout_no_politics_only_set(
+    category: str,
+    name: str,
+    members: Sequence[ScoutMarketRow],
+) -> Optional[str]:
+    """Rule 3.5: Reject politics-only or routine government/election sets."""
+    if (category or "").strip().lower() in _SCOUT_POLITICAL_CATEGORIES:
+        return "politics_only_set:category"
+    if not members:
+        return None
+    political_count = sum(1 for row in members if _is_political_market(row))
+    if political_count >= max(1, math.ceil(len(members) * 0.6)):
+        return "politics_only_set:members"
+    return None
+
+
 def validate_scout_proposed_set(
     proposal: ScoutProposedSet,
     catalog_by_id: Mapping[int, ScoutMarketRow],
@@ -511,6 +1040,7 @@ def validate_scout_proposed_set(
 
     passing: list[ScoutMarketRow] = []
     dropped: list[tuple[int, str]] = []
+    dropped_rows: list[tuple[ScoutMarketRow, str]] = []
     seen_ids: set[int] = set()
     for mid in proposal.member_ids:
         if mid in seen_ids:
@@ -521,7 +1051,10 @@ def validate_scout_proposed_set(
         if ok and row is not None:
             passing.append(row)
         else:
-            dropped.append((mid, reason or "rejected"))
+            reason_str = reason or "rejected"
+            dropped.append((mid, reason_str))
+            if row is not None:
+                dropped_rows.append((row, reason_str))
 
     deduped_rows, deduped_pairs = dedupe_cross_venue_members(passing)
     if len(deduped_rows) < min_members:
@@ -536,6 +1069,17 @@ def validate_scout_proposed_set(
         (proposal.footer or "").strip()
         or "Separate markets grouped together. They do not add up to 100%."
     )
+
+    for rule_err in (
+        check_scout_voice_words(name, kicker, why, footer),
+        check_scout_no_mechanical_sales_downloads(name, why, deduped_rows),
+        check_scout_no_politics_only_set(category, name, deduped_rows),
+        check_scout_map_look_places(look, deduped_rows),
+        check_scout_blurb_matches_members(why, deduped_rows, dropped_rows),
+    ):
+        if rule_err is not None:
+            return None, rule_err
+
     return (
         ScoutValidatedSet(
             slug=slug,
@@ -765,15 +1309,97 @@ def _parse_json_object(raw_text: str) -> dict[str, Any]:
     return parsed if isinstance(parsed, dict) else {}
 
 
-def _approved_examples_summary(seed_entries: Sequence[FunMarketEntry]) -> list[dict[str, Any]]:
+def _approved_examples_summary(
+    seed_entries: Sequence[FunMarketEntry],
+    sub_tag_descriptions: Optional[Mapping[str, str]] = None,
+) -> list[dict[str, Any]]:
     by_group: dict[str, list[str]] = {}
     for entry in seed_entries:
-        group = entry.sub_tags[0] if entry.sub_tags else entry.fun_bucket
-        by_group.setdefault(group, []).append(entry.title)
+        tags = entry.sub_tags or (entry.fun_bucket,)
+        for group in tags:
+            by_group.setdefault(group, []).append(entry.title)
+    if sub_tag_descriptions is None:
+        try:
+            sub_tag_descriptions = load_fun_markets_registry().sub_tags
+        except OSError:
+            sub_tag_descriptions = {}
     return [
-        {"group": group, "sample_titles": titles[:4], "count": len(titles)}
+        {
+            "group": group,
+            "description": str(sub_tag_descriptions.get(group) or ""),
+            "sample_titles": titles[:8],
+            "count": len(titles),
+        }
         for group, titles in sorted(by_group.items())
     ]
+
+
+def _tag_chunk_recursive(
+    chunk: Sequence[ScoutMarketRow],
+    *,
+    openai_client: Any,
+    system_prompt: str,
+    job_budget: Optional[JobBudget],
+    depth: int = 0,
+) -> tuple[list[ScoutTaggedMarket], float]:
+    lines = [f"{m.market_id} | {m.source} | {m.category or ''} | {m.title}" for m in chunk]
+    user_prompt = f"Markets ({len(chunk)}):\n" + "\n".join(lines)
+    result = complete_chat_detailed(
+        "fun_scout_tag",
+        openai_client,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        max_output_tokens=_TAG_MAX_OUTPUT_TOKENS_PER_BATCH,
+        temperature=0.2,
+        job_budget=job_budget,
+        response_format={"type": "json_object"},
+    )
+    cost = float(result.cost_usd or 0.0)
+    choices = getattr(result.response, "choices", None)
+    finish_reason = getattr(choices[0], "finish_reason", None) if choices else None
+    if finish_reason == "length" and len(chunk) > 1 and depth < 4:
+        mid = len(chunk) // 2
+        left_tagged, left_cost = _tag_chunk_recursive(
+            chunk[:mid],
+            openai_client=openai_client,
+            system_prompt=system_prompt,
+            job_budget=job_budget,
+            depth=depth + 1,
+        )
+        right_tagged, right_cost = _tag_chunk_recursive(
+            chunk[mid:],
+            openai_client=openai_client,
+            system_prompt=system_prompt,
+            job_budget=job_budget,
+            depth=depth + 1,
+        )
+        return left_tagged + right_tagged, cost + left_cost + right_cost
+
+    payload = _parse_json_object(_extract_response_text(result.response))
+    items_out: list[ScoutTaggedMarket] = []
+    for item in payload.get("tagged") or []:
+        if not isinstance(item, Mapping):
+            continue
+        try:
+            mid = int(item["market_id"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        items_out.append(
+            ScoutTaggedMarket(
+                market_id=mid,
+                fun_group=str(item.get("fun_group") or "fun").strip().lower(),
+                reason=str(item.get("reason") or "").strip()[:120],
+                is_fun_single=bool(item.get("is_fun_single")),
+                set_hint=(
+                    str(item["set_hint"]).strip()[:80]
+                    if item.get("set_hint")
+                    else None
+                ),
+            )
+        )
+    return items_out, cost
 
 
 def run_scout_tagging_pass(
@@ -785,71 +1411,52 @@ def run_scout_tagging_pass(
     job_budget: Optional[JobBudget] = None,
     batch_size: int = _TAG_BATCH_SIZE,
 ) -> tuple[list[ScoutTaggedMarket], float]:
-    """Run the small-model tagging pass over open non-sports titles (~2c/night)."""
-    examples_json = json.dumps(_approved_examples_summary(approved_examples)[:12])
+    """Run the small-model high-recall tagging pass over open non-sports titles."""
+    examples_json = json.dumps(_approved_examples_summary(approved_examples))
     retired_json = json.dumps(
         [{"name": r.get("name"), "reason": r.get("reason")} for r in retired_sets[:12]]
     )
     system_prompt = (
-        "You are tagging open prediction markets for Bain Luck's Discover feed. "
-        "Pick genuinely fun, conversation-worthy single markets (weird, curious, "
-        "water-cooler, pop culture, science, weather, internet lore, milestones) "
-        "and markets that belong in a clever group. Exclude routine sports, "
-        "ordinary economic prints, local elections, and anything about a named "
-        "person's pregnancy, health, affair, divorce, arrest, trial, or death "
-        "(engagements are allowed). Never pick violence, war, or nuclear-weapon "
-        "markets. Return strict JSON: "
-        '{"tagged": [{"market_id": int, "fun_group": str, "is_fun_single": bool, '
-        '"set_hint": str|null, "reason": str}]}.'
+        "You are filtering prediction markets for Bain Luck's Discover feed. "
+        "Keep EVERY market that belongs to any approved theme OR could anchor a clever, "
+        "conversation-worthy set (pop culture, movies, music, awards, TV finales, games, "
+        "Christmas/snow cities, Taylor Swift, Elon Musk, James Bond, Pope Leo XIV, space, "
+        "science/unsolved mysteries, celebrity engagements, internet lore, everyday food/gas "
+        "prices, year-end Super Bowl/Google/Spotify/TIME lists).\n"
+        f"Approved themes and example titles (all must be represented): {examples_json}\n"
+        f"Retired sets (do NOT pick sets matching these): {retired_json}\n"
+        "High-recall rules:\n"
+        "- If a market fits ANY approved theme — even a modest city weather question, movie RT score, "
+        "TV winner, music album/song, Pope/Taylor Swift/Bond/Space market, or Costco/fast-food price — "
+        "ALWAYS include it and set `fun_group` to that theme slug (e.g. `taylor-swift`, `white-christmas`, "
+        "`christmas`, `james-bond`, `space`, `unsolved-problems`, `tv-finales`, `engagements`, `pope-leo-xiv`, "
+        "`everyday-prices`, `super-bowl-culture`, `year-end`, `movies`, `long-awaited`, `long-shot`, `who-shows-up`, `elon-musk`).\n"
+        "- EXCLUDE routine sports, Fed/CPI/GDP/unemployment prints, monthly point-of-sale or sales-growth "
+        "series, monthly app download counts, routine elections/cabinet/head-of-state/geopolitical conflict markets "
+        "(NOTE: keep non-political curiosity markets misfiled under politics like Pope Leo XIV, aliens/UFOs, "
+        "Miss Universe, World Happiness, Nobel Peace Prize), and any named person's pregnancy/health/affair/"
+        "divorce/arrest/trial/death or violence/war/nuclear weapons (engagements ARE allowed).\n"
+        "- Keep `reason` to <= 6 words.\n"
+        'Return strict JSON: {"tagged": [{"market_id": int, "fun_group": str, '
+        '"is_fun_single": bool, "set_hint": str|null, "reason": str}]}.'
     )
 
-    tagged: list[ScoutTaggedMarket] = []
+    tagged_by_id: dict[int, ScoutTaggedMarket] = {}
     total_cost = 0.0
     step = max(1, int(batch_size))
     for i in range(0, len(markets), step):
         chunk = markets[i : i + step]
-        lines = [f"{m.market_id} | {m.source} | {m.category or ''} | {m.title}" for m in chunk]
-        user_prompt = (
-            f"Approved set examples: {examples_json}\n"
-            f"Retired (do NOT repeat): {retired_json}\n"
-            f"Markets ({len(chunk)}):\n" + "\n".join(lines)
-        )
-        result = complete_chat_detailed(
-            "fun_scout_tag",
-            openai_client,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            max_output_tokens=_DEFAULT_TAG_OUTPUT_TOKENS_PER_BATCH,
-            temperature=0.2,
+        chunk_tagged, chunk_cost = _tag_chunk_recursive(
+            chunk,
+            openai_client=openai_client,
+            system_prompt=system_prompt,
             job_budget=job_budget,
-            response_format={"type": "json_object"},
         )
-        if result.cost_usd is not None:
-            total_cost += result.cost_usd
-        payload = _parse_json_object(_extract_response_text(result.response))
-        for item in payload.get("tagged") or []:
-            if not isinstance(item, Mapping):
-                continue
-            try:
-                mid = int(item["market_id"])
-            except (KeyError, TypeError, ValueError):
-                continue
-            tagged.append(
-                ScoutTaggedMarket(
-                    market_id=mid,
-                    fun_group=str(item.get("fun_group") or "fun").strip().lower(),
-                    reason=str(item.get("reason") or "").strip()[:160],
-                    is_fun_single=bool(item.get("is_fun_single")),
-                    set_hint=(
-                        str(item["set_hint"]).strip()[:80]
-                        if item.get("set_hint")
-                        else None
-                    ),
-                )
-            )
-    return tagged, round(total_cost, 6)
+        total_cost += chunk_cost
+        for item in chunk_tagged:
+            if item.market_id not in tagged_by_id:
+                tagged_by_id[item.market_id] = item
+    return list(tagged_by_id.values()), round(total_cost, 6)
 
 
 def run_scout_set_writing_pass(
@@ -862,21 +1469,29 @@ def run_scout_set_writing_pass(
     retired_sets: Sequence[Mapping[str, Any]] = (),
     morning_grades: Sequence[Mapping[str, Any]] = (),
     job_budget: Optional[JobBudget] = None,
+    min_volume: float = FUN_TAG_DEFAULT_MIN_LIFETIME_VOLUME,
+    now: Optional[datetime] = None,
 ) -> tuple[list[ScoutProposedSet], str, float]:
     """Run the Claude set-writing pass to propose novel Discover sets."""
     system_prompt = (
-        "You are Bain Luck's nightly Fun Scout. Your job is to invent crisp, "
+        "You are Bain Luck's nightly Fun Scout. Your job is to invent 12 to 18 crisp, "
         "shareable sets of prediction markets that are genuinely better together "
         'than alone — the kind a person texts to a friend (e.g. "Will it ever '
         'come out?", "White Christmas", "How 2026 gets summed up").\n'
-        "Rules:\n"
+        "Rules (enforced automatically in code — any violation drops the set):\n"
         "1. Every set needs at least 3 distinct live markets from the supplied list.\n"
         "2. Never put two venues' copies of the same market in one set.\n"
-        "3. Taste guard: no named person's pregnancy, health, affairs, divorce, "
-        "arrest, trial, or death (engagements are allowed); no war/violence/nukes.\n"
-        "4. Choose `look` from: `map` (cities/weather/geography), `faces` "
-        "(people — requires credited portraits), `bars` (everything else).\n"
-        "5. Never repeat a retired or graded-down set.\n"
+        "3. Voice ban: NEVER use the words `trader`, `traders`, `bet`, `bets`, or `betting` "
+        "in the set name, kicker, why_better_together, or footer. Write for casual readers.\n"
+        "4. Blurb honesty: `why_better_together` may ONLY name people, titles, or topics that appear "
+        "in your `member_ids` — never mention a market you decided not to include.\n"
+        "5. Visual look: choose `map` ONLY when members are distinct specific geographic places "
+        "(cities, ski resorts, mountains, lakes, states); choose `faces` for specific people "
+        "(requires credited portraits); choose `bars` for everything else (including global storms/volcanoes).\n"
+        "6. No mechanical financial metrics (never group monthly sales growth, POS growth, or app downloads).\n"
+        "7. No politics-only, cabinet/government-exit, or routine election sets.\n"
+        "8. Taste guard: no named person's pregnancy, health, affairs, divorce, arrest, trial, or death "
+        "(engagements are allowed); no war/violence/nukes. Never repeat a retired/down-graded set.\n"
         "Return strict JSON only:\n"
         '{"sets": [{"slug": str, "name": str, "kicker": str, "category": str, '
         '"why_better_together": str, "look": "map"|"faces"|"bars", '
@@ -884,15 +1499,28 @@ def run_scout_set_writing_pass(
         '"template": str|null, "footer": str|null, "member_ids": [int, ...]}]}'
     )
 
-    candidate_lines = []
+    live_candidates: list[tuple[ScoutTaggedMarket, ScoutMarketRow]] = []
     for t in tagged_markets:
         row = catalog_by_id.get(t.market_id)
         if row is None:
             continue
-        candidate_lines.append(
-            f"{row.market_id} | {row.source} | {row.category or ''} | "
-            f"group={t.fun_group} | hint={t.set_hint or ''} | {row.title}"
+        ok, _ = check_scout_member(row, min_volume=min_volume, now=now)
+        if not ok:
+            continue
+        live_candidates.append((t, row))
+
+    live_candidates.sort(
+        key=lambda pair: (
+            pair[0].fun_group,
+            -(float(pair[1].volume) if pair[1].volume is not None else -1.0),
+            pair[1].market_id,
         )
+    )
+    candidate_lines = [
+        f"{row.market_id} | {row.source} | {row.category or ''} | "
+        f"group={t.fun_group} | hint={t.set_hint or ''} | {row.title}"
+        for t, row in live_candidates
+    ]
     family_lines = [
         f"{f.family_key} (open={f.open_count}, sample={f.sample_title})"
         for f in uncovered_families[:80]
@@ -903,7 +1531,7 @@ def run_scout_set_writing_pass(
         f"Recent morning grades: {json.dumps(list(morning_grades)[:20])}\n"
         f"Uncovered sentinel families ({len(family_lines)}):\n"
         + "\n".join(family_lines)
-        + f"\n\nTagged fun candidates ({len(candidate_lines)}):\n"
+        + f"\n\nLive tagged fun candidates ({len(candidate_lines)}, grouped by theme):\n"
         + "\n".join(candidate_lines)
     )
 
@@ -1013,6 +1641,8 @@ def run_nightly_fun_scout(
         retired_sets=retired_sets,
         morning_grades=morning_grades,
         job_budget=job_budget,
+        min_volume=min_volume,
+        now=run_now,
     )
 
     retired_slugs = frozenset(
@@ -1147,4 +1777,44 @@ def evaluate_scout_against_seed_sets(
         "missed_seed_groups": missed_seed_groups,
         "novel_scout_sets": novel_scout_sets,
         "default_set_model": default_model_for_task("fun_scout_sets"),
+    }
+
+
+def evaluate_tagging_pass_against_seed_sets(
+    tagged_markets: Sequence[ScoutTaggedMarket],
+    input_markets: Sequence[ScoutMarketRow],
+    seed_entries: Optional[Mapping[int, FunMarketEntry]] = None,
+) -> dict[str, Any]:
+    """Measure per-seed-group input presence vs first-pass tagging survival (#13102)."""
+    entries = seed_entries if seed_entries is not None else load_fun_markets_registry().markets
+    input_ids = {m.market_id for m in input_markets}
+    tagged_ids = {t.market_id for t in tagged_markets}
+
+    seed_groups: dict[str, set[int]] = {}
+    unique_seed_ids: set[int] = set()
+    for mid, entry in entries.items():
+        unique_seed_ids.add(mid)
+        for tag in entry.sub_tags or (entry.fun_bucket,):
+            seed_groups.setdefault(tag, set()).add(mid)
+
+    groups_report: list[dict[str, Any]] = []
+    for group_name, seed_ids in sorted(seed_groups.items()):
+        in_input = len(seed_ids & input_ids)
+        survived = len(seed_ids & tagged_ids)
+        groups_report.append(
+            {
+                "seed_group": group_name,
+                "seed_size": len(seed_ids),
+                "in_input": in_input,
+                "survived_first_pass": survived,
+            }
+        )
+
+    return {
+        "tagged_count": len(tagged_ids),
+        "input_count": len(input_ids),
+        "unique_seed_total": len(unique_seed_ids),
+        "unique_seed_in_input": len(unique_seed_ids & input_ids),
+        "unique_seed_survived": len(unique_seed_ids & tagged_ids),
+        "groups": groups_report,
     }
