@@ -499,7 +499,7 @@ final class FollowUpPolishItem6Tests: XCTestCase {
         )
         XCTAssertEqual(finishInput.beforeLabel, "Pregame")
         XCTAssertEqual(finishInput.beforeColumnLabel, "Pregame")
-        XCTAssertEqual(finishInput.win.deltaText, "+15.3 pts since pregame")
+        XCTAssertEqual(finishInput.win.deltaText, "+15.3 points since pregame")
         XCTAssertFalse(finishInput.finalBarsExplanation.localizedCaseInsensitiveContains("opened"))
         XCTAssertFalse(finishInput.finalFootnotePrefix.localizedCaseInsensitiveContains("opened"))
         XCTAssertTrue(finishInput.finalBarsExplanation.localizedCaseInsensitiveContains("pregame"))

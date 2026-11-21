@@ -515,7 +515,7 @@ enum EventAtlasGolfTournament11666 {
             if let pts = formatMovementPoints(liveProb - openProb) {
                 return "\(pts) since pregame"
             }
-            return "0.0 pts since pregame"
+            return "0.0 points since pregame"
         }()
 
         let actual: GolfFinishResult10868 = {
@@ -1054,7 +1054,7 @@ enum EventAtlasGolfTournament11666 {
         guard let delta, delta.isFinite, abs(delta) >= 0.001 else { return nil }
         let pts = delta * 100
         let sign = pts > 0 ? "+" : ""
-        return String(format: "%@%.1f pts", sign, pts)
+        return String(format: "%@%.1f points", sign, pts)
     }
 }
 
@@ -2456,8 +2456,9 @@ struct EventAtlasGolfContenderChooserView11666: View {
                             .font(.subheadline.weight(isSelected ? .bold : .medium))
                             .foregroundStyle(.primary)
                             .fixedSize(horizontal: false, vertical: true)
-                        Spacer(minLength: 6)
+                            .frame(maxWidth: .infinity, alignment: .leading)
                         chooserRowTrailing(row)
+                            .layoutPriority(1)
                     }
                 }
             }
@@ -2478,55 +2479,84 @@ struct EventAtlasGolfContenderChooserView11666: View {
 
     @ViewBuilder
     private func chooserRowTrailing(_ row: GolfTournamentFieldRow) -> some View {
-        HStack(spacing: 8) {
-            if let moveText = EventAtlasGolfTournament11666.formatMovementPoints(row.movement24h) {
-                Text(moveText)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle((row.movement24h ?? 0) > 0 ? DS.emeraldDark : .red)
-                    .monospacedDigit()
-            }
-            if phase == .final {
-                if row.isWinner == true {
-                    HStack(spacing: 4) {
-                        Text("✓ Won")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(DS.emeraldDark)
-                        if let mark = SourceMarkButton(row.sourceMark, number: nil, subject: row.name, numberSize: 15, compactRow: true) {
-                            mark.buttonStyle(.borderless)
-                        }
-                    }
-                } else if showsPregameBaseline, let open = row.openingProbability, open > 0, open < 1 {
-                    HStack(spacing: 4) {
-                        Text("○ Pregame \(formatProbability(open))")
-                            .font(.caption)
-                            .foregroundStyle(DS.textSecondaryReadable)
-                            .monospacedDigit()
-                        if let mark = SourceMarkButton(row.sourceMark, number: nil, subject: row.name, numberSize: 13, compactRow: true) {
-                            mark.buttonStyle(.borderless)
-                        }
-                    }
-                } else {
-                    Text("—")
-                        .font(.caption)
-                        .foregroundStyle(DS.textSecondaryReadable)
-                }
-            } else {
-                HStack(spacing: 4) {
-                    Text(row.probabilityLabel)
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(row.position == 1 ? .blue : .primary)
+        let moveText = EventAtlasGolfTournament11666.formatMovementPoints(row.movement24h)
+        if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 4) {
+                chooserPrimaryValue(row)
+                if let moveText {
+                    Text(moveText)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle((row.movement24h ?? 0) > 0 ? DS.emeraldDark : .red)
                         .monospacedDigit()
-                    if let mark = SourceMarkButton(
-                        row.sourceMark,
-                        number: row.probability,
-                        renderedPercent: row.sourceMark?.state == .settled ? nil : row.renderedPercent,
-                        subject: row.name,
-                        numberSize: 15,
-                        compactRow: true,
-                        showsTenths: row.probabilityLabel.contains(".")
-                    ) {
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        } else {
+            VStack(alignment: .trailing, spacing: 2) {
+                chooserPrimaryValue(row)
+                if let moveText {
+                    Text(moveText)
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle((row.movement24h ?? 0) > 0 ? DS.emeraldDark : .red)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func chooserPrimaryValue(_ row: GolfTournamentFieldRow) -> some View {
+        if phase == .final {
+            if row.isWinner == true {
+                HStack(spacing: 4) {
+                    Text("✓ Won")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(DS.emeraldDark)
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                    if let mark = SourceMarkButton(row.sourceMark, number: nil, subject: row.name, numberSize: 15, compactRow: true) {
                         mark.buttonStyle(.borderless)
                     }
+                }
+            } else if showsPregameBaseline, let open = row.openingProbability, open > 0, open < 1 {
+                HStack(spacing: 4) {
+                    Text("○ Pregame \(formatProbability(open))")
+                        .font(.caption)
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .monospacedDigit()
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                    if let mark = SourceMarkButton(row.sourceMark, number: nil, subject: row.name, numberSize: 13, compactRow: true) {
+                        mark.buttonStyle(.borderless)
+                    }
+                }
+            } else {
+                Text("—")
+                    .font(.caption)
+                    .foregroundStyle(DS.textSecondaryReadable)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+        } else {
+            HStack(spacing: 4) {
+                Text(row.probabilityLabel)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(row.position == 1 ? .blue : .primary)
+                    .monospacedDigit()
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                if let mark = SourceMarkButton(
+                    row.sourceMark,
+                    number: row.probability,
+                    renderedPercent: row.sourceMark?.state == .settled ? nil : row.renderedPercent,
+                    subject: row.name,
+                    numberSize: 15,
+                    compactRow: true,
+                    showsTenths: row.probabilityLabel.contains(".")
+                ) {
+                    mark.buttonStyle(.borderless)
                 }
             }
         }
