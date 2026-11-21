@@ -212,11 +212,34 @@ def _slug_leaks(item: dict, raw_names) -> dict[str, str]:
     for path, text in _every_served_string(item):
         if _is_machine_field(path):
             continue
+        if (
+            re.search(r"(?:^|\.)source_mark\.sources\[\d+\]\.reason$", path)
+            and text == "observation_unknown"
+        ):
+            # This diagnostic enum is not copy. Keep source names, methods,
+            # and any raw venue slug in this slot within the same guard.
+            continue
         if any(raw in text for raw in raw_names):
             leaks[path] = text
         elif LOOKS_LIKE_A_SLUG.match(text):
             leaks[path] = text
     return leaks
+
+
+def test_source_mark_reason_code_does_not_exempt_reader_copy():
+    slug = "claude-fable-5.1-max"
+    mark = {
+        "sources": [{"name": slug, "reason": "observation_unknown"}],
+        "method": slug,
+    }
+    item = {"data": {"top_outcomes": [{"source_mark": mark}]}}
+    prefix = "data.top_outcomes[0].source_mark"
+    assert set(_slug_leaks(item, [slug])) == {
+        f"{prefix}.sources[0].name",
+        f"{prefix}.method",
+    }
+    mark["sources"][0]["reason"] = slug
+    assert f"{prefix}.sources[0].reason" in _slug_leaks(item, [slug])
 
 
 # ── 1. THE PURE DECISION ────────────────────────────────────────────────────

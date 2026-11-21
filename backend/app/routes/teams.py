@@ -261,6 +261,19 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
     )
     team = result.scalars().first()
     if not team:
+        # #13229 / 314-B: follow retired_team_redirects first so a folded team's
+        # old numeric id (/api/teams/14545) or retired slug (/api/teams/tottenham)
+        # resolves transparently to the surviving canonical club instead of 404ing.
+        from app.utils.team_redirects import resolve_retired_team_by_identifier
+
+        retired_canonical_id = await resolve_retired_team_by_identifier(
+            db, identifier
+        )
+        if retired_canonical_id is not None:
+            team = (await db.execute(
+                select(Team).options(selectinload(Team.sport)).where(Team.id == retired_canonical_id)
+            )).scalars().first()
+    if not team:
         # #1204: legacy-slug redirect. A slug retired by a team-identity merge is
         # registered in team_identity_mapping (source='legacy_slug') pointing at the
         # canonical franchise, so a bookmarked old slug (e.g. /teams/boston) resolves

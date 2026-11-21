@@ -2195,7 +2195,13 @@ def free_background_slots(
 #: live; gated OFF by default behind `DISCOVER_FUN_SCOUT_ENABLED`. Cost: 1 fire
 #: per day (0.04/hr), no-op while disabled. Census over assembled `beat_schedule`
 #: prints `explicit 112 implicit 38 total 150`.
-BACKGROUND_BEAT_COUNT = 150
+#: 🔴 RE-DERIVED at speed (2026-11-20, #13241): 150 → 151, explicit 112 → 113,
+#: fall-through UNMOVED at 38. `sync-espn-standings-records`
+#: (`crontab(minute=23, hour="*/2")`) names `background` every 2 hours outside
+#: the `:31-:44` settlement sweep window (2 tiny ESPN standings GETs +
+#: existing-row `current_record` update, <0.5 s/fire, 12 fires/day). Census over
+#: assembled `beat_schedule` prints `explicit 113 implicit 38 total 151`.
+BACKGROUND_BEAT_COUNT = 151
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT

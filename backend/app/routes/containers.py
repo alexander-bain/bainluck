@@ -563,6 +563,114 @@ def _base_empty(slug: str | None = None) -> dict:
     }
 
 
+_MAP_PNG_CACHE: dict[str, tuple[float, bytes]] = {}
+_MAP_PNG_TTL_S = 300.0
+
+
+@router.get("/{slug}/map.png")
+async def get_container_map_png(
+    slug: str = Path(..., min_length=1, max_length=200),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Server-rendered U.S. snow-chance map PNG for map-look groupings (317: B).
+
+    Dynamically shades the 11 White Christmas cities from live snow probabilities
+    with zero baked numeric percentages, so readers on both the website and the
+    current iPhone build see an up-to-date map with no app change.
+    """
+    from app.utils.roundup_containers import (
+        ROUNDUP_PRODUCERS,
+        _load_last_good_roundup_copy,
+        ensure_optional_roundup_candidates,
+    )
+    from app.utils.white_christmas_map import (
+        extract_white_christmas_city_probs,
+        render_white_christmas_map_png,
+    )
+
+    if slug != "machinery-white-christmas":
+        raise HTTPException(status_code=404, detail="Not found")
+
+    ensure_optional_roundup_candidates()
+
+    now_mono = time.monotonic()
+    cached = _MAP_PNG_CACHE.get(slug)
+    if cached is not None and (now_mono - cached[0]) < _MAP_PNG_TTL_S:
+        return Response(
+            content=cached[1],
+            media_type="image/png",
+            headers={"Cache-Control": "public, max-age=300"},
+        )
+
+    city_probs: dict[str, float] = {}
+    try:
+        producer = ROUNDUP_PRODUCERS.get(slug)
+        if producer is not None:
+            cached_tuple = await asyncio.wait_for(
+                _load_last_good_roundup_copy(producer, db),
+                timeout=3.0,
+            )
+            if cached_tuple is not None:
+                _fi, container_payload, _age, _keep = cached_tuple
+                sections = (container_payload or {}).get("sections") or ()
+                members = [
+                    m
+                    for sec in sections
+                    if isinstance(sec, dict)
+                    for m in (sec.get("members") or ())
+                ]
+                city_probs = extract_white_christmas_city_probs(members)
+            if not city_probs:
+                res = await asyncio.wait_for(producer.load(db), timeout=5.0)
+                if res and res.members:
+                    city_probs = extract_white_christmas_city_probs(res.members)
+    except Exception:
+        logger.warning(
+            "white christmas map live probability lookup fell back to neutral",
+            exc_info=True,
+        )
+
+    png_bytes = render_white_christmas_map_png(city_probs)
+    if city_probs:
+        _MAP_PNG_CACHE[slug] = (now_mono, png_bytes)
+        cache_control = "public, max-age=300"
+    else:
+        cache_control = "no-store"
+    return Response(
+        content=png_bytes,
+        media_type="image/png",
+        headers={"Cache-Control": cache_control},
+    )
+
+
+_CARD_ART_ASSETS: dict[str, tuple[str, str]] = {
+    # Decision 318 (Candidate B): Rawpixel #5906428, CC0 1.0 Public Domain
+    # Source: https://www.rawpixel.com/image/5906428/ring-free-public-domain-cc0-photo
+    "machinery-who-gets-engaged": ("who_gets_engaged_ring_cc0.jpg", "image/jpeg"),
+}
+
+
+@router.get("/{slug}/card-art.jpg")
+async def get_container_card_art_jpg(
+    slug: str = Path(..., min_length=1, max_length=200),
+) -> Response:
+    """Serve verified first-party static card art for machinery groupings."""
+    from pathlib import Path as FilePath
+
+    asset = _CARD_ART_ASSETS.get(slug)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    filename, media_type = asset
+    asset_path = FilePath(__file__).resolve().parent.parent / "data" / filename
+    if not asset_path.is_file():
+        raise HTTPException(status_code=404, detail="Not found")
+    return Response(
+        content=asset_path.read_bytes(),
+        media_type=media_type,
+        headers={"Cache-Control": "public, max-age=86400"},
+    )
+
+
 @router.get("/{slug}/week-navigation")
 async def get_week_navigation(
     response: Response,

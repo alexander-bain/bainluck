@@ -481,16 +481,33 @@ async def submit_onboarding(
     # With the new constraint (user_id, team_id, relation_type), a team can have
     # multiple relations (e.g., both "local" and "follow"). We track (team_id, relation_type)
     # pairs to prevent exact duplicates within a single submission.
+    all_submitted_ids = [
+        ref.team_id
+        for refs in (
+            body.local_teams,
+            body.follow_teams,
+            body.alma_mater_teams,
+            body.rival_teams,
+        )
+        for ref in refs
+    ]
+    redirect_map: dict[int, int] = {}
+    if all_submitted_ids and isinstance(db, AsyncSession):
+        from app.utils.team_redirects import resolve_retired_team_ids_batch
+
+        redirect_map = await resolve_retired_team_ids_batch(db, all_submitted_ids)
+
     seen_pairs: set[tuple[int, str]] = set()
 
     def _add_favorite(team_id: int, relation_type: str) -> None:
-        pair = (team_id, relation_type)
+        canonical_id = redirect_map.get(team_id, team_id)
+        pair = (canonical_id, relation_type)
         if pair in seen_pairs:
             return
         seen_pairs.add(pair)
         db.add(UserFavorite(
             user_id=user.id,
-            team_id=team_id,
+            team_id=canonical_id,
             relation_type=relation_type,
             source="onboarding",
             weight=1.0,
@@ -849,8 +866,23 @@ async def search_teams(
             )
             team = team_check.scalar_one_or_none()
 
+            # Guard #13229 / 314-B: resolve via retired_team_redirects,
+            # team_identity_mapping, alternate_names, and unambiguous
+            # same-league short spellings before fuzzy matching or minting.
+            if not team:
+                from app.utils.team_redirects import (
+                    distinguishing_tokens_agree,
+                    find_existing_team_in_sport,
+                )
+
+                team = await find_existing_team_in_sport(
+                    db, team_name, sport_id
+                )
+
             # Fuzzy match: find existing team with a matching name
             if not team:
+                from app.utils.team_redirects import distinguishing_tokens_agree
+
                 _first_word = team_name.split()[0] if team_name else ""
                 if len(_first_word) >= 3:
                     fuzzy_check = await db.execute(
@@ -860,7 +892,10 @@ async def search_teams(
                         )
                     )
                     for candidate in fuzzy_check.scalars():
-                        if _names_match(team_name, candidate.name):
+                        if (
+                            distinguishing_tokens_agree(team_name, candidate.name)
+                            and _names_match(team_name, candidate.name)
+                        ):
                             team = candidate
                             break
 
@@ -1007,9 +1042,19 @@ async def add_favorite(
     if body.relation_type not in valid_types:
         raise HTTPException(status_code=400, detail=f"relation_type must be one of {valid_types}")
 
-    # Verify team exists
-    result = await db.execute(select(Team).where(Team.id == body.team_id))
+    # Verify team exists (following retired_team_redirects for folded duplicate rows, #13229)
+    target_team_id = body.team_id
+    result = await db.execute(select(Team).where(Team.id == target_team_id))
     team = result.scalar_one_or_none()
+    if not team:
+        from app.utils.team_redirects import resolve_retired_team_id
+
+        canonical_id = await resolve_retired_team_id(db, target_team_id)
+        if canonical_id != target_team_id:
+            canonical_result = await db.execute(select(Team).where(Team.id == canonical_id))
+            team = canonical_result.scalar_one_or_none()
+            if team:
+                target_team_id = team.id
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
 
@@ -1018,7 +1063,7 @@ async def add_favorite(
         select(UserFavorite).where(
             and_(
                 UserFavorite.user_id == user.id,
-                UserFavorite.team_id == body.team_id,
+                UserFavorite.team_id == target_team_id,
                 UserFavorite.relation_type == body.relation_type,
             )
         )
@@ -1028,14 +1073,25 @@ async def add_favorite(
 
     db.add(UserFavorite(
         user_id=user.id,
-        team_id=body.team_id,
+        team_id=target_team_id,
         relation_type=body.relation_type,
         source="manual",
         weight=1.0,
     ))
     await db.flush()
 
-    logger.info(f"Added favorite: user={user.id} team={body.team_id} type={body.relation_type}")
+    safe_relation_type = {
+        "follow": "follow",
+        "local": "local",
+        "alma_mater": "alma_mater",
+        "rival": "rival",
+    }[body.relation_type]
+    logger.info(
+        "Added favorite: user=%d team=%d type=%s",
+        int(user.id),
+        int(target_team_id),
+        safe_relation_type,
+    )
     return {"status": "added"}
 
 
@@ -1051,20 +1107,49 @@ async def remove_favorite(
     if relation_type not in valid_types:
         raise HTTPException(status_code=400, detail=f"relation_type must be one of {valid_types}")
 
+    target_team_id = team_id
     result = await db.execute(
         delete(UserFavorite).where(
             and_(
                 UserFavorite.user_id == user.id,
-                UserFavorite.team_id == team_id,
+                UserFavorite.team_id == target_team_id,
                 UserFavorite.relation_type == relation_type,
             )
         )
     )
 
     if result.rowcount == 0:
+        from app.utils.team_redirects import resolve_retired_team_id
+
+        canonical_id = await resolve_retired_team_id(db, team_id)
+        if canonical_id != team_id:
+            target_team_id = canonical_id
+            retry_result = await db.execute(
+                delete(UserFavorite).where(
+                    and_(
+                        UserFavorite.user_id == user.id,
+                        UserFavorite.team_id == target_team_id,
+                        UserFavorite.relation_type == relation_type,
+                    )
+                )
+            )
+            result = retry_result
+
+    if result.rowcount == 0:
         raise HTTPException(status_code=404, detail="Favorite not found")
 
-    logger.info(f"Removed favorite: user={user.id} team={team_id} type={relation_type}")
+    safe_relation_type = {
+        "follow": "follow",
+        "local": "local",
+        "alma_mater": "alma_mater",
+        "rival": "rival",
+    }[relation_type]
+    logger.info(
+        "Removed favorite: user=%d team=%d type=%s",
+        int(user.id),
+        int(target_team_id),
+        safe_relation_type,
+    )
     return {"status": "removed"}
 
 

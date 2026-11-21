@@ -78,8 +78,17 @@ ESPN_STANDINGS_BASE = "https://site.api.espn.com/apis/v2/sports"
 # Keyed by our sport key; the value is ESPN's `groups` id. Only the pre-game
 # pass reads this — see `espn_sync` — so the live pass's board, and therefore
 # what `create_events_from_unmatched_espn` creates from, is unchanged.
+#
+# #13241 / #13229: college basketball has the exact same featured-slice trap.
+# Measured 2026-11-20 against ESPN's live scoreboard: the undated board returns
+# 6 men's / 5 women's featured games, whereas `?groups=50` (ESPN's Division I
+# group) returns the full 59 men's / 41 women's D-I slate. Without `groups=50`,
+# non-featured college basketball teams' `Team.current_record` went stale from
+# the prior season and were refused on game pages.
 ESPN_FULL_SLATE_GROUPS: dict[str, str] = {
     "americanfootball_ncaaf": "80",
+    "basketball_ncaab": "50",
+    "basketball_wncaab": "50",
 }
 
 # Mapping from our sport keys to ESPN sport/league paths

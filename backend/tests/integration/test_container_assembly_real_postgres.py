@@ -1465,6 +1465,8 @@ class TestTheReadContract:
         assert (await read_published(s, container.slug)).state == "empty"
 
     async def test_headers_and_children_share_the_membership_snapshot(self, corrected_session):
+        from types import SimpleNamespace
+
         from sqlalchemy.ext.asyncio import AsyncSession
 
         from app.models.models import Container
@@ -1492,7 +1494,19 @@ class TestTheReadContract:
 
         before = await read_published(reader, root.slug, include_headers=True)
         assert (await read_published(reader, root.slug)).as_dict() == before.as_dict()
-        inline = await read_published(reader, root.slug, include_headers=True, inline_schema=True)
+        batch_sizes = []
+
+        async def observe_execute(*args, **kwargs):
+            result = await reader.execute(*args, **kwargs)
+            rows = result.fetchall()
+            batch_sizes.append(len(rows))
+            return SimpleNamespace(fetchall=lambda: rows)
+
+        inline = await read_published(
+            SimpleNamespace(execute=observe_execute), root.slug, include_headers=True, inline_schema=True
+        )
+        assert len(inline.members) == 3
+        assert batch_sizes == [1]
         assert inline.as_dict() == before.as_dict()
         assert inline.header_rows == before.header_rows
         assert [row[0] for row in before.header_rows] == [root.id, child.id]

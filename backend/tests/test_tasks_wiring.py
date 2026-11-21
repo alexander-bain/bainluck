@@ -520,6 +520,9 @@ class TestBeatScheduleCompleteness:
         # default. Gotcha #12: this allowlist is the reason a new beat entry
         # cannot land silently.
         "backfill-venue-history-gaps",
+        # #13241 — periodic ESPN standings record refresh for college basketball
+        # teams (existing rows by verified espn_id only, never creates teams).
+        "sync-espn-standings-records",
     }
 
     def test_no_missing_entries(self):
