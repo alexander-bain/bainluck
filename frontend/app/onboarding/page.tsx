@@ -305,12 +305,27 @@ export default function OnboardingPage() {
         selected: true,
       },
     ]);
+    track('follow_team', {
+      action: 'follow',
+      ...(team.sport_key ? { sport: team.sport_key } : {}),
+      relation_type: 'follow',
+      surface: 'onboarding',
+    });
     setFollowQuery("");
     setFollowResults([]);
   };
 
   const removeFollowTeam = (teamId: number) => {
+    const existing = followTeams.find((t) => t.id === teamId);
     setFollowTeams((prev) => prev.filter((t) => t.id !== teamId));
+    if (existing) {
+      track('follow_team', {
+        action: 'unfollow',
+        ...(existing.sport_key ? { sport: existing.sport_key } : {}),
+        relation_type: 'follow',
+        surface: 'onboarding',
+      });
+    }
   };
 
   // =========================================================================

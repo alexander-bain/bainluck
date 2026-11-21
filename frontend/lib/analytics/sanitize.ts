@@ -114,6 +114,8 @@ const EVENT_NAME_REGISTRY: Record<AnalyticsEventName, true> = {
   session_open: true,
   feed_exit: true,
   search_no_results: true,
+  follow_team: true,
+  pin_item: true,
 };
 
 /**
@@ -278,6 +280,8 @@ export const ALLOWED_PARAM_KEYS: ReadonlySet<string> = new Set<string>([
   'content_type',
   'item_id',
   'item_name',
+  'item_type',
+  'relation_type',
   'headline',
   'personalized',
   'source',
