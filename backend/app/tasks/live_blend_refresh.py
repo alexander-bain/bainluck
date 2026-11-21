@@ -7262,8 +7262,14 @@ class LiveBlendRefresher:
                                 value,
                                 eligibility=reading.eligibility,
                                 observed_basis=basis,
-                                away_value=None if _ws_draw is None else round(_ws_away, 4),
-                                draw_value=None if _ws_draw is None else round(_ws_draw, 4),
+                                **(
+                                    {
+                                        "away_value": round(_ws_away, 4),
+                                        "draw_value": round(_ws_draw, 4),
+                                    }
+                                    if _ws_draw is not None
+                                    else {}
+                                ),
                             )
                         ).returning(
                             Event.win_probability_sources,

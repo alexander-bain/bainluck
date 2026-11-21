@@ -513,8 +513,11 @@ async def _write(session, event, source, value, metadata, values, evidence, trac
             "betting",
             value,
             price_read_at=read_at,
-            away_value=away_value,
-            draw_value=draw_value,
+            **(
+                {"away_value": away_value, "draw_value": draw_value}
+                if away_value is not None and draw_value is not None
+                else {}
+            ),
         )
     elif source == "stat_model":
         expression = atomic_stamp_expression("stat_model", value)
