@@ -1,7 +1,13 @@
 import type { Metadata } from "next";
 import type { EventDetailResponse } from "@/lib/types";
 import { buildShareUrl } from "@/lib/share";
-import { APP_STORE_APP_ID } from "@/lib/brandCopy";
+import {
+  APP_CLIP_BUNDLE_ID,
+  APP_STORE_APP_ID,
+  APP_STORE_CAMPAIGNS,
+  APP_STORE_PROVIDER_TOKEN,
+  buildAppleItunesMetaContent,
+} from "@/lib/brandCopy";
 import {
   buildEventShareCopy,
   isFinishedForShare,
@@ -159,7 +165,17 @@ export async function generateMetadata({
     title,
     description,
     alternates: { canonical: url },
-    itunes: { appId: APP_STORE_APP_ID, appArgument: url },
+    ...(APP_STORE_PROVIDER_TOKEN
+      ? {
+          other: {
+            "apple-itunes-app": buildAppleItunesMetaContent(
+              url,
+              APP_CLIP_BUNDLE_ID,
+              APP_STORE_CAMPAIGNS.bannerEventPage,
+            ),
+          },
+        }
+      : { itunes: { appId: APP_STORE_APP_ID, appArgument: url } }),
     openGraph: {
       title: socialTitle,
       description,

@@ -22,7 +22,13 @@ import {
 } from "@/lib/unresolvedShareMeta";
 import { withSettledResultCertainty } from "@/lib/settledResultDisplay";
 import { VERIFIED_TITLE } from "@/lib/verifiedTitleDetail";
-import { APP_STORE_APP_ID } from "@/lib/brandCopy";
+import {
+  APP_CLIP_BUNDLE_ID,
+  APP_STORE_APP_ID,
+  APP_STORE_CAMPAIGNS,
+  APP_STORE_PROVIDER_TOKEN,
+  buildAppleItunesMetaContent,
+} from "@/lib/brandCopy";
 
 type FuturesMarketMetadata = FuturesMarketDetailResponse & {
   image_url?: string | null;
@@ -226,7 +232,17 @@ export async function generateMetadata({
     title: titleText,
     description,
     alternates: { canonical: url },
-    itunes: { appId: APP_STORE_APP_ID, appArgument: url },
+    ...(APP_STORE_PROVIDER_TOKEN
+      ? {
+          other: {
+            "apple-itunes-app": buildAppleItunesMetaContent(
+              url,
+              APP_CLIP_BUNDLE_ID,
+              APP_STORE_CAMPAIGNS.bannerFuturesPage,
+            ),
+          },
+        }
+      : { itunes: { appId: APP_STORE_APP_ID, appArgument: url } }),
     openGraph: {
       title: `${titleText} | Bain Luck`,
       description,
