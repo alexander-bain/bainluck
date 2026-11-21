@@ -369,3 +369,124 @@ def test_summarize_testflight_screenshot_returns_none_on_model_error(monkeypatch
         )
         is None
     )
+
+
+class TestCreateBugReportIssueTaskTestFlightSummary:
+    """#13274: create_github_issue_for_bug_report_task executes TestFlight summary with real asyncio."""
+
+    def _wire_task_boundaries(self, monkeypatch, summary_fn):
+        from contextlib import asynccontextmanager
+        from types import SimpleNamespace
+        import app.tasks as tasks_mod
+        from app.tasks import base as tasks_base
+        from app.tasks import bug_report_github as gh_mod
+
+        report = SimpleNamespace(
+            id=238,
+            description="Formatting of numbers is off",
+            category="ios",
+            user_email=None,
+            backlog_ref=None,
+            screenshot_base64="ZmFrZV9wbmc=",
+            app_state={"source": "testflight", "platform": "IOS"},
+        )
+
+        class _FakeScalars:
+            def all(self):
+                return []
+
+        class _FakeResult:
+            def scalars(self):
+                return _FakeScalars()
+
+        class _FakeDB:
+            async def get(self, model, pk):
+                return report if pk == 238 else None
+
+            async def execute(self, stmt):
+                return _FakeResult()
+
+        @asynccontextmanager
+        async def _fake_session():
+            yield _FakeDB()
+
+        created_issues = []
+
+        def _fake_create_issue(title, body, labels):
+            created_issues.append({"title": title, "body": body, "labels": labels})
+            return 13999, "I_kwDO_fake_node"
+
+        monkeypatch.setattr(tasks_base, "get_task_session", _fake_session)
+        monkeypatch.setattr(gh_mod, "GITHUB_TOKEN", "test-token")
+        monkeypatch.setattr(gh_mod, "create_github_issue", _fake_create_issue)
+        monkeypatch.setattr(gh_mod, "add_to_project_board", lambda node_id: None)
+        monkeypatch.setattr(tf, "summarize_testflight_screenshot", summary_fn)
+        return tasks_mod, created_issues
+
+    def test_testflight_report_with_screenshot_includes_summary_without_patching_asyncio(self, monkeypatch):
+        """Runs the real task path with unpatched asyncio; fails if asyncio is unimported."""
+        seen = []
+
+        def _fake_summary(screenshot_b64, *, report_id):
+            seen.append((screenshot_b64, report_id))
+            return "- Matchup card shows percentages aligned cleanly."
+
+        tasks_mod, created_issues = self._wire_task_boundaries(monkeypatch, _fake_summary)
+
+        result = tasks_mod.create_github_issue_for_bug_report_task.run(238)
+
+        assert result == {"issue_number": 13999, "report_id": 238}
+        assert seen == [("ZmFrZV9wbmc=", 238)]
+        assert len(created_issues) == 1
+        body = created_issues[0]["body"]
+        assert "### Screenshot description" in body
+        assert "- Matchup card shows percentages aligned cleanly." in body
+
+    def test_unexpected_summary_error_logs_error_with_type_not_timeout(self, monkeypatch, caplog):
+        """Unexpected errors log at ERROR with exception type and never impersonate a timeout."""
+        import logging
+
+        def _broken_summary(screenshot_b64, *, report_id):
+            raise RuntimeError("vision backend boom")
+
+        tasks_mod, created_issues = self._wire_task_boundaries(monkeypatch, _broken_summary)
+
+        with caplog.at_level(logging.WARNING, logger="app.tasks"):
+            result = tasks_mod.create_github_issue_for_bug_report_task.run(238)
+
+        assert result == {"issue_number": 13999, "report_id": 238}
+        assert "### Screenshot description" not in created_issues[0]["body"]
+        error_records = [r for r in caplog.records if r.name == "app.tasks" and r.levelname == "ERROR"]
+        assert len(error_records) == 1
+        msg = error_records[0].getMessage()
+        assert "RuntimeError" in msg
+        assert "vision backend boom" in msg
+        assert "timed out" not in msg.lower()
+        assert not any("timed out" in r.getMessage().lower() for r in caplog.records if r.name == "app.tasks")
+
+    def test_real_summary_timeout_logs_warning_as_timeout(self, monkeypatch, caplog):
+        """Only a genuine asyncio.TimeoutError logs the 'timed out' warning."""
+        import logging
+        import time
+
+        started = []
+
+        def _slow_summary(screenshot_b64, *, report_id):
+            started.append(report_id)
+            time.sleep(0.25)
+            return "- Should not finish in time."
+
+        tasks_mod, created_issues = self._wire_task_boundaries(monkeypatch, _slow_summary)
+        monkeypatch.setattr(tasks_mod, "_TESTFLIGHT_SCREENSHOT_SUMMARY_TIMEOUT_S", 0.05, raising=False)
+
+        with caplog.at_level(logging.WARNING, logger="app.tasks"):
+            result = tasks_mod.create_github_issue_for_bug_report_task.run(238)
+
+        assert started == [238]
+        assert result == {"issue_number": 13999, "report_id": 238}
+        assert "### Screenshot description" not in created_issues[0]["body"]
+        task_records = [r for r in caplog.records if r.name == "app.tasks"]
+        warn_msgs = [r.getMessage() for r in task_records if r.levelname == "WARNING"]
+        assert any("timed out after" in m.lower() for m in warn_msgs)
+        assert not any(r.levelname == "ERROR" for r in task_records)
+

@@ -19,6 +19,7 @@ to conserve API calls.
 Estimated capacity: ~1.9 calls/second, ~166K calls/day.
 """
 
+import asyncio
 import logging
 import os
 
@@ -3227,6 +3228,9 @@ def send_bug_fixed_email_task(self, report_id: int):
 
 # --- Bug Report → GitHub Issue ---
 
+_TESTFLIGHT_SCREENSHOT_SUMMARY_TIMEOUT_S = 10.0
+
+
 @celery_app.task(bind=True, max_retries=2, name="app.tasks.create_github_issue_for_bug_report")
 def create_github_issue_for_bug_report_task(self, report_id: int):
     """Create a GitHub Issue from a rage-shake bug report."""
@@ -3339,12 +3343,18 @@ def create_github_issue_for_bug_report_task(self, report_id: int):
                             report.screenshot_base64,
                             report_id=report.id,
                         ),
-                        timeout=10.0,
+                        timeout=_TESTFLIGHT_SCREENSHOT_SUMMARY_TIMEOUT_S,
+                    )
+                except asyncio.TimeoutError:
+                    logger.warning(
+                        "TestFlight screenshot summary timed out after %.1fs for report #%d (filing without it)",
+                        _TESTFLIGHT_SCREENSHOT_SUMMARY_TIMEOUT_S, report.id,
                     )
                 except Exception as exc:
-                    logger.warning(
-                        "TestFlight screenshot summary timed out or failed for report #%d (filing without it): %s",
-                        report.id, exc,
+                    logger.error(
+                        "TestFlight screenshot summary failed unexpectedly for report #%d (%s: %s) — filing without it",
+                        report.id, type(exc).__name__, exc,
+                        exc_info=True,
                     )
 
             body = format_issue_body(
