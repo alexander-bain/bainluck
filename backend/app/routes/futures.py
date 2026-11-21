@@ -4748,12 +4748,13 @@ async def get_futures_market(
         raise HTTPException(status_code=404, detail="Market not found")
 
     nominee_field = (await grammy_nominee_fields(db, [market])).get(market.id)
-    requested_id = market.id
+    requested_id = market_id
     legacy_market = (
         market if nominee_field is not None else await grammy_pre_nomination_board(db, market)
     )
     if nominee_field is not None:
         market = nominee_field
+        market_id = market.id
     if is_grammy_general_field_market(market):
         representation = REPRESENTATION_SOURCE
 
@@ -4767,7 +4768,7 @@ async def get_futures_market(
     source_breakdown = []
     if outcome_ids:
         bookmakers, source_breakdown = await _load_market_sources(
-            db, market.id, outcome_ids
+            db, market_id, outcome_ids
         )
 
     # Two venues, two price rules, plus one that belongs to neither — ONE set of

@@ -90,7 +90,7 @@ async def grammy_nominee_fields(
     if available is None:
         from app.models import FuturesMarket, FuturesOutcome
 
-        result = await db.execute(
+        statement = (
             select(FuturesMarket)
             .options(
                 selectinload(FuturesMarket.sport),
@@ -102,7 +102,7 @@ async def grammy_nominee_fields(
                 FuturesMarket.status.in_(("open", "resolved")),
             )
         )
-        available = result.scalars()
+        available = (await db.execute(statement)).scalars()
     found = {}
     for market in available:
         if (
