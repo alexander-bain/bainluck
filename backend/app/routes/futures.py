@@ -21,9 +21,13 @@ from app.services import get_db, OddsAPIService
 from app.utils import futures_price_screen, movement_pool, probability_to_american
 from app.utils.durable_venue_receipt import log_durable_venue_serve
 from app.utils.event_awards import (
+    GRAMMY_TIE_LABEL,
+    append_grammy_out_rows,
     grammy_nominee_fields,
     grammy_pre_nomination_board,
     is_grammy_general_field_market,
+    is_grammy_graded_loss,
+    is_grammy_tie,
 )
 from app.utils.observed_span_steps import add_history_steps, add_timeline_steps
 from app.utils.settlement_display import (
@@ -4852,7 +4856,9 @@ async def get_futures_market(
         # field when they link to Kalshi. Polymarket supplies only its Out rows.
         retired = _format_market_detail(legacy_market, normalize_numbers=False)
         detail["id"] = requested_id
-        detail["outcomes"].extend(row for row in retired["outcomes"] if row.get("is_out"))
+        append_grammy_out_rows(
+            detail["outcomes"], retired["outcomes"], match_artist_suffix=True
+        )
         detail["outcome_count"] = len(detail["outcomes"])
     elif representation == REPRESENTATION_VERIFIED_TITLE:
         _apply_verified_title_to_detail(
@@ -9909,9 +9915,7 @@ def _format_market_detail(
     """
     from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
     from app.utils.superseded_name_twins import drop_superseded_name_twins
-    from app.utils.event_awards import GRAMMY_GENERAL_FIELD_POLYMARKET_IDS
     from app.utils.field_opening_coherence import field_openings_publishable
-    from app.utils.graded_out_field_legs import TERMINAL_LOSER_CEILING
     from app.utils.settled_price import SETTLED_NO_PRICE
     from app.utils.odds_api_retirement import NOT_LIVE_STATUSES, WITHDRAWN_STATUS
     from app.utils.market_staleness import (
@@ -10569,23 +10573,18 @@ def _format_market_detail(
         withheld = withheld | {o.id for o in sorted_outcomes}
 
     eliminated = []
-    if (
+    grammy_open_field = (
         _board_status == "open"
-        and market.source == "polymarket"
-        and market.external_id in GRAMMY_GENERAL_FIELD_POLYMARKET_IDS
+        and is_grammy_general_field_market(market)
         and getattr(market, "mutually_exclusive", None) is True
-    ):
+    )
+    if grammy_open_field:
         # A venue-graded No is out of the field even if an old trade was
         # written over its terminal price. Keep it on the board, without a
         # quote or clock, and compute the live distribution without it.
         for row in outcomes:
-            if (
-                row["is_winner"] is False
-                and row["resolution_source"] == "api_settlement"
-                and (
-                    row["probability"] is None
-                    or row["probability"] < TERMINAL_LOSER_CEILING
-                )
+            if is_grammy_graded_loss(
+                row["is_winner"], row["resolution_source"], row["probability"]
             ):
                 row["is_out"] = True
                 for field in (
@@ -10872,8 +10871,14 @@ def _format_market_detail(
     #
     # Prices and eligibility are untouched by design — this only overwrites the one
     # field whose whole job is to say where the row sits, using the list it sits in.
+    if grammy_open_field and market.source == "kalshi":
+        outcomes.sort(key=lambda row: is_grammy_tie(row["name"]))
+        for row in outcomes:
+            if is_grammy_tie(row["name"]):
+                row["name"] = GRAMMY_TIE_LABEL
     assign_display_ranks(outcomes)
-    outcomes.extend(eliminated)
+    if eliminated:
+        append_grammy_out_rows(outcomes, eliminated)
 
     # The source price is the selected stored input, before field normalization.
     # Withheld values and unresolved results keep an explicit refusal.
