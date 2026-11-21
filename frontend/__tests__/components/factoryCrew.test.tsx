@@ -2,7 +2,6 @@
 
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-import { useRouter } from "next/navigation";
 import FactoryFloor from "@/app/factory/FactoryFloor";
 import {
   beltFlowing,
@@ -17,10 +16,6 @@ import { replayReading, useReplayJournal } from "@/app/factory/replayJournal";
 import { builderOfDay, clipboard, hours, injuryHours } from "@/app/factory/signs";
 import { factoryTabTitle, floorVerdict } from "@/app/factory/verdict";
 
-jest.mock("next/navigation", () => {
-  const router = { refresh: jest.fn() };
-  return { useRouter: () => router };
-});
 jest.mock("@/hooks/usePageTracking", () => ({ usePageTracking: jest.fn() }));
 jest.mock("@/hooks/useScrollDepth", () => ({ useScrollDepth: jest.fn() }));
 jest.mock("@/hooks/useEngagementTime", () => ({
@@ -281,8 +276,16 @@ it("names the change waiting for inspection and uses a singular day", () => {
 
 it("checks for a new floor every minute while the page is visible", async () => {
   watchMotion();
-  const refresh = jest.mocked(useRouter().refresh);
-  refresh.mockClear();
+  const savedFetch = global.fetch;
+  const readAt = "2026-11-18T18:01:00Z";
+  const readFloor = jest.fn().mockResolvedValueOnce({
+    ok: true,
+    json: async () => ({
+      data: snapshot, lastGoodAt: now, readAt, renderedAt: readAt,
+      readFailed: false, buildCommit: null,
+    }),
+  }).mockRejectedValueOnce(new Error("Reading unavailable"));
+  global.fetch = readFloor;
   const container = document.createElement("div");
   const root = createRoot(container);
   try {
@@ -290,11 +293,19 @@ it("checks for a new floor every minute while the page is visible", async () => 
       root.render(<FactoryFloor data={snapshot} lastGoodAt={now} renderedAt={now} />),
     );
     await act(async () => { jest.advanceTimersByTime(59_999); });
-    expect(refresh).toHaveBeenCalledTimes(0);
+    expect(readFloor).toHaveBeenCalledTimes(0);
     await act(async () => { jest.advanceTimersByTime(1); });
-    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(readFloor).toHaveBeenCalledTimes(1);
+    expect(readFloor).toHaveBeenCalledWith("/factory/reading", expect.objectContaining({ cache: "no-store" }));
+    expect(container.querySelector("header")?.textContent).toContain("Read at 10:01 AM PT");
+
+    await act(async () => { jest.advanceTimersByTime(60_000); });
+    expect(container.querySelector('[data-factory][data-reader="behind"]')).toBeTruthy();
+    expect(container.querySelectorAll("[data-bay]")).toHaveLength(18);
+    expect(container.textContent).toContain("Last read 10:01 AM PT");
   } finally {
     await act(async () => root.unmount());
+    global.fetch = savedFetch;
   }
 });
 
