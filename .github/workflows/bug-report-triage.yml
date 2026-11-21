@@ -79,7 +79,7 @@ jobs:
             --allowedTools "Read,Grep,Glob,Bash(gh issue view ${{ github.event.issue.number }}:*),Bash(gh issue comment ${{ github.event.issue.number }}:*)"
             --max-turns 30
       - name: Label the owner and post one line on NOW lines 2 (#12779)
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const lanes = {
