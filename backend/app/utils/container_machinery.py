@@ -1584,11 +1584,18 @@ def _hydrate_market_visual_item(
             if outcomes_out
             else ""
         )
+        m_prep_ans = _PREP_DATE_OUTCOME_RE.match(lead_ans_clean)
+        if m_prep_ans:
+            lead_ans_for_phrase = f"{m_prep_ans.group(1).lower()} {_abbreviate_month_names(m_prep_ans.group(2).strip())}"
+        elif _BARE_MONTH_DAY_RE.match(lead_ans_clean):
+            lead_ans_for_phrase = f"by {_abbreviate_month_names(lead_ans_clean)}"
+        else:
+            lead_ans_for_phrase = lead_ans_clean
         raw_phrase = str(fun_market_headline_phrase(mid, sub_tag=fun_sub_tag) or "").strip()
         if raw_phrase:
             if "{answer}" in raw_phrase:
                 if lead_ans_clean and lead_ans_clean.lower() not in {"yes", "no"}:
-                    headline_phrase = raw_phrase.replace("{answer}", lead_ans_clean)
+                    headline_phrase = raw_phrase.replace("{answer}", lead_ans_for_phrase)
             else:
                 headline_phrase = raw_phrase
         raw_with_phrase = str(
@@ -1597,7 +1604,7 @@ def _hydrate_market_visual_item(
         if raw_with_phrase:
             if "{answer}" in raw_with_phrase:
                 if lead_ans_clean and lead_ans_clean.lower() not in {"yes", "no"}:
-                    headline_with_phrase = raw_with_phrase.replace("{answer}", lead_ans_clean)
+                    headline_with_phrase = raw_with_phrase.replace("{answer}", lead_ans_for_phrase)
             else:
                 headline_with_phrase = raw_with_phrase
 

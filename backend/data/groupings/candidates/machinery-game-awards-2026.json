@@ -1,0 +1,55 @@
+{
+  "slug": "machinery-game-awards-2026",
+  "stage": "preview",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_event",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "ENTERTAINMENT · GAMING",
+  "name": "The Game Awards 2026",
+  "category": "entertainment",
+  "tag": "ENTERTAINMENT",
+  "section_title": "Category Favorites",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "extra_llm_categories": [
+      "culture",
+      "tech"
+    ],
+    "card_rows": 3,
+    "card_section_key": "game_awards_2026",
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/ec/Keyboard_%28Unsplash%29.jpg/960px-Keyboard_%28Unsplash%29.jpg",
+    "card_image_alt": "Backlit mechanical gaming keyboard glowing in magenta and blue",
+    "card_image_credit": "Anas Alshanti (CC0 1.0 Public Domain, Wikimedia Commons)",
+    "card_image_author": "Anas Alshanti",
+    "card_image_license": "CC0 1.0 Public Domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Keyboard_(Unsplash).jpg",
+    "sections": [
+      {
+        "key": "game_awards_2026",
+        "title": "Category Favorites",
+        "item_noun": "awards",
+        "note": "Leading contenders across direction, narrative, audio, multiplayer, mobile, and indie categories.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch4-game-awards-2026",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 10,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}

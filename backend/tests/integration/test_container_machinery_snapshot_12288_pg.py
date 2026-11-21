@@ -645,6 +645,19 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
         (56775621, "KXB3-VOGUE", "Vogue (US) 2026: Cover Models", "entertainment", [("Taylor Swift", 0.60, 0.60), ("Alex Consani", 0.41, 0.41)]),
         (109412, "KXB3-RYANAIR", "Will Elon purchase Ryanair?", "politics", [("Yes", 0.05, 0.05)]),
         (109633, "KXB3-SUPERMAN", "Next Superman film: Will Elon Musk be cast?", "entertainment", [("Yes", 0.05, 0.05)]),
+        # 11. #12288 Batch 4 preview groupings (Game Awards, 2026-27 Championships, Unsolved Big Problems, AI & Big Tech)
+        (58399979, "PMB4-TGADIR", "The Game Awards: Best Game Direction", "entertainment", [("Grand Theft Auto VI", 0.84, 0.84), ("Control Resonant", 0.10, 0.10)]),
+        (58399941, "PMB4-TGANAR", "The Game Awards: Best Narrative", "entertainment", [("Grand Theft Auto VI", 0.79, 0.79), ("The Blood of Dawnwalker", 0.08, 0.08)]),
+        (58399980, "PMB4-TGAAUD", "The Game Awards: Best Audio Design", "entertainment", [("Grand Theft Auto VI", 0.72, 0.72), ("Ace Combat 8", 0.08, 0.08)]),
+        (57792807, "PMB4-HEISMAN", "NCAA Football: 2026 Heisman Award Winner", "football", [("Jeremiah Smith", 0.63, 0.63), ("Darian Mensah", 0.17, 0.17)]),
+        (66031970, "PMB4-NBAMVP", "NBA: 2026-27 MVP", "basketball", [("Victor Wembanyama", 0.39, 0.39), ("Luka Doncic", 0.38, 0.38)]),
+        (70732924, "PMB4-UCL27", "UEFA Champions League: 2027 Champion", "soccer", [("Barcelona", 0.22, 0.22), ("Paris Saint-Germain", 0.18, 0.18)]),
+        (53049401, "KXB4-RIEMANN", "When will the Riemann hypothesis win the Millennium Prize?", "tech", [("Before 2035", 0.91, 0.91), ("Before 2032", 0.80, 0.80)]),
+        (112792, "KXB4-MILLEN", "When will the next Millennium Prize be awarded?", "tech", [("Before 2035", 0.86, 0.86), ("Before 2030", 0.64, 0.64)]),
+        (60626095, "PMB4-AIMATH", "Which math problems will AI solve in 2026?", "tech", [("Riemann Hypothesis", 0.76, 0.76), ("Ramsey Number R(5,5)", 0.24, 0.24)]),
+        (113318, "PMB4-LARGEST", "Largest Company end of December 2026?", "economics", [("Apple", 0.94, 0.94), ("NVIDIA", 0.03, 0.03)]),
+        (68806125, "PMB4-SECOND", "2nd Largest Company end of November 2026?", "tech", [("Microsoft", 0.80, 0.80), ("Alphabet", 0.12, 0.12)]),
+        (23449601, "PMB4-ANTHOAI", "Anthropic vs OpenAI - higher valuation on December 31?", "economics", [("Anthropic", 0.67, 0.67), ("OpenAI", 0.33, 0.33)]),
     ):
         await _add_market(
             market_id=mid,

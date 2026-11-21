@@ -58,6 +58,10 @@ FUN_MARKETS_DATA_PATH = (
 CURATED_GROUPING_SETS_PATH = (
     Path(__file__).resolve().parents[2] / "data" / "groupings" / "batch3_curated_sets.json"
 )
+CURATED_GROUPING_SETS_PATHS: tuple[Path, ...] = (
+    CURATED_GROUPING_SETS_PATH,
+    Path(__file__).resolve().parents[2] / "data" / "groupings" / "batch4_curated_sets.json",
+)
 
 
 @lru_cache(maxsize=1)
@@ -67,31 +71,32 @@ def _load_curated_grouping_sets() -> tuple[
     dict[tuple[str, int], str],
     dict[tuple[str, int], str],
 ]:
-    """Load curated Batch 3 sub-tag memberships, short labels, and headline phrases."""
+    """Load curated Batch 3/4 sub-tag memberships, short labels, and headline phrases."""
     ids_by_tag: dict[str, tuple[int, ...]] = {}
     labels_by_tag_mid: dict[tuple[str, int], str] = {}
     phrases_by_tag_mid: dict[tuple[str, int], str] = {}
     with_phrases_by_tag_mid: dict[tuple[str, int], str] = {}
-    if not CURATED_GROUPING_SETS_PATH.is_file():
-        return ids_by_tag, labels_by_tag_mid, phrases_by_tag_mid, with_phrases_by_tag_mid
-    raw = json.loads(CURATED_GROUPING_SETS_PATH.read_text(encoding="utf-8"))
-    for tag, spec in (raw.get("sets") or {}).items():
-        tag_k = str(tag).strip().lower()
-        ordered: list[int] = []
-        for entry in (spec or {}).get("entries") or ():
-            mid = int(entry["id"])
-            if mid not in ordered:
-                ordered.append(mid)
-            sl = str(entry.get("short_label") or "").strip()
-            if sl:
-                labels_by_tag_mid[(tag_k, mid)] = sl
-            hp = str(entry.get("headline_phrase") or "").strip()
-            if hp:
-                phrases_by_tag_mid[(tag_k, mid)] = hp
-            hwp = str(entry.get("headline_with_phrase") or "").strip()
-            if hwp:
-                with_phrases_by_tag_mid[(tag_k, mid)] = hwp
-        ids_by_tag[tag_k] = tuple(ordered)
+    for manifest_path in CURATED_GROUPING_SETS_PATHS:
+        if not manifest_path.is_file():
+            continue
+        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+        for tag, spec in (raw.get("sets") or {}).items():
+            tag_k = str(tag).strip().lower()
+            ordered: list[int] = list(ids_by_tag.get(tag_k, ()))
+            for entry in (spec or {}).get("entries") or ():
+                mid = int(entry["id"])
+                if mid not in ordered:
+                    ordered.append(mid)
+                sl = str(entry.get("short_label") or "").strip()
+                if sl:
+                    labels_by_tag_mid[(tag_k, mid)] = sl
+                hp = str(entry.get("headline_phrase") or "").strip()
+                if hp:
+                    phrases_by_tag_mid[(tag_k, mid)] = hp
+                hwp = str(entry.get("headline_with_phrase") or "").strip()
+                if hwp:
+                    with_phrases_by_tag_mid[(tag_k, mid)] = hwp
+            ids_by_tag[tag_k] = tuple(ordered)
     return ids_by_tag, labels_by_tag_mid, phrases_by_tag_mid, with_phrases_by_tag_mid
 
 
