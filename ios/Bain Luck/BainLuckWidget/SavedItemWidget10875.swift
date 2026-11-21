@@ -87,7 +87,6 @@ struct SavedItemWidget10875: Widget {
                                intent: SelectSavedItemIntent10875.self,
                                provider: SavedItemWidgetProvider10875()) { entry in
             SavedItemWidgetView10875(entry: entry)
-                .widgetURL(entry.url)
         }
         .configurationDisplayName("Saved game or market")
         .description("Follow one of your saved games or markets.")
@@ -118,12 +117,20 @@ struct SavedItemWidgetView10875: View {
     }
 
     var body: some View {
+        let taggedURL = WidgetLinkTagging13261.tagged(
+            entry.url,
+            kind: WidgetLinkTagging13261.savedKind(for: family)
+        )
         if drawnLook == .today {
-            content.containerBackground(.fill.tertiary, for: .widget)
+            content
+                .containerBackground(.fill.tertiary, for: .widget)
+                .widgetURL(taggedURL)
         } else {
-            content.containerBackground(for: .widget) {
-                SavedLookBackground12466(look: drawnLook, model: lookModel)
-            }
+            content
+                .containerBackground(for: .widget) {
+                    SavedLookBackground12466(look: drawnLook, model: lookModel)
+                }
+                .widgetURL(taggedURL)
         }
     }
 

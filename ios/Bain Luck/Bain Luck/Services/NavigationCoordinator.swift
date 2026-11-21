@@ -105,6 +105,24 @@ final class NavigationCoordinator: ObservableObject {
 
         guard !pathComponents.isEmpty else { return false }
 
+        guard routeSupportedPath(url: url, pathComponents: pathComponents, queryItems: queryItems) else {
+            return false
+        }
+
+        let destinationType = WidgetAndAlertTelemetry13261.destinationType(for: pathComponents)
+        if let widgetOpen = WidgetAndAlertTelemetry13261.parseWidgetOpen(
+            url: url,
+            destinationType: destinationType
+        ) {
+            AnalyticsService.trackWidgetOpen(
+                widgetKind: widgetOpen.widgetKind,
+                destinationType: widgetOpen.destinationType
+            )
+        }
+        return true
+    }
+
+    private func routeSupportedPath(url: URL, pathComponents: [String], queryItems: [URLQueryItem]?) -> Bool {
         switch pathComponents[0] {
         case "events":
             if pathComponents.count >= 2, let id = Int(pathComponents[1]) {
