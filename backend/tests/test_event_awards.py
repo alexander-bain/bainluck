@@ -522,18 +522,27 @@ def test_awards_price_screen_has_no_route_imports():
         assert not route_imports, f"{module.__name__} loads routes {route_imports}"
 
 
-@pytest.mark.parametrize("count", [7, 8])
+@pytest.mark.parametrize("count", [7, 8, 9])
 async def test_grammy_nominee_board_requires_the_named_field(count):
     nominees = [
         "Berghain", "Choosin' Texas", "the cure", "hate that i made you love me",
         "I Knew It, I Knew You", "Man I Need", "Risk It All", "WHERE IS MY HUSBAND!",
+        "An extra contender",
     ]
     original = SimpleNamespace(id=58492243, source="polymarket", external_id="805158")
     candidate = SimpleNamespace(
         source="kalshi",
         status="open",
         external_id="KXGRAMMY-SOTY69",
-        outcomes=[SimpleNamespace(name=name) for name in [*nominees[:count], "Tie"]],
+        outcomes=[
+            *(SimpleNamespace(name=name) for name in [*nominees[:count], "Tie"]),
+            SimpleNamespace(
+                name="An August guess",
+                is_winner=False,
+                resolution_source="api_settlement",
+                current_probability=0.0,
+            ),
+        ],
     )
     db = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(scalars=lambda: [candidate])))
     assert await grammy_nominee_fields(db, [original]) == (

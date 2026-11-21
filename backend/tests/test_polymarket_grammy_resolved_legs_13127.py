@@ -68,8 +68,21 @@ async def test_discovery_and_id_refresh_keep_the_nominee_and_skip_the_graded_los
     assert "eliminated" not in unpriced[event.id]
 
 
-@pytest.mark.parametrize("external_id", ["805158", "another_board"])
-def test_detail_puts_the_graded_grammy_loss_after_contenders(external_id, monkeypatch):
+@pytest.mark.parametrize(
+    ("source", "external_id", "grammy"),
+    [
+        ("polymarket", "805158", True),
+        ("polymarket", "another_board", False),
+        ("kalshi", "KXGRAMMY-SOTY69", True),
+        ("kalshi", "KXGRAMMY-ROTY69", True),
+        ("kalshi", "KXGRAMAOTY-69", True),
+        ("kalshi", "KXGRAMBNA-69", True),
+        ("kalshi", "KXOTHER-FIELD", False),
+    ],
+)
+def test_detail_puts_the_graded_grammy_loss_after_contenders(
+    source, external_id, grammy, monkeypatch
+):
     from datetime import datetime, timezone
 
     from app.routes import futures
@@ -108,7 +121,7 @@ def test_detail_puts_the_graded_grammy_loss_after_contenders(external_id, monkey
         name="Grammys 2027: Song of the Year Winner",
         description=None,
         category="award",
-        source="polymarket",
+        source=source,
         external_id=external_id,
         status="open",
         sport=None,
@@ -133,6 +146,8 @@ def test_detail_puts_the_graded_grammy_loss_after_contenders(external_id, monkey
             outcome(2, "I Just Might", 0.01, "api_settlement"),
             outcome(3, "Man I Need", 0.1165),
             outcome(4, "A live long shot", 0.004),
+            outcome(5, "Tie", 0.2),
+            outcome(6, "Unknown result", 0.0, "ungradeable_result"),
         ],
     )
     response = futures._format_market_detail(market, normalize_numbers=False)
@@ -141,8 +156,13 @@ def test_detail_puts_the_graded_grammy_loss_after_contenders(external_id, monkey
     assert rows[3]["probability"] == 0.1165
     assert rows[4]["probability"] == 0.004
     assert not rows[4].get("is_out")
+    assert not rows[6].get("is_out")
+    if grammy and source == "kalshi":
+        assert response["outcomes"][-2]["id"] == 5
+        assert rows[5]["name"] == "Tie (co-winners)"
+        assert rows[5]["probability"] == 0.2
     eliminated = rows[2]
-    if external_id == "805158":
+    if grammy:
         assert response["outcomes"][-1]["id"] == 2
         from app.utils.settled_price import SETTLED_NO_PRICE
 
@@ -170,7 +190,7 @@ async def test_grammy_detail_keeps_its_address_and_never_blends_the_two_boards(
     old = SimpleNamespace(id=58492243, source="polymarket", external_id="805158", outcomes=[])
     current = SimpleNamespace(
         id=100, source="kalshi", external_id="KXGRAMMY-SOTY69",
-        outcomes=[SimpleNamespace(id=900), SimpleNamespace(id=901)],
+        outcomes=[SimpleNamespace(id=oid) for oid in (900, 901, 902)],
     )
     legacy_request = requested_id == old.id
     db_result = Mock()
@@ -198,12 +218,16 @@ async def test_grammy_detail_keeps_its_address_and_never_blends_the_two_boards(
         if market is current:
             rows = [
                 {"id": 900, "name": "the cure", "probability": 0.22, "source_mark": "kalshi"},
-                {"id": 901, "name": "Tie", "probability": 0.01},
+                {"id": 901, "name": "Tie (co-winners)", "probability": 0.01},
+                {"id": 902, "name": "Aperture", "is_out": True, "rank": None},
             ]
         else:
             rows = [
                 {"id": 1, "name": "the cure", "probability": 0.30},
                 {"id": 2, "name": "I Just Might", "is_out": True, "rank": None},
+                {"id": 3, "name": "APERTURE – Harry Styles", "is_out": True, "rank": None},
+                {"id": 4, "name": "the cure - Olivia Rodrigo", "is_out": True, "rank": None},
+                {"id": 5, "name": "Aperture - Remix - Harry Styles", "is_out": True, "rank": None},
             ]
         return {"id": market.id, "source": market.source, "outcomes": rows}
 
@@ -212,12 +236,12 @@ async def test_grammy_detail_keeps_its_address_and_never_blends_the_two_boards(
         requested_id, db, representation=futures.REPRESENTATION_VERIFIED_TITLE,
     )
     assert result["id"] == requested_id and result["source"] == "kalshi"
-    assert result["outcome_count"] == 3
-    assert [row["id"] for row in result["outcomes"]] == [900, 901, 2]
+    assert result["outcome_count"] == 5
+    assert [row["id"] for row in result["outcomes"]] == [900, 901, 902, 2, 5]
     assert result["outcomes"][0]["probability"] == 0.22
     assert result["outcomes"][0]["source_mark"] == "kalshi"
     assert result["outcomes"][-1]["rank"] is None
-    source_read.assert_awaited_once_with(db, 100, [900, 901])
+    source_read.assert_awaited_once_with(db, 100, [900, 901, 902])
     blend.assert_not_awaited()
 
 
