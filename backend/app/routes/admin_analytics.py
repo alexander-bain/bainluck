@@ -23,6 +23,10 @@ router = APIRouter()
 _CACHE_PREFIX = "bainluck:analytics"
 
 
+def _safe_cache_key_for_log(key: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in ":_-" else "_" for ch in str(key or ""))
+
+
 async def _cache_get(key: str) -> dict | list | None:
     """Read a JSON-serialised value from Redis."""
     from app.tasks.redis_state import get_async_redis_client
@@ -34,7 +38,7 @@ async def _cache_get(key: str) -> dict | list | None:
         if raw:
             return json.loads(raw)
     except Exception:
-        logger.debug("Redis cache miss/error for %s", key)
+        logger.debug("Redis cache miss/error for %s", _safe_cache_key_for_log(key))
     return None
 
 
@@ -47,7 +51,7 @@ async def _cache_set(key: str, data: Any, ttl_seconds: int) -> None:
         await rc.setex(f"{_CACHE_PREFIX}:{key}", ttl_seconds, json.dumps(data, default=str))
         await rc.aclose()
     except Exception:
-        logger.debug("Redis cache write error for %s", key)
+        logger.debug("Redis cache write error for %s", _safe_cache_key_for_log(key))
 
 
 # ---------------------------------------------------------------------------
@@ -122,6 +126,19 @@ _FUNNEL_GUESS_EVENTS: frozenset[str] = frozenset({
     "higher_lower_result",
 })
 _FUNNEL_SIGNUP_EVENTS: frozenset[str] = frozenset({"sign_up", "login"})
+
+
+_CANONICAL_PERIODS: dict[str, str] = {
+    "7d": "7d",
+    "14d": "14d",
+    "30d": "30d",
+    "90d": "90d",
+}
+
+
+def _normalize_period(period: str, *, default: str = "30d") -> str:
+    norm = str(period or "").strip().lower()
+    return _CANONICAL_PERIODS.get(norm, default)
 
 
 def _period_to_start_date(period: str, *, default: str = "30daysAgo") -> str:
@@ -210,6 +227,7 @@ async def analytics_overview(
     """Key site metrics: DAU, sessions, avg session duration, bounce rate, top pages."""
     _check_admin_secret(secret, request=request)
 
+    period = _normalize_period(period, default="30d")
     cache_key = f"overview:{period}"
     cached = await _cache_get(cache_key)
     if cached:
@@ -245,6 +263,7 @@ async def analytics_discover(
     """Discover-specific metrics: feed loads, card events, scroll depth, predictions."""
     _check_admin_secret(secret, request=request)
 
+    period = _normalize_period(period, default="30d")
     cache_key = f"discover:{period}"
     cached = await _cache_get(cache_key)
     if cached:
@@ -363,6 +382,7 @@ async def analytics_retention(
     """Daily/weekly retention cohorts: new vs returning users."""
     _check_admin_secret(secret, request=request)
 
+    period = _normalize_period(period, default="30d")
     cache_key = f"retention:{period}"
     cached = await _cache_get(cache_key)
     if cached:
@@ -426,6 +446,7 @@ async def analytics_funnel(
     """Discover conversion funnel: visit -> swipe/interact -> guess -> sign-up."""
     _check_admin_secret(secret, request=request)
 
+    period = _normalize_period(period, default="30d")
     cache_key = f"funnel:{period}"
     cached = await _cache_get(cache_key)
     if cached:
@@ -590,6 +611,7 @@ async def analytics_pages(
     """Page-level engagement: views, users, duration, grouped by section."""
     _check_admin_secret(secret, request=request)
 
+    period = _normalize_period(period, default="30d")
     cache_key = f"pages:{period}"
     cached = await _cache_get(cache_key)
     if cached:
