@@ -33,7 +33,7 @@ export default function EventScene({
       } as CSSProperties}
     >
       <div className={styles.eventAction}>
-        {crew && <Worker {...crew} />}
+        {crew && <Worker {...crew} onFloor />}
         {(event.kind === "live" || event.kind === "deploy" || event.kind === "merge") && (
           <Truck size={20} />
         )}

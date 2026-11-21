@@ -1,11 +1,38 @@
 import { crewActivity, onActiveFloor, recentlyActive } from "./activity";
-import type { NameableBuilder } from "./builderNames";
-import type { Change, FactoryData, FloorEvent } from "./types";
+import { nameableBuilders, type NameableBuilder } from "./builderNames";
+import type { Change, FactoryData, FloorEvent, Line, Station } from "./types";
 import type { WorkerState } from "./Worker";
 
 export type CrewMove =
   | "walk" | "carry" | "cheer" | "slump" | "work"
   | "fist-pump" | "sign" | "flex" | "slide" | "cartwheel";
+
+export type FloorCrew = {
+  identity: NameableBuilder;
+  pose: WorkerState;
+  position?: { line: Line; station: Station };
+};
+
+export function placeCrew(data: FactoryData, now: string, visible: Change[]): FloorCrew[] {
+  return nameableBuilders.map(identity => {
+    if (identity === "Fable") {
+      const look = data.events?.filter(event =>
+        (event.kind === "fable" || event.kind === "returned") && recentlyActive(event.observed_at, now),
+      ).at(-1);
+      return { identity, pose: crewPose(data, identity, now, []).pose,
+        position: { line: look?.line ?? "Server", station: "Review" } };
+    }
+    const changes = visible.filter(change => change.builder === identity).sort((a, b) =>
+      Date.parse(b.last_activity) - Date.parse(a.last_activity) || a.number - b.number,
+    );
+    const status = crewPose(data, identity, now, changes);
+    const change = status.change ?? changes.find(onActiveFloor) ??
+      changes.find(crate => crate.live_at && recentlyActive(crate.live_at, now));
+    return change
+      ? { identity, pose: status.pose, position: { line: change.line, station: change.station } }
+      : { identity, pose: "asleep" };
+  });
+}
 
 export function crewAction(event: FloorEvent): {
   identity: NameableBuilder; state: WorkerState; move: CrewMove;

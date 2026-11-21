@@ -1,5 +1,7 @@
 /** @jest-environment jsdom */
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import FactoryFloor from "@/app/factory/FactoryFloor";
@@ -11,9 +13,9 @@ import {
   transferId,
   workshopLight,
 } from "@/app/factory/activity";
-import { crewAction, crewPose } from "@/app/factory/crewMotion";
+import { crewAction, crewPose, placeCrew } from "@/app/factory/crewMotion";
 import type { Change, FactoryData, FloorEvent } from "@/app/factory/types";
-import { useEventPlayer } from "@/app/factory/playback";
+import { replayDuration, useEventPlayer } from "@/app/factory/playback";
 import { useDayReplay } from "@/app/factory/useDayReplay";
 import { replayReading, useReplayJournal } from "@/app/factory/replayJournal";
 import { builderOfDay, clipboard, hours, injuryHours } from "@/app/factory/signs";
@@ -129,6 +131,20 @@ beforeEach(() => {
 });
 afterEach(() => jest.useRealTimers());
 
+it("keeps each CSS animation name property a bare keyframe name", () => {
+  const css = readFileSync(resolve(__dirname, "../../app/factory/factory.module.css"), "utf8");
+  const properties = new Set(
+    Array.from(css.matchAll(/\banimation(?:-name)?:\s*var\((--[\w-]+)\)/g), match => match[1]),
+  );
+  const keyframes = Array.from(css.matchAll(/@keyframes\s+([\w-]+)\s*\{/g), match => match[1]);
+  expect(properties).toContain("--crew-idle-animation");
+  for (const property of properties) {
+    const declarations = Array.from(css.matchAll(new RegExp(property + ":\\s*([^;}]+)", "g")));
+    expect(declarations.length).toBeGreaterThan(0);
+    for (const [, value] of declarations) expect(keyframes).toContain(value.trim());
+  }
+});
+
 function watchMotion() {
   let reduced = false;
   const listeners = new Set<() => void>();
@@ -210,6 +226,32 @@ it("uses recorded transfers, failed checks and live events for distinct crew mov
   const checks = { ...snapshot, transitions: [] };
   expect(crewPose(checks, "B", now, [checks.changes[0]]).pose).toBe("waiting");
   expect(crewPose(checks, "C", now, []).pose).toBe("asleep");
+});
+
+it("keeps each named figure at one supported station or on a rest bench", () => {
+  const open: Change[] = [
+    { ...base, builder: "B", line: "Server", station: "Test", checks_running: true },
+    { ...base, number: 13002, builder: "B", line: "Website", station: "Review", last_activity: "2026-11-18T17:30:00Z" },
+    { ...base, number: 13003, builder: "E", line: "Website", station: "Write", last_activity: "2026-11-18T17:30:00Z" },
+  ];
+  const roster = placeCrew({ ...snapshot, changes: open, transitions: [] }, now, open);
+  expect(roster).toHaveLength(8);
+  expect(roster.filter(person => person.identity === "B")).toEqual([
+    { identity: "B", pose: "waiting", position: { line: "Server", station: "Test" } },
+  ]);
+  expect(roster).toContainEqual({ identity: "E", pose: "asleep", position: { line: "Website", station: "Write" } });
+  expect(roster).toContainEqual({ identity: "W", pose: "asleep" });
+});
+
+it("leaves enough replay time for three seconds per station on a busy day", () => {
+  const event: FloorEvent = {
+    id: "move", kind: "move", builder: "D", line: "Server", number: 12998,
+    from: "Write", station: "Review", at: now, observed_at: now,
+  };
+  expect(replayDuration([event], 60_000)).toBe(60_000);
+  expect(replayDuration(Array.from({ length: 25 }, (_, index) => ({
+    ...event, id: String(index),
+  })), 60_000)).toBe(150_000);
 });
 
 it("offers the recorded crew cards and replays an earlier move when the fresh floor is quiet", async () => {
@@ -804,10 +846,17 @@ it("starts a real transfer when an open page receives a newer read", async () =>
     };
     await act(async () => root.render(<FactoryFloor data={after} lastGoodAt={next} renderedAt={next} />));
     await act(async () => { jest.advanceTimersByTime(1); });
-    expect(container.querySelector(selector)?.textContent).toContain("#12998");
+    const scene = container.querySelector<HTMLElement>(selector)!;
+    expect(scene.textContent).toContain("#12998");
+    expect(scene.closest('[data-crew-strip="Server"]')).not.toBeNull();
+    expect(scene.closest("[data-bay]")).toBeNull();
+    expect(scene.style.getPropertyValue("--event-length")).toBe("3000ms");
+    expect(scene.querySelector("[data-floor-figure]")).not.toBeNull();
     expect(container.querySelector('[data-arriving="true"]')?.textContent).toContain("#12998");
     expect(container.querySelector('[data-mascot-action="pushing"]')?.textContent).toContain("#12998");
     expect(container.querySelectorAll("[data-mascot-pose]")).toHaveLength(1);
+    await act(async () => { jest.advanceTimersByTime(1500); });
+    expect(container.querySelector(selector)).not.toBeNull();
     await act(async () => { jest.advanceTimersByTime(1500); });
     expect(container.querySelector(selector)).toBeNull();
     expect(container.querySelector('[data-arriving="true"]')).toBeNull();

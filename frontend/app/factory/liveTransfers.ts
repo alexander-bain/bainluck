@@ -1,8 +1,6 @@
 import { transferEvents } from "./replayJournal";
 import type { FactoryData, FloorEvent } from "./types";
 
-export const LIVE_TRANSITION_MS = 1250;
-
 export function transfersSince(data: FactoryData | null, since: string | undefined): FloorEvent[] {
   if (!data || !since) return [];
   const first = Date.parse(since);
