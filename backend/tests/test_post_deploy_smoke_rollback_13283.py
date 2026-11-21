@@ -54,6 +54,7 @@ def test_standin_500_reports_would_roll_back_without_heroku_calls():
     report = mod.run_self_test_500()
     assert report.verdict == "would_roll_back"
     assert "would roll back" in report.summary
+    assert "commit read=standin5, expected=standin5" in report.summary
     assert all(ep.outcome == "failed" for ep in report.endpoints)
     assert all(len(ep.attempts) == 3 for ep in report.endpoints)
 
@@ -64,6 +65,7 @@ def test_standin_500_reports_would_roll_back_without_heroku_calls():
         check=True,
     )
     assert "would roll back" in proc.stdout
+    assert "commit read=standin5, expected=standin5" in proc.stdout
 
 
 def test_standin_200_non_empty_passes_with_single_attempt_per_endpoint():
@@ -104,6 +106,7 @@ def test_standin_200_non_empty_passes_with_single_attempt_per_endpoint():
 
     assert report.verdict == "passed"
     assert report.health_commit == "abc12345"
+    assert "commit read=abc12345, expected=abc12345" in report.summary
     assert [len(ep.attempts) for ep in report.endpoints] == [1, 1]
     assert "/api/feed?machinery=1&limit=20" in seen_paths
     assert "/api/events?sport=basketball_nba&limit=20" in seen_paths
@@ -270,6 +273,7 @@ def test_ci_workflow_wires_dry_run_and_script_has_zero_heroku_mutations():
 
     smoke_job = wf["jobs"]["post-deploy-smoke-dry-run"]
     assert smoke_job["needs"] == ["deploy"]
+    assert smoke_job["timeout-minutes"] >= 15
     assert "needs.deploy.outputs.deployed == 'true'" in smoke_job["if"]
     smoke_step = smoke_job["steps"][-1]
     assert smoke_step["env"]["AUTO_ROLLBACK_ENABLED"] == "${{ vars.AUTO_ROLLBACK_ENABLED }}"
@@ -292,3 +296,111 @@ def test_ci_workflow_wires_dry_run_and_script_has_zero_heroku_mutations():
             if name in {"run", "Popen", "check_output", "check_call"}:
                 dumped = ast.dump(node).lower()
                 assert "'heroku'" not in dumped and '"heroku"' not in dumped
+
+
+def test_default_health_wait_handles_preboot_cutover():
+    mod = _load_module()
+    assert mod.DEFAULT_HEALTH_WAIT_SECONDS >= 360.0
+
+    clock = 0.0
+    sleeps: list[float] = []
+    endpoint_paths: list[str] = []
+
+    def fake_sleep(seconds: float) -> None:
+        nonlocal clock
+        sleeps.append(seconds)
+        clock += seconds
+
+    def fake_get(url: str, timeout: float):
+        if url.endswith("/api/health"):
+            commit = "new22222" if clock >= 200.0 else "old11111"
+            return 200, json.dumps({"status": "ok", "commit": commit})
+        endpoint_paths.append(url)
+        if "/api/feed" in url:
+            return 200, '{"items":[{"id":1}]}'
+        return 200, '{"events":[{"id":2}]}'
+
+    report = mod.run_smoke_check(
+        base_url="http://standin.local",
+        expected_sha="new22222abcdef12",
+        initial_delay_seconds=60.0,
+        retry_delay_seconds=30.0,
+        http_get=fake_get,
+        sleep_fn=fake_sleep,
+        monotonic_fn=lambda: clock,
+    )
+    assert report.verdict == "passed"
+    assert report.health_commit == "new22222"
+    assert "PASS:" in report.summary
+    assert "commit read=new22222, expected=new22222" in report.summary
+    assert len(endpoint_paths) == 2
+
+
+def test_health_commit_mismatch_after_full_wait_returns_inconclusive_never_pass_or_rollback():
+    mod = _load_module()
+    for failing_endpoints in (False, True):
+        clock = 0.0
+        sleeps: list[float] = []
+        probed_endpoints: list[str] = []
+
+        def fake_sleep(seconds: float) -> None:
+            nonlocal clock
+            sleeps.append(seconds)
+            clock += seconds
+
+        def fake_get(url: str, timeout: float):
+            if url.endswith("/api/health"):
+                return 200, '{"status":"ok","commit":"old11111"}'
+            probed_endpoints.append(url)
+            return (500, '{"detail":"boom"}') if failing_endpoints else (200, '{"items":[{"id":1}]}')
+
+        report = mod.run_smoke_check(
+            base_url="http://standin.local",
+            expected_sha="new22222abcdef12",
+            initial_delay_seconds=60.0,
+            http_get=fake_get,
+            sleep_fn=fake_sleep,
+            monotonic_fn=lambda: clock,
+        )
+        assert report.verdict == "inconclusive"
+        assert report.health_commit == "old11111"
+        assert report.endpoints == ()
+        assert probed_endpoints == []
+        assert sum(sleeps) >= 360.0
+        assert "INCONCLUSIVE" in report.summary
+        assert "commit read=old11111, expected=new22222" in report.summary
+        assert "PASS" not in report.summary.upper()
+        assert "would roll back" not in report.summary.lower()
+
+
+def test_health_never_answers_returns_inconclusive_with_read_none():
+    mod = _load_module()
+    clock = 0.0
+    sleeps: list[float] = []
+
+    def fake_sleep(seconds: float) -> None:
+        nonlocal clock
+        sleeps.append(seconds)
+        clock += seconds
+
+    def fake_get(url: str, timeout: float):
+        if url.endswith("/api/health"):
+            raise TimeoutError("booting")
+        raise AssertionError(f"endpoint should not be probed when health never answered: {url}")
+
+    report = mod.run_smoke_check(
+        base_url="http://standin.local",
+        expected_sha="new22222abcdef12",
+        initial_delay_seconds=60.0,
+        http_get=fake_get,
+        sleep_fn=fake_sleep,
+        monotonic_fn=lambda: clock,
+    )
+    assert report.verdict == "inconclusive"
+    assert report.health_commit is None
+    assert report.endpoints == ()
+    assert sum(sleeps) >= 360.0
+    assert "INCONCLUSIVE" in report.summary
+    assert "commit read=none, expected=new22222" in report.summary
+    assert "PASS" not in report.summary.upper()
+    assert "would roll back" not in report.summary.lower()
