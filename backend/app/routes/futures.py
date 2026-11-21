@@ -20,7 +20,11 @@ from app.models import Event, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
 from app.services import get_db, OddsAPIService
 from app.utils import futures_price_screen, movement_pool, probability_to_american
 from app.utils.durable_venue_receipt import log_durable_venue_serve
-from app.utils.event_awards import grammy_nominee_fields, grammy_pre_nomination_board
+from app.utils.event_awards import (
+    grammy_nominee_fields,
+    grammy_pre_nomination_board,
+    is_grammy_general_field_market,
+)
 from app.utils.observed_span_steps import add_history_steps, add_timeline_steps
 from app.utils.settlement_display import (
     VERDICT_UNKNOWN as SETTLEMENT_VERDICT_UNKNOWN,
@@ -4750,6 +4754,8 @@ async def get_futures_market(
     )
     if nominee_field is not None:
         market = nominee_field
+    if is_grammy_general_field_market(market):
+        representation = REPRESENTATION_SOURCE
 
     # The provenance half — which books contributed, and their latest price per
     # outcome — is the whole cost of this endpoint and it is the only half that
@@ -4805,16 +4811,13 @@ async def get_futures_market(
         # the card's rule (`feed._score_futures`), so the tap lands on the board
         # the card showed. Cached grid only; a miss keeps every leg.
         out_division_labels=(await out_legs_by_market([market])).get(market.id),
-        normalize_numbers=(
-            legacy_market is not None or representation != REPRESENTATION_VERIFIED_TITLE
-        ),
+        normalize_numbers=representation != REPRESENTATION_VERIFIED_TITLE,
     )
     if len(bookmakers) > 1 and source_breakdown:
         detail["source_breakdown"] = source_breakdown
     # #10165: the game this board is the Polymarket container OF, so the page can
     # send the reader to the game instead of drawing the container as a field.
     detail["container_of_event_id"] = await _game_container_of_event_id(db, market)
-    # #9387: opt-in only. The default response is untouched, field for field.
     if legacy_market is not None:
         # Preserve old page addresses and give search and Discover the same
         # field when they link to Kalshi. Polymarket supplies only its Out rows.
@@ -7410,7 +7413,7 @@ async def get_probability_timeline(
     nominee_field = (await grammy_nominee_fields(db, [market])).get(market.id)
     if nominee_field is not None:
         market = nominee_field
-        market_id = market.id
+    if is_grammy_general_field_market(market):
         representation = REPRESENTATION_SOURCE
 
     # #6641 — ONE CONDITION, ONE LINE. A Polymarket "field" row is served to us
@@ -8571,8 +8574,8 @@ async def get_futures_history(
 
     nominee_field = (await grammy_nominee_fields(db, [market])).get(market.id)
     if nominee_field is not None and not any(o.id == outcome_id for o in market.outcomes):
+        # Read the nominee field while keeping the response tied to the requested URL.
         market = nominee_field
-        market_id = market.id
 
     # #6641, same rule and same reason as `get_probability_timeline` above —
     # this is the other half of the same chart. No iOS client reads it, but the
@@ -8675,7 +8678,7 @@ async def get_futures_history(
         select(FuturesOddsSnapshot)
         .join(FuturesOutcome, FuturesOutcome.id == FuturesOddsSnapshot.outcome_id)
         .where(
-            FuturesOutcome.market_id == market_id,
+            FuturesOutcome.market_id == market.id,
             FuturesOddsSnapshot.captured_at >= cutoff,
         )
         .order_by(FuturesOddsSnapshot.captured_at)
@@ -8892,7 +8895,7 @@ async def get_futures_history(
                     FuturesOutcome.id == FuturesOddsSnapshot.outcome_id,
                 )
                 .where(
-                    FuturesOutcome.market_id == market_id,
+                    FuturesOutcome.market_id == market.id,
                     FuturesOddsSnapshot.captured_at >= extended_cutoff,
                 )
                 .order_by(FuturesOddsSnapshot.captured_at)

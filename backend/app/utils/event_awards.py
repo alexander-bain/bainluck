@@ -63,6 +63,14 @@ _GRAMMY_PRE_NOMINATION_BOARDS = {
 }
 
 
+def is_grammy_general_field_market(market: Any) -> bool:
+    source = getattr(market, "source", None)
+    external_id = getattr(market, "external_id", None)
+    return (source == "kalshi" and external_id in _GRAMMY_PRE_NOMINATION_BOARDS) or (
+        source == "polymarket" and external_id in GRAMMY_NOMINEE_FIELDS
+    )
+
+
 async def grammy_nominee_fields(
     db: AsyncSession, markets: Iterable[Any], *, available: Iterable[Any] | None = None,
 ) -> dict[int, Any]:
