@@ -75,6 +75,9 @@ enum AnalyticsPrivacy {
         "watch_app_open", "watch_app_background", "watch_action", "watch_refresh", "watch_reading",
         // Screens / navigation
         "screen_view", "navigation_click", "return_visit",
+        "session_open", "shared_link_open",
+        // Follow & pin (#13261)
+        "follow_team", "pin_item",
         // Events + futures
         "event_card_click", "event_detail_view", "chart_time_range", "futures_detail_view",
         // Search
@@ -118,6 +121,9 @@ enum AnalyticsPrivacy {
         // Screens / navigation
         "screen_name", "page_type", "click_type", "from_page", "to_page",
         "days_since_last", "session_number",
+        "is_first_session", "entry_type", "first_screen", "destination_type", "medium",
+        // Follow & pin (#13261)
+        "relation_type",
         // Entities (opaque ids and categorical labels — joinable, not personal)
         "event_id", "market_id", "item_id", "item_type", "result_type", "result_id",
         "sport", "category", "status", "entry_method", "range", "surface", "source",

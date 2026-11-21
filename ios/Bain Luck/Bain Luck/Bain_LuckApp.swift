@@ -108,6 +108,7 @@ struct Bain_LuckApp: App {
         let defaults = UserDefaults.standard
         let sessionCount = defaults.integer(forKey: "bainluck_session_count") + 1
         defaults.set(sessionCount, forKey: "bainluck_session_count")
+        SessionOpenTracker13261.shared.recordLaunch(sessionNumber: sessionCount)
         let today = Calendar.current.startOfDay(for: Date())
         if let lastVisit = defaults.object(forKey: "bainluck_last_visit") as? Date {
             let daysSince = Calendar.current.dateComponents([.day], from: lastVisit, to: today).day ?? 0
@@ -266,6 +267,7 @@ struct Bain_LuckApp: App {
             .sheet(isPresented: $showTelemetryConsent) {
                 TelemetryConsentPrompt { _ in
                     showTelemetryConsent = false
+                    SessionOpenTracker13261.shared.handleConsentChange()
                 }
             }
             #if os(macOS)
