@@ -28,6 +28,7 @@ struct ContainerHubView: View {
     let displayName: String
     @StateObject private var vm: ContainerHubViewModel
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dismiss) private var dismiss
 
     private var hubSurface: Color { ContainerHubThemeTokens.surface(colorScheme) }
     private var hubCardBg: Color { ContainerHubThemeTokens.cardBg(colorScheme) }
@@ -49,7 +50,7 @@ struct ContainerHubView: View {
             case .loaded(let presentation):
                 hub(presentation)
             case .unavailable:
-                status("This collection isn't available right now.", retry: false)
+                status("We couldn’t find this collection, or it isn’t available right now.", retry: false)
             case .error(let message):
                 status(message, retry: true)
             }
@@ -68,10 +69,24 @@ struct ContainerHubView: View {
     }
 
     private var effectiveNavigationTitle: String {
-        if GroupingMachineryGate12288.isMachineryCandidateSlug(vm.slug), displayName.count > 28 {
+        let candidate: String
+        let showsBodyHeading: Bool
+        if case .loaded(let presentation) = vm.state, let loadedTitle = presentation.title, !loadedTitle.isEmpty {
+            candidate = (displayName.isEmpty || displayName == "Collection") ? loadedTitle : displayName
+            showsBodyHeading = true
+        } else {
+            candidate = displayName == "Collection" ? "" : displayName
+            showsBodyHeading = false
+        }
+        // Long titles already render in full as the bold body heading; keeping the
+        // inline nav bar clear avoids mid-word "…" truncation on 390 px iPhones.
+        if showsBodyHeading, candidate.count > 24 {
             return ""
         }
-        return displayName
+        if GroupingMachineryGate12288.isMachineryCandidateSlug(vm.slug), candidate.count > 28 {
+            return ""
+        }
+        return candidate
     }
 
     private func hub(_ presentation: ContainerHubPresentation) -> some View {
@@ -320,8 +335,11 @@ struct ContainerHubView: View {
         VStack(spacing: 16) {
             Text(message).font(.subheadline).foregroundStyle(hubTextSecondary)
                 .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
             if retry {
                 Button("Try Again") { Task { await vm.load() } }.buttonStyle(.borderedProminent)
+            } else {
+                Button("Back to Discover") { dismiss() }.buttonStyle(.borderedProminent)
             }
         }
         .padding(24)
