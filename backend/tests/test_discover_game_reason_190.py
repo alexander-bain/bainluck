@@ -25,7 +25,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from app.utils import discover_game_reason as gr
-from app.utils.personalization import PersonalizationContext
+from app.utils.personalization import PersonalizationContext, followed_team_ids_from_ctx
 
 NOW = datetime(2026, 11, 15, 23, 30, tzinfo=timezone.utc)
 CARDS = json.loads((Path(__file__).parent / "fixtures" / "discover_games_2026_11_15.json").read_text())
@@ -118,8 +118,8 @@ class TestEachReasonAndSwitch:
                 40: {"rival"},
             }
         )
-        assert gr.followed_team_ids_from_ctx(ctx) == frozenset({10, 20, 30})
-        assert gr.followed_team_ids_from_ctx(PersonalizationContext()) == frozenset()
+        assert followed_team_ids_from_ctx(ctx) == frozenset({10, 20, 30})
+        assert followed_team_ids_from_ctx(PersonalizationContext()) == frozenset()
 
 
 class TestSignalsRead:

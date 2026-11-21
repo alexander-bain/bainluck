@@ -28,8 +28,6 @@ from collections.abc import Set as AbstractSet
 from datetime import datetime, timedelta
 from typing import Any, Iterable, Optional
 
-from app.utils.personalization import STANDING_TEAM_RELATIONSHIPS
-
 SWITCH_ENV = "DISCOVER_GAME_NEEDS_REASON"
 ALLOWED_REASONS_ENV = "DISCOVER_GAME_ALLOWED_REASONS"
 #: Stated-stake single-game reasons that can be re-enabled one at a time via
@@ -73,20 +71,6 @@ def needs_game_signals(environ: Optional[dict] = None) -> bool:
     return game_reason_enabled(environ) and bool(
         allowed_stated_reasons(environ) & DB_SIGNAL_REASON_KINDS
     )
-
-
-def followed_team_ids_from_ctx(ctx: Any) -> frozenset[int]:
-    """Extract standing-followed team IDs (follow/local/alma_mater) from personalization ctx."""
-    relations = getattr(ctx, "team_relations", None)
-    if not isinstance(relations, dict):
-        return frozenset()
-    out: set[int] = set()
-    for tid, rels in relations.items():
-        if not isinstance(tid, int) or isinstance(tid, bool) or not rels:
-            continue
-        if set(rels) & STANDING_TEAM_RELATIONSHIPS:
-            out.add(tid)
-    return frozenset(out)
 
 
 def _num(value: Any) -> Optional[float]:

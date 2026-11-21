@@ -340,7 +340,6 @@ from app.utils.not_trading import market_not_trading
 from app.utils.discover_game_reason import (
     annotate_game_signals,
     apply_game_reasons,
-    followed_team_ids_from_ctx,
     game_reason_enabled,
     needs_game_signals,
 )
@@ -351,6 +350,7 @@ from app.utils.personalization import (
     compute_futures_multiplier,
     compute_sport_affinity_multiplier,
     followed_sport_categories,
+    followed_team_ids_from_ctx,
     is_returning_reader,
     my_stuff_admits_followed_sport,
 )
