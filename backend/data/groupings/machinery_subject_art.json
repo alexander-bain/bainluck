@@ -1126,6 +1126,46 @@
       "detail": "Guard · Atlanta",
       "accent_color": "#E03A3E",
       "url": "https://a.espncdn.com/i/headshots/nba/players/full/4869342.png"
+    },
+    {
+      "key": "ncaa-jeremiah-smith",
+      "aliases": [
+        "Jeremiah Smith"
+      ],
+      "kind": "person",
+      "detail": "WR · Ohio State",
+      "accent_color": "#BB0000",
+      "url": "https://a.espncdn.com/i/headshots/college-football/players/full/5079720.png"
+    },
+    {
+      "key": "ncaa-darian-mensah",
+      "aliases": [
+        "Darian Mensah"
+      ],
+      "kind": "person",
+      "detail": "QB · Miami",
+      "accent_color": "#F47321",
+      "url": "https://a.espncdn.com/i/headshots/college-football/players/full/5121169.png"
+    },
+    {
+      "key": "ncaa-cj-carr",
+      "aliases": [
+        "CJ Carr"
+      ],
+      "kind": "person",
+      "detail": "QB · Notre Dame",
+      "accent_color": "#0C2340",
+      "url": "https://a.espncdn.com/i/headshots/college-football/players/full/5079369.png"
+    },
+    {
+      "key": "ncaa-gunner-stockton",
+      "aliases": [
+        "Gunner Stockton"
+      ],
+      "kind": "person",
+      "detail": "QB · Georgia",
+      "accent_color": "#BA0C2F",
+      "url": "https://a.espncdn.com/i/headshots/college-football/players/full/4685578.png"
     }
   ],
   "nfl_teams": {

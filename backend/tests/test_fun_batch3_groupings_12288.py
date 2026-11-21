@@ -113,13 +113,13 @@ def test_batch3_definitions_are_public_with_verified_pd_or_cc0_art_and_no_venue_
             assert venue not in str(sec.get("note") or "").lower()
             assert venue not in str(rule.get("headline_predicate") or "").lower()
 
-    # No other preview set changes stage under 321: A.
-    for preview_slug in (
+    # Under 324: A, all seven Batch 2 + Batch 4 sets also flipped to public.
+    for public_slug in (
         "machinery-long-shots",
         "machinery-long-awaited",
         "machinery-space-race",
     ):
-        assert load_machinery_definition(paths_by_slug[preview_slug])["stage"] == "preview"
+        assert load_machinery_definition(paths_by_slug[public_slug])["stage"] == "public"
 
 
 @pytest.mark.asyncio

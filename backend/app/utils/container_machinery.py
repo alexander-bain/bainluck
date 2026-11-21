@@ -4089,6 +4089,26 @@ async def produce_container_machinery(
     raw_footer = str(definition.get("footer") or "").strip()
     clean_footer = "" if _SETTLEMENT_FILLER_RE.search(raw_footer) else raw_footer
 
+    # Keep Discover benchmark_strip cards consistent: either every row has a
+    # picture or no row leaves a reserved empty gap beside sibling rows.
+    if vb_form == "benchmark_strip" and card_visual_rows:
+        row_has_url = [
+            isinstance(r, Mapping) and _has_verified_art(r) for r in card_visual_rows
+        ]
+        if any(row_has_url) and not all(row_has_url):
+            normalized_rows: list[dict[str, Any]] = []
+            for row in card_visual_rows:
+                if isinstance(row, Mapping):
+                    row_copy = dict(row)
+                    art = row_copy.get("art")
+                    if isinstance(art, Mapping):
+                        art_copy = dict(art)
+                        art_copy["url"] = None
+                        art_copy["kind"] = "monogram"
+                        row_copy["art"] = art_copy
+                    normalized_rows.append(row_copy)
+            card_visual_rows = normalized_rows
+
     has_card_art = any(_has_verified_art(r) for r in card_visual_rows if isinstance(r, Mapping))
     if vb_form == "paired_stage_bars" and lead_paired_set:
         has_card_art = any(
