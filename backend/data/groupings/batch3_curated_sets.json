@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "description": "Batch 3 curated preview set memberships, short labels, and plain-speech headline phrases (#12288). Loaded by discover_fun_tags helpers without altering fun_markets.json's 100-entry Discover admission seed.",
+  "description": "Batch 3 curated grouping set memberships, short labels, and plain-speech headline phrases (#12288, 321: A). Loaded by discover_fun_tags helpers without altering fun_markets.json's 100-entry Discover admission seed.",
   "sets": {
     "batch3-2026-summed-up": {
       "entries": [
@@ -25,7 +25,7 @@
         {"id": 70150103, "short_label": "Emily Henry's Happy Place cast", "headline_phrase": "{answer} in Happy Place"},
         {"id": 109250, "short_label": "TV shows cancelled this year", "headline_phrase": "{answer} getting cancelled"},
         {"id": 108275, "short_label": "The Simpsons ending announced", "headline_phrase": "The Simpsons announcing its end"},
-        {"id": 59172754, "short_label": "Dune vs Avengers score", "headline_phrase": "{answer} topping Rotten Tomatoes"}
+        {"id": 59172754, "short_label": "Dune vs Avengers score", "headline_phrase": "{answer} out-scoring Avengers on Rotten Tomatoes"}
       ]
     },
     "batch3-stage-and-cover": {
@@ -40,12 +40,12 @@
     },
     "batch3-elon-musk-side-quests": {
       "entries": [
-        {"id": 109633, "short_label": "Cast in the next Superman film"},
-        {"id": 109412, "short_label": "Buying Ryanair"},
-        {"id": 109316, "short_label": "Buying a major sports team before 2027"},
-        {"id": 108218, "short_label": "Visiting Mars in his lifetime"},
-        {"id": 109490, "short_label": "Out as Tesla CEO before 2027"},
-        {"id": 109489, "short_label": "Tesla Optimus released this year"}
+        {"id": 109633, "short_label": "Cast in the next Superman film", "headline_with_phrase": "being cast in the next Superman film"},
+        {"id": 109412, "short_label": "Buying Ryanair", "headline_with_phrase": "buying Ryanair"},
+        {"id": 109316, "short_label": "Buying a major sports team before 2027", "headline_with_phrase": "buying a major sports team before 2027"},
+        {"id": 108218, "short_label": "Visiting Mars in his lifetime", "headline_with_phrase": "visiting Mars in his lifetime"},
+        {"id": 109490, "short_label": "Out as Tesla CEO before 2027", "headline_with_phrase": "being out as Tesla CEO before 2027"},
+        {"id": 109489, "short_label": "Tesla Optimus released this year", "headline_with_phrase": "Tesla Optimus released this year"}
       ]
     }
   }
