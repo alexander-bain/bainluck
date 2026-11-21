@@ -53,6 +53,7 @@ import {
   stations,
   stationNames,
   pacificDay,
+  workshopLight,
   time,
   duration,
   readerBehind,
@@ -256,6 +257,7 @@ export default function FactoryFloor(initial: {
   const verdict = floorVerdict(data, readFailed, now);
   const tabTitle = factoryTabTitle(verdict);
   const today = pacificDay(now);
+  const light = workshopLight(now);
   const journal = useReplayJournal(data, today);
   const replay = useDayReplay(motion);
   const speech = data?.speech;
@@ -357,6 +359,7 @@ export default function FactoryFloor(initial: {
       <article
         className={styles.factory}
         data-factory="true"
+        data-workshop-light={light}
         data-motion="paused"
       >
         <header className={styles.heading}>
@@ -557,6 +560,7 @@ export default function FactoryFloor(initial: {
     <article
       className={styles.factory}
       data-factory="true"
+      data-workshop-light={light}
       data-reader={behind ? "behind" : "current"}
       data-motion={motion ? "running" : "paused"}
     >

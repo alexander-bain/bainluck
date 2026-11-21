@@ -2340,3 +2340,22 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 @media (max-width: 720px) {
   .builderNameInputs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+.factory[data-workshop-light="night"] .heading {
+  background-color: color-mix(in srgb, var(--housing) 82%, var(--workshop-sky));
+}
+.factory[data-workshop-light="night"] .heading::before {
+  filter: brightness(0.49) saturate(0.7) hue-rotate(16deg);
+}
+.factory[data-workshop-light="night"] .floorFooter::before {
+  filter: brightness(0.76) sepia(0.25);
+}
+
+@media (prefers-color-scheme: dark) {
+  .factory[data-workshop-light="night"] .heading::before {
+    filter: brightness(0.22) saturate(0.65) hue-rotate(16deg);
+  }
+  .factory[data-workshop-light="night"] .floorFooter::before {
+    filter: brightness(0.24) sepia(0.35);
+  }
+}
