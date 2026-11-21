@@ -135,13 +135,17 @@ export interface Jam {
   source?: Stop["source"];
 }
 
-export interface ChecksQueue {
-  machines: number;
-  running: number;
-  waiting: number;
-  longest_wait_minutes: number | null;
-  queued_without_jobs: number;
-}
+export type ChecksQueue = { machines: number } & (
+  | { unavailable: true }
+  | {
+      unavailable?: false;
+      machines_busy?: number;
+      running: number;
+      waiting: number;
+      longest_wait_minutes: number | null;
+      queued_without_jobs: number;
+    }
+);
 
 export interface FactoryData {
   schema_version: number;

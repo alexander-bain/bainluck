@@ -83,8 +83,8 @@ def _run_inventory(api, endpoint: str, now: datetime) -> dict:
         return read()
 
 
-def machine_queue(api, repo: str, now: datetime) -> dict | None:
-    """Return run counts and the independent job counts used for dock attribution."""
+def machine_queue(api, repo: str, now: datetime) -> dict:
+    """Return the public queue and the job counts used for dock attribution."""
     prefix = f"repos/{repo}/actions/runs"
     try:
         runs = _run_inventory(api, prefix, now)
@@ -141,6 +141,7 @@ def machine_queue(api, repo: str, now: datetime) -> dict | None:
         return {
             "display": {
                 "machines": HOSTED_MACHINE_CAPACITY,
+                "machines_busy": len(running_jobs),
                 "running": runs_running,
                 "waiting": runs_waiting,
                 "longest_wait_minutes": (
@@ -157,8 +158,10 @@ def machine_queue(api, repo: str, now: datetime) -> dict | None:
             ),
         }
     except (OSError, urllib.error.URLError, KeyError, ValueError, TypeError):
-        # An incomplete read cannot supply counts or a cause for a delay.
-        return None
+        return {
+            "display": {"machines": HOSTED_MACHINE_CAPACITY, "unavailable": True},
+            "master_jobs": None,
+        }
 
 
 def attach_machine_reason(result, queue):

@@ -136,7 +136,7 @@ it("shows an unavailable floor and the last good time without any historical cou
 
 it("shows the full Checks queue and preserves the floor when its reading is invalid", async () => {
   const queue = {
-    waiting: 131, running: 12, machines: 40,
+    waiting: 131, running: 12, machines: 40, machines_busy: 31,
     longest_wait_minutes: 1, queued_without_jobs: 2,
   };
   const read = createFactoryReader(jest.fn()
@@ -151,12 +151,57 @@ it("shows the full Checks queue and preserves the floor when its reading is inva
   );
   expect(html).toContain('data-queue-waiting="131"');
   expect(html).toContain("Runs running</dt><dd>12");
-  expect(html).toContain("Borrowed machines</dt><dd>40");
+  expect(html).toContain("Machines busy</dt><dd>31 of 40");
   expect(html).toContain("Longest wait</dt><dd>1 minute");
   expect(html).toContain("GitHub lists 2 queued runs with no job details.");
   const invalid = renderToStaticMarkup(
     <FactoryFloor {...await read()} renderedAt="2026-11-18T15:59:00Z" />,
   );
   expect(invalid).toContain("Queue details are missing from this read.");
+  expect(invalid).toContain("up to 40 machines");
+  expect(invalid).not.toContain("Machines busy");
   expect(invalid).toContain('data-factory-row="Server"');
+});
+
+it("shows zero machines busy on a complete quiet read", async () => {
+  const read = createFactoryReader(jest.fn().mockResolvedValue({
+    ...response,
+    json: async () => ({
+      ...snapshot,
+      signals: {
+        ...snapshot.signals,
+        checks_queue: {
+          machines: 40, machines_busy: 0, running: 0, waiting: 0,
+          longest_wait_minutes: null, queued_without_jobs: 0,
+        },
+      },
+    }),
+  }));
+  const html = renderToStaticMarkup(
+    <FactoryFloor {...await read()} renderedAt="2026-11-18T15:59:00Z" />,
+  );
+  expect(html).toContain("Machines busy</dt><dd>0 of 40");
+  expect(html).toContain("Longest wait</dt><dd>No wait");
+});
+
+it("preserves a valid run read with a missing machine count", async () => {
+  const read = createFactoryReader(jest.fn().mockResolvedValue({
+    ...response,
+    json: async () => ({
+      ...snapshot,
+      signals: {
+        ...snapshot.signals,
+        checks_queue: {
+          machines: 40, machines_busy: -1, running: 5, waiting: 0,
+          longest_wait_minutes: null, queued_without_jobs: 0,
+        },
+      },
+    }),
+  }));
+  const html = renderToStaticMarkup(
+    <FactoryFloor {...await read()} renderedAt="2026-11-18T15:59:00Z" />,
+  );
+  expect(html).toContain("Runs running</dt><dd>5");
+  expect(html).toContain("up to 40 machines");
+  expect(html).not.toContain("Machines busy");
 });

@@ -891,10 +891,9 @@ def main():
         add_journeys(result, previous)
         add_signs(result, snapshot, previous)
         queue = machine_queue(api, REPO, datetime.now(timezone.utc))
-        if queue is not None:
-            result["signals"]["checks_queue"] = queue["display"]
-            if snapshot.get("master_ci_active"):
-                attach_machine_reason(result, queue["master_jobs"])
+        result["signals"]["checks_queue"] = queue["display"]
+        if snapshot.get("master_ci_active"):
+            attach_machine_reason(result, queue["master_jobs"])
 
         def save_meter(body):
             api.request(

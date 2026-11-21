@@ -80,6 +80,7 @@ class TestMachineQueue(unittest.TestCase):
             queue["display"],
             {
                 "machines": 40,
+                "machines_busy": 40,
                 "running": 1,
                 "waiting": 1,
                 "longest_wait_minutes": 10,
@@ -153,7 +154,22 @@ class TestMachineQueue(unittest.TestCase):
         self.assertEqual(result["display"]["waiting"], 0)
         self.assertIsNone(result["master_jobs"])
 
-    def test_partial_response_gives_no_counts_or_cause(self):
+    def test_quiet_queue_reports_zero_machines_busy(self):
+        self.queued = []
+        self.running = []
+        self.assertEqual(
+            self.measured()["display"],
+            {
+                "machines": 40,
+                "machines_busy": 0,
+                "running": 0,
+                "waiting": 0,
+                "longest_wait_minutes": None,
+                "queued_without_jobs": 0,
+            },
+        )
+
+    def test_partial_response_keeps_only_the_capacity_and_gives_no_cause(self):
         original = self.response
 
         def partial(endpoint, **kwargs):
@@ -163,7 +179,13 @@ class TestMachineQueue(unittest.TestCase):
             return result
 
         self.response = partial
-        self.assertIsNone(self.measured())
+        self.assertEqual(
+            self.measured(),
+            {
+                "display": {"machines": 40, "unavailable": True},
+                "master_jobs": None,
+            },
+        )
 
     def test_retries_an_inventory_that_shifted_during_the_read(self):
         original = self.response
