@@ -601,7 +601,7 @@ def drop_provably_purged_candidates(
 # status=None and may not appear in the first N pages of the
 # unfiltered listing. Explicitly query key sports series tickers
 # to guarantee we don't miss championship/conference markets.
-_SPORTS_SERIES_TICKERS = [
+_PRIMARY_SPORTS_SERIES_TICKERS = [
     # Championship / conference
     "KXNBA", "KXNBAEAST", "KXNBAWEST",
     "KXNHL", "KXNHLEAST", "KXNHLWEST",
@@ -609,6 +609,9 @@ _SPORTS_SERIES_TICKERS = [
     "KXNFL", "KXNFLNFC", "KXNFLAFC",
     # Game winner (moneyline) — Kalshi retains settled events forever
     "KXNBAGAME", "KXNHLGAME", "KXMLBGAME", "KXNFLGAME",
+]
+
+_SPORTS_SERIES_TICKERS = _PRIMARY_SPORTS_SERIES_TICKERS + [
     # #10090: EuroLeague winner games are absent from the main scan and
     # discovery refuses GAME payloads. Use the existing stripped rescue and
     # market backfill; daily turnover also requires always-fetch membership.
@@ -1044,8 +1047,20 @@ _BACKFILL_SERIES_MAX_PAGES = 10
 # first, so golf keeps its first claim; what rain jumps is the ~50 non-priority
 # sports series behind it.
 _PRIORITY_RESCUE_PREFIXES = (
-    "KXPGA", "KXLPGA", "KXLIV", "KXDPWORLD", "KXRAIN", "KXGRAM",
+    "KXPGA", "KXLPGA", "KXLIV", "KXDPWORLD", "KXRAIN",
 )
+
+
+def _rescue_series_order(series: str) -> int:
+    if series.startswith(_PRIORITY_RESCUE_PREFIXES):
+        return 0
+    # Keep the existing early series through the daily game moneylines.
+    # Their event shells are inputs to the reserved market backfill.
+    if series in _PRIMARY_SPORTS_SERIES_TICKERS:
+        return 1
+    if series in _OPEN_GRAMMY_SERIES_TICKERS:
+        return 2
+    return 3
 
 # ---------------------------------------------------------------------------
 # Series DISCOVERY (#2927 container principle, applied to series).
@@ -2888,10 +2903,7 @@ class KalshiAPIService(BaseAPIClient):
         _tel["open_derivative_series_fetched"] = _open_series_fetched
         _tel["open_derivative_events_added"] = _open_added
 
-        _ordered_series = sorted(
-            _RESCUE_SERIES_TICKERS,
-            key=lambda s: 0 if s.upper().startswith(_PRIORITY_RESCUE_PREFIXES) else 1,
-        )
+        _ordered_series = sorted(_RESCUE_SERIES_TICKERS, key=_rescue_series_order)
         for st in _ordered_series:
             open_grammy_series = st in _OPEN_GRAMMY_SERIES_TICKERS
             _supp_nested = not any(tok in st.upper() for tok in _HEAVY_TOKENS)

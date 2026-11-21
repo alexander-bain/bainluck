@@ -11610,8 +11610,8 @@ def _format_market_detail(
     # two-row count is what the combat adapters read as a fight — so letting the
     # expiry drop feed this would invent a breadcrumb on a river-level market.
     # The identity answer stays bit-identical to the one served before #7274.
-    concept_outcome_count = (
-        len(outcomes) + len(eliminated) + expired_rungs_dropped + raw_dominant_dropped
+    concept_outcome_count = len(outcomes) + (
+        len(eliminated) + expired_rungs_dropped + raw_dominant_dropped
     )
 
     # #4253: a single-winner field cannot have five different winners. Measured

@@ -69,12 +69,19 @@ async def test_discovery_and_id_refresh_keep_the_nominee_and_skip_the_graded_los
 
 
 @pytest.mark.parametrize("external_id", ["805158", "another_board"])
-def test_detail_puts_the_graded_grammy_loss_after_contenders(external_id):
+def test_detail_puts_the_graded_grammy_loss_after_contenders(external_id, monkeypatch):
     from datetime import datetime, timezone
 
-    from app.routes.futures import _format_market_detail
+    from app.routes import futures
 
     observed = datetime(2026, 11, 20, 22, 12, tzinfo=timezone.utc)
+
+    class FrozenDatetime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return observed.astimezone(tz) if tz else observed.replace(tzinfo=None)
+
+    monkeypatch.setattr(futures, "datetime", FrozenDatetime)
 
     def outcome(oid, name, value, authority=None):
         return SimpleNamespace(
@@ -128,7 +135,7 @@ def test_detail_puts_the_graded_grammy_loss_after_contenders(external_id):
             outcome(4, "A live long shot", 0.004),
         ],
     )
-    response = _format_market_detail(market, normalize_numbers=False)
+    response = futures._format_market_detail(market, normalize_numbers=False)
     rows = {row["id"]: row for row in response["outcomes"]}
     assert rows[1]["probability"] == 0.2405
     assert rows[3]["probability"] == 0.1165

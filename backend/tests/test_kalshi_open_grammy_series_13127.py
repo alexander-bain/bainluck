@@ -61,7 +61,9 @@ async def test_open_grammys_reach_the_writer_ahead_of_history(monkeypatch):
     events = await client._fetch_all_events_unfiltered(deadline=time.monotonic() + 400)
     for series in open_events:
         assert (series, "open", True) in calls
-        assert calls.index((series, "open", True)) < calls.index(("KXNBAGAME", None, False))
+        grammy_index = calls.index((series, "open", True))
+        assert calls.index(("KXNFLGAME", None, False)) < grammy_index
+        assert grammy_index < calls.index(("KXEUROLEAGUEGAME", None, False))
 
     ordered = _floor_series_first(events)
     assert {event.event_ticker for event in ordered[:-1]} == {
