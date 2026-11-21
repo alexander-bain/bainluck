@@ -1337,6 +1337,81 @@ def _canonical_market_outcome_map(
     return rows, by_oid, by_key
 
 
+_MONTH_ABBREV_MAP: dict[str, str] = {
+    "january": "Jan",
+    "february": "Feb",
+    "march": "Mar",
+    "april": "Apr",
+    "may": "May",
+    "june": "June",
+    "july": "July",
+    "august": "Aug",
+    "september": "Sep",
+    "october": "Oct",
+    "november": "Nov",
+    "december": "Dec",
+}
+_FULL_MONTH_RE = re.compile(
+    r"\b(January|February|March|April|August|September|October|November|December)\b",
+    re.IGNORECASE,
+)
+_MONTH_TOKEN_PATTERN = (
+    r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|"
+    r"Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
+)
+_PREP_DATE_OUTCOME_RE = re.compile(r"^(before|by|after)\s+(.+)$", re.IGNORECASE)
+_AFTER_DATE_OUTCOME_RE = re.compile(r"^after\s+", re.IGNORECASE)
+_BARE_MONTH_DAY_RE = re.compile(
+    rf"^{_MONTH_TOKEN_PATTERN}\s+\d{{1,2}}(?:,\s*\d{{4}})?$",
+    re.IGNORECASE,
+)
+_BARE_MONTH_YEAR_OR_YEAR_RE = re.compile(
+    rf"^(?:{_MONTH_TOKEN_PATTERN}\s+20\d{{2}}|20\d{{2}})$",
+    re.IGNORECASE,
+)
+
+
+def _abbreviate_month_names(text: str) -> str:
+    return _FULL_MONTH_RE.sub(
+        lambda m: _MONTH_ABBREV_MAP.get(m.group(1).lower(), m.group(1)),
+        text,
+    )
+
+
+def _format_fun_lead_answer_label(base_title: str, lead_ans: str) -> tuple[str, bool]:
+    """Format a non-Yes/No fun market's leading answer onto its short label.
+
+    Returns ``(display_title, is_date_timing_row)``.
+    - Bare month+day answers (e.g. ``December 31``, ``March 31, 2027``) read
+      ``"<base> by Dec 31"`` / ``"<base> by Mar 31, 2027"`` (Fable Nov 20 look).
+    - Bare month+year or year answers (e.g. ``March 2027``, ``2027``) read
+      ``"<base> in Mar 2027"`` / ``"<base> in 2027"``.
+    - ``Before ...`` / ``By ...`` / ``After ...`` read ``"<base> before ..."``
+      with abbreviated month names and no awkward colon.
+    - Non-date answers (e.g. ``United States``) keep ``"<base>: United States"``
+      with ``is_date_timing_row = False``.
+    """
+    ans = lead_ans.strip()
+    if not ans or ans.lower() in {"yes", "no"}:
+        return base_title, False
+    m_prep = _PREP_DATE_OUTCOME_RE.match(ans)
+    if m_prep:
+        prep = m_prep.group(1).lower()
+        rest = _abbreviate_month_names(m_prep.group(2).strip())
+        if rest.lower() in base_title.lower():
+            return base_title, True
+        return f"{base_title} {prep} {rest}", True
+    if _BARE_MONTH_DAY_RE.match(ans):
+        short_date = _abbreviate_month_names(ans)
+        return f"{base_title} by {short_date}", True
+    if _BARE_MONTH_YEAR_OR_YEAR_RE.match(ans):
+        short_date = _abbreviate_month_names(ans)
+        return f"{base_title} in {short_date}", True
+    if ans.lower() in base_title.lower():
+        return base_title, False
+    return f"{base_title}: {ans}", False
+
+
 def _hydrate_market_visual_item(
     market: Mapping[str, Any],
     *,
@@ -1399,7 +1474,26 @@ def _hydrate_market_visual_item(
             }
         ]
     else:
-        kept = valid[:max_outcomes]
+        ordered_valid = list(valid)
+        # Fable Nov 20 preview look (Item 5i): on single-number fun strips, an
+        # "After <Date>" delay bucket (e.g. "GTA VI on PC: After March 2027 at 67%")
+        # reads as likely to arrive when it means the opposite. Prefer the leading
+        # non-"After" release-window outcome so the row ranks by actual arrival odds
+        # while keeping 100% member-page parity on its real outcome_id.
+        if (
+            use_fun_short_label
+            and max_outcomes == 1
+            and ordered_valid
+            and _AFTER_DATE_OUTCOME_RE.match(str(ordered_valid[0].get("name") or "").strip())
+        ):
+            non_after = [
+                o
+                for o in ordered_valid
+                if not _AFTER_DATE_OUTCOME_RE.match(str(o.get("name") or "").strip())
+            ]
+            if non_after:
+                ordered_valid = non_after
+        kept = ordered_valid[:max_outcomes]
         outcomes_out = []
         for idx, o in enumerate(kept):
             o_name = _clean_outcome_label(str(o.get("name") or "").strip())
@@ -1466,22 +1560,21 @@ def _hydrate_market_visual_item(
         base_title = clean_card_face_title(_clean_section_market_label(clean_raw_name))
 
     display_title = base_title
+    is_date_timing_row = False
     # On single-number fun strips (`fun_sub_tag` + `max_outcomes == 1`), a
     # non-Yes/No ("when"/"which") market's row and headline must name its
-    # leading answer alongside the number (Item 5b / #13224).
+    # leading answer cleanly alongside the number (Item 5 / #13224).
     if use_fun_short_label and max_outcomes == 1 and not shape_is_yes and outcomes_out:
         lead_ans = str(outcomes_out[0].get("name") or "").strip()
-        if (
-            lead_ans
-            and lead_ans.lower() not in {"yes", "no"}
-            and lead_ans.lower() not in display_title.lower()
-        ):
-            display_title = f"{display_title}: {lead_ans}"
+        display_title, is_date_timing_row = _format_fun_lead_answer_label(
+            display_title, lead_ans
+        )
 
     return {
         "market_id": mid,
         "title": display_title,
         "raw_title": clean_raw_name,
+        "is_date_timing_row": is_date_timing_row,
         "href": f"/futures/{mid}",
         "source": str(market.get("source") or ""),
         "lead_prob": lead_prob,
@@ -3069,10 +3162,16 @@ def _build_dynamic_title_from_set(
             return f"{_prose_rate_outcome(str(sp_fav['name']), capitalize_first=True)} leads {sp_phrase} at {sp_fav['rendered_percent']}%"
 
     if benchmark_items:
-        lead_bm = benchmark_items[0]
+        rule_dict = definition.get("rule") if isinstance(definition.get("rule"), Mapping) else {}
+        headline_pool = benchmark_items
+        if rule_dict.get("headline_exclude_date_rows"):
+            non_date = [it for it in benchmark_items if not it.get("is_date_timing_row")]
+            if non_date:
+                headline_pool = non_date
+        lead_bm = headline_pool[0]
         lead_o = _fav_outcome(lead_bm)
         group_name = str(definition.get("name") or "").strip().rstrip("?")
-        rule_pred = str((definition.get("rule") or {}).get("headline_predicate") or "").strip()
+        rule_pred = str(rule_dict.get("headline_predicate") or "").strip()
         if lead_o is not None:
             lead_t = str(lead_bm.get("title") or "").strip()
             lead_p = int(lead_o["rendered_percent"])
@@ -3083,8 +3182,8 @@ def _build_dynamic_title_from_set(
                 lead_clause = f"{lead_t} {verb} {group_name} at {lead_p}%"
             else:
                 lead_clause = f"{lead_t} {verb} at {lead_p}%"
-            if len(benchmark_items) >= 2:
-                sec_bm = benchmark_items[1]
+            if len(headline_pool) >= 2:
+                sec_bm = headline_pool[1]
                 sec_o = _fav_outcome(sec_bm)
                 if sec_o is not None:
                     sec_t = str(sec_bm.get("title") or "").strip()

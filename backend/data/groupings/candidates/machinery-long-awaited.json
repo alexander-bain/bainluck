@@ -24,6 +24,7 @@
     "card_rows": 3,
     "card_section_key": "long_awaited_releases",
     "headline_predicate": "is the likeliest long-awaited release",
+    "headline_exclude_date_rows": true,
     "sections": [
       {
         "key": "long_awaited_releases",
