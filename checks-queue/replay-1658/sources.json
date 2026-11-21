@@ -1,0 +1,17 @@
+{
+  "snapshotPublishedAt": "2026-11-21T00:48:07.134730Z",
+  "queueReplayedAt": "2026-11-21T00:58:11Z",
+  "confirmedJobsThen": {
+    "running": 40,
+    "waiting": 44
+  },
+  "queueDisplayMinimum": {
+    "machines": 40,
+    "waiting": 23,
+    "running": 8,
+    "longest_wait_minutes": 5,
+    "queued_without_jobs": 26
+  },
+  "queueSource": "GitHub Actions records of job creation, first start, and completion for assigned hosted jobs.",
+  "emptyRunSource": "Runs still listed queued whose last recorded update was before this time and which have no jobs on any attempt."
+}
