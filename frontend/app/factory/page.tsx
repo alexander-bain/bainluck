@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { cache } from "react";
 import { Inter, Space_Grotesk } from "next/font/google";
 import { unstable_cache } from "next/cache";
+import { frontendCommitSha } from "@/lib/buildInfo";
 import FactoryFloor from "./FactoryFloor";
 import { createFactoryReader } from "./data";
 import { factoryTabTitle, floorVerdict } from "./verdict";
@@ -25,7 +26,7 @@ const readFactory = createFactoryReader(undefined, (load) =>
 
 const loadFactory = cache(async () => {
   const read = await readFactory();
-  return { ...read, renderedAt: new Date().toISOString() };
+  return { ...read, renderedAt: new Date().toISOString(), buildCommit: frontendCommitSha() };
 });
 
 export async function generateMetadata(): Promise<Metadata> {

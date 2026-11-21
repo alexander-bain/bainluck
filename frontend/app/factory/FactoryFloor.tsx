@@ -1,7 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ArrowDown,
   ArrowLeft,
@@ -38,6 +37,8 @@ import FactoryMascot, { MascotMove, mascotAction } from "./FactoryMascot";
 import InjurySign from "./InjurySign";
 import { builderOfDay, clipboard, median } from "./signs";
 import { useDayReplay } from "./useDayReplay";
+import { useFactoryDisplay } from "./useFactoryDisplay";
+import { validateSnapshot } from "./data";
 import { useReplayJournal } from "./replayJournal";
 import { LIVE_TRANSITION_MS, remainingEvents, transfersSince } from "./liveTransfers";
 import { crossesSegment, eventText, useEventPlayer } from "./playback";
@@ -62,9 +63,9 @@ import {
 } from "./activity";
 
 const lines: Line[] = ["Server", "Website", "Apps"];
-const PAGE_REFRESH_MS = 60_000;
 const SPEECH_INTERVAL_MS = 8_000;
 const FOLLOWED_CRATES_KEY = "factory-followed-crates-v1";
+const RELOAD_FLOOR_KEY = "factory-floor-before-reload";
 const pacificPostingTime = new Intl.DateTimeFormat("en-US", {
   timeZone: "America/Los_Angeles",
   month: "short",
@@ -218,36 +219,44 @@ export default function FactoryFloor({
   lastGoodAt,
   readAt,
   readFailed = false,
+  buildCommit = null,
   renderedAt,
 }: {
   data: FactoryData | null;
   lastGoodAt: string | null;
   readAt?: string;
   readFailed?: boolean;
+  buildCommit?: string | null;
   renderedAt: string;
 }) {
   usePageTracking({ pageType: "home", pageTitle: "The Factory" });
   useScrollDepth({ pageType: "home" });
   useEngagementTime({ pageType: "home" });
-  const router = useRouter();
-  const [now, setNow] = useState(renderedAt);
   const [selectedCrate, selectCrate] = useState<string | null>(null);
   const [selectedGroup, selectGroup] = useState<CrateGroup | null>(null);
   const [followed, setFollowed] = useState<number[]>([]);
   const [speaker, setSpeaker] = useState<NamedBuilder>();
-  const [knownGoodAt, setKnownGoodAt] = useState(lastGoodAt);
-  const [lastShown, setLastShown] = useState(snapshot);
+  const [knownGoodAt, setKnownGoodAt] = useState(readAt ?? lastGoodAt);
+  const [lastShown, setLastShown] = useState({ data: snapshot, readAt });
   // Keep the open page intact if a refresh lands on a server with an empty cache.
-  const data =
-    snapshot &&
-    (!lastShown ||
-      Date.parse(snapshot.generated_at) >= Date.parse(lastShown.generated_at))
-      ? snapshot
-      : lastShown;
+  const incomingTime = snapshot ? Date.parse(snapshot.generated_at) : -Infinity;
+  const shownTime = lastShown.data ? Date.parse(lastShown.data.generated_at) : -Infinity;
+  const incomingReadTime = readAt ? Date.parse(readAt) : -Infinity;
+  const shownReadTime = lastShown.readAt ? Date.parse(lastShown.readAt) : -Infinity;
+  const useIncoming = snapshot && (incomingTime > shownTime ||
+    (incomingTime === shownTime && incomingReadTime >= shownReadTime));
+  const { data, readAt: shownReadAt } = useIncoming ? { data: snapshot, readAt } : lastShown;
   const detail = useRef<HTMLDialogElement>(null);
-  const [tabVisible, setTabVisible] = useState(true);
-  const [reducedMotion, setReducedMotion] = useState<boolean | null>(null);
-  const lastRefresh = useRef(Date.parse(renderedAt));
+  const rememberFloor = useCallback(() => {
+    try {
+      if (data) sessionStorage.setItem(RELOAD_FLOOR_KEY, JSON.stringify({ data, readAt: shownReadAt }));
+    } catch {
+      // The previous read time is still kept separately in local storage.
+    }
+  }, [data, shownReadAt]);
+  const { now, tabVisible, reducedMotion } = useFactoryDisplay(
+    renderedAt, buildCommit, Boolean(snapshot && !readFailed), rememberFloor,
+  );
   const behind = data !== null && (readFailed || readerBehind(data, now));
   const motion = !behind && tabVisible && reducedMotion === false;
   const verdict = floorVerdict(data, readFailed, now);
@@ -298,12 +307,29 @@ export default function FactoryFloor({
   }, []);
 
   useEffect(() => {
-    if (data) setLastShown(data);
-  }, [data]);
+    if (data) setLastShown({ data, readAt: shownReadAt });
+  }, [data, shownReadAt]);
+
+  useEffect(() => {
+    try {
+      const saved = sessionStorage.getItem(RELOAD_FLOOR_KEY);
+      sessionStorage.removeItem(RELOAD_FLOOR_KEY);
+      if (snapshot || !saved) return;
+      const copy: { data: FactoryData; readAt?: string } = JSON.parse(saved);
+      setLastShown({
+        data: validateSnapshot(copy.data),
+        readAt: typeof copy.readAt === "string" && Number.isFinite(Date.parse(copy.readAt))
+          ? copy.readAt : undefined,
+      });
+    } catch {
+      // The unreadable state handles a copy that cannot be recovered.
+    }
+  }, [snapshot]);
 
   useEffect(() => {
     try {
       const timestamp =
+        shownReadAt ||
         data?.generated_at ||
         lastGoodAt ||
         localStorage.getItem("factory-last-good-at");
@@ -312,9 +338,9 @@ export default function FactoryFloor({
         if (data) localStorage.setItem("factory-last-good-at", timestamp);
       }
     } catch {
-      setKnownGoodAt(lastGoodAt);
+      setKnownGoodAt(shownReadAt ?? lastGoodAt);
     }
-  }, [data, lastGoodAt]);
+  }, [data, lastGoodAt, shownReadAt]);
 
   useEffect(() => {
     if (
@@ -325,32 +351,6 @@ export default function FactoryFloor({
       detail.current.showModal();
     }
   }, [selectedCrate, selectedGroup]);
-
-  useEffect(() => {
-    const preference = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const preferenceChanged = () => setReducedMotion(preference.matches);
-    const refresh = () => {
-      const visible = document.visibilityState === "visible";
-      setTabVisible(visible);
-      if (visible) {
-        setNow(new Date().toISOString());
-        if (Date.now() - lastRefresh.current >= PAGE_REFRESH_MS) {
-          lastRefresh.current = Date.now();
-          router.refresh();
-        }
-      }
-    };
-    preferenceChanged();
-    refresh();
-    preference.addEventListener("change", preferenceChanged);
-    document.addEventListener("visibilitychange", refresh);
-    const interval = window.setInterval(refresh, PAGE_REFRESH_MS);
-    return () => {
-      preference.removeEventListener("change", preferenceChanged);
-      document.removeEventListener("visibilitychange", refresh);
-      window.clearInterval(interval);
-    };
-  }, [router]);
 
   if (!data) {
     return (
@@ -383,6 +383,7 @@ export default function FactoryFloor({
   const shipped = data.changes.filter(
     (c) => c.station === "Live" && c.live_at && pacificDay(c.live_at) === today,
   );
+  const lastRead = shownReadAt ?? data.generated_at;
   const canRankDeliveries = !behind && pacificDay(data.generated_at) === today && data.coverage.length === 0;
   const dayLeader = canRankDeliveries ? builderOfDay(shipped) : null;
   const dayLeaders = dayLeader ? new Intl.ListFormat("en-US").format(
@@ -433,6 +434,12 @@ export default function FactoryFloor({
   const stops = behind ? [] : shownStops(data);
   const holds = stops.filter((stop) => stop.kind === "hold");
   const waits = stops.filter((stop) => stop.kind !== "hold");
+  const explained = new Set(stops.map((stop) => `${stop.line}/${stop.station}`));
+  const otherAlerts = [...new Set(verdict.bays
+    .filter((alert) => alert.level === "amber" && alert.text !== verdict.text &&
+      (alert.crowded || !explained.has(`${alert.line}/${alert.station}`)))
+    .map((alert) => alert.text))];
+  const floorAlertCount = waits.length + otherAlerts.length;
   const serverHold = holds.find((stop) => stop.line === "Server");
   const testFlightPost = data.signals.testflight_post;
   const notes =
@@ -565,15 +572,16 @@ export default function FactoryFloor({
           <span className={styles.statusDot} aria-hidden="true" />
           <div>
             <strong>
-              {behind ? "Not updating" : readAt ? `Read at ${time(readAt)} PT` : "Read from GitHub"}
+              {behind ? "Not updating" : shownReadAt ? `Read at ${time(shownReadAt)} PT` : "Read from GitHub"}
             </strong>
-            <span title="Published snapshot">
+            <span>
+              {behind && "Published "}
               {new Intl.DateTimeFormat("en-US", {
                 timeZone: "America/Los_Angeles",
                 month: "short",
                 day: "numeric",
               }).format(new Date(data.generated_at))}
-              {(behind || !readAt || time(readAt) !== time(data.generated_at)) &&
+              {(behind || !shownReadAt || time(shownReadAt) !== time(data.generated_at)) &&
                 ` at ${time(data.generated_at)} PT`}
             </span>
           </div>
@@ -637,8 +645,8 @@ export default function FactoryFloor({
         <div className={styles.readerWarning} role="status">
           <Pause size={20} aria-hidden="true" />
           <p>
-            Last read {time(data.generated_at)} PT,{" "}
-            {duration((Date.parse(now) - Date.parse(data.generated_at)) / 1000)}{" "}
+            Last read {time(lastRead)} PT,{" "}
+            {duration((Date.parse(now) - Date.parse(lastRead)) / 1000)}{" "}
             ago. Updates have stopped.
           </p>
         </div>
@@ -682,14 +690,15 @@ export default function FactoryFloor({
             {holds.slice(1).map((stop) => notice(stop, now))}
           </div>
         )}
-        {waits.length > 0 && (
+        {floorAlertCount > 0 && (
           <details className={styles.waitNotices}>
             <summary className={styles.summary}>
               <ChevronRight size={13} aria-hidden="true" />
-              {waits.length} floor {waits.length === 1 ? "alert" : "alerts"}
+              {floorAlertCount} floor {floorAlertCount === 1 ? "alert" : "alerts"}
             </summary>
             <div className={styles.stopNotices}>
               {waits.map((stop) => notice(stop, now))}
+              {otherAlerts.map((alert) => <p key={alert} data-level="amber">{alert}</p>)}
             </div>
           </details>
         )}
@@ -795,17 +804,6 @@ export default function FactoryFloor({
                               ),
                             ]
                           : [];
-                      const lastPost =
-                        station === "Live"
-                          ? changes.reduce<string | null>(
-                              (at, c) =>
-                                c.live_posted_at &&
-                                (!at || c.live_posted_at > at)
-                                  ? c.live_posted_at
-                                  : at,
-                              null,
-                            )
-                          : null;
                       const backup = bayAlerts.some((alert) => alert.crowded);
                       const jammed = activeJams.some(
                         (j) =>
@@ -862,10 +860,7 @@ export default function FactoryFloor({
                             {workerId && !dockBuilders.length && (
                               <span className={styles.bayWorkerName}>{names[workerId]}</span>
                             )}
-                            <span
-                              className={styles.baySignals}
-                              title={bayAlert?.text}
-                            >
+                            <span className={styles.baySignals}>
                               <span
                                 className={styles.lamp}
                                 data-state={
@@ -924,9 +919,7 @@ export default function FactoryFloor({
                               )}
                             </div>
                             {station === "Live" && last && (
-                              <span title={lastPost ? `Live posted at ${time(lastPost)} PT` : undefined}>
-                                Last {time(last)} PT
-                              </span>
+                              <span>Last {time(last)} PT</span>
                             )}
                             {check?.check_progress && (
                               <span>#{check.number} · {check.check_progress.done} of {check.check_progress.total} checks</span>
@@ -1030,6 +1023,7 @@ export default function FactoryFloor({
                 {selected.testflight_build && (
                   <p>TestFlight build {selected.testflight_build} was posted.</p>
                 )}
+                {selected.live_posted_at && <p>Live posted at {time(selected.live_posted_at)} PT.</p>}
                 {selected.check_progress && (
                   <p>{selected.check_progress.done} of {selected.check_progress.total} checks finished.</p>
                 )}
