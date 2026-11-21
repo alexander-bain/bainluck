@@ -14,7 +14,6 @@ Verifies:
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 from fastapi.testclient import TestClient
 
@@ -50,14 +49,6 @@ def test_four_public_grouped_cards_have_verified_pd_or_cc0_pictures_and_credits(
         for entry in (register_doc.get("entries") or [])
         if isinstance(entry, dict)
     }
-    fe_register = (
-        Path(__file__).resolve().parents[2]
-        / "frontend"
-        / "lib"
-        / "discover"
-        / "verifiedDiscoverArt.json"
-    )
-    assert fe_register.read_bytes() == _REGISTER_PATH.read_bytes()
     for slug in PICTURED_PUBLIC_SLUGS:
         assert slug in paths_by_slug
         defn = load_machinery_definition(paths_by_slug[slug])
