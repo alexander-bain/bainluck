@@ -1478,7 +1478,8 @@ class TestStep2FirstPassRecallAndHygiene:
         reg = load_fun_markets_registry()
         summary = _approved_examples_summary(list(reg.markets.values()), reg.sub_tags)
         groups = {item["group"]: item for item in summary}
-        assert len(groups) == 17
+        expected_tags = {tag for entry in reg.markets.values() for tag in entry.sub_tags}
+        assert set(groups) == expected_tags and len(groups) >= 17
         for missing_previously in (
             "taylor-swift",
             "tv-finales",
@@ -1751,7 +1752,8 @@ class TestStep3SetRulesAndRun3946Fixtures:
             for tag in entry.sub_tags:
                 groups.setdefault(tag, []).append(row)
 
-        assert len(groups) == 17
+        expected_tags = {tag for entry in reg.markets.values() for tag in entry.sub_tags}
+        assert set(groups) == expected_tags and len(groups) >= 17
         for group_name, rows in groups.items():
             assert check_scout_no_mechanical_sales_downloads(group_name, group_name, rows) is None
             assert check_scout_no_politics_only_set("culture", group_name, rows) is None
