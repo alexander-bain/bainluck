@@ -188,6 +188,11 @@ for _receipt_job in (
         "REUSE_BASE",
     }
 
+# #13283: dry-run post-deploy smoke step passes workflow inputs as env data.
+STEP_ENV_KEYS[
+    ("post-deploy-smoke-dry-run", "Post-deploy smoke rollback check (dry-run only)")
+] = {"AUTO_ROLLBACK_ENABLED", "EXPECTED_SHA", "PREV_LIVE_SHA"}
+
 
 def _allowed_environment(env, allowed, scope):
     env = {} if env is None else env
