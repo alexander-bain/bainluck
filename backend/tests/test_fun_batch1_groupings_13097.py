@@ -61,17 +61,17 @@ def _sample_markets() -> list[dict]:
 async def test_batch1_three_fun_groupings_build_cleanly_with_full_parity_and_twin_dedup() -> None:
     db = {"events": [], "markets": _sample_markets(), "paired_sets": {}, "market_histories": {}}
 
-    # 1. White Christmas
+    # 1. White Christmas (promoted to public under Ruling 316: A after Fable's FLIP line)
     wc_def = load_machinery_definition("data/groupings/candidates/machinery-white-christmas.json")
-    assert wc_def["stage"] == "preview"
+    assert wc_def["stage"] == "public"
     assert wc_def["look"] == "map"
     assert "weather" in (_category_llm_pool_for_definition(wc_def) or ())
     wc_prod = build_container_machinery_producer(wc_def)
-    assert wc_prod.stage == "preview" and wc_prod.look == "map"
+    assert wc_prod.stage == "public" and wc_prod.look == "map"
     wc_res = await produce_container_machinery(db, wc_def, now=NOW)
     assert wc_res.machinery_card["form_id"] == "benchmark_strip"
     assert wc_res.sections[0]["visual_block"]["item_noun"] == "cities"
-    assert wc_res.machinery_card["stage"] == "preview"
+    assert wc_res.machinery_card["stage"] == "public"
     assert wc_res.machinery_card["look"] == "map"
     assert [r["name"] for r in wc_res.machinery_card["rows"]] == ["Pittsburgh", "Milwaukee", "Detroit"]
     assert [r["rendered_percent"] for r in wc_res.machinery_card["rows"]] == [44, 41, 38]
@@ -103,17 +103,17 @@ async def test_batch1_three_fun_groupings_build_cleanly_with_full_parity_and_twi
     c_p, p_p = _compute_member_number_parity(jb_fi, jb_cp)
     assert c_p["passes"] is True and p_p["passes"] is True
 
-    # 3. Who Gets Engaged? (Ruling 273: B; deadline in title & subtitle per Fable Nov 20 card look)
+    # 3. Who Gets Engaged? (promoted to public under Ruling 316: A after Fable's FLIP line)
     eg_def = load_machinery_definition("data/groupings/candidates/machinery-who-gets-engaged.json")
-    assert eg_def["stage"] == "preview"
+    assert eg_def["stage"] == "public"
     assert eg_def["look"] == "faces"
     assert eg_def["rule"]["sections"][0]["note"] == "Chance each couple is engaged by Dec 31, 2026."
     assert "politics" in (_category_llm_pool_for_definition(eg_def) or ())
     eg_prod = build_container_machinery_producer(eg_def)
-    assert eg_prod.stage == "preview" and eg_prod.look == "faces"
+    assert eg_prod.stage == "public" and eg_prod.look == "faces"
     eg_res = await produce_container_machinery(db, eg_def, now=NOW)
     assert eg_res.machinery_card["form_id"] == "benchmark_strip"
-    assert eg_res.machinery_card["stage"] == "preview"
+    assert eg_res.machinery_card["stage"] == "public"
     assert eg_res.machinery_card["look"] == "faces"
     shown_ids = [m["id"] for m in eg_res.members]
     assert 57774265 not in shown_ids, "Roblox hours engaged must be excluded"
@@ -174,7 +174,10 @@ async def test_preview_stage_hidden_from_public_machinery_feed_and_search_but_se
     k_prev = feed_response_cache_key(limit=20, offset=0, machinery="preview")
     assert len({k_none, k_pub, k_prev}) == 3
 
-    wc_def = load_machinery_definition("data/groupings/candidates/machinery-white-christmas.json")
+    wc_def = {
+        **load_machinery_definition("data/groupings/candidates/machinery-white-christmas.json"),
+        "stage": "preview",
+    }
     wc_prod = build_container_machinery_producer(wc_def, enabled=lambda: True)
     db = {"events": [], "markets": _sample_markets(), "paired_sets": {}, "market_histories": {}}
     base = [
@@ -305,7 +308,7 @@ async def test_more_sets_excludes_preview_stage_under_public_set(monkeypatch: An
         reset_roundup_cache_for_tests()
         _seed_producer("machinery-oscars-best-picture", "Oscars Best Picture", "entertainment", "public")
         _seed_producer("machinery-fed-and-macro", "Fed & Macro", "economics", "public")
-        _seed_producer("machinery-white-christmas", "White Christmas", "weather", "preview")
+        _seed_producer("machinery-long-shots", "Long Shots People Talk About", "entertainment", "preview")
 
         cards = await select_more_sets(
             fake_db,
