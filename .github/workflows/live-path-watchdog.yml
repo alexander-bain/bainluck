@@ -336,6 +336,20 @@ jobs:
           echo "::error::#12534/#12555 identity gate did not run all thirteen cases"
           exit 1
         }
+    - name: "#13338 onboarding club search and save (real Postgres)"
+      id: db_13338_onboarding_club_search
+      if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}
+      run: |
+        python -m pytest tests/integration/test_onboarding_team_search_13338_pg.py \
+          -v -rs > /tmp/onboarding13338.txt 2>&1 || {
+          cat /tmp/onboarding13338.txt
+          exit 1
+        }
+        cat /tmp/onboarding13338.txt
+        grep -qE "[^0-9]3 passed([,[:space:]]|$)" /tmp/onboarding13338.txt || {
+          echo "::error::#13338 onboarding gate did not run all three cases"
+          exit 1
+        }
     - name: "#12519 team-merge dedup keeps distinct names (real Postgres)"
       id: db_12519_team_merge_dedup
       if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}
