@@ -245,13 +245,18 @@ async def _run_matcher_group(Session, event_id: int, *, at_orient=None, after_co
     return spoke, stats
 
 
-async def _run_poll(Session, raw_markets):
+async def _run_poll(Session, raw_markets, *, on_reply=None):
     """The REAL two-minute poll (PR #8929/#8962 tree), venue stubbed."""
     from app.services.kalshi_api import KalshiAPIService
     from app.tasks import prediction_market_matching as pmm
 
     service = KalshiAPIService(api_key="test-key")
-    service.get_markets = AsyncMock(return_value=(raw_markets, None))
+    def reply(**_kwargs):
+        if on_reply is not None:
+            on_reply()
+        return raw_markets, None
+
+    service.get_markets = AsyncMock(side_effect=reply)
     service.close = AsyncMock()
 
     async with Session() as poll_session:
@@ -340,6 +345,94 @@ async def _stored(Session, event_id: int) -> dict:
                 {"id": event_id},
             )
         ).scalar() or {}
+
+
+async def test_two_same_price_kalshi_polls_advance_the_served_source_time(pg, monkeypatch):
+    """#12581: a committed second read dates the unchanged headline on both sides."""
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+
+    from app.routes import events as event_routes
+    from app.services.database import get_db
+    from app.tasks import prediction_market_matching as pmm, redis_state
+    from app.utils.aggregation import source_price_read_time
+
+    Session, event_id = pg
+    path = f"/api/events/{event_id}"
+    book = _post_goal_book()
+    poll_clock = datetime.now(timezone.utc)
+    receipts = []
+
+    class PollClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return poll_clock.astimezone(tz) if tz else poll_clock.replace(tzinfo=None)
+
+    def record_reply():
+        nonlocal poll_clock
+        poll_clock = datetime.now(timezone.utc)
+        receipts.append(poll_clock)
+
+    async def poll_and_reload():
+        nonlocal poll_clock
+        poll_clock = started_at = datetime.now(timezone.utc)
+        before = len(receipts)
+        stats = await _run_poll(Session, book, on_reply=record_reply)
+        assert stats["terminal"] == "complete", stats
+        assert stats["kalshi_fetched"] == 1, stats
+        assert stats["kalshi_outcomes_updated"] == 2, stats
+        assert len(receipts) == before + 1
+        observed_at = receipts[-1]
+        assert started_at < observed_at
+        stored = await _stored(Session, event_id)
+        assert stored["kalshi"]["value"] == POST_GOAL
+        assert source_price_read_time(stored, "kalshi", POST_GOAL) == observed_at
+        return observed_at
+
+    def assert_marks(body, at):
+        observed_at = at.isoformat().replace("+00:00", "Z")
+        for axis, probability in (("source_mark", POST_GOAL), ("away_source_mark", 0.965)):
+            assert body[axis]["state"] == "single"
+            assert body[axis]["sources"] == [{
+                "key": "kalshi", "name": "Kalshi", "probability": probability,
+                "observed_at": observed_at,
+            }]
+
+    async def get_detail_session():
+        async with Session() as session:
+            yield session
+
+    monkeypatch.setattr(pmm, "datetime", PollClock)
+    monkeypatch.setattr(redis_state, "get_redis_client", lambda *a, **kw: None)
+    monkeypatch.setattr(event_routes, "_event_detail_cache", {})
+    app = FastAPI()
+    app.include_router(event_routes.router, prefix="/api/events")
+    app.dependency_overrides[get_db] = get_detail_session
+
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        first_at = await poll_and_reload()
+        first = (await client.get(path)).raise_for_status().json()
+        assert first["state_read_fresh"] is True
+        assert first_at < datetime.fromisoformat(first["state_read_not_before"])
+        assert_marks(first, first_at)
+
+        second_at = await poll_and_reload()
+        assert first_at < second_at
+        cached = (await client.get(path)).raise_for_status().json()
+        assert cached["state_read_fresh"] is False
+        assert_marks(cached, first_at)
+
+        fresh = (await client.get(path, params={"fresh": "true"})).raise_for_status().json()
+        assert fresh["state_read_fresh"] is True
+        assert second_at < datetime.fromisoformat(fresh["state_read_not_before"])
+        assert_marks(fresh, second_at)
+
+        cached_after_refresh = (await client.get(path)).raise_for_status().json()
+        assert cached_after_refresh["state_read_fresh"] is False
+        assert_marks(cached_after_refresh, second_at)
+        for body in (first, cached, fresh, cached_after_refresh):
+            assert body["hero_probability"] == pytest.approx(POST_GOAL)
+            assert body["hero_probability_away"] == pytest.approx(0.965)
 
 
 def _clock(entry: dict) -> datetime:
