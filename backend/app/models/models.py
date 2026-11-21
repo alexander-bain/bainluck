@@ -3786,3 +3786,47 @@ class OpenFuturesOutcome(Base):
     # declared here, every test rig that runs `create_all` without the pg_trgm
     # extension would fail on its operator class.
     __table_args__ = (Index("ix_open_futures_outcomes_market_id", "market_id"),)
+
+
+class RetiredTeamRedirect(Base):
+    """Maps a folded/retired team row id and slug to its surviving canonical team (#13229).
+
+    Written atomically inside a duplicate-team fold transaction before the donor
+    row is deleted from ``teams``. Read by ``GET /api/teams/{identifier}``,
+    ``POST/DELETE /api/me/favorites``, and all three ``Team(...)`` creation sites
+    so bookmarked URLs, cached 1.0.8 Follow taps, and incoming short spellings
+    resolve transparently to the surviving team instead of 404ing or recreating
+    the retired row.
+    """
+
+    __tablename__ = "retired_team_redirects"
+
+    retired_team_id: Mapped[int] = mapped_column(
+        Integer, primary_key=True, autoincrement=False
+    )
+    retired_slug: Mapped[Optional[str]] = mapped_column(
+        String(200), unique=True, index=True
+    )
+    retired_name: Mapped[Optional[str]] = mapped_column(String(200))
+    sport_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("sports.id", ondelete="SET NULL"), index=True
+    )
+    canonical_team_id: Mapped[int] = mapped_column(
+        ForeignKey("teams.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    retired_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    reason: Mapped[Optional[str]] = mapped_column(String(200))
+
+    __table_args__ = (
+        CheckConstraint(
+            "retired_team_id <> canonical_team_id",
+            name="ck_retired_team_redirects_not_self",
+        ),
+        Index(
+            "ix_retired_team_redirects_sport_name",
+            "sport_id",
+            "retired_name",
+        ),
+    )
