@@ -1062,6 +1062,13 @@ async def _sync_espn_live_events():
             dated_espn = ESPNAPIService()
 
             async def _fetch_scheduled_dated(sport_key: str, board_day: str):
+                from app.services.espn_api import ESPN_FULL_SLATE_GROUPS
+
+                groups = ESPN_FULL_SLATE_GROUPS.get(sport_key)
+                if groups:
+                    return await dated_espn.get_scoreboard(
+                        sport_key, date=board_day, groups=groups
+                    )
                 return await dated_espn.get_scoreboard(sport_key, date=board_day)
 
             scheduled_dated_boards: dict = {}
@@ -8412,5 +8419,141 @@ async def _sync_tennis_from_espn(limit: int = 1000, dates: str | None = None) ->
         stats["score_corrections"], sum(stats["score_refused"].values()),
         stats["line_writes"], stats["line_stamp_refreshes"],
         sum(stats["line_refused"].values()),
+    )
+    return {"status": "ok", **stats}
+
+
+# #13241 — college basketball leagues whose non-featured D-I teams play dozens
+# of games off ESPN's featured scoreboard slice. ESPN's v2 standings endpoint
+# carries current-season records for every D-I school in a single request per
+# league (~365 men's + ~363 women's) and already refuses preseason tables inside
+# `ESPNAPIService.get_standings_reading`.
+ESPN_STANDINGS_RECORD_SPORTS: tuple[str, ...] = (
+    "basketball_ncaab",
+    "basketball_wncaab",
+)
+_STANDINGS_RECORD_RE = re.compile(r"^\d+-\d+(?:-\d+)?$")
+
+
+async def _sync_espn_standings_records(
+    sport_keys: tuple[str, ...] = ESPN_STANDINGS_RECORD_SPORTS,
+) -> dict:
+    """Refresh ``Team.current_record`` from ESPN standings for existing teams (#13241).
+
+    Strict invariants:
+    - Fetches all ESPN standings bodies BEFORE opening a DB session (#9049).
+    - NEVER creates a ``Team`` row; ONLY updates ``current_record`` on existing
+      rows matched by ``(Team.sport_id, Team.espn_id)``.
+    - Leaves rows untouched when ESPN is dark (``None``) or reports a preseason
+      / empty standings table (``records == {}``).
+    """
+    from app.models.models import Sport, Team
+    from app.services.espn_api import ESPNAPIService
+
+    stats: dict = {
+        "sports_checked": 0,
+        "sports_dark": [],
+        "sports_empty": [],
+        "teams_matched": 0,
+        "teams_updated": 0,
+        "teams_unchanged": 0,
+        "by_sport": {},
+        "errors": [],
+    }
+
+    fetched_by_sport: dict[str, dict[str, str]] = {}
+    espn = ESPNAPIService()
+    try:
+        for sport_key in sport_keys:
+            stats["sports_checked"] += 1
+            try:
+                reading = await espn.get_standings_reading(sport_key)
+            except Exception as exc:
+                logger.warning(
+                    "ESPN standings record sync failed for %s: %s", sport_key, exc
+                )
+                stats["errors"].append(f"{sport_key}: {exc}")
+                continue
+            if reading is None:
+                stats["sports_dark"].append(sport_key)
+                continue
+            raw_records = reading.get("records") or {}
+            clean_records = {
+                str(espn_id).strip(): str(rec).strip()
+                for espn_id, rec in raw_records.items()
+                if str(espn_id).strip()
+                and isinstance(rec, str)
+                and _STANDINGS_RECORD_RE.match(rec.strip())
+            }
+            if not clean_records:
+                stats["sports_empty"].append(sport_key)
+                continue
+            fetched_by_sport[sport_key] = clean_records
+    finally:
+        await espn.close()
+
+    if not fetched_by_sport:
+        return {"status": "ok", **stats}
+
+    for sport_key, clean_records in fetched_by_sport.items():
+        sport_stats = {
+            "records_in_feed": len(clean_records),
+            "teams_matched": 0,
+            "teams_updated": 0,
+            "teams_unchanged": 0,
+        }
+        try:
+            async with get_task_session() as session:
+                sport_row = (
+                    await session.execute(
+                        select(Sport).where(Sport.key == sport_key)
+                    )
+                ).scalar_one_or_none()
+                if sport_row is None:
+                    stats["by_sport"][sport_key] = sport_stats
+                    continue
+
+                team_rows = (
+                    await session.execute(
+                        select(Team).where(
+                            Team.sport_id == sport_row.id,
+                            Team.espn_id.in_(list(clean_records.keys())),
+                        )
+                    )
+                ).scalars().all()
+
+                for team in team_rows:
+                    new_record = clean_records.get(str(team.espn_id))
+                    if not new_record:
+                        continue
+                    sport_stats["teams_matched"] += 1
+                    if team.current_record != new_record:
+                        team.current_record = new_record
+                        sport_stats["teams_updated"] += 1
+                    else:
+                        sport_stats["teams_unchanged"] += 1
+
+                if sport_stats["teams_updated"]:
+                    await session.commit()
+        except Exception as exc:
+            logger.warning(
+                "ESPN standings record DB update failed for %s: %s", sport_key, exc
+            )
+            stats["errors"].append(f"{sport_key}_db: {exc}")
+            continue
+
+        stats["teams_matched"] += sport_stats["teams_matched"]
+        stats["teams_updated"] += sport_stats["teams_updated"]
+        stats["teams_unchanged"] += sport_stats["teams_unchanged"]
+        stats["by_sport"][sport_key] = sport_stats
+
+    logger.info(
+        "ESPN standings record sync: checked=%d matched=%d updated=%d unchanged=%d dark=%d empty=%d",
+        stats["sports_checked"],
+        stats["teams_matched"],
+        stats["teams_updated"],
+        stats["teams_unchanged"],
+        len(stats["sports_dark"]),
+        len(stats["sports_empty"]),
     )
     return {"status": "ok", **stats}
