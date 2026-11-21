@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import time
+import unicodedata
 from collections import Counter
 from types import SimpleNamespace
 from contextlib import asynccontextmanager, suppress
@@ -36970,13 +36971,21 @@ class TeamNameLookup(dict):
     sport in hand cannot be made worse off by a map it never reads.
     """
 
-    __slots__ = ("by_league", "by_id", "league_ceilings")
+    __slots__ = ("by_league", "by_id", "league_ceilings", "mens_college_basketball")
 
-    def __init__(self, mapping=None, by_league=None, by_id=None, league_ceilings=None):
+    def __init__(
+        self,
+        mapping=None,
+        by_league=None,
+        by_id=None,
+        league_ceilings=None,
+        mens_college_basketball=None,
+    ):
         super().__init__(mapping or {})
         self.by_league = by_league or {}
         self.by_id = by_id or {}
         self.league_ceilings = league_ceilings or {}
+        self.mens_college_basketball = mens_college_basketball or {}
 
     def subset(self, names) -> "TeamNameLookup":
         """The rows for `names`, keeping the per-league map with them.
@@ -36992,6 +37001,7 @@ class TeamNameLookup(dict):
             {k: v for k, v in self.by_league.items() if k in names},
             self.by_id,
             self.league_ceilings,
+            self.mens_college_basketball,
         )
 
     def __eq__(self, other):
@@ -37012,6 +37022,8 @@ class TeamNameLookup(dict):
             self.by_league == getattr(other, "by_league", {})
             and self.by_id == getattr(other, "by_id", {})
             and self.league_ceilings == getattr(other, "league_ceilings", {})
+            and self.mens_college_basketball
+            == getattr(other, "mens_college_basketball", {})
         )
 
     def __ne__(self, other):
@@ -37062,6 +37074,88 @@ def _team_for_event_by_name(
     return row
 
 
+_WNCAAB_IDENTITY = league_identity("basketball_wncaab")
+_NCAAB_IDENTITY = league_identity("basketball_ncaab")
+
+
+def _mens_college_name_keys(name: str | None) -> tuple[str, ...]:
+    """Normalized lookup keys for men's ↔ women's college basketball borrow (298: A, #13144).
+
+    Strips accents and punctuation, expands non-initial ``st`` to ``state``
+    (``Grambling St Tigers`` ↔ ``Grambling State Tigers``) and initial ``st``
+    to ``saint`` (``St. John's`` ↔ ``Saint John's``) without touching the
+    opposite direction.
+    """
+    if not name or not isinstance(name, str):
+        return ()
+    ascii_text = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
+    cleaned = ascii_text.lower().replace("&", " and ")
+    cleaned = re.sub(r"['’`]", "", cleaned)
+    cleaned = re.sub(r"[^a-z0-9]+", " ", cleaned).strip()
+    if not cleaned:
+        return ()
+    tokens = cleaned.split()
+    canonical_tokens = []
+    for idx, tok in enumerate(tokens):
+        if tok == "st":
+            canonical_tokens.append("saint" if idx == 0 else "state")
+        else:
+            canonical_tokens.append(tok)
+    canonical = " ".join(canonical_tokens)
+    if canonical == cleaned:
+        return (cleaned,)
+    return (cleaned, canonical)
+
+
+def _lookup_mens_college_basketball(team_lookup, name: str | None):
+    """Find the school's crested men's basketball row for a WNCAAB team (298: A)."""
+    mens_map = getattr(team_lookup, "mens_college_basketball", None)
+    if not mens_map or not name:
+        return None
+    keys = _mens_college_name_keys(name)
+    for k in keys:
+        hit = mens_map.get(k)
+        if hit is not None:
+            return hit
+    # Secondary pass for women's "Lady <Mascot>" names (e.g. "LSU Lady Tigers" -> "LSU Tigers").
+    for k in keys:
+        tokens = k.split()
+        if "lady" in tokens:
+            stripped = [t for t in tokens if t != "lady"]
+            if len(stripped) >= 2:
+                hit = mens_map.get(" ".join(stripped))
+                if hit is not None:
+                    return hit
+    return None
+
+
+def _borrow_mens_basketball_identity(womens_row, mens_row) -> TeamSnapshot:
+    """Borrow crest, colours and short name from ``mens_row`` onto a crestless
+    ``basketball_wncaab`` row, never taking the men's record or standings (298: A).
+
+    Returns a NEW ``TeamSnapshot`` without mutating either input.
+    """
+    branding = {
+        "logo_url_small": getattr(mens_row, "logo_url_small", None),
+        "logo_url_large": getattr(mens_row, "logo_url_large", None)
+        or getattr(mens_row, "logo_url_small", None),
+        "primary_color": getattr(mens_row, "primary_color", None)
+        or getattr(womens_row, "primary_color", None),
+        "secondary_color": getattr(mens_row, "secondary_color", None)
+        or getattr(womens_row, "secondary_color", None),
+        "abbreviation": getattr(mens_row, "abbreviation", None)
+        or getattr(womens_row, "abbreviation", None),
+    }
+    if isinstance(womens_row, TeamSnapshot):
+        return dataclass_replace(womens_row, **branding)
+    kept = {
+        f.name: getattr(womens_row, f.name, f.default)
+        for f in dataclass_fields(TeamSnapshot)
+        if f.name not in branding
+    }
+    return TeamSnapshot(**kept, **branding)
+
+
 def _team_for_event(
     team_lookup,
     name: str | None,
@@ -37080,6 +37174,11 @@ def _team_for_event(
     (via `by_id` pre-resolved against `by_league` and a name-path check on the
     linked row's own name).
 
+    Under ruling 298: A (#13144), when a `basketball_wncaab` game's own team
+    row has no crest (or is absent), it borrows the crest, colours and short
+    name from the same school's `basketball_ncaab` row — never the men's
+    record or standings.
+
     Accepts a plain `dict` (no `by_league` / `by_id`) and degrades to `.get` —
     but note that every production caller passes a `TeamNameLookup`, so a test
     that exercises only the dict path is testing the branch nothing takes.
@@ -37090,30 +37189,53 @@ def _team_for_event(
     # `if not team_lookup` discards it.
     if team_lookup is None:
         return None
-    by_name = _team_for_event_by_name(team_lookup, name, sport_key)
-    if by_name is not None or team_id is None:
-        return by_name
-    by_id = getattr(team_lookup, "by_id", None) or {}
-    row_by_id = by_id.get(team_id)
-    if row_by_id is None:
-        return None
     identity = league_identity(sport_key)
-    if (
-        identity is not None
-        and league_identity(getattr(row_by_id, "sport_key", None)) != identity
-    ):
-        return None
-    # Route the linked row's own name through the same name path so two-row
-    # preference (#7132) still applies even on a hand-built TeamNameLookup.
-    linked_name = getattr(row_by_id, "name", None)
-    if linked_name:
-        preferred = _team_for_event_by_name(team_lookup, linked_name, sport_key)
-        if preferred is not None and (
+    resolved = _team_for_event_by_name(team_lookup, name, sport_key)
+    if resolved is None and team_id is not None:
+        by_id = getattr(team_lookup, "by_id", None) or {}
+        row_by_id = by_id.get(team_id)
+        if row_by_id is not None and (
             identity is None
-            or league_identity(getattr(preferred, "sport_key", None)) == identity
+            or league_identity(getattr(row_by_id, "sport_key", None)) == identity
         ):
-            return preferred
-    return row_by_id
+            # Route the linked row's own name through the same name path so two-row
+            # preference (#7132) still applies even on a hand-built TeamNameLookup.
+            linked_name = getattr(row_by_id, "name", None)
+            preferred = (
+                _team_for_event_by_name(team_lookup, linked_name, sport_key)
+                if linked_name
+                else None
+            )
+            if preferred is not None and (
+                identity is None
+                or league_identity(getattr(preferred, "sport_key", None)) == identity
+            ):
+                resolved = preferred
+            else:
+                resolved = row_by_id
+
+    # Ruling 298: A (#13144) — a women's college basketball game whose own
+    # row has no real crest takes crest, colours and short name from the same
+    # school's men's basketball row, never its record or standings.
+    if identity == _WNCAAB_IDENTITY:
+        own_league = (
+            resolved is not None
+            and league_identity(getattr(resolved, "sport_key", None))
+            == _WNCAAB_IDENTITY
+        )
+        has_own_crest = own_league and _crest_for_corroboration(resolved) is not None
+        if not has_own_crest:
+            mens_row = _lookup_mens_college_basketball(team_lookup, name)
+            if mens_row is None and own_league:
+                mens_row = _lookup_mens_college_basketball(
+                    team_lookup, getattr(resolved, "name", None)
+                )
+            if mens_row is not None:
+                if own_league:
+                    return _borrow_mens_basketball_identity(resolved, mens_row)
+                return _crest_only(mens_row)
+
+    return resolved
 
 
 #: The `TeamSnapshot` fields that describe one LEAGUE's row rather than the
@@ -37473,7 +37595,39 @@ def _dedupe_team_name_lookup(teams) -> dict:
         preferred = (by_league.get(team.name) or {}).get(identity)
         by_id[tid] = preferred if preferred is not None else team
 
-    return TeamNameLookup(lookup, by_league, by_id, league_ceilings)
+    # Ruling 298: A (#13144): index crested men's college basketball rows by
+    # normalized name/alias so a women's college game with no crest of its own
+    # borrows the school's crest, colours and short name (never record/standings).
+    mens_cbb: dict = {}
+    mens_cbb_ambiguous: set = set()
+    _mens_cbb_ceiling = league_ceilings.get(_NCAAB_IDENTITY)
+    for team in teams:
+        if league_identity(getattr(team, "sport_key", None)) != _NCAAB_IDENTITY:
+            continue
+        if _crest_for_corroboration(team) is None:
+            continue
+        labels = [team.name] + list(team.alternate_names or [])
+        seen_keys: set[str] = set()
+        for label in labels:
+            for key in _mens_college_name_keys(label):
+                if key in seen_keys or key in mens_cbb_ambiguous:
+                    continue
+                seen_keys.add(key)
+                incumbent = mens_cbb.get(key)
+                if incumbent is None:
+                    mens_cbb[key] = team
+                elif _crest_is_shared(incumbent, team):
+                    if _same_league_row_preference(
+                        team, league_ceiling=_mens_cbb_ceiling
+                    ) > _same_league_row_preference(
+                        incumbent, league_ceiling=_mens_cbb_ceiling
+                    ):
+                        mens_cbb[key] = team
+                else:
+                    mens_cbb_ambiguous.add(key)
+                    mens_cbb.pop(key, None)
+
+    return TeamNameLookup(lookup, by_league, by_id, league_ceilings, mens_cbb)
 
 
 async def _build_team_lookup(db: AsyncSession, team_names: list[str]) -> dict:
