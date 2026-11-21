@@ -9,16 +9,26 @@ import asyncio
 import hashlib
 import logging
 import time
+from typing import Optional
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services import container_discovery
+from app.utils import request_cache as _rc
 from app.utils.container_corrections import PUBLICATION_COLUMN, REVISION_COLUMN
 
 logger = logging.getLogger(__name__)
 COLLECTION_READ_BUDGET_SECONDS = 0.25
+FINGERPRINT_READ_BUDGET_SECONDS = 0.5
+FINGERPRINT_FAILURE_BACKOFF_SECONDS = 5.0
+FINGERPRINT_REDIS_LKG_KEY = "feed:collections_fingerprint:lkg:v1"
+FINGERPRINT_REDIS_LKG_TTL_SECONDS = 3600
+FINGERPRINT_UNAVAILABLE = "unverified"
+_FINGERPRINT_SINGLEFLIGHT_KEY = "feed_collections:fingerprint"
+
 _fingerprint_cache: tuple[float, str] | None = None
+_fingerprint_retry_after: float = 0.0
 
 #: #10003: what a cached collection-bearing page is keyed on. One row per
 #: discoverable published root hub, as ``id:membership_revision``. The revision
@@ -56,52 +66,178 @@ def feed_collections_enabled(
     )
 
 
-async def feed_collections_cache_fingerprint(db, *, max_age_seconds=0.0):
+def _reset_fingerprint_cache_for_tests() -> None:
+    """Clear the process-local fingerprint memo and failure backoff."""
+    global _fingerprint_cache, _fingerprint_retry_after
+    _fingerprint_cache = None
+    _fingerprint_retry_after = 0.0
+
+
+def _is_postgres_async_session(db) -> bool:
+    if not isinstance(db, AsyncSession):
+        return False
+    try:
+        bind = db.get_bind()
+    except Exception:
+        bind = getattr(db, "bind", None)
+    return getattr(getattr(bind, "dialect", None), "name", None) == "postgresql"
+
+
+async def _read_redis_lkg_fingerprint() -> Optional[str]:
+    """Read the durable last-known-good collection fingerprint from Redis."""
+    return await _rc.read_redis_lkg_text(FINGERPRINT_REDIS_LKG_KEY)
+
+
+def _remember_redis_lkg_fingerprint(fingerprint: str) -> None:
+    """Persist the healthy fingerprint to Redis LKG without blocking callers."""
+    if not fingerprint:
+        return
+    _rc.write_redis_lkg_text(
+        FINGERPRINT_REDIS_LKG_KEY, FINGERPRINT_REDIS_LKG_TTL_SECONDS, fingerprint
+    )
+
+
+async def _fallback_lkg_fingerprint(max_age_seconds: float) -> Optional[str]:
+    """Return process LKG, else Redis LKG; never raise."""
+    global _fingerprint_cache
+    if _fingerprint_cache is not None:
+        return _fingerprint_cache[1]
+    redis_fp = await _read_redis_lkg_fingerprint()
+    if redis_fp is not None:
+        # Store aged so the next request past backoff still refreshes from DB.
+        _fingerprint_cache = (time.monotonic() - max_age_seconds, redis_fp)
+    return redis_fp
+
+
+async def feed_collections_cache_fingerprint(
+    db, *, max_age_seconds=0.0, budget_seconds: float = FINGERPRINT_READ_BUDGET_SECONDS
+):
     """The publication state a collection-bearing page may be cached under, or None.
 
-    #10003. ``add_feed_collections`` reads publication on every BUILD; this
-    lets a built page be reused only while that publication state still holds,
-    so revocation stays live without disabling the cache. One statement over
-    the few published root hubs.
+    #10003 + #13350. ``add_feed_collections`` reads publication on every BUILD;
+    this lets a built page be reused while that publication state holds, with
+    bounded query timeout, singleflight refresh, 5 s failure backoff, and
+    process/Redis last-known-good fallback so a slow or failing DB check never
+    switches Discover's cache off.
 
-    ``None`` means "could not tell" and the caller must not cache — which is
-    the pre-#10003 behaviour, so a failure here costs speed, never truth. The
-    read runs in a SAVEPOINT so a failed statement (an un-migrated database
-    has no ``membership_revision``) rolls back alone instead of aborting the
-    request's transaction or expiring its loaded rows.
+    When ``max_age_seconds == 0.0`` (default / prewarm / strict tests), no LKG
+    fallback is returned on failure, preserving ``None`` -> did not verify.
     """
-    # Discover opens reuse this public publication hash for at most five seconds.
-    # This removes three DB round trips from a warm feed request. Prices and
-    # personalized payloads keep their existing independent cache lifetimes.
-    global _fingerprint_cache
+    global _fingerprint_cache, _fingerprint_retry_after
     now = time.monotonic()
-    max_age_seconds = min(max(0.0, max_age_seconds), 5.0)
-    if (
-        max_age_seconds > 0
-        and _fingerprint_cache is not None
-        and now - _fingerprint_cache[0] < max_age_seconds
-    ):
-        return _fingerprint_cache[1]
-    try:
-        async with db.begin_nested():
-            raw = (
-                await db.execute(
-                    text(_FINGERPRINT_SQL),
-                    {"slug_pattern": container_discovery.DISCOVERABLE_SLUG_PATTERN},
-                )
-            ).scalar()
-    except Exception:
-        logger.warning(
-            "Discover collection fingerprint read failed; serving uncached",
-            exc_info=True,
-        )
-        return None
-    if not isinstance(raw, str):
-        return None
-    fingerprint = hashlib.sha256(f"v1|{raw}".encode()).hexdigest()[:16]
+    max_age_seconds = min(max(0.0, float(max_age_seconds)), 5.0)
+    timeout_s = max(0.0, float(budget_seconds))
+
     if max_age_seconds > 0:
-        _fingerprint_cache = (now, fingerprint)
-    return fingerprint
+        if _fingerprint_cache is not None and (
+            now - _fingerprint_cache[0] < max_age_seconds or now < _fingerprint_retry_after
+        ):
+            return _fingerprint_cache[1]
+        if now < _fingerprint_retry_after:
+            return await _fallback_lkg_fingerprint(max_age_seconds)
+
+    async def _query_db() -> Optional[str]:
+        if timeout_s <= 0:
+            return None
+        try:
+            if _is_postgres_async_session(db):
+                timeout_ms = max(1, int(timeout_s * 1000))
+                async def _pg_run():
+                    async with db.begin_nested():
+                        prev_res = await db.execute(
+                            text("SELECT current_setting('statement_timeout')")
+                        )
+                        prev_timeout = prev_res.scalar() if prev_res is not None else None
+                        await db.execute(
+                            text("SELECT set_config('statement_timeout', :val, true)"),
+                            {"val": f"{timeout_ms}ms"},
+                        )
+                        raw = (
+                            await db.execute(
+                                text(_FINGERPRINT_SQL),
+                                {"slug_pattern": container_discovery.DISCOVERABLE_SLUG_PATTERN},
+                            )
+                        ).scalar()
+                        await db.execute(
+                            text("SELECT set_config('statement_timeout', :val, true)"),
+                            {"val": str(prev_timeout) if prev_timeout is not None else "0"},
+                        )
+                        return raw
+
+                raw = await asyncio.wait_for(_pg_run(), timeout=timeout_s + 0.25)
+            else:
+                async def _generic_run():
+                    async with db.begin_nested():
+                        return (
+                            await db.execute(
+                                text(_FINGERPRINT_SQL),
+                                {"slug_pattern": container_discovery.DISCOVERABLE_SLUG_PATTERN},
+                            )
+                        ).scalar()
+
+                raw = await asyncio.wait_for(_generic_run(), timeout=timeout_s)
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            if isinstance(db, AsyncSession) and not db.is_active:
+                try:
+                    await db.rollback()
+                except Exception:
+                    logger.debug("Fingerprint rollback failed", exc_info=True)
+            logger.warning(
+                "Discover collection fingerprint read failed; preserving cache",
+                exc_info=True,
+            )
+            return None
+        if not isinstance(raw, str):
+            return None
+        return hashlib.sha256(f"v1|{raw}".encode()).hexdigest()[:16]
+
+    if max_age_seconds <= 0:
+        fp = await _query_db()
+        if fp is not None:
+            _remember_redis_lkg_fingerprint(fp)
+        return fp
+
+    leader, fut = _rc.begin_build(_FINGERPRINT_SINGLEFLIGHT_KEY)
+    if not leader:
+        try:
+            res = await asyncio.wait_for(
+                asyncio.shield(fut), timeout=max(0.05, timeout_s + 0.25)
+            )
+            if res is not None:
+                return res
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
+        return await _fallback_lkg_fingerprint(max_age_seconds)
+
+    try:
+        fp = await _query_db()
+        if fp is not None:
+            _fingerprint_cache = (time.monotonic(), fp)
+            _fingerprint_retry_after = 0.0
+            _remember_redis_lkg_fingerprint(fp)
+            _rc.finish_build(_FINGERPRINT_SINGLEFLIGHT_KEY, fut, result=fp)
+            return fp
+        _fingerprint_retry_after = time.monotonic() + FINGERPRINT_FAILURE_BACKOFF_SECONDS
+        fallback = await _fallback_lkg_fingerprint(max_age_seconds)
+        _rc.finish_build(_FINGERPRINT_SINGLEFLIGHT_KEY, fut, result=fallback)
+        return fallback
+    except BaseException as exc:
+        _rc.finish_build(
+            _FINGERPRINT_SINGLEFLIGHT_KEY,
+            fut,
+            exc=(
+                exc
+                if isinstance(exc, Exception)
+                else RuntimeError("fingerprint read cancelled")
+            ),
+        )
+        if fut.done() and not fut.cancelled():
+            fut.exception()
+        raise
 
 
 #: #10290: which branch ``add_feed_collections`` took, for an ``observe`` hook.

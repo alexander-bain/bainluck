@@ -65,6 +65,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import time
 from dataclasses import dataclass
@@ -72,6 +73,7 @@ from typing import Any, Awaitable, Callable, Iterable, Mapping, Optional
 
 from sqlalchemy import bindparam, text
 
+from app.utils import request_cache as _rc
 from app.utils.container_corrections import PUBLICATION_COLUMN, REVISION_COLUMN
 from app.utils.theme_definitions import (
     FEED_KEY_MAP,
@@ -87,6 +89,10 @@ THEME_REF_READ_BUDGET_SECONDS = 0.25
 #: The publication read gates the response cache, so a timeout costs a cold
 #: build, not just a link. It gets a little more room than the per-build read.
 THEME_PUBLICATION_READ_BUDGET_SECONDS = 0.5
+THEME_PUBLICATION_FAILURE_BACKOFF_SECONDS = 5.0
+THEME_PUBLICATION_REDIS_LKG_KEY = "feed:published_themes:lkg:v1"
+THEME_PUBLICATION_REDIS_LKG_TTL_SECONDS = 3600
+_THEME_PUBLICATION_SINGLEFLIGHT_KEY = "theme_collection_ref:published"
 #: Each cleanup step (rollback/close, then invalidate) on a read's own session.
 #: Off the request path, so this only bounds how long a connection is held.
 THEME_REF_CLEANUP_STEP_SECONDS = 1.0
@@ -299,6 +305,54 @@ _PUBLISHED_SQL = text(
 ).bindparams(bindparam("slugs", expanding=True))
 
 _published_cache: Optional[tuple[float, PublishedThemes]] = None
+_published_retry_after: float = 0.0
+
+
+def _decode_published_themes_lkg(raw: Any) -> Optional[PublishedThemes]:
+    if isinstance(raw, bytes):
+        raw = raw.decode("utf-8", errors="ignore")
+    if not isinstance(raw, str) or not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+        if not isinstance(parsed, list):
+            return None
+        items = tuple(
+            PublishedTheme(int(row[0]), str(row[1]), int(row[2]))
+            for row in parsed
+            if isinstance(row, (list, tuple)) and len(row) == 3
+        )
+        return PublishedThemes(items)
+    except Exception:
+        return None
+
+
+async def _read_redis_lkg_themes() -> Optional[PublishedThemes]:
+    return _decode_published_themes_lkg(
+        await _rc.read_redis_lkg_text(THEME_PUBLICATION_REDIS_LKG_KEY)
+    )
+
+
+def _remember_redis_lkg_themes(published: PublishedThemes) -> None:
+    encoded = json.dumps(
+        [[t.container_id, t.slug, t.revision] for t in published.themes],
+        separators=(",", ":"),
+    )
+    _rc.write_redis_lkg_text(
+        THEME_PUBLICATION_REDIS_LKG_KEY,
+        THEME_PUBLICATION_REDIS_LKG_TTL_SECONDS,
+        encoded,
+    )
+
+
+async def _fallback_lkg_themes(max_age_seconds: float) -> Optional[PublishedThemes]:
+    global _published_cache
+    if _published_cache is not None:
+        return _published_cache[1]
+    redis_themes = await _read_redis_lkg_themes()
+    if redis_themes is not None:
+        _published_cache = (time.monotonic() - max_age_seconds, redis_themes)
+    return redis_themes
 
 
 async def read_published_themes(
@@ -309,54 +363,113 @@ async def read_published_themes(
 ) -> Optional[PublishedThemes]:
     """The published, registry-maintained theme containers, or None.
 
-    None means "could not tell": the caller must not cache the page and emits
-    no ref, so a failure costs speed, never truth. The statement runs on its
-    own session inside ``budget_seconds`` (capped at
-    ``THEME_PUBLICATION_READ_BUDGET_SECONDS``), so neither a failure (an
-    un-migrated database has no ``publication_state``) nor a stall can touch
-    the request's transaction or hold up its cache gate past the budget.
+    When ``max_age_seconds > 0`` (request path), uses singleflight coalescing,
+    5 s failure backoff, and process/Redis last-known-good fallback so a slow or
+    failing side read never switches the Discover cache off. When
+    ``max_age_seconds == 0.0`` (default / prewarm / strict tests), no stale LKG
+    fallback is used on failure.
     """
-    global _published_cache
+    global _published_cache, _published_retry_after
     now = time.monotonic()
-    max_age_seconds = min(max(0.0, max_age_seconds), 5.0)
-    if (
-        max_age_seconds > 0
-        and _published_cache is not None
-        and now - _published_cache[0] < max_age_seconds
-    ):
-        return _published_cache[1]
-    budget = min(budget_seconds, THEME_PUBLICATION_READ_BUDGET_SECONDS)
-    if budget <= 0:
-        return None
-
-    async def _read(session):
-        return (
-            await session.execute(
-                _PUBLISHED_SQL, {"published": PUBLISHED, "slugs": maintained_slugs()}
-            )
-        ).fetchall()
-
-    ok, rows = await _side_read(
-        _read, budget_seconds=budget, session_factory=session_factory, what="publication"
-    )
-    if not ok:
-        # Logged by _side_read: serving uncached, no collection links.
-        return None
-    published = PublishedThemes(
-        tuple(PublishedTheme(int(r[0]), str(r[1]), int(r[2])) for r in rows)
-    )
+    max_age_seconds = min(max(0.0, float(max_age_seconds)), 5.0)
     if max_age_seconds > 0:
-        _published_cache = (now, published)
-    return published
+        if _published_cache is not None and (
+            now - _published_cache[0] < max_age_seconds or now < _published_retry_after
+        ):
+            return _published_cache[1]
+        if now < _published_retry_after:
+            return await _fallback_lkg_themes(max_age_seconds)
+
+    budget = min(budget_seconds, THEME_PUBLICATION_READ_BUDGET_SECONDS)
+
+    async def _query() -> Optional[PublishedThemes]:
+        if budget <= 0:
+            return None
+
+        async def _read(session):
+            return (
+                await session.execute(
+                    _PUBLISHED_SQL,
+                    {"published": PUBLISHED, "slugs": maintained_slugs()},
+                )
+            ).fetchall()
+
+        ok, rows = await _side_read(
+            _read,
+            budget_seconds=budget,
+            session_factory=session_factory,
+            what="publication",
+        )
+        if not ok:
+            return None
+        return PublishedThemes(
+            tuple(PublishedTheme(int(r[0]), str(r[1]), int(r[2])) for r in rows)
+        )
+
+    if max_age_seconds <= 0:
+        published = await _query()
+        if published is not None:
+            _remember_redis_lkg_themes(published)
+        return published
+
+    leader, fut = _rc.begin_build(_THEME_PUBLICATION_SINGLEFLIGHT_KEY)
+    if not leader:
+        try:
+            res = await asyncio.wait_for(
+                asyncio.shield(fut), timeout=max(0.05, budget + 0.25)
+            )
+            if res is not None:
+                return res
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            pass
+        return await _fallback_lkg_themes(max_age_seconds)
+
+    try:
+        published = await _query()
+        if published is not None:
+            _published_cache = (time.monotonic(), published)
+            _published_retry_after = 0.0
+            _remember_redis_lkg_themes(published)
+            _rc.finish_build(_THEME_PUBLICATION_SINGLEFLIGHT_KEY, fut, result=published)
+            return published
+        _published_retry_after = (
+            time.monotonic() + THEME_PUBLICATION_FAILURE_BACKOFF_SECONDS
+        )
+        fallback = await _fallback_lkg_themes(max_age_seconds)
+        _rc.finish_build(_THEME_PUBLICATION_SINGLEFLIGHT_KEY, fut, result=fallback)
+        return fallback
+    except BaseException as exc:
+        _rc.finish_build(
+            _THEME_PUBLICATION_SINGLEFLIGHT_KEY,
+            fut,
+            exc=(
+                exc
+                if isinstance(exc, Exception)
+                else RuntimeError("published themes read cancelled")
+            ),
+        )
+        if fut.done() and not fut.cancelled():
+            fut.exception()
+        raise
 
 
 def compose_collections_fingerprint(
-    collections: Optional[str], published: Optional[PublishedThemes]
+    collections: Optional[str],
+    published: Optional[PublishedThemes],
+    *,
+    theme_unavailable: bool = False,
 ) -> Optional[str]:
     """The route's ``collections=`` cache-key part, with the published themes.
 
     Unchanged when no theme is published, so shipping this cold-starts no key.
+    When the theme publication state could not be read and no LKG exists
+    (``theme_unavailable=True``), keeps caching enabled under an isolated
+    ``unverified`` key until the read recovers.
     """
+    if published is None and theme_unavailable:
+        return f"{collections or ''}|theme:unverified"
     theme = published.fingerprint() if published is not None else None
     if theme is None:
         return collections
@@ -756,5 +869,6 @@ async def attach_search_family_collection_refs(
 
 
 def _reset_published_cache_for_tests() -> None:
-    global _published_cache
+    global _published_cache, _published_retry_after
     _published_cache = None
+    _published_retry_after = 0.0

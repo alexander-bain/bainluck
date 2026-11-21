@@ -322,6 +322,13 @@ def _pregame_projection_cache_process_tier_only(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _feed_fingerprint_redis_lkg_off_unless_a_test_sets_it(monkeypatch):
+    """#13350: Redis LKG fallback for Discover fingerprints is OFF in tests
+    unless a test installs a fake Redis client and enables it."""
+    monkeypatch.setenv("FEED_FINGERPRINT_REDIS_LKG_ENABLED", "0")
+
+
+@pytest.fixture(autouse=True)
 def _sentinel_red_comment_cadence_off_unless_a_test_sets_it(monkeypatch):
     """#12276: the sentinel rail's "Still RED" cadence keeps its last comment in
     Redis. Off in tests unless a test turns it on with a fake client — a
@@ -411,6 +418,8 @@ def _reset_loaded_request_caches(retained=None):
             ),
         ),
         ("app.utils.candidate_base", ("_reset_l0_for_tests",)),
+        ("app.utils.feed_collections", ("_reset_fingerprint_cache_for_tests",)),
+        ("app.utils.theme_collection_ref", ("_reset_published_cache_for_tests",)),
         ("app.utils.principal_independent_cache", ("clear_shared_builds",)),
         ("app.utils.event_history_cache", ("_reset_for_tests",)),
         ("app.utils.prematch_reading", ("_reset_prematch_cache_for_tests",)),
