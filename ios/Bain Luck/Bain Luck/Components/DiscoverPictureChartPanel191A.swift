@@ -480,7 +480,7 @@ struct DiscoverPictureChartPanel191AView: View {
 
     var body: some View {
         Group {
-            if !didFinishLoad || !model.points.isEmpty || !model.threeWayPoints.isEmpty {
+            if !model.points.isEmpty || !model.threeWayPoints.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
                     if model.showsPregameLabel {
                         Text("Pregame")
