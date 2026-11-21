@@ -62,18 +62,17 @@ final class TheLiveChartEndCarriesTheHeroNumber9436Tests: XCTestCase {
         }
     }
 
-    /// The reading carries the hero's provenance, and only a `"blend"` hero
-    /// may label a line — an `opening` hero equal to the blend tip, or an
-    /// older payload with no source at all, draws no number.
+    /// The opening quote never becomes a current reading. An untagged
+    /// reading has no chart label. An admitted blend can label its own tip.
     func testOnlyABlendHeroLabelsALine() throws {
         let points = [point(0, 0.5), point(1, 0.6)]
-        for source in ["opening", nil] as [String?] {
-            let reading = try XCTUnwrap(LiveEdgeReading.current(in: try event(p: 0.6, heroSource: source)))
-            XCTAssertEqual(reading.source, source)
-            XCTAssertNil(LiveChartEdgeMarkerPlan.edgeVertex(in: points, visible: ["aggregate"],
-                                                            reading: reading, latestFrame: nil),
-                         "source \(source ?? "nil")")
-        }
+        let opening = try event(p: 0.6, heroSource: "opening")
+        XCTAssertNil(LiveEdgeReading.current(in: opening))
+
+        let untagged = try XCTUnwrap(LiveEdgeReading.current(in: try event(p: 0.6, heroSource: nil)))
+        XCTAssertNil(untagged.source)
+        XCTAssertNil(LiveChartEdgeMarkerPlan.edgeVertex(in: points, visible: ["aggregate"],
+                                                        reading: untagged, latestFrame: nil))
         let blend = try XCTUnwrap(LiveEdgeReading.current(in: try event(p: 0.6)))
         XCTAssertEqual(LiveChartEdgeMarkerPlan.edgeVertex(in: points, visible: ["aggregate"],
                                                           reading: blend, latestFrame: nil)?.id, points[1].id)
