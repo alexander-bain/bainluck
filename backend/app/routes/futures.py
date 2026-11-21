@@ -130,8 +130,7 @@ from app.utils.tournament_stages import (
     is_game_level_market,
 )
 
-# Keep the route's existing entry points for the shared price screen.
-_newest_capture_per_outcome = futures_price_screen._newest_capture_per_outcome
+# Keep the route's existing batch entry point for the shared price screen.
 withheld_price_outcome_ids_for_markets = (
     futures_price_screen.withheld_price_outcome_ids_for_markets
 )
