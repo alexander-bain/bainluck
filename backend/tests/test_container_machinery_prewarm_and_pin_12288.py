@@ -2849,3 +2849,136 @@ def test_built_on_request_full_build_matches_warm_writer_and_never_sinks_groupin
         (22, "golf-this-week"),
     ):
         assert ((full_build[idx].get("data") or {}).get("collection_ref") or {}).get("slug") == slug
+
+
+@pytest.mark.asyncio
+async def test_prewarm_machinery_warms_public_then_preview_without_publishing_preview_publicly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fable Nov 20 call: worker warm-up warms stage='preview' sets into Redis after
+    stage='public' sets, while public feed publish remains strictly stage='public'."""
+    from app.tasks.precompute_category_pages import _publish_machinery_feed_from_prewarm_base
+    from app.utils.roundup_containers import _redis_cache_key
+
+    reset_roundup_cache_for_tests()
+    saved = dict(ROUNDUP_PRODUCERS)
+    monkeypatch.setenv("CONTAINER_MACHINERY_SLICE1_ENABLED", "true")
+    monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+    monkeypatch.setenv("CONTAINERS_READ_CACHE_ENABLED", "true")
+
+    order: list[str] = []
+
+    class _FakeRedis:
+        def __init__(self) -> None:
+            self.store: dict[str, str] = {}
+
+        def setex(self, key: str, ttl: int, val: str) -> bool:
+            self.store[key] = val
+            return True
+
+        def set(self, key: str, val: str, ex: int | None = None) -> bool:
+            self.store[key] = val
+            return True
+
+        def get(self, key: str):
+            return self.store.get(key)
+
+        def ttl(self, key: str) -> int:
+            return 300 if key in self.store else -2
+
+    fake_rc = _FakeRedis()
+
+    @asynccontextmanager
+    async def _fake_session(*_a, **_kw):
+        yield SimpleNamespace()
+
+    def _make_prod(slug: str, stage: str) -> RoundupProducer:
+        async def _prod(_db, *, now=None):
+            order.append(f"start:{slug}")
+            if stage == "public":
+                await asyncio.sleep(0.01)
+            order.append(f"end:{slug}")
+            return RoundupMembers(
+                members=(
+                    {
+                        "type": "market",
+                        "id": 901 if stage == "public" else 902,
+                        "card": {"id": 901 if stage == "public" else 902, "name": slug, "status": "open"},
+                    },
+                ),
+                rows=({"label": slug, "probability": 0.5, "market_id": 901 if stage == "public" else 902},),
+                title=slug,
+                kicker="GROUPING",
+                footer="",
+                destination_href=f"/collections/{slug}",
+                machinery_card={"slug": slug, "stage": stage, "title": slug, "rows": []},
+            )
+
+        return RoundupProducer(
+            slug=slug,
+            name=slug,
+            kind="roundup",
+            category="entertainment",
+            section_title=slug,
+            footer="",
+            stage=stage,
+            produce=_prod,
+            membership="computed-produced",
+            relations=("same_subject",),
+            level="member",
+            rule={"producer": "container_machinery"},
+            enabled=lambda: True,
+        )
+
+    try:
+        ROUNDUP_PRODUCERS.clear()
+        ROUNDUP_PRODUCERS["machinery-fed-and-macro"] = _make_prod("machinery-fed-and-macro", "public")
+        ROUNDUP_PRODUCERS["machinery-who-gets-engaged"] = _make_prod("machinery-who-gets-engaged", "preview")
+        monkeypatch.setattr("app.utils.roundup_containers.ensure_optional_roundup_candidates", lambda: None)
+        monkeypatch.setattr("app.tasks.base.get_task_session", _fake_session)
+
+        res = await _prewarm_machinery_roundups(deadline_s=5.0, rc=fake_rc)
+        assert res["warmed"] == 2
+        assert res["slugs"]["machinery-fed-and-macro"]["outcome"] == "ok"
+        assert res["slugs"]["machinery-who-gets-engaged"]["outcome"] == "ok"
+        # Public set finished before preview set even started.
+        assert order.index("end:machinery-fed-and-macro") < order.index("start:machinery-who-gets-engaged")
+        # Both are written to Redis so preview reads hit warm cache under the 3.5s preview limit.
+        assert _redis_cache_key("machinery-fed-and-macro") in fake_rc.store
+        assert _redis_cache_key("machinery-who-gets-engaged") in fake_rc.store
+
+        # Public feed splice STILL includes only stage="public" sets.
+        import time as _time
+
+        plain_items = [
+            {"type": "futures", "score": 80.0 - i, "data": {"id": 5000 + i, "name": f"M{i}", "status": "open"}}
+            for i in range(10)
+        ]
+        pub_res = _publish_machinery_feed_from_prewarm_base(
+            fake_rc,
+            mach_base={
+                "page_base_body": {"items": plain_items, "total": len(plain_items)},
+                "page_base_key": "feed:pagebase:v1:test",
+                "age_origin": _time.time(),
+                "opening_seating": False,
+                "limit": 20,
+                "offset": 0,
+                "cache_shape": {"limit": 20, "offset": 0, "event_pct": 0.15, "mode": "discover"},
+            },
+            label="test",
+        )
+        assert pub_res.get("outcome") == "ok"
+        assert pub_res.get("groupings") == 1
+        published_raw = fake_rc.store.get(pub_res["cache_key"])
+        assert published_raw is not None
+        published_slugs = [
+            ((it.get("data") or {}).get("collection_ref") or {}).get("slug")
+            for it in json.loads(published_raw)["items"]
+        ]
+        assert "machinery-fed-and-macro" in published_slugs
+        assert "machinery-who-gets-engaged" not in published_slugs
+    finally:
+        ROUNDUP_PRODUCERS.clear()
+        ROUNDUP_PRODUCERS.update(saved)
+        reset_roundup_cache_for_tests()
+

@@ -35,24 +35,34 @@ from app.utils.discover_fun_scout import (
     ScoutLicenceState,
     ScoutMarketRow,
     ScoutProposedSet,
+    ScoutTaggedMarket,
     ScoutUncoveredFamily,
+    _approved_examples_summary,
     advance_scout_licence_clean_day,
     assert_fun_scout_within_caps,
     build_scout_anthropic_client,
     build_scout_rule_file_definition,
     check_scout_anthropic_key_status,
+    check_scout_blurb_matches_members,
+    check_scout_map_look_places,
     check_scout_member,
+    check_scout_no_mechanical_sales_downloads,
+    check_scout_no_politics_only_set,
+    check_scout_voice_words,
     dedupe_cross_venue_members,
     estimate_fun_scout_spend,
     evaluate_scout_against_seed_sets,
+    evaluate_tagging_pass_against_seed_sets,
     format_fun_scout_pre_run_spend_line,
     retire_scout_set,
     run_nightly_fun_scout,
+    run_scout_set_writing_pass,
+    run_scout_tagging_pass,
     suspend_scout_licence_on_wrong_card,
     validate_scout_proposed_set,
     write_scout_rule_files,
 )
-from app.utils.discover_fun_tags import FunMarketEntry
+from app.utils.discover_fun_tags import FunMarketEntry, load_fun_markets_registry
 from app.utils.roundup_containers import validate_roundup_definition
 
 FROZEN_NOW = datetime(2025, 2, 15, 18, 0, tzinfo=timezone.utc)
@@ -1043,6 +1053,711 @@ class TestFrozenBenchmarkInput:
 
         out = capsys.readouterr().out
         assert "Shared tagging pass complete" in out
+        assert "First-pass seed survival (unique):" in out
         assert "Will it ever come out?" in out
         assert "Will GTA VI release before 2027?" in out
         assert "Benchmark total actual spend:" in out
+
+
+# ---------------------------------------------------------------------------
+# #13102 Fable Steps 2-4: First-pass recall & all 20 sets from run.3946
+# ---------------------------------------------------------------------------
+
+# Exact market catalog metadata for the 20 validated sets from run.3946.
+_RUN_3946_MARKETS: dict[int, ScoutMarketRow] = {
+    mid: _mk(mid, title, source=source, category=category)
+    for mid, source, category, title in [
+        (27594646, "polymarket", "entertainment", "GTA VI released by...?"),
+        (60473244, "kalshi", "entertainment", "GTA VI Online: Release date"),
+        (62878194, "polymarket", "entertainment", "Songs on GTA VI Radio at Launch?"),
+        (67717832, "polymarket", "entertainment", "GTA VI on PC in what month?"),
+        (61857942, "polymarket", "entertainment", "'GTA VI: The Album' First Week Sales?"),
+        (66639375, "polymarket", "entertainment", "Another GTA VI trailer released by...?"),
+        (5398277, "kalshi", "entertainment", "Avengers: Doomsday: Rotten Tomatoes score"),
+        (65536494, "kalshi", "entertainment", "Hexed · Rotten Tomatoes score"),
+        (67804442, "kalshi", "entertainment", "The Angry Birds Movie 3 · Rotten Tomatoes score"),
+        (67804441, "kalshi", "entertainment", "Jumanji: Open World · Rotten Tomatoes score"),
+        (67804589, "kalshi", "entertainment", "Focker-In-Law · Rotten Tomatoes score"),
+        (67804440, "kalshi", "entertainment", "Werwulf · Rotten Tomatoes score"),
+        (114137, "polymarket", "weather", "How many large volcano eruptions (VEI >=4) in 2026?"),
+        (109358, "kalshi", "weather", "Will 2026 be the hottest year ever?"),
+        (8431182, "kalshi", "weather", "How many major Atlantic hurricanes will there be in 2026?"),
+        (59129330, "polymarket", "weather", "What will the peak RONI be for the 2026-27 El Niño?"),
+        (114083, "polymarket", "weather", "Major volcano eruption (VEI >=6) in 2026?"),
+        (114135, "polymarket", "weather", "Will any Category 5 hurricane make landfall in the US in before 2027?"),
+        (1234182, "polymarket", "weather", "How many Tornadoes in the US in 2026?"),
+        (108222, "kalshi", "weather", "Will a supervolcano erupt before 2050?"),
+        (59131718, "polymarket", "weather", "How low will Lake Mead drop?"),
+        (67804405, "kalshi", "weather", "When will Big Bear Mountain Resort open for the 26/27 winter season?"),
+        (67804432, "kalshi", "weather", "Mammoth Mountain snowfall total by December 24th"),
+        (52755772, "kalshi", "weather", "What will the peak RONI value for El Niño be during the NDJ 2026-27 season?"),
+        (109218, "kalshi", "entertainment", "Who will release a new album in 2026?"),
+        (59693617, "kalshi", "entertainment", "When will Drake release a new album?"),
+        (25924930, "kalshi", "entertainment", "When will Kendrick Lamar release a new album?"),
+        (109216, "kalshi", "entertainment", "Will Ye and Travis Scott release a joint album this year?"),
+        (109376, "kalshi", "entertainment", "Who will be featured on Travis Scott's next album?"),
+        (70150728, "kalshi", "entertainment", "When will Don Toliver release 'NITROUS'?"),
+        (70733263, "polymarket", "tech", "#1 Searched Person on Google 2026?"),
+        (57792626, "polymarket", "entertainment", "#1 Searched TV Show on Google 2026?"),
+        (60634621, "polymarket", "tech", "Top 5 Most Searched Movies on Google 2026"),
+        (60634622, "polymarket", "tech", "Top 5 Most Searched Actors on Google 2026"),
+        (56775630, "kalshi", "entertainment", "Google's Year in Search 2026 Global - Movies: #1 search"),
+        (52755889, "kalshi", "entertainment", "MrBeast: 1 Billion subscribers"),
+        (56775628, "kalshi", "entertainment", "Will Grok Imagine's full-length Odyssey film be released this year?"),
+        (70534836, "polymarket", "entertainment", "# of views of next MrBeast video on week 1? (Higher Strikes)"),
+        (2776130, "kalshi", "entertainment", "X re-launches Vine this year?"),
+        (33282766, "kalshi", "entertainment", "60 minutes: Joe Rogan joins as a Correspondent this year?"),
+        (109587, "kalshi", "entertainment", "Who will attend The Met Gala?"),
+        (108505, "kalshi", "entertainment", "Who will headline Coachella 2027?"),
+        (2063381, "kalshi", "entertainment", "Who Will Be Inducted into the Rock & Roll Hall of Fame?"),
+        (25922492, "kalshi", "entertainment", "Sports Illustrated Swimsuit Issue 2027: Cover model"),
+        (25923689, "kalshi", "entertainment", "Which countries will officially participate in Eurovision Song Contest 2027?"),
+        (70170465, "kalshi", "economics", "Grubhub: Food Delivery app downloads in November 2026"),
+        (70170599, "kalshi", "economics", "Zyn Point of Sale Growth in November 2026"),
+        (70170475, "kalshi", "economics", "Disney+ app downloads in November 2026"),
+        (70170605, "kalshi", "economics", "Red Bull Point of Sale Growth in November 2026"),
+        (70170610, "kalshi", "economics", "Monster Energy Drinks Point of Sale Growth in November 2026"),
+        (70170603, "kalshi", "economics", "Rogue Point of Sale Growth in November 2026"),
+        (109276, "kalshi", "entertainment", "New Star Wars movie released in theaters before 2027?"),
+        (109380, "kalshi", "entertainment", "New main Fast & Furious film officially announced in 2026?"),
+        (109633, "kalshi", "entertainment", "Next Superman film: Will Elon Musk be cast?"),
+        (58858756, "polymarket", "entertainment", "Miles Morales live-action film actor?"),
+        (113281, "polymarket", "politics", "Who will leave Trump Administration before 2027?"),
+        (113664, "polymarket", "politics", "Meloni out as Prime Minister of Italy by...?"),
+        (109419, "kalshi", "politics", "Who will announce a California departure in 2026?"),
+        (25924022, "kalshi", "politics", "Sara Duterte out as Vice President of the Philippines?"),
+        (113175, "polymarket", "tech", "Will Ari Weinstein leave OpenAI by December 31, 2026?"),
+        (68365230, "polymarket", "entertainment", '"Avengers: Doomsday" Opening Weekend Box Office'),
+        (114149, "polymarket", "entertainment", "Will Dune 3 or Avengers: Doomsday gross more on their opening weekend?"),
+        (70733323, "polymarket", "entertainment", "Will Dune: Part Three be delayed?"),
+        (59172754, "kalshi", "entertainment", "Dune vs Avengers: Highest Rotten Tomatoes Score"),
+        (65820473, "polymarket", "entertainment", "Oscars 2027: Best Documentary Feature Film Nominations"),
+        (65966169, "polymarket", "entertainment", "Oscars 2027: Best Film Editing Nominations"),
+        (65966180, "polymarket", "entertainment", "Oscars 2027: Best Sound Nominations"),
+        (65966144, "polymarket", "entertainment", "Oscars 2027: Best Animated Short Film Nominations"),
+        (65966153, "polymarket", "entertainment", "Oscars 2027: Best Live Action Short Film Nominations"),
+        (65966161, "polymarket", "entertainment", "Oscars 2027: Best Documentary Short Film Nominations"),
+        (68313448, "polymarket", "entertainment", "Who will be in the 2027 Big Game halftime show?"),
+        (69851900, "polymarket", "entertainment", "What songs will be played at the 2027 Big Game halftime show?"),
+        (69851899, "polymarket", "entertainment", "First song at 2027 Big Game Halftime Show?"),
+        (69851897, "polymarket", "entertainment", "Last song at 2027 Big Game Halftime Show?"),
+        (109347, "kalshi", "entertainment", "Marvel: Robert Downey Jr. back as Iron Man this year?"),
+    ]
+}
+
+_RUN_3946_SETS_FIXTURES: tuple[tuple[str, ScoutProposedSet, str | None], ...] = (
+    # --- 10 claude-sonnet-5-5 sets ---
+    (
+        "sonnet",
+        ScoutProposedSet(
+            slug="gta-vi-countdown",
+            name="The GTA VI Countdown",
+            kicker="DISCOVER SET",
+            category="gaming",
+            why_better_together=(
+                "Each market is one piece of the GTA VI rollout. Together they show how "
+                "confident traders are that it ships on time, what it will sound like, "
+                "and how big the launch gets."
+            ),
+            look="bars",
+            member_ids=(27594646, 60473244, 62878194, 67717832, 61857942, 66639375),
+        ),
+        "banned_voice_word:traders",
+    ),
+    (
+        "sonnet",
+        ScoutProposedSet(
+            slug="fresh-or-rotten",
+            name="Fresh or Rotten?",
+            kicker="DISCOVER SET",
+            category="movies",
+            why_better_together=(
+                "Seeing a Marvel tentpole next to a Jumanji sequel and an Angry Birds movie "
+                "shows which franchises traders trust critics to like."
+            ),
+            look="bars",
+            member_ids=(5398277, 65536494, 67804442, 67804441, 67804589, 67804440),
+        ),
+        "banned_voice_word:traders",
+    ),
+    (
+        "sonnet",
+        ScoutProposedSet(
+            slug="mother-natures-2026",
+            name="Mother Nature's 2026",
+            kicker="DISCOVER SET",
+            category="weather",
+            why_better_together=(
+                "Each market covers a different way the planet could surprise us this year, "
+                "and together they show how wild traders expect 2026 to get."
+            ),
+            look="map",
+            member_ids=(114137, 109358, 8431182, 59129330, 114083, 114135, 1234182),
+        ),
+        "banned_voice_word:traders",
+    ),
+    (
+        "sonnet",
+        ScoutProposedSet(
+            slug="waiting-on-the-drop",
+            name="Waiting on the Drop",
+            kicker="DISCOVER SET",
+            category="music",
+            why_better_together=(
+                "Drake, Kendrick, Travis, Ye and Don Toliver are all on the clock. "
+                "Together the markets show which superstar traders expect to break the silence first."
+            ),
+            look="bars",
+            member_ids=(109218, 59693617, 25924930, 109216, 70150728),
+        ),
+        "banned_voice_word:traders",
+    ),
+    (
+        "sonnet",
+        ScoutProposedSet(
+            slug="year-in-search-2026",
+            name="What the World Googled",
+            kicker="DISCOVER SET",
+            category="internet",
+            why_better_together=(
+                "Google's Year in Search is a snapshot of what everyone was obsessed with. "
+                "These four markets add up to the cultural obsession of 2026."
+            ),
+            look="bars",
+            member_ids=(70733263, 57792626, 60634621, 60634622),
+        ),
+        None,
+    ),
+    (
+        "sonnet",
+        ScoutProposedSet(
+            slug="extremely-online",
+            name="Extremely Online",
+            kicker="DISCOVER SET",
+            category="internet",
+            why_better_together=(
+                "These markets are all bets on where internet culture goes next: "
+                "creators, comebacks and AI-made movies."
+            ),
+            look="bars",
+            member_ids=(52755889, 56775628, 70534836, 2776130, 33282766),
+        ),
+        "banned_voice_word:bets",
+    ),
+    (
+        "sonnet",
+        ScoutProposedSet(
+            slug="guest-list-season",
+            name="Guest List Season",
+            kicker="DISCOVER SET",
+            category="culture",
+            why_better_together=(
+                "The Met Gala, Coachella, the Rock Hall, Eurovision and magazine covers are all "
+                "contests over who is famous enough to be included."
+            ),
+            look="bars",
+            member_ids=(109587, 108505, 2063381, 25922492, 25923689),
+        ),
+        None,
+    ),
+    (
+        "sonnet",
+        ScoutProposedSet(
+            slug="november-cravings",
+            name="November Cravings",
+            kicker="DISCOVER SET",
+            category="consumer",
+            why_better_together=(
+                "Point-of-sale growth for Red Bull, Monster, Rogue and Zyn, plus Grubhub and "
+                "Disney+ downloads, shows what Americans are buying and doing in November."
+            ),
+            look="bars",
+            member_ids=(70170465, 70170599, 70170475, 70170605, 70170610, 70170603),
+        ),
+        "mechanical_sales_or_downloads_family",
+    ),
+    (
+        "sonnet",
+        ScoutProposedSet(
+            slug="franchise-fever",
+            name="Franchise Fever",
+            kicker="DISCOVER SET",
+            category="movies",
+            why_better_together=(
+                "Casting rumors, trailers and announcements across the big franchises show which "
+                "universe traders think will make the next big move."
+            ),
+            look="bars",
+            member_ids=(109276, 109380, 109633, 58858756),
+        ),
+        "banned_voice_word:traders",
+    ),
+    (
+        "sonnet",
+        ScoutProposedSet(
+            slug="exit-interviews",
+            name="Exit Interviews",
+            kicker="DISCOVER SET",
+            category="politics",
+            why_better_together=(
+                "Cabinet departures, a prime minister's exit, an OpenAI exec and a California move "
+                "are all bets on who walks away, which shows how stable power looks in 2026."
+            ),
+            look="bars",
+            member_ids=(113281, 113664, 109419, 25924022, 113175),
+        ),
+        "banned_voice_word:bets",
+    ),
+    # --- 10 claude-opus-5-5 sets ---
+    (
+        "opus",
+        ScoutProposedSet(
+            slug="gta-vi-countdown",
+            name="GTA VI Countdown",
+            kicker="DISCOVER SET",
+            category="gaming",
+            why_better_together=(
+                "Together these markets trace the full rollout: one more trailer, the launch date, "
+                "the radio soundtrack, the album, the PC port and Online. Read side by side, they "
+                "show whether the hype calendar holds together."
+            ),
+            look="bars",
+            member_ids=(27594646, 60473244, 62878194, 67717832, 61857942, 66639375),
+        ),
+        None,
+    ),
+    (
+        "opus",
+        ScoutProposedSet(
+            slug="dune-vs-doomsday",
+            name="Dune vs. Doomsday",
+            kicker="DISCOVER SET",
+            category="movies",
+            why_better_together=(
+                "This is a head-to-head blockbuster showdown. The box office, critic scores and the "
+                "chance Dune slips off the date all bear on the same rivalry."
+            ),
+            look="bars",
+            member_ids=(5398277, 68365230, 114149, 70733323, 59172754),
+        ),
+        None,
+    ),
+    (
+        "opus",
+        ScoutProposedSet(
+            slug="restless-planet-2026",
+            name="Restless Planet",
+            kicker="DISCOVER SET",
+            category="weather",
+            why_better_together=(
+                "Volcanoes, tornadoes and hurricanes in both oceans make one Mother Nature scorecard. "
+                "Each market makes the others feel bigger."
+            ),
+            look="map",
+            member_ids=(114137, 8431182, 114083, 114135, 1234182, 108222),
+        ),
+        "map_look_requires_places:0/6",
+    ),
+    (
+        "opus",
+        ScoutProposedSet(
+            slug="powder-watch",
+            name="Powder Watch",
+            kicker="DISCOVER SET",
+            category="weather",
+            why_better_together=(
+                "El Niño sets up the season. Big Bear's opening day and Mammoth's snowfall show "
+                "whether it delivers, and Lake Mead shows what the snowpack is worth."
+            ),
+            look="map",
+            member_ids=(59131718, 67804405, 67804432, 52755772),
+        ),
+        None,
+    ),
+    (
+        "opus",
+        ScoutProposedSet(
+            slug="oscar-deep-cuts",
+            name="Oscar Deep Cuts",
+            kicker="DISCOVER SET",
+            category="awards",
+            why_better_together=(
+                "These are the shorts, sound, editing and documentary nominations most people guess "
+                "blindly. Grouped together, they make a ballot for real film nerds."
+            ),
+            look="bars",
+            member_ids=(65820473, 65966169, 65966180, 65966144, 65966153, 65966161),
+        ),
+        None,
+    ),
+    (
+        "opus",
+        ScoutProposedSet(
+            slug="year-in-search-2026",
+            name="What the World Googled",
+            kicker="DISCOVER SET",
+            category="internet culture",
+            why_better_together=(
+                "Every one of these markets resolves on Google's Year in Search: top person, show, "
+                "movies and actors. Together they make one guessable snapshot of the year's obsessions."
+            ),
+            look="bars",
+            member_ids=(70733263, 57792626, 60634621, 60634622, 56775630),
+        ),
+        None,
+    ),
+    (
+        "opus",
+        ScoutProposedSet(
+            slug="halftime-setlist-2027",
+            name="Call the Halftime Setlist",
+            kicker="DISCOVER SET",
+            category="music",
+            why_better_together=(
+                "These markets build the whole 13-minute show from performer to first song, "
+                "full setlist and closer. You can predict the show start to finish."
+            ),
+            look="bars",
+            member_ids=(68313448, 69851900, 69851899, 69851897),
+        ),
+        None,
+    ),
+    (
+        "opus",
+        ScoutProposedSet(
+            slug="album-when",
+            name="Drop the Album Already",
+            kicker="DISCOVER SET",
+            category="music",
+            why_better_together=(
+                "Drake, Kendrick, Travis, Ye and Don Toliver have all left fans waiting. "
+                "Grouped together, the set becomes a 'who blinks first' race."
+            ),
+            look="bars",
+            member_ids=(59693617, 25924930, 109216, 109376, 70150728),
+        ),
+        None,
+    ),
+    (
+        "opus",
+        ScoutProposedSet(
+            slug="internet-takeover",
+            name="The Internet Eats TV",
+            kicker="DISCOVER SET",
+            category="internet culture",
+            why_better_together=(
+                "Each market tests how far creator culture can swallow the mainstream, from a billion "
+                "subscribers to Vine's revival to a podcaster on 60 Minutes."
+            ),
+            look="bars",
+            member_ids=(52755889, 70534836, 2776130, 33282766),
+        ),
+        None,
+    ),
+    (
+        "opus",
+        ScoutProposedSet(
+            slug="cape-gossip",
+            name="Cape Gossip",
+            kicker="DISCOVER SET",
+            category="movies",
+            why_better_together=(
+                "Rumors about RDJ's return, Elon as Superman, Miles Morales and Jordan Peele's "
+                "Marvel debut all feed the same fan-forum frenzy."
+            ),
+            look="bars",
+            member_ids=(109347, 109633, 58858756),
+        ),
+        "blurb_mentions_unlisted_member:",
+    ),
+)
+
+
+class TestStep2FirstPassRecallAndHygiene:
+    def test_approved_examples_summary_keeps_all_17_seed_themes_and_descriptions(self):
+        reg = load_fun_markets_registry()
+        summary = _approved_examples_summary(list(reg.markets.values()), reg.sub_tags)
+        groups = {item["group"]: item for item in summary}
+        assert len(groups) == 17
+        for missing_previously in (
+            "taylor-swift",
+            "tv-finales",
+            "unsolved-problems",
+            "white-christmas",
+            "who-shows-up",
+            "year-end",
+        ):
+            assert missing_previously in groups
+            assert groups[missing_previously]["description"]
+
+    def test_tagging_pass_splits_truncated_batches_and_evaluates_seed_survival(self):
+        reg = load_fun_markets_registry()
+        examples = list(reg.markets.values())
+        markets = [
+            _mk(1, "Taylor Swift (Taylor's Version) announced?"),
+            _mk(2, "Snow in Seattle in Dec?"),
+            _mk(3, "Snow in Denver in Dec?"),
+            _mk(4, "Fed rate cut bps?"),
+        ]
+
+        seen_chunks: list[int] = []
+
+        class _SplittingOpenAI:
+            class _Chat:
+                class _Completions:
+                    def create(self, **kwargs):
+                        user_msg = kwargs["messages"][1]["content"]
+                        ids = [
+                            int(line.split(" | ", 1)[0])
+                            for line in user_msg.splitlines()[1:]
+                        ]
+                        seen_chunks.append(len(ids))
+                        if len(ids) > 2:
+                            return SimpleNamespace(
+                                choices=[
+                                    SimpleNamespace(
+                                        finish_reason="length",
+                                        message=SimpleNamespace(content='{"tagged": ['),
+                                    )
+                                ],
+                                usage=SimpleNamespace(prompt_tokens=100, completion_tokens=50),
+                            )
+                        body = json.dumps(
+                            {
+                                "tagged": [
+                                    {
+                                        "market_id": mid,
+                                        "fun_group": "taylor-swift" if mid == 1 else "white-christmas",
+                                        "is_fun_single": False,
+                                        "set_hint": "theme",
+                                        "reason": "matches approved theme",
+                                    }
+                                    for mid in ids
+                                    if mid != 4
+                                ]
+                            }
+                        )
+                        return SimpleNamespace(
+                            choices=[
+                                SimpleNamespace(
+                                    finish_reason="stop",
+                                    message=SimpleNamespace(content=body),
+                                )
+                            ],
+                            usage=SimpleNamespace(prompt_tokens=80, completion_tokens=40),
+                        )
+
+                completions = _Completions()
+
+            chat = _Chat()
+
+        tagged, cost = run_scout_tagging_pass(
+            markets,
+            openai_client=_SplittingOpenAI(),
+            approved_examples=examples,
+            batch_size=4,
+        )
+        assert cost > 0
+        assert seen_chunks == [4, 2, 2]
+        assert [t.market_id for t in tagged] == [1, 2, 3]
+
+        seed = {
+            1: FunMarketEntry(1, "Taylor Swift", ("taylor-swift",), "entertainment", "entertainment"),
+            2: FunMarketEntry(2, "Snow in Seattle", ("white-christmas",), "odd", "weather"),
+            3: FunMarketEntry(3, "Snow in Denver", ("white-christmas",), "odd", "weather"),
+            999: FunMarketEntry(999, "Absent market", ("james-bond",), "entertainment", "entertainment"),
+        }
+        report = evaluate_tagging_pass_against_seed_sets(tagged, markets, seed)
+        assert report["unique_seed_in_input"] == 3
+        assert report["unique_seed_survived"] == 3
+        by_group = {g["seed_group"]: g for g in report["groups"]}
+        assert by_group["taylor-swift"] == {"seed_group": "taylor-swift", "seed_size": 1, "in_input": 1, "survived_first_pass": 1}
+        assert by_group["white-christmas"]["survived_first_pass"] == 2
+        assert by_group["james-bond"]["in_input"] == 0
+
+    def test_set_writer_filters_thin_and_taste_markets_before_prompting_claude(self):
+        catalog = {
+            1: _mk(1, "Will Taylor Swift drop an album?", volume=50_000),
+            2: _mk(2, "Thin Taylor Swift market?", volume=100),
+            3: _mk(3, "Taylor Swift pregnant by...?", volume=2_000_000),
+            4: _mk(4, "Will GTA VI ship before 2026?", volume=80_000),
+            5: _mk(5, "Will Winds of Winter ship before 2026?", volume=60_000),
+        }
+        tagged = [
+            ScoutTaggedMarket(1, "taylor-swift", "approved", False),
+            ScoutTaggedMarket(2, "taylor-swift", "approved", False),
+            ScoutTaggedMarket(3, "taylor-swift", "approved", False),
+            ScoutTaggedMarket(4, "long-awaited", "approved", False),
+            ScoutTaggedMarket(5, "long-awaited", "approved", False),
+        ]
+        captured_prompts: list[str] = []
+
+        class _CaptureAnthropic:
+            class _Messages:
+                def create(self, **kwargs):
+                    captured_prompts.append(kwargs["messages"][0]["content"])
+                    return SimpleNamespace(
+                        content=[SimpleNamespace(text='{"sets": []}')],
+                        usage=SimpleNamespace(input_tokens=100, output_tokens=20),
+                        stop_reason="end_turn",
+                    )
+
+            messages = _Messages()
+
+        run_scout_set_writing_pass(
+            tagged,
+            catalog,
+            [],
+            anthropic_client=_CaptureAnthropic(),
+            approved_examples=[],
+            now=FROZEN_NOW,
+        )
+        assert len(captured_prompts) == 1
+        prompt = captured_prompts[0]
+        assert "Will Taylor Swift drop an album?" in prompt
+        assert "Thin Taylor Swift market?" not in prompt
+        assert "pregnant" not in prompt
+        # Candidates are grouped by fun_group (long-awaited precedes taylor-swift).
+        assert prompt.index("group=long-awaited") < prompt.index("group=taylor-swift")
+
+
+class TestStep3SetRulesAndRun3946Fixtures:
+    @pytest.mark.parametrize(
+        "model_tag,proposal,expected_err_prefix",
+        _RUN_3946_SETS_FIXTURES,
+        ids=[f"{m}-{p.slug}" for m, p, _ in _RUN_3946_SETS_FIXTURES],
+    )
+    def test_all_twenty_run_3946_sets_match_fable_rules(
+        self, model_tag, proposal, expected_err_prefix
+    ):
+        vset, err = validate_scout_proposed_set(
+            proposal, _RUN_3946_MARKETS, now=FROZEN_NOW
+        )
+        if expected_err_prefix is None:
+            assert err is None, f"{model_tag}/{proposal.slug} unexpectedly rejected: {err}"
+            assert vset is not None
+        else:
+            assert vset is None, f"{model_tag}/{proposal.slug} unexpectedly passed"
+            assert err is not None and err.startswith(expected_err_prefix), (
+                f"{model_tag}/{proposal.slug} got {err!r}, expected prefix {expected_err_prefix!r}"
+            )
+
+    def test_step3_individual_rule_checks_against_adversarial_variants(self):
+        # 1. Strip 'traders' from Mother Nature's 2026 -> STILL fails on map rule.
+        mn = dict(_RUN_3946_MARKETS)
+        mother_clean = ScoutProposedSet(
+            slug="mother-natures-clean",
+            name="Mother Nature's 2026",
+            kicker="DISCOVER SET",
+            category="weather",
+            why_better_together=(
+                "Each market covers a different way the planet could surprise us this year."
+            ),
+            look="map",
+            member_ids=(114137, 109358, 8431182, 59129330, 114083, 114135, 1234182),
+        )
+        vset, err = validate_scout_proposed_set(mother_clean, mn, now=FROZEN_NOW)
+        assert vset is None and err == "map_look_requires_places:0/7"
+
+        # 2. Strip 'bets' from Exit Interviews -> fails on politics category AND politics members.
+        exit_clean_voice = ScoutProposedSet(
+            slug="exit-interviews-clean",
+            name="Exit Interviews",
+            kicker="DISCOVER SET",
+            category="politics",
+            why_better_together="Who steps away before the end of 2026.",
+            look="bars",
+            member_ids=(113281, 113664, 109419, 25924022, 113175),
+        )
+        vset, err = validate_scout_proposed_set(exit_clean_voice, mn, now=FROZEN_NOW)
+        assert vset is None and err == "politics_only_set:category"
+
+        exit_relabelled = ScoutProposedSet(
+            slug="exit-interviews-relabeled",
+            name="Exit Interviews",
+            kicker="DISCOVER SET",
+            category="culture",
+            why_better_together="Who steps away before the end of 2026.",
+            look="bars",
+            member_ids=(113281, 113664, 109419, 25924022, 113175),
+        )
+        vset, err = validate_scout_proposed_set(exit_relabelled, mn, now=FROZEN_NOW)
+        assert vset is None and err == "politics_only_set:members"
+
+        # 3. Cape Gossip: dropped Jordan Peele member triggers dropped-member check; fixed blurb passes.
+        mn_with_dropped_peele = {
+            **_RUN_3946_MARKETS,
+            109402: _mk(
+                109402,
+                "Will Jordan Peele direct a Marvel film?",
+                source="kalshi",
+                category="entertainment",
+                volume=500.0,  # fails real trading check -> dropped
+            ),
+        }
+        cape_with_dropped = ScoutProposedSet(
+            slug="cape-gossip-dropped",
+            name="Cape Gossip",
+            kicker="DISCOVER SET",
+            category="movies",
+            why_better_together=(
+                "Rumors about RDJ's return, Elon as Superman, Miles Morales and "
+                "Jordan Peele's Marvel debut all feed the same fan-forum frenzy."
+            ),
+            look="bars",
+            member_ids=(109347, 109633, 58858756, 109402),
+        )
+        vset, err = validate_scout_proposed_set(cape_with_dropped, mn_with_dropped_peele, now=FROZEN_NOW)
+        assert vset is None and err is not None and err.startswith("blurb_mentions_dropped_member:")
+
+        cape_fixed_blurb = ScoutProposedSet(
+            slug="cape-gossip-clean",
+            name="Cape Gossip",
+            kicker="DISCOVER SET",
+            category="movies",
+            why_better_together=(
+                "Rumors about RDJ's return, Elon as Superman and Miles Morales's casting "
+                "all feed the same superhero rumor mill."
+            ),
+            look="bars",
+            member_ids=(109347, 109633, 58858756),
+        )
+        vset, err = validate_scout_proposed_set(cape_fixed_blurb, _RUN_3946_MARKETS, now=FROZEN_NOW)
+        assert err is None and vset is not None
+
+        # 4. Blurb count mismatch & footer banned words rejected.
+        count_mismatch = ScoutProposedSet(
+            slug="cape-count-mismatch",
+            name="Cape Gossip",
+            kicker="DISCOVER SET",
+            category="movies",
+            why_better_together="These four markets capture superhero casting rumors.",
+            look="bars",
+            member_ids=(109347, 109633, 58858756),
+        )
+        vset, err = validate_scout_proposed_set(count_mismatch, _RUN_3946_MARKETS, now=FROZEN_NOW)
+        assert vset is None and err == "blurb_member_count_mismatch:4!=3"
+        assert check_scout_voice_words("Set", "SET", "Clean blurb.", "Betting lines.") == "banned_voice_word:Betting".lower()
+
+    def test_all_17_seed_groups_clear_politics_and_mechanical_checks_and_white_christmas_map_passes(self):
+        reg = load_fun_markets_registry()
+        groups: dict[str, list[ScoutMarketRow]] = {}
+        for entry in reg.markets.values():
+            row = _mk(
+                entry.market_id,
+                entry.title,
+                category=entry.discover_category,
+            )
+            for tag in entry.sub_tags:
+                groups.setdefault(tag, []).append(row)
+
+        assert len(groups) == 17
+        for group_name, rows in groups.items():
+            assert check_scout_no_mechanical_sales_downloads(group_name, group_name, rows) is None
+            assert check_scout_no_politics_only_set("culture", group_name, rows) is None
+
+        assert check_scout_map_look_places("map", groups["white-christmas"]) is None
+        assert check_scout_blurb_matches_members(
+            "City-by-city snow odds for Denver, NYC, Philadelphia and Seattle.",
+            groups["white-christmas"],
+        ) is None

@@ -538,7 +538,10 @@ def format_event_data(
             if hero.settled_result is not None:
                 data["hero_settled_result"] = hero.settled_result
     else:
-        _suppress_scheduled_orphan = _draw_priced and not _is_settled_hero and status == "scheduled"
+        # #13131: on a draw-priced sport, a non-settled list card must show all
+        # three numbers (home, draw, away) or none — never one orphan home
+        # percentage or a two-way 1 - home complement without a draw.
+        _suppress_incomplete_three_way = _draw_priced and not _is_settled_hero
 
         if current_home_prob is not None:
             if (
@@ -558,8 +561,7 @@ def format_event_data(
                     "away_rendered_percent": away_pct,
                     "draw_rendered_percent": draw_pct,
                 }
-            elif _suppress_scheduled_orphan:
-                # #13131 step 3: scheduled one-leg draw-priced card -> nothing for chance.
+            elif _suppress_incomplete_three_way:
                 odds_data = {
                     "home_probability": None,
                     "away_probability": None,
@@ -587,7 +589,7 @@ def format_event_data(
             if prob_source:
                 odds_data["source"] = prob_source
             data["current_odds"] = odds_data
-        elif _suppress_scheduled_orphan and (hero is not None or prob_source):
+        elif _suppress_incomplete_three_way and (hero is not None or prob_source):
             # Preserve `current_odds` key with nulled chance fields when suppressed.
             odds_data = {
                 "home_probability": None,
@@ -611,7 +613,7 @@ def format_event_data(
                     data["hero_probability"] = current_home_prob
                     data["hero_probability_away"] = current_away_prob
                     data["hero_probability_draw"] = current_draw_prob
-                elif _suppress_scheduled_orphan:
+                elif _suppress_incomplete_three_way:
                     data["hero_probability"] = None
                     data["hero_probability_away"] = None
                     data["hero_probability_draw"] = None

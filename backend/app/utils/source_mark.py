@@ -167,6 +167,7 @@ def headline_source_marks(
     observations: Mapping[str, Any] | None = None,
     method: str | None = None,
     away_available: bool = True,
+    three_way_probs: tuple[float, float, float] | None = None,
 ) -> tuple[dict, dict]:
     """Both axes from the hero's trace; no client complements or source guesses.
 
@@ -198,6 +199,7 @@ def headline_source_marks(
         observations=observations,
         method=method,
         away_available=away_available,
+        three_way_probs=three_way_probs,
     )
 
 
@@ -208,8 +210,16 @@ def blended_source_marks(
     observations: Mapping[str, Any] | None = None,
     method: str | None = None,
     away_available: bool = True,
+    three_way_probs: tuple[float, float, float] | None = None,
 ) -> tuple[dict, dict]:
-    """Orient the selected two-sided quote inputs for each team."""
+    """Orient the selected quote inputs for each team.
+
+    On a two-way sport the away leg is ``1 - p_home``. On a three-way
+    (draw-priced) sport, ``three_way_probs = (home, away, draw)`` gives the
+    exact non-home away share ``away / (1 - home)`` so ``away_source_mark``
+    carries each source's away chance rather than ``1 - p_home`` (which folds
+    the draw into the away team, #13131).
+    """
     selected = list(selected_inputs)
     bag = getattr(event, "win_probability_sources", None)
     count = bag.get("betting_book_count") if isinstance(bag, dict) else None
@@ -223,11 +233,32 @@ def blended_source_marks(
     else:
         clocks = observations
 
+    away_share: float | None = None
+    if three_way_probs is not None:
+        h3, a3, _d3 = three_way_probs
+        if (
+            isinstance(h3, (int, float))
+            and isinstance(a3, (int, float))
+            and not isinstance(h3, bool)
+            and not isinstance(a3, bool)
+            and 0.0 < h3 < 1.0
+            and 0.0 < a3 < 1.0
+            and (h3 + a3) < 0.99
+        ):
+            away_share = a3 / (1.0 - h3)
+
+    def _orient(probability: float, away: bool) -> float:
+        if not away:
+            return probability
+        if away_share is not None:
+            return round((1.0 - probability) * away_share, 6)
+        return 1 - probability
+
     def mark(away: bool) -> dict:
         return quote_source_mark(
             ({
                 "key": key,
-                "probability": 1 - probability if away else probability,
+                "probability": _orient(probability, away),
                 "observed_at": clocks.get(key),
                 "count": count if key == "betting" else None,
             }

@@ -1124,7 +1124,11 @@ def _market_matches_query(
 
     fun_sub_tag = str(query.get("fun_sub_tag") or "").strip()
     if fun_sub_tag:
-        from app.utils.discover_fun_tags import check_fun_taste_guard, fun_market_ids_for_sub_tag
+        from app.utils.discover_fun_tags import (
+            check_fun_real_trading,
+            check_fun_taste_guard,
+            fun_market_ids_for_sub_tag,
+        )
 
         allowed_fun_ids = fun_market_ids_for_sub_tag(fun_sub_tag)
         mid_val = market.get("id")
@@ -1136,6 +1140,23 @@ def _market_matches_query(
         )
         if not taste_ok:
             return False
+        raw_min_vol = query.get("min_lifetime_volume")
+        min_vol_override = (
+            int(raw_min_vol)
+            if isinstance(raw_min_vol, (int, float)) and not isinstance(raw_min_vol, bool)
+            else None
+        )
+        trading_ok, _ = check_fun_real_trading(
+            market.get("volume"), min_lifetime_volume=min_vol_override
+        )
+        if not trading_ok:
+            return False
+    else:
+        raw_min_vol = query.get("min_lifetime_volume")
+        if isinstance(raw_min_vol, (int, float)) and not isinstance(raw_min_vol, bool):
+            vol_val = market.get("volume")
+            if not isinstance(vol_val, (int, float)) or isinstance(vol_val, bool) or float(vol_val) < float(raw_min_vol):
+                return False
 
     req_tokens = [str(t).lower() for t in (query.get("title_all_tokens") or ()) if str(t).strip()]
     if any(tok not in title_low for tok in req_tokens):
@@ -1212,6 +1233,35 @@ def _market_matches_query(
     if shape == "binary":
         names = {str(o.get("name") or "").strip().lower() for o in priced}
         if "yes" not in names and len(priced) != 1:
+            return False
+
+    max_lead_prob = query.get("max_lead_probability")
+    if isinstance(max_lead_prob, (int, float)) and not isinstance(max_lead_prob, bool):
+        max_lp = float(max_lead_prob)
+        max_pct = int(round(max_lp * 100))
+        canonical_rows, _, _ = _canonical_market_outcome_map(
+            raw_outcomes,
+            mutually_exclusive=bool(market.get("mutually_exclusive", True)),
+            question=str(market.get("name") or ""),
+        )
+        non_floor = [o for o in canonical_rows if 0.005 <= float(o["probability"]) <= 0.995]
+        min_needed = 2 if len(canonical_rows) == 2 else 1
+        valid_rows = non_floor if len(non_floor) >= min_needed else list(canonical_rows)
+        if not valid_rows:
+            return False
+        is_yes_shape = len(valid_rows) <= 2 and any(
+            str(o.get("name") or "").strip().lower() == "yes" for o in valid_rows
+        )
+        if is_yes_shape:
+            lead_row = next(
+                (o for o in valid_rows if str(o.get("name") or "").strip().lower() == "yes"),
+                valid_rows[0],
+            )
+        else:
+            lead_row = max(valid_rows, key=lambda o: float(o["probability"]))
+        lead_p = float(lead_row["probability"])
+        lead_pct = int(lead_row.get("rendered_percent") or _half_up_pct(lead_p))
+        if lead_p > max_lp or lead_pct > max_pct:
             return False
 
     return True
@@ -1293,6 +1343,7 @@ def _hydrate_market_visual_item(
     max_outcomes: int,
     resolver: SubjectArtResolver,
     content_kind: Optional[str] = None,
+    use_fun_short_label: bool = False,
 ) -> dict[str, Any]:
     mid = int(market["id"])
     if "top_outcomes" in market and isinstance(market["top_outcomes"], (list, tuple)):
@@ -1406,9 +1457,30 @@ def _hydrate_market_visual_item(
     card_copy["content_kind"] = effective_kind
     card_copy["member_page_numbers"] = mpn
 
+    base_title: Optional[str] = None
+    if use_fun_short_label:
+        from app.utils.discover_fun_tags import fun_market_short_label
+
+        base_title = fun_market_short_label(mid)
+    if not base_title:
+        base_title = clean_card_face_title(_clean_section_market_label(clean_raw_name))
+
+    display_title = base_title
+    # On single-number fun strips (`fun_sub_tag` + `max_outcomes == 1`), a
+    # non-Yes/No ("when"/"which") market's row and headline must name its
+    # leading answer alongside the number (Item 5b / #13224).
+    if use_fun_short_label and max_outcomes == 1 and not shape_is_yes and outcomes_out:
+        lead_ans = str(outcomes_out[0].get("name") or "").strip()
+        if (
+            lead_ans
+            and lead_ans.lower() not in {"yes", "no"}
+            and lead_ans.lower() not in display_title.lower()
+        ):
+            display_title = f"{display_title}: {lead_ans}"
+
     return {
         "market_id": mid,
-        "title": clean_card_face_title(_clean_section_market_label(clean_raw_name)),
+        "title": display_title,
         "raw_title": clean_raw_name,
         "href": f"/futures/{mid}",
         "source": str(market.get("source") or ""),
@@ -1417,6 +1489,7 @@ def _hydrate_market_visual_item(
         "scale_ordered": scale_ordered,
         "content_kind": effective_kind,
         "closeness_to_50": abs(lead_prob - 0.5),
+        "_volume": float(market.get("volume") or 0.0),
         "outcomes": outcomes_out,
         "member_page_numbers": mpn,
         "card": card_copy,
@@ -3530,7 +3603,11 @@ async def produce_container_machinery(
                         "form_id": form_id,
                         "initial_visible_limit": initial_visible,
                         "items": [
-                            {k: v for k, v in fm_it.items() if k not in ("card", "_twin_market_ids")}
+                            {
+                                k: v
+                                for k, v in fm_it.items()
+                                if k not in ("card", "_twin_market_ids", "_volume")
+                            }
                             for fm_it in fallback_matched
                         ],
                     },
@@ -3539,12 +3616,14 @@ async def produce_container_machinery(
 
         # aq_kind == "markets"
         explicit_ck = str(aq.get("content_kind") or "").strip().lower() or None
+        use_fun_short = bool(str(aq.get("fun_sub_tag") or "").strip())
         matched = [
             _hydrate_market_visual_item(
                 m,
                 max_outcomes=max_outcomes,
                 resolver=resolver,
                 content_kind=explicit_ck,
+                use_fun_short_label=use_fun_short,
             )
             for m in all_markets
             if (MEMBER_MARKET, int(m["id"])) not in seen_member_keys
@@ -3554,8 +3633,22 @@ async def produce_container_machinery(
         order_by = str(aq.get("order_by") or "lead_prob_desc")
         if order_by == "closeness_to_50":
             matched.sort(key=lambda x: (x["closeness_to_50"], -x["lead_prob"]))
+        elif order_by == "lead_prob_asc":
+            matched.sort(
+                key=lambda x: (
+                    x["lead_prob"],
+                    -float(x.get("_volume") or 0.0),
+                    x["title"].casefold(),
+                )
+            )
         else:
-            matched.sort(key=lambda x: (-x["lead_prob"], x["title"].casefold()))
+            matched.sort(
+                key=lambda x: (
+                    -x["lead_prob"],
+                    -float(x.get("_volume") or 0.0),
+                    x["title"].casefold(),
+                )
+            )
         matched = matched[:max_items]
         if len(matched) < min_items:
             return RoundupRefusal((("container_machinery", f"too_few_markets:{sec_key}"),))
@@ -3588,7 +3681,11 @@ async def produce_container_machinery(
             "form_id": form_id,
             "initial_visible_limit": initial_visible,
             "items": [
-                {k: v for k, v in it.items() if k not in ("card", "_twin_market_ids")}
+                {
+                    k: v
+                    for k, v in it.items()
+                    if k not in ("card", "_twin_market_ids", "_volume")
+                }
                 for it in matched
             ],
         }
@@ -3790,6 +3887,16 @@ async def produce_container_machinery(
             if _history_chart_moved(own_chart):
                 mini_chart = {k: v for k, v in own_chart.items() if k != "card"}
 
+    suppress_card_photo = bool(rule.get("suppress_card_photo"))
+    if suppress_card_photo:
+        for env in all_member_envelopes:
+            if isinstance(env, dict) and isinstance(env.get("card"), dict):
+                env["card"]["image_url"] = None
+        for sec in built_sections:
+            for env in sec.get("members") or ():
+                if isinstance(env, dict) and isinstance(env.get("card"), dict):
+                    env["card"]["image_url"] = None
+
     card_item_count, card_item_noun = _machinery_card_item_count_and_noun(vb)
     machinery_card: dict[str, Any] = {
         "slug": slug,
@@ -3807,6 +3914,8 @@ async def produce_container_machinery(
         "destination_href": dest_href,
         "rows": card_visual_rows,
     }
+    if suppress_card_photo:
+        machinery_card["suppress_card_photo"] = True
     if mini_chart is not None:
         machinery_card["mini_chart"] = mini_chart
 

@@ -103,11 +103,11 @@ async def test_batch1_three_fun_groupings_build_cleanly_with_full_parity_and_twi
     c_p, p_p = _compute_member_number_parity(jb_fi, jb_cp)
     assert c_p["passes"] is True and p_p["passes"] is True
 
-    # 3. Who Gets Engaged? (Ruling 273: B)
+    # 3. Who Gets Engaged? (Ruling 273: B; deadline in title & subtitle per Fable Nov 20 card look)
     eg_def = load_machinery_definition("data/groupings/candidates/machinery-who-gets-engaged.json")
     assert eg_def["stage"] == "preview"
     assert eg_def["look"] == "faces"
-    assert "2026" not in eg_def["rule"]["sections"][0]["note"]
+    assert eg_def["rule"]["sections"][0]["note"] == "Chance each couple is engaged by Dec 31, 2026."
     assert "politics" in (_category_llm_pool_for_definition(eg_def) or ())
     eg_prod = build_container_machinery_producer(eg_def)
     assert eg_prod.stage == "preview" and eg_prod.look == "faces"
@@ -125,7 +125,10 @@ async def test_batch1_three_fun_groupings_build_cleanly_with_full_parity_and_twi
     assert 61085868 in shown_ids and 109618 not in shown_ids
     assert 109618 in eg_res.covered_market_ids
     assert eg_res.sections[0]["visual_block"]["item_noun"] == "couples"
-    assert eg_res.title == "Scooter Braun & Sydney Sweeney are the likeliest to get engaged at 36%, with Timothée Chalamet & Kylie Jenner at 13%"
+    assert eg_res.title == (
+        "Scooter Braun & Sydney Sweeney are the likeliest to get engaged before the year ends at 36%, "
+        "with Timothée Chalamet & Kylie Jenner at 13%"
+    )
     eg_fi = compose_roundup_feed_item(eg_prod, eg_res)
     assert 109618 in eg_fi["data"]["member_ids"]
     eg_cp = compose_roundup_container(eg_prod, eg_res)
@@ -315,4 +318,43 @@ async def test_more_sets_excludes_preview_stage_under_public_set(monkeypatch: An
         )
         slugs = [c["slug"] for c in cards]
         assert slugs == ["machinery-fed-and-macro"], f"preview set leaked into more_sets: {slugs}"
+
+
+@pytest.mark.asyncio
+async def test_white_christmas_and_who_gets_engaged_suppress_unverified_card_photos() -> None:
+    """Fable Nov 20 card look: White Christmas never carries Dallas lightning fallback and
+    Who Gets Engaged never carries stock photos of unnamed people."""
+    from app.utils.discover_image_policy import sanitize_discover_feed_item
+
+    markets = _sample_markets()
+    for m in markets:
+        if "engaged" in m["name"].lower():
+            m["image_url"] = (
+                "https://images.pexels.com/photos/31241769/pexels-photo-31241769.jpeg"
+                "?auto=compress&cs=tinysrgb&h=650&w=940"
+            )
+    db = {"events": [], "markets": markets, "paired_sets": {}, "market_histories": {}}
+
+    wc_def = load_machinery_definition("data/groupings/candidates/machinery-white-christmas.json")
+    wc_prod = build_container_machinery_producer(wc_def)
+    wc_res = await produce_container_machinery(db, wc_def, now=NOW)
+    assert wc_res.machinery_card.get("suppress_card_photo") is True
+    wc_fi = sanitize_discover_feed_item(compose_roundup_feed_item(wc_prod, wc_res))
+    assert wc_fi["data"].get("image_url") is None
+    assert all((s.get("data") or {}).get("image_url") is None for s in wc_fi["data"].get("items") or ())
+
+    eg_def = load_machinery_definition("data/groupings/candidates/machinery-who-gets-engaged.json")
+    eg_prod = build_container_machinery_producer(eg_def)
+    eg_res = await produce_container_machinery(db, eg_def, now=NOW)
+    assert eg_res.machinery_card.get("suppress_card_photo") is True
+    assert eg_res.machinery_card["subtitle"] == "Chance each couple is engaged by Dec 31, 2026."
+    assert "before the year ends" in eg_res.machinery_card["title"]
+    eg_fi = sanitize_discover_feed_item(compose_roundup_feed_item(eg_prod, eg_res))
+    assert eg_fi["data"].get("image_url") is None
+    assert all((s.get("data") or {}).get("image_url") is None for s in eg_fi["data"].get("items") or ())
+    eg_cp = compose_roundup_container(eg_prod, eg_res)
+    for sec in eg_cp.get("sections") or ():
+        for m in sec.get("members") or ():
+            assert (m.get("card") or {}).get("image_url") is None
+
 

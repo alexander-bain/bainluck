@@ -348,6 +348,8 @@ nonisolated struct FuturesOutcome: Decodable, Identifiable, Sendable {
     /// own result (`{"verdict","basis"}`). Absent on every other market and on
     /// older servers. Read only through ``SettledResultDisplay698``.
     @LenientDecode var settlementDisplay: SettlementDisplay698? = nil
+    /// The venue graded this outcome out while the field remains open.
+    var isOut: Bool? = nil
     /// Direction 228 (#12885): optional server-supplied numerical sort key.
     @TolerantNumeric var sortKey: Double? = nil
 
@@ -357,7 +359,7 @@ nonisolated struct FuturesOutcome: Decodable, Identifiable, Sendable {
         case probabilityChange24h = "probabilityChange24H"
         case openingProbability, openingAmericanOdds, isWinner, resolutionSource, lastUpdated
         case contributingSources, observedAt, aggregationRule
-        case settlementDisplay, sortKey
+        case settlementDisplay, sortKey, isOut
     }
 }
 

@@ -3386,6 +3386,7 @@ async def _fetch_polymarket_prices(
     # brittle about formatting, but it is right about the rule.
     from app.tasks.polymarket import _unpriced_leg_external_ids
     from app.tasks.polymarket import _refused_leg_books  # #9399
+    from app.tasks.polymarket import polymarket_field_leg_resolved_no
     from app.utils.winner_field_coherence import field_is_incoherent
 
     raw_events = await service.get_events_by_ids(event_ids)
@@ -3403,6 +3404,8 @@ async def _fetch_polymarket_prices(
             continue
         priced: list[dict] = []
         for market in event.markets:
+            if polymarket_field_leg_resolved_no(event, market):
+                continue
             prob = _resolve_market_probability(market)
             if prob is None or prob <= 0:
                 # #5869. The refusal is a fact about this pass and it used to

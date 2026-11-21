@@ -579,3 +579,95 @@ class TestNumberDifferenceRefusal:
         assert t_uta.abbreviation == "UTA"
         assert stats["espn_id_name_disagreement"] == 0
         assert stats["teams_updated"] == 4
+
+
+class TestReserveAndWomensSideGuard13202:
+    """#13202: a reserve or women's side must not receive the first team's
+    short name or crest when its name differs by II, III, B, Women, or Reserves."""
+
+    @pytest.mark.parametrize(
+        "row_name, espn_name",
+        [
+            ("Columbus Crew 2", "Columbus Crew"),
+            ("Portland Timbers 2", "Portland Timbers"),
+            ("LA Galaxy II", "LA Galaxy"),
+            ("Toronto FC II", "Toronto FC"),
+            ("Bayern Munich II", "Bayern Munich"),
+            ("Real Sociedad B", "Real Sociedad"),
+            ("Athletic Club B", "Athletic Club"),
+            ("Chelsea FC Women", "Chelsea FC"),
+            ("Barcelona B", "Barcelona"),
+            ("Chelsea Women", "Chelsea"),
+            ("Arsenal FC Reserves", "Arsenal FC"),
+            ("FC Utrecht III", "FC Utrecht"),
+        ],
+    )
+    def test_fuzzy_hit_refuses_reserve_and_womens_pairs(self, row_name, espn_name):
+        assert not fuzzy_hit_is_identical(
+            row_name,
+            row_name,
+            1.0,
+            {"999"},
+            matched_espn_name=espn_name.lower(),
+        )
+
+    @pytest.mark.parametrize(
+        "row_name, espn_name",
+        [
+            ("Charlotte 49ers", "Charlotte 49ers"),
+            ("Schalke 04", "FC Schalke 04"),
+            ("Sacramento St Hornets", "Sacramento State Hornets"),
+            ("Chelsea FC Women", "Chelsea FC Women"),
+        ],
+    )
+    def test_fuzzy_hit_keeps_numbered_clubs_st_state_and_matching_womens_sides(
+        self, row_name, espn_name
+    ):
+        assert fuzzy_hit_is_identical(
+            row_name,
+            row_name,
+            1.0,
+            {"999"},
+            matched_espn_name=espn_name.lower(),
+        )
+
+    def test_backfill_pass_refuses_la_galaxy_ii_real_sociedad_b_and_chelsea_fc_women(
+        self, monkeypatch
+    ):
+        la_galaxy = _espn("187", "LA Galaxy", "LA Galaxy", "LA", location="LA Galaxy")
+        real_sociedad = _espn(
+            "89", "Real Sociedad", "Real Sociedad", "RSO", location="Real Sociedad"
+        )
+        chelsea = _espn("363", "Chelsea FC", "Chelsea", "CHE", location="Chelsea FC")
+        charlotte = _espn(
+            "2429", "Charlotte 49ers", "Charlotte", "CLT", location="Charlotte"
+        )
+        schalke = _espn("133", "FC Schalke 04", "Schalke", "S04", location="Schalke 04")
+
+        t_lag2 = _team(20001, "LA Galaxy II", abbreviation=None)
+        t_rsb = _team(20002, "Real Sociedad B", abbreviation=None)
+        t_cfcw = _team(20003, "Chelsea FC Women", abbreviation=None)
+        t_clt = _team(20004, "Charlotte 49ers", abbreviation=None)
+        t_s04 = _team(20005, "Schalke 04", abbreviation=None)
+        t_sac = _team(
+            20006,
+            "Sacramento St Hornets",
+            logo="https://a.espncdn.com/i/teamlogos/ncaa/500/16.png",
+            abbreviation=None,
+        )
+
+        stats = _run_pass(
+            monkeypatch,
+            [t_lag2, t_rsb, t_cfcw, t_clt, t_s04, t_sac],
+            [la_galaxy, real_sociedad, chelsea, charlotte, schalke, SACRAMENTO],
+            sport_key="soccer_usa_mls",
+        )
+
+        for refused in (t_lag2, t_rsb, t_cfcw):
+            assert refused.abbreviation is None
+            assert refused.logo_url_small is None
+        assert t_clt.abbreviation == "CLT"
+        assert t_s04.abbreviation == "S04"
+        assert t_sac.abbreviation == "SAC"
+        assert stats["teams_updated"] == 3
+

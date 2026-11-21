@@ -125,6 +125,15 @@ nonisolated struct WatchFeedEvent: Decodable, Identifiable, Sendable {
     var isLive: Bool { status == "live" }
     var isSettled: Bool { status == "completed" || status == "closed" || heroProbabilitySource == "settled" }
 
+    var currentHomeProbability: Double? {
+        heroProbabilitySource == "opening" ? nil : currentOdds?.homeProbability
+    }
+
+    var scoreline: String? {
+        guard isLive || isSettled, let awayScore, let homeScore else { return nil }
+        return "\(awayScore)–\(homeScore)"
+    }
+
     /// Short live-game clock string ("Q3 4:21" / "T7"), when available.
     ///
     /// #4880 — shares the phone's rule rather than keeping a fourth copy of the

@@ -1885,6 +1885,7 @@ def _format_game_brief(
         if _brief_3 is not None:
             _h3, _a3, _d3 = _brief_3
             _hp, _dp, _ap = rendered_three_way_percents(_h3, _d3, _a3)
+            brief["home_win_probability"] = _h3
             brief["current_odds"] = {
                 "home_probability": _h3,
                 "away_probability": _a3,
@@ -1898,7 +1899,17 @@ def _format_game_brief(
                 source_inputs,
                 method=source_method[0] if source_method else None,
                 away_available=True,
+                three_way_probs=_brief_3,
             )
+        elif _draw_priced:
+            # #13131: a draw-priced list card must show all three numbers or
+            # none — never two-way 1 - home with no draw, and never one orphan
+            # home chance.
+            from app.utils.source_mark import no_source_mark
+
+            brief["home_win_probability"] = None
+            brief["source_mark"] = no_source_mark("no_probability")
+            brief["away_source_mark"] = no_source_mark("no_probability")
         else:
             brief["current_odds"] = {
                 "home_probability": home_prob,
@@ -1908,7 +1919,7 @@ def _format_game_brief(
                 event,
                 source_inputs,
                 method=source_method[0] if source_method else None,
-                away_available=not _draw_priced,
+                away_available=True,
             )
 
     # Opening line — the card's live footer says "Opened 62/38" from this, and a
@@ -3862,6 +3873,11 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
             datetime.now(timezone.utc),
             sport_key_override=sport_key,
             latest_odds_query=latest_odds_per_bookmaker_query,
+            absorbed_ids_by_event={
+                cid: folded.absorbed_ids
+                for cid, folded in _tag_folded.items()
+                if folded.absorbed_ids
+            },
         )
 
         # Per-item, not per-rail (gotcha #42: "one bad item must never wipe a

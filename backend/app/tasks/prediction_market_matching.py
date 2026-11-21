@@ -1256,7 +1256,7 @@ async def leagues_by_side_for_matchup(
         # #8100: Polymarket's "South East Melbourne Phoenix" is teams 2919
         # "S.E. Melbourne Phoenix". Without this the Phoenix alone of the ten
         # NBL clubs was placed in `basketball_other`, beside its league row.
-        known |= venue_spellings_of(name)
+        known |= venue_spellings_of(name, sport_key=league)
         for index, side in enumerate(lowered):
             if side in known:
                 leagues_by_side[index].add(league)

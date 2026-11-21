@@ -2,12 +2,13 @@
 
 The task runs against real tables via the existing SQLite dialect shim. Only
 the task session and cursor store are replaced; production selectors and
-matching run unchanged. Stored poison is deliberately outside this prevention.
+matching run unchanged. The later fixture pass now repairs stored poison too.
 """
 
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 import asyncio
+import logging
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -87,12 +88,19 @@ def _run(session, *, use_llm=False):
     return dict(session.execute(select(FuturesOutcome.id, FuturesOutcome.team_id)).all()), stats
 
 
-def test_names_and_rosters_bind_to_fixture_while_unrelated_clubs_and_stored_poison_stay_out():
+def test_names_and_rosters_bind_to_fixture_and_stored_poison_is_repaired(caplog):
+    caplog.set_level(logging.INFO, logger=team_linking.__name__)
     with Session(_make_engine()) as session:
         _seed(session)
         links, stats = _run(session)
-    assert links == {1: 541, 2: 541, 3: 544, 4: 541, 5: None, 6: None, 7: None, 8: 10740}
+    assert links == {1: 541, 2: 541, 3: 544, 4: 541, 5: None, 6: None, 7: None, 8: 541}
     assert stats["outcomes_refused_outside_event_teams"] >= 2
+    assert stats["outcomes_relinked_into_fixture"] == 1
+    refusals = [record.getMessage() for record in caplog.records
+                if record.getMessage().startswith("Outcome club link refused:")]
+    assert len(refusals) == stats["outcomes_refused_outside_event_teams"]
+    assert "Outcome club link refused: outcome=5 market=67649495 fixture=14781145 candidate_club=10741 fixture_clubs=[541, 544] reason=outside_fixture" in refusals
+    assert "Outcome club link refused: outcome=6 market=67649495 fixture=14781145 candidate_club=10740 fixture_clubs=[541, 544] reason=outside_fixture" in refusals
 
 
 def test_llm_cannot_reintroduce_an_outside_fixture_club():
@@ -128,8 +136,9 @@ def test_wrong_sport_fixture_ids_cannot_authorize_category_fallback():
         _seed(session, sport_id=1, home_id=10740, away_id=10741)
         links, stats = _run(session)
     assert all(links[oid] is None for oid in range(1, 8))
-    assert links[8] == 10740  # Already-linked data still belongs to the repair.
-    assert stats["outcomes_refused_outside_event_teams"] > 0
+    assert links[8] == 10740  # An unverified fixture cannot authorize a repair.
+    assert stats["outcomes_refused_unknown_fixture"] == 7
+    assert stats["fixture_refusals"]["home_club_sport_or_gender_mismatch"] == 7
 
 
 @pytest.mark.parametrize("outside_fixture_outcome", [False, True])
@@ -180,7 +189,8 @@ def test_opposite_gender_fixture_ids_do_not_authorize_a_club():
         links, stats = _run(session)
     assert all(links[oid] is None for oid in range(1, 8))
     assert links[8] == 10740
-    assert stats["outcomes_refused_outside_event_teams"] > 0
+    assert stats["outcomes_refused_unknown_fixture"] == 7
+    assert stats["fixture_refusals"]["home_club_sport_or_gender_mismatch"] == 7
 
 
 def test_same_sport_names_resolve_fixture_without_team_foreign_keys():

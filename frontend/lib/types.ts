@@ -950,6 +950,8 @@ export interface SettlementDisplay {
 
 export interface FuturesOutcome {
   rendered_percent?: number | null;
+  /** Venue-graded elimination on an otherwise open field. */
+  is_out?: boolean;
   id: number;
   name: string;
   probability: number | null;

@@ -101,8 +101,11 @@ def test_draw_priced_away_is_unavailable_but_a_verified_final_keeps_both_results
     row.status = "live"
     row.commence_time = now - timedelta(minutes=30)
     live = card(row)
+    assert live["hero_probability"] is None
     assert live["hero_probability_away"] is None
-    assert live["away_source_mark"] == {"state": "none", "sources": [], "reason": "away_unavailable"}
+    assert live["source_mark"] == live["away_source_mark"] == {
+        "state": "none", "sources": [], "reason": "no_probability",
+    }
     row.status = "completed"
     row.commence_time = now - timedelta(hours=2)
     row.completed_at = now - timedelta(minutes=3)
