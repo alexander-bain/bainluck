@@ -138,43 +138,86 @@ struct TeamDetailView: View {
 
     static let readableDetailMaxWidth: CGFloat = 720
 
+    @ViewBuilder
+    private func teamHeroLogo(_ team: TeamPageTeam) -> some View {
+        if let logo = team.logoLarge ?? team.logoSmall, let url = URL(string: logo) {
+            if let preloaded = preloadedAvatarImages[url] {
+                preloaded
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 64, height: 64)
+            } else {
+                AsyncImage(url: url) { image in
+                    image.resizable().scaledToFit()
+                } placeholder: {
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color(hex: TeamDetailTeamColour.logoTileHex(team.primaryColor)))
+                        // #4720 — the served abbreviation still wins; the
+                        // FALLBACK was one raw character ("1" for
+                        // "1. FC Heidenheim 1846") and is now the app's badge.
+                        .overlay(Text(team.abbreviation ?? TeamShortName.abbreviation(team.name)).font(.title2).bold().foregroundStyle(.white))
+                }
+                .frame(width: 64, height: 64)
+            }
+        }
+    }
+
+    private func teamHeroIdentity(_ team: TeamPageTeam, singleLineTitle: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(team.name)
+                .font(singleLineTitle ? .title3.bold() : .title2.bold())
+                .lineLimit(singleLineTitle ? 1 : nil)
+                .fixedSize(horizontal: singleLineTitle, vertical: true)
+            HStack(spacing: 8) {
+                if let record = team.record {
+                    Text(record).font(.subheadline).foregroundStyle(.secondary)
+                }
+                if let sport = team.sportName {
+                    Text(sport).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+
+    private func teamHeroLogoCompact(_ team: TeamPageTeam) -> some View {
+        teamHeroLogo(team)
+            .scaleEffect(52.0 / 64.0)
+            .frame(width: 52, height: 52)
+    }
+
     private func teamContent(_ data: TeamPageResponse) -> some View {
         let team = data.team
+        let followSubject = FollowedSubject295A.team(
+            slug: team.slug,
+            teamId: team.id,
+            name: team.name,
+            sportKey: team.sportKey,
+            logoUrl: team.logoSmall ?? team.logoLarge,
+            primaryColor: team.primaryColor
+        )
+        let alertsContextId = "team-page:\(team.slug)"
         return List {
             // Hero
             Section {
-                HStack(spacing: 16) {
-                    if let logo = team.logoLarge ?? team.logoSmall, let url = URL(string: logo) {
-                        if let preloaded = preloadedAvatarImages[url] {
-                            preloaded
-                                .resizable()
-                                .scaledToFit()
-                                .frame(width: 64, height: 64)
-                        } else {
-                            AsyncImage(url: url) { image in
-                                image.resizable().scaledToFit()
-                            } placeholder: {
-                                RoundedRectangle(cornerRadius: 8)
-                                    .fill(Color(hex: TeamDetailTeamColour.logoTileHex(team.primaryColor)))
-                                    // #4720 — the served abbreviation still wins; the
-                                    // FALLBACK was one raw character ("1" for
-                                    // "1. FC Heidenheim 1846") and is now the app's badge.
-                                    .overlay(Text(team.abbreviation ?? TeamShortName.abbreviation(team.name)).font(.title2).bold().foregroundStyle(.white))
+                VStack(alignment: .leading, spacing: 12) {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 12) {
+                            teamHeroLogoCompact(team)
+                            teamHeroIdentity(team, singleLineTitle: true)
+                            Spacer(minLength: 6)
+                            FollowButton295A(subject: followSubject, pageContextId: alertsContextId, compact: true)
+                        }
+
+                        VStack(alignment: .leading, spacing: 12) {
+                            HStack(spacing: 14) {
+                                teamHeroLogo(team)
+                                teamHeroIdentity(team, singleLineTitle: false)
                             }
-                            .frame(width: 64, height: 64)
+                            FollowButton295A(subject: followSubject, pageContextId: alertsContextId)
                         }
                     }
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(team.name).font(.title2).bold()
-                        HStack(spacing: 8) {
-                            if let record = team.record {
-                                Text(record).font(.subheadline).foregroundStyle(.secondary)
-                            }
-                            if let sport = team.sportName {
-                                Text(sport).font(.caption).foregroundStyle(.secondary)
-                            }
-                        }
-                    }
+
+                    GameAlertsInlinePageSlot295A(contextId: alertsContextId)
                 }
                 .listRowBackground(Color.clear)
             }

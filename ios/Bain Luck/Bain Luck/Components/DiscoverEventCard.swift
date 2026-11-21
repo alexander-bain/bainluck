@@ -401,24 +401,28 @@ struct NativeEventDiscoverCard: View {
 
     @ViewBuilder
     private var discoverFooterRow: some View {
-        // Context text + footer (#10373 — share button rides the caption row).
-        if let contextText {
-            if dynamicTypeSize.isAccessibilitySize {
-                contextCaption(contextText)
+        VStack(alignment: .leading, spacing: 8) {
+            GameCardTeamFollowBar295A(event: event)
+
+            // Context text + footer (#10373 — share button rides the caption row).
+            if let contextText {
+                if dynamicTypeSize.isAccessibilitySize {
+                    contextCaption(contextText)
+                    HStack {
+                        Spacer()
+                        footerMarks
+                    }
+                } else {
+                    HStack(alignment: .center, spacing: 8) {
+                        contextCaption(contextText)
+                        footerMarks
+                    }
+                }
+            } else {
                 HStack {
                     Spacer()
                     footerMarks
                 }
-            } else {
-                HStack(alignment: .center, spacing: 8) {
-                    contextCaption(contextText)
-                    footerMarks
-                }
-            }
-        } else {
-            HStack {
-                Spacer()
-                footerMarks
             }
         }
     }

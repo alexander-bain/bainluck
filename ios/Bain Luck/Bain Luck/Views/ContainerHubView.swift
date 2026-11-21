@@ -75,14 +75,40 @@ struct ContainerHubView: View {
     }
 
     private func hub(_ presentation: ContainerHubPresentation) -> some View {
-        ScrollView {
+        let setName = presentation.title ?? displayName
+        let alertsContextId = "set-hub:\(vm.slug)"
+        let followSubject = FollowedSubject295A.set(
+            slug: vm.slug,
+            setKind: .container,
+            name: setName
+        )
+        return ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
-                if let title = presentation.title {
-                    Text(title)
-                        .font(.title2.weight(.bold))
-                        .foregroundStyle(hubTextPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .center, spacing: 12) {
+                        if let title = presentation.title {
+                            Text(title)
+                                .font(.title2.weight(.bold))
+                                .foregroundStyle(hubTextPrimary)
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: true)
+                        }
+                        Spacer(minLength: 8)
+                        FollowButton295A(subject: followSubject, pageContextId: alertsContextId)
+                    }
+
+                    VStack(alignment: .leading, spacing: 10) {
+                        if let title = presentation.title {
+                            Text(title)
+                                .font(.title2.weight(.bold))
+                                .foregroundStyle(hubTextPrimary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        FollowButton295A(subject: followSubject, pageContextId: alertsContextId)
+                    }
                 }
+
+                GameAlertsInlinePageSlot295A(contextId: alertsContextId)
                 if let subtitle = presentation.subtitle {
                     Text(subtitle)
                         .font(.subheadline)
