@@ -264,3 +264,37 @@ def test_ambiguous_mascot_and_non_wncaab_sports_never_borrow():
     assert lady_lsu is not None and lady_lsu.abbreviation == "LSU"
     # Non-WNCAAB sport does NOT use the men's borrow fallback.
     assert _team_for_event(lookup, "LSU Lady Tigers", "soccer_usa_mls") is None
+
+
+def test_duplicate_crested_mens_rows_tie_break_without_crashing():
+    """Regression for live 500 on 5d8cbe64: two crested basketball_ncaab rows
+    sharing one school crest must tie-break cleanly via _same_league_row_preference
+    (using `stale_only`, never an invalid kwarg) and still borrow cleanly."""
+    stale_mens = _FakeTeam(
+        901,
+        "Duke Blue Devils",
+        sport_id=20,
+        sport_key="basketball_ncaab",
+        abbreviation="DUKE",
+        primary_color="#003087",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/ncaa/500/150.png",
+        current_record="30-5",
+    )
+    fresh_mens = _FakeTeam(
+        902,
+        "Duke Blue Devils",
+        sport_id=20,
+        sport_key="basketball_ncaab",
+        abbreviation="DUKE",
+        primary_color="#003087",
+        secondary_color="#ffffff",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/ncaa/500/150.png",
+        current_record="4-1",
+    )
+    lookup = _dedupe_team_name_lookup([stale_mens, fresh_mens])
+    resolved = _team_for_event(lookup, "Duke Blue Devils", "basketball_wncaab")
+    assert resolved is not None
+    payload = _format_team_data(resolved)
+    assert payload["abbreviation"] == "DUKE"
+    assert payload["logo_small"] == "https://a.espncdn.com/i/teamlogos/ncaa/500/150.png"
+    assert payload["record"] is None
