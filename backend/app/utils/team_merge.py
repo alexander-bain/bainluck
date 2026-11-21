@@ -340,6 +340,14 @@ async def _apply_merge(session, canonical, stub, sport_key) -> dict:
     counts = {}
     for stmt in _FK_STATEMENTS:
         table = stmt.split()[1]
+        if table == "retired_team_redirects":
+            # Minimal-schema historical integration fixtures (and pre-migration
+            # deploys) may not have `retired_team_redirects` yet.
+            exists = (
+                await s.execute(text("SELECT to_regclass('retired_team_redirects')"))
+            ).scalar()
+            if exists is None:
+                continue
         res = await s.execute(text(stmt), {"src": stub.id, "tgt": canonical.id})
         counts[table] = counts.get(table, 0) + (res.rowcount or 0)
 
