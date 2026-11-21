@@ -20831,6 +20831,7 @@ async def get_event(
     # rather than re-deriving it is the whole reason that function returns one.
     # `agg_prob` itself is unchanged and every reader of it below is untouched.
     agg_prob, agg_tier = compute_aggregate_probability_tiered(blend_view)
+    _detail_books_three_way: Optional[tuple[float, float]] = None
 
     # #6238: read ONCE for every probability object this route serves, so the
     # hero, the fallback, the opening line and the top-level pair cannot answer
@@ -20954,6 +20955,14 @@ async def get_event(
         _hero_draw_prob: Optional[float] = None
         _draw_pct: Optional[int] = None
         if sport_prices_a_draw(event_sport_key):
+            if (
+                aggregated.get("home_probability") is not None
+                and aggregated.get("away_probability") is not None
+            ):
+                _detail_books_three_way = (
+                    aggregated["home_probability"],
+                    aggregated["away_probability"],
+                )
             _detail_three_way = resolve_three_way_probabilities(
                 hero_home_prob,
                 books_home=aggregated["home_probability"],
@@ -21307,6 +21316,7 @@ async def get_event(
         method=_hero_source_method[0] if _hero_source_method else None,
         away_available=response.get("hero_probability_away") is not None,
         three_way_probs=_detail_mark_three_way,
+        books_three_way=_detail_books_three_way,
     )
 
     # #5077: this page says LIVE, ticks a 20s refresh, shows no score, and its
@@ -38835,11 +38845,21 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         )
         else None
     )
+    _list_agg_books = (odds_data or {}).get("aggregated") or {}
+    _list_books_three_way = (
+        (_list_agg_books.get("home_probability"), _list_agg_books.get("away_probability"))
+        if (
+            _list_agg_books.get("home_probability") is not None
+            and _list_agg_books.get("away_probability") is not None
+        )
+        else three_way_books
+    )
     response["source_mark"], response["away_source_mark"] = headline_source_marks(
         _hero_view, _list_effective_hero, _hero_inputs,
         method=_hero_method[0] if _hero_method else None,
         away_available=response.get("hero_probability_away") is not None,
         three_way_probs=_list_mark_three_way,
+        books_three_way=_list_books_three_way,
     )
 
     # Compute highlight data (Level 1 + Level 2 if time_series available)

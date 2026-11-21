@@ -3620,8 +3620,8 @@ def _second_slot(reading, home_prob: float) -> tuple:
     here because there is no specimen: it would be an untested branch dressed as
     a fix, and the narrow hole is named in the issue instead.
     """
-    away = reading.away_probability
-    draw = reading.draw_probability
+    away = getattr(reading, "away_probability", None)
+    draw = getattr(reading, "draw_probability", None)
     if away is None or draw is None:
         return 1.0 - home_prob, None
     # "Did it flip" is asked as "which of the two candidates is this closer to",
@@ -8055,6 +8055,8 @@ async def _phase2_persist_group_reading(
         ),
         eligibility=reading.eligibility,
         observed_basis=basis,
+        away_value=None if draw_prob is None else round(away_prob, 4),
+        draw_value=None if draw_prob is None else round(draw_prob, 4),
     )
     # #10090 item 4: as the two-minute poll's stamp, published once committed.
     written = await session.execute(
@@ -13227,6 +13229,8 @@ async def _poll_live_prediction_market_prices():
                         reading.contributing_outcomes or (reading.outcome,),
                         committed_price_reads,
                     ),
+                    away_value=None if draw_prob is None else round(away_prob, 4),
+                    draw_value=None if draw_prob is None else round(draw_prob, 4),
                 )
                 # #10090 item 4: this commit published nothing, so the move
                 # reached an open page only when another writer next published

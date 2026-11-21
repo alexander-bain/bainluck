@@ -13424,6 +13424,7 @@ async def _score_events(
                 method=hero_method[0] if hero_method else None,
                 away_available=away_available,
                 three_way_probs=_card_three_way,
+                books_three_way=live_three_way_books.get(event.id),
             )
             # #10582: score provenance belongs to the scoreboard, not the blend.
             # The same projection serves cached feed and fresh price-card reads.

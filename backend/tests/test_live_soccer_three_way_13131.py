@@ -269,9 +269,10 @@ async def test_read_live_three_way_books_folds_suppressed_twin_snapshots():
 
 
 def test_cologne_at_bayern_away_source_mark_carries_away_chance_for_blended_sources():
-    """On a 90 / 7 / 3 Bundesliga match with two blended sources, away_source_mark
-    must scale each source by the three-way away share (0.03 / 0.10 = 0.30),
-    never emitting 1 - p_home (0.10 / 0.09)."""
+    """On a 90 / 7 / 3 Bundesliga match with two blended sources (#13131 + #13269),
+    Sportsbooks carries its own away chance (0.03, never 1 - 0.90 = 0.10) and a
+    prediction venue without its own away quote is named with probability=None
+    rather than shown a worked-out figure."""
     from app.utils.source_mark import blended_source_marks
 
     ev = SimpleNamespace(
@@ -287,11 +288,12 @@ def test_cologne_at_bayern_away_source_mark_carries_away_chance_for_blended_sour
         method="weighted average",
         away_available=True,
         three_way_probs=(0.902, 0.0294, 0.0686),
+        books_three_way=(0.90, 0.03),
     )
     home_by_key = {s["key"]: s["probability"] for s in home_mark["sources"]}
     away_by_key = {s["key"]: s["probability"] for s in away_mark["sources"]}
     assert home_by_key == {"betting": 0.90, "polymarket": 0.91}
     assert away_by_key["betting"] == pytest.approx(0.03, abs=1e-4)
-    assert away_by_key["polymarket"] == pytest.approx(0.027, abs=1e-4)
+    assert away_by_key["polymarket"] is None
     assert away_by_key["betting"] < 0.05  # definitely not 1 - 0.90 = 0.10
 
