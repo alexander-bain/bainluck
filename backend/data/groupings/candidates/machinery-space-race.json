@@ -22,6 +22,13 @@
     "extra_llm_categories": ["culture", "space", "science"],
     "card_rows": 3,
     "card_section_key": "space_milestones",
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/57/NASA-Apollo8-Dec24-Earthrise-b.jpg/960px-NASA-Apollo8-Dec24-Earthrise-b.jpg",
+    "card_image_alt": "Earth rising above the cratered horizon of the Moon photographed from Apollo 8",
+    "card_image_credit": "NASA / Bill Anders (Public domain, Wikimedia Commons)",
+    "card_image_author": "NASA / Bill Anders",
+    "card_image_license": "Public domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:NASA-Apollo8-Dec24-Earthrise-b.jpg",
     "headline_predicate": "leads the race to the Moon and Mars",
     "sections": [
       {

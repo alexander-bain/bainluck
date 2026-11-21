@@ -40,7 +40,6 @@ from app.utils.roundup_containers import (
 )
 
 BATCH2_SLUGS = (
-    "machinery-taylor-swift",
     "machinery-long-shots",
     "machinery-long-awaited",
     "machinery-space-race",
@@ -81,9 +80,20 @@ def _mk_market(
 
 
 def test_batch2_candidate_files_are_discovered_as_preview_with_clean_metadata():
+    import json
+    from app.utils.discover_image_policy import _REGISTER_PATH
+
     paths_by_slug = {p.stem: p for p in discover_machinery_candidate_paths()}
+    assert "machinery-taylor-swift" not in paths_by_slug, (
+        "machinery-taylor-swift retired: cannot hold 6 live priced non-taste-blocked rows"
+    )
+    register_doc = json.loads(_REGISTER_PATH.read_text(encoding="utf-8"))
+    verified_urls = {
+        str(entry.get("url") or "").strip()
+        for entry in (register_doc.get("entries") or [])
+        if isinstance(entry, dict)
+    }
     expected_nouns = {
-        "machinery-taylor-swift": "markets",
         "machinery-long-shots": "long shots",
         "machinery-long-awaited": "releases",
         "machinery-space-race": "milestones",
@@ -94,44 +104,29 @@ def test_batch2_candidate_files_are_discovered_as_preview_with_clean_metadata():
         assert defn["stage"] == "preview"
         rule = defn["rule"]
         assert rule.get("headline_predicate"), f"{slug} must set headline_predicate"
+        assert rule.get("suppress_card_photo") is True
+        url = str(rule.get("card_image_url") or "").strip()
+        assert url.startswith("https://thumb.wikimedia.org/")
+        assert url in verified_urls
+        assert str(rule.get("card_image_alt") or "").strip()
+        assert str(rule.get("card_image_credit") or "").strip()
+        assert str(rule.get("card_image_author") or "").strip()
+        lic = str(rule.get("card_image_license") or "").lower()
+        assert "cc0" in lic or "public domain" in lic
+        assert str(rule.get("card_image_source_page") or "").startswith(
+            "https://commons.wikimedia.org/wiki/File:"
+        )
         sec = rule["sections"][0]
         assert sec.get("item_noun") == expected_nouns[slug]
         sub_tag = sec["atom_query"].get("fun_sub_tag")
-        assert sub_tag and len(fun_market_ids_for_sub_tag(sub_tag)) >= 4
+        assert sub_tag and len(fun_market_ids_for_sub_tag(sub_tag)) >= 6
 
 
-@pytest.mark.asyncio
-async def test_taylor_swift_preview_builds_cleanly_and_blocks_wedding_and_taste_leaks():
+def test_long_awaited_excludes_delay_tokens():
     paths_by_slug = {p.stem: p for p in discover_machinery_candidate_paths()}
-    defn = load_machinery_definition(paths_by_slug["machinery-taylor-swift"])
-    prod = build_container_machinery_producer(defn)
-    assert prod.stage == "preview"
-    snapshot = {
-        "events": [],
-        "paired_sets": {},
-        "market_histories": {},
-        "markets": [
-            _mk_market(109309, "Will Taylor Swift (Taylor's Version) be announced this year?", [("Yes", 0.42), ("No", 0.58)]),
-            _mk_market(109310, "Will Reputation (Taylor's Version) be announced this year?", [("Yes", 0.08), ("No", 0.92)]),
-            _mk_market(109295, "Will Taylor Swift meet with Pope Leo XIV before 2027?", [("Yes", 0.04), ("No", 0.96)]),
-            _mk_market(109291, "Blake Lively and Taylor Swift seen together in public this year?", [("Yes", 0.035), ("No", 0.965)], category="politics"),
-            # Untracked / wedding / taste leaks must never enter
-            _mk_market(52755900, "Taylor Swift wedding dress designer?", [("Yes", 0.50), ("No", 0.50)]),
-            _mk_market(99999901, "Taylor Swift pregnant in 2026?", [("Yes", 0.20), ("No", 0.80)]),
-        ],
-    }
-    res = await produce_container_machinery(snapshot, defn, now=NOW)
-    assert not isinstance(res, RoundupRefusal), f"Unexpected refusal: {res}"
-    fi = compose_roundup_feed_item(prod, res)
-    cp = compose_roundup_container(prod, res)
-    assert fi is not None and cp is not None
-    sec = cp["sections"][0]
-    member_ids = [m["id"] for m in sec["members"]]
-    assert set(member_ids) == {109309, 109310, 109295, 109291}
-    assert 52755900 not in member_ids
-    assert 99999901 not in member_ids
-    c_p, p_p = _compute_member_number_parity(fi, cp)
-    assert c_p["passes"] is True and p_p["passes"] is True
+    defn = load_machinery_definition(paths_by_slug["machinery-long-awaited"])
+    excl = set(defn["rule"]["sections"][0]["atom_query"].get("exclude_tokens") or ())
+    assert {"delay", "delayed", "postpone", "postponed", "cancel", "cancelled"}.issubset(excl)
 
 
 @pytest.mark.asyncio
@@ -224,29 +219,7 @@ def test_all_fun_markets_have_short_labels_and_simpsons_beyonce_left_long_awaite
 async def test_batch2_headlines_use_short_labels_leading_answers_and_long_shots_ceiling():
     paths_by_slug = {p.stem: p for p in discover_machinery_candidate_paths()}
 
-    # 1. Taylor Swift uses short labels in rows and headline
-    ts_defn = load_machinery_definition(paths_by_slug["machinery-taylor-swift"])
-    ts_prod = build_container_machinery_producer(ts_defn)
-    ts_snap = {
-        "events": [],
-        "paired_sets": {},
-        "market_histories": {},
-        "markets": [
-            _mk_market(109309, "Will Taylor Swift (Taylor's Version) be announced this year?", [("Yes", 0.41), ("No", 0.59)]),
-            _mk_market(109310, "Will Reputation (Taylor's Version) be announced this year?", [("Yes", 0.08), ("No", 0.92)]),
-            _mk_market(109295, "Will Taylor Swift meet with Pope Leo XIV before 2027?", [("Yes", 0.04), ("No", 0.96)]),
-            _mk_market(109291, "Blake Lively and Taylor Swift seen together in public this year?", [("Yes", 0.04), ("No", 0.96)], category="politics"),
-        ],
-    }
-    ts_res = await produce_container_machinery(ts_snap, ts_defn, now=NOW)
-    assert not isinstance(ts_res, RoundupRefusal)
-    ts_fi = compose_roundup_feed_item(ts_prod, ts_res)
-    assert ts_fi["data"]["roundup"]["machinery_card"]["title"] == (
-        "Debut (Taylor's Version) is the likeliest Taylor Swift move at 41%, "
-        "with Reputation (Taylor's Version) at 8%"
-    )
-
-    # 2. Long shots: ceiling <= 20%, thin markets (<10k) out, volume tie-break, leading answer in row + headline
+    # 1. Long shots: ceiling <= 20%, thin markets (<10k) out, volume tie-break, leading answer in row + headline
     ls_defn = load_machinery_definition(paths_by_slug["machinery-long-shots"])
     ls_prod = build_container_machinery_producer(ls_defn)
     ls_snap = {

@@ -1666,6 +1666,42 @@
       "author": "NASA Kennedy Space Center / Frank Michaux",
       "license": "Public domain",
       "source_page": "https://commons.wikimedia.org/wiki/File:NASA%27s_SpaceX_Europa_Clipper_Launch_(KSC-20241014-PH-FMX01_0001).jpg"
+    },
+    {
+      "entity_key": "batch2-long-shots",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Long Shots People Talk About — Milky Way night sky",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ae/Milky_Way_Streaky_Bay_%28Unsplash%29.jpg/960px-Milky_Way_Streaky_Bay_%28Unsplash%29.jpg",
+      "credit": "Thom Schneider (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Thom Schneider",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Milky_Way_Streaky_Bay_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch2-long-awaited",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Long-Awaited Releases — antique silver pocket watch",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/1a/Old_pocket_watch_%28Unsplash_UIUgYu9bENU%29.jpg/960px-Old_pocket_watch_%28Unsplash_UIUgYu9bENU%29.jpg",
+      "credit": "Rodion Kutsaev (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Rodion Kutsaev",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Old_pocket_watch_(Unsplash_UIUgYu9bENU).jpg"
+    },
+    {
+      "entity_key": "batch2-space-race",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Space & Mars — Apollo 8 Earthrise over the lunar horizon (NASA)",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/57/NASA-Apollo8-Dec24-Earthrise-b.jpg/960px-NASA-Apollo8-Dec24-Earthrise-b.jpg",
+      "credit": "NASA / Bill Anders (Public domain, Wikimedia Commons)",
+      "author": "NASA / Bill Anders",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:NASA-Apollo8-Dec24-Earthrise-b.jpg"
     }
   ]
 }
