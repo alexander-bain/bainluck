@@ -484,8 +484,21 @@ nonisolated struct MachineryCardContract: Decodable, Equatable, Identifiable, Se
     let eventRows: [MachineryEventVisualItem]
     let outcomeRows: [MachineryOutcomeVisual]
     let miniChart: MachineryHistoryChartItem?
+    let imageUrl: String?
+    let imageAlt: String?
 
     var id: String { slug }
+
+    var verifiedImageURL: URL? {
+        guard let imageUrl, !imageUrl.isEmpty,
+              let parsed = URL(string: imageUrl),
+              let scheme = parsed.scheme?.lowercased(),
+              scheme == "https",
+              let host = parsed.host, !host.isEmpty else {
+            return nil
+        }
+        return parsed
+    }
 
     var isEventCard: Bool {
         formId == .coinFlipMatchups || formId == .matchupSlate
@@ -521,7 +534,9 @@ nonisolated struct MachineryCardContract: Decodable, Equatable, Identifiable, Se
         destinationHref: String = "",
         eventRows: [MachineryEventVisualItem] = [],
         outcomeRows: [MachineryOutcomeVisual] = [],
-        miniChart: MachineryHistoryChartItem? = nil
+        miniChart: MachineryHistoryChartItem? = nil,
+        imageUrl: String? = nil,
+        imageAlt: String? = nil
     ) {
         self.slug = slug
         self.formId = formId
@@ -537,6 +552,10 @@ nonisolated struct MachineryCardContract: Decodable, Equatable, Identifiable, Se
         self.eventRows = Array(eventRows.prefix(3))
         self.outcomeRows = Array(MachineryMarketVisualItem.normalizedOutcomes(outcomeRows, scaleOrdered: scaleOrdered).prefix(3))
         self.miniChart = (miniChart?.hasMovingSeries == true) ? miniChart : nil
+        let trimmedImageURL = imageUrl?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.imageUrl = (trimmedImageURL?.isEmpty == false) ? trimmedImageURL : nil
+        let trimmedImageAlt = imageAlt?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.imageAlt = (trimmedImageAlt?.isEmpty == false) ? trimmedImageAlt : nil
     }
 
     init(from decoder: Decoder) throws {
@@ -575,6 +594,13 @@ nonisolated struct MachineryCardContract: Decodable, Equatable, Identifiable, Se
         } else {
             self.miniChart = nil
         }
+
+        let rawImageURL = c.decodeFirst(String.self, keys: ["imageUrl", "image_url"])?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        self.imageUrl = (rawImageURL?.isEmpty == false) ? rawImageURL : nil
+        let rawImageAlt = c.decodeFirst(String.self, keys: ["imageAlt", "image_alt"])?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        self.imageAlt = (rawImageAlt?.isEmpty == false) ? rawImageAlt : nil
     }
 }
 
