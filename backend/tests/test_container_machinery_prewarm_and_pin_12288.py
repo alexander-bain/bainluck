@@ -1640,15 +1640,16 @@ async def test_machinery_stale_while_revalidate_prevents_feed_drop_and_proactive
             for it in spliced
         )
 
-        # Past the 1800s hard stale window (t0 + 1900s), stale entry is NOT served
+        # Past the hard stale window, stale entry is NOT served
+        past_stale = ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S + 100.0
         fi_expired, cp_expired = await evaluate_roundup_producer(
-            prod, fake_db, now=t0 + 1900.0, allow_stale=True
+            prod, fake_db, now=t0 + past_stale, allow_stale=True
         )
         assert fi_expired is not None and cp_expired is not None and calls == 2
 
-        # Direct page open (`allow_stale=False`) past soft TTL (t0 + 1900 + 450) still rebuilds live
+        # Direct page open (`allow_stale=False`) past soft TTL still rebuilds live
         fi_fresh, cp_fresh = await evaluate_roundup_producer(
-            prod, fake_db, now=t0 + 2350.0, allow_stale=False
+            prod, fake_db, now=t0 + past_stale + 450.0, allow_stale=False
         )
         assert fi_fresh is not None and cp_fresh is not None and calls == 3
 

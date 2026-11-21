@@ -247,6 +247,84 @@ async def _link_upcoming_unlinked_events_pass(
     return summary
 
 
+async def _auto_create_missing_teams(
+    session,
+    sport_id: int,
+    sport_key: str,
+    all_team_names,
+) -> int:
+    """Create missing ``Team`` rows for ``sport_id`` without recreating folded clubs (#13229).
+
+    Checks exact ``Team.name``, distinguishing-token-safe ``_canonical_names_match``,
+    ``retired_team_redirects``, ``team_identity_mapping``, ``Team.alternate_names``,
+    and unambiguous same-league short spellings before minting a new ``Team``.
+    """
+    from app.utils.team_redirects import (
+        distinguishing_tokens_agree,
+        find_existing_team_in_sport,
+    )
+
+    existing_result = await session.execute(
+        select(Team).where(Team.sport_id == sport_id)
+    )
+    existing_teams = list(existing_result.scalars().all())
+    existing_team_names = {t.name for t in existing_teams if t.name}
+
+    # Process longer canonical spellings before short ones so a batch carrying
+    # both "Tottenham Hotspur" and "Tottenham" mints only the canonical name.
+    ordered_candidates = sorted(
+        {name for name in all_team_names if isinstance(name, str) and name.strip()},
+        key=lambda n: (-len(n), n),
+    )
+
+    new_teams: list[Team] = []
+    for candidate in ordered_candidates:
+        if candidate in existing_team_names:
+            continue
+        if any(
+            distinguishing_tokens_agree(candidate, existing)
+            and _canonical_names_match(candidate, existing)
+            for existing in existing_team_names
+        ):
+            continue
+        existing_match = await find_existing_team_in_sport(
+            session,
+            candidate,
+            sport_id,
+            existing_teams=existing_teams,
+        )
+        if existing_match is not None:
+            continue
+
+        new_team = Team(
+            name=candidate,
+            sport_id=sport_id,
+        )
+        session.add(new_team)
+        existing_teams.append(new_team)
+        existing_team_names.add(candidate)
+        new_teams.append(new_team)
+
+    if not new_teams:
+        return 0
+
+    await session.flush()  # Assign IDs for identity registration
+
+    from app.services.team_identity import team_identity_service
+
+    for new_team_obj in new_teams:
+        if new_team_obj.id is not None:
+            await team_identity_service.register_team_identity(
+                session,
+                new_team_obj.id,
+                "odds_api",
+                sport_key,
+                source_name=new_team_obj.name,
+            )
+
+    return len(new_teams)
+
+
 async def _discover_events():
     """
     Async implementation of discover_events.
@@ -610,58 +688,17 @@ async def _discover_events():
                     # Auto-create Team records for any teams not yet in the DB.
                     # This ensures college teams (Harvard, Brown, Stanford, etc.)
                     # get Team records even without ESPN scoreboard matching.
-                    # Uses fuzzy matching to avoid creating "Stanford" when
-                    # "Stanford Cardinal" already exists (and vice versa).
+                    # Guarded against recreating folded/existing clubs via
+                    # retired_team_redirects, team_identity_mapping,
+                    # alternate_names, and unambiguous short spellings (#13229).
                     if all_team_names:
-                        existing_result = await session.execute(
-                            select(Team.name).where(
-                                Team.sport_id == sport_id,
-                            )
+                        created_count = await _auto_create_missing_teams(
+                            session, sport_id, sport_key, all_team_names
                         )
-                        existing_team_names = {
-                            row[0] for row in existing_result.all()
-                        }
-                        new_team_names = set()
-                        for candidate in all_team_names:
-                            # Exact match
-                            if candidate in existing_team_names:
-                                continue
-                            # Fuzzy match against existing teams
-                            if any(
-                                _canonical_names_match(candidate, existing)
-                                for existing in existing_team_names
-                            ):
-                                continue
-                            new_team_names.add(candidate)
-                        for team_name in new_team_names:
-                            new_team = Team(
-                                name=team_name,
-                                sport_id=sport_id,
-                            )
-                            session.add(new_team)
-                        if new_team_names:
-                            await session.flush()  # Get IDs for identity registration
-
-                            # Register Odds API identities for newly created teams
-                            from app.services.team_identity import team_identity_service
-                            for team_name in new_team_names:
-                                # Look up the team we just created
-                                team_result = await session.execute(
-                                    select(Team).where(
-                                        Team.name == team_name,
-                                        Team.sport_id == sport_id,
-                                    )
-                                )
-                                new_team_obj = team_result.scalar_one_or_none()
-                                if new_team_obj:
-                                    await team_identity_service.register_team_identity(
-                                        session, new_team_obj.id, "odds_api", sport_key,
-                                        source_name=team_name,
-                                    )
-
-                            total_new_teams += len(new_team_names)
+                        if created_count:
+                            total_new_teams += created_count
                             logger.info(
-                                f"Auto-created {len(new_team_names)} Team "
+                                f"Auto-created {created_count} Team "
                                 f"records for {sport_key}"
                             )
 

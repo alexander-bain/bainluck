@@ -54,6 +54,8 @@ export interface MachineryCardContract {
   section_count: number;
   item_count?: number | null;
   item_noun?: string | null;
+  image_url?: string | null;
+  image_alt?: string | null;
   destination_href: string;
   rows: Record<string, unknown>[];
   mini_chart?: MachineryHistoryChartItem | null;
@@ -876,11 +878,32 @@ export default function MachinerySectionRenderer({
   visualBlock: MachineryVisualBlock;
   members: CollectionMember[];
 }) {
-  const { form_id, initial_visible_limit, item_noun, paired_metric_set, items = [] } = visualBlock;
+  const {
+    form_id,
+    initial_visible_limit,
+    item_noun,
+    hero_image_url,
+    hero_image_alt,
+    paired_metric_set,
+    items = [],
+  } = visualBlock;
   const limit = Math.min(3, Math.max(1, Number(initial_visible_limit ?? 3)));
+  const heroFigure = hero_image_url ? (
+    <div
+      data-testid="machinery-section-hero-image"
+      className="mb-3 overflow-hidden rounded-card border border-surface-border bg-surface-elevated"
+    >
+      <img
+        src={hero_image_url}
+        alt={hero_image_alt || "Set visual"}
+        className="block aspect-[2/1] w-full object-cover"
+      />
+    </div>
+  ) : null;
   if (form_id === "paired_stage_bars" && paired_metric_set) {
     return (
       <div data-machinery-form="paired_stage_bars">
+        {heroFigure}
         <AwardCategoryPairedCard
           set={paired_metric_set}
           surface="collection"
@@ -891,24 +914,59 @@ export default function MachinerySectionRenderer({
     );
   }
   if (form_id === "probability_history_chart") {
-    return <ProbabilityHistoryChartBlock items={items} limit={limit} />;
+    return (
+      <div>
+        {heroFigure}
+        <ProbabilityHistoryChartBlock items={items} limit={limit} />
+      </div>
+    );
   }
   if (form_id === "coin_flip_matchups") {
-    return <CoinFlipMatchupsBlock items={items} limit={limit} />;
+    return (
+      <div>
+        {heroFigure}
+        <CoinFlipMatchupsBlock items={items} limit={limit} />
+      </div>
+    );
   }
   if (form_id === "matchup_slate") {
-    return <MatchupSlateBlock members={members} limit={limit} />;
+    return (
+      <div>
+        {heroFigure}
+        <MatchupSlateBlock members={members} limit={limit} />
+      </div>
+    );
   }
   if (form_id === "duel_bar") {
-    return <DuelBarBlock items={items} />;
+    return (
+      <div>
+        {heroFigure}
+        <DuelBarBlock items={items} />
+      </div>
+    );
   }
   if (form_id === "contender_spotlight") {
-    return <ContenderSpotlightBlock items={items} limit={limit} />;
+    return (
+      <div>
+        {heroFigure}
+        <ContenderSpotlightBlock items={items} limit={limit} />
+      </div>
+    );
   }
   if (form_id === "benchmark_strip") {
-    return <BenchmarkStripBlock items={items} limit={limit} itemNoun={item_noun} />;
+    return (
+      <div>
+        {heroFigure}
+        <BenchmarkStripBlock items={items} limit={limit} itemNoun={item_noun} />
+      </div>
+    );
   }
-  return <SiblingFieldsGridBlock items={items} limit={limit} />;
+  return (
+    <div>
+      {heroFigure}
+      <SiblingFieldsGridBlock items={items} limit={limit} />
+    </div>
+  );
 }
 
 export function MachineryDiscoverCard({ card }: { card: MachineryCardContract }) {
@@ -945,7 +1003,20 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
         <p className="mt-0.5 text-xs text-text-secondary">{card.subtitle}</p>
       )}
 
-      {card.mini_chart && <SingleHistoryChartCard chart={card.mini_chart} compact />}
+      {card.image_url && (
+        <div
+          data-testid="machinery-card-hero-image"
+          className="mt-2.5 overflow-hidden rounded-lg border border-surface-border bg-surface-elevated"
+        >
+          <img
+            src={card.image_url}
+            alt={card.image_alt || card.title}
+            className="block aspect-[2/1] w-full object-cover"
+          />
+        </div>
+      )}
+
+      {!card.image_url && card.mini_chart && <SingleHistoryChartCard chart={card.mini_chart} compact />}
 
       <div className="mt-3 divide-y divide-surface-border">
         {isEventCard

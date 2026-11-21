@@ -941,6 +941,34 @@ async def upsert_team(session, team_name, espn_team, sport_id, team_cache=None, 
             )
 
     if not team:
+        # #13229 / 314-B: check retired_team_redirects, team_identity_mapping,
+        # alternate_names, same-league espn_id (only when ESPN identity
+        # corresponds), and unambiguous same-league short spellings before
+        # refusing or minting a new Team row. Preserves #13202 reserve/women's
+        # separation and #6215 wrong-event-match refusal.
+        from app.utils.team_redirects import find_existing_team_in_sport
+
+        cached_sport_teams = (
+            [
+                cached_team
+                for (_nm, cached_sport_id), cached_team in team_cache.items()
+                if cached_sport_id == sport_id
+            ]
+            if team_cache is not None
+            else None
+        )
+        team = await find_existing_team_in_sport(
+            session,
+            team_name,
+            sport_id,
+            espn_id=getattr(espn_team, "espn_id", None),
+            existing_teams=cached_sport_teams or None,
+            allow_espn_id_match=espn_identity_corresponds(
+                team_name, None, espn_team
+            ),
+        )
+
+    if not team:
         # REFUSE THE MINT, not just the enrichment (#6215, CERT-2877). The
         # caller's `sport_id` is the EVENT's, so a wrong event-level match does
         # not merely borrow a badge — it creates the club under the wrong
@@ -1051,7 +1079,7 @@ async def upsert_team(session, team_name, espn_team, sport_id, team_cache=None, 
     # see `espn_identity_corresponds`. Only this arm can reach a row created
     # moments ago, which is the wrong-event-match case both arms exist for.
     if not team.espn_id and not espn_identity_corresponds(
-        team_name, team.alternate_names, espn_team
+        team.name or team_name, team.alternate_names, espn_team
     ):
         logger.warning(
             "ESPN identity refused for team %r (sport_id=%s): payload names "

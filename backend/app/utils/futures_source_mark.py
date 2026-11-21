@@ -72,7 +72,10 @@ def futures_outcome_source_mark(
     if (
         served_settled is True
         or status == "resolved"
-        or (authority == RETRACTED_SOURCE and (status != "open" or grade is True))
+        or (
+            authority == RETRACTED_SOURCE
+            and (status not in {"active", "open"} or grade is True)
+        )
     ):
         return no_source_mark("result_unknown")
     if row.get("probability") is None:

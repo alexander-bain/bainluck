@@ -35,8 +35,10 @@ Honest v1 limitations (design §6 said "fast-follow", so this is deliberately th
 from __future__ import annotations
 
 import re
+import unicodedata
 from collections.abc import Iterable
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any
 
 from sqlalchemy import select
@@ -44,6 +46,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.utils.futures_market_snapshot import concept_price_observed_at_iso
+from app.utils.settled_price import SETTLED_SOURCE
 from app.utils.settledness import (
     market_assigned_settled,
     settled_under_assigned_state,
@@ -57,10 +60,10 @@ GRAMMY_NOMINEE_FIELDS = {
     "805159": "KXGRAMMY-ROTY69",
     "805160": "KXGRAMAOTY-69",
 }
-GRAMMY_GENERAL_FIELD_POLYMARKET_IDS = frozenset(GRAMMY_NOMINEE_FIELDS)
 _GRAMMY_PRE_NOMINATION_BOARDS = {
     ticker: external_id for external_id, ticker in GRAMMY_NOMINEE_FIELDS.items()
 }
+GRAMMY_TIE_LABEL = "Tie (co-winners)"
 
 
 def is_grammy_general_field_market(market: Any) -> bool:
@@ -69,6 +72,52 @@ def is_grammy_general_field_market(market: Any) -> bool:
     return (source == "kalshi" and external_id in _GRAMMY_PRE_NOMINATION_BOARDS) or (
         source == "polymarket" and external_id in GRAMMY_NOMINEE_FIELDS
     )
+
+
+def is_grammy_tie(name: str) -> bool:
+    return name.strip().casefold() == "tie"
+
+
+def is_grammy_graded_loss(
+    is_winner: bool | None,
+    resolution_source: str | None,
+    probability: float | Decimal | None,
+) -> bool:
+    from app.utils.graded_out_field_legs import TERMINAL_LOSER_CEILING
+
+    return (
+        is_winner is False
+        and resolution_source == SETTLED_SOURCE
+        and (probability is None or float(probability) < TERMINAL_LOSER_CEILING)
+    )
+
+
+def _grammy_name_key(name: str) -> str:
+    text = unicodedata.normalize("NFKC", name).casefold().replace("’", "'")
+    return " ".join(text.split()).replace(" – ", " - ").replace(" — ", " - ")
+
+
+def append_grammy_out_rows(
+    outcomes: list[dict],
+    retired: Iterable[dict],
+    *,
+    match_artist_suffix: bool = False,
+) -> None:
+    """Keep the selected board's row when an earlier award board repeats it."""
+    names = {_grammy_name_key(row["name"]) for row in outcomes}
+    for row in retired:
+        if row.get("is_out") is not True:
+            continue
+        name = _grammy_name_key(row["name"])
+        # The earlier Polymarket titles often end in " - Artist". A shortened
+        # title only matches a name already present in this award's field.
+        title, separator, artist = name.rpartition(" - ")
+        if name in names or (
+            match_artist_suffix and separator and artist and title in names
+        ):
+            continue
+        outcomes.append(row)
+        names.add(name)
 
 
 async def grammy_nominee_fields(
@@ -110,14 +159,27 @@ async def grammy_nominee_fields(
             or market.status not in ("open", "resolved")
         ):
             continue
-        nominees = {
-            outcome.name.strip().casefold()
-            for outcome in market.outcomes
-            if outcome.name
-            and not is_field_outcome(outcome.name)
-            and not is_placeholder_outcome_name(outcome.name)
-        } - {"tie"}
-        if len(nominees) >= 8:
+        nominees = set()
+        for outcome in market.outcomes:
+            name = (outcome.name or "").strip()
+            if (
+                not name
+                or is_grammy_tie(name)
+                or is_field_outcome(name)
+                or is_placeholder_outcome_name(name)
+            ):
+                continue
+            # Search can pass an already loaded board. Read its loaded grade
+            # without fetching a deferred field in the middle of selection.
+            values = getattr(outcome, "__dict__", {})
+            if market.status == "open" and is_grammy_graded_loss(
+                values.get("is_winner"),
+                values.get("resolution_source"),
+                values.get("current_probability"),
+            ):
+                continue
+            nominees.add(_grammy_name_key(name))
+        if len(nominees) == 8 or (market.status == "resolved" and len(nominees) > 8):
             found[market.external_id] = market
     return {market_id: found[ticker] for market_id, ticker in tickers.items() if ticker in found}
 

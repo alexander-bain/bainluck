@@ -1467,6 +1467,31 @@ def sanitize_discover_feed_item(item: dict[str, Any]) -> dict[str, Any]:
         # so neither generic domain fallbacks nor member stock photos leak onto the card.
         roundup_meta = raw_data.get("roundup") if isinstance(raw_data.get("roundup"), dict) else None
         mc_meta = roundup_meta.get("machinery_card") if isinstance(roundup_meta, dict) else None
+        explicit_mc_image = (
+            str(mc_meta.get("image_url") or "").strip() or None
+            if isinstance(mc_meta, dict)
+            else None
+        )
+        explicit_mc_credit = (
+            str(mc_meta.get("image_credit") or "").strip() or None
+            if isinstance(mc_meta, dict) and explicit_mc_image
+            else None
+        )
+        explicit_mc_author = (
+            str(mc_meta.get("image_author") or "").strip() or None
+            if isinstance(mc_meta, dict) and explicit_mc_image
+            else None
+        )
+        explicit_mc_license = (
+            str(mc_meta.get("image_license") or "").strip() or None
+            if isinstance(mc_meta, dict) and explicit_mc_image
+            else None
+        )
+        explicit_mc_source_page = (
+            str(mc_meta.get("image_source_page") or "").strip() or None
+            if isinstance(mc_meta, dict) and explicit_mc_image
+            else None
+        )
         if isinstance(mc_meta, dict) and mc_meta.get("suppress_card_photo") is True:
             cleared_sub_items = []
             for sub in sub_items:
@@ -1493,13 +1518,13 @@ def sanitize_discover_feed_item(item: dict[str, Any]) -> dict[str, Any]:
                 "data": {
                     **raw_data,
                     "items": cleared_sub_items,
-                    "image_url": None,
-                    "image_presentation": None,
+                    "image_url": explicit_mc_image,
+                    "image_presentation": "photo" if explicit_mc_image else None,
                     "image_monogram": None,
-                    "image_credit": None,
-                    "image_author": None,
-                    "image_license": None,
-                    "image_source_page": None,
+                    "image_credit": explicit_mc_credit,
+                    "image_author": explicit_mc_author,
+                    "image_license": explicit_mc_license,
+                    "image_source_page": explicit_mc_source_page,
                 },
             }
         # Resolve bundle-level representative art for non-roundup / audit consumers

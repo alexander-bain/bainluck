@@ -1059,11 +1059,15 @@ def _is_cacheable_refusal(reasons: Sequence[Any]) -> bool:
 ROUNDUP_MACHINERY_NON_LIVE_CACHE_TTL_S = 300.0
 #: Hard Redis retention (keep-time) for round-up and machinery snapshots so
 #: Discover feed builds (`ROUNDUP_PRODUCER_TIMEOUT_SECONDS = 0.5`) keep the
-#: last good copy when a read times out instead of dropping the card (#12288, #13146).
-ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S = 1800.0
+#: last good copy across restarts, outages, and overnight quiet spells instead
+#: of dropping cards (#11259, #12288, #13146). Live-slate keep-time stays 5m.
+ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S = 21600.0
 ROUNDUP_MACHINERY_LIVE_STALE_TTL_S = 300.0
-ROUNDUP_STANDING_NON_LIVE_STALE_TTL_S = 1800.0
+ROUNDUP_STANDING_NON_LIVE_STALE_TTL_S = 21600.0
 ROUNDUP_STANDING_LIVE_STALE_TTL_S = 300.0
+#: Per-producer timeout for a genuinely cold public machinery grouping (no
+#: Redis copy, e.g. a live slate whose 5m TTL expired during an outage).
+ROUNDUP_MACHINERY_COLD_TIMEOUT_SECONDS = 1.5
 #: Redis hash tracking `machinery-*` slugs that currently hold a live game (or one
 #: starting within `MACHINERY_IMMINENT_START_WINDOW_S`), read by the 30s realtime
 #: republisher (`_prewarm_live_feed_shapes`) so live slates never expire between
@@ -1873,6 +1877,8 @@ async def evaluate_roundup_producer(
     licences_path: Optional[Path | str] = None,
     force_refresh: bool = False,
     allow_stale: bool = False,
+    prefetched_shared: Any = _PREFETCH_UNSET,
+    shared_read_ok: bool = True,
     outcome_meta: Optional[dict[str, Any]] = None,
 ) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
     """Run ``producer`` once and return ``(feed_item, container_payload)``, cached 60s per slug."""
@@ -1935,17 +1941,15 @@ async def evaluate_roundup_producer(
     )
 
     if use_cache and not force_refresh:
-        is_machinery = _is_machinery_producer_slug(producer.slug)
         local_stale_fallback: Optional[tuple[float, dict[str, Any], dict[str, Any]]] = None
         cached = _roundup_local_cache.get(cache_key)
         if cached is not None:
             local_ttl = _roundup_cache_ttl_seconds(producer.slug, cached[2])
             if (ts - cached[0]) < local_ttl:
-                _record_machinery_live_origin(cached[0], producer.slug, cached[2])
+                _record_roundup_live_origin(cached[0], producer.slug, cached[2])
                 return copy.deepcopy(cached[1]), copy.deepcopy(cached[2])
             if (
                 allow_stale
-                and is_machinery
                 and cached[1] is not None
                 and cached[2] is not None
             ):
@@ -1958,17 +1962,24 @@ async def evaluate_roundup_producer(
                     local_stale_fallback = (cached[0], cached[1], cached[2])
         if isinstance(db, AsyncSession):
             try:
-                from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
+                raw_val: Any = None
+                if prefetched_shared is not _PREFETCH_UNSET:
+                    if shared_read_ok:
+                        raw_val = prefetched_shared
+                else:
+                    from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
 
-                client = await get_shared_async_redis()
-                res = await bounded_redis_call(
-                    lambda: client.get(_redis_cache_key(producer.slug))
-                )
-                if res.is_ok and res.value:
+                    client = await get_shared_async_redis()
+                    res = await bounded_redis_call(
+                        lambda: client.get(_redis_cache_key(producer.slug))
+                    )
+                    if res.is_ok:
+                        raw_val = res.value
+                if raw_val:
                     raw = json.loads(
-                        res.value.decode("utf-8")
-                        if isinstance(res.value, (bytes, bytearray))
-                        else res.value
+                        raw_val.decode("utf-8")
+                        if isinstance(raw_val, (bytes, bytearray))
+                        else raw_val
                     )
                     raw_ttl = (
                         float(raw.get("ttl_s") or ROUNDUP_CACHE_TTL_S)
@@ -1984,9 +1995,9 @@ async def evaluate_roundup_producer(
                         age_s = max(0.0, ts - built_at)
                         if age_s < raw_ttl:
                             _roundup_local_cache[cache_key] = (built_at, fi, cp)
-                            _record_machinery_live_origin(built_at, producer.slug, cp)
+                            _record_roundup_live_origin(built_at, producer.slug, cp)
                             return copy.deepcopy(fi), copy.deepcopy(cp)
-                        if allow_stale and is_machinery:
+                        if allow_stale:
                             if fi is None or cp is None:
                                 if (
                                     local_stale_fallback is not None
@@ -2011,7 +2022,7 @@ async def evaluate_roundup_producer(
                                     or built_at >= local_stale_fallback[0]
                                 ):
                                     _roundup_local_cache[cache_key] = (built_at, fi, cp)
-                                    _record_machinery_live_origin(
+                                    _record_roundup_live_origin(
                                         built_at, producer.slug, cp
                                     )
                                     return copy.deepcopy(fi), copy.deepcopy(cp)
@@ -3916,6 +3927,12 @@ async def add_roundup_feed_items(
         if _is_machinery_producer_slug(p.slug) and (p.enabled is None or p.enabled())
     ]
     machinery_incomplete = False
+    # One batched Redis MGET up front hydrates every warm machinery grouping
+    # and standing round-up across a cold dyno restart in a single round-trip
+    # instead of 20+ sequential Redis GETs and serial 0.5s DB timeouts.
+    public_prefetched, public_shared_ok = await _prefetch_shared_roundup_entries(
+        public_producers, db
+    )
     for idx, producer in enumerate(public_producers):
         elapsed = time.perf_counter() - started
         remaining = stage_budget - elapsed
@@ -3924,9 +3941,12 @@ async def add_roundup_feed_items(
             quiet_after_budget = 0
             dropped_after_budget = 0
             rem_producers = public_producers[idx:]
-            prefetched_shared, shared_read_ok = await _prefetch_shared_roundup_entries(
-                rem_producers, db
-            )
+            if public_shared_ok:
+                prefetched_shared, shared_read_ok = public_prefetched, True
+            else:
+                prefetched_shared, shared_read_ok = await _prefetch_shared_roundup_entries(
+                    rem_producers, db
+                )
             for rem_producer in rem_producers:
                 quiet_meta: dict[str, Any] = {}
                 last_good = await _load_last_good_roundup_copy(
@@ -4005,15 +4025,31 @@ async def add_roundup_feed_items(
                 stats_10m["had_nothing_to_show"],
             )
             break
-        per_timeout = min(remaining, ROUNDUP_PRODUCER_TIMEOUT_SECONDS)
         is_mach_prod = _is_machinery_producer_slug(producer.slug) and (
             producer.enabled is None or producer.enabled()
         )
+        pref_val = public_prefetched.get(producer.slug)
+        per_timeout = min(remaining, ROUNDUP_PRODUCER_TIMEOUT_SECONDS)
+        # On a fresh process after a restart (`_roundup_local_cache` empty for
+        # this slug), let standing round-ups reuse their warm shared Redis copy
+        # immediately rather than burning DB budget and dropping cards.
+        standing_cold_restart = (
+            not is_mach_prod
+            and public_shared_ok
+            and pref_val is not None
+            and (producer.slug, "live") not in _roundup_local_cache
+        )
         try:
-            eval_coro = (
-                evaluate_roundup_producer(producer, db, now=now, allow_stale=True)
-                if _is_machinery_producer_slug(producer.slug)
-                else evaluate_roundup_producer(producer, db, now=now)
+            eval_coro = evaluate_roundup_producer(
+                producer,
+                db,
+                now=now,
+                allow_stale=(
+                    _is_machinery_producer_slug(producer.slug)
+                    or standing_cold_restart
+                ),
+                prefetched_shared=pref_val if public_shared_ok else _PREFETCH_UNSET,
+                shared_read_ok=public_shared_ok,
             )
             feed_item, container_payload = await asyncio.wait_for(
                 eval_coro,
@@ -4030,7 +4066,12 @@ async def add_roundup_feed_items(
                     )
             timeout_quiet: dict[str, Any] = {}
             last_good = await _load_last_good_roundup_copy(
-                producer, db, now=now, quiet_out=timeout_quiet
+                producer,
+                db,
+                now=now,
+                prefetched_shared=pref_val if public_shared_ok else _PREFETCH_UNSET,
+                shared_read_ok=public_shared_ok,
+                quiet_out=timeout_quiet,
             )
             if last_good is not None:
                 fi_lg, _cp_lg, age_lg, keep_lg = last_good

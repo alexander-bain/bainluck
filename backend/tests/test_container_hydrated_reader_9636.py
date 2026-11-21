@@ -130,6 +130,14 @@ class _Session:
             return _Result([(1,)] if exists else [])
         if text_.startswith("WITH hub AS"):
             rows = self._published_rows(params["slug"])
+            if "packed_members AS" in text_ and rows:
+                edges = [row[3:9] for row in rows if row[4] is not None]
+                columns = tuple(zip(*edges, strict=True)) if edges else (None,) * 6
+                packed = rows[0][:3] + columns
+                if "AS header_rows" in text_:
+                    headers = self._header_rows() if self.hub.publication == "published" else None
+                    packed += (headers,)
+                return _Result([packed])
             if "AS header_rows" in text_ and rows:
                 rows = [row + (None,) for row in rows]
                 if self.hub.publication == "published":
