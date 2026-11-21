@@ -1019,9 +1019,6 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 .worker[data-worker="celebrating"] .workerCue {
   background: #21664e;
 }
-.eventScene[data-event="commit"] .workerFigure {
-  animation: work var(--event-length) ease-in-out both;
-}
 .baySignals {
   display: flex;
   flex-direction: column;
@@ -1426,14 +1423,14 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   color: #a8b9c7;
 }
 .builderW { background: #496246; }
-.worker[data-identity="S"] { --portrait: url("/factory/workshop/speed.webp"); }
-.worker[data-identity="B"] { --portrait: url("/factory/workshop/builder-b.webp"); }
-.worker[data-identity="C"] { --portrait: url("/factory/workshop/builder-c.webp"); }
-.worker[data-identity="D"] { --portrait: url("/factory/workshop/atlas.webp"); }
-.worker[data-identity="E"] { --portrait: url("/factory/workshop/builder-e.webp"); }
-.worker[data-identity="F"] { --portrait: url("/factory/workshop/builder-f.webp"); }
-.worker[data-identity="W"] { --portrait: url("/factory/workshop/wee-bey.webp"); }
-.worker[data-identity="Fable"] { --portrait: url("/factory/workshop/fable.webp"); }
+.worker[data-identity="S"] { --portrait: url("/factory/crew/speed.webp"); }
+.worker[data-identity="B"] { --portrait: url("/factory/crew/builder-b.webp"); }
+.worker[data-identity="C"] { --portrait: url("/factory/crew/builder-c.webp"); }
+.worker[data-identity="D"] { --portrait: url("/factory/crew/atlas.webp"); }
+.worker[data-identity="E"] { --portrait: url("/factory/crew/builder-e.webp"); }
+.worker[data-identity="F"] { --portrait: url("/factory/crew/builder-f.webp"); }
+.worker[data-identity="W"] { --portrait: url("/factory/crew/wee-bey.webp"); }
+.worker[data-identity="Fable"] { --portrait: url("/factory/crew/fable.webp"); }
 .dockCrew {
   display: flex;
   align-items: center;
@@ -2356,6 +2353,143 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 }
 .nameTag { max-width: 100%; text-align: center; }
 .speechBubble > strong { white-space: normal; }
+
+.builderCard[data-crew="S"] { --apron: #305948; }
+.builderCard[data-crew="B"] { --apron: #8b5734; }
+.builderCard[data-crew="C"] { --apron: #7d532e; }
+.builderCard[data-crew="D"] { --apron: #574c60; }
+.builderCard[data-crew="E"] { --apron: #365a7e; }
+.builderCard[data-crew="F"] { --apron: #385371; }
+.builderCard[data-crew="W"] { --apron: #535b37; }
+.builderCard[data-crew="Fable"] { --apron: #834b57; }
+.builders {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.builderCard[data-crew] {
+  min-width: 0;
+  border: 1px solid var(--edge);
+  border-block-start: 3px solid var(--apron);
+  border-radius: 8px;
+  padding: 10px;
+  text-align: center;
+  font-size: .875rem;
+}
+.builderCard > .worker {
+  width: min(100%, 114px);
+  height: 114px;
+}
+.worker[data-identity="C"][data-worker="asleep"] .workerFigure {
+  transform: none;
+}
+.builderCard > .nameTag {
+  width: fit-content;
+  font-size: 1.125rem;
+  padding: 3px 9px;
+  border-radius: 4px;
+  color: white;
+  background: var(--apron);
+}
+.builderCard > :is(.temperament, .crewSpeech, .crewRecordNote) {
+  margin: 0;
+  font-size: .875rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.builderCard[data-crew="B"] > .crewSpeech {
+  border: 1px solid var(--edge);
+  padding: 5px 8px;
+  border-radius: 3px;
+  background: var(--paper);
+}
+.crewRecordNote {
+  margin: 4px 12px 12px;
+  color: var(--secondary);
+  font-size: .875rem;
+}
+.crewHabits {
+  width: 100%;
+  text-align: start;
+  margin: 0;
+}
+.crewHabits > div {
+  display: grid;
+  gap: 2px;
+  border-top: 1px solid var(--edge);
+  padding: 6px 0;
+}
+.crewHabits dt { color: var(--secondary); }
+.crewHabits dd { margin: 0; font-weight: 700; }
+.inspectionDesk > .voiceButton { flex-shrink: 0; }
+.inspectionDesk > .voiceButton > .worker { width: 26px; height: 24px; }
+.eventAction .worker {
+  width: 46px;
+  height: 43px;
+}
+.worker[data-identity="F"][data-crew-move="cartwheel"] {
+  --portrait: url("/factory/crew/builder-f-moving.webp");
+}
+.worker[data-crew-move] .workerFigure {
+  animation: var(--crew-animation) var(--event-length) ease-in-out both;
+}
+.worker[data-crew-move="work"] { --crew-animation: work; }
+.worker:is([data-crew-move="walk"], [data-crew-move="carry"]) { --crew-animation: carrySteps; }
+.worker[data-crew-move="cheer"] { --crew-animation: cheer; }
+.worker[data-crew-move="slump"] { --crew-animation: slump; }
+.worker[data-crew-move="fist-pump"] { --crew-animation: fistPump; }
+.worker[data-crew-move="sign"] { --crew-animation: raiseSign; }
+.worker[data-crew-move="flex"] { --crew-animation: flexPose; }
+.worker[data-crew-move="slide"] { --crew-animation: slideFeet; }
+.worker[data-crew-move="cartwheel"] { --crew-animation: cartwheel; }
+
+@keyframes carrySteps {
+  0%, 50%, 100% { transform: none; }
+  25% { transform: translateY(-4px) rotate(-5deg); }
+  75% { transform: translateY(-4px) rotate(5deg); }
+}
+@keyframes cheer {
+  0%, 65%, 100% { transform: none; }
+  34% { transform: translateY(-8px) scale(1.06); }
+}
+@keyframes slump {
+  0%, 100% { transform: none; }
+  35%, 75% { transform: translateY(3px) rotate(-12deg) scaleY(.85); }
+}
+@keyframes fistPump {
+  0%, 65%, 100% { transform: none; }
+  26%, 48% { transform: translateY(-3px) rotate(9deg); }
+  38% { transform: translateY(-1px) rotate(3deg); }
+}
+@keyframes raiseSign {
+  0%, 100% { transform: none; }
+  32%, 74% { transform: translateY(-4px) scale(1.12); }
+}
+@keyframes flexPose {
+  0%, 100% { transform: none; }
+  30%, 70% { transform: scale(1.14) rotate(3deg); }
+  50% { transform: scale(1.16); }
+}
+@keyframes slideFeet {
+  0% { transform: translateX(-12px) rotate(-8deg); }
+  80% { transform: translateX(4px); }
+  100% { transform: none; }
+}
+@keyframes cartwheel {
+  0% { transform: none; }
+  50% { transform: translateY(-11px) rotate(180deg); }
+  100% { transform: rotate(360deg); }
+}
+
+@media (max-width: 670px) {
+  .builders { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+@media (min-width: 1760px) {
+  .builderCard[data-crew] { font-size: 20px; }
+  .builderCard > :is(.temperament, .crewSpeech, .crewRecordNote),
+  .crewRecordNote { font-size: 20px; }
+  .builderCard > .nameTag { font-size: 28px; }
+}
 
 @media (max-width: 720px) {
   .builderNameInputs { grid-template-columns: repeat(2, minmax(0, 1fr)); }

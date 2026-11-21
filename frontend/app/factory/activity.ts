@@ -1,4 +1,4 @@
-import type { Change, FactoryData, Line, Station, Stop } from "./types";
+import type { Change, FactoryData, FloorEvent, Line, Station, Stop } from "./types";
 
 export const stations: Station[] = [
   "Write",
@@ -38,6 +38,10 @@ export function workshopLight(value: string) {
 
 export function pacificDay(value: string) {
   return pacificDate.format(new Date(value));
+}
+
+export function transferId(event: Omit<FloorEvent, "id">) {
+  return `transfer:${event.line}:${event.number}:${event.from}:${event.station}:${Date.parse(event.at)}:${Date.parse(event.observed_at)}`;
 }
 
 export function time(value: string) {

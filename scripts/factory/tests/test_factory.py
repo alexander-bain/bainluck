@@ -552,6 +552,9 @@ class FactoryRules(unittest.TestCase):
         previous["notes"], _ = make_notes(previous, [], {}, budget, None)
         previous["speech"], _ = make_speech(previous, {}, budget, None)
         previous["model_usage"] = {"day": budget.state()["day"], "calls": 0}
+        from crew import add_crew_week
+
+        crew_week = add_crew_week(previous, [])
         current = {**deepcopy(previous), "generated_at": "2026-11-18T01:05:00Z"}
         api = MagicMock()
         api.pages.return_value = []
@@ -567,7 +570,7 @@ class FactoryRules(unittest.TestCase):
         ), patch(
             "collect.GitHub", return_value=api
         ), patch(
-            "collect.read_published", return_value=({"id": 1}, previous, {})
+            "collect.read_published", return_value=({"id": 1}, previous, {"crew_week": crew_week})
         ), patch(
             "collect.collect", return_value={"pulls": []}
         ), patch(

@@ -15,7 +15,7 @@ export const defaultNames: FactoryNames = {
   C: "Builder C",
   D: "Atlas",
   E: "Builder E",
-  F: "Apple",
+  F: "Builder F",
   W: "Wee-Bey",
   Fable: "Fable",
   Other: "Earlier work",
@@ -46,7 +46,7 @@ function readNames(): CustomNames {
 
 export function holdAuthorName(author: string, names: FactoryNames) {
   if (author === "Alex") return "Repository owner";
-  if (author === "Builder F") return names.F;
+  if (author === "Apple") return names.F;
   const builder = nameableBuilders.find(key => defaultNames[key] === author);
   return builder ? names[builder] : author;
 }

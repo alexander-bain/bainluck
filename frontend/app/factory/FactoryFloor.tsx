@@ -32,9 +32,11 @@ import styles from "./factory.module.css";
 import Worker, { type WorkerState } from "./Worker";
 import EventScene from "./EventScene";
 import BuilderNamePanel from "./BuilderNamePanel";
+import CrewCard from "./CrewCard";
+import { crewPose } from "./crewMotion";
 import {
-  builders, holdAuthorName, useBuilderNames,
-  type FactoryNames, type NamedBuilder,
+  builders, holdAuthorName, nameableBuilders, useBuilderNames,
+  type FactoryNames, type NameableBuilder, type NamedBuilder,
 } from "./builderNames";
 import CrateJourney from "./CrateJourney";
 import ChecksQueue from "./ChecksQueue";
@@ -228,6 +230,7 @@ export default function FactoryFloor(initial: {
   }, [initial.renderedAt]);
   const [selectedCrate, selectCrate] = useState<string | null>(null);
   const [selectedGroup, selectGroup] = useState<CrateGroup | null>(null);
+  const [selectedCrew, selectCrew] = useState<NameableBuilder | null>(null);
   const [followed, setFollowed] = useState<number[]>([]);
   const [speaker, setSpeaker] = useState<NamedBuilder>();
   const { names, ...nameEditor } = useBuilderNames();
@@ -277,19 +280,36 @@ export default function FactoryFloor(initial: {
     data?.generated_at, tape, motion && !replay.session && !transfer,
   );
   const playing = replay.session ? replay.playing : transfer ?? livePlaying;
-  const mascotCanMove = motion && !selectedCrate && !selectedGroup;
-  const mascotMove = mascotCanMove && playing ? mascotAction(playing.event) : undefined;
+  const sceneVisible = motion && !selectedCrate && !selectedGroup && !selectedCrew;
+  const mascotMove = sceneVisible && playing ? mascotAction(playing.event) : undefined;
+  const quiet = Boolean(data && !behind && !data.changes.some(change =>
+    onActiveFloor(change) && (change.checks_running || recentlyActive(change.last_activity, now))) &&
+    !data.events?.some(event => recentlyActive(event.observed_at, now)) &&
+    !data.transitions?.some(move => recentlyActive(move.observed_at ?? move.at, now)));
+  const autoReplayDay = useRef<string>();
+  const { session, finished, open: openReplay, close: closeReplay } = replay;
+
+  useEffect(() => {
+    if (session?.automatic && (!quiet || finished)) {
+      closeReplay();
+      return;
+    }
+    if (session || playing || !sceneVisible || !quiet || !data?.day_replay ||
+        !journal?.events.length || autoReplayDay.current === today) return;
+    autoReplayDay.current = today;
+    openReplay(journal, true);
+  }, [session, playing, sceneVisible, quiet, data?.day_replay, journal, today, finished, openReplay, closeReplay]);
 
   useEffect(() => {
     document.title = tabTitle;
   }, [tabTitle]);
 
   useEffect(() => {
-    if (!motion || !currentSpeaker || speakers.length < 2 || replay.session || selectedCrate || selectedGroup) return;
+    if (!sceneVisible || !currentSpeaker || speakers.length < 2 || replay.session) return;
     const next = speakers[(speakers.indexOf(currentSpeaker) + 1) % speakers.length];
     const timer = window.setTimeout(() => setSpeaker(next), SPEECH_INTERVAL_MS);
     return () => window.clearTimeout(timer);
-  }, [motion, currentSpeaker, speakers, replay.session, selectedCrate, selectedGroup]);
+  }, [sceneVisible, currentSpeaker, speakers, replay.session]);
 
   useEffect(() => {
     try {
@@ -346,13 +366,13 @@ export default function FactoryFloor(initial: {
 
   useEffect(() => {
     if (
-      (selectedCrate !== null || selectedGroup) &&
+      (selectedCrate !== null || selectedGroup || selectedCrew) &&
       detail.current &&
       !detail.current.open
     ) {
       detail.current.showModal();
     }
-  }, [selectedCrate, selectedGroup]);
+  }, [selectedCrate, selectedGroup, selectedCrew]);
 
   if (!data) {
     return (
@@ -396,9 +416,11 @@ export default function FactoryFloor(initial: {
   const recordTime = behind ? data.generated_at : now;
   const clockedIn = new Set(
     data.changes
-      .filter((c) => c.builder !== "Other" && recentlyActive(c.last_activity, recordTime))
+      .filter((c) => c.builder !== "Other" && (onActiveFloor(c) || c.station === "Live") &&
+        recentlyActive(c.last_activity, recordTime))
       .map((c) => c.builder),
   );
+  const foremanPose = crewPose(data, "Fable", recordTime, []);
   const engineeringRecords = clipboard(recordTime, shipped, onFloor);
   const mergesToday = new Set(
     data.changes
@@ -490,6 +512,7 @@ export default function FactoryFloor(initial: {
     detail.current?.close();
     selectCrate(null);
     selectGroup(null);
+    selectCrew(null);
   }
 
   function toggleFollowed(number: number) {
@@ -502,27 +525,45 @@ export default function FactoryFloor(initial: {
     }
   }
 
-  function workerFigure(id: NamedBuilder, fallback: WorkerState) {
-    const voice = data?.speech?.[id];
-    const figure = <Worker identity={id} state={voice?.mood ?? fallback} />;
-    if (!voice) return figure;
+  function workerFigure(id: NameableBuilder, pose: WorkerState) {
     return (
       <button
         type="button"
         className={styles.voiceButton}
-        aria-label={`Read ${names[id]}’s speech`}
-        aria-pressed={currentSpeaker === id}
-        aria-controls="factory-speech"
-        onClick={() => setSpeaker(id)}
+        aria-label={`Meet ${names[id]}`}
+        aria-haspopup="dialog"
+        onClick={() => {
+          if (id !== "Fable" && data?.speech?.[id]) setSpeaker(id);
+          selectCrew(id);
+        }}
       >
-        {figure}
+        <Worker identity={id} state={pose} />
       </button>
+    );
+  }
+
+  function crewCard(id: NameableBuilder, titleId?: string) {
+    const lane = visible.filter(change => change.builder === id);
+    const status = id === "Fable" ? foremanPose : crewPose(data!, id, recordTime, lane);
+    return (
+      <CrewCard
+        key={id}
+        identity={id}
+        name={names[id]}
+        pose={status.pose}
+        clockedIn={id === "Fable" ? foremanPose.pose === "working" : clockedIn.has(id)}
+        number={status.change?.number}
+        voice={id === "Fable" ? undefined : data?.speech?.[id]}
+        habits={data?.crew_week?.builders[id]}
+        now={recordTime}
+        titleId={titleId}
+      />
     );
   }
 
   function crate(change: Change) {
     const key = crateKey(change.line, change.number);
-    const arriving = motion && !replay.session && !selectedCrate && !selectedGroup &&
+    const arriving = sceneVisible && !replay.session &&
       transfer?.event.line === change.line && transfer.event.number === change.number &&
       transfer.event.station === change.station;
     return (
@@ -598,7 +639,7 @@ export default function FactoryFloor(initial: {
             <FactoryMascot
               level={verdict.level}
               pose={clockedIn.size ? "standing" : "asleep"}
-              moving={mascotCanMove && clockedIn.size > 0 && verdict.level !== "red"}
+              moving={sceneVisible && clockedIn.size > 0 && verdict.level !== "red"}
             />
           )}
         </StackLight>
@@ -635,7 +676,7 @@ export default function FactoryFloor(initial: {
             Recorded transfers
           </summary>
           <p>
-            Transfers this browser saw today, starting at {time(replay.session.journal.events[0].at)} PT.
+            Recorded station moves today, starting at {time(replay.session.journal.events[0].at)} PT.
             The replay may cover part of the day.
           </p>
           <ol>
@@ -662,7 +703,9 @@ export default function FactoryFloor(initial: {
           <ChecksQueue queue={data.signals.checks_queue} />
           {currentSpeaker && currentSpeech && (
             <div className={styles.floorSpeech} id="factory-speech" data-floor-speech={currentSpeaker}>
-              <Worker identity={currentSpeaker} state={currentSpeech.mood} />
+              {workerFigure(currentSpeaker, crewPose(data, currentSpeaker, recordTime, visible.filter(
+                change => change.builder === currentSpeaker,
+              )).pose)}
               <p className={styles.speechBubble} data-source={currentSpeech.source}>
                 <strong>{names[currentSpeaker]}</strong>{" "}{currentSpeech.text}
               </p>
@@ -729,7 +772,7 @@ export default function FactoryFloor(initial: {
                     </div>
                     {station === "Review" && (
                       <div className={styles.inspectionDesk}>
-                        <Worker identity="Fable" state="idle" />
+                        {workerFigure("Fable", foremanPose.pose)}
                         <span>{nameEditor.custom.Fable?.trim() ? names.Fable : "Foreman"}</span>
                       </div>
                     )}
@@ -793,8 +836,9 @@ export default function FactoryFloor(initial: {
                       const crew = crewActivity(data, now, changes);
                       const worker = crew.change ?? changes[0];
                       const workerId = worker?.builder === "Other" ? undefined : worker?.builder;
-                      const workerState = (workerId && data.speech?.[workerId]?.mood) ||
-                        (changes.length ? crew.pose : activity.worker);
+                      const workerState = workerId
+                        ? crewPose(data, workerId, recordTime, changes.filter(change => change.builder === workerId)).pose
+                        : activity.worker;
                       const dockBuilders =
                         station === "Merge line"
                           ? [
@@ -934,7 +978,7 @@ export default function FactoryFloor(initial: {
                         </div>
                       );
                     })}
-                    {reducedMotion === false && !behind && playing?.event.line === line && (
+                    {sceneVisible && playing?.event.line === line && (
                       <EventScene key={playing.event.id} {...playing} foreman={names.Fable} />
                     )}
                     {mascotMove && playing?.event.line === line && (
@@ -982,14 +1026,14 @@ export default function FactoryFloor(initial: {
             </div>
           </aside>
         </div>
-        {(selected || group) && (
+        {(selected || group || selectedCrew) && (
           <dialog
             className={styles.detail}
-            aria-labelledby="factory-change-title"
+            aria-labelledby={selectedCrew ? "factory-crew-title" : "factory-change-title"}
             ref={detail}
             onCancel={closeDetail}
           >
-            {selected ? (
+            {selectedCrew ? crewCard(selectedCrew, "factory-crew-title") : selected ? (
               <div>
                 {group && (
                   <button className={styles.backToList} type="button" onClick={() => selectCrate(null)}>
@@ -1064,7 +1108,7 @@ export default function FactoryFloor(initial: {
             )}
             <button
               type="button"
-              aria-label="Close change details"
+              aria-label={selectedCrew ? "Close crew card" : "Close change details"}
               onClick={closeDetail}
             >
               <X size={18} />
@@ -1160,41 +1204,13 @@ export default function FactoryFloor(initial: {
             </span>
           </summary>
           <BuilderNamePanel {...nameEditor} />
+          {data.crew_week && (
+            <p className={styles.crewRecordNote}>Weekly tracking started {pacificPostingTime.format(
+              new Date(data.crew_week.since),
+            )} PT. Busiest hours use recorded commits, deliveries and looks.</p>
+          )}
           <div className={styles.builders}>
-            {builders.map((key) => {
-              const crew = crewActivity(
-                data,
-                now,
-                visible.filter((c) => c.builder === key),
-              );
-              const voice = data.speech?.[key];
-              const mood = voice?.mood ?? crew.pose;
-              const pose = {
-                carrying: "Carrying",
-                waiting: "Waiting",
-                working: "Working",
-                celebrating: "Celebrating",
-                stuck: "Stuck",
-                asleep: "Asleep",
-              }[mood];
-              return (
-                <div
-                  key={key}
-                  className={styles.builderCard}
-                  data-crew={key}
-                  data-pose={mood}
-                >
-                  <Worker identity={key} state={mood} />
-                  <strong className={styles.nameTag}>{names[key]}</strong>
-                  {key === "W" && <small>Spare hand</small>}
-                  <span>{clockedIn.has(key) ? "Clocked in" : "Quiet for 15 minutes"}</span>
-                  <span>{pose}{!voice && crew.change && ` #${crew.change.number}`}</span>
-                  <p className={styles.crewSpeech} data-source={voice?.source}>
-                    {voice?.text ?? "This lane’s speech is missing from this read."}
-                  </p>
-                </div>
-              );
-            })}
+            {nameableBuilders.map(id => crewCard(id))}
           </div>
         </details>
 

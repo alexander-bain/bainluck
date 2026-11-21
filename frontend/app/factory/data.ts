@@ -1,5 +1,5 @@
-import { factoryEventKinds, factoryMoods, type Change, type ChecksQueue, type FactoryData, type FloorEvent } from "./types";
-import { stationNames, stations } from "./activity";
+import { factoryEventKinds, factoryMoods, type Change, type ChecksQueue, type CrewHabits, type FactoryData, type FloorEvent } from "./types";
+import { pacificDay, stationNames, stations, transferId } from "./activity";
 
 export const FACTORY_DATA_URL =
   "https://github.com/alexander-bain/bainluck/releases/download/factory-data/factory.json";
@@ -57,6 +57,44 @@ function isEvent(event: FloorEvent) {
     (event.kind !== "check" ||
       (isProgress(event.done, event.total) &&
         ["passed", "failed", "finished"].includes(event.outcome ?? "")));
+}
+
+function verifiedReplay(payload: FactoryData) {
+  const replay = payload.day_replay;
+  if (!replay || !Array.isArray(replay.events) ||
+      !Number.isFinite(Date.parse(replay.through)) || Date.parse(replay.through) > Date.parse(payload.generated_at) ||
+      replay.date !== pacificDay(replay.through) || replay.date !== pacificDay(payload.generated_at)) return;
+  if (replay.events.every(event => event && (event.kind === "move" || event.kind === "returned") &&
+      ["Server", "Website", "Apps"].includes(event.line) &&
+      Number.isSafeInteger(event.number) && event.number > 0 &&
+      (event.builder === undefined || ["S", "B", "C", "D", "E", "F", "W", "Other"].includes(event.builder)) &&
+      event.from !== undefined && stations.includes(event.from) && stations.includes(event.station) &&
+      event.from !== event.station &&
+      Date.parse(event.at) <= Date.parse(event.observed_at) &&
+      Date.parse(event.observed_at) <= Date.parse(replay.through) &&
+      pacificDay(event.at) === replay.date && event.id === transferId(event))) return replay;
+}
+
+function validHabits(habits: CrewHabits, through: number) {
+  return habits && Number.isSafeInteger(habits.changes) && habits.changes >= 0 &&
+    Array.isArray(habits.stations) && habits.stations.length <= stations.length &&
+    habits.stations.every(station => stations.includes(station)) &&
+    Array.isArray(habits.hours) && habits.hours.length <= 24 &&
+    habits.hours.every(hour => Number.isSafeInteger(hour) && hour >= 0 && hour < 24) &&
+    (habits.longest === undefined || habits.longest && Number.isSafeInteger(habits.longest.number) &&
+      habits.longest.number > 0 && Date.parse(habits.longest.since) <= through);
+}
+
+function verifiedCrew(payload: FactoryData) {
+  const week = payload.crew_week;
+  const through = Date.parse(payload.generated_at);
+  if (!week?.builders || !(Date.parse(week.since) <= through)) return;
+  const builders: NonNullable<FactoryData["crew_week"]>["builders"] = {};
+  for (const member of ["S", "B", "C", "D", "E", "F", "W", "Fable"] as const) {
+    const habits = week.builders[member];
+    if (habits && validHabits(habits, through)) builders[member] = habits;
+  }
+  if (Object.keys(builders).length) return { since: week.since, builders };
 }
 
 function notesForSnapshot(payload: FactoryData) {
@@ -219,6 +257,8 @@ export function validateSnapshot(payload: FactoryData): FactoryData {
     throw new Error("Snapshot incomplete");
   const notes = notesForSnapshot(payload);
   const speech = speechForSnapshot(payload);
+  const replay = verifiedReplay(payload);
+  const crew = verifiedCrew(payload);
   const { checks_queue: rawQueue, ...signals } = payload.signals;
   const checksQueue = verifiedChecksQueue(rawQueue);
   const usage = payload.model_usage;
@@ -234,6 +274,8 @@ export function validateSnapshot(payload: FactoryData): FactoryData {
       : {}),
     ...(payload.transitions ? { transitions: payload.transitions } : {}),
     ...(payload.events ? { events: payload.events } : {}),
+    ...(replay ? { day_replay: replay } : {}),
+    ...(crew ? { crew_week: crew } : {}),
     ...(payload.injury_clock ? { injury_clock: payload.injury_clock } : {}),
     ...(payload.stops ? { stops: payload.stops } : {}),
     ...(notes ? { notes } : {}),

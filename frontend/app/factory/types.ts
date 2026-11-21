@@ -80,6 +80,13 @@ export interface DayReplay {
   events: FloorEvent[];
 }
 
+export interface CrewHabits {
+  changes: number;
+  stations: Station[];
+  hours: number[];
+  longest?: { number: number; since: string };
+}
+
 export interface Injury {
   kind: "switched-off" | "wrong-number";
   number: number;
@@ -156,6 +163,11 @@ export interface FactoryData {
   speech?: Partial<Record<Exclude<Builder, "Other">, LaneSpeech>>;
   model_usage?: { day: string; calls: number };
   events?: FloorEvent[];
+  day_replay?: DayReplay;
+  crew_week?: {
+    since: string;
+    builders: Partial<Record<Exclude<Builder, "Other"> | "Fable", CrewHabits>>;
+  };
   injury_clock?: InjuryClock;
   stops?: Stop[];
   notes?: {
