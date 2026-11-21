@@ -1214,8 +1214,14 @@ async def _ingest_event_odds(
                 },
                 # Only when the live rule dated it: every other write is unchanged.
                 **({"price_read_at": lines_read_at} if lines_read_at is not None else {}),
-                away_value=_betting_away_val,
-                draw_value=_betting_draw_val,
+                **(
+                    {
+                        "away_value": _betting_away_val,
+                        "draw_value": _betting_draw_val,
+                    }
+                    if _betting_away_val is not None and _betting_draw_val is not None
+                    else {}
+                ),
                 trace_inputs=None if _trace_books is None else (
                     lambda: {**_trace_books, "select_end": nonvenue_trace().clock(),
                              "upstream_clock_domain": "ODDS_API_BOOKMAKER_LAST_UPDATE"}),
