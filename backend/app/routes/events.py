@@ -19041,15 +19041,10 @@ async def list_events(
             .limit(200)
             .subquery()
         )
-        priority = case(
-            (Event.status == "live", 0),
-            (and_(Event.status == "scheduled", Event.commence_time >= now), 1),
-            else_=2,
-        )
         query = (
             select(Event)
             .join(window, Event.id == window.c.id)
-            .order_by(priority, Event.commence_time, Event.id)
+            .order_by(live_scheduled_settled_order(now), Event.commence_time, Event.id)
         )
         limit = min(limit, 50)
     else:

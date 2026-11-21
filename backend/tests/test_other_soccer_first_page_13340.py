@@ -1,7 +1,7 @@
 """The Other Soccer reader gets a small page from its existing game window."""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from sqlalchemy.dialects import postgresql
@@ -22,6 +22,8 @@ async def test_league_window_is_paged_before_enrichment(
     rows = [SimpleNamespace(id=event_id) for event_id in range(50)]
     result = SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: rows))
     db = SimpleNamespace(execute=AsyncMock(return_value=result))
+    reader_order = Mock(wraps=events.live_scheduled_settled_order)
+    monkeypatch.setattr(events, "live_scheduled_settled_order", reader_order)
     monkeypatch.setattr(events, "recover_kalshi_expiration_starts", AsyncMock())
     monkeypatch.setattr(
         events, "fold_twin_events", lambda _: SimpleNamespace(dropped_ids=())
@@ -49,9 +51,11 @@ async def test_league_window_is_paged_before_enrichment(
     assert response["count"] == 0
     if league_page:
         assert "LIMIT 200" in sql and f"LIMIT 50 OFFSET {offset}" in sql
-        assert "ORDER BY CASE WHEN (events.status = 'live')" in sql
+        reader_order.assert_called_once()
+        assert "ORDER BY CASE WHEN" in sql
         assert response["next_offset"] == expected_next
     else:
+        reader_order.assert_not_called()
         assert "ORDER BY events.commence_time" in sql
         assert "LIMIT 50" not in sql
         assert "next_offset" not in response
