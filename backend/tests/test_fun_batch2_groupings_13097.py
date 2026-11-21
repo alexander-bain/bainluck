@@ -266,6 +266,11 @@ async def test_batch2_headlines_use_short_labels_leading_answers_and_long_shots_
             _mk_market(109435, "Will the U.S. confirm that aliens exist?", [("Before Jan 20, 2029", 0.155), ("Before Jan 1, 2028", 0.115)], volume=37_388_641.0),
             _mk_market(108339, "Will Trump go on SNL during his second term?", [("Yes", 0.155), ("No", 0.845)], volume=27_619.0),
             _mk_market(108218, "Will Elon Musk visit Mars in his lifetime?", [("Yes", 0.12), ("No", 0.88)], volume=126_757.0),
+            # Bare date answer formats as "by Dec 31" (Item 5iii); Ruling 313: A rows stay in Long Shots
+            _mk_market(9997262, "Satoshi's identity be proven?", [("December 31", 0.014), ("April 30", 0.001)], volume=50_000.0),
+            _mk_market(113504, "Will Jesus Christ return before 2027?", [("Yes", 0.01), ("No", 0.99)], volume=50_000.0),
+            _mk_market(34191685, "Earth being flat?", [("Yes", 0.01), ("No", 0.99)], volume=50_000.0),
+            _mk_market(109398, "Magnitude 8 California earthquake?", [("Before 2027", 0.02), ("Before 2026", 0.001)], volume=50_000.0),
         ],
     }
     ls_res = await produce_container_machinery(ls_snap, ls_defn, now=NOW)
@@ -274,15 +279,24 @@ async def test_batch2_headlines_use_short_labels_leading_answers_and_long_shots_
     ls_cp = compose_roundup_container(ls_prod, ls_res)
     ls_items = ls_cp["sections"][0]["visual_block"]["items"]
     ls_ids = [it["market_id"] for it in ls_items]
-    assert ls_ids == [109435, 108339, 66925975, 108218]
+    assert ls_ids[:4] == [109435, 108339, 66925975, 108218]
+    assert {9997262, 113504, 34191685, 109398}.issubset(set(ls_ids))
     assert all(it["outcomes"][0]["rendered_percent"] <= 20 for it in ls_items)
-    assert ls_items[0]["title"] == "U.S. confirming aliens: Before Jan 20, 2029"
+    assert ls_items[0]["title"] == "U.S. confirming aliens before Jan 20, 2029"
+    satoshi = next(it for it in ls_items if it["market_id"] == 9997262)
+    assert satoshi["title"] == "Satoshi's identity proven by Dec 31"
+    quake = next(it for it in ls_items if it["market_id"] == 109398)
+    assert quake["title"] == "Magnitude 8 California earthquake before 2027"
     assert ls_fi["data"]["roundup"]["machinery_card"]["title"] == (
-        "U.S. confirming aliens: Before Jan 20, 2029 is the likeliest long shot at 16%, "
+        "U.S. confirming aliens before Jan 20, 2029 is the likeliest long shot at 16%, "
         "with Trump on SNL at 16%"
     )
+    ls_cp_p, ls_fi_p = _compute_member_number_parity(ls_fi, ls_cp)
+    assert ls_cp_p["passes"] is True and ls_fi_p["passes"] is True
 
-    # 3. Long-awaited: Simpsons & Beyonce excluded; "when" market names leading answer in row + headline
+    # 3. Long-awaited: Simpsons & Beyonce excluded; "After ..." delay bucket does NOT rank
+    # as "likeliest", and date rows (GTA VI, Frank Ocean, Drake, Stranger Things) stay out
+    # of the "likeliest" headline while keeping 100% member-page parity (Item 5i).
     la_defn = load_machinery_definition(paths_by_slug["machinery-long-awaited"])
     la_prod = build_container_machinery_producer(la_defn)
     la_snap = {
@@ -291,10 +305,13 @@ async def test_batch2_headlines_use_short_labels_leading_answers_and_long_shots_
         "market_histories": {},
         "markets": [
             _mk_market(108239, "Next Pirates of the Caribbean film: Will Johnny Depp be cast?", [("Yes", 0.74), ("No", 0.26)]),
-            _mk_market(67717832, "GTA VI on PC in what month?", [("After March 2027", 0.69), ("Before Dec 2026", 0.05)]),
+            _mk_market(67717832, "GTA VI on PC in what month?", [("After March 2027", 0.675), ("March 2027", 0.136), ("January 2027", 0.088)]),
+            _mk_market(109347, "Will Robert Downey Jr. play Iron Man again?", [("Yes", 0.41), ("No", 0.59)]),
             _mk_market(108275, "Will there be an announcement that The Simpsons is ending?", [("Yes", 0.67), ("No", 0.33)]),
             _mk_market(108306, "What genre will Beyonce’s next album be?", [("Rock", 0.64), ("Country", 0.20)]),
             _mk_market(112760, "When will Frank Ocean release a new album?", [("2027", 0.31), ("2026", 0.18)]),
+            _mk_market(59693617, "When will Drake release a new album?", [("Before Dec 1, 2026", 0.095), ("Before Jan 1, 2027", 0.065)]),
+            _mk_market(114237, 'New "Stranger Things" episode released?', [("March 31, 2027", 0.055), ("December 31, 2026", 0.017)]),
         ],
     }
     la_res = await produce_container_machinery(la_snap, la_defn, now=NOW)
@@ -303,13 +320,21 @@ async def test_batch2_headlines_use_short_labels_leading_answers_and_long_shots_
     la_cp = compose_roundup_container(la_prod, la_res)
     la_items = la_cp["sections"][0]["visual_block"]["items"]
     la_ids = [it["market_id"] for it in la_items]
-    assert la_ids == [108239, 67717832, 112760]
-    assert la_items[1]["title"] == "GTA VI on PC: After March 2027"
-    assert la_items[2]["title"] == "Frank Ocean's next album: 2027"
+    # GTA VI ranked by its 14% March 2027 release-window chance, NOT 68% "After March 2027"
+    assert la_ids == [108239, 109347, 112760, 67717832, 59693617, 114237]
+    by_mid = {it["market_id"]: it for it in la_items}
+    assert by_mid[67717832]["title"] == "GTA VI on PC in Mar 2027"
+    assert by_mid[67717832]["outcomes"][0]["rendered_percent"] == 14
+    assert by_mid[112760]["title"] == "Frank Ocean's next album in 2027"
+    assert by_mid[59693617]["title"] == "Drake's next album before Dec 1, 2026"
+    assert by_mid[114237]["title"] == "New Stranger Things episode by Mar 31, 2027"
+    # Headline names ONLY non-date Yes/No rows under "likeliest"
     assert la_fi["data"]["roundup"]["machinery_card"]["title"] == (
         "Johnny Depp in Pirates is the likeliest long-awaited release at 74%, "
-        "with GTA VI on PC: After March 2027 at 69%"
+        "with Robert Downey Jr. back as Iron Man at 41%"
     )
+    la_cp_p, la_fi_p = _compute_member_number_parity(la_fi, la_cp)
+    assert la_cp_p["passes"] is True and la_fi_p["passes"] is True
 
     # 4. Space & Mars: "which" market names leading country in row + headline; thin Bezos ($440) out
     sp_defn = load_machinery_definition(paths_by_slug["machinery-space-race"])
