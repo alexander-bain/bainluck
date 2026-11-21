@@ -552,44 +552,36 @@ def test_event_reason_falls_back_to_empty_string_when_card_context_is_enough():
 
 
 class TestHumanizeBinaryOutcomeName:
-    """Yes/No outcomes should be replaced with meaningful entity names."""
+    """#13270 — Yes/No outcomes stay canonical 'Yes'/'No'; never 'Not <subject>'."""
 
     def test_extracts_subject_from_will_question(self):
         assert (
             humanize_binary_outcome_name("Yes", "Will Anthropic IPO first?")
-            == "Anthropic"
+            == "Yes"
         )
 
     def test_extracts_subject_openai(self):
         assert (
             humanize_binary_outcome_name("Yes", "Will OpenAI IPO before 2027?")
-            == "OpenAI"
+            == "Yes"
         )
 
     def test_a_generic_first_word_falls_through_to_the_bare_side(self):
-        # "the Dodgers" — "the" is generic, so Strategy 1 declines the subject
-        # and Strategy 2 would label the card `the Dodgers win the World
-        # Series` above a title reading `Will the Dodgers win the World
-        # Series?`. #3517 refuses the restatement; the title carries the name.
         result = humanize_binary_outcome_name(
             "Yes", "Will the Dodgers win the World Series?"
         )
         assert result == "Yes"
 
-    def test_no_outcome_negates_subject(self):
+    def test_no_outcome_stays_canonical_no(self):
         result = humanize_binary_outcome_name("No", "Will Anthropic IPO first?")
-        assert result == "Not Anthropic"
+        assert result == "No"
+        assert not result.startswith("Not ")
 
     def test_no_outcome_preserves_side_for_top_five_market(self):
         result = humanize_binary_outcome_name(
             "No",
             "Will Rory McIlroy finish Top 5 at the Truist Championship?",
         )
-        # #3491: "finish" is outside Strategy 1's verb list, so this falls to
-        # Strategy 2, whose label does not fit the pair. The bare side is then
-        # the answer rather than a chopped echo. What this test has always been
-        # about is unchanged and asserted below: the No side must never reach
-        # the card wearing the AFFIRMATIVE reading of the question.
         assert result == "No"
         assert not result.startswith("Rory McIlroy finish Top 5")
 
@@ -598,7 +590,7 @@ class TestHumanizeBinaryOutcomeName:
             humanize_binary_outcome_name(
                 "Yes", "Will Taylor Swift be pregnant in 2026?"
             )
-            == "Taylor Swift"
+            == "Yes"
         )
 
     def test_extracts_elon_musk(self):
@@ -606,30 +598,23 @@ class TestHumanizeBinaryOutcomeName:
             humanize_binary_outcome_name(
                 "Yes", "Will Elon Musk step down as CEO of Tesla?"
             )
-            == "Elon Musk"
+            == "Yes"
         )
 
     def test_generic_subject_never_becomes_the_label(self):
         result = humanize_binary_outcome_name(
             "Yes", "Will there be a government shutdown?"
         )
-        # Not "there", and — #3517 — not `there be a government shutdown`
-        # either, which is the question with its auxiliary removed.
         assert result == "Yes"
         assert result != "there"
 
     def test_non_will_question_takes_the_bare_side(self):
-        # Strategy 1 requires `Will <subject> <verb>`, so a question opening
-        # with any other auxiliary can only be labelled by Strategy 2 — and
-        # #3517 refuses every Strategy 2 label as a restatement.
         result = humanize_binary_outcome_name(
             "Yes", "Does Alcaraz reach the semifinals?"
         )
         assert result == "Yes"
 
     def test_non_will_question_returns_the_side_when_the_pair_does_not_fit(self):
-        # 38 characters, so the label itself would fit but `"Not: " + label`
-        # would not. #3491 gates on the PAIR, so neither side is chopped.
         market = "Federal Reserve interest rate above 5%?"
         assert humanize_binary_outcome_name("Yes", market) == "Yes"
         assert humanize_binary_outcome_name("No", market) == "No"
@@ -649,10 +634,6 @@ class TestHumanizeBinaryOutcomeName:
         assert humanize_binary_outcome_name("Yes", None) == "Yes"
 
     def test_long_market_name_returns_the_side_rather_than_a_fragment(self):
-        # 🔴 `len(result) <= 40` is what this used to assert, and #3491 makes
-        # that vacuous — "Yes" satisfies it however badly the function behaves.
-        # The contract is that an over-long label is REFUSED, not shortened, so
-        # assert the exact string and that no fragment of the question survives.
         long_name = "Will the extremely long and complicated market name that goes on forever resolve positively?"
         result = humanize_binary_outcome_name("Yes", long_name)
         assert result == "Yes"
@@ -670,16 +651,20 @@ class TestHumanizeBinaryOutcomeName:
         result = humanize_binary_outcome_name(
             "Yes", "Will Bitcoin reach $100k by December 2026?"
         )
-        assert result == "Bitcoin"
+        assert result == "Yes"
 
     def test_case_insensitive_yes_no(self):
         assert (
             humanize_binary_outcome_name("YES", "Will Anthropic IPO first?")
-            == "Anthropic"
+            == "Yes"
         )
         assert (
             humanize_binary_outcome_name("yes", "Will Anthropic IPO first?")
-            == "Anthropic"
+            == "Yes"
+        )
+        assert (
+            humanize_binary_outcome_name("NO", "Will Anthropic IPO first?")
+            == "No"
         )
 
 
@@ -692,8 +677,8 @@ class TestHumanizeOutcomeNamesForFeed:
             {"name": "No", "probability": 0.31},
         ]
         result = humanize_outcome_names_for_feed(outcomes, "Will Anthropic IPO first?")
-        assert result[0]["name"] == "Anthropic"
-        assert result[1]["name"] == "Not Anthropic"
+        assert result[0]["name"] == "Yes"
+        assert result[1]["name"] == "No"
         # Original list not mutated
         assert outcomes[0]["name"] == "Yes"
 
