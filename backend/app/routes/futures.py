@@ -20,6 +20,11 @@ from app.models import Event, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
 from app.services import get_db, OddsAPIService
 from app.utils import futures_price_screen, movement_pool, probability_to_american
 from app.utils.durable_venue_receipt import log_durable_venue_serve
+from app.utils.event_awards import (
+    grammy_nominee_fields,
+    grammy_pre_nomination_board,
+    is_grammy_general_field_market,
+)
 from app.utils.observed_span_steps import add_history_steps, add_timeline_steps
 from app.utils.settlement_display import (
     VERDICT_UNKNOWN as SETTLEMENT_VERDICT_UNKNOWN,
@@ -4742,6 +4747,17 @@ async def get_futures_market(
     if not market:
         raise HTTPException(status_code=404, detail="Market not found")
 
+    nominee_field = (await grammy_nominee_fields(db, [market])).get(market.id)
+    requested_id = market_id
+    legacy_market = (
+        market if nominee_field is not None else await grammy_pre_nomination_board(db, market)
+    )
+    if nominee_field is not None:
+        market = nominee_field
+        market_id = market.id
+    if is_grammy_general_field_market(market):
+        representation = REPRESENTATION_SOURCE
+
     # The provenance half — which books contributed, and their latest price per
     # outcome — is the whole cost of this endpoint and it is the only half that
     # is cached. `market` and its outcomes were just read fresh above and are
@@ -4803,8 +4819,14 @@ async def get_futures_market(
     # #10165: the game this board is the Polymarket container OF, so the page can
     # send the reader to the game instead of drawing the container as a field.
     detail["container_of_event_id"] = await _game_container_of_event_id(db, market)
-    # #9387: opt-in only. The default response is untouched, field for field.
-    if representation == REPRESENTATION_VERIFIED_TITLE:
+    if legacy_market is not None:
+        # Preserve old page addresses and give search and Discover the same
+        # field when they link to Kalshi. Polymarket supplies only its Out rows.
+        retired = _format_market_detail(legacy_market, normalize_numbers=False)
+        detail["id"] = requested_id
+        detail["outcomes"].extend(row for row in retired["outcomes"] if row.get("is_out"))
+        detail["outcome_count"] = len(detail["outcomes"])
+    elif representation == REPRESENTATION_VERIFIED_TITLE:
         _apply_verified_title_to_detail(
             detail, await _resolve_verified_title(db, market), market
         )
@@ -7389,6 +7411,12 @@ async def get_probability_timeline(
     if not market:
         raise HTTPException(status_code=404, detail="Market not found")
 
+    nominee_field = (await grammy_nominee_fields(db, [market])).get(market.id)
+    if nominee_field is not None:
+        market = nominee_field
+    if is_grammy_general_field_market(market):
+        representation = REPRESENTATION_SOURCE
+
     # #6641 — ONE CONDITION, ONE LINE. A Polymarket "field" row is served to us
     # twice over: the bare condition id carries the named rung ("March 31,
     # 2026") and the decomposition branch writes the same condition's two legs
@@ -8545,6 +8573,11 @@ async def get_futures_history(
     if not market:
         raise HTTPException(status_code=404, detail="Market not found")
 
+    nominee_field = (await grammy_nominee_fields(db, [market])).get(market.id)
+    if nominee_field is not None and not any(o.id == outcome_id for o in market.outcomes):
+        # Read the nominee field while keeping the response tied to the requested URL.
+        market = nominee_field
+
     # #6641, same rule and same reason as `get_probability_timeline` above —
     # this is the other half of the same chart. No iOS client reads it, but the
     # web futures page does, and the payload carried the legs either way (four
@@ -8646,7 +8679,7 @@ async def get_futures_history(
         select(FuturesOddsSnapshot)
         .join(FuturesOutcome, FuturesOutcome.id == FuturesOddsSnapshot.outcome_id)
         .where(
-            FuturesOutcome.market_id == market_id,
+            FuturesOutcome.market_id == market.id,
             FuturesOddsSnapshot.captured_at >= cutoff,
         )
         .order_by(FuturesOddsSnapshot.captured_at)
@@ -8863,7 +8896,7 @@ async def get_futures_history(
                     FuturesOutcome.id == FuturesOddsSnapshot.outcome_id,
                 )
                 .where(
-                    FuturesOutcome.market_id == market_id,
+                    FuturesOutcome.market_id == market.id,
                     FuturesOddsSnapshot.captured_at >= extended_cutoff,
                 )
                 .order_by(FuturesOddsSnapshot.captured_at)

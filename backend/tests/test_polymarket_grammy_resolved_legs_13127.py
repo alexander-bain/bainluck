@@ -1,7 +1,7 @@
 """An authoritative No on an open winner field cannot reappear as an old trade."""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -159,3 +159,115 @@ def test_detail_puts_the_graded_grammy_loss_after_contenders(external_id, monkey
         assert not eliminated.get("is_out")
         assert eliminated["probability"] == 0.01
         assert eliminated["last_updated"] == observed.isoformat()
+
+
+@pytest.mark.parametrize("requested_id", [58492243, 100])
+async def test_grammy_detail_keeps_its_address_and_never_blends_the_two_boards(
+    monkeypatch, requested_id,
+):
+    from app.routes import futures
+
+    old = SimpleNamespace(id=58492243, source="polymarket", external_id="805158", outcomes=[])
+    current = SimpleNamespace(
+        id=100, source="kalshi", external_id="KXGRAMMY-SOTY69",
+        outcomes=[SimpleNamespace(id=900), SimpleNamespace(id=901)],
+    )
+    legacy_request = requested_id == old.id
+    db_result = Mock()
+    db_result.unique.return_value = db_result
+    db_result.scalar_one_or_none.return_value = old if legacy_request else current
+    db = SimpleNamespace(execute=AsyncMock(return_value=db_result))
+    fields = {old.id: current} if legacy_request else {}
+    monkeypatch.setattr(futures, "grammy_nominee_fields", AsyncMock(return_value=fields))
+    monkeypatch.setattr(futures, "grammy_pre_nomination_board", AsyncMock(return_value=old))
+    source_read = AsyncMock(return_value=(["kalshi"], []))
+    monkeypatch.setattr(futures, "_load_market_sources", source_read)
+    for name, result in (
+        ("_withheld_price_outcome_ids", set()),
+        ("_fleet_newest_observation", None),
+        ("_game_container_leg_sides", {}),
+        ("_game_container_lead_leg", None),
+        ("_game_container_of_event_id", None),
+        ("out_legs_by_market", {}),
+    ):
+        monkeypatch.setattr(futures, name, AsyncMock(return_value=result))
+    blend = AsyncMock()
+    monkeypatch.setattr(futures, "_resolve_verified_title", blend)
+
+    def detail(market, *args, **kwargs):
+        if market is current:
+            rows = [
+                {"id": 900, "name": "the cure", "probability": 0.22, "source_mark": "kalshi"},
+                {"id": 901, "name": "Tie", "probability": 0.01},
+            ]
+        else:
+            rows = [
+                {"id": 1, "name": "the cure", "probability": 0.30},
+                {"id": 2, "name": "I Just Might", "is_out": True, "rank": None},
+            ]
+        return {"id": market.id, "source": market.source, "outcomes": rows}
+
+    monkeypatch.setattr(futures, "_format_market_detail", detail)
+    result = await futures.get_futures_market(
+        requested_id, db, representation=futures.REPRESENTATION_VERIFIED_TITLE,
+    )
+    assert result["id"] == requested_id and result["source"] == "kalshi"
+    assert result["outcome_count"] == 3
+    assert [row["id"] for row in result["outcomes"]] == [900, 901, 2]
+    assert result["outcomes"][0]["probability"] == 0.22
+    assert result["outcomes"][0]["source_mark"] == "kalshi"
+    assert result["outcomes"][-1]["rank"] is None
+    source_read.assert_awaited_once_with(db, 100, [900, 901])
+    blend.assert_not_awaited()
+
+
+@pytest.mark.parametrize(
+    ("endpoint", "requested_id"),
+    [("history", 58492243), ("timeline", 58492243), ("timeline", 100)],
+)
+async def test_grammy_chart_reads_the_nominee_field_at_either_address(
+    monkeypatch, endpoint, requested_id,
+):
+    from app.routes import futures
+
+    legacy = SimpleNamespace(id=58492243, source="polymarket", external_id="805158", outcomes=[])
+    field = SimpleNamespace(
+        id=100, source="kalshi", external_id="KXGRAMMY-SOTY69", status="open",
+        name="Song of the Year", outcomes=[], commence_time=None, market_metadata={},
+    )
+    market_row = legacy if requested_id == legacy.id else field
+    market_result = Mock()
+    market_result.unique.return_value = market_result
+    market_result.scalar_one_or_none.return_value = market_row
+    snapshots = Mock()
+    snapshots.scalars.return_value.all.return_value = []
+    db = SimpleNamespace(execute=AsyncMock(side_effect=[market_result, snapshots]))
+    fields = {legacy.id: field} if market_row is legacy else {}
+    monkeypatch.setattr(futures, "grammy_nominee_fields", AsyncMock(return_value=fields))
+    screen = AsyncMock(return_value=set())
+    monkeypatch.setattr(futures, "_withheld_price_outcome_ids", screen)
+    blend = AsyncMock()
+    monkeypatch.setattr(futures, "_resolve_verified_title", blend)
+
+    if endpoint == "timeline":
+        monkeypatch.setattr(futures, "_format_market_detail", Mock(return_value={"outcomes": []}))
+        result = await futures.get_probability_timeline(
+            requested_id, top=10, hours=168, db=db,
+            representation=futures.REPRESENTATION_VERIFIED_TITLE,
+        )
+    else:
+        monkeypatch.setattr(futures, "out_legs_by_market", AsyncMock(return_value={}))
+        monkeypatch.setattr(
+            futures, "_load_generic_venue_history",
+            AsyncMock(return_value=futures._GenericVenueHistory()),
+        )
+        result = await futures.get_futures_history(
+            requested_id, outcome_id=None, hours=8760, top_n=10, champion=None, db=db,
+        )
+        snapshot_query = db.execute.await_args_list[1].args[0]
+        assert snapshot_query.compile().params["market_id_1"] == field.id
+
+    assert result["market_id"] == requested_id
+    assert result["market_name"] == field.name
+    screen.assert_awaited_once_with(db, field)
+    blend.assert_not_awaited()

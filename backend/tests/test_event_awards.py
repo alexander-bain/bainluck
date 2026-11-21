@@ -6,6 +6,7 @@ import ast
 import inspect
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -18,7 +19,9 @@ from app.utils.event_awards import (
     clean_category_label,
     derive_awards_concept,
     edition_year,
+    grammy_nominee_fields,
     parse_awards_slug,
+    prefer_grammy_nominee_fields,
 )
 
 
@@ -517,3 +520,51 @@ def test_awards_price_screen_has_no_route_imports():
             if name == "app.routes" or name.startswith("app.routes.")
         )
         assert not route_imports, f"{module.__name__} loads routes {route_imports}"
+
+
+@pytest.mark.parametrize("count", [7, 8])
+async def test_grammy_nominee_board_requires_the_named_field(count):
+    nominees = [
+        "Berghain", "Choosin' Texas", "the cure", "hate that i made you love me",
+        "I Knew It, I Knew You", "Man I Need", "Risk It All", "WHERE IS MY HUSBAND!",
+    ]
+    original = SimpleNamespace(id=58492243, source="polymarket", external_id="805158")
+    candidate = SimpleNamespace(
+        source="kalshi",
+        status="open",
+        external_id="KXGRAMMY-SOTY69",
+        outcomes=[SimpleNamespace(name=name) for name in [*nominees[:count], "Tie"]],
+    )
+    db = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(scalars=lambda: [candidate])))
+    assert await grammy_nominee_fields(db, [original]) == (
+        {original.id: candidate} if count == 8 else {}
+    )
+    assert set(db.execute.await_args.args[0].compile().params["external_id_1"]) == {
+        "KXGRAMMY-SOTY69"
+    }
+
+
+async def test_other_futures_do_not_read_a_grammy_replacement():
+    db = SimpleNamespace(execute=AsyncMock())
+    unrelated = SimpleNamespace(id=7, source="polymarket", external_id="future-grammy-edition")
+    assert await grammy_nominee_fields(db, [unrelated]) == {}
+    db.execute.assert_not_awaited()
+
+
+async def test_cached_nominee_board_replaces_the_old_discovery_row_once():
+    db = SimpleNamespace(execute=AsyncMock())
+    old = SimpleNamespace(id=58492243, source="polymarket", external_id="805158")
+    nominee = SimpleNamespace(
+        id=100,
+        source="kalshi",
+        status="open",
+        external_id="KXGRAMMY-SOTY69",
+        outcomes=[SimpleNamespace(name=name) for name in (
+            "Berghain", "Choosin' Texas", "the cure", "hate that i made you love me",
+            "I Knew It, I Knew You", "Man I Need", "Risk It All", "WHERE IS MY HUSBAND!", "Tie",
+        )],
+    )
+    other = SimpleNamespace(id=8, source="kalshi", external_id="OTHER", status="open")
+    replacements = await grammy_nominee_fields(db, [old, other, nominee], available=[nominee, other])
+    assert prefer_grammy_nominee_fields([old, other, nominee], replacements) == [nominee, other]
+    db.execute.assert_not_awaited()

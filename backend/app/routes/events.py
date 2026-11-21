@@ -13688,16 +13688,28 @@ async def search_events(
     # reaches a candidate shape, so a market with no suspicious book pays no
     # query at all. Browse measured 16 of 200 markets paying one; a search page
     # carries a page of futures, not two hundred.
+    from app.utils.event_awards import grammy_nominee_fields, prefer_grammy_nominee_fields
+
+    nominee_fields = await grammy_nominee_fields(db, (*deduped_futures, *futures_markets))
+    if nominee_fields:
+        deduped_futures = prefer_grammy_nominee_fields(deduped_futures, nominee_fields)
+        futures_markets = prefer_grammy_nominee_fields(futures_markets, nominee_fields)
+
     # #8661: the deduped rows were asked before the filter above; only a
     # promoted headline contender can be new here, and one whose every price is
     # refused leaves the page like any other withdrawn card.
-    for m in futures_markets:
+    for m in (*futures_markets, *nominee_fields.values()):
         if m.id not in _withheld_by_market:
             _withheld_by_market[m.id] = await _search_withheld_price_ids(
                 db, m, _withheld_shed
             )
     if _withheld_shed:
         degraded.append("price_refusal")
+    if nominee_fields:
+        deduped_futures = [
+            m for m in deduped_futures
+            if not _futures_market_prices_all_withheld(m, _withheld_by_market[m.id])
+        ]
     futures_markets = [
         m for m in futures_markets
         if not _futures_market_prices_all_withheld(m, _withheld_by_market[m.id])
@@ -16226,6 +16238,13 @@ async def typeahead_search(
         }
         _ta_headline_ids.discard(None)
         _ta_mark("headline_contenders")
+
+    from app.utils.event_awards import grammy_nominee_fields, prefer_grammy_nominee_fields
+
+    nominee_fields = await grammy_nominee_fields(
+        db, ta_futures_ranked, available=ta_futures_ranked
+    )
+    ta_futures_ranked = prefer_grammy_nominee_fields(ta_futures_ranked, nominee_fields)
 
     # #10165: the search page's #8375/#8664 container withholding, which never
     # reached this loop. Production 2026-10-02 04:45Z, `yankees` at 390px: the
