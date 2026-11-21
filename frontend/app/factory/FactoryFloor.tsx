@@ -638,6 +638,7 @@ export default function FactoryFloor({
       <section className={styles.floorCard} aria-labelledby="floor-heading">
         <div className={styles.sectionHeading}>
           <h2 id="floor-heading">The floor</h2>
+          <ChecksQueue queue={data.signals.checks_queue} />
           {currentSpeaker && currentSpeech && (
             <div className={styles.floorSpeech} id="factory-speech" data-floor-speech={currentSpeaker.key}>
               <Worker identity={currentSpeaker.key} state={currentSpeech.mood} />
@@ -683,7 +684,6 @@ export default function FactoryFloor({
             </div>
           </details>
         )}
-        <ChecksQueue queue={data.signals.checks_queue} />
         <div className={styles.scrollHint}>
           <ArrowRight size={14} /> Scroll across to follow the line
         </div>
