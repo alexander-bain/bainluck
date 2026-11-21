@@ -440,6 +440,8 @@ async def write_nonvenue_probability(
     received_at=None,
     entry_extra=None,
     price_read_at=None,
+    away_value: float | None = None,
+    draw_value: float | None = None,
 ):
     """Atomically replace/remove one allowed source and queue its returned blend.
 
@@ -479,7 +481,8 @@ async def write_nonvenue_probability(
     )
     try:
         return await _write(session, event, source, value, metadata, values, evidence,
-                            trace, seam, received_at, entry_extra, price_read_at)
+                            trace, seam, received_at, entry_extra, price_read_at,
+                            away_value=away_value, draw_value=draw_value)
     except BaseException as exc:
         if seam is not None:
             trace.write_failed(seam, exc)
@@ -487,7 +490,8 @@ async def write_nonvenue_probability(
 
 
 async def _write(session, event, source, value, metadata, values, evidence, trace, seam,
-                 received_at=None, entry_extra=None, price_read_at=None):
+                 received_at=None, entry_extra=None, price_read_at=None,
+                 away_value=None, draw_value=None):
     prior_txn_row_write = await _probe_prior_txn_row_write(session, event.id)
     # Literal source dispatch keeps the existing writer/eligibility scanner
     # able to verify every mint. This entry point never accepts venue sources.
@@ -505,7 +509,13 @@ async def _write(session, event, source, value, metadata, values, evidence, trac
             if price_read_at.tzinfo is None:
                 price_read_at = price_read_at.replace(tzinfo=timezone.utc)
             read_at = price_read_at if read_at is None else min(read_at, price_read_at)
-        expression = atomic_stamp_expression("betting", value, price_read_at=read_at)
+        expression = atomic_stamp_expression(
+            "betting",
+            value,
+            price_read_at=read_at,
+            away_value=away_value,
+            draw_value=draw_value,
+        )
     elif source == "stat_model":
         expression = atomic_stamp_expression("stat_model", value)
     elif source == "mlb":

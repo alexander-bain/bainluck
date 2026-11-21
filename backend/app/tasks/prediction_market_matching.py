@@ -8055,6 +8055,8 @@ async def _phase2_persist_group_reading(
         ),
         eligibility=reading.eligibility,
         observed_basis=basis,
+        away_value=None if draw_prob is None else round(away_prob, 4),
+        draw_value=None if draw_prob is None else round(draw_prob, 4),
     )
     # #10090 item 4: as the two-minute poll's stamp, published once committed.
     written = await session.execute(
@@ -13227,6 +13229,8 @@ async def _poll_live_prediction_market_prices():
                         reading.contributing_outcomes or (reading.outcome,),
                         committed_price_reads,
                     ),
+                    away_value=None if draw_prob is None else round(away_prob, 4),
+                    draw_value=None if draw_prob is None else round(draw_prob, 4),
                 )
                 # #10090 item 4: this commit published nothing, so the move
                 # reached an open page only when another writer next published

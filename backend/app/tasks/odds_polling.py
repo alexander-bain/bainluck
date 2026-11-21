@@ -1182,6 +1182,16 @@ async def _ingest_event_odds(
         # describe a measurement the value never came from.
         if not _partial_under_floor:
             from app.utils.nonvenue_live_push import write_nonvenue_probability
+            _betting_away_val = None
+            _betting_draw_val = None
+            if (
+                _betting_value is not None
+                and all_away_probs
+                and 0.0 < avg_away < 1.0
+                and (_betting_value + avg_away) < 0.99
+            ):
+                _betting_away_val = round(avg_away, 4)
+                _betting_draw_val = round(1.0 - _betting_value - avg_away, 4)
             await write_nonvenue_probability(
                 session, event, "betting",
                 _betting_value,
@@ -1204,6 +1214,8 @@ async def _ingest_event_odds(
                 },
                 # Only when the live rule dated it: every other write is unchanged.
                 **({"price_read_at": lines_read_at} if lines_read_at is not None else {}),
+                away_value=_betting_away_val,
+                draw_value=_betting_draw_val,
                 trace_inputs=None if _trace_books is None else (
                     lambda: {**_trace_books, "select_end": nonvenue_trace().clock(),
                              "upstream_clock_domain": "ODDS_API_BOOKMAKER_LAST_UPDATE"}),

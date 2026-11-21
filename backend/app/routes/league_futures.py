@@ -1900,6 +1900,7 @@ def _format_game_brief(
                 method=source_method[0] if source_method else None,
                 away_available=True,
                 three_way_probs=_brief_3,
+                books_three_way=three_way_books,
             )
         elif _draw_priced:
             # #13131: a draw-priced list card must show all three numbers or
