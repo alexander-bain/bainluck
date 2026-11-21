@@ -10,9 +10,6 @@
   --red: #a52832;
   --red-light: #fff0ef;
   --housing: #151e28;
-  --worker-skin: #efcfa9;
-  --worker-cloth: #84b2ac;
-  --worker-paper: #f3eee0;
   --line-column: 64px;
   --lane-gap: 6px;
   --floor-inset: 14px;
@@ -299,19 +296,14 @@
   gap: var(--lane-gap);
   margin-bottom: 6px;
 }
-.stationHeadings > div {
-  padding-left: 1px;
-}
-.stationHeadings strong {
+.stationSign strong {
   font-size: 14px;
   font-weight: 600;
-  display: block;
 }
-.stationHeadings span {
-  display: block;
+.stationSign > span,
+.inspectionDesk > span:last-child {
   font-size: 10px;
   color: var(--secondary);
-  margin-top: 2px;
 }
 .lineRow {
   display: grid;
@@ -516,6 +508,7 @@
   box-shadow: 0 0 0 2px var(--amber-light);
 }
 .floorKey {
+  grid-column: 2;
   padding: 3px var(--floor-inset) 6px;
   font-size: 11px;
   color: var(--secondary);
@@ -838,7 +831,7 @@ details[open] > .summary > svg { transform: rotate(90deg); }
     transform: translateX(25px);
   }
 }
-@media (max-width: 895px) {
+@media (max-width: 990px) {
   .scrollHint {
     display: flex;
     align-items: center;
@@ -984,69 +977,49 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   opacity: 1;
 }
 .worker {
+  position: relative;
+  display: inline-block;
   width: 80px;
   height: 65px;
   flex-shrink: 0;
-  overflow: visible;
-  fill: none;
-  stroke: #182c38;
-  stroke-width: 2.3;
-  stroke-linejoin: round;
-  stroke-linecap: round;
 }
-.workerFace {
-  fill: var(--worker-skin);
+.workerFigure {
+  position: absolute;
+  inset: 0;
+  background: var(--portrait) center bottom / contain no-repeat;
+  transform-origin: center bottom;
 }
-.overalls {
-  fill: var(--worker-cloth);
+.workerCue {
+  position: absolute;
+  inset-block-start: 0;
+  inset-inline-end: 0;
+  width: 16px;
+  height: 16px;
+  padding: 2px;
+  color: #fff0d3;
+  background: #263c3e;
+  border-radius: 50%;
 }
-.workerHat {
-  fill: #d7a869;
+.worker[data-worker="asleep"] .workerFigure {
+  opacity: 0.76;
+  transform: rotate(-13deg) scale(0.9);
 }
-.workerHands {
-  stroke: var(--worker-skin);
-  stroke-width: 3.5;
+.worker[data-worker="carrying"] .workerCue {
+  inset-block-start: auto;
+  inset-block-end: 0;
+  width: 21px;
+  height: 21px;
+  color: #fff2d8;
+  background: #824a25;
+  border-radius: 4px;
 }
-.paper {
-  fill: var(--worker-paper);
-  stroke: #79949e;
-  stroke-width: 1.8;
+.worker:is([data-worker="stuck"], [data-worker="alarmed"]) .workerCue {
+  background: #8c3430;
 }
-.lens {
-  fill: #cce9eb;
-  fill-opacity: 0.75;
-  stroke: #95bfc6;
-  stroke-width: 3;
+.worker[data-worker="celebrating"] .workerCue {
+  background: #21664e;
 }
-.lever {
-  fill: #758c9d;
-  stroke: #a5bbc9;
-  stroke-width: 2;
-}
-.workerBox {
-  fill: #b79259;
-  stroke: #eee0b6;
-  stroke-width: 1.5;
-}
-.dispatchFlag {
-  fill: #6dc8a9;
-  stroke: #9adfc6;
-  stroke-width: 2;
-}
-.sleepText,
-.alarmText {
-  stroke: none;
-  fill: #dce6ef;
-  font:
-    600 12px var(--factory-body),
-    sans-serif;
-}
-.alarmText {
-  fill: #ffb3b6;
-  font-size: 18px;
-}
-.eventScene[data-event="commit"] .workerArm {
-  transform-origin: 50px 45px;
+.eventScene[data-event="commit"] .workerFigure {
   animation: work var(--event-length) ease-in-out both;
 }
 .baySignals {
@@ -1079,9 +1052,6 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 }
 .lamp[data-state="caution"] {
   background: #ffd58c;
-}
-.machine[data-alert="amber"] {
-  border-color: var(--amber);
 }
 .machine[data-alert="red"] {
   border-color: var(--red);
@@ -1456,20 +1426,14 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   color: #a8b9c7;
 }
 .builderW { background: #496246; }
-.worker[data-identity="S"] { --worker-cloth: #81aaf6; --cap: #9bbcff; }
-.worker[data-identity="B"] { --worker-cloth: #ad88ef; --cap: #cbb9fa; }
-.worker[data-identity="C"] { --worker-cloth: #75c9b7; --cap: #9ad8c9; }
-.worker[data-identity="D"] { --worker-cloth: #e3ac68; --cap: #fbc75f; }
-.worker[data-identity="E"] { --worker-cloth: #e695b4; --cap: #f2aac3; }
-.worker[data-identity="F"] { --worker-cloth: #9db1c9; --cap: #aac4df; }
-.worker[data-identity="W"] { --worker-cloth: #a8b790; --cap: #becb99; }
-.worker[data-identity="Fable"] { --worker-cloth: #87aeb8; --cap: #bd976c; }
-.workerHat { fill: var(--cap, #d7a869); }
-.worker[data-worker="asleep"] .workerBody {
-  transform: rotate(7deg);
-  transform-origin: 49px 65px;
-}
-.builderCard .sleepText { fill: var(--secondary); }
+.worker[data-identity="S"] { --portrait: url("/factory/workshop/speed.webp"); }
+.worker[data-identity="B"] { --portrait: url("/factory/workshop/builder-b.webp"); }
+.worker[data-identity="C"] { --portrait: url("/factory/workshop/builder-c.webp"); }
+.worker[data-identity="D"] { --portrait: url("/factory/workshop/atlas.webp"); }
+.worker[data-identity="E"] { --portrait: url("/factory/workshop/builder-e.webp"); }
+.worker[data-identity="F"] { --portrait: url("/factory/workshop/builder-f.webp"); }
+.worker[data-identity="W"] { --portrait: url("/factory/workshop/wee-bey.webp"); }
+.worker[data-identity="Fable"] { --portrait: url("/factory/workshop/fable.webp"); }
 .dockCrew {
   display: flex;
   align-items: center;
@@ -1523,6 +1487,10 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 .lineName > .buildPlate {
   color: #183530;
 }
+.buildPlate time {
+  display: block;
+  margin-block-start: 2px;
+}
 .builderCard > small {
   margin-top: -5px;
   color: var(--secondary);
@@ -1549,8 +1517,12 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   --housing: #222925;
   --workshop-copper: #99552d;
   --workshop-rim: #e9ab71;
-  --workshop-enamel: #4e7365;
-  --workshop-sky: #e0ebdf;
+  --workshop-sky: #a4c8c1;
+  --station-ink: #251d16;
+  --station-sub: #594231;
+  --line-column: 102px;
+  --lane-gap: 8px;
+  --floor-inset: 16px;
 }
 
 .factory h1,
@@ -1560,103 +1532,204 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   letter-spacing: -0.045em;
 }
 
+.factory h1 { font-size: clamp(39px, 4.8vw, 64px); }
+.sectionHeading h2 { font-size: 26px; }
+
 .heading {
   position: relative;
   isolation: isolate;
-  min-height: 78px;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(200px, 0.72fr) max-content;
+  min-height: 114px;
+  gap: clamp(8px, 2.1vw, 38px);
   margin-bottom: 8px;
-  padding: 4px 9px;
+  padding: 7px 14px 7px clamp(38px, 6vw, 105px);
   background: var(--workshop-sky);
   border: 1px solid var(--workshop-copper);
-  border-radius: 12px;
+  border-radius: 16px 16px 9px 9px;
   overflow: hidden;
 }
 
-.heading::before {
+.heading::before,
+.heading::after {
   content: "";
   position: absolute;
   inset: 0;
   z-index: -1;
-  background: url("/factory/workshop-header.png") center 35% / 100% auto no-repeat;
+}
+
+.heading::before {
+  background: url("/factory/workshop/windows.webp") 48% top / auto 134% repeat-x;
+}
+
+.heading::after {
+  background: url("/factory/workshop/drive-left.webp") -24px 100% / auto 88% no-repeat;
 }
 
 .titlePlate,
 .injurySign,
-.updated {
+.updated,
+.lineName {
+  border: 11px solid transparent;
+  border-image: url("/factory/workshop/rivet-plaque.webp") 36 / 11px stretch;
   background: var(--paper);
-  border: 1px solid var(--workshop-copper);
-  border-radius: 9px;
-  box-shadow: 0 1px 0 var(--workshop-rim);
-  padding: 5px 8px;
+  background-clip: padding-box;
+  padding: 2px 8px;
 }
 
-.titlePlate { min-width: 0; }
+.titlePlate { justify-self: start; min-width: 0; }
 .titlePlate .intro,
 .titlePlate h1 { margin: 0; }
-.updated { flex: none; }
-.updated strong { margin-bottom: 2px; }
-
-.workshopIdle {
-  position: absolute;
-  inset-inline-end: 27%;
-  inset-block-end: 6px;
-  z-index: -1;
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  color: var(--workshop-copper);
-  pointer-events: none;
-}
-
-.idleSteam { opacity: 0.6; }
-.factory[data-motion="running"] .idleGear {
-  animation: workshopGear 32s linear infinite;
-}
-.factory[data-motion="running"] .idleSteam {
-  animation: workshopSteam 7s ease-in-out infinite;
-}
-
-@keyframes workshopGear {
-  to { transform: rotate(360deg); }
-}
-@keyframes workshopSteam {
-  0%, 100% { opacity: 0.45; transform: translateY(2px); }
-  50% { opacity: 0.75; transform: translateY(-3px); }
-}
+.injurySign { max-width: 100%; }
+.updated { align-items: flex-start; font-size: 12px; }
+.updated strong { margin-bottom: 2px; font-weight: 650; }
 
 .floorCard {
   border-color: var(--workshop-copper);
-  border-top-width: 3px;
-  box-shadow: inset 0 1px 0 var(--workshop-rim);
+  border-width: 2px;
+  border-radius: 16px 16px 10px 10px;
+  background:
+    url("/factory/workshop/frame-horizontal.webp") top / 100% 8px no-repeat,
+    url("/factory/workshop/frame-vertical.webp") left top / 7px 136px no-repeat,
+    url("/factory/workshop/frame-vertical.webp") right top / 7px 136px no-repeat,
+    var(--paper);
+  box-shadow: 0 2px 0 color-mix(in srgb, var(--workshop-copper) 20%, transparent);
 }
 
-.stationHeadings > div,
-.lineName {
-  border: 1px solid var(--workshop-copper);
-  background: var(--paper);
-  box-shadow: inset 0 1px 0 var(--workshop-rim);
-  border-radius: 9px 9px 6px 6px;
+.sectionHeading { padding-block: 12px 8px; }
+.replayButton {
+  color: #fff8eb;
+  background: #185b43;
+  border-color: #153c2e;
+  box-shadow: inset 0 2px 0 #477d48;
 }
-.stationHeadings > div { position: relative; padding: 2px 4px; }
-.stationHeadings > div > strong { padding-inline-start: 18px; }
-.stationIcon { position: absolute; inset-block-start: 4px; inset-inline-start: 4px; }
+
+.floorGrid { min-width: 940px; }
+.stationHeadings {
+  margin-bottom: 8px;
+  align-items: start;
+}
+.stationHeadings > span {
+  align-self: stretch;
+  background: url("/factory/workshop/conveyor.webp") center 56px / 95% auto no-repeat;
+}
+.stationSign {
+  position: relative;
+  isolation: isolate;
+  min-height: 95px;
+  padding: 8px 12px 23px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--station-ink);
+}
+.stationSign::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background: url("/factory/workshop/station-plaque.webp") center / 100% 100% no-repeat;
+}
+.stationSign strong {
+  font-size: 16px;
+  font-weight: 750;
+}
+.stationSign > span {
+  color: var(--station-sub);
+  line-height: 1.2;
+}
+.stationNote, .inspectionDesk {
+  padding-inline: 5px;
+}
 .stationNote p { margin-bottom: 0; }
-.lineName { align-self: start; padding: 5px 3px; }
-.floorKey { padding-block-end: 4px; }
+.lineRail {
+  position: relative;
+}
+.lineRail::before,
+.lineRail::after {
+  position: absolute;
+  content: "";
+  pointer-events: none;
+}
+.lineRail::before {
+  inset-block: 42px 26px;
+  inset-inline-start: calc(50% - 4px);
+  width: 8px;
+  background: url("/factory/workshop/frame-vertical.webp") center / 100% 100% no-repeat;
+}
+.lineRail::after {
+  inset-block-end: 0;
+  inset-inline-start: calc(50% - 11px);
+  width: calc(50% + 22px);
+  height: 38px;
+  transform: scaleX(-1);
+  background: url("/factory/workshop/copper-elbow.webp") center / 100% 100% no-repeat;
+}
+.lineName {
+  position: relative;
+  z-index: 1;
+  align-self: start;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 81px;
+  margin-top: 4px;
+  padding: 4px 2px;
+  text-align: center;
+}
+.lineName strong { font-size: 15px; }
+.lineName svg { color: var(--ink); }
+.lineRow { margin-bottom: 9px; }
+.machines { padding-bottom: 22px; }
+
+.floorKey {
+  margin: 0;
+  font-size: 14px;
+  font-style: italic;
+  color: var(--ink);
+  text-align: center;
+}
 
 .floorFooter {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
-  align-items: baseline;
+  position: relative;
+  isolation: isolate;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 3px;
+  min-height: 63px;
+  padding: 5px clamp(35px, 8vw, 124px);
+  background: linear-gradient(180deg, var(--paper), var(--floor));
+}
+
+.floorFooter::before,
+.floorFooter::after {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
+}
+
+.floorFooter::before {
+  background: url("/factory/workshop/floorboards.webp") center bottom / 100% 100% no-repeat;
+  opacity: 0.55;
+}
+
+.floorFooter::after {
+  background:
+    url("/factory/workshop/drive-left.webp") left bottom / auto 100% no-repeat,
+    url("/factory/workshop/drive-right.webp") right bottom / auto 100% no-repeat;
 }
 
 .builderDay {
   display: flex;
   align-items: flex-start;
   gap: 5px;
-  margin: 0 var(--floor-inset) 4px;
+  justify-self: end;
+  margin: 0;
   max-width: 100%;
   color: var(--ink);
   font-size: 11px;
@@ -1668,13 +1741,64 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 
 .machine {
   position: relative;
-  background: var(--housing);
+  background: linear-gradient(145deg, #ffffff0d, #00000010 80%), var(--housing);
   color: #f7efe1;
   border-color: var(--workshop-copper);
-  box-shadow: inset 0 0 0 1px rgb(234 171 113 / 21%);
+  border-radius: 11px;
+  box-shadow: inset 0 0 0 1px rgb(255 192 122 / 55%), 0 1px 1px #321d1833;
+  padding: 5px 7px;
+  min-height: 108px;
 }
-
-.beltSegment { border-color: var(--workshop-enamel); }
+.machine.backedUp {
+  border-color: #e29e35;
+  box-shadow: inset 0 0 0 1px #ffe8aa;
+}
+.machine[data-alert="red"] { box-shadow: inset 0 0 0 1px #ff998c; }
+.machineTop > .worker {
+  width: 42px;
+  height: 34px;
+}
+.bayWorkerName { font-size: 11px; }
+.crateLetter,
+.crateNumber { font-size: 11px; }
+.belts {
+  left: -5px;
+  right: 5px;
+  height: 15px;
+  gap: 0;
+  padding-inline: 4px;
+  border: 1px solid #325345;
+  border-radius: 8px;
+  background: #325345;
+}
+.belts::before,
+.belts::after {
+  content: "";
+  position: absolute;
+  z-index: 1;
+  inset-block-start: -4px;
+  width: 21px;
+  height: 21px;
+  background: url("/factory/workshop/belt-cap.webp") center / contain no-repeat;
+}
+.belts::before { inset-inline-start: -3px; }
+.belts::after { inset-inline-end: -3px; }
+.beltSegment {
+  border-color: #4c744f;
+  border-radius: 0;
+  background: #496644;
+  color: #f6eacc;
+}
+.beltSegment i {
+  background: url("/factory/workshop/belt-roller.webp") left top / auto 100% repeat-x;
+  opacity: 0.7;
+}
+.beltSegment[data-flowing="true"] {
+  border-color: #174b31;
+  color: #fffbe6;
+}
+.beltSegment[data-flowing="true"] i { opacity: 1; }
+.beltSegment svg { background: transparent; }
 .crate[data-arriving="true"] { visibility: hidden; }
 .crate[data-followed="true"] { box-shadow: inset 0 0 0 1px var(--workshop-rim); }
 
@@ -1716,7 +1840,7 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 
 .voiceButton:focus-visible { outline: 2px solid var(--workshop-rim); }
 .voiceButton[aria-pressed="true"] { box-shadow: inset 0 0 0 1px var(--workshop-rim); }
-.voiceButton > .worker { width: 34px; height: 27px; margin-left: -3px; }
+.voiceButton > .worker { width: 42px; height: 34px; margin-left: -3px; }
 .dockCrew .voiceButton > .worker { width: 24px; height: 23px; margin-left: 0; }
 .floorSpeech {
   display: flex;
@@ -1762,11 +1886,40 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   .floorSpeech { order: 1; flex: 1 0 100%; justify-content: flex-start; }
 }
 
+@media (min-width: 1200px) {
+  .factory h1 { font-size: clamp(42px, 4.3vw, 56px); }
+  .heading { min-height: 100px; padding-block: 4px; }
+  .verdict > .mascot { width: 37px; }
+  .stationSign { min-height: 87px; padding-bottom: 21px; }
+  .lineRow { margin-bottom: 6px; }
+  .machines { padding-bottom: 19px; }
+  .machine { padding-block: 4px; }
+  .floorFooter { min-height: 51px; }
+}
+
 @media (max-width: 640px) {
-  .heading { padding: 8px; }
-  .heading::before { background-size: auto 100%; background-position: right center; }
-  .workshopIdle { inset-inline-end: 12px; }
-  .updated, .injurySign { max-width: 100%; }
+  .factory {
+    --line-column: 76px;
+    --lane-gap: 6px;
+    --floor-inset: 9px;
+  }
+  .factory h1 { font-size: clamp(32px, 9.5vw, 43px); }
+  .heading {
+    grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr);
+    padding: 8px;
+    gap: 6px;
+  }
+  .heading::before { background-size: auto 110%; }
+  .heading::after { background-size: auto 58%; }
+  .titlePlate { grid-column: 1 / -1; justify-self: center; }
+  .titlePlate .intro { font-size: 12px; }
+  .updated { gap: 4px; font-size: 11px; padding-inline: 2px; }
+  .updated strong { display: block; }
+  .lineName { padding-inline: 1px; }
+  .lineName strong { font-size: 12px; }
+  .lineName > .buildPlate { width: 100%; font-size: 9px; }
+  .floorFooter { display: flex; flex-wrap: wrap; justify-content: center; padding-inline: 50px; }
+  .floorFooter::after { background-size: auto 52%, auto 52%; }
   .speechBubble { padding: 4px 6px; }
 }
 
@@ -1780,17 +1933,33 @@ details[open] > .summary > svg { transform: rotate(90deg); }
     --housing: #111e2b;
     --workshop-copper: #c18554;
     --workshop-rim: #f1b681;
-    --workshop-enamel: #61977b;
     --workshop-sky: #112233;
+    --station-ink: #fff0d3;
+    --station-sub: #e0d0b9;
   }
+  .heading::before { filter: brightness(0.34) saturate(0.8); }
+  .stationSign::after {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 0;
+    background: linear-gradient(#3d5264, #162736 65%);
+    clip-path: polygon(
+      11% 45%, 14% 37%, 22% 32%, 30% 32%, 35% 25%, 40% 19%,
+      46% 15%, 51% 14%, 57% 16%, 63% 22%, 68% 30%, 73% 32%,
+      82% 34%, 89% 44%, 89% 68%, 86% 71%, 14% 71%, 11% 68%
+    );
+  }
+  .floorFooter::before { filter: brightness(0.32) saturate(0.4); opacity: 0.7; }
 }
 
 .checksQueue {
+  flex: 0 1 620px;
   display: grid;
-  grid-template-columns: auto minmax(80px, 1fr) minmax(0, 2.25fr);
+  grid-template-columns: auto minmax(60px, 1fr);
   align-items: center;
-  gap: 4px 12px;
-  margin: 3px var(--floor-inset) 8px;
+  gap: 2px 10px;
+  margin: 0;
   padding: 6px 8px;
   border: 1px solid var(--workshop-copper);
   border-radius: 7px;
@@ -1824,6 +1993,7 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   color: var(--secondary);
 }
 .queueCounts {
+  grid-column: 1 / -1;
   display: flex;
   flex-wrap: wrap;
   justify-content: space-between;
@@ -1837,7 +2007,375 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 .checksQueue .queueHelp, .checksQueue > small { grid-column: 1 / -1; color: var(--secondary); }
 .factory[data-reader="behind"] .queueTrack { opacity: 0.6; }
 @media (max-width: 720px) {
-  .checksQueue { grid-template-columns: minmax(0, 1fr) minmax(72px, 0.8fr); }
+  .checksQueue {
+    order: 2;
+    flex: 1 0 100%;
+    grid-template-columns: minmax(0, 1fr) minmax(72px, 0.8fr);
+  }
   .queueCounts { display: grid; grid-column: 1 / -1; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .queueCounts > div { flex-wrap: wrap; gap: 0 4px; }
+}
+
+.machineTop {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  row-gap: 1px;
+}
+.machineTop > .baySignals { grid-area: 1 / 2; justify-self: end; }
+.machineTop > .bayWorkerName { grid-column: 1 / -1; }
+.shelfGroup { grid-column: 1 / -1; }
+.shelfGroup .shelf { border: 1px solid var(--edge); border-radius: 8px; }
+
+/* The unattended overview fills a display. Phones keep the scrolling floor. */
+@media (min-width: 1000px) and (min-height: 680px) {
+  :global(main):has(.factory) > :global(div) {
+    width: 100%;
+    max-width: none;
+    padding: 0;
+  }
+
+  .factory {
+    --screen-type: clamp(12px, min(1.042vw, 1.852vh), 44px);
+    --screen-gap: calc(var(--screen-type) * 0.2);
+    --line-column: calc(var(--screen-type) * 9);
+    --lane-gap: calc(var(--screen-type) * 0.38);
+    --floor-inset: calc(var(--screen-type) * 0.75);
+    display: flex;
+    flex-direction: column;
+    min-height: 100dvh;
+    margin: 0;
+    padding: var(--screen-gap) calc(var(--screen-type) * 0.85);
+    font-size: var(--screen-type);
+    line-height: 1.16;
+  }
+
+  .factory :is(p, a, button, strong, small, span, li, dt, dd) {
+    font-size: var(--screen-type);
+  }
+
+  .factory h1 { font-size: calc(var(--screen-type) * 2.55); }
+  .factory h2 { font-size: var(--screen-type); }
+  .sectionHeading h2 { font-size: calc(var(--screen-type) * 1.45); }
+
+  .heading {
+    min-height: calc(var(--screen-type) * 4.6);
+    padding-block: 0;
+    margin-bottom: var(--screen-gap);
+  }
+  .titlePlate,
+  .injurySign,
+  .updated {
+    border-width: 8px;
+    border-image-width: 8px;
+  }
+  .intro { line-height: 1.2; }
+  .injurySign strong { font-size: calc(var(--screen-type) * 1.4); }
+  .statusBand {
+    display: grid;
+    grid-template-columns: minmax(0, 0.83fr) minmax(0, 1.3fr);
+    gap: var(--screen-gap);
+  }
+  .verdict,
+  .foremanNote { margin-bottom: var(--screen-gap); }
+  .verdict > .mascot { width: calc(var(--screen-type) * 1.65); }
+  .foremanNote > div { line-height: 1.16; }
+  .foremanNote small { flex-basis: auto; }
+  .foremanNote p { line-height: 1.18; }
+  .foremanNote b { display: none; }
+
+  .floorCard {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+  .sectionHeading {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 2.05fr) minmax(0, 1fr) max-content;
+    gap: 5px 10px;
+    padding-block: calc(var(--screen-gap) * 1.35) 2px;
+  }
+  .floorActions { flex-direction: column; align-items: flex-end; gap: 3px; }
+  .checksQueue {
+    grid-template-columns: max-content minmax(34px, 1fr) auto;
+    padding: 3px 6px;
+    column-gap: 6px;
+    font-size: var(--screen-type);
+    line-height: 1.12;
+  }
+  .queueHeading h3 { font-size: var(--screen-type); }
+  .checksQueue > small {
+    grid-column: 3;
+    grid-row: 1;
+    justify-self: end;
+  }
+  .queueCounts { column-gap: 8px; }
+  .checksQueue > p:not(.queueHelp) { grid-column: 2 / -1; }
+  .tapHint { font-size: var(--screen-type); }
+  .floorSpeech > .worker {
+    width: calc(var(--screen-type) * 1.65);
+    height: calc(var(--screen-type) * 1.5);
+  }
+  .factory :is(.bayWorkerName, .nameTag, .speechBubble > strong, .builderDay > div > span) {
+    font-size: calc(var(--screen-type) * 1.4);
+  }
+  .speechBubble { line-height: 1.15; }
+
+  .floorScroll {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+  }
+  .floorGrid {
+    flex: 1;
+    display: grid;
+    /* Each line fits its own contents and shares the remaining height. */
+    grid-template-rows: min-content repeat(3, auto);
+    min-width: 0;
+  }
+  .stationHeadings { margin-bottom: var(--screen-gap); }
+  .stationHeadings > span { background-position: center 68%; }
+  .stationSign {
+    --sign-type: var(--screen-type);
+    min-height: calc(var(--sign-type) * 4.35);
+    padding: calc(var(--sign-type) * 0.43) 11% calc(var(--sign-type) * 0.56);
+  }
+  /* Stretch the face between the copper arch and feet around the three rows. */
+  .stationSign::before {
+    background: none;
+    border-image: url("/factory/workshop/station-plaque.webp") 78 0 70 fill /
+      calc(var(--sign-type) * 0.8) 0 calc(var(--sign-type) * 0.41) stretch;
+  }
+  .stationSign svg {
+    width: var(--sign-type);
+    height: var(--sign-type);
+    flex: none;
+  }
+  .stationSign :is(strong, span) { font-size: var(--sign-type); }
+  .stationNote,
+  .inspectionDesk { padding-inline: 3px; }
+  .stationNote p { line-height: 1.12; }
+  .inspectionDesk > .worker { height: var(--screen-type); }
+  .inspectionDesk > span:last-child { font-size: var(--screen-type); }
+  .lineRow { margin-bottom: calc(var(--screen-gap) * 0.5); }
+  .lineName {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    align-content: start;
+    justify-items: center;
+    min-height: calc(var(--screen-type) * 3.1);
+  }
+  .lineName svg { width: calc(var(--screen-type) * 1.3); height: auto; }
+  .lineName > .buildPlate {
+    grid-column: 1 / -1;
+    width: 100%;
+    font-size: var(--screen-type);
+    line-height: 1.16;
+  }
+
+  .machines { padding-bottom: calc(var(--screen-type) * 0.95); }
+  .machine {
+    min-height: calc(var(--screen-type) * 5.35);
+    padding: 4px 6px;
+  }
+  .machineTop {
+    grid-template-columns: max-content minmax(0, 1fr) auto;
+    min-height: calc(var(--screen-type) * 1.22);
+    padding-inline: 1px;
+    margin-bottom: 2px;
+    column-gap: 3px;
+  }
+  .machineTop > .bayWorkerName {
+    grid-area: 1 / 2;
+    overflow-wrap: anywhere;
+    line-height: 1.03;
+    padding-inline: 0;
+  }
+  .machineTop > .baySignals { grid-area: 1 / 3; }
+  .machineTop > .worker,
+  .voiceButton > .worker,
+  .dockCrew .voiceButton > .worker {
+    width: calc(var(--screen-type) * 1.5);
+    height: calc(var(--screen-type) * 1.18);
+  }
+  .baySignals {
+    flex-direction: row-reverse;
+    text-align: end;
+    max-width: calc(var(--screen-type) * 5.1);
+    line-height: 1.05;
+  }
+  .lamp { flex: none; }
+  .crate {
+    min-height: calc(var(--screen-type) * 1.32);
+    padding-block: 2px;
+  }
+  .crateLetter,
+  .crateNumber { line-height: 1.1; }
+  .machineCaption { line-height: 1.15; }
+  .more { min-height: calc(var(--screen-type) * 1.2); }
+  .dockSign { line-height: 1.05; }
+  .belts { height: calc(var(--screen-type) * 0.8); }
+  .belts::before,
+  .belts::after {
+    width: calc(var(--screen-type) * 1.07);
+    height: calc(var(--screen-type) * 1.07);
+  }
+  .floorFooter {
+    min-height: calc(var(--screen-type) * 1.35);
+    padding-block: 1px;
+  }
+  .builderDay strong { margin-inline-end: 4px; }
+  .records:not(:has(> details[open])) {
+    grid-template-columns: minmax(0, 2.9fr) repeat(4, minmax(0, 1fr));
+  }
+  .records:not(:has(> details[open])) .shelfGroup { grid-column: 1; }
+  .shelf { padding: 2px; gap: 4px; }
+  .shelf button { min-height: calc(var(--screen-type) * 1.42); padding: 3px 4px; }
+  .summary { padding: 3px 5px; gap: 4px; font-size: var(--screen-type); }
+  .records .eventLog .summary { font-size: var(--screen-type); }
+  .notes {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0 10px;
+    padding-top: 2px;
+    font-size: var(--screen-type);
+    line-height: 1.1;
+  }
+}
+
+@media (min-width: 1000px) and (min-height: 680px) and (prefers-color-scheme: dark) {
+  .stationSign::after {
+    clip-path: polygon(
+      11% 42%, 14% 28%, 22% 19%, 30% 19%, 35% 15%, 40% 11%,
+      46% 9%, 51% 8%, 57% 10%, 63% 13%, 68% 18%, 73% 19%,
+      82% 22%, 89% 41%, 89% 85%, 86% 90%, 14% 90%, 11% 85%
+    );
+  }
+}
+
+@media (min-width: 1000px) and (min-height: 680px) and (max-height: 800px) {
+  .factory { --screen-type: 11.5px; --screen-gap: 2px; }
+  .heading { min-height: 58px; }
+  .titlePlate,
+  .injurySign,
+  .updated { border-width: 6px; border-image-width: 6px; }
+  .lineName {
+    border-width: 8px;
+    border-image-width: 8px;
+    gap: 3px;
+    padding-block: 2px;
+  }
+  .machines { padding-bottom: 9px; }
+  .machine { padding-block: 3px; }
+  .belts::before,
+  .belts::after { inset-block-start: -2px; }
+}
+
+@media (min-width: 1000px) and (min-height: 1100px) and (orientation: portrait) {
+  .factory { --screen-type: 16px; }
+  .stationSign { --sign-type: 13px; }
+  .heading { min-height: 160px; }
+  .sectionHeading { display: flex; flex-wrap: wrap; }
+  .checksQueue { order: 2; flex: 1 0 100%; }
+  .lineName { margin-top: 24px; }
+  .lineRail::before { inset-block-start: 76px; }
+  .machine { padding: 16px 10px; }
+  .machineTop { grid-template-columns: max-content minmax(0, 1fr); }
+  .machineTop > .bayWorkerName { grid-area: 2 / 1 / auto / -1; }
+  .machineTop > .baySignals { grid-area: 1 / 2; }
+  .machineSummary { flex-wrap: wrap; }
+  .crates {
+    grid-template-columns: 1fr;
+    gap: 6px;
+    margin-block: auto;
+  }
+  .machineTop > .worker,
+  .voiceButton > .worker {
+    width: 54px;
+    height: 64px;
+  }
+  .floorFooter { min-height: 104px; }
+  .records:not(:has(> details[open])) {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .records:not(:has(> details[open])) .shelfGroup { grid-column: 1 / -1; }
+}
+
+.builderNamePanel {
+  margin: 6px var(--floor-inset) 12px;
+  max-width: 980px;
+  padding: 8px 12px;
+  color: var(--ink);
+  font-size: var(--screen-type, 14px);
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: var(--floor);
+}
+.builderNamePanel summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.builderNamePanel p {
+  margin: 8px 0;
+  color: var(--secondary);
+}
+.builderNameInputs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.builderNameInputs label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.builderNameInputs input,
+.builderNamePanel button {
+  border: 1px solid var(--edge);
+  border-radius: 5px;
+  color: var(--ink);
+  background: var(--paper);
+  padding: 6px 8px;
+  font: inherit;
+}
+.builderNameInputs input {
+  width: 100%;
+  min-width: 0;
+  font-size: max(16px, var(--screen-type, 14px));
+}
+.builderNamePanel button {
+  margin-top: 10px;
+}
+.nameTag,
+.bayWorkerName,
+.inspectionDesk,
+.builderDay > div,
+.speechBubble > strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.nameTag { max-width: 100%; text-align: center; }
+.speechBubble > strong { white-space: normal; }
+
+@media (max-width: 720px) {
+  .builderNameInputs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+.factory[data-workshop-light="night"] .heading {
+  background-color: color-mix(in srgb, var(--housing) 82%, var(--workshop-sky));
+}
+.factory[data-workshop-light="night"] .heading::before {
+  filter: brightness(0.49) saturate(0.7) hue-rotate(16deg);
+}
+.factory[data-workshop-light="night"] .floorFooter::before {
+  filter: brightness(0.76) sepia(0.25);
+}
+
+@media (prefers-color-scheme: dark) {
+  .factory[data-workshop-light="night"] .heading::before {
+    filter: brightness(0.22) saturate(0.65) hue-rotate(16deg);
+  }
+  .factory[data-workshop-light="night"] .floorFooter::before {
+    filter: brightness(0.24) sepia(0.35);
+  }
 }

@@ -1,9 +1,8 @@
 import type { Metadata } from "next";
 import { cache } from "react";
 import { Inter, Space_Grotesk } from "next/font/google";
-import { unstable_cache } from "next/cache";
 import FactoryFloor from "./FactoryFloor";
-import { createFactoryReader } from "./data";
+import { loadFactoryReading } from "./displayReading";
 import { factoryTabTitle, floorVerdict } from "./verdict";
 
 export const revalidate = 60;
@@ -19,14 +18,7 @@ const spaceGrotesk = Space_Grotesk({
   display: "swap",
   variable: "--factory-heading",
 });
-const readFactory = createFactoryReader(undefined, (load) =>
-  unstable_cache(load, ["factory-live-v4"], { revalidate: 60 }),
-);
-
-const loadFactory = cache(async () => {
-  const read = await readFactory();
-  return { ...read, renderedAt: new Date().toISOString() };
-});
+const loadFactory = cache(loadFactoryReading);
 
 export async function generateMetadata(): Promise<Metadata> {
   const { data, readFailed, renderedAt } = await loadFactory();

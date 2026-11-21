@@ -11,15 +11,15 @@ type TimerState = {
   remaining: number;
 };
 
-export function eventText(event: FloorEvent) {
+export function eventText(event: FloorEvent, foreman = "Fable") {
   const number = `#${event.number}`;
   switch (event.kind) {
     case "commit": return `${number} gets a new commit`;
     case "check":
       return `${number} ${event.outcome === "failed" ? "fails" : event.outcome === "passed" ? "passes" : "finishes"} a check · ${event.done} of ${event.total}`;
     case "bot": return `Bot approves ${number}`;
-    case "fable": return `Fable clears ${number}`;
-    case "returned": return `Fable sends ${number} back to the bench`;
+    case "fable": return `${foreman} clears ${number}`;
+    case "returned": return `${foreman} sends ${number} back to the bench`;
     case "move": return `${number} moves to ${stationNames[event.station]}`;
     case "merge": return `${number} merges`;
     case "deploy": return `The deploy job starts for ${number}`;

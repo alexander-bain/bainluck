@@ -4,7 +4,7 @@ import { Suspense } from "react";
 import { usePathname, useSearchParams } from "next/navigation";
 import { EMBED_PARAM, isEmbeddedAbout } from "@/lib/embed";
 
-// #5914 — renders its children everywhere EXCEPT inside the native About embed.
+// #5914 — omits the shared shell on the native About embed and the Factory display.
 //
 // The three things this wraps in `app/layout.tsx` are the three defects in
 // native/168's photograph, and all three come from the root layout rather than
@@ -51,7 +51,7 @@ import { EMBED_PARAM, isEmbeddedAbout } from "@/lib/embed";
 function EmbedGateInner({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const embedValue = useSearchParams().get(EMBED_PARAM);
-  return isEmbeddedAbout(pathname, embedValue) ? null : <>{children}</>;
+  return pathname === "/factory" || isEmbeddedAbout(pathname, embedValue) ? null : <>{children}</>;
 }
 
 export default function EmbedGate({

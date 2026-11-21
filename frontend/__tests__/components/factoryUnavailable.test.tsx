@@ -45,7 +45,7 @@ it("draws the floor when a timed-out read succeeds on retry", async () => {
   expect(html).not.toContain("The floor can&#x27;t be read right now");
 });
 
-it("keeps the earlier floor and shows its age after a timeout", async () => {
+it("keeps the earlier floor and shows when the last successful read happened", async () => {
   const fetcher = jest
     .fn()
     .mockResolvedValueOnce(response)
@@ -56,19 +56,23 @@ it("keeps the earlier floor and shows its age after a timeout", async () => {
     cacheWrite(entry);
     return entry;
   });
-  expect((await read()).data).toEqual(snapshot);
-
-  const html = renderToStaticMarkup(
-    <FactoryFloor {...await read()} renderedAt="2026-11-18T16:02:00Z" />,
-  );
-  expect(fetcher).toHaveBeenCalledTimes(3);
-  expect(cacheWrite).toHaveBeenCalledTimes(1);
-  expect(html).toContain('data-factory-row="Server"');
-  expect(html).toContain('data-motion="paused"');
-  expect(html).toContain("Not updating");
-  expect(html).toContain(
-    "Last read 7:58 AM PT, 4 min ago. Updates have stopped.",
-  );
+  const clock = jest.spyOn(Date, "now").mockReturnValue(Date.parse("2026-11-18T15:59:00Z"));
+  try {
+    expect((await read()).data).toEqual(snapshot);
+    clock.mockReturnValue(Date.parse("2026-11-18T16:02:00Z"));
+    const html = renderToStaticMarkup(
+      <FactoryFloor {...await read()} renderedAt="2026-11-18T16:02:00Z" />,
+    );
+    expect(fetcher).toHaveBeenCalledTimes(3);
+    expect(cacheWrite).toHaveBeenCalledTimes(1);
+    expect(html).toContain('data-factory-row="Server"');
+    expect(html).toContain('data-motion="paused"');
+    expect(html).toContain("Not updating");
+    expect(html).toContain("Last read 7:59 AM PT, 3 min ago. Updates have stopped.");
+    expect(html).toContain("7:58 AM PT");
+  } finally {
+    clock.mockRestore();
+  }
 });
 
 it("draws the fresh floor on the first visit after the cache ages out", async () => {

@@ -25,6 +25,17 @@ const pacificDate = new Intl.DateTimeFormat("en-CA", {
   day: "2-digit",
 });
 
+const pacificHour = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/Los_Angeles",
+  hour: "numeric",
+  hourCycle: "h23",
+});
+
+export function workshopLight(value: string) {
+  const hour = Number(pacificHour.format(new Date(value)));
+  return hour >= 6 && hour < 18 ? "day" : "night";
+}
+
 export function pacificDay(value: string) {
   return pacificDate.format(new Date(value));
 }

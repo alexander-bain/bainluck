@@ -8,9 +8,11 @@ import styles from "./factory.module.css";
 export default function EventScene({
   event,
   clipMs,
+  foreman,
 }: {
   event: FloorEvent;
   clipMs: number;
+  foreman: string;
 }) {
   const start = stations.indexOf(event.from ?? event.station);
   const end = stations.indexOf(event.station);
@@ -30,7 +32,7 @@ export default function EventScene({
     >
       <div className={styles.eventAction}>
         {event.kind === "commit" && event.builder && event.builder !== "Other" && (
-          <Worker state="working" station="Write" identity={event.builder} />
+          <Worker state="working" identity={event.builder} />
         )}
         {(event.kind === "live" || event.kind === "deploy" || event.kind === "merge") && (
           <Truck size={20} />
@@ -47,7 +49,7 @@ export default function EventScene({
         </span>
         {event.kind === "check" && <span>{event.done} of {event.total}</span>}
         {event.kind === "bot" && <span>Bot</span>}
-        {event.kind === "fable" && <span>Fable</span>}
+        {event.kind === "fable" && <span>{foreman}</span>}
         {event.kind === "returned" && <span>Sent back</span>}
       </div>
     </div>

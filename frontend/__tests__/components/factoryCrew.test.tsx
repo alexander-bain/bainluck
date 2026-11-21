@@ -2,13 +2,13 @@
 
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
-import { useRouter } from "next/navigation";
 import FactoryFloor from "@/app/factory/FactoryFloor";
 import {
   beltFlowing,
   crewActivity,
   duration,
   stopText,
+  workshopLight,
 } from "@/app/factory/activity";
 import type { Change, FactoryData, FloorEvent } from "@/app/factory/types";
 import { useEventPlayer } from "@/app/factory/playback";
@@ -17,10 +17,6 @@ import { replayReading, useReplayJournal } from "@/app/factory/replayJournal";
 import { builderOfDay, clipboard, hours, injuryHours } from "@/app/factory/signs";
 import { factoryTabTitle, floorVerdict } from "@/app/factory/verdict";
 
-jest.mock("next/navigation", () => {
-  const router = { refresh: jest.fn() };
-  return { useRouter: () => router };
-});
 jest.mock("@/hooks/usePageTracking", () => ({ usePageTracking: jest.fn() }));
 jest.mock("@/hooks/useScrollDepth", () => ({ useScrollDepth: jest.fn() }));
 jest.mock("@/hooks/useEngagementTime", () => ({
@@ -281,8 +277,16 @@ it("names the change waiting for inspection and uses a singular day", () => {
 
 it("checks for a new floor every minute while the page is visible", async () => {
   watchMotion();
-  const refresh = jest.mocked(useRouter().refresh);
-  refresh.mockClear();
+  const savedFetch = global.fetch;
+  const readAt = "2026-11-18T18:01:00Z";
+  const readFloor = jest.fn().mockResolvedValueOnce({
+    ok: true,
+    json: async () => ({
+      data: snapshot, lastGoodAt: now, readAt, renderedAt: readAt,
+      readFailed: false, buildCommit: null,
+    }),
+  }).mockRejectedValueOnce(new Error("Reading unavailable"));
+  global.fetch = readFloor;
   const container = document.createElement("div");
   const root = createRoot(container);
   try {
@@ -290,11 +294,19 @@ it("checks for a new floor every minute while the page is visible", async () => 
       root.render(<FactoryFloor data={snapshot} lastGoodAt={now} renderedAt={now} />),
     );
     await act(async () => { jest.advanceTimersByTime(59_999); });
-    expect(refresh).toHaveBeenCalledTimes(0);
+    expect(readFloor).toHaveBeenCalledTimes(0);
     await act(async () => { jest.advanceTimersByTime(1); });
-    expect(refresh).toHaveBeenCalledTimes(1);
+    expect(readFloor).toHaveBeenCalledTimes(1);
+    expect(readFloor).toHaveBeenCalledWith("/factory/reading", expect.objectContaining({ cache: "no-store" }));
+    expect(container.querySelector("header")?.textContent).toContain("Read at 10:01 AM PT");
+
+    await act(async () => { jest.advanceTimersByTime(60_000); });
+    expect(container.querySelector('[data-factory][data-reader="behind"]')).toBeTruthy();
+    expect(container.querySelectorAll("[data-bay]")).toHaveLength(18);
+    expect(container.textContent).toContain("Last read 10:01 AM PT");
   } finally {
     await act(async () => root.unmount());
+    global.fetch = savedFetch;
   }
 });
 
@@ -435,6 +447,28 @@ it("puts the same sourced hold on the stack light, bay, note and tab", async () 
     expect(container.querySelector('[data-line="Server"][data-bay="Merge line"]')?.getAttribute("data-alert")).toBe("red");
     expect(container.querySelectorAll('[data-alert="red"]')).toHaveLength(1);
     expect(document.title).toBe(`${text} | The Factory`);
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
+
+it("labels the TestFlight build with the Pacific time of the recorded post", async () => {
+  watchMotion();
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const postedAt = "2026-11-17T23:05:00Z";
+  const data = {
+    ...snapshot,
+    signals: { ...snapshot.signals, testflight_post: { build: 5832, at: postedAt } },
+  };
+
+  try {
+    await act(async () =>
+      root.render(<FactoryFloor data={data} lastGoodAt={now} renderedAt={now} />),
+    );
+    const postingTime = container.querySelector(`time[datetime="${postedAt}"]`);
+    expect(postingTime?.parentElement?.textContent).toContain("TestFlight build 5832");
+    expect(postingTime?.textContent).toBe("Posted Nov 17, 3:05 PM PT");
   } finally {
     await act(async () => root.unmount());
   }
@@ -739,4 +773,60 @@ it("starts a real transfer when an open page receives a newer read", async () =>
   } finally {
     await act(async () => root.unmount());
   }
+});
+
+it("shows browser-only names as text across the floor and restores the defaults", async () => {
+  watchMotion();
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const storageKey = "factory-builder-names-v1";
+  const name = "Rivet <em>crew</em>";
+  localStorage.setItem(storageKey, JSON.stringify({
+    B: name,
+    F: "Weld",
+    Fable: "Inspector",
+    Other: "Wrong shelf",
+  }));
+  const data: FactoryData = {
+    ...snapshot,
+    speech: { B: { text: "#12998 is in checks.", mood: "working", source: "model" } },
+  };
+
+  try {
+    await act(async () => root.render(
+      <FactoryFloor data={data} lastGoodAt={now} renderedAt={now} />,
+    ));
+    expect(container.querySelector("[data-crew='B'] strong")?.textContent).toBe(name);
+    expect(container.querySelector("[data-floor-speech='B'] strong")?.textContent).toBe(name);
+    expect(container.querySelector("[data-crate='12998']")?.getAttribute("aria-label")).toContain(name);
+    expect(container.querySelector("aside[aria-label='Builder of the day']")?.textContent).toContain("Weld");
+    expect(container.textContent).toContain("Inspector");
+    expect(container.textContent).not.toContain("Wrong shelf");
+    expect(container.querySelector("em")).toBeNull();
+    expect(container.querySelectorAll("input[type='text']")).toHaveLength(8);
+    expect(container.querySelector("input")?.maxLength).toBe(24);
+
+    const reset = Array.from(container.querySelectorAll("button")).find(
+      button => button.textContent === "Reset names",
+    );
+    expect(reset).toBeDefined();
+    await act(async () => reset?.click());
+    expect(container.querySelector("[data-crew='B'] strong")?.textContent).toBe("Builder B");
+    expect(container.querySelector("aside[aria-label='Builder of the day']")?.textContent).toContain("Apple");
+    expect(localStorage.getItem(storageKey)).toBeNull();
+  } finally {
+    localStorage.removeItem(storageKey);
+    await act(async () => root.unmount());
+  }
+});
+
+it.each([
+  ["2026-11-20T13:59:00Z", "night"],
+  ["2026-11-20T14:00:00Z", "day"],
+  ["2026-11-21T01:59:00Z", "day"],
+  ["2026-11-21T02:00:00Z", "night"],
+  ["2026-07-01T13:00:00Z", "day"],
+  ["2026-07-02T01:00:00Z", "night"],
+])("sets the workshop light at %s to %s in Pacific time", (at, expected) => {
+  expect(workshopLight(at)).toBe(expected);
 });
