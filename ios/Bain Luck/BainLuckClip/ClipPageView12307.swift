@@ -68,25 +68,30 @@ struct ClipPageView12307: View {
                     now: context.date,
                     lastUpdateFailed: model.lastUpdateFailed,
                     webURL: model.subject.flatMap(ClipInvocation12307.webURL(for:)),
-                    getApp: { showGetApp = true })
+                    getApp: presentGetApp)
             }
         case .unsupported:
             ClipMessageView12307(
                 title: "Open a game from bainluck.com",
                 detail: "This link doesn't name a game or market that Bain Luck can show here.",
-                getApp: { showGetApp = true })
+                getApp: presentGetApp)
         case .gone:
             ClipMessageView12307(
                 title: "This page isn't on Bain Luck anymore",
                 detail: "The game or market this link names has been removed.",
-                getApp: { showGetApp = true })
+                getApp: presentGetApp)
         case .unreachable:
             ClipMessageView12307(
                 title: "Bain Luck can't be reached",
                 detail: "Check your connection, then try again.",
                 retry: { Task { await model.refresh() } },
-                getApp: { showGetApp = true })
+                getApp: presentGetApp)
         }
+    }
+
+    private func presentGetApp() {
+        ClipTelemetry13261.recordGetAppTap(subject: model.subject)
+        showGetApp = true
     }
 }
 

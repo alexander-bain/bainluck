@@ -97,6 +97,8 @@ enum AnalyticsPrivacy {
         // Push (Queue 311 A4 / #1159) — the client half of the digest funnel.
         // The server emits `push_sent`; this is the open that joins to it.
         "push_opened",
+        // App Clip (#13261 row 15 / #12307)
+        "app_clip_open", "app_clip_alert_enable", "app_clip_get_app_tap",
     ]
 
     /// Keys that must NEVER reach Firebase, even if some caller adds them. Raw
@@ -149,6 +151,8 @@ enum AnalyticsPrivacy {
         // contract on its merits, which is worth stating rather than assuming,
         // because "id" in a key name is normally the reason to refuse.
         "payload_id",
+        // App Clip (#13261 row 15 / #12307)
+        "entry_type",
     ]
 
     // MARK: - Value scrubbing

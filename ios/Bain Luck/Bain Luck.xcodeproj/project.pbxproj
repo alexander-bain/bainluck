@@ -283,6 +283,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				AppClip12307/ClipInvocation12307.swift,
+				AppClip12307/ClipTelemetry13261.swift,
 				Intents/IntentRouteHandoff10873.swift,
 				Utilities/ComplementProbabilityDisplay.swift,
 				Utilities/DrawPricedWinner.swift,
