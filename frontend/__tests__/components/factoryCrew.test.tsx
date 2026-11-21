@@ -773,3 +773,48 @@ it("starts a real transfer when an open page receives a newer read", async () =>
     await act(async () => root.unmount());
   }
 });
+
+it("shows browser-only names as text across the floor and restores the defaults", async () => {
+  watchMotion();
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const storageKey = "factory-builder-names-v1";
+  const name = "Rivet <em>crew</em>";
+  localStorage.setItem(storageKey, JSON.stringify({
+    B: name,
+    F: "Weld",
+    Fable: "Inspector",
+    Other: "Wrong shelf",
+  }));
+  const data: FactoryData = {
+    ...snapshot,
+    speech: { B: { text: "#12998 is in checks.", mood: "working", source: "model" } },
+  };
+
+  try {
+    await act(async () => root.render(
+      <FactoryFloor data={data} lastGoodAt={now} renderedAt={now} />,
+    ));
+    expect(container.querySelector("[data-crew='B'] strong")?.textContent).toBe(name);
+    expect(container.querySelector("[data-floor-speech='B'] strong")?.textContent).toBe(name);
+    expect(container.querySelector("[data-crate='12998']")?.getAttribute("aria-label")).toContain(name);
+    expect(container.querySelector("aside[aria-label='Builder of the day']")?.textContent).toContain("Weld");
+    expect(container.textContent).toContain("Inspector");
+    expect(container.textContent).not.toContain("Wrong shelf");
+    expect(container.querySelector("em")).toBeNull();
+    expect(container.querySelectorAll("input[type='text']")).toHaveLength(8);
+    expect(container.querySelector("input")?.maxLength).toBe(24);
+
+    const reset = Array.from(container.querySelectorAll("button")).find(
+      button => button.textContent === "Reset names",
+    );
+    expect(reset).toBeDefined();
+    await act(async () => reset?.click());
+    expect(container.querySelector("[data-crew='B'] strong")?.textContent).toBe("Builder B");
+    expect(container.querySelector("aside[aria-label='Builder of the day']")?.textContent).toContain("Apple");
+    expect(localStorage.getItem(storageKey)).toBeNull();
+  } finally {
+    localStorage.removeItem(storageKey);
+    await act(async () => root.unmount());
+  }
+});
