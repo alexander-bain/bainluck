@@ -100,6 +100,8 @@ enum AnalyticsPrivacy {
         // Push (Queue 311 A4 / #1159) — the client half of the digest funnel.
         // The server emits `push_sent`; this is the open that joins to it.
         "push_opened",
+        // Notifications, Live Activities & widgets (#13261 rows 11–13)
+        "push_permission_result", "live_activity_action", "widget_open",
     ]
 
     /// Keys that must NEVER reach Firebase, even if some caller adds them. Raw
@@ -148,6 +150,8 @@ enum AnalyticsPrivacy {
         "duration_ms", "transport_delay_ms",
         "entry", "shell_ms", "first_card_ms", "fold_ms", "interactive_ms",
         "card_count", "device_class", "network_class",
+        // Notifications, Live Activities & widgets (#13261 rows 11–13)
+        "destination_type", "widget_kind",
         // Push funnel join key (Queue 311 A4 / #1159). `payload_id` is a
         // CAMPAIGN id of the form `digest-YYYYMMDD` — a date and a surface
         // name. It identifies which send this open belongs to, not who opened

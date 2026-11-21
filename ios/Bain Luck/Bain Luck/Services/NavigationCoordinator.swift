@@ -117,6 +117,16 @@ final class NavigationCoordinator: ObservableObject {
         ) {
             SessionOpenTracker13261.shared.recordArrival(arrival)
         }
+        let destinationType = WidgetAndAlertTelemetry13261.destinationType(for: pathComponents)
+        if let widgetOpen = WidgetAndAlertTelemetry13261.parseWidgetOpen(
+            url: url,
+            destinationType: destinationType
+        ) {
+            AnalyticsService.trackWidgetOpen(
+                widgetKind: widgetOpen.widgetKind,
+                destinationType: widgetOpen.destinationType
+            )
+        }
         return true
     }
 
@@ -160,7 +170,6 @@ final class NavigationCoordinator: ObservableObject {
             return ("other", "other")
         }
     }
-
     private func routeSupportedPath(url: URL, pathComponents: [String], queryItems: [URLQueryItem]?) -> Bool {
         switch pathComponents[0] {
         case "events":

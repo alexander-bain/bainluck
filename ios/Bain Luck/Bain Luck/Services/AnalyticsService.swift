@@ -480,10 +480,55 @@ enum AnalyticsService {
     /// this open to the server-side `push_sent` — without it the funnel has two
     /// unrelated counts instead of a rate. Carries no user, device, or market
     /// content.
-    nonisolated static func trackPushOpened(payloadId: String, surface: String = "digest") {
-        log("push_opened", [
-            "payload_id": payloadId,
+    nonisolated static func trackPushOpened(
+        payloadId: String? = nil,
+        surface: String = "digest",
+        destinationType: String = "other"
+    ) {
+        var params: [String: Any] = [
             "surface": surface,
+            "destination_type": destinationType,
+        ]
+        if let payloadId {
+            params["payload_id"] = payloadId
+        }
+        log("push_opened", params)
+    }
+
+    // MARK: - Notifications, Live Activities & Widgets (#13261 Rows 11–13)
+
+    nonisolated static func trackPushPermissionResult(
+        granted: Bool,
+        surface: String = "system_prompt"
+    ) {
+        log("push_permission_result", [
+            "outcome": granted ? "granted" : "denied",
+            "surface": surface,
+        ])
+    }
+
+    nonisolated static func trackLiveActivityAction(
+        action: String,
+        eventId: Int,
+        outcome: String,
+        surface: String = "event_detail"
+    ) {
+        log("live_activity_action", [
+            "action": action,
+            "event_id": eventId,
+            "outcome": outcome,
+            "surface": surface,
+        ])
+    }
+
+    nonisolated static func trackWidgetOpen(
+        widgetKind: String,
+        destinationType: String
+    ) {
+        log("widget_open", [
+            "widget_kind": WidgetAndAlertTelemetry13261.normalizedWidgetKind(widgetKind),
+            "destination_type": destinationType,
+            "surface": "widget",
         ])
     }
 
