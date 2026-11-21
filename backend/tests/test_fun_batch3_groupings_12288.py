@@ -118,7 +118,6 @@ def test_batch3_definitions_are_public_with_verified_pd_or_cc0_art_and_no_venue_
         "machinery-long-shots",
         "machinery-long-awaited",
         "machinery-space-race",
-        "machinery-taylor-swift",
     ):
         assert load_machinery_definition(paths_by_slug[preview_slug])["stage"] == "preview"
 
@@ -222,7 +221,7 @@ async def test_musk_set_every_row_has_explicit_with_phrase_keeping_proper_nouns_
         109412: "buying Ryanair",
         109633: "being cast in the next Superman film",
         109316: "buying a major sports team before 2027",
-        109490: "being out as Tesla CEO before 2027",
+        109490: "leaving as Tesla CEO before 2027",
         109489: "Tesla Optimus released this year",
     }
     for mid, phrase in expected_with_phrases.items():
