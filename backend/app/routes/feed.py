@@ -15603,6 +15603,7 @@ async def _score_futures(
     # market/outcome rows are loaded fresh and every runtime filter, scoring,
     # personalization, diversity, and page op run unchanged below.
     from app.utils import candidate_base as _candidate_base
+    from app.utils.event_awards import grammy_nominee_fields, prefer_grammy_nominee_fields
 
     # Queue 305 (#1475): the #1090 thin-pool broaden pass re-scores the SAME
     # config-independent candidate base with relaxed staleness windows. When the
@@ -15786,6 +15787,12 @@ async def _score_futures(
             # ~72% of this whole stage, and thrown away
             # (`OUTCOME_LOAD_ONLY_EXTRA` carries the numbers).
             loaded = result.scalars().unique().all()
+            nominee_fields = await grammy_nominee_fields(db, loaded)
+            if nominee_fields:
+                loaded_ids = {market.id for market in loaded}
+                loaded.extend(
+                    market for market in nominee_fields.values() if market.id not in loaded_ids
+                )
             # #7632. THE DETAIL PAGE'S WITHHELD SET, COMPUTED ONCE FOR THE WHOLE
             # POOL AND CARRIED ON THE ARTIFACT. Here rather than in the
             # serializers because here is the only place with a session, the
@@ -15829,6 +15836,10 @@ async def _score_futures(
             for market in _futures_snapshot.from_plain(_snapshot_payload)
         }
         markets = [markets_by_id[mid] for mid in market_ids if mid in markets_by_id]
+        nominee_fields = await grammy_nominee_fields(
+            db, markets, available=markets_by_id.values()
+        )
+        markets = prefer_grammy_nominee_fields(markets, nominee_fields)
         mark_timing("market_load")
 
         # Queue 305 (#1475): hand this freshly-loaded, ordered base down to the

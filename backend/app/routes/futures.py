@@ -20,6 +20,7 @@ from app.models import Event, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
 from app.services import get_db, OddsAPIService
 from app.utils import futures_price_screen, movement_pool, probability_to_american
 from app.utils.durable_venue_receipt import log_durable_venue_serve
+from app.utils.event_awards import grammy_nominee_fields, grammy_pre_nomination_board
 from app.utils.observed_span_steps import add_history_steps, add_timeline_steps
 from app.utils.settlement_display import (
     VERDICT_UNKNOWN as SETTLEMENT_VERDICT_UNKNOWN,
@@ -4742,6 +4743,14 @@ async def get_futures_market(
     if not market:
         raise HTTPException(status_code=404, detail="Market not found")
 
+    nominee_field = (await grammy_nominee_fields(db, [market])).get(market.id)
+    requested_id = market.id
+    legacy_market = (
+        market if nominee_field is not None else await grammy_pre_nomination_board(db, market)
+    )
+    if nominee_field is not None:
+        market = nominee_field
+
     # The provenance half — which books contributed, and their latest price per
     # outcome — is the whole cost of this endpoint and it is the only half that
     # is cached. `market` and its outcomes were just read fresh above and are
@@ -4752,7 +4761,7 @@ async def get_futures_market(
     source_breakdown = []
     if outcome_ids:
         bookmakers, source_breakdown = await _load_market_sources(
-            db, market_id, outcome_ids
+            db, market.id, outcome_ids
         )
 
     # Two venues, two price rules, plus one that belongs to neither — ONE set of
@@ -4796,7 +4805,9 @@ async def get_futures_market(
         # the card's rule (`feed._score_futures`), so the tap lands on the board
         # the card showed. Cached grid only; a miss keeps every leg.
         out_division_labels=(await out_legs_by_market([market])).get(market.id),
-        normalize_numbers=representation != REPRESENTATION_VERIFIED_TITLE,
+        normalize_numbers=(
+            legacy_market is not None or representation != REPRESENTATION_VERIFIED_TITLE
+        ),
     )
     if len(bookmakers) > 1 and source_breakdown:
         detail["source_breakdown"] = source_breakdown
@@ -4804,7 +4815,14 @@ async def get_futures_market(
     # send the reader to the game instead of drawing the container as a field.
     detail["container_of_event_id"] = await _game_container_of_event_id(db, market)
     # #9387: opt-in only. The default response is untouched, field for field.
-    if representation == REPRESENTATION_VERIFIED_TITLE:
+    if legacy_market is not None:
+        # Preserve old page addresses and give search and Discover the same
+        # field when they link to Kalshi. Polymarket supplies only its Out rows.
+        retired = _format_market_detail(legacy_market, normalize_numbers=False)
+        detail["id"] = requested_id
+        detail["outcomes"].extend(row for row in retired["outcomes"] if row.get("is_out"))
+        detail["outcome_count"] = len(detail["outcomes"])
+    elif representation == REPRESENTATION_VERIFIED_TITLE:
         _apply_verified_title_to_detail(
             detail, await _resolve_verified_title(db, market), market
         )
@@ -7389,6 +7407,12 @@ async def get_probability_timeline(
     if not market:
         raise HTTPException(status_code=404, detail="Market not found")
 
+    nominee_field = (await grammy_nominee_fields(db, [market])).get(market.id)
+    if nominee_field is not None:
+        market = nominee_field
+        market_id = market.id
+        representation = REPRESENTATION_SOURCE
+
     # #6641 — ONE CONDITION, ONE LINE. A Polymarket "field" row is served to us
     # twice over: the bare condition id carries the named rung ("March 31,
     # 2026") and the decomposition branch writes the same condition's two legs
@@ -8544,6 +8568,11 @@ async def get_futures_history(
 
     if not market:
         raise HTTPException(status_code=404, detail="Market not found")
+
+    nominee_field = (await grammy_nominee_fields(db, [market])).get(market.id)
+    if nominee_field is not None and not any(o.id == outcome_id for o in market.outcomes):
+        market = nominee_field
+        market_id = market.id
 
     # #6641, same rule and same reason as `get_probability_timeline` above —
     # this is the other half of the same chart. No iOS client reads it, but the

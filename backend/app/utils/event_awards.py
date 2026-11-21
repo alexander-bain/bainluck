@@ -35,7 +35,9 @@ Honest v1 limitations (design §6 said "fast-follow", so this is deliberately th
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass, field
+from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -47,8 +49,108 @@ from app.utils.settledness import (
     settled_under_assigned_state,
 )
 
-# Polymarket's pre-nomination boards for the 69th ceremony's general field.
-GRAMMY_GENERAL_FIELD_POLYMARKET_IDS = frozenset({"805148", "805158", "805159", "805160"})
+# The 69th ceremony's pre-nomination Polymarket boards and Kalshi nominee fields.
+# Ruling 145 keeps the contracts separate because they settle a tie differently.
+GRAMMY_NOMINEE_FIELDS = {
+    "805148": "KXGRAMBNA-69",
+    "805158": "KXGRAMMY-SOTY69",
+    "805159": "KXGRAMMY-ROTY69",
+    "805160": "KXGRAMAOTY-69",
+}
+GRAMMY_GENERAL_FIELD_POLYMARKET_IDS = frozenset(GRAMMY_NOMINEE_FIELDS)
+_GRAMMY_PRE_NOMINATION_BOARDS = {
+    ticker: external_id for external_id, ticker in GRAMMY_NOMINEE_FIELDS.items()
+}
+
+
+async def grammy_nominee_fields(
+    db: AsyncSession, markets: Iterable[Any], *, available: Iterable[Any] | None = None,
+) -> dict[int, Any]:
+    """Find complete nominee boards for the requested pre-nomination markets."""
+    tickers = {
+        market.id: GRAMMY_NOMINEE_FIELDS[market.external_id]
+        for market in markets
+        if getattr(market, "source", None) == "polymarket"
+        and getattr(market, "external_id", None) in GRAMMY_NOMINEE_FIELDS
+    }
+    if not tickers:
+        return {}
+
+    from app.utils.outcome_display import is_field_outcome, is_placeholder_outcome_name
+
+    expected_tickers = set(tickers.values())
+    if available is None:
+        from app.models import FuturesMarket, FuturesOutcome
+
+        result = await db.execute(
+            select(FuturesMarket)
+            .options(
+                selectinload(FuturesMarket.sport),
+                selectinload(FuturesMarket.outcomes).selectinload(FuturesOutcome.team),
+            )
+            .where(
+                FuturesMarket.source == "kalshi",
+                FuturesMarket.external_id.in_(expected_tickers),
+                FuturesMarket.status.in_(("open", "resolved")),
+            )
+        )
+        available = result.scalars()
+    found = {}
+    for market in available:
+        if (
+            market.source != "kalshi" or market.external_id not in expected_tickers
+            or market.status not in ("open", "resolved")
+        ):
+            continue
+        nominees = {
+            outcome.name.strip().casefold()
+            for outcome in market.outcomes
+            if outcome.name
+            and not is_field_outcome(outcome.name)
+            and not is_placeholder_outcome_name(outcome.name)
+        } - {"tie"}
+        if len(nominees) >= 8:
+            found[market.external_id] = market
+    return {market_id: found[ticker] for market_id, ticker in tickers.items() if ticker in found}
+
+
+async def grammy_pre_nomination_board(db: AsyncSession, market: Any) -> Any:
+    """Fetch the board that can supply confirmed Out rows for a nominee field."""
+    if getattr(market, "source", None) != "kalshi":
+        return None
+    external_id = _GRAMMY_PRE_NOMINATION_BOARDS.get(getattr(market, "external_id", None))
+    if external_id is None:
+        return None
+
+    from app.models import FuturesMarket, FuturesOutcome
+
+    result = await db.execute(
+        select(FuturesMarket)
+        .options(
+            selectinload(FuturesMarket.sport),
+            selectinload(FuturesMarket.outcomes).selectinload(FuturesOutcome.team),
+        )
+        .where(FuturesMarket.source == "polymarket", FuturesMarket.external_id == external_id)
+    )
+    return result.scalar_one_or_none()
+
+
+def prefer_grammy_nominee_fields(
+    markets: list[Any], replacements: dict[int, Any]
+) -> list[Any]:
+    """Substitute the matched field once while keeping the existing list order."""
+    if not replacements:
+        return markets
+    nominee_ids = {market.id for market in replacements.values()}
+    seen = set()
+    preferred = []
+    for choice in markets:
+        market = replacements.get(choice.id, choice)
+        if market.id in nominee_ids and market.id in seen:
+            continue
+        preferred.append(market)
+        seen.add(market.id)
+    return preferred
 
 
 # Day-of-year on which a Kalshi award market resolves when the ceremony has no
