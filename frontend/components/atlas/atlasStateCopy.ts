@@ -122,6 +122,60 @@ export function formatAtlasTimestampPT(
 }
 
 /**
+ * Formats an ISO date or timestamp in the reader's local timezone (or an explicit
+ * IANA `timeZone`, used by tests) with its short timezone abbreviation so tapped
+ * chart readings always match the chart's local x-axis clock (#12628).
+ */
+export function formatAtlasTimestampLocal(
+  iso: string | null | undefined,
+  options?: { includeSeconds?: boolean; timeZone?: string },
+): string | null {
+  if (!iso || typeof iso !== 'string') return null;
+  const trimmed = iso.trim();
+  if (!trimmed) return null;
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    const dateOnly = parseIsoForPT(trimmed);
+    if (!dateOnly) return null;
+    // Bare YYYY-MM-DD dates carry no clock and are anchored at noon UTC;
+    // format in UTC so UTC+13 (e.g. Pacific/Auckland) never shifts the day.
+    return new Intl.DateTimeFormat('en-US', {
+      timeZone: 'UTC',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+    }).format(dateOnly);
+  }
+  const date = parseIsoForPT(trimmed);
+  if (!date) return null;
+  const includeSeconds = options?.includeSeconds ?? false;
+  const resolvedTz =
+    options?.timeZone ?? Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const tzOpt = options?.timeZone ? { timeZone: options.timeZone } : {};
+  if (resolvedTz === 'America/Los_Angeles') {
+    const formatted = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'America/Los_Angeles',
+      month: 'short',
+      day: 'numeric',
+      year: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      ...(includeSeconds ? { second: '2-digit' } : {}),
+    }).format(date);
+    return `${formatted} PT`;
+  }
+  return new Intl.DateTimeFormat('en-US', {
+    ...tzOpt,
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    ...(includeSeconds ? { second: '2-digit' } : {}),
+    timeZoneName: 'short',
+  }).format(date);
+}
+
+/**
  * Formats source attribution for the details sheet and footer without putting
  * venue names inside narrative sentences.
  */
