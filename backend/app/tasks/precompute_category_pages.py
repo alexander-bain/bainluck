@@ -1947,14 +1947,24 @@ async def _prewarm_machinery_roundups(
 
     ensure_optional_roundup_candidates()
     slug_filter = set(slugs) if slugs is not None else None
-    producers = [
+    all_machinery = [
         p
         for p in ROUNDUP_PRODUCERS.values()
         if _is_machinery_producer_slug(p.slug)
         and (p.enabled is None or p.enabled())
-        and (slug_filter is not None or getattr(p, "stage", "public") == "public")
         and (slug_filter is None or p.slug in slug_filter)
     ]
+    if slug_filter is not None:
+        public_producers = all_machinery
+        preview_producers = []
+    else:
+        public_producers = [
+            p for p in all_machinery if getattr(p, "stage", "public") == "public"
+        ]
+        preview_producers = [
+            p for p in all_machinery if getattr(p, "stage", "public") == "preview"
+        ]
+    producers = [*public_producers, *preview_producers]
     if not producers:
         return {"outcome": "empty", "warmed": 0, "slugs": {}}
 
@@ -2043,7 +2053,21 @@ async def _prewarm_machinery_roundups(
                 "redis_ttl_s": None,
             }
 
-    results = dict(await asyncio.gather(*(_warm_one(p) for p in producers)))
+    # Warm public groupings first so their Redis copies are never delayed by or
+    # competing for DB connections with slower stage="preview" groupings, then
+    # warm preview groupings so `/api/feed?machinery=preview` and preview pages
+    # hit warm Redis under the 3.5s read-time preview limit (Fable Nov 20 call).
+    public_pairs = (
+        await asyncio.gather(*(_warm_one(p) for p in public_producers))
+        if public_producers
+        else []
+    )
+    preview_pairs = (
+        await asyncio.gather(*(_warm_one(p) for p in preview_producers))
+        if preview_producers
+        else []
+    )
+    results = dict([*public_pairs, *preview_pairs])
     wall_ms = round((_time.monotonic() - wall_started) * 1000.0, 1)
     total_db_ms = round(sum(float(v.get("elapsed_ms") or 0.0) for v in results.values()), 1)
     warmed = sum(1 for v in results.values() if v.get("outcome") == "ok")
