@@ -213,7 +213,10 @@ struct ContainerHubView: View {
                 if vm.refreshError != nil {
                     Text("Couldn’t refresh. Showing the last loaded collection.")
                         .font(.subheadline).foregroundStyle(hubTextSecondary)
-                    Button("Try refresh again") { Task { await vm.load() } }
+                    Button("Try refresh again") {
+                        AnalyticsService.trackCollectionHubAction(slug: vm.slug, actionKind: "refresh", itemType: "collection")
+                        Task { await vm.load() }
+                    }
                 }
                 cardColumns(presentation.children, columnCount: hubColumnCount) { child in
                     NavigationLink(value: Route.containerHub(slug: child.slug, name: child.name)) {
@@ -241,6 +244,9 @@ struct ContainerHubView: View {
                             }
                         )
                     }
+                    .simultaneousGesture(TapGesture().onEnded {
+                        AnalyticsService.trackCollectionHubAction(slug: vm.slug, actionKind: "open_child_collection", itemType: "collection")
+                    })
                     .id("container:\(child.slug)")
                 }
                 if !vm.pairedMetricSets.isEmpty {
@@ -385,7 +391,10 @@ struct ContainerHubView: View {
                     EventCardView(event: event, reason: nil)
                 }
                 .buttonStyle(.plain)
-                .simultaneousGesture(TapGesture().onEnded { vm.opened(member) })
+                .simultaneousGesture(TapGesture().onEnded {
+                    AnalyticsService.trackCollectionHubAction(slug: vm.slug, actionKind: "open_event", itemType: "event")
+                    vm.opened(member)
+                })
                 // #10146: the game page is the fuller view of its questions; the hub
                 // no longer expands hundreds of contracts inline under each card.
                 if let route = presentation.moreOnGameRoute(for: member) {
@@ -403,7 +412,10 @@ struct ContainerHubView: View {
                         .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .simultaneousGesture(TapGesture().onEnded { vm.opened(member) })
+                    .simultaneousGesture(TapGesture().onEnded {
+                        AnalyticsService.trackCollectionHubAction(slug: vm.slug, actionKind: "open_more_on_game", itemType: "event")
+                        vm.opened(member)
+                    })
                     .accessibilityIdentifier("hub.moreOnGame.\(member.memberId)")
                 }
             }
@@ -469,7 +481,10 @@ struct ContainerHubView: View {
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(hubBorder, lineWidth: 0.5))
         }
         .buttonStyle(.plain)
-        .simultaneousGesture(TapGesture().onEnded { vm.opened(member) })
+        .simultaneousGesture(TapGesture().onEnded {
+            AnalyticsService.trackCollectionHubAction(slug: vm.slug, actionKind: "open_market", itemType: "market")
+            vm.opened(member)
+        })
     }
 
     private func status(_ message: String, retry: Bool) -> some View {

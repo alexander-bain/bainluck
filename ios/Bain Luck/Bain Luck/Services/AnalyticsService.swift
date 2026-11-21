@@ -446,6 +446,8 @@ enum AnalyticsService {
             "app_build": appBuild(),
             "surface": "my_stuff",
             "outcome_class": stage.outcomeClass.rawValue,
+            "has_pins": stage.hasPins,
+            "state": stage.state,
         ])
     }
 
@@ -658,6 +660,51 @@ enum AnalyticsService {
             "destination_type": destinationType,
             "source": source,
             "medium": medium,
+        ])
+    }
+
+    // MARK: - Set Hubs & Game Page Interactions (#13261 rows 9 & 10)
+
+    private nonisolated static let allowedCollectionActions: Set<String> = [
+        "open_event", "open_market", "open_more_on_game", "open_child_collection", "refresh",
+    ]
+    private nonisolated static let allowedGamePageActions: Set<String> = [
+        "expand", "collapse", "filter", "open", "tap",
+    ]
+    private nonisolated static let allowedGamePageSections: Set<String> = [
+        "sources", "models", "props", "story", "chart",
+    ]
+
+    nonisolated static func sanitizeSlugToken(_ raw: String) -> String {
+        let base = raw.split(whereSeparator: { $0 == "?" || $0 == "#" || $0 == "/" }).first.map(String.init) ?? ""
+        let lower = base.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let filtered = String(lower.unicodeScalars.filter {
+            ("a"..."z").contains($0) || ("0"..."9").contains($0) || $0 == "-" || $0 == "_"
+        }.prefix(64))
+        return filtered.isEmpty ? "unknown" : filtered
+    }
+
+    nonisolated static func trackCollectionHubAction(slug: String, actionKind: String, itemType: String? = nil) {
+        let safeAction = allowedCollectionActions.contains(actionKind) ? actionKind : "other"
+        var params: [String: Any] = [
+            "slug": sanitizeSlugToken(slug),
+            "action_kind": safeAction,
+            "surface": "collection_hub",
+        ]
+        if let itemType, ["event", "market", "collection"].contains(itemType) {
+            params["item_type"] = itemType
+        }
+        log("collection_hub_action", params)
+    }
+
+    nonisolated static func trackGamePageAction(actionKind: String, section: String, sport: String? = nil) {
+        let safeAction = allowedGamePageActions.contains(actionKind) ? actionKind : "tap"
+        let safeSection = allowedGamePageSections.contains(section) ? section : "other"
+        log("game_page_action", [
+            "action_kind": safeAction,
+            "section": safeSection,
+            "sport": sport ?? "unknown",
+            "surface": "event_detail",
         ])
     }
 
