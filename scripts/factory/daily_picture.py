@@ -15,9 +15,9 @@ from notes import COLLECTOR_DAILY_CALLS, LABELS, MONTHLY_COST_MICROS
 from signals import on_floor
 from llm_models import UnsupportedModelError, image_model_for_task
 
-DAILY_PICTURE_ENABLED = False
+DAILY_PICTURE_ENABLED = True
 MEASUREMENT_MONTH_MICROS = 5_000_000
-MEASUREMENT_MAX_MICROS = 500_000
+PICTURE_MAX_MICROS = 500_000
 SIZE = "1024x1024"
 QUALITY = "medium"
 MAX_PROMPT_BYTES = 2048
@@ -210,8 +210,9 @@ def metered_picture(snapshot, budget, key, *, sample=False, enabled=DAILY_PICTUR
         return None, {"status": "unpriced", "mode": mode}
     receipt = {**quote(spec), "mode": mode}
     reserve = receipt["reserve_micros"]
-    if sample and (reserve > MEASUREMENT_MAX_MICROS
-                   or meter["month_micros"] + reserve > MEASUREMENT_MONTH_MICROS):
+    if reserve > PICTURE_MAX_MICROS:
+        return None, {**receipt, "status": "over-picture-budget"}
+    if sample and meter["month_micros"] + reserve > MEASUREMENT_MONTH_MICROS:
         return None, {**receipt, "status": "over-measurement-budget"}
     if meter["calls"] >= COLLECTOR_DAILY_CALLS or meter["month_micros"] + reserve > MONTHLY_COST_MICROS:
         return None, {**receipt, "status": "no-reservation"}
@@ -225,8 +226,7 @@ def metered_picture(snapshot, budget, key, *, sample=False, enabled=DAILY_PICTUR
     )
     if not reservation:
         return None, {**receipt, "status": "no-reservation"}
-    if sample:
-        receipt["month_before_micros"] = reservation[0]["month_micros"]
+    receipt["month_before_micros"] = reservation[0]["month_micros"]
     try:
         response, request_id = request(payload, key)
         tokens, spent = image_usage(response, spec)

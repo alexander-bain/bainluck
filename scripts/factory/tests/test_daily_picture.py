@@ -1,5 +1,5 @@
 import base64
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import io
 from pathlib import Path
 import sys
@@ -12,7 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from daily_picture import asset_label, asset_name, gallery, metered_picture, picture_request, quote
 from collect import main, publish_daily_picture
-from notes import ModelBudget, meter_body
+from notes import MONTHLY_COST_MICROS, ModelBudget, meter_body
 from llm_models import image_model_for_task
 
 
@@ -37,8 +37,10 @@ class DailyPictureTests(unittest.TestCase):
             "data": [{"b64_json": base64.b64encode(self.image).decode()}],
         }, "req_test"))
 
-    def test_scheduled_path_is_off_and_the_template_never_includes_titles(self):
-        result, receipt = metered_picture(self.snapshot, self.budget, "fake", request=self.request)
+    def test_disabled_path_skips_the_provider_and_the_template_omits_titles(self):
+        result, receipt = metered_picture(
+            self.snapshot, self.budget, "fake", enabled=False, request=self.request,
+        )
         self.assertIsNone(result)
         self.assertEqual(receipt["status"], "off")
         self.request.assert_not_called()
@@ -51,7 +53,7 @@ class DailyPictureTests(unittest.TestCase):
 
     def test_measurement_reserves_and_prices_one_image_for_the_receipt(self):
         result, receipt = metered_picture(
-            self.snapshot, self.budget, "fake", sample=True, request=self.request
+            self.snapshot, self.budget, "fake", sample=True, enabled=False, request=self.request,
         )
         self.assertEqual(result[1], self.image)
         self.assertEqual(receipt["status"], "measured")
@@ -64,7 +66,7 @@ class DailyPictureTests(unittest.TestCase):
         again = ModelBudget(self.budget.body, self.save, now=tomorrow)
         metered_picture(
             {**self.snapshot, "generated_at": tomorrow.isoformat()},
-            again, "fake", sample=True, request=self.request,
+            again, "fake", sample=True, enabled=False, request=self.request,
         )
         self.request.assert_called_once()
 
@@ -73,7 +75,7 @@ class DailyPictureTests(unittest.TestCase):
         meter.update(calls=1, month_micros=4_960_000)
         self.budget = ModelBudget(meter_body("", meter), self.save, now=self.now)
         _, receipt = metered_picture(
-            self.snapshot, self.budget, "fake", sample=True, request=self.request
+            self.snapshot, self.budget, "fake", sample=True, enabled=False, request=self.request,
         )
         self.assertEqual(receipt["status"], "over-measurement-budget")
         self.request.assert_not_called()
@@ -82,13 +84,59 @@ class DailyPictureTests(unittest.TestCase):
     def test_unknown_usage_keeps_the_reserve_and_prevents_another_measurement(self):
         self.request.side_effect = TimeoutError()
         _, receipt = metered_picture(
-            self.snapshot, self.budget, "fake", sample=True, request=self.request
+            self.snapshot, self.budget, "fake", sample=True, enabled=False, request=self.request,
         )
         self.assertEqual(receipt["status"], "usage-unavailable")
         reserve = quote(image_model_for_task("factory_picture"))["reserve_micros"]
         self.assertEqual(self.budget.state()["month_micros"], reserve)
-        metered_picture(self.snapshot, self.budget, "fake", sample=True, request=self.request)
+        metered_picture(
+            self.snapshot, self.budget, "fake", sample=True, enabled=False, request=self.request,
+        )
         self.request.assert_called_once()
+
+    def test_daily_draw_waits_until_evening_and_settles_once_per_pacific_day(self):
+        meter = self.budget.state()
+        meter.update(calls=1, month_micros=38_066)
+        body = meter_body("", meter)
+        before_evening = self.now - timedelta(hours=2)
+        prepare = Mock(return_value=True)
+        check = Mock(return_value=True)
+        options = {"request": self.request, "prepare": prepare, "check": check}
+
+        _, receipt = metered_picture(
+            {**self.snapshot, "generated_at": before_evening.isoformat()},
+            ModelBudget(body, self.save, now=before_evening), "fake", **options,
+        )
+        self.assertEqual(receipt["status"], "outside-daily-turn")
+        self.request.assert_not_called()
+
+        budget = ModelBudget(body, self.save, now=self.now)
+        picture, receipt = metered_picture(self.snapshot, budget, "fake", **options)
+        self.assertEqual(asset_name(picture[0]), "factory-picture-2026-11-21.webp")
+        self.assertEqual(picture[1], self.image)
+        self.assertEqual(receipt["status"], "drawn")
+        self.assertEqual(receipt["month_before_micros"], 38_066)
+        self.assertEqual(receipt["used_micros"], 25_215)
+        self.assertEqual(receipt["month_cost_usd"], 0.063281)
+
+        again = ModelBudget(budget.body, self.save, now=self.now + timedelta(minutes=5))
+        _, receipt = metered_picture(self.snapshot, again, "fake", **options)
+        self.assertEqual(receipt["status"], "outside-daily-turn")
+        self.request.assert_called_once()
+        self.assertEqual(self.save.call_count, 2)
+
+    def test_daily_draw_keeps_the_picture_and_monthly_limits(self):
+        with patch("daily_picture.quote", return_value={"reserve_micros": 500_001}):
+            _, receipt = metered_picture(self.snapshot, self.budget, "fake", request=self.request)
+        self.assertEqual(receipt["status"], "over-picture-budget")
+
+        meter = self.budget.state()
+        meter.update(calls=1, month_micros=MONTHLY_COST_MICROS - 1)
+        budget = ModelBudget(meter_body("", meter), self.save, now=self.now)
+        _, receipt = metered_picture(self.snapshot, budget, "fake", request=self.request)
+        self.assertEqual(receipt["status"], "no-reservation")
+        self.request.assert_not_called()
+        self.save.assert_not_called()
 
     def test_enabled_path_rejects_lettering_then_keeps_yesterdays_date(self):
         picture, receipt = metered_picture(
@@ -116,10 +164,12 @@ class DailyPictureTests(unittest.TestCase):
         self.assertEqual(gallery(assets + [{**assets[-1], "state": "starter"}], self.now), records[-7:][::-1])
 
     def test_missing_key_or_unregistered_picture_model_skips_the_provider(self):
-        metered_picture(self.snapshot, self.budget, "", sample=True, request=self.request)
+        metered_picture(
+            self.snapshot, self.budget, "", sample=True, enabled=False, request=self.request,
+        )
         with patch.dict("os.environ", {"LLM_MODEL_FACTORY_PICTURE": "unpriced"}):
             _, receipt = metered_picture(
-                self.snapshot, self.budget, "fake", sample=True, request=self.request
+                self.snapshot, self.budget, "fake", sample=True, enabled=False, request=self.request,
             )
         self.assertEqual(receipt["status"], "unpriced")
         self.request.assert_not_called()
@@ -149,7 +199,8 @@ class DailyPictureTests(unittest.TestCase):
         publish.assert_not_called()
         self.assertIn('"status": "measured"', out.getvalue())
 
-    def test_upload_is_disabled_with_the_shipped_switch(self):
+    def test_upload_skips_the_release_when_daily_pictures_are_off(self):
         api = Mock()
-        self.assertIsNone(publish_daily_picture(api, {}, None))
+        with patch("collect.DAILY_PICTURE_ENABLED", False):
+            self.assertIsNone(publish_daily_picture(api, {}, None))
         api.request.assert_not_called()
