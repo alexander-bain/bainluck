@@ -3996,6 +3996,13 @@ async def produce_container_machinery(
                 if isinstance(env, dict) and isinstance(env.get("card"), dict):
                     env["card"]["image_url"] = None
 
+    card_image_url = str(rule.get("card_image_url") or "").strip() or None
+    card_image_alt = str(rule.get("card_image_alt") or "").strip() or None
+    if card_image_url and isinstance(vb, dict):
+        vb["hero_image_url"] = card_image_url
+        if card_image_alt:
+            vb["hero_image_alt"] = card_image_alt
+
     card_item_count, card_item_noun = _machinery_card_item_count_and_noun(vb)
     machinery_card: dict[str, Any] = {
         "slug": slug,
@@ -4015,6 +4022,10 @@ async def produce_container_machinery(
     }
     if suppress_card_photo:
         machinery_card["suppress_card_photo"] = True
+    if card_image_url:
+        machinery_card["image_url"] = card_image_url
+        if card_image_alt:
+            machinery_card["image_alt"] = card_image_alt
     if mini_chart is not None:
         machinery_card["mini_chart"] = mini_chart
 
