@@ -23,6 +23,8 @@
     "card_rows": 3,
     "card_section_key": "christmas_snow",
     "suppress_card_photo": true,
+    "card_image_url": "https://api.bainluck.com/api/containers/machinery-white-christmas/map.png",
+    "card_image_alt": "U.S. map showing 11 cities shaded by chance of a white Christmas",
     "headline_predicate": "is the likeliest white Christmas",
     "sections": [
       {

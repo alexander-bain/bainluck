@@ -339,8 +339,14 @@ async def test_white_christmas_and_who_gets_engaged_suppress_unverified_card_pho
     wc_prod = build_container_machinery_producer(wc_def)
     wc_res = await produce_container_machinery(db, wc_def, now=NOW)
     assert wc_res.machinery_card.get("suppress_card_photo") is True
+    assert wc_res.machinery_card.get("image_url") == (
+        "https://api.bainluck.com/api/containers/machinery-white-christmas/map.png"
+    )
     wc_fi = sanitize_discover_feed_item(compose_roundup_feed_item(wc_prod, wc_res))
-    assert wc_fi["data"].get("image_url") is None
+    assert wc_fi["data"].get("image_url") == (
+        "https://api.bainluck.com/api/containers/machinery-white-christmas/map.png"
+    )
+    assert wc_fi["data"].get("image_presentation") == "photo"
     assert all((s.get("data") or {}).get("image_url") is None for s in wc_fi["data"].get("items") or ())
 
     eg_def = load_machinery_definition("data/groupings/candidates/machinery-who-gets-engaged.json")
