@@ -243,6 +243,39 @@ it("keeps each named figure at one supported station or on a rest bench", () => 
   expect(roster).toContainEqual({ identity: "W", pose: "asleep" });
 });
 
+it("shows a signed lane as active without a crate and displays only its recorded wait number", async () => {
+  watchMotion();
+  const data: FactoryData = {
+    ...snapshot,
+    changes: [],
+    crew_posts: {
+      F: { at: "2026-11-18T17:57:00Z" },
+      W: { at: "2026-11-18T17:45:00Z", waiting_on: 12998 },
+      C: { at: "2026-11-18T17:44:59Z", waiting_on: 12999 },
+    },
+    speech: {
+      F: { source: "facts", mood: "asleep", text: "There is no recent activity for this lane." },
+    },
+  };
+  expect(placeCrew(data, now, [])).toContainEqual({ identity: "F", pose: "working" });
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(<FactoryFloor data={data} lastGoodAt={now} renderedAt={now} />));
+    const apple = container.querySelector('[data-crew="F"]');
+    const spare = container.querySelector('[data-crew="W"]');
+    const quiet = container.querySelector('[data-crew="C"]');
+    expect(apple?.getAttribute("data-pose")).toBe("working");
+    expect(apple?.textContent).toContain("Active at 9:57 AM PT");
+    expect(apple?.textContent).not.toContain("There is no recent activity");
+    expect(spare?.textContent).toContain("Waiting on #12998");
+    expect(quiet?.getAttribute("data-pose")).toBe("asleep");
+    expect(quiet?.textContent).not.toContain("Waiting on #12999");
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
+
 it("leaves enough replay time for three seconds per station on a busy day", () => {
   const event: FloorEvent = {
     id: "move", kind: "move", builder: "D", line: "Server", number: 12998,

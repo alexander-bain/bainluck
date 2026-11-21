@@ -27,7 +27,7 @@ from journeys import add_journeys
 from signs import add_signs, switched_off, wrong_numbers
 from notes import ModelBudget, make_notes
 from speech import make_speech
-from signals import commands_from, test_file
+from signals import commands_from, crew_posts_from, test_file
 
 REPO = "alexander-bain/bainluck"
 RELEASE = "factory-data"
@@ -637,7 +637,7 @@ def collect(api, previous=None, cache=None, open_summaries=None):
     last_read = (
         previous.get("generated_at") if previous.get("injury_clock") else injury_since
     )
-    comments_since = min(floor, instant(last_read))
+    comments_since = min(floor, instant(last_read), now - timedelta(minutes=15))
     comments = api.pages(f"issues/12779/comments?since={iso(comments_since)}")
     commands = commands_from(
         c for c in comments if instant(c.get("updated_at", c["created_at"])) >= floor
@@ -718,8 +718,10 @@ def collect(api, previous=None, cache=None, open_summaries=None):
     flight_run = next((r for r in runs if r["name"] == "TestFlight release"), None)
     if flight_run and flight_run["conclusion"] in {"failure", "cancelled", "timed_out"}:
         master["testflight"] = flight_run["conclusion"]
+    captured = datetime.now(timezone.utc)
     return {
-        "captured_at": iso(datetime.now(timezone.utc)),
+        "captured_at": iso(captured),
+        "crew_posts": crew_posts_from(comments, captured),
         "pulls": pulls,
         "deployments": receipts,
         "deploy_starts": starts,
@@ -931,6 +933,8 @@ def main():
             summaries = api.pages("pulls?state=open&sort=updated&direction=desc")
         snapshot = collect(api, previous, cache, summaries)
         result = build(snapshot, previous)
+        if posts := snapshot.get("crew_posts"):
+            result["crew_posts"] = posts
         add_events(result, snapshot, previous, cache)
         add_journeys(result, previous)
         add_day_replay(result, previous)

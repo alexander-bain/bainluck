@@ -98,6 +98,21 @@ function verifiedCrew(payload: FactoryData) {
   if (Object.keys(builders).length) return { since: week.since, builders };
 }
 
+function verifiedCrewPosts(payload: FactoryData) {
+  const posts: NonNullable<FactoryData["crew_posts"]> = {};
+  const through = Date.parse(payload.generated_at);
+  for (const lane of ["S", "B", "C", "D", "E", "F", "W"] as const) {
+    const post = payload.crew_posts?.[lane];
+    const at = typeof post?.at === "string" ? Date.parse(post.at) : NaN;
+    if (!(at <= through)) continue;
+    const number = post?.waiting_on;
+    posts[lane] = { at: new Date(at).toISOString() };
+    if (typeof number === "number" && Number.isSafeInteger(number) && number > 0)
+      posts[lane].waiting_on = number;
+  }
+  if (Object.keys(posts).length) return posts;
+}
+
 function verifiedPictures(payload: FactoryData) {
   if (!Array.isArray(payload.pictures)) return;
   const count = (value: number) => Number.isSafeInteger(value) && value >= 0;
@@ -273,6 +288,7 @@ export function validateSnapshot(payload: FactoryData): FactoryData {
   const speech = speechForSnapshot(payload);
   const replay = verifiedReplay(payload);
   const crew = verifiedCrew(payload);
+  const posts = verifiedCrewPosts(payload);
   const pictures = verifiedPictures(payload);
   const { checks_queue: rawQueue, ...signals } = payload.signals;
   const checksQueue = verifiedChecksQueue(rawQueue);
@@ -291,6 +307,7 @@ export function validateSnapshot(payload: FactoryData): FactoryData {
     ...(payload.events ? { events: payload.events } : {}),
     ...(replay ? { day_replay: replay } : {}),
     ...(crew ? { crew_week: crew } : {}),
+    ...(posts ? { crew_posts: posts } : {}),
     ...(pictures?.length ? { pictures } : {}),
     ...(payload.injury_clock ? { injury_clock: payload.injury_clock } : {}),
     ...(payload.stops ? { stops: payload.stops } : {}),
