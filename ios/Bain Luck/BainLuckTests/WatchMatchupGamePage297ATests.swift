@@ -472,5 +472,140 @@ final class WatchMatchupGamePage297ATests: XCTestCase {
             }
         }
     }
+
+    private func wristTileInput(_ game: WatchSelectedGame) -> WatchWristTileInput12616 {
+        WatchWristTileInput12616(
+            homeTeam: game.homeTeam,
+            awayTeam: game.awayTeam,
+            homeServedAbbreviation: game.homeCompactIdentity?.abbreviation,
+            awayServedAbbreviation: game.awayCompactIdentity?.abbreviation,
+            sportKey: game.sportKey,
+            isLive: game.isLive,
+            isFinal: game.isFinal,
+            homeScore: game.homeScore,
+            awayScore: game.awayScore,
+            homeProbability: game.homeProbability,
+            awayProbability: game.awayProbability,
+            drawProbability: game.drawProbability,
+            prematchHomeProbability: game.prematchHomeProbability,
+            prematchAwayProbability: game.prematchAwayProbability,
+            prematchDrawProbability: game.prematchDrawProbability,
+            projectedHomeScore: game.projectedHomeScore,
+            projectedAwayScore: game.projectedAwayScore,
+            homePrimaryColor: game.homePrimaryColor,
+            homeSecondaryColor: game.homeSecondaryColor,
+            awayPrimaryColor: game.awayPrimaryColor,
+            awaySecondaryColor: game.awaySecondaryColor,
+            commenceTime: game.commenceTime,
+            liveClockText: game.liveClockText,
+            stateLabel: game.stateLabel,
+            probabilityObservedAt: game.probabilityObservedAt,
+            scoreObservedAt: game.scoreObservedAt
+        )
+    }
+
+    func testPinTileAndGamePageAgreeOnEverySingleSnapshot() throws {
+        // 1. Half-cent 2-way NBA duel (Rockets 55.5% / Nuggets 44.5% -> 56% / 44%)
+        let twoWayHalfCent = try decodeGame(#"""
+        {
+          "id": 133031,
+          "away_team": "Houston Rockets",
+          "home_team": "Denver Nuggets",
+          "away_team_data": {"team_id": 10, "abbreviation": "HOU"},
+          "home_team_data": {"team_id": 7, "abbreviation": "DEN"},
+          "status": "live",
+          "sport": "basketball_nba",
+          "away_score": 76,
+          "home_score": 78,
+          "hero_probability": 0.445,
+          "hero_probability_away": 0.555,
+          "hero_probability_observed_at": "2026-11-21T04:38:00Z"
+        }
+        """#)
+        let twoWayTile = WatchWristTileModel12616.build(wristTileInput(twoWayHalfCent), now: now, timeZone: pt)
+        let twoWayPage = WatchMatchupGameHeroModel297A.build(from: twoWayHalfCent, now: now, timeZone: pt, crestForTeamID: { _ in nil })
+        XCTAssertEqual(twoWayTile.heroFigureText, "56%")
+        XCTAssertEqual(twoWayPage.away.currentPercentText, "56%")
+        XCTAssertEqual(twoWayPage.home.currentPercentText, "44%")
+
+        // 2. Same 0.445 / 0.555 probabilities WITHOUT sportKey: pin tile (45% Home) and game page
+        // must agree on scalar Home 45% and never invent a 44%/56% 2-way split (#13303).
+        let missingSport = try decodeGame(#"""
+        {
+          "id": 133032,
+          "away_team": "Houston Rockets",
+          "home_team": "Denver Nuggets",
+          "away_team_data": {"team_id": 10, "abbreviation": "HOU"},
+          "home_team_data": {"team_id": 7, "abbreviation": "DEN"},
+          "status": "live",
+          "hero_probability": 0.445,
+          "hero_probability_away": 0.555,
+          "hero_probability_observed_at": "2026-11-21T04:38:00Z"
+        }
+        """#)
+        let missingSportTile = WatchWristTileModel12616.build(wristTileInput(missingSport), now: now, timeZone: pt)
+        let missingSportPage = WatchMatchupGameHeroModel297A.build(from: missingSport, now: now, timeZone: pt, crestForTeamID: { _ in nil })
+        XCTAssertEqual(missingSport.homeRenderedPercent, 45)
+        XCTAssertEqual(missingSportTile.heroFigureText, "45%")
+        XCTAssertEqual(missingSportPage.home.currentPercentText, "45%")
+        XCTAssertNil(missingSportPage.away.currentPercentText)
+
+        // 3. Draw-priced soccer without draw_probability: game page matches pin tile by withholding away.
+        let soccerNoDraw = try decodeGame(#"""
+        {
+          "id": 133033,
+          "away_team": "Espanyol",
+          "home_team": "Athletic Bilbao",
+          "status": "live",
+          "sport": "soccer_spain_la_liga",
+          "hero_probability": 0.685,
+          "hero_probability_away": 0.315,
+          "hero_probability_observed_at": "2026-11-21T04:38:00Z"
+        }
+        """#)
+        let soccerNoDrawTile = WatchWristTileModel12616.build(wristTileInput(soccerNoDraw), now: now, timeZone: pt)
+        let soccerNoDrawPage = WatchMatchupGameHeroModel297A.build(from: soccerNoDraw, now: now, timeZone: pt, crestForTeamID: { _ in nil })
+        XCTAssertEqual(soccerNoDrawTile.heroFigureText, "69%")
+        XCTAssertEqual(soccerNoDrawPage.home.currentPercentText, "69%")
+        XCTAssertNil(soccerNoDrawPage.away.currentPercentText)
+
+        // 4. Final draw-priced game without prematch draw_probability: pregameRenderedPercents agrees with pin tile.
+        let finalNoDrawPrematch = try decodeGame(#"""
+        {
+          "id": 133034,
+          "away_team": "Espanyol",
+          "home_team": "Athletic Bilbao",
+          "status": "completed",
+          "sport": "soccer_spain_la_liga",
+          "away_score": 1,
+          "home_score": 0,
+          "prematch_odds": {"home_probability": 0.685, "away_probability": 0.115}
+        }
+        """#)
+        let finalNoDrawTile = WatchWristTileModel12616.build(wristTileInput(finalNoDrawPrematch), now: now, timeZone: pt)
+        let finalNoDrawPage = WatchMatchupGameHeroModel297A.build(from: finalNoDrawPrematch, now: now, timeZone: pt, crestForTeamID: { _ in nil })
+        XCTAssertNil(finalNoDrawPrematch.pregameRenderedPercents.away)
+        XCTAssertEqual(finalNoDrawPrematch.pregameRenderedPercents.home, 69)
+        XCTAssertNil(finalNoDrawPage.away.pregameText)
+        XCTAssertEqual(finalNoDrawPage.home.pregameText, "Pregame 69%")
+        XCTAssertEqual(finalNoDrawTile.supportingLine, "", "Pin tile withholds winner pregame line when away is withheld")
+
+        let finalHomeWin = try decodeGame(#"""
+        {
+          "id": 133035,
+          "away_team": "Espanyol",
+          "home_team": "Athletic Bilbao",
+          "status": "completed",
+          "sport": "soccer_spain_la_liga",
+          "away_score": 0,
+          "home_score": 1,
+          "prematch_odds": {"home_probability": 0.685, "away_probability": 0.115}
+        }
+        """#)
+        let finalHomeWinTile = WatchWristTileModel12616.build(wristTileInput(finalHomeWin), now: now, timeZone: pt)
+        let finalHomeWinPage = WatchMatchupGameHeroModel297A.build(from: finalHomeWin, now: now, timeZone: pt, crestForTeamID: { _ in nil })
+        XCTAssertEqual(finalHomeWinTile.supportingLine, "Pregame 69%")
+        XCTAssertEqual(finalHomeWinPage.home.pregameText, "Pregame 69%")
+    }
     #endif
 }

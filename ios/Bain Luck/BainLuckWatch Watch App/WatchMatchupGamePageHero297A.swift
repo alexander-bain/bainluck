@@ -285,13 +285,18 @@ nonisolated struct WatchMatchupGameHeroModel297A: Equatable, Sendable {
         guard game.showsForecast, let homeP = game.homeProbability else {
             return ResolvedChances(awayText: nil, awayShare: nil, drawText: nil, drawShare: nil, homeText: nil, homeShare: nil)
         }
+        let trimmedSport = game.sportKey?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let hasSport = !trimmedSport.isEmpty
         if isThreeWay {
+            // Keep 3-way parity with WatchWristTileModel12616 / DrawPricedWinner:
+            // never surface an unverified away percentage when drawProbability is absent.
+            let hasExplicitDraw = game.drawProbability != nil
             let homePct = game.homeRenderedPercent
-            let awayPct = renderedPercent(game.awayProbability)
+            let awayPct = hasExplicitDraw ? renderedPercent(game.awayProbability) : nil
             let drawPct = renderedPercent(game.drawProbability)
             let homeShare = min(max(homeP, 0), 1)
             let drawShare = game.drawProbability.map { min(max($0, 0), 1) }
-            let awayShare = game.awayProbability.map { min(max($0, 0), 1) }
+            let awayShare = hasExplicitDraw ? game.awayProbability.map { min(max($0, 0), 1) } : nil
             return ResolvedChances(
                 awayText: awayPct.map { "\($0)%" },
                 awayShare: awayShare,
@@ -299,6 +304,18 @@ nonisolated struct WatchMatchupGameHeroModel297A: Equatable, Sendable {
                 drawShare: drawShare,
                 homeText: homePct.map { "\($0)%" },
                 homeShare: homeShare
+            )
+        }
+        // Unknown/unclassified sport with no draw reading: match WatchWristTileModel12616
+        // and WatchSelectedGame.homeRenderedPercent (scalar home%, never assume 2-way duel).
+        guard hasSport else {
+            return ResolvedChances(
+                awayText: nil,
+                awayShare: nil,
+                drawText: nil,
+                drawShare: nil,
+                homeText: game.homeRenderedPercent.map { "\($0)%" },
+                homeShare: min(max(homeP, 0), 1)
             )
         }
         // Two-way non-draw market: keep served pair honest and never invent away from nil.
@@ -839,7 +856,7 @@ struct WatchMatchupGamePageHeroView297A: View {
             ZStack(alignment: .leading) {
                 HStack(spacing: 1) {
                     RoundedRectangle(cornerRadius: 3.5, style: .continuous)
-                        .fill(model.away.currentShare == nil && model.isThreeWaySoccer
+                        .fill(model.away.currentShare == nil
                               ? Color.white.opacity(0.24)
                               : Self.rgbColor(model.away.barHex))
                         .frame(width: max(4, awayW))
