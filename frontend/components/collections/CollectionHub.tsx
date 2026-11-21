@@ -130,6 +130,14 @@ export default function CollectionHub({ slug, initialHub = null }: { slug: strin
   const shown = hub?.slug === slug ? hub : null;
   latest.current = shown;
 
+  // Keep the browser tab title aligned with the loaded collection when SSR timed out
+  // and rendered the generic "Collection" fallback title.
+  useEffect(() => {
+    if (shown?.title) {
+      document.title = `${shown.title} | Bain Luck`;
+    }
+  }, [shown?.title]);
+
   // #12577: Oscars collection surfaces paired Nominated % + Wins % category cards with posters
   const isOscarsHub = slug === "oscars-2027" || slug === "oscars" || slug === "the-oscars";
   const [oscarsPairedSets, setOscarsPairedSets] = useState<PairedMetricSet[]>([]);
