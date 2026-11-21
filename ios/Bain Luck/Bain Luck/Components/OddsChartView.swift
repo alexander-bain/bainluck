@@ -2456,7 +2456,13 @@ struct OddsChartView: View {
                         LiveChartEdgeMarker(
                             selection: selection, proxy: proxy, plotFrame: plotFrame,
                             tail: liveSplit.tail, segments: liveSplit.segments,
-                            label: "\(homeShort) \(liveEdge.homeLabel)",
+                            label: LiveChartEdgeMarkerPlan.endpointLabel(
+                                homeShort: homeShort,
+                                awayShort: awayShort,
+                                reading: liveEdge,
+                                sides: axis.sides,
+                                fallbackAwayLabel: pairedAwayLabel9483
+                            ),
                             rising: Self.liveEdgeRising(priceActivity, showsPreview: liveEdgeShowsPreview),
                             lineColor: colorForSource(liveSplit.source, sources: sources),
                             lineStyle: strokeStyleForSource(liveSplit.source, sources: sources),
