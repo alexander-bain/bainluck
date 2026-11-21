@@ -18,7 +18,7 @@ from sqlalchemy.orm import selectinload
 
 from app.dependencies.auth import get_current_user, get_optional_user
 from app.models.models import (
-    User, UserPin, UserFavorite, UserPreference, Team, Sport, Event,
+    User, UserPin, UserFavorite, UserPreference, Team, Sport, Event, RetiredTeamRedirect,
     FuturesMarket, FuturesOutcome, TeamIdentityMapping,
 )
 from app.services.database import get_db, get_db_rw
@@ -687,7 +687,7 @@ _TEAM_SEARCH_EXCLUDED_SPORTS = (
     "soccer_colombia_primera_a",
 )
 _MARKET_TEAM_SUFFIX = (
-    r"\s+[-–—]\s+(?:exact score|more markets|player props|total corners)\s*$"
+    r"(?i)\s+[-–—]\s+(?:exact score|more markets|player props|total corners)\s*$"
 )
 
 
@@ -703,20 +703,35 @@ async def search_teams(
     if sum(map(len, words)) < 2:
         return []
 
-    # The tokens contain only letters and digits. PostgreSQL's word-start
-    # anchor allows "Los" Angeles and refuses Car"los", even in an alias.
+    # Search whole word prefixes in the saved name or an existing alias.
+    # The tokens contain only letters and digits.
     search_fields = (Team.name, Team.abbreviation, Team.location,
                      cast(Team.alternate_names, String))
-    matches = [
-        or_(*(field.bool_op("~*")(rf"\m{word}") for field in search_fields))
-        for word in words
-    ]
-    phrase = r"[[:space:][:punct:]]+".join(words)
+    matches = []
+    for word in words:
+        prefix = rf"(?i)(?:^|\W|_){word}"
+        retired_alias = select(RetiredTeamRedirect.retired_team_id).where(
+            RetiredTeamRedirect.canonical_team_id == Team.id,
+            RetiredTeamRedirect.sport_id == Team.sport_id,
+            RetiredTeamRedirect.retired_name.regexp_match(prefix),
+        ).exists()
+        venue_alias = select(TeamIdentityMapping.id).where(
+            TeamIdentityMapping.team_id == Team.id,
+            TeamIdentityMapping.sport_key == Sport.key,
+            TeamIdentityMapping.source == "odds_api",
+            TeamIdentityMapping.source_name.regexp_match(prefix),
+        ).exists()
+        matches.append(or_(
+            *(field.regexp_match(prefix) for field in search_fields),
+            retired_alias,
+            venue_alias,
+        ))
+    phrase = r"(?:\W|_)+".join(words)
     relevance = case(
-        (Team.name.bool_op("~*")(rf"^{phrase}$"), 0),
-        (Team.name.bool_op("~*")(rf"^{phrase}"), 1),
-        (Team.abbreviation.bool_op("~*")(rf"^{phrase}$"), 2),
-        (Team.name.bool_op("~*")(rf"\m{phrase}"), 3),
+        (Team.name.regexp_match(rf"(?i)^{phrase}$"), 0),
+        (Team.name.regexp_match(rf"(?i)^{phrase}"), 1),
+        (Team.abbreviation.regexp_match(rf"(?i)^{phrase}$"), 2),
+        (Team.name.regexp_match(rf"(?i)(?:^|\W|_){phrase}"), 3),
         else_=4,
     )
     tier = case(_TEAM_SEARCH_TIER, value=Sport.key, else_=5)
@@ -735,7 +750,7 @@ async def search_teams(
         .where(
             *matches,
             Sport.key.notin_(_TEAM_SEARCH_EXCLUDED_SPORTS),
-            Team.name.bool_op("!~*")(_MARKET_TEAM_SUFFIX),
+            ~Team.name.regexp_match(_MARKET_TEAM_SUFFIX),
             has_league_game,
         )
         .order_by(relevance, tier, Team.name, Team.id)

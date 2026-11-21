@@ -46,13 +46,21 @@ ISSUE_SEARCHES = {
     "Tottenham": ("Tottenham Hotspur", EPL),
     "Arsenal": ("Arsenal", EPL),
 }
-ADDITIONAL_SEARCHES = {
+FULL_NAME_SEARCHES = {
+    "Real Madrid": ("Real Madrid", LA_LIGA),
     "Manchester City": ("Manchester City", EPL),
     "New York Knicks": ("New York Knicks", NBA),
     "Los Angeles Lakers": ("Los Angeles Lakers", NBA),
     "Tottenham Hotspur": ("Tottenham Hotspur", EPL),
     "Harvard Crimson": ("Harvard Crimson", NCAAB),
+}
+ADDITIONAL_SEARCHES = {
+    "Real Madr": ("Real Madrid", LA_LIGA),
+    "Canadiens": ("Montreal Canadiens", "icehockey_nhl"),
+    "LAFC": ("Los Angeles FC", MLS),
     "Spurs": ("San Antonio Spurs", NBA),
+    "Harv": ("Harvard Crimson", NCAAB),
+    "Magpies": ("Newcastle United", EPL),
 }
 
 
@@ -76,7 +84,7 @@ async def seed_clubs(session):
         (1032, "Los Angeles Dodgers", MLB, None, []),
         (1033, "Los Angeles FC", MLS, None, ["LAFC"]),
         (1034, "Carlos Rivera", "boxing", None, []),
-        (1040, "Tottenham Hotspur", EPL, "367", ["Spurs"]),
+        (1040, "Tottenham Hotspur", EPL, "367", []),
         (1041, "Tottenham Hotspur", UCL, "367", ["Spurs"]),
         (1042, "Tottenham Hotspur FC - Exact Score", EPL, None, []),
         (1043, "Arsenal", EPL, "359", ["Arsenal FC"]),
@@ -109,7 +117,7 @@ async def seed_clubs(session):
                     for identity, name, league in wrong_leagues)
     await session.flush()
 
-    played_at = datetime(2026, 11, 1, 12, tzinfo=timezone.utc)
+    played_at = datetime(2024, 1, 1, 12, tzinfo=timezone.utc)
     session.add_all(
         Event(
             sport_id=sport_ids[league],
@@ -134,7 +142,13 @@ async def seed_clubs(session):
         ]
     )
     session.add(User(id=1, firebase_uid="onboarding-search-test"))
-    session.add(RetiredTeamRedirect(retired_team_id=14545, canonical_team_id=1040))
+    session.add(RetiredTeamRedirect(
+        retired_team_id=14545, canonical_team_id=1040,
+        retired_name="Spurs", sport_id=sport_ids[EPL],
+    ))
+    session.add(TeamIdentityMapping(
+        team_id=1024, source="odds_api", source_name="Magpies", sport_key=EPL,
+    ))
     await session.commit()
 
 
@@ -165,14 +179,15 @@ async def sessions():
         await engine.dispose()
 
 
-async def test_twelve_onboarding_queries_return_real_clubs(sessions):
+async def test_issue_and_additional_onboarding_queries_return_real_clubs(sessions):
     async with sessions() as db:
         await db.execute(text("SET TRANSACTION READ ONLY"))
         team_ids = set((await db.scalars(select(Team.id))).all())
-        for query, first in (ISSUE_SEARCHES | ADDITIONAL_SEARCHES).items():
+        for query, first in (ISSUE_SEARCHES | FULL_NAME_SEARCHES | ADDITIONAL_SEARCHES).items():
             results = await search_teams(query, db)
             assert (results[0].name, results[0].sport_key) == first, query
             assert all(result.id in team_ids for result in results), query
+            assert all(variant.id in team_ids for result in results for variant in result.sports), query
             assert all(result.id < 1090 for result in results), query
             assert all(" - " not in result.name for result in results), query
 
@@ -196,6 +211,7 @@ async def test_prefixes_keep_other_clubs_separate_and_group_confirmed_spurs_vari
             (1040, EPL), (1041, UCL),
         ]
         assert {r.id for r in await search_teams("Spurs", db)} == {1040, 1052}
+        assert [r.id for r in await search_teams("Magpies", db)] == [1024]
 
 
 async def test_save_resolves_old_id_skips_missing_ids_and_saves_the_rest(sessions):
