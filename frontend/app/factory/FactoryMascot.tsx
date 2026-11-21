@@ -28,10 +28,11 @@ export default function FactoryMascot({ level, pose, moving = false }: {
   );
 }
 
-export function MascotMove({ event, clipMs, pose }: {
+export function MascotMove({ event, clipMs, pose, alongside }: {
   event: FloorEvent;
   clipMs: number;
   pose: MascotAction;
+  alongside?: boolean;
 }) {
   const end = stations.indexOf(event.station);
   const start = pose === "pushing" && event.from ? stations.indexOf(event.from) : end;
@@ -40,6 +41,7 @@ export function MascotMove({ event, clipMs, pose }: {
       className={styles.mascotRoute}
       aria-hidden="true"
       data-mascot-action={pose}
+      data-alongside={alongside || undefined}
       data-reverse={end < start || undefined}
       style={{
         "--event-start": start,

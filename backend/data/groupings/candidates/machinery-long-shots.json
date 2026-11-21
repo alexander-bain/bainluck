@@ -22,6 +22,13 @@
     "extra_llm_categories": ["culture", "tech", "politics", "economics", "weather", "basketball"],
     "card_rows": 3,
     "card_section_key": "long_shots_board",
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ae/Milky_Way_Streaky_Bay_%28Unsplash%29.jpg/960px-Milky_Way_Streaky_Bay_%28Unsplash%29.jpg",
+    "card_image_alt": "Star-filled night sky showing the Milky Way galaxy",
+    "card_image_credit": "Thom Schneider (CC0 1.0 Public Domain, Wikimedia Commons)",
+    "card_image_author": "Thom Schneider",
+    "card_image_license": "CC0 1.0 Public Domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Milky_Way_Streaky_Bay_(Unsplash).jpg",
     "headline_predicate": "is the likeliest long shot",
     "sections": [
       {

@@ -91,19 +91,24 @@ class GitHub:
                 ),
             },
         )
-        with self.lock:
-            self.api_calls += 1
-            self.api_calls_by_resource[
-                "graphql" if endpoint == "graphql" else "core"
-            ] += 1
-        try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                self._remember_rate(response.headers)
-                content = response.read()
-        except urllib.error.HTTPError as error:
-            self._remember_rate(error.headers)
-            raise
-        return json.loads(content) if content else None
+        attempts = 2 if method == "GET" or (method == "POST" and graphql_read) else 1
+        for attempt in range(attempts):
+            with self.lock:
+                self.api_calls += 1
+                self.api_calls_by_resource[
+                    "graphql" if endpoint == "graphql" else "core"
+                ] += 1
+            try:
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    self._remember_rate(response.headers)
+                    content = response.read()
+                return json.loads(content) if content else None
+            except urllib.error.HTTPError as error:
+                self._remember_rate(error.headers)
+                if attempt + 1 == attempts or not 500 <= error.code <= 599:
+                    raise
+                error.close()
+                time.sleep(1)
 
     def _remember_rate(self, headers):
         remaining = headers.get("X-RateLimit-Remaining")

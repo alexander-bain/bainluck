@@ -14,10 +14,11 @@ const poseIcons = {
   stuck: CircleAlert,
 } as const;
 
-export default function Worker({ state, identity, move }: {
+export default function Worker({ state, identity, move, onFloor = false }: {
   state: WorkerState;
   identity: Identity;
   move?: CrewMove;
+  onFloor?: boolean;
 }) {
   const Cue = state === "working" || state === "waiting" || state === "idle"
     ? undefined
@@ -30,6 +31,7 @@ export default function Worker({ state, identity, move }: {
       data-worker={state}
       data-identity={identity}
       data-crew-move={move}
+      data-floor-figure={onFloor || undefined}
     >
       <span className={styles.workerFigure} />
       {Cue && <Cue className={styles.workerCue} />}

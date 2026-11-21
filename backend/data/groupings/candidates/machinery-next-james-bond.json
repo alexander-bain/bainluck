@@ -22,6 +22,13 @@
     "materialize": "read-time",
     "card_rows": 3,
     "card_section_key": "bond_castings",
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/30/Tower_Bride_at_dusk_2016-unsplash_%282%29.jpg/960px-Tower_Bride_at_dusk_2016-unsplash_%282%29.jpg",
+    "card_image_alt": "Tower Bridge in London illuminated over the River Thames at twilight",
+    "card_image_credit": "Susan Yin (CC0 1.0 Public Domain, Wikimedia Commons)",
+    "card_image_author": "Susan Yin",
+    "card_image_license": "CC0 1.0 Public Domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Tower_Bride_at_dusk_2016-unsplash_(2).jpg",
     "sections": [
       {
         "key": "bond_castings",

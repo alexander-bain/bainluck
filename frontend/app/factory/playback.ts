@@ -3,6 +3,7 @@ import type { FloorEvent } from "./types";
 import { stationNames, stations } from "./activity";
 
 const PLAYBACK_WINDOW_MS = 5 * 60_000;
+export const WALK_PER_STATION_MS = 3000;
 
 type TimerState = {
   reading: string;
@@ -36,6 +37,20 @@ export function crossesSegment(event: FloorEvent | undefined, segment: number) {
 
 export function playbackStep(count: number, durationMs: number) {
   return durationMs / Math.max(1, count);
+}
+
+function eventLength(event: FloorEvent, step: number) {
+  const distance = event.from ? Math.abs(stations.indexOf(event.from) - stations.indexOf(event.station)) : 0;
+  return distance ? distance * WALK_PER_STATION_MS : Math.min(1200, step * 0.85);
+}
+
+export function replayDuration(events: FloorEvent[], minimum: number) {
+  const step = playbackStep(events.length, minimum);
+  const duration = events.reduce((elapsed, event, i) => {
+    const clip = eventLength(event, step);
+    return elapsed + (i === events.length - 1 ? clip : Math.max(step, clip));
+  }, 0);
+  return Math.max(minimum, duration);
 }
 
 /** Timers advance only while visible. A repeated read never plays an event twice. */
@@ -80,9 +95,9 @@ export function useEventPlayer(
         return;
       }
       seen.current.add(event.id);
-      const clipMs = Math.min(1200, state.step * 0.85);
+      const clipMs = eventLength(event, state.step);
       setActive({ event, clipMs });
-      schedule(state.events.length ? state.step : clipMs);
+      schedule(state.events.length ? Math.max(state.step, clipMs) : clipMs);
     }
     schedule(state.remaining);
     return () => {

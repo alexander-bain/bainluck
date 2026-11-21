@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { useEventPlayer } from "./playback";
+import { replayDuration, useEventPlayer } from "./playback";
 import type { DayReplay } from "./types";
 
 export const DAY_REPLAY_MS = 60_000;
@@ -35,7 +35,7 @@ export function useDayReplay(animate: boolean) {
   }, [session, playing]);
 
   const open = useCallback((journal: DayReplay, automatic = false) => {
-    remaining.current = DAY_REPLAY_MS;
+    remaining.current = replayDuration(journal.events, DAY_REPLAY_MS);
     setLastTime(journal.events[0]?.at ?? journal.through);
     setFinished(false);
     setSession({ journal, id: String(++nextId.current), automatic });

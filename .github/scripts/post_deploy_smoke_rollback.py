@@ -28,7 +28,7 @@ DEFAULT_INITIAL_DELAY_SECONDS = 60.0
 DEFAULT_RETRIES = 3
 DEFAULT_RETRY_DELAY_SECONDS = 30.0
 DEFAULT_TIMEOUT_SECONDS = 30.0
-DEFAULT_HEALTH_WAIT_SECONDS = 120.0
+DEFAULT_HEALTH_WAIT_SECONDS = 360.0
 DEFAULT_HEALTH_POLL_SECONDS = 10.0
 
 KILL_SWITCH_ENV = "AUTO_ROLLBACK_ENABLED"
@@ -78,7 +78,7 @@ class EndpointResult:
 class SmokeReport:
     """Full decision record for a dry-run smoke check."""
 
-    verdict: str  # "disabled", "passed", "empty_list_report", "alert_only", "would_roll_back"
+    verdict: str  # "disabled", "inconclusive", "passed", "empty_list_report", "alert_only", "would_roll_back"
     endpoints: tuple[EndpointResult, ...]
     changed_migrations: tuple[str, ...]
     prior_release_state: str
@@ -101,6 +101,12 @@ def is_auto_rollback_enabled(env_value: str | None) -> bool:
 def _short_sha(sha: str) -> str:
     clean = sha.strip()
     return clean[:8] if clean else "unknown"
+
+
+def _commit_context(health_commit: str | None, expected_sha: str) -> str:
+    read_tag = _short_sha(health_commit) if (health_commit and health_commit.strip()) else "none"
+    expected_tag = _short_sha(expected_sha) if (expected_sha and expected_sha.strip()) else "none"
+    return f"commit read={read_tag}, expected={expected_tag}"
 
 
 def _sha_matches(health_commit: str | None, expected_sha: str) -> bool:
@@ -370,6 +376,7 @@ def run_smoke_check(
         )
 
     health_commit: str | None = None
+    commit_ctx = _commit_context(health_commit, expected_sha)
     if expected_sha and not skip_health_wait:
         health_commit = wait_for_health_commit(
             base_url=base_url,
@@ -381,6 +388,21 @@ def run_smoke_check(
             sleep_fn=sleep_fn,
             monotonic_fn=monotonic_fn,
         )
+        commit_ctx = _commit_context(health_commit, expected_sha)
+        if not _sha_matches(health_commit, expected_sha):
+            return SmokeReport(
+                verdict="inconclusive",
+                endpoints=(),
+                changed_migrations=changed_migrations,
+                prior_release_state=resolved_prior_state,
+                expected_sha=expected_sha,
+                prev_sha=prev_sha,
+                health_commit=health_commit,
+                summary=(
+                    f"INCONCLUSIVE: /api/health did not serve expected commit within "
+                    f"{int(health_wait_seconds)}s ({commit_ctx}; dry-run; no rollback)."
+                ),
+            )
 
     if initial_delay_seconds > 0:
         sleep_fn(initial_delay_seconds)
@@ -412,7 +434,7 @@ def run_smoke_check(
             prev_sha=prev_sha,
             health_commit=health_commit,
             summary=(
-                "PASS: post-deploy public read checks succeeded (dry-run; no rollback needed).\n"
+                f"PASS: post-deploy public read checks succeeded ({commit_ctx}; dry-run; no rollback needed).\n"
                 f"{detail_block}"
             ),
         )
@@ -427,7 +449,7 @@ def run_smoke_check(
             prev_sha=prev_sha,
             health_commit=health_commit,
             summary=(
-                "REPORT ONLY: endpoint answered HTTP 200 with an empty list; "
+                f"REPORT ONLY: endpoint answered HTTP 200 with an empty list ({commit_ctx}); "
                 "errors and empty lists are different things — no rollback (dry-run).\n"
                 f"{detail_block}"
             ),
@@ -447,7 +469,7 @@ def run_smoke_check(
             prev_sha=prev_sha,
             health_commit=health_commit,
             summary=(
-                f"alert only: database migration changed ({mig_list}); "
+                f"alert only: database migration changed ({mig_list}; {commit_ctx}); "
                 "automatic rollback refused (dry-run, no Heroku call).\n"
                 f"{detail_block}"
             ),
@@ -463,7 +485,7 @@ def run_smoke_check(
             prev_sha=prev_sha,
             health_commit=health_commit,
             summary=(
-                f"alert only: prior release state is '{resolved_prior_state}'; "
+                f"alert only: prior release state is '{resolved_prior_state}' ({commit_ctx}); "
                 "never roll back twice / over failed prior release — automatic rollback refused "
                 "(dry-run, no Heroku call).\n"
                 f"{detail_block}"
@@ -479,7 +501,7 @@ def run_smoke_check(
         prev_sha=prev_sha,
         health_commit=health_commit,
         summary=(
-            f"would roll back release {short_sha} (dry-run only; NO Heroku call made)\n"
+            f"would roll back release {short_sha} ({commit_ctx}; dry-run only; NO Heroku call made)\n"
             f"planned_issue_title: {planned_issue_title}\n"
             f"{detail_block}"
         ),
@@ -518,7 +540,9 @@ def run_self_test_500() -> SmokeReport:
             retries=3,
             retry_delay_seconds=0.0,
             timeout_seconds=5.0,
-            skip_health_wait=True,
+            health_wait_seconds=2.0,
+            health_poll_seconds=0.05,
+            skip_health_wait=False,
             auto_rollback_env="true",
         )
     finally:

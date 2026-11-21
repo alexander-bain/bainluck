@@ -10,6 +10,7 @@ import unittest
 import io
 import tempfile
 from contextlib import redirect_stdout
+from urllib.error import HTTPError
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts/factory"))
@@ -38,6 +39,34 @@ from notes import ModelBudget, make_notes
 from speech import make_speech
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+class GitHubRequestTests(unittest.TestCase):
+    def test_history_query_retries_a_transient_504_and_counts_both_calls(self):
+        api = GitHub(token="fake")
+        error = HTTPError("https://api.github.com/graphql", 504, "Gateway Timeout", {}, None)
+        response = MagicMock()
+        response.__enter__.return_value.headers = {
+            "X-RateLimit-Remaining": "98", "X-RateLimit-Resource": "graphql",
+        }
+        response.__enter__.return_value.read.return_value = b'{"data": {"history": []}}'
+        with patch("collect.urllib.request.urlopen", side_effect=[error, response]), patch("collect.time.sleep"):
+            result = api.request("graphql", {"query": "query { repository { id } }"})
+        self.assertEqual(result, {"data": {"history": []}})
+        self.assertEqual(api.api_calls, 2)
+        self.assertEqual(api.api_calls_by_resource["graphql"], 2)
+        self.assertEqual(api.rates["graphql"], 98)
+
+    def test_stops_after_two_read_failures_and_never_retries_a_write(self):
+        error = HTTPError("https://api.github.com/example", 502, "Bad Gateway", {}, None)
+        for method, attempts in [("GET", 2), ("PATCH", 1)]:
+            with self.subTest(method=method):
+                api = GitHub(token="fake", read_only=False)
+                with patch("collect.urllib.request.urlopen", side_effect=error) as send, patch("collect.time.sleep"):
+                    with self.assertRaises(HTTPError):
+                        api.request("example", method=method)
+                self.assertEqual(send.call_count, attempts)
+                self.assertEqual(api.api_calls, attempts)
 
 
 class FactoryRules(unittest.TestCase):
