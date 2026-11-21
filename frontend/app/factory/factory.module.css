@@ -508,6 +508,7 @@
   box-shadow: 0 0 0 2px var(--amber-light);
 }
 .floorKey {
+  grid-column: 2;
   padding: 3px var(--floor-inset) 6px;
   font-size: 11px;
   color: var(--secondary);
@@ -1639,8 +1640,32 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   padding-inline: 5px;
 }
 .stationNote p { margin-bottom: 0; }
+.lineRail {
+  position: relative;
+}
+.lineRail::before,
+.lineRail::after {
+  position: absolute;
+  content: "";
+  pointer-events: none;
+}
+.lineRail::before {
+  inset-block: 42px 26px;
+  inset-inline-start: calc(50% - 4px);
+  width: 8px;
+  background: url("/factory/workshop/frame-vertical.webp") center / 100% 100% no-repeat;
+}
+.lineRail::after {
+  inset-block-end: 0;
+  inset-inline-start: calc(50% - 11px);
+  width: calc(50% + 22px);
+  height: 38px;
+  transform: scaleX(-1);
+  background: url("/factory/workshop/copper-elbow.webp") center / 100% 100% no-repeat;
+}
 .lineName {
   position: relative;
+  z-index: 1;
   align-self: start;
   align-items: center;
   justify-content: center;
@@ -1649,18 +1674,6 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   margin-top: 4px;
   padding: 4px 2px;
   text-align: center;
-}
-.lineName::after {
-  position: absolute;
-  z-index: 0;
-  inset-block-start: calc(100% + 7px);
-  inset-inline-start: calc(50% - 5px);
-  width: 47px;
-  height: 35px;
-  transform: scaleX(-1);
-  background: url("/factory/workshop/copper-elbow.webp") center / 100% 100% no-repeat;
-  content: "";
-  pointer-events: none;
 }
 .lineName strong { font-size: 15px; }
 .lineName svg { color: var(--ink); }
@@ -1678,9 +1691,8 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 .floorFooter {
   position: relative;
   isolation: isolate;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: space-between;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
   gap: 3px;
   min-height: 63px;
@@ -1712,6 +1724,7 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   display: flex;
   align-items: flex-start;
   gap: 5px;
+  justify-self: end;
   margin: 0;
   max-width: 100%;
   color: var(--ink);
@@ -1869,6 +1882,17 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   .floorSpeech { order: 1; flex: 1 0 100%; justify-content: flex-start; }
 }
 
+@media (min-width: 1200px) {
+  .factory h1 { font-size: clamp(42px, 4.3vw, 56px); }
+  .heading { min-height: 100px; padding-block: 4px; }
+  .verdict > .mascot { width: 37px; }
+  .stationSign { min-height: 87px; padding-bottom: 21px; }
+  .lineRow { margin-bottom: 6px; }
+  .machines { padding-bottom: 19px; }
+  .machine { padding-block: 4px; }
+  .floorFooter { min-height: 51px; }
+}
+
 @media (max-width: 640px) {
   .factory {
     --line-column: 76px;
@@ -1888,10 +1912,9 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   .updated { gap: 4px; font-size: 11px; padding-inline: 2px; }
   .updated strong { display: block; }
   .lineName { padding-inline: 1px; }
-  .lineName::after { width: 31px; height: 26px; }
   .lineName strong { font-size: 12px; }
   .lineName > .buildPlate { width: 100%; font-size: 9px; }
-  .floorFooter { justify-content: center; padding-inline: 50px; }
+  .floorFooter { display: flex; flex-wrap: wrap; justify-content: center; padding-inline: 50px; }
   .floorFooter::after { background-size: auto 52%, auto 52%; }
   .speechBubble { padding: 4px 6px; }
 }
