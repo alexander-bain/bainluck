@@ -378,3 +378,131 @@ async def test_prewarm_standing_roundups_caches_300s_nonlive_60s_live_and_never_
     assert live_res["outcome"] == "ok"
     assert seen_slugs == [("roundup-live",)]
     assert idle_res == {"outcome": "idle", "warmed": 0}
+
+
+@pytest.mark.asyncio
+async def test_live_feed_shapes_resplices_live_machinery_after_gather_when_warmed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When `gather` warms live machinery after Discover finishes, post-gather re-splices `:machinery`."""
+    monkeypatch.setenv("CONTAINER_MACHINERY_SLICE1_ENABLED", "true")
+    monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+
+    async def _run_case(*, warmed_count: int) -> tuple[int, dict[str, tuple[int, str]], dict[str, dict[str, str]]]:
+        hashes: dict[str, dict[str, str]] = {
+            pcp.FEED_PREWARM_LIVE_SHAPES_KEY: {"discover": "1"},
+        }
+        written_keys: dict[str, tuple[int, str]] = {}
+        splice_calls = 0
+        machinery_refreshed = False
+
+        class _Pipe:
+            def __init__(self) -> None:
+                self.ops: list[tuple] = []
+
+            def hset(self, key: str, field: str, value: str):
+                self.ops.append(("hset", key, field, value))
+                return self
+
+            def hdel(self, key: str, field: str):
+                self.ops.append(("hdel", key, field))
+                return self
+
+            def expire(self, key: str, ttl: int):
+                return self
+
+            def execute(self) -> None:
+                for op, k, f, *rest in self.ops:
+                    if op == "hset":
+                        hashes.setdefault(k, {})[f] = rest[0]
+                    elif op == "hdel":
+                        hashes.setdefault(k, {}).pop(f, None)
+
+        fake_rc = MagicMock()
+        fake_rc.pipeline.side_effect = lambda transaction=True: _Pipe()
+        fake_rc.get.return_value = None
+        fake_rc.hset.side_effect = lambda k, f, v: hashes.setdefault(k, {}).__setitem__(f, v)
+        fake_rc.hgetall.side_effect = lambda k: dict(hashes.get(k, {}))
+        fake_rc.setex.side_effect = lambda k, ttl, v: written_keys.__setitem__(k, (ttl, v))
+        fake_rc.exists.side_effect = lambda k: 1 if k in written_keys else 0
+
+        full_deck = [
+            {"type": "futures", "id": "f-1", "data": {"id": 1, "status": "open"}},
+            {"type": "event", "id": "ev-live", "data": {"id": 999, "status": "live"}},
+        ]
+
+        async def _fake_get_feed(**kwargs):
+            req: Request = kwargs["request"]
+            req.scope[fc.FEED_PREWARM_KEY_SCOPE_KEY] = "feed_cache:disc20"
+            req.scope[fc.FEED_PREWARM_MACHINERY_BASE_SCOPE_KEY] = {
+                "page_base_key": "feed:pagebase:disc20",
+                "page_base_body": {"items": full_deck, "total": len(full_deck)},
+                "page_base_fresh_ttl": 30,
+                "page_base_stale_ttl": 60,
+                "page_base_last_good_ttl": 60,
+                "cache_shape": {"limit": 20, "offset": 0, "event_pct": 0.15, "mode": "discover"},
+                "limit": 20,
+                "offset": 0,
+                "opening_seating": True,
+                "edition_policy": "default",
+                "age_origin": 1_800_000_000.0,
+            }
+            return {
+                "items": [full_deck[0]],
+                "total": len(full_deck),
+                "cache": {"status": "miss", "built_at": 1_800_000_000.0},
+            }
+
+        def _fake_splice(rc, *, mach_base, label):
+            nonlocal splice_calls
+            splice_calls += 1
+            ttl = 60 if machinery_refreshed else 25
+            pb_key = f"feed:machinery_pagebase:disc20:{'fresh' if machinery_refreshed else 'stale'}"
+            written_keys["feed:machinery_pagebase:disc20:stale"] = (ttl, "{}")
+            return {"outcome": "ok", "live": True, "page_base_key": pb_key}
+
+        async def _fake_mach_live(rc, *, deadline_s=20.0):
+            nonlocal machinery_refreshed
+            await asyncio.sleep(0)
+            if warmed_count > 0:
+                machinery_refreshed = True
+            return {"outcome": "ok" if warmed_count else "idle", "warmed": warmed_count}
+
+        async def _fake_stand_live(rc, *, deadline_s=15.0):
+            return {"outcome": "idle", "warmed": 0}
+
+        @asynccontextmanager
+        async def _fake_session():
+            yield MagicMock()
+
+        discover_only = tuple(s for s in pcp.FEED_PREWARM_SHAPES if s["label"] == "discover")
+        with (
+            patch("app.tasks.redis_state.get_redis_client", lambda: fake_rc),
+            patch("app.routes.feed.get_feed", _fake_get_feed),
+            patch("app.tasks.base.get_task_session", _fake_session),
+            patch.object(pcp, "FEED_PREWARM_SHAPES", discover_only),
+            patch.object(pcp, "_publish_machinery_feed_from_prewarm_base", _fake_splice),
+            patch.object(pcp, "_prewarm_live_machinery_roundups", _fake_mach_live),
+            patch.object(pcp, "_prewarm_live_standing_roundups", _fake_stand_live),
+            patch("app.utils.feed_served_markets.record_served_market_ids"),
+        ):
+            await pcp._prewarm_live_feed_shapes()
+
+        return splice_calls, written_keys, hashes
+
+    calls_warmed, written_warmed, hashes_warmed = await _run_case(warmed_count=1)
+    assert calls_warmed == 2
+    assert written_warmed["feed:machinery_pagebase:disc20:stale"][0] == 60
+    assert (
+        hashes_warmed[pcp.FEED_PREWARM_MACHINERY_KEYS_KEY]["discover"]
+        == "feed:machinery_pagebase:disc20:fresh"
+    )
+
+    calls_idle, written_idle, hashes_idle = await _run_case(warmed_count=0)
+    assert calls_idle == 1
+    assert written_idle["feed:machinery_pagebase:disc20:stale"][0] == 25
+    assert (
+        hashes_idle[pcp.FEED_PREWARM_MACHINERY_KEYS_KEY]["discover"]
+        == "feed:machinery_pagebase:disc20:stale"
+    )
+

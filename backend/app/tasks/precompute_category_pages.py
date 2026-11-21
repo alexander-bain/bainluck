@@ -1731,13 +1731,21 @@ async def _prewarm_feed_shape(
                     exc_info=True,
                 )
                 _mach_pub_res = {"outcome": "error"}
-            if (
-                isinstance(_mach_pub_res, dict)
-                and _mach_pub_res.get("outcome") != "ok"
-            ):
+            _needs_post_gather_resplice = (
+                not isinstance(_mach_pub_res, dict)
+                or _mach_pub_res.get("outcome") != "ok"
+                or bool(_mach_pub_res.get("live"))
+            )
+            if _needs_post_gather_resplice:
                 _pending_sink = _PREWARM_PENDING_MACH_BASES_VAR.get()
                 if _pending_sink is not None:
-                    _pending_sink[label] = _mach_base_ctx
+                    _pending_sink[label] = {
+                        "mach_base": _mach_base_ctx,
+                        "force_retry": (
+                            not isinstance(_mach_pub_res, dict)
+                            or _mach_pub_res.get("outcome") != "ok"
+                        ),
+                    }
     # #2236 + #12529: A shape's page base / spliced `:machinery` deck can hold
     # live events at seats >= 20 even when its 20-card slice has `live=False`.
     # Enroll any shape whose slice, page base, OR spliced machinery deck is live
@@ -3071,12 +3079,18 @@ async def _prewarm_live_feed_shapes():
         _PREWARM_PENDING_MACH_BASES_VAR.reset(pending_token)
 
     # #12529: If a Discover build finished ahead of `_prewarm_live_machinery_roundups`
-    # with `incomplete`, re-run the pure-Python `<5 ms` splice now that live
-    # machinery keys have been refreshed.
-    for pending_label, pending_base in pending_mach_bases.items():
+    # with `incomplete`, OR carried live machinery groupings whose cache was then
+    # refreshed during `gather`, re-run the pure-Python `<5 ms` splice now so
+    # `:machinery` receives the fresh live timestamp/TTL.
+    _mach_warmed_n = int(machinery_live_result.get("warmed") or 0)
+    for pending_label, pending_entry in pending_mach_bases.items():
+        if not isinstance(pending_entry, dict) or "mach_base" not in pending_entry:
+            continue
+        if not pending_entry.get("force_retry") and _mach_warmed_n <= 0:
+            continue
         try:
             retry_res = _publish_machinery_feed_from_prewarm_base(
-                rc, mach_base=pending_base, label=pending_label
+                rc, mach_base=pending_entry["mach_base"], label=pending_label
             )
             if isinstance(retry_res, dict) and retry_res.get("outcome") == "ok":
                 if retry_res.get("page_base_key"):
