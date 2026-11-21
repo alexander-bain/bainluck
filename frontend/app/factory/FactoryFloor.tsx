@@ -33,6 +33,7 @@ import Worker, { type WorkerState } from "./Worker";
 import EventScene from "./EventScene";
 import BuilderNamePanel from "./BuilderNamePanel";
 import CrewCard from "./CrewCard";
+import DailyPictures from "./DailyPictures";
 import { crewPose } from "./crewMotion";
 import {
   builders, holdAuthorName, nameableBuilders, useBuilderNames,
@@ -1213,6 +1214,8 @@ export default function FactoryFloor(initial: {
             {nameableBuilders.map(id => crewCard(id))}
           </div>
         </details>
+
+        <DailyPictures pictures={data.pictures} artist={names.F} />
 
         <details className={styles.panel} aria-labelledby="last-step-heading">
           <summary className={styles.summary}>

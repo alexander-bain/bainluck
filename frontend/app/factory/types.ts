@@ -87,6 +87,13 @@ export interface CrewHabits {
   longest?: { number: number; since: string };
 }
 
+export interface FactoryPicture {
+  day: string;
+  as_of: string;
+  floor: number;
+  shipped: number;
+}
+
 export interface Injury {
   kind: "switched-off" | "wrong-number";
   number: number;
@@ -168,6 +175,7 @@ export interface FactoryData {
     since: string;
     builders: Partial<Record<Exclude<Builder, "Other"> | "Fable", CrewHabits>>;
   };
+  pictures?: FactoryPicture[];
   injury_clock?: InjuryClock;
   stops?: Stop[];
   notes?: {

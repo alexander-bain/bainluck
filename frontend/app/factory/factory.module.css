@@ -2491,6 +2491,45 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   .builderCard > .nameTag { font-size: 28px; }
 }
 
+.dailyPictures {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(96px, auto);
+  align-items: start;
+  gap: 12px;
+  max-width: 620px;
+  padding: 0 12px 12px;
+  margin-inline: auto;
+}
+.dayPicture {
+  min-width: 0;
+  margin: 0;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.dayPicture img { display: block; width: 100%; height: auto; }
+.dayPicture figcaption { padding: 8px 10px; line-height: 1.4; }
+.dayPicture time { font-weight: 700; }
+.dayPicture p { margin: 4px 0 0; }
+.pictureEasel { display: grid; justify-items: center; gap: 6px; }
+.pictureEasel > .worker { width: 96px; height: 108px; }
+.pictureEasel ul { display: grid; gap: 5px; list-style: none; padding: 0; margin: 3px 0 0; }
+.pictureEasel button {
+  border: 1px solid var(--edge);
+  border-radius: 4px;
+  padding: 5px 8px;
+  color: var(--ink);
+  background: var(--paper);
+}
+.pictureEasel button[aria-pressed="true"] { border-color: var(--green); font-weight: 700; }
+.pictureEasel button:focus-visible { outline: 2px solid var(--green); outline-offset: 2px; }
+
+@media (min-width: 1000px) and (min-height: 680px) {
+  .records:has(> [data-daily-pictures]):not(:has(> details[open])) {
+    grid-template-columns: minmax(0, 2.9fr) repeat(5, minmax(0, 1fr));
+  }
+}
+
 @media (max-width: 720px) {
   .builderNameInputs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

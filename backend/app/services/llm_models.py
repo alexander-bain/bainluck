@@ -44,6 +44,34 @@ class UnsupportedModelError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class ImageModelSpec:
+    model: str
+    text_input_per_m: int
+    image_input_per_m: int
+    image_output_per_m: int
+    price_url: str
+
+
+_FACTORY_IMAGE = ImageModelSpec(
+    model="gpt-image-2.6-flare",
+    text_input_per_m=5,
+    image_input_per_m=8,
+    image_output_per_m=30,
+    price_url="https://developers.openai.com/api/docs/models/gpt-image-2.6-flare",
+)
+
+
+def image_model_for_task(task: str) -> ImageModelSpec:
+    # The global chat-model override does not apply to the Images API.
+    if task != "factory_picture":
+        raise UnsupportedModelError("No image model is configured for that task")
+    choice = os.getenv("LLM_MODEL_FACTORY_PICTURE", _FACTORY_IMAGE.model).strip()
+    if choice != _FACTORY_IMAGE.model:
+        raise UnsupportedModelError("No Factory image rate is recorded for that model")
+    return _FACTORY_IMAGE
+
+
+@dataclass(frozen=True)
 class ModelSpec:
     """What the request layer must know about a model before it may call it.
 
