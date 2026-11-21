@@ -166,13 +166,17 @@ def _at(now: datetime):
     _nothing_new` is where those two disagree.
     """
     import app.routes.futures as futures_routes
+    from app.utils import futures_price_screen
 
     class _Clock(datetime):
         @classmethod
         def now(cls, tz=None):
             return now if tz else now.replace(tzinfo=None)
 
-    with mock.patch.object(futures_routes, "datetime", _Clock):
+    with (
+        mock.patch.object(futures_routes, "datetime", _Clock),
+        mock.patch.object(futures_price_screen, "datetime", _Clock),
+    ):
         yield
 
 

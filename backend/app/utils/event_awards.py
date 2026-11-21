@@ -42,6 +42,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.utils.futures_market_snapshot import concept_price_observed_at_iso
+from app.utils.futures_price_screen import (
+    _board_has_a_verdict,
+    _fleet_newest_observation,
+    withheld_price_outcome_ids_for_markets,
+)
 
 from app.utils.settledness import (
     market_assigned_settled,
@@ -295,11 +300,6 @@ class AwardsEventAdapter:
 
     async def build_event(self, slug: str, db: AsyncSession) -> dict | None:
         from app.models import FuturesMarket
-        from app.routes.futures import (
-            _board_has_a_verdict,
-            _fleet_newest_observation,
-            withheld_price_outcome_ids_for_markets,
-        )
         from app.utils.market_staleness import (
             board_touched_at,
             stale_observation_keys,

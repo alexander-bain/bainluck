@@ -37,6 +37,7 @@ from sqlalchemy.orm import Session, load_only
 
 from app.models.models import Base, FuturesMarket, FuturesOutcome
 from app.routes import futures as futures_route
+from app.utils import futures_price_screen
 from app.utils import graded_out_field_legs as graded_mod
 
 
@@ -286,8 +287,9 @@ class TestWithheldKalshiSingleQueryUnion:
             src = kalshi_snapshot_rows if venue == "kalshi" else poly_snapshot_rows
             return [(oid, p) for oid, p in src if oid in oids]
 
-        monkeypatch.setattr(futures_route, "_newest_kalshi_trades", fake_kalshi_trades)
-        monkeypatch.setattr(futures_route, "_newest_venue_trade_rows", fake_venue_rows)
+        for module in (futures_route, futures_price_screen):
+            monkeypatch.setattr(module, "_newest_kalshi_trades", fake_kalshi_trades)
+            monkeypatch.setattr(module, "_newest_venue_trade_rows", fake_venue_rows)
 
         batched = asyncio.run(
             futures_route.withheld_price_outcome_ids_for_markets(None, [b1, b2])
@@ -316,7 +318,7 @@ class TestWithheldKalshiSingleQueryUnion:
             [self._leg(31, "ThinAsk", 0.50, bid=0.0, ask=0.99)],
         )
         monkeypatch.setattr(
-            futures_route, "_refuted_midpoint_candidates", lambda _m: []
+            futures_price_screen, "_refuted_midpoint_candidates", lambda _m: []
         )
 
         calls: list[tuple[str, list[int]]] = []
@@ -329,8 +331,8 @@ class TestWithheldKalshiSingleQueryUnion:
             calls.append((f"venue:{venue}", list(oids)))
             return []
 
-        monkeypatch.setattr(futures_route, "_newest_kalshi_trades", fake_kalshi_trades)
-        monkeypatch.setattr(futures_route, "_newest_venue_trade_rows", fake_venue_rows)
+        monkeypatch.setattr(futures_price_screen, "_newest_kalshi_trades", fake_kalshi_trades)
+        monkeypatch.setattr(futures_price_screen, "_newest_venue_trade_rows", fake_venue_rows)
 
         got = asyncio.run(
             futures_route.withheld_price_outcome_ids_for_markets(None, [b])

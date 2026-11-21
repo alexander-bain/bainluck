@@ -2,11 +2,14 @@
 the real KX award ticker/name shapes (verified live 2026-07-12). The adapter's
 build_event is exercised via the route test (test_route_event_concept.py)."""
 
+import ast
+import inspect
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
 
+from app.utils import event_awards, futures_price_screen
 from app.utils.event_awards import (
     CEREMONIES,
     AwardsEventAdapter,
@@ -499,3 +502,18 @@ async def test_old_best_actor_prices_cannot_appear_in_the_awards_hero_or_rail():
     assert result["graded_winner"] == "Michael B. Jordan"
     assert result["probability"] is None
     assert all(outcome["probability"] is None for outcome in result["outcomes"])
+
+
+def test_awards_price_screen_has_no_route_imports():
+    for module in (event_awards, futures_price_screen):
+        imports = set()
+        for node in ast.walk(ast.parse(inspect.getsource(module))):
+            if isinstance(node, ast.Import):
+                imports.update(alias.name for alias in node.names)
+            if isinstance(node, ast.ImportFrom) and node.module:
+                imports.update(f"{node.module}.{alias.name}" for alias in node.names)
+        route_imports = sorted(
+            name for name in imports
+            if name == "app.routes" or name.startswith("app.routes.")
+        )
+        assert not route_imports, f"{module.__name__} loads routes {route_imports}"
