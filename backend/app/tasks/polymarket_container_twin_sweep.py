@@ -105,6 +105,24 @@ DEFAULT_LOOKAHEAD_DAYS = 45
 MIN_MARKETS_FLOOR = 500
 
 
+def _family_row_columns():
+    from app.models.models import Event
+
+    return (
+        Event.id, Event.sport_id, Event.status, Event.espn_id, Event.external_id,
+        Event.statpal_fixture_id, Event.home_score, Event.away_score,
+        Event.win_probability_sources,
+    )
+
+
+#: #12042: the `events` columns a family member's evidence needs, and nothing
+#: else: `twin_identity_rank` (scores, `espn_id`, `external_id`, `status`,
+#: `win_probability_sources` for the source count, the loaded `sport`, `id`)
+#: plus `statpal_fixture_id` for the row. A column read and not listed raises
+#: (raiseload) rather than lazy-loading on an async session.
+FAMILY_ROW_COLUMNS = _family_row_columns()
+
+
 async def load_rows(session, *, lookback: int, lookahead: int):
     """Every Polymarket market carrying both venue signals, plus its row's ids.
 
@@ -122,10 +140,11 @@ async def load_rows(session, *, lookback: int, lookahead: int):
     then elects, suppress it, and send the reader to the worse of the two.
     """
     from sqlalchemy import select, text
-    from sqlalchemy.orm import selectinload
+    from sqlalchemy.orm import load_only, selectinload
 
     from app.models.models import Event
     from app.utils.event_twin_fold import twin_identity_rank
+    from app.utils.polymarket_container_twins import split_family_event_ids
 
     result = await session.execute(
         text(
@@ -169,6 +188,18 @@ async def load_rows(session, *, lookback: int, lookahead: int):
         starts.setdefault(row.event_id, set()).add(row.vgs)
         current_tags[row.event_id] = row.tags_text or "[]"
 
+    # #12042: the judgement reads a row only for the members of a family of two
+    # or more events (`split_family_event_ids`), so only those events are
+    # loaded, and only the columns `twin_identity_rank` and the row below read.
+    # The window now holds ~45k events (plan estimate, Nov 11; 1,852 on
+    # 2026-09-17). Loading every one as a full ORM row took worker-background
+    # past its quota (peak 473.8 MB, 11 of 13 runs never finished) and past the
+    # 300 s limit. `current_tags` is narrowed the same way: only a planned
+    # duplicate's tags are banked or compared, and every planned duplicate is a
+    # family member.
+    family_ids = split_family_event_ids(markets)
+    current_tags = {eid: tags for eid, tags in current_tags.items() if eid in family_ids}
+
     # `selectinload(Event.sport)` is REQUIRED, not an optimisation: the
     # election's second-to-last rung prefers a row that NAMES ITS LEAGUE over a
     # `*_other` catch-all (#2866), so it reads `event.sport`. Lazy-loading that
@@ -178,13 +209,16 @@ async def load_rows(session, *, lookback: int, lookahead: int):
         (
             await session.execute(
                 select(Event)
-                .where(Event.id.in_(list(current_tags)))
-                .options(selectinload(Event.sport))
+                .where(Event.id.in_(sorted(family_ids)))
+                .options(
+                    load_only(*FAMILY_ROW_COLUMNS, raiseload=True),
+                    selectinload(Event.sport),
+                )
             )
         )
         .scalars()
         .all()
-    )
+    ) if family_ids else []
 
     rows = {
         event.id: ContainerRow(
