@@ -7,6 +7,7 @@ No reserved slot, score bonus, assembly, or publication decision lives here.
 
 import asyncio
 import hashlib
+import inspect
 import json
 import logging
 import math
@@ -286,19 +287,22 @@ async def feed_collections_cache_fingerprint(
                         return raw
 
                 raw = await asyncio.wait_for(_pg_run(), timeout=timeout_s + 0.25)
-            elif isinstance(db, AsyncSession):
-                async def _generic_run():
-                    async with db.begin_nested():
-                        return (
-                            await db.execute(
-                                text(_FINGERPRINT_SQL),
-                                {"slug_pattern": container_discovery.DISCOVERABLE_SLUG_PATTERN},
-                            )
-                        ).scalar()
-
-                raw = await asyncio.wait_for(_generic_run(), timeout=timeout_s)
             else:
-                async def _double_run():
+                async def _generic_run():
+                    begin_nested = getattr(db, "begin_nested", None)
+                    cm = begin_nested() if callable(begin_nested) else None
+                    if hasattr(cm, "__aenter__") and hasattr(cm, "__aexit__"):
+                        async with cm:
+                            return (
+                                await db.execute(
+                                    text(_FINGERPRINT_SQL),
+                                    {
+                                        "slug_pattern": container_discovery.DISCOVERABLE_SLUG_PATTERN
+                                    },
+                                )
+                            ).scalar()
+                    if inspect.iscoroutine(cm):
+                        cm.close()
                     return (
                         await db.execute(
                             text(_FINGERPRINT_SQL),
@@ -306,7 +310,7 @@ async def feed_collections_cache_fingerprint(
                         )
                     ).scalar()
 
-                raw = await asyncio.wait_for(_double_run(), timeout=timeout_s)
+                raw = await asyncio.wait_for(_generic_run(), timeout=timeout_s)
         except asyncio.CancelledError:
             raise
         except Exception:
