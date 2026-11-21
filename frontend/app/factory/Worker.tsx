@@ -1,4 +1,5 @@
 import { CircleAlert, Moon, Package, Sparkles } from "lucide-react";
+import type { CrewMove } from "./crewMotion";
 import type { Builder, FactoryMood } from "./types";
 import styles from "./factory.module.css";
 
@@ -13,9 +14,10 @@ const poseIcons = {
   stuck: CircleAlert,
 } as const;
 
-export default function Worker({ state, identity }: {
+export default function Worker({ state, identity, move }: {
   state: WorkerState;
   identity: Identity;
+  move?: CrewMove;
 }) {
   const Cue = state === "working" || state === "waiting" || state === "idle"
     ? undefined
@@ -27,6 +29,7 @@ export default function Worker({ state, identity }: {
       aria-hidden="true"
       data-worker={state}
       data-identity={identity}
+      data-crew-move={move}
     >
       <span className={styles.workerFigure} />
       {Cue && <Cue className={styles.workerCue} />}

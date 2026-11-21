@@ -1,12 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { pacificDay, stations } from "./activity";
+import { pacificDay, stations, transferId } from "./activity";
 import type { DayReplay, FactoryData, FloorEvent } from "./types";
 
 const storageKey = "factory-today-transfers-v1";
-
-function transferId(event: Omit<FloorEvent, "id">) {
-  return `transfer:${event.line}:${event.number}:${event.from}:${event.station}:${Date.parse(event.at)}:${Date.parse(event.observed_at)}`;
-}
 
 export function transferEvents(data: FactoryData): FloorEvent[] {
   const builders = new Map(data.changes.map((change) => [change.number, change.builder]));
@@ -38,11 +34,12 @@ export function transferEvents(data: FactoryData): FloorEvent[] {
 }
 
 export function replayReading(data: FactoryData | null, date: string): DayReplay | undefined {
-  if (!data?.transitions || pacificDay(data.generated_at) !== date) return;
+  if (!data || pacificDay(data.generated_at) !== date ||
+      (!data.transitions && !data.day_replay)) return;
   return mergeReadings({
     date, through: data.generated_at,
     events: transferEvents(data).filter((event) => pacificDay(event.at) === date),
-  });
+  }, data.day_replay);
 }
 
 function mergeReadings(current: DayReplay, ...history: (DayReplay | undefined)[]): DayReplay {

@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useEventPlayer } from "./playback";
 import type { DayReplay } from "./types";
 
 export const DAY_REPLAY_MS = 60_000;
 
-type Session = { id: string; journal: DayReplay };
+type Session = { id: string; journal: DayReplay; automatic: boolean };
 
 export function useDayReplay(animate: boolean) {
   const nextId = useRef(0);
@@ -34,12 +34,13 @@ export function useDayReplay(animate: boolean) {
     if (session && playing) setLastTime(playing.event.at);
   }, [session, playing]);
 
-  function open(journal: DayReplay) {
+  const open = useCallback((journal: DayReplay, automatic = false) => {
     remaining.current = DAY_REPLAY_MS;
     setLastTime(journal.events[0]?.at ?? journal.through);
     setFinished(false);
-    setSession({ journal, id: String(++nextId.current) });
-  }
+    setSession({ journal, id: String(++nextId.current), automatic });
+  }, []);
+  const close = useCallback(() => setSession(null), []);
 
   return {
     session,
@@ -48,6 +49,6 @@ export function useDayReplay(animate: boolean) {
     finished,
     open,
     restart: () => { if (session) open(session.journal); },
-    close: () => setSession(null),
+    close,
   };
 }

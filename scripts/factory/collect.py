@@ -18,6 +18,7 @@ import urllib.parse
 
 from model import build, instant, iso, public_title, PACIFIC, TRUSTED
 from ci_queue import attach_machine_reason, machine_queue
+from crew import add_crew_week, add_day_replay
 from events import add_events
 from journeys import add_journeys
 from signs import add_signs, switched_off, wrong_numbers
@@ -834,6 +835,8 @@ def read_published(api):
         )
         if payload.get("generated_at") == previous.get("generated_at"):
             cache = payload.get("pulls", {})
+        if "crew_week" in payload:
+            cache["crew_week"] = payload["crew_week"]
     return release, previous, cache
 
 
@@ -876,11 +879,10 @@ def main():
     speech_stats = note_stats.copy()
     try:
         previous = json.loads(args.previous.read_text()) if args.previous else {}
-        cache = (
-            json.loads(args.cache_input.read_text()).get("pulls", {})
-            if args.cache_input
-            else {}
-        )
+        cache_file = json.loads(args.cache_input.read_text()) if args.cache_input else {}
+        cache = cache_file.get("pulls", {})
+        if "crew_week" in cache_file:
+            cache["crew_week"] = cache_file["crew_week"]
         release, summaries = None, None
         if args.publish:
             release, previous, cache = read_published(api)
@@ -889,6 +891,8 @@ def main():
         result = build(snapshot, previous)
         add_events(result, snapshot, previous, cache)
         add_journeys(result, previous)
+        add_day_replay(result, previous)
+        crew_week = add_crew_week(result, snapshot["pulls"], cache.get("crew_week"))
         add_signs(result, snapshot, previous)
         queue = machine_queue(api, REPO, datetime.now(timezone.utc))
         result["signals"]["checks_queue"] = queue["display"]
@@ -916,6 +920,7 @@ def main():
             "schema_version": 1,
             "generated_at": result["generated_at"],
             "pulls": {str(p["number"]): p for p in snapshot["pulls"]},
+            "crew_week": crew_week,
         }
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps(result, separators=(",", ":")) + "\n")

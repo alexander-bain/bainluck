@@ -2,6 +2,7 @@ import type { CSSProperties } from "react";
 import { Check, Minus, Truck, X } from "lucide-react";
 import Worker from "./Worker";
 import { stations } from "./activity";
+import { crewAction } from "./crewMotion";
 import type { FloorEvent } from "./types";
 import styles from "./factory.module.css";
 
@@ -17,6 +18,7 @@ export default function EventScene({
   const start = stations.indexOf(event.from ?? event.station);
   const end = stations.indexOf(event.station);
   const color = event.builder ? styles[`builder${event.builder}`] : undefined;
+  const crew = crewAction(event);
   return (
     <div
       aria-hidden="true"
@@ -31,9 +33,7 @@ export default function EventScene({
       } as CSSProperties}
     >
       <div className={styles.eventAction}>
-        {event.kind === "commit" && event.builder && event.builder !== "Other" && (
-          <Worker state="working" identity={event.builder} />
-        )}
+        {crew && <Worker {...crew} />}
         {(event.kind === "live" || event.kind === "deploy" || event.kind === "merge") && (
           <Truck size={20} />
         )}

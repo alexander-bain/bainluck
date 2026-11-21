@@ -8,8 +8,10 @@ import {
   crewActivity,
   duration,
   stopText,
+  transferId,
   workshopLight,
 } from "@/app/factory/activity";
+import { crewAction, crewPose } from "@/app/factory/crewMotion";
 import type { Change, FactoryData, FloorEvent } from "@/app/factory/types";
 import { useEventPlayer } from "@/app/factory/playback";
 import { useDayReplay } from "@/app/factory/useDayReplay";
@@ -191,6 +193,49 @@ it("shows carrying, standing in line, working and sleeping from snapshot evidenc
     crewActivity({ ...snapshot, transitions: [] }, now, [snapshot.changes[0]])
       .pose,
   ).toBe("working");
+});
+
+it("uses recorded transfers, failed checks and live events for distinct crew moves", () => {
+  const change: Omit<FloorEvent, "id"> = {
+    kind: "move", number: 12998, line: "Server", builder: "F",
+    station: "Test", from: "Write", at: now, observed_at: now,
+  };
+  const event = { ...change, id: transferId(change) };
+  expect(crewAction(event)?.move).toBe("cartwheel");
+  expect(crewAction({ ...event, builder: "E" })?.move).toBe("slide");
+  expect(crewAction({ ...event, kind: "check", builder: "B", outcome: "failed" })?.move).toBe("slump");
+  expect(crewAction({ ...event, kind: "live", builder: "S" })?.move).toBe("fist-pump");
+  expect(crewAction({ ...event, kind: "live", builder: "D" })?.move).toBe("flex");
+  expect(crewAction({ ...event, kind: "deploy", from: undefined })).toBeUndefined();
+  const checks = { ...snapshot, transitions: [] };
+  expect(crewPose(checks, "B", now, [checks.changes[0]]).pose).toBe("waiting");
+  expect(crewPose(checks, "C", now, []).pose).toBe("asleep");
+});
+
+it("offers the recorded crew cards and replays an earlier move when the fresh floor is quiet", async () => {
+  const reduce = watchMotion();
+  const rootElement = document.createElement("div");
+  const root = createRoot(rootElement);
+  const at = "2026-11-18T17:00:00Z";
+  const moved: Omit<FloorEvent, "id"> = {
+    kind: "move", number: 12998, builder: "B", line: "Website",
+    from: "Write", station: "Test", at, observed_at: at,
+  };
+  await act(async () => root.render(<FactoryFloor data={{
+    ...snapshot, changes: [], transitions: [], notes: undefined, stops: [],
+    day_replay: { date: "2026-11-18", through: at, events: [{ ...moved, id: transferId(moved) }] },
+    crew_week: { since: at, builders: { B: { changes: 2, stations: ["Test"], hours: [9] } } },
+  }} lastGoodAt={now} renderedAt={now} />));
+  try {
+    expect(rootElement.querySelectorAll("[data-crew]")).toHaveLength(8);
+    expect(rootElement.querySelector('[data-crew="B"]')?.textContent).toContain("Recorded changes shipped this week2");
+    expect(rootElement.textContent).toContain("9:00 AM PT · Website");
+    await act(async () => reduce());
+    expect(rootElement.querySelector("[data-crew-move]")).toBeNull();
+    expect(rootElement.textContent).toContain("9:00 AM PT · Website");
+  } finally {
+    await act(async () => root.unmount());
+  }
 });
 
 it("counts deliveries in each Live bay and keeps held changes and quiet drafts off the floor", async () => {
@@ -581,7 +626,7 @@ it("keeps lane speech, its pose and the daily count readable with motion off", a
   try {
     await act(async () => root.render(<FactoryFloor data={data} lastGoodAt={now} renderedAt={now} />));
     const builder = container.querySelector('[data-crew="B"]');
-    expect(builder?.getAttribute("data-pose")).toBe("working");
+    expect(builder?.getAttribute("data-pose")).toBe("carrying");
     expect(builder?.querySelector('p[data-source="model"]')?.textContent).toBe("#12998 is in checks.");
     expect(container.textContent).toContain("3 of 200 model calls made today.");
     expect(container.querySelector("[data-factory]")?.getAttribute("data-motion")).toBe("paused");
@@ -647,7 +692,7 @@ it("only displays a daily leader for deliveries recorded today with complete cov
   const sign = () => container.querySelector('[aria-label="Builder of the day"]')?.textContent;
   try {
     await act(async () => root.render(<FactoryFloor data={data} lastGoodAt={now} renderedAt={now} />));
-    expect(sign()).toContain("Apple · 1 change live");
+    expect(sign()).toContain("Builder F · 1 change live");
     const incomplete = { ...data, coverage: ["Server deployment could not be confirmed."] };
     await act(async () => root.render(<FactoryFloor data={incomplete} lastGoodAt={now} renderedAt={now} />));
     expect(sign()).toContain("Delivery records are incomplete");
@@ -812,7 +857,7 @@ it("shows browser-only names as text across the floor and restores the defaults"
     expect(reset).toBeDefined();
     await act(async () => reset?.click());
     expect(container.querySelector("[data-crew='B'] strong")?.textContent).toBe("Builder B");
-    expect(container.querySelector("aside[aria-label='Builder of the day']")?.textContent).toContain("Apple");
+    expect(container.querySelector("aside[aria-label='Builder of the day']")?.textContent).toContain("Builder F");
     expect(localStorage.getItem(storageKey)).toBeNull();
   } finally {
     localStorage.removeItem(storageKey);
