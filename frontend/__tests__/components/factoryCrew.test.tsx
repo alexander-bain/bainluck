@@ -8,6 +8,7 @@ import {
   crewActivity,
   duration,
   stopText,
+  workshopLight,
 } from "@/app/factory/activity";
 import type { Change, FactoryData, FloorEvent } from "@/app/factory/types";
 import { useEventPlayer } from "@/app/factory/playback";
@@ -817,4 +818,15 @@ it("shows browser-only names as text across the floor and restores the defaults"
     localStorage.removeItem(storageKey);
     await act(async () => root.unmount());
   }
+});
+
+it.each([
+  ["2026-11-20T13:59:00Z", "night"],
+  ["2026-11-20T14:00:00Z", "day"],
+  ["2026-11-21T01:59:00Z", "day"],
+  ["2026-11-21T02:00:00Z", "night"],
+  ["2026-07-01T13:00:00Z", "day"],
+  ["2026-07-02T01:00:00Z", "night"],
+])("sets the workshop light at %s to %s in Pacific time", (at, expected) => {
+  expect(workshopLight(at)).toBe(expected);
 });
