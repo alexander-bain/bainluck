@@ -9,7 +9,7 @@ import Vision
 #endif
 
 /// #13304 / Fable 7:06 AM PT assignment (1.0.7): `MachineryDiscoverCardView` draws `card.image_url`
-/// when present inside a `2:1` frame that fits the whole picture (`.scaledToFit()`, no fill-and-crop),
+/// when present inside a `2:1` frame that fills and centre-crops the picture (`.scaledToFill().clipped()`),
 /// and leaves cards without `image_url` completely unchanged.
 @MainActor
 final class MachineryCardHeroImage13304Tests: XCTestCase {
@@ -153,7 +153,7 @@ final class MachineryCardHeroImage13304Tests: XCTestCase {
         // A 2:1 frame inside 326 pt width is 163 pt tall + 10 pt VStack spacing = 173 pt delta.
         let expectedDelta: CGFloat = (390 - 32 - 32) / 2.0 + 10.0
         XCTAssertEqual(hMap - hBaseline, expectedDelta, accuracy: 2.0, "2:1 image should add exact 2:1 frame height + spacing")
-        XCTAssertEqual(hRing - hBaseline, expectedDelta, accuracy: 2.0, "3:2 image must fit inside the exact same 2:1 frame height (no crop/distortion)")
+        XCTAssertEqual(hRing - hBaseline, expectedDelta, accuracy: 2.0, "3:2 image must fit inside the exact same 2:1 frame height (centre-cropped inside exact 2:1 box)")
         XCTAssertEqual(hMap, hRing, accuracy: 1.0)
 
         // Also confirm AX5 renders cleanly with zero truncation dots.

@@ -1669,9 +1669,10 @@ struct MachineryDiscoverCardView: View {
                 if let image {
                     image
                         .resizable()
-                        .scaledToFit()
+                        .scaledToFill()
                 }
             }
+            .clipped()
         }
         .frame(maxWidth: .infinity)
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
