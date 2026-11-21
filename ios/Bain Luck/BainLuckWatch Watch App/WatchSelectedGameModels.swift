@@ -66,9 +66,13 @@ nonisolated struct WatchSelectedGame: Codable, Sendable, Identifiable {
     /// rounds the live pair (direction 209: a final shows the winner's pregame
     /// chance). A missing price stays missing.
     var pregameRenderedPercents: (home: Int?, away: Int?) {
-        let drawSport = (sportKey.map { DrawPricedWinner.sportPricesADraw($0) } ?? true) || prematchDrawProbability != nil
-        if drawSport {
+        if prematchDrawProbability != nil {
             return (renderedPercent(prematchHomeProbability), renderedPercent(prematchAwayProbability))
+        }
+        guard let sportKey,
+              !sportKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !DrawPricedWinner.sportPricesADraw(sportKey) else {
+            return (renderedPercent(prematchHomeProbability), nil)
         }
         let pair = renderedDuelPercents(away: prematchAwayProbability, home: prematchHomeProbability)
         return (pair[1], pair[0])
