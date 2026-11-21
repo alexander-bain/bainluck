@@ -922,14 +922,17 @@ struct FuturesDetailView: View {
         marketStatus: String?,
         marketSource: String?
     ) -> some View {
-        let isLeader = outcome.id == leaderId
+        let isOut = outcome.isOut == true
+        let isLeader = !isOut && outcome.id == leaderId
         let probPct = (outcome.probability ?? 0) * 100
         // #10964: a graded row names its result instead of its last quote.
-        let value = FuturesDetailRowValue.of(outcome, marketStatus: marketStatus, marketSource: marketSource)
+        let value: FuturesDetailRowValue = isOut
+            ? .none
+            : .of(outcome, marketStatus: marketStatus, marketSource: marketSource)
 
         return VStack(spacing: 6) {
             HStack(alignment: .top) {
-                if showsRank {
+                if showsRank && !isOut {
                     // Rank number
                     Text("#\(rank)")
                         .font(.system(size: 13, weight: .semibold, design: .monospaced))
@@ -1022,7 +1025,11 @@ struct FuturesDetailView: View {
                     }
                     .multilineTextAlignment(.trailing)
                 case .none:
-                    EmptyView()
+                    if isOut {
+                        Text("Out")
+                            .font(.system(size: 15, weight: .medium))
+                            .foregroundStyle(DS.textSecondary)
+                    }
                 }
             }
 

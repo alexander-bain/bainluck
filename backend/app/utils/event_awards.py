@@ -47,6 +47,10 @@ from app.utils.settledness import (
     settled_under_assigned_state,
 )
 
+# Polymarket's pre-nomination boards for the 69th ceremony's general field.
+GRAMMY_GENERAL_FIELD_POLYMARKET_IDS = frozenset({"805148", "805158", "805159", "805160"})
+
+
 # Day-of-year on which a Kalshi award market resolves when the ceremony has no
 # published date: the exchange's end-of-year backstop, not a schedule (gotcha #14)
 # or a ceremony-completion signal.

@@ -1423,6 +1423,7 @@ export type FuturesSortDirection = "asc" | "desc";
 
 export interface SortableOutcome {
   name: string;
+  is_out?: boolean;
   probability: number | null;
   probability_change_24h?: number | null;
   /** Grading, on a settled market only. See `sortFuturesOutcomes`'s `resolved`. */
@@ -1490,6 +1491,7 @@ export function sortFuturesOutcomes<T extends SortableOutcome>(
   const winnerLeads = resolved && field === "probability" && direction === "desc";
 
   return [...outcomes].sort((a, b) => {
+    if (Boolean(a.is_out) !== Boolean(b.is_out)) return a.is_out ? 1 : -1;
     let comparison = 0;
 
     if (winnerLeads) {

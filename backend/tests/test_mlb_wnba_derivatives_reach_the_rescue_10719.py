@@ -172,7 +172,9 @@ class TestTheOpenPass:
         """It is carved from the main scan, never from the floor's 60s."""
         monkeypatch.setattr(ka, "_OPEN_DERIVATIVE_RESERVE_S", 0.0)
         calls, _, tel = await _run_fetch(client, monkeypatch)
-        assert not [c for c in calls if c[1] == "open"]
+        assert not [
+            c for c in calls if c[1] == "open" and c[0] not in ka._OPEN_GRAMMY_SERIES_TICKERS
+        ]
         assert tel["open_derivative_truncated_after"] == 0
         assert ("KXMLBGAME", None, False) in calls, "the floor did not run"
 
@@ -183,7 +185,7 @@ class TestTheOpenPass:
             st = kw.get("series_ticker")
             if st is None:
                 return ([], None)
-            if kw.get("status") == "open":
+            if kw.get("status") == "open" and st not in ka._OPEN_GRAMMY_SERIES_TICKERS:
                 calls.append(st)
                 if st == ka._OPEN_DERIVATIVE_SERIES_TICKERS[0]:
                     raise RuntimeError("429")
