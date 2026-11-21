@@ -25,6 +25,7 @@
     ],
     "card_rows": 3,
     "card_section_key": "summed_up_2026",
+    "hide_row_art": true,
     "suppress_card_photo": true,
     "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fc/Minimal_vinyl_player_%28Unsplash%29.jpg/1280px-Minimal_vinyl_player_%28Unsplash%29.jpg",
     "card_image_alt": "Minimalist silver turntable playing a vinyl record",

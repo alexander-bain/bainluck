@@ -594,12 +594,312 @@ def _fallback_color(label: str) -> str:
     return _PALETTE_FALLBACK[h % len(_PALETTE_FALLBACK)]
 
 
+_PLACEHOLDER_CREST_SUFFIX = "/default.png"
+_TEAM_CLUB_PREFIX_RE = re.compile(r"^(?:fc|cf|sc|ac|afc|sv|fk)\s+", re.IGNORECASE)
+_TEAM_CLUB_SUFFIX_RE = re.compile(r"\s+(?:fc|cf|sc|ac|afc)$", re.IGNORECASE)
+_TEAM_STATIC_LOGO_KINDS: frozenset[str] = frozenset({"team_logo", "espn_team_logo"})
+_TEAM_LOOKUP_INDEX_CACHE: Optional[
+    tuple[Any, dict[str, list[str]], dict[str, str]]
+] = None
+_SPORTS_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "sports",
+        "basketball",
+        "football",
+        "hockey",
+        "baseball",
+        "soccer",
+        "tennis",
+        "golf",
+        "mma",
+        "boxing",
+    }
+)
+_SPORTS_TITLE_SPORT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\b(?:uefa\s+)?champions\s+league\b|\bucl\b", re.IGNORECASE), "soccer_uefa_champs_league"),
+    (re.compile(r"\beuropa\s+league\b", re.IGNORECASE), "soccer_uefa_europa_league"),
+    (re.compile(r"\b(?:english\s+)?premier\s+league\b|\bepl\b", re.IGNORECASE), "soccer_epl"),
+    (re.compile(r"\bla\s+liga\b", re.IGNORECASE), "soccer_spain_la_liga"),
+    (re.compile(r"\bbundesliga\b", re.IGNORECASE), "soccer_germany_bundesliga"),
+    (re.compile(r"\bserie\s+a\b", re.IGNORECASE), "soccer_italy_serie_a"),
+    (re.compile(r"\bligue\s+1\b", re.IGNORECASE), "soccer_france_ligue_one"),
+    (re.compile(r"\bmls\b", re.IGNORECASE), "soccer_usa_mls"),
+    (re.compile(r"\bfifa\s+world\s+cup\b|\bworld\s+cup\b", re.IGNORECASE), "soccer_fifa_world_cup"),
+    (
+        re.compile(r"\bwomen'?s\s+(?:march\s+madness|ncaa\b.*\bbasketball|college\s+basketball)\b|\bwncaab\b", re.IGNORECASE),
+        "basketball_wncaab",
+    ),
+    (
+        re.compile(r"\bmarch\s+madness\b|\b(?:men'?s\s+)?(?:ncaa\b.*\bbasketball|college\s+basketball)\b|\bfinal\s+four\b", re.IGNORECASE),
+        "basketball_ncaab",
+    ),
+    (re.compile(r"\bwnba\b", re.IGNORECASE), "basketball_wnba"),
+    (re.compile(r"\bnba\b", re.IGNORECASE), "basketball_nba"),
+    (re.compile(r"\bstanley\s+cup\b|\bnhl\b", re.IGNORECASE), "icehockey_nhl"),
+    (
+        re.compile(
+            r"\bsuper\s+bowl\b(?!\s+(?:halftime|half-time|commercial|ads?|anthem|broadcast|viewership))|\bnfl\b",
+            re.IGNORECASE,
+        ),
+        "americanfootball_nfl",
+    ),
+    (re.compile(r"\bcollege\s+football\b|\bcfp\b|\bncaaf\b|\bheisman\b", re.IGNORECASE), "americanfootball_ncaaf"),
+    (re.compile(r"\bworld\s+series\b|\bmlb\b", re.IGNORECASE), "baseball_mlb"),
+)
+
+
+def _strip_club_affixes(name: str) -> str:
+    cleaned = _TEAM_CLUB_PREFIX_RE.sub("", name.strip()).strip()
+    return _TEAM_CLUB_SUFFIX_RE.sub("", cleaned).strip()
+
+
+def _is_sports_definition(definition: Optional[Mapping[str, Any]]) -> bool:
+    if not isinstance(definition, Mapping):
+        return False
+    if str(definition.get("category") or "").strip().lower() in _SPORTS_CATEGORIES:
+        return True
+    rule = definition.get("rule") if isinstance(definition.get("rule"), Mapping) else {}
+    for extra_cat in rule.get("extra_llm_categories") or ():
+        if str(extra_cat or "").strip().lower() in _SPORTS_CATEGORIES:
+            return True
+    for sec in rule.get("sections") or ():
+        if isinstance(sec, Mapping) and isinstance(sec.get("atom_query"), Mapping):
+            aq = sec["atom_query"]
+            if aq.get("kind") == "events" or aq.get("sport_key"):
+                return True
+    return False
+
+
+def _infer_sports_key_for_market(
+    market: Mapping[str, Any],
+    definition: Optional[Mapping[str, Any]] = None,
+) -> Optional[str]:
+    for key_field in ("sport", "sport_key"):
+        raw = str(market.get(key_field) or "").strip().lower()
+        if raw and "_" in raw:
+            return raw
+    title = str(market.get("name") or market.get("raw_title") or "").strip()
+    if title:
+        for pat, sk in _SPORTS_TITLE_SPORT_PATTERNS:
+            if pat.search(title):
+                return sk
+    if isinstance(definition, Mapping):
+        rule = definition.get("rule") if isinstance(definition.get("rule"), Mapping) else {}
+        sec_sports = {
+            str(sec["atom_query"].get("sport_key") or "").strip().lower()
+            for sec in (rule.get("sections") or ())
+            if isinstance(sec, Mapping)
+            and isinstance(sec.get("atom_query"), Mapping)
+            and sec["atom_query"].get("sport_key")
+        }
+        if len(sec_sports) == 1:
+            return next(iter(sec_sports))
+    return None
+
+
+def _is_sports_context(
+    market: Mapping[str, Any],
+    definition: Optional[Mapping[str, Any]] = None,
+) -> bool:
+    llm_cat = str(
+        market.get("llm_sport_category") or market.get("category") or ""
+    ).strip().lower()
+    if llm_cat and llm_cat not in _SPORTS_CATEGORIES and not _is_sports_definition(definition):
+        return False
+    return (
+        llm_cat in _SPORTS_CATEGORIES
+        or _infer_sports_key_for_market(market, definition) is not None
+        or _is_sports_definition(definition)
+    )
+
+
+def _extract_team_crest_record(team_obj: Any) -> Optional[dict[str, Any]]:
+    """Build a verified ``team_logo`` art record from a TeamSnapshot/Team/dict, or None."""
+    if team_obj is None:
+        return None
+    if isinstance(team_obj, Mapping):
+        url_sm = str(team_obj.get("logo_url_small") or "").strip()
+        url_lg = str(team_obj.get("logo_url_large") or "").strip()
+        url_alt = str(team_obj.get("logo_url") or "").strip()
+        abbr = str(team_obj.get("abbreviation") or "").strip()
+        color = str(team_obj.get("primary_color") or "").strip()
+    else:
+        url_sm = str(getattr(team_obj, "logo_url_small", None) or "").strip()
+        url_lg = str(getattr(team_obj, "logo_url_large", None) or "").strip()
+        url_alt = str(getattr(team_obj, "logo_url", None) or "").strip()
+        abbr = str(getattr(team_obj, "abbreviation", None) or "").strip()
+        color = str(getattr(team_obj, "primary_color", None) or "").strip()
+    chosen_url = ""
+    for candidate in (url_sm, url_lg, url_alt):
+        if candidate and not candidate.endswith(_PLACEHOLDER_CREST_SUFFIX):
+            chosen_url = candidate
+            break
+    if not chosen_url:
+        return None
+    return {
+        "url": chosen_url,
+        "kind": "team_logo",
+        "detail": abbr.upper(),
+        "accent_color": color or "#1E293B",
+    }
+
+
+def _build_team_lookup_from_entries(raw_teams: Sequence[Any]) -> Any:
+    """Convert snapshot team dicts or objects into a ``TeamNameLookup``."""
+    from app.routes.events import TeamSnapshot, _dedupe_team_name_lookup
+
+    snaps: list[TeamSnapshot] = []
+    for item in raw_teams:
+        if isinstance(item, TeamSnapshot):
+            snaps.append(item)
+        elif isinstance(item, Mapping):
+            snaps.append(
+                TeamSnapshot(
+                    id=item.get("id"),
+                    sport_id=item.get("sport_id"),
+                    sport_key=item.get("sport_key") or item.get("sport"),
+                    name=item.get("name"),
+                    slug=item.get("slug"),
+                    abbreviation=item.get("abbreviation"),
+                    primary_color=item.get("primary_color"),
+                    secondary_color=item.get("secondary_color"),
+                    logo_url_small=item.get("logo_url_small") or item.get("logo_url"),
+                    logo_url_large=item.get("logo_url_large") or item.get("logo_url"),
+                    alternate_names=tuple(item.get("alternate_names") or ()),
+                    espn_id=item.get("espn_id"),
+                )
+            )
+        elif hasattr(item, "name"):
+            snaps.append(
+                TeamSnapshot(
+                    id=getattr(item, "id", None),
+                    sport_id=getattr(item, "sport_id", None),
+                    sport_key=getattr(item, "sport_key", None),
+                    name=getattr(item, "name", None),
+                    slug=getattr(item, "slug", None),
+                    abbreviation=getattr(item, "abbreviation", None),
+                    primary_color=getattr(item, "primary_color", None),
+                    secondary_color=getattr(item, "secondary_color", None),
+                    logo_url_small=getattr(item, "logo_url_small", None) or getattr(item, "logo_url", None),
+                    logo_url_large=getattr(item, "logo_url_large", None) or getattr(item, "logo_url", None),
+                    alternate_names=tuple(getattr(item, "alternate_names", None) or ()),
+                    espn_id=getattr(item, "espn_id", None),
+                )
+            )
+    return _dedupe_team_name_lookup(snaps)
+
+
 class SubjectArtResolver:
     """Unified verified-art resolver across teams, people, and films/series (#12659, #12850)."""
 
-    def __init__(self) -> None:
-        self._by_norm: dict[str, dict[str, Any]] = {}
-        self._load_catalogs()
+    def __init__(
+        self,
+        *,
+        team_lookup: Any = None,
+        _static_by_norm: Optional[dict[str, dict[str, Any]]] = None,
+    ) -> None:
+        self._team_lookup = team_lookup
+        self._team_keys_by_norm: dict[str, list[str]] = {}
+        self._team_prefix_unique: dict[str, str] = {}
+        if _static_by_norm is not None:
+            self._by_norm = _static_by_norm
+        else:
+            self._by_norm: dict[str, dict[str, Any]] = {}
+            self._load_catalogs()
+        if self._team_lookup is not None:
+            self._index_team_lookup()
+
+    def _index_team_lookup(self) -> None:
+        global _TEAM_LOOKUP_INDEX_CACHE
+        cached = _TEAM_LOOKUP_INDEX_CACHE
+        is_immutable_lookup = type(self._team_lookup).__name__ == "TeamNameLookup"
+        if is_immutable_lookup and cached is not None and cached[0] is self._team_lookup:
+            self._team_keys_by_norm = cached[1]
+            self._team_prefix_unique = cached[2]
+            return
+
+        seen_raw: set[str] = set()
+        raw_keys: list[str] = []
+        if isinstance(self._team_lookup, Mapping):
+            for k in self._team_lookup.keys():
+                if isinstance(k, str) and k and k not in seen_raw:
+                    seen_raw.add(k)
+                    raw_keys.append(k)
+        by_league = getattr(self._team_lookup, "by_league", None)
+        if isinstance(by_league, Mapping):
+            for k in by_league.keys():
+                if isinstance(k, str) and k and k not in seen_raw:
+                    seen_raw.add(k)
+                    raw_keys.append(k)
+
+        prefix_candidates: dict[str, set[str]] = {}
+        for k in raw_keys:
+            for nk in (_norm_key(k), _ascii_fold_key(k)):
+                if nk:
+                    bucket = self._team_keys_by_norm.setdefault(nk, [])
+                    if k not in bucket:
+                        bucket.append(k)
+            stripped = _strip_club_affixes(k)
+            if stripped and stripped != k:
+                for nk in (_norm_key(stripped), _ascii_fold_key(stripped)):
+                    if nk:
+                        prefix_candidates.setdefault(nk, set()).add(k)
+        for nk, matches in prefix_candidates.items():
+            if len(matches) == 1:
+                self._team_prefix_unique[nk] = next(iter(matches))
+
+        if is_immutable_lookup:
+            _TEAM_LOOKUP_INDEX_CACHE = (
+                self._team_lookup,
+                self._team_keys_by_norm,
+                self._team_prefix_unique,
+            )
+
+    def _resolve_from_team_lookup(
+        self,
+        subject: str,
+        *,
+        sport_key: Optional[str] = None,
+    ) -> Optional[dict[str, Any]]:
+        if self._team_lookup is None or not subject:
+            return None
+        from app.routes.events import (
+            _lookup_mens_college_basketball,
+            _team_for_event_by_name,
+        )
+
+        candidates: list[str] = [subject]
+        stripped_subject = _strip_club_affixes(subject)
+        subject_forms = [subject]
+        if stripped_subject and stripped_subject != subject:
+            subject_forms.append(stripped_subject)
+        for form in subject_forms:
+            if form not in candidates:
+                candidates.append(form)
+            for nk in (_norm_key(form), _ascii_fold_key(form)):
+                if not nk:
+                    continue
+                for alias_key in self._team_keys_by_norm.get(nk, ()):
+                    if alias_key not in candidates:
+                        candidates.append(alias_key)
+                pref_key = self._team_prefix_unique.get(nk)
+                if pref_key and pref_key not in candidates:
+                    candidates.append(pref_key)
+
+        for cand in candidates:
+            team_row = _team_for_event_by_name(self._team_lookup, cand, sport_key)
+            rec = _extract_team_crest_record(team_row)
+            if rec is not None:
+                return rec
+
+        if sport_key == "basketball_wncaab":
+            for cand in candidates:
+                mens_row = _lookup_mens_college_basketball(self._team_lookup, cand)
+                rec = _extract_team_crest_record(mens_row)
+                if rec is not None:
+                    return rec
+
+        return None
 
     def _register(
         self,
@@ -735,11 +1035,28 @@ class SubjectArtResolver:
         *,
         explicit_url: Optional[str] = None,
         explicit_color: Optional[str] = None,
+        sport_key: Optional[str] = None,
+        allow_team_lookup: Optional[bool] = None,
     ) -> dict[str, Any]:
         clean_subj = _OUTCOME_PROP_SUFFIX_RE.sub("", subject.strip())
+        if allow_team_lookup is True and self._team_lookup is not None and not explicit_url:
+            team_hit = self._resolve_from_team_lookup(
+                clean_subj or subject, sport_key=sport_key
+            )
+            if team_hit is not None:
+                color = explicit_color or team_hit.get("accent_color") or _fallback_color(clean_subj or subject)
+                return {
+                    "url": team_hit["url"],
+                    "kind": team_hit["kind"],
+                    "detail": team_hit.get("detail") or "",
+                    "accent_color": color,
+                    "initials": _initials(clean_subj or subject),
+                }
         nk = _norm_key(clean_subj) or _norm_key(subject)
         fk = _ascii_fold_key(clean_subj) or _ascii_fold_key(subject)
         hit = self._by_norm.get(nk) or (self._by_norm.get(fk) if fk else None)
+        if allow_team_lookup is False and hit and hit.get("kind") in _TEAM_STATIC_LOGO_KINDS:
+            hit = None
         url = explicit_url or (hit["url"] if hit else None)
         color = explicit_color or (hit.get("accent_color") if hit else None) or _fallback_color(clean_subj or subject)
         out: dict[str, Any] = {
@@ -1420,6 +1737,8 @@ def _hydrate_market_visual_item(
     content_kind: Optional[str] = None,
     use_fun_short_label: bool = False,
     fun_sub_tag: Optional[str] = None,
+    sport_key: Optional[str] = None,
+    allow_team_lookup: Optional[bool] = None,
 ) -> dict[str, Any]:
     mid = int(market["id"])
     if "top_outcomes" in market and isinstance(market["top_outcomes"], (list, tuple)):
@@ -1506,6 +1825,16 @@ def _hydrate_market_visual_item(
             art = resolver.resolve(
                 o_name,
                 explicit_url=(str(o["image_url"]) if o.get("image_url") else None),
+                sport_key=(
+                    sport_key
+                    if sport_key is not None
+                    else _infer_sports_key_for_market(market)
+                ),
+                allow_team_lookup=(
+                    bool(allow_team_lookup)
+                    if allow_team_lookup is not None
+                    else _is_sports_context(market)
+                ),
             )
             canon_subj = art.get("canonical_name")
             if canon_subj and _ascii_fold_key(canon_subj) == _ascii_fold_key(o_name):
@@ -1764,11 +2093,15 @@ def _hydrate_event_visual_item(
         home_team,
         explicit_url=home_td.get("logo_small") or home_td.get("logo_large") or event.get("home_image_url"),
         explicit_color=home_td.get("primary_color"),
+        sport_key=str(event.get("sport") or "").strip().lower() or None,
+        allow_team_lookup=True,
     )
     away_art = resolver.resolve(
         away_team,
         explicit_url=away_td.get("logo_small") or away_td.get("logo_large") or event.get("away_image_url"),
         explicit_color=away_td.get("primary_color"),
+        sport_key=str(event.get("sport") or "").strip().lower() or None,
+        allow_team_lookup=True,
     )
 
     # Ruling 253: A & Fable 8:35 PM Rule 1: print the exact pair the game's own
@@ -2125,7 +2458,12 @@ async def _load_snapshot_from_db(
 ) -> dict[str, Any]:
     """Load candidate events, open futures markets, paired sets, and outcome histories."""
     if isinstance(db, Mapping) and (
-        "events" in db or "markets" in db or "paired_sets" in db or "market_histories" in db
+        "events" in db
+        or "markets" in db
+        or "paired_sets" in db
+        or "market_histories" in db
+        or "team_lookup" in db
+        or "teams" in db
     ):
         raw_mh = db.get("market_histories") or {}
         norm_mh: dict[int, list[dict[str, Any]]] = {}
@@ -2135,11 +2473,15 @@ async def _load_snapshot_from_db(
                     norm_mh[int(k)] = [dict(x) for x in (v or ()) if isinstance(x, Mapping)]
                 except (TypeError, ValueError):
                     continue
+        snap_team_lookup = db.get("team_lookup")
+        if snap_team_lookup is None and isinstance(db.get("teams"), Sequence):
+            snap_team_lookup = _build_team_lookup_from_entries(db["teams"])
         return {
             "events": list(db.get("events") or ()),
             "markets": list(db.get("markets") or ()),
             "paired_sets": dict(db.get("paired_sets") or {}),
             "market_histories": norm_mh,
+            "team_lookup": snap_team_lookup,
         }
 
     from sqlalchemy import and_, func, or_, select
@@ -2764,11 +3106,56 @@ async def _load_snapshot_from_db(
                         }
                     )
 
+    team_lookup_out: Any = None
+    sports_markets_for_lookup = [
+        m for m in markets_out if _is_sports_context(m, definition)
+    ]
+    if events_out or sports_markets_for_lookup or _is_sports_definition(definition):
+        candidate_team_names: list[str] = []
+        for ev_d in events_out:
+            for tk in ("home_team", "away_team"):
+                tv = str(ev_d.get(tk) or "").strip()
+                if tv:
+                    candidate_team_names.append(tv)
+        for m_d in sports_markets_for_lookup:
+            for o_d in m_d.get("top_outcomes") or m_d.get("outcomes") or ():
+                if not isinstance(o_d, Mapping):
+                    continue
+                raw_on = str(o_d.get("name") or o_d.get("outcome_name") or "").strip()
+                cleaned_on = _clean_outcome_label(raw_on)
+                for cand_on in (raw_on, cleaned_on, _OUTCOME_PROP_SUFFIX_RE.sub("", cleaned_on).strip()):
+                    if cand_on and cand_on.lower() not in {"yes", "no"}:
+                        candidate_team_names.append(cand_on)
+        dedup_names = list(dict.fromkeys(candidate_team_names))
+        if dedup_names or _is_sports_definition(definition):
+            try:
+                import app.routes.events as _events_mod
+
+                subset_lookup = await _events_mod._build_team_lookup(
+                    db, dedup_names or ["__all__"]
+                )
+                cached_full = getattr(_events_mod, "_team_cache", None)
+                if (
+                    getattr(_events_mod._build_team_lookup, "__module__", "")
+                    == "app.routes.events"
+                    and isinstance(cached_full, Mapping)
+                    and (cached_full or getattr(cached_full, "by_league", None))
+                ):
+                    team_lookup_out = _events_mod._as_lookup(cached_full)
+                else:
+                    team_lookup_out = subset_lookup
+            except Exception:
+                logger.debug(
+                    "container_machinery: team lookup load failed; falling back to static art",
+                    exc_info=True,
+                )
+
     return {
         "events": events_out,
         "markets": markets_out,
         "paired_sets": paired_out,
         "market_histories": histories_out,
+        "team_lookup": team_lookup_out,
     }
 
 
@@ -3418,13 +3805,22 @@ async def produce_container_machinery(
     from app.utils.roundup_containers import RoundupMembers, RoundupRefusal
 
     now_dt = now or datetime.now(timezone.utc)
-    resolver = _default_art_resolver()
+    base_resolver = _default_art_resolver()
     rule = definition.get("rule") if isinstance(definition.get("rule"), Mapping) else {}
     sections_cfg = rule.get("sections") or ()
     if not isinstance(sections_cfg, Sequence) or not sections_cfg:
         return RoundupRefusal((("container_machinery", "empty_sections"),))
 
     snapshot = await _load_snapshot_from_db(db, definition, now_dt)
+    snap_team_lookup = snapshot.get("team_lookup")
+    resolver = (
+        SubjectArtResolver(
+            team_lookup=snap_team_lookup,
+            _static_by_norm=base_resolver._by_norm,
+        )
+        if snap_team_lookup is not None
+        else base_resolver
+    )
     all_events = snapshot["events"]
     all_markets = snapshot["markets"]
     paired_sets = snapshot["paired_sets"]
@@ -3720,7 +4116,14 @@ async def produce_container_machinery(
         if aq_kind == "market_history":
             hours = int(aq.get("hours") or 168)
             matched_h = [
-                _hydrate_market_visual_item(m, max_outcomes=max_outcomes, resolver=resolver, content_kind="history")
+                _hydrate_market_visual_item(
+                    m,
+                    max_outcomes=max_outcomes,
+                    resolver=resolver,
+                    content_kind="history",
+                    sport_key=_infer_sports_key_for_market(m, definition),
+                    allow_team_lookup=_is_sports_context(m, definition),
+                )
                 for m in all_markets
                 if (MEMBER_MARKET, int(m["id"])) not in seen_member_keys
                 and _market_matches_query(m, aq, now_dt=now_dt)
@@ -3849,6 +4252,8 @@ async def produce_container_machinery(
                 content_kind=explicit_ck,
                 use_fun_short_label=use_fun_short,
                 fun_sub_tag=fun_sub_tag_val,
+                sport_key=_infer_sports_key_for_market(m, definition),
+                allow_team_lookup=_is_sports_context(m, definition),
             )
             for m in all_markets
             if (MEMBER_MARKET, int(m["id"])) not in seen_member_keys
@@ -4089,25 +4494,39 @@ async def produce_container_machinery(
     raw_footer = str(definition.get("footer") or "").strip()
     clean_footer = "" if _SETTLEMENT_FILLER_RE.search(raw_footer) else raw_footer
 
+    hide_row_art = bool(rule.get("hide_row_art"))
+    if hide_row_art and card_visual_rows:
+        card_visual_rows = _strip_visual_row_art(card_visual_rows)
+
     # Keep Discover benchmark_strip cards consistent: either every row has a
-    # picture or no row leaves a reserved empty gap beside sibling rows.
-    if vb_form == "benchmark_strip" and card_visual_rows:
+    # picture or no row leaves a reserved empty gap beside sibling rows, and
+    # log missing subjects on public sports cards that lack full row art.
+    if (
+        not hide_row_art
+        and card_visual_rows
+        and vb_form in {"benchmark_strip", "sibling_fields_grid", "leader_bars"}
+        and not card_scale_ordered
+    ):
         row_has_url = [
             isinstance(r, Mapping) and _has_verified_art(r) for r in card_visual_rows
         ]
-        if any(row_has_url) and not all(row_has_url):
-            normalized_rows: list[dict[str, Any]] = []
-            for row in card_visual_rows:
-                if isinstance(row, Mapping):
-                    row_copy = dict(row)
-                    art = row_copy.get("art")
-                    if isinstance(art, Mapping):
-                        art_copy = dict(art)
-                        art_copy["url"] = None
-                        art_copy["kind"] = "monogram"
-                        row_copy["art"] = art_copy
-                    normalized_rows.append(row_copy)
-            card_visual_rows = normalized_rows
+        is_public_stage = (
+            str(definition.get("stage") or "").strip().lower() == "public"
+            or definition.get("stage") is None
+        )
+        if not all(row_has_url) and is_public_stage and _is_sports_definition(definition):
+            missing_subjects = [
+                _missing_art_subject_label(r, vb)
+                for r, has_art in zip(card_visual_rows, row_has_url)
+                if isinstance(r, Mapping) and not has_art
+            ]
+            logger.warning(
+                "Public sports card %s dropped row pictures; missing art for subjects=%s",
+                slug,
+                missing_subjects,
+            )
+        if vb_form == "benchmark_strip" and any(row_has_url) and not all(row_has_url):
+            card_visual_rows = _strip_visual_row_art(card_visual_rows)
 
     has_card_art = any(_has_verified_art(r) for r in card_visual_rows if isinstance(r, Mapping))
     if vb_form == "paired_stage_bars" and lead_paired_set:
@@ -4358,6 +4777,42 @@ def is_machinery_candidate_slug(slug: str) -> bool:
     if not slug or "/" in slug or "\\" in slug or ".." in slug:
         return False
     return any(p.stem == slug for p in discover_machinery_candidate_paths())
+
+
+def _missing_art_subject_label(row: Mapping[str, Any], vb: Mapping[str, Any]) -> str:
+    """Resolve the true outcome subject name for missing-art warnings."""
+    row_mid = row.get("market_id")
+    row_oid = row.get("outcome_id")
+    for item in vb.get("items") or ():
+        if not isinstance(item, Mapping):
+            continue
+        if row_mid is not None and item.get("market_id") != row_mid:
+            continue
+        outs = item.get("outcomes") or ()
+        matched = next(
+            (o for o in outs if isinstance(o, Mapping) and o.get("outcome_id") == row_oid),
+            outs[0] if outs else None,
+        )
+        if isinstance(matched, Mapping):
+            cand = str(matched.get("name") or "").strip()
+            if cand and cand.lower() not in {"yes", "no"}:
+                return cand
+    return str(row.get("name") or "")
+
+
+def _strip_visual_row_art(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Strip row picture URLs cleanly (all-or-nothing or ``rule.hide_row_art``)."""
+    stripped: list[dict[str, Any]] = []
+    for row in rows:
+        row_copy = dict(row)
+        art = row_copy.get("art")
+        if isinstance(art, Mapping):
+            art_copy = dict(art)
+            art_copy["url"] = None
+            art_copy["kind"] = "monogram"
+            row_copy["art"] = art_copy
+        stripped.append(row_copy)
+    return stripped
 
 
 def _has_verified_art(obj: Mapping[str, Any]) -> bool:
