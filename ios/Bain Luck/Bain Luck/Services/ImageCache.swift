@@ -40,4 +40,8 @@ actor ImageCache {
         inflight.removeValue(forKey: url.absoluteString)
         return result
     }
+
+    func seedForTesting(_ image: PlatformImage, url: URL) {
+        cache.setObject(image, forKey: url.absoluteString as NSString)
+    }
 }

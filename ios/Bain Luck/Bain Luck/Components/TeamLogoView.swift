@@ -52,9 +52,54 @@ struct TeamLogoView: View {
     var abbreviation: String? = nil
     var opponentAbbreviation: String? = nil
 
+    @Environment(\.colorScheme) private var colorScheme
     @State private var image: PlatformImage?
+    @State private var needsDarkBacking = false
     @State private var loadFailed = false
     @State private var triedEspnFallback = false
+
+    /// #13213 — returns true when a transparent crest's opaque pixels are dark overall
+    /// (for example Utah Jazz's dark-navy note logo), so Dark Mode places it on a soft light disc.
+    static func needsDarkSurfaceBacking(_ image: PlatformImage) -> Bool {
+        let cgImage: CGImage?
+        #if canImport(UIKit)
+        cgImage = image.cgImage
+        #elseif canImport(AppKit)
+        cgImage = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        #endif
+        guard let cg = cgImage else { return false }
+
+        let sampleSize = 16
+        var pixels = [UInt8](repeating: 0, count: sampleSize * sampleSize * 4)
+        guard let ctx = CGContext(
+            data: &pixels,
+            width: sampleSize,
+            height: sampleSize,
+            bitsPerComponent: 8,
+            bytesPerRow: sampleSize * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue
+        ) else {
+            return false
+        }
+        ctx.draw(cg, in: CGRect(x: 0, y: 0, width: sampleSize, height: sampleSize))
+
+        var luminances: [Double] = []
+        luminances.reserveCapacity(sampleSize * sampleSize)
+        for idx in stride(from: 0, to: pixels.count, by: 4) {
+            let alpha = Double(pixels[idx + 3])
+            guard alpha >= 32 else { continue }
+            let r = min(255.0, Double(pixels[idx]) * 255.0 / alpha) / 255.0
+            let g = min(255.0, Double(pixels[idx + 1]) * 255.0 / alpha) / 255.0
+            let b = min(255.0, Double(pixels[idx + 2]) * 255.0 / alpha) / 255.0
+            luminances.append(0.2126 * r + 0.7152 * g + 0.0722 * b)
+        }
+        guard !luminances.isEmpty else { return false }
+        luminances.sort()
+        let avg = luminances.reduce(0, +) / Double(luminances.count)
+        let p90 = luminances[min(luminances.count - 1, Int(Double(luminances.count) * 0.9))]
+        return avg < 0.27 && p90 < 0.38
+    }
 
     /// Resolve URL: primary url → flag (international) → ESPN fallback → nil.
     ///
@@ -74,6 +119,16 @@ struct TeamLogoView: View {
                         .aspectRatio(contentMode: .fill)
                         .frame(width: size, height: size)
                         .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
+                } else if colorScheme == .dark && needsDarkBacking {
+                    ZStack {
+                        Circle()
+                            .fill(Color.white.opacity(0.92))
+                        Image(platformImage: image)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .padding(size * 0.12)
+                    }
+                    .frame(width: size, height: size)
                 } else {
                     Image(platformImage: image)
                         .resizable()
@@ -96,15 +151,19 @@ struct TeamLogoView: View {
                 triedEspnFallback = true
                 return
             }
-            image = await ImageCache.shared.image(for: imageURL)
-            if image == nil {
+            let loaded = await ImageCache.shared.image(for: imageURL)
+            if let loaded {
+                needsDarkBacking = !isPhotograph && Self.needsDarkSurfaceBacking(loaded)
+                image = loaded
+            } else {
                 // If primary URL failed, try ESPN fallback
                 if !triedEspnFallback, url != nil, let espnURL = espnTeamLogoURL(for: teamName),
-                   let espnImageURL = URL(string: espnURL) {
+                   let espnImageURL = URL(string: espnURL),
+                   let fallbackLoaded = await ImageCache.shared.image(for: espnImageURL) {
                     triedEspnFallback = true
-                    image = await ImageCache.shared.image(for: espnImageURL)
-                }
-                if image == nil {
+                    needsDarkBacking = !isPhotograph && Self.needsDarkSurfaceBacking(fallbackLoaded)
+                    image = fallbackLoaded
+                } else {
                     loadFailed = true
                     triedEspnFallback = true
                 }
@@ -188,7 +247,7 @@ struct TeamLogoView: View {
     private var initialsFallback: some View {
         ZStack {
             Circle()
-                .fill(color.opacity(0.2))
+                .fill(colorScheme == .dark ? Color.white.opacity(0.90) : color.opacity(0.2))
             // Three glyphs where one used to sit, at every size this view is drawn
             // (18 on a leaderboard row, 80 on the iPad hero), plus four-letter
             // served college codes (`DUKE`, `GONZ`, `MISS`) under Ruling 194-A.
