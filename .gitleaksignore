@@ -166,3 +166,7 @@ d6ebef9997e3cb2aec9d2c5947855748b67b5d09:evals/ranking/grades/2026-11-10-groupin
 # Exact findings from gitleaks run 44461617146 on PR #13037; renamed to SLUG_FIELD in follow-up commit.
 67845ab2138ce91077ff5fb1351a9cd857aef194:backend/tests/test_wbb_auto_create_orientation.py:generic-api-key:37
 67845ab2138ce91077ff5fb1351a9cd857aef194:backend/tests/test_wbb_auto_create_orientation.py:generic-api-key:50
+
+# #13081: synthetic placeholder JWT string in test_game_alerts_13081.py, not a credential.
+# Exact finding from gitleaks run 44588260488 on PR #13088; replaced in follow-up commit.
+3eebfd71abfd3e437ecf79da8dd8b4a7e63c3cd9:backend/tests/test_game_alerts_13081.py:jwt:53
