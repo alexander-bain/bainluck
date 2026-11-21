@@ -499,8 +499,16 @@ extension WidgetTapJourneyTests {
         XCUIDevice.shared.press(.home)
         try activateConfiguredSiriModularFace(in: host)
         let widget = host.otherElements["bottom-left"].firstMatch
+        let launcher = widget.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Open your selected game in Bain Luck, or choose a game")).firstMatch
+        // Run 44921277743 att1 (widgets): the slot appeared while WidgetKit was still
+        // drawing its redacted placeholder (private-use glyphs). Wait for the real
+        // launcher label to replace it, matching Exactograph's 45 s placeholder wait.
+        let drawn = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            widget.exists && launcher.exists
+        }, object: host)
+        let arrivedLauncher = XCTWaiter.wait(for: [drawn], timeout: 45) == .completed
         try freshFaceRequire(host.wait(for: .runningForeground, timeout: 15)
-                             && widget.waitForExistence(timeout: 15) && widget.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Open your selected game in Bain Luck, or choose a game")).firstMatch.exists
+                             && widget.waitForExistence(timeout: 15) && arrivedLauncher
                              && widget.isHittable && host.frame.contains(widget.frame),
                              "Fresh installed face has no reachable BainLuckWatch launcher", host: host)
         freshFaceCapture(host, name: "Fresh face actual mounted BainLuckWatch launcher")
