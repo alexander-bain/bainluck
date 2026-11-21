@@ -9,6 +9,7 @@ cold/insufficient cache skips rather than fails."""
 import importlib
 
 import pytest
+from app.utils.unlinked_held_fixture import FIXTURE_RULE
 
 fs = importlib.import_module("app.tasks.flow_sentinel")
 
@@ -50,6 +51,7 @@ class TestRunner:
         _patch_redis(monkeypatch, {
             "status": "ok",
             "unlinked_held": {
+                "fixture_rule": FIXTURE_RULE,
                 "status": "ok", "headline_unlinked_held": 0, "events_checked": 4,
                 "candidates_scanned": 120, "misses": [], "by_source": {},
             },
@@ -64,6 +66,7 @@ class TestRunner:
         _patch_redis(monkeypatch, {
             "status": "ok",
             "unlinked_held": {
+                "fixture_rule": FIXTURE_RULE,
                 "status": "ok", "headline_unlinked_held": 1, "events_checked": 3,
                 "candidates_scanned": 90,
                 "misses": [{
@@ -80,6 +83,34 @@ class TestRunner:
         f = out["failures"][0]
         assert f["event_id"] == 77 and f["source"] == "kalshi"
         assert "matcher miss" in f["detail"] and "12345" in f["detail"]
+
+    @pytest.mark.asyncio
+    async def test_old_name_only_cache_is_not_filed(self, monkeypatch):
+        _patch_redis(monkeypatch, {"unlinked_held": {
+            "status": "ok", "misses": [{"market_id": 69305233}],
+        }})
+        out = await fs._run_unlinked_held(None)
+        assert out["skipped"] is True
+        assert out["failures"] == []
+        assert "fixture-qualified refresh" in out["evidence"]["reason"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("misses", [[], [{"market_id": 12345, "event_id": 77}]])
+    async def test_unknown_evidence_cannot_report_clean_or_hide_real_misses(self, monkeypatch, misses):
+        _patch_redis(monkeypatch, {"unlinked_held": {
+            "fixture_rule": FIXTURE_RULE, "status": "ok", "misses": misses,
+            "unassessed_pairs": 2, "fixture_pair_refusals": {"unknown_gender": 2},
+        }})
+        out = await fs._run_unlinked_held(None)
+        assert out["evidence"]["unassessed_pairs"] == 2
+        assert out["evidence"]["fixture_pair_refusals"] == {"unknown_gender": 2}
+        if misses:
+            assert not out["passed"] and not out.get("skipped")
+            assert len(out["failures"]) == 1
+            assert fs.flow_outcome(out) == "fail"
+        else:
+            assert out["skipped"] is True
+            assert fs.flow_outcome(out) == "unknown"
 
     @pytest.mark.asyncio
     async def test_insufficient_slate_skips(self, monkeypatch):
