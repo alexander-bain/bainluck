@@ -1437,6 +1437,7 @@ def _hydrate_market_visual_item(
     content_kind: Optional[str] = None,
     use_fun_short_label: bool = False,
     short_labels: Optional[Mapping[str, str]] = None,
+    headline_phrases: Optional[Mapping[str, str]] = None,
 ) -> dict[str, Any]:
     mid = int(market["id"])
     if "top_outcomes" in market and isinstance(market["top_outcomes"], (list, tuple)):
@@ -1592,9 +1593,25 @@ def _hydrate_market_visual_item(
             display_title, lead_ans
         )
 
+    headline_phrase: Optional[str] = None
+    if isinstance(headline_phrases, Mapping):
+        raw_phrase = str(headline_phrases.get(str(mid)) or "").strip()
+        if raw_phrase:
+            lead_ans_clean = (
+                str(outcomes_out[0].get("name") or "").strip().rstrip("?").strip()
+                if outcomes_out
+                else ""
+            )
+            if "{answer}" in raw_phrase:
+                if lead_ans_clean and lead_ans_clean.lower() not in {"yes", "no"}:
+                    headline_phrase = raw_phrase.replace("{answer}", lead_ans_clean)
+            else:
+                headline_phrase = raw_phrase
+
     return {
         "market_id": mid,
         "title": display_title,
+        "headline_phrase": headline_phrase,
         "raw_title": clean_raw_name,
         "is_date_timing_row": is_date_timing_row,
         "href": f"/futures/{mid}",
@@ -3202,10 +3219,13 @@ def _build_dynamic_title_from_set(
         group_name = str(definition.get("name") or "").strip().rstrip("?")
         rule_pred = str(rule_dict.get("headline_predicate") or "").strip()
         if lead_o is not None:
-            lead_t = str(lead_bm.get("title") or "").strip()
+            lead_phrase = str(lead_bm.get("headline_phrase") or "").strip()
+            lead_t = lead_phrase or str(lead_bm.get("title") or "").strip()
             lead_p = int(lead_o["rendered_percent"])
             verb = "lead" if " & " in lead_t else "leads"
-            if rule_pred:
+            if lead_phrase:
+                lead_clause = f"{lead_phrase} is at {lead_p}%"
+            elif rule_pred:
                 lead_clause = f"{lead_t} {rule_pred} at {lead_p}%"
             elif group_name:
                 lead_clause = f"{lead_t} {verb} {group_name} at {lead_p}%"
@@ -3215,7 +3235,10 @@ def _build_dynamic_title_from_set(
                 sec_bm = headline_pool[1]
                 sec_o = _fav_outcome(sec_bm)
                 if sec_o is not None:
-                    sec_t = str(sec_bm.get("title") or "").strip()
+                    sec_t = (
+                        str(sec_bm.get("headline_phrase") or "").strip()
+                        or str(sec_bm.get("title") or "").strip()
+                    )
                     sec_p = int(sec_o["rendered_percent"])
                     return f"{lead_clause}, with {sec_t} at {sec_p}%"
             return lead_clause
@@ -3748,6 +3771,11 @@ async def produce_container_machinery(
         explicit_short_labels = (
             aq.get("short_labels") if isinstance(aq.get("short_labels"), Mapping) else None
         )
+        explicit_headline_phrases = (
+            aq.get("headline_phrases")
+            if isinstance(aq.get("headline_phrases"), Mapping)
+            else None
+        )
         matched = [
             _hydrate_market_visual_item(
                 m,
@@ -3756,6 +3784,7 @@ async def produce_container_machinery(
                 content_kind=explicit_ck,
                 use_fun_short_label=use_fun_short,
                 short_labels=explicit_short_labels,
+                headline_phrases=explicit_headline_phrases,
             )
             for m in all_markets
             if (MEMBER_MARKET, int(m["id"])) not in seen_member_keys

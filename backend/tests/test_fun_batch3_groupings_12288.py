@@ -119,7 +119,12 @@ async def test_batch3_four_preview_sets_build_with_parity_non_race_headlines_and
     assert s1_res.machinery_card["stage"] == "preview"
     assert s1_res.machinery_card["item_count"] == 9
     assert s1_res.machinery_card["image_url"] == s1_def["rule"]["card_image_url"]
-    assert "Bad Bunny" in s1_res.title and "97%" in s1_res.title
+    assert s1_res.title == (
+        "Bad Bunny as Spotify's top artist is at 97%, "
+        "with Grand Theft Auto VI for Game of the Year at 92%"
+    )
+    assert "board" not in s1_res.title.lower()
+    assert ": " not in s1_res.title
     s1_fi = sanitize_discover_feed_item(compose_roundup_feed_item(s1_prod, s1_res))
     s1_cp = compose_roundup_container(s1_prod, s1_res)
     c_p, p_p = _compute_member_number_parity(s1_fi, s1_cp)
@@ -134,7 +139,10 @@ async def test_batch3_four_preview_sets_build_with_parity_non_race_headlines_and
     assert "winner" not in s2_res.title.lower()
     assert "leads" not in s2_res.title.lower()
     assert "race" not in s2_res.title.lower()
+    assert "board" not in s2_res.title.lower()
     assert "?" not in s2_res.title
+    assert "in Avengers: Doomsday is at 97%" in s2_res.title
+    assert "Dune: Part Three topping Rotten Tomatoes at 84%" in s2_res.title
     s2_fi = sanitize_discover_feed_item(compose_roundup_feed_item(s2_prod, s2_res))
     s2_cp = compose_roundup_container(s2_prod, s2_res)
     c_p, p_p = _compute_member_number_parity(s2_fi, s2_cp)
@@ -151,8 +159,12 @@ async def test_batch3_four_preview_sets_build_with_parity_non_race_headlines_and
     assert "winner" not in s3_res.title.lower()
     assert "leads" not in s3_res.title.lower()
     assert "race" not in s3_res.title.lower()
-    assert "Tame Impala" in s3_res.title
-    assert "Timothée Chalamet" in s3_res.title
+    assert "board" not in s3_res.title.lower()
+    assert ": " not in s3_res.title
+    assert s3_res.title == (
+        "Tame Impala headlining Coachella 2027 is at 99%, "
+        "with Timothée Chalamet hosting SNL at 87%"
+    )
     s3_fi = sanitize_discover_feed_item(compose_roundup_feed_item(s3_prod, s3_res))
     s3_cp = compose_roundup_container(s3_prod, s3_res)
     c_p, p_p = _compute_member_number_parity(s3_fi, s3_cp)

@@ -29,7 +29,6 @@
     "card_image_author": "Elijah Flores",
     "card_image_license": "CC0 1.0 Public Domain",
     "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Movie_theater_seats_(Unsplash).jpg",
-    "headline_predicate": "is most likely on the Hollywood board",
     "sections": [
       {
         "key": "cast_delayed_cancelled",
@@ -59,6 +58,17 @@
             "109250": "TV shows cancelled this year",
             "108275": "The Simpsons ending announced",
             "59172754": "Dune vs Avengers score"
+          },
+          "headline_phrases": {
+            "109214": "{answer} in Avengers: Doomsday",
+            "56867561": "Avengers: Secret Wars getting delayed",
+            "108506": "{answer} as Miles Morales",
+            "70150106": "{answer} in The Brave and the Bold",
+            "70150102": "{answer} as Princess Tiana",
+            "70150103": "{answer} in Happy Place",
+            "109250": "{answer} getting cancelled",
+            "108275": "The Simpsons announcing its end",
+            "59172754": "{answer} topping Rotten Tomatoes"
           },
           "shape": "any",
           "order_by": "lead_prob_desc",

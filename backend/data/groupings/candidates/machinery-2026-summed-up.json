@@ -29,7 +29,6 @@
     "card_image_author": "Lee Campbell",
     "card_image_license": "CC0 1.0 Public Domain",
     "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Minimal_vinyl_player_(Unsplash).jpg",
-    "headline_predicate": "tops the 2026 culture board",
     "headline_exclude_date_rows": true,
     "sections": [
       {
@@ -60,6 +59,17 @@
             "109614": "Game of the Year",
             "109537": "#2 most searched person on Google",
             "52755613": "Top U.S. streamed song"
+          },
+          "headline_phrases": {
+            "27467306": "{answer} for TIME Person of the Year",
+            "8431009": "{answer} for Word of the Year",
+            "109517": "{answer} as Spotify's top artist",
+            "70733200": "{answer} as Spotify's top song",
+            "71373602": "{answer} as the top U.S. Spotify album",
+            "109527": "Spotify 2026 Wrapped releasing {answer}",
+            "109614": "{answer} for Game of the Year",
+            "109537": "{answer} as #2 most searched on Google",
+            "52755613": "{answer} as the top U.S. streamed song"
           },
           "shape": "any",
           "order_by": "lead_prob_desc",

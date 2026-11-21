@@ -29,7 +29,6 @@
     "card_image_author": "Jonathan Velasquez",
     "card_image_license": "CC0 1.0 Public Domain",
     "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Silver_and_black_studio_microphone_condenser.jpg",
-    "headline_predicate": "is most likely on the stage and cover board",
     "sections": [
       {
         "key": "stage_and_cover",
@@ -53,6 +52,14 @@
             "56775621": "Vogue 2026 cover",
             "108505": "Coachella 2027 headliner",
             "108504": "Rolling Loud Miami headliner"
+          },
+          "headline_phrases": {
+            "62368061": "{answer} hosting SNL",
+            "109296": "{answer} on Call Her Daddy",
+            "109287": "{answer} on Joe Rogan",
+            "56775621": "{answer} on the Vogue cover",
+            "108505": "{answer} headlining Coachella 2027",
+            "108504": "{answer} headlining Rolling Loud"
           },
           "shape": "any",
           "order_by": "lead_prob_desc",
