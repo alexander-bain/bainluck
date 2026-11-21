@@ -99,6 +99,7 @@ nonisolated struct TournamentHeroCard: View {
                                 if let mark = SourceMarkButton(
                                     golfer.sourceMark,
                                     number: golfer.sourceMark?.state == .settled ? nil : golfer.probability,
+                                    renderedPercent: golfer.sourceMark?.state == .settled ? nil : golfer.renderedPercent,
                                     subject: golfer.name,
                                     numberSize: 15,
                                     compactRow: true,
@@ -119,6 +120,7 @@ nonisolated struct TournamentHeroCard: View {
                             if let mark = SourceMarkButton(
                                 outcome.sourceMark,
                                 number: outcome.sourceMark?.state == .settled ? nil : outcome.probability,
+                                renderedPercent: outcome.sourceMark?.state == .settled ? nil : outcome.renderedPercent,
                                 subject: outcome.name,
                                 numberSize: 15,
                                 compactRow: true,

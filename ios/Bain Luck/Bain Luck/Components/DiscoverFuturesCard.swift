@@ -300,6 +300,7 @@ struct NativeFuturesDiscoverCard: View {
                         if let mark = SourceMarkButton(
                             leaderMark,
                             number: leaderMark?.state == .settled ? nil : leader.probability,
+                            renderedPercent: leaderMark?.state == .settled ? nil : (renderedPercents.first ?? nil),
                             subject: leader.name,
                             numberSize: 20,
                             compactRow: true
@@ -561,6 +562,7 @@ struct NativeFuturesDiscoverCard: View {
                 if let mark = SourceMarkButton(
                     outcomeMark,
                     number: outcomeMark?.state == .settled ? nil : outcome.probability,
+                    renderedPercent: outcomeMark?.state == .settled ? nil : percent,
                     subject: outcome.name,
                     numberSize: 12,
                     compactRow: true

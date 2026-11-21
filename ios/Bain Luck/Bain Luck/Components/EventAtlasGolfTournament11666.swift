@@ -2519,6 +2519,7 @@ struct EventAtlasGolfContenderChooserView11666: View {
                     if let mark = SourceMarkButton(
                         row.sourceMark,
                         number: row.probability,
+                        renderedPercent: row.sourceMark?.state == .settled ? nil : row.renderedPercent,
                         subject: row.name,
                         numberSize: 15,
                         compactRow: true,

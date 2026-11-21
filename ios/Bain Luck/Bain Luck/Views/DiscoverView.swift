@@ -3714,7 +3714,7 @@ struct NativeGroupCard: View {
             if let probability = summary.probability {
                 VStack(alignment: isAX ? .leading : .trailing, spacing: 4) {
                     HStack(alignment: .firstTextBaseline, spacing: 4) {
-                        Text(formatProbability(probability))
+                        Text(formatProbability(probability, renderedPercent: summary.renderedPercent))
                             .font(.title2.weight(.bold).monospacedDigit())
                             .foregroundStyle(primaryInk)
                             .lineLimit(1)
@@ -3722,6 +3722,7 @@ struct NativeGroupCard: View {
                         if let mark = SourceMarkButton(
                             summary.sourceMark,
                             number: summary.sourceMark?.state == .settled ? nil : probability,
+                            renderedPercent: summary.sourceMark?.state == .settled ? nil : summary.renderedPercent,
                             subject: summary.label,
                             numberSize: 18,
                             compactRow: true

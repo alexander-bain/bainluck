@@ -279,6 +279,7 @@ nonisolated struct DiscoverRoundupRowModel: Equatable, Identifiable, Sendable {
     let observedAt: String?
     let showsRowAgeMark: Bool
     let sourceMark: SourceMark?
+    var renderedPercent: Int? = nil
 
     var formattedPercentText: String {
         "\(marker ?? "")\(digits)%"
@@ -488,7 +489,8 @@ nonisolated struct DiscoverRoundupCardModel: Equatable, Sendable {
                 secondary: secondary,
                 observedAt: stamps[idx],
                 showsRowAgeMark: !allOld && staleFlags[idx],
-                sourceMark: item.row.sourceMark
+                sourceMark: item.row.sourceMark,
+                renderedPercent: item.row.renderedPercent
             )
         }
 

@@ -393,6 +393,7 @@ struct TournamentHubResultCard: View {
                let markButton = SourceMarkButton(
                    sourceMark,
                    number: prematchNumber,
+                   renderedPercent: SourceMarkSheet.parsedWholePercent(from: prematchText),
                    subject: name,
                    subtitle: row.headline.isEmpty ? nil : row.headline,
                    isPregame: true,

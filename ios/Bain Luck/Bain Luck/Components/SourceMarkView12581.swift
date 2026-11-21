@@ -11,6 +11,8 @@ struct SourceMarkButton: View {
     let mark: SourceMark
     /// The number the mark follows, as the row prints it; the sheet repeats it.
     let number: Double?
+    /// Exact rounded whole percent printed by the card/row (e.g. pair/bundle rounding `86` when `number` is `0.865`).
+    var renderedPercent: Int? = nil
     /// Optional team or competitor name when the card shows two sides (#12989 follow-up).
     let subject: String?
     /// Optional row caption / market label under `subject` when multiple rows share the same subject (#13113 follow-up).
@@ -32,6 +34,7 @@ struct SourceMarkButton: View {
     init?(
         _ mark: SourceMark?,
         number: Double? = nil,
+        renderedPercent: Int? = nil,
         subject: String? = nil,
         subtitle: String? = nil,
         isPregame: Bool = false,
@@ -42,6 +45,7 @@ struct SourceMarkButton: View {
         guard let mark, mark.draws else { return nil }
         self.mark = mark
         self.number = number
+        self.renderedPercent = renderedPercent
         self.subject = subject
         self.subtitle = subtitle
         self.isPregame = isPregame
@@ -67,6 +71,7 @@ struct SourceMarkButton: View {
             SourceMarkSheet(
                 mark: mark,
                 number: number,
+                renderedPercent: renderedPercent,
                 subject: subject,
                 subtitle: subtitle,
                 isPregame: isPregame,
@@ -85,6 +90,7 @@ struct SourceMarkButton: View {
 struct SourceMarkSheet: View {
     let mark: SourceMark
     var number: Double? = nil
+    var renderedPercent: Int? = nil
     var subject: String? = nil
     var subtitle: String? = nil
     var isPregame: Bool = false
@@ -94,9 +100,9 @@ struct SourceMarkSheet: View {
 
     static let title = "Where this number comes from"
 
-    static func formatSheetProbability(_ probability: Double, showsTenths: Bool) -> String {
+    static func formatSheetProbability(_ probability: Double, renderedPercent: Int? = nil, showsTenths: Bool) -> String {
         guard showsTenths else {
-            return formatProbability(probability)
+            return formatProbability(probability, renderedPercent: renderedPercent)
         }
         let pct = probability * 100
         if pct > 0 && pct < 0.05 { return "<0.1%" }
@@ -158,8 +164,22 @@ struct SourceMarkSheet: View {
     }
 
     /// The tapped number, matching the row's precision.
-    static func headline(_ number: Double?, showsTenths: Bool = false) -> String? {
-        number.map { formatSheetProbability($0, showsTenths: showsTenths) }
+    static func headline(_ number: Double?, renderedPercent: Int? = nil, showsTenths: Bool = false) -> String? {
+        if let number {
+            return formatSheetProbability(number, renderedPercent: renderedPercent, showsTenths: showsTenths)
+        }
+        return showsTenths ? nil : renderedPercent.map { "\($0)%" }
+    }
+
+    static func parsedWholePercent(from printedText: String?) -> Int? {
+        guard let raw = printedText?.trimmingCharacters(in: .whitespacesAndNewlines),
+              raw.hasSuffix("%"),
+              !raw.contains("."),
+              !raw.hasPrefix("<"),
+              !raw.hasPrefix(">") else {
+            return nil
+        }
+        return Int(raw.dropLast())
     }
 
     /// One line of method under the rows. Multi-source blends and scaled
@@ -193,7 +213,7 @@ struct SourceMarkSheet: View {
     }
 
     var body: some View {
-        let headlineText = Self.headline(number, showsTenths: showsTenths)
+        let headlineText = Self.headline(number, renderedPercent: renderedPercent, showsTenths: showsTenths)
         let contextText = Self.contextLine(subject: subject, isPregame: isPregame)
         let subtitleText = Self.subtitleLine(subtitle)
         let singleAttribution = Self.singleUnscaledAttribution(mark, headline: headlineText, showsTenths: showsTenths, now: now)

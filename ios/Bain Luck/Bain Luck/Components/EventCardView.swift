@@ -444,6 +444,7 @@ struct EventCardView: View {
     struct CardSourceMarkPresentation: Equatable {
         let mark: SourceMark
         let number: Double?
+        let renderedPercent: Int?
         let subject: String?
         let isPregame: Bool
         let showsTenths: Bool
@@ -483,46 +484,84 @@ struct EventCardView: View {
             return nil
         }
 
-        guard canStillBeGraded,
-              !resolved.isPregame,
-              event.status == "live",
-              resolved.number != nil else {
+        guard resolved.number != nil else {
             return CardSourceMarkPresentation(
                 mark: resolved.mark,
-                number: resolved.number,
+                number: nil,
+                renderedPercent: nil,
                 subject: resolved.subject,
                 isPregame: resolved.isPregame,
                 showsTenths: false
             )
         }
 
-        let liveTenths = CompactGameCard12616.liveTenthsStrings(
-            away: event.currentOdds?.awayProbability,
-            home: event.currentOdds?.homeProbability,
-            awayIsWithheld: currentAwayIsWithheld
-        )
-        let hasHomeCandidate = event.sourceMark?.draws == true && event.currentOdds?.homeProbability != nil
-        let hasAwayCandidate = !currentAwayIsWithheld
-            && event.awaySourceMark?.draws == true
-            && event.currentOdds?.awayProbability != nil
-        let choseAway: Bool = {
-            if hasHomeCandidate && hasAwayCandidate {
-                return (event.currentOdds?.awayProbability ?? 0) > (event.currentOdds?.homeProbability ?? 0)
+        if canStillBeGraded && !resolved.isPregame {
+            let hasHomeCandidate = event.sourceMark?.draws == true && event.currentOdds?.homeProbability != nil
+            let hasAwayCandidate = !currentAwayIsWithheld
+                && event.awaySourceMark?.draws == true
+                && event.currentOdds?.awayProbability != nil
+            let choseAway: Bool = {
+                if hasHomeCandidate && hasAwayCandidate {
+                    return (event.currentOdds?.awayProbability ?? 0) > (event.currentOdds?.homeProbability ?? 0)
+                }
+                return hasAwayCandidate
+            }()
+
+            if event.status == "live" {
+                let liveTenths = CompactGameCard12616.liveTenthsStrings(
+                    away: event.currentOdds?.awayProbability,
+                    home: event.currentOdds?.homeProbability,
+                    awayIsWithheld: currentAwayIsWithheld
+                )
+                let printedCell = choseAway ? liveTenths.away : liveTenths.home
+                let showsTenths = printedCell?.contains(".") == true
+                if showsTenths {
+                    return CardSourceMarkPresentation(
+                        mark: resolved.mark,
+                        number: alignNumberToPrintedTenths(resolved.number, printedText: printedCell),
+                        renderedPercent: nil,
+                        subject: resolved.subject,
+                        isPregame: false,
+                        showsTenths: true
+                    )
+                }
             }
-            return hasAwayCandidate
+
+            let pair = duelPercents(
+                away: event.currentOdds?.awayProbability,
+                home: event.currentOdds?.homeProbability,
+                servedAway: event.currentOdds?.awayRenderedPercent,
+                servedHome: event.currentOdds?.homeRenderedPercent
+            )
+            return CardSourceMarkPresentation(
+                mark: resolved.mark,
+                number: resolved.number,
+                renderedPercent: choseAway ? pair[0] : pair[1],
+                subject: resolved.subject,
+                isPregame: resolved.isPregame,
+                showsTenths: false
+            )
+        }
+
+        let prematchRenderedPercent: Int? = {
+            guard resolved.isPregame, let prematch else { return nil }
+            let hasHome = event.pregameSourceMark?.draws == true && prematch.homeProbability != nil
+            let hasAway = !prematchAwayIsWithheld
+                && event.awayPregameSourceMark?.draws == true
+                && prematch.awayProbability != nil
+            let choseAway: Bool = (hasHome && hasAway)
+                ? (prematch.awayProbability > prematch.homeProbability)
+                : hasAway
+            return choseAway ? prematch.percents[0] : prematch.percents[1]
         }()
-        let printedCell = choseAway ? liveTenths.away : liveTenths.home
-        let showsTenths = printedCell?.contains(".") == true
-        let alignedNumber = showsTenths
-            ? alignNumberToPrintedTenths(resolved.number, printedText: printedCell)
-            : resolved.number
 
         return CardSourceMarkPresentation(
             mark: resolved.mark,
-            number: alignedNumber,
+            number: resolved.number,
+            renderedPercent: prematchRenderedPercent,
             subject: resolved.subject,
             isPregame: resolved.isPregame,
-            showsTenths: showsTenths
+            showsTenths: false
         )
     }
 
@@ -538,6 +577,7 @@ struct EventCardView: View {
         let button = SourceMarkButton(
             resolved.mark,
             number: resolved.number,
+            renderedPercent: resolved.renderedPercent,
             subject: resolved.subject,
             isPregame: resolved.isPregame,
             numberSize: 17,

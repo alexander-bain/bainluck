@@ -200,6 +200,7 @@ struct NativeTournamentDiscoverCard: View {
                                     if let mark = SourceMarkButton(
                                         leader.sourceMark,
                                         number: leader.probability,
+                                        renderedPercent: leader.renderedPercent,
                                         subject: leader.name,
                                         numberSize: 22,
                                         compactRow: true,

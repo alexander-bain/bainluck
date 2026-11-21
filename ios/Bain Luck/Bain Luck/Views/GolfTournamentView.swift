@@ -185,6 +185,7 @@ struct GolfTournamentView: View {
                         if let mark = SourceMarkButton(
                             outcome.sourceMark,
                             number: outcome.sourceMark?.state == .settled ? nil : outcome.probability,
+                            renderedPercent: outcome.sourceMark?.state == .settled ? nil : outcome.renderedPercent,
                             subject: outcome.name,
                             numberSize: 15,
                             compactRow: true,
@@ -252,6 +253,7 @@ struct GolfTournamentView: View {
                 if let mark = SourceMarkButton(
                     row.sourceMark,
                     number: (row.isWinner == true || row.sourceMark?.state == .settled) ? nil : row.probability,
+                    renderedPercent: (row.isWinner == true || row.sourceMark?.state == .settled) ? nil : row.renderedPercent,
                     subject: row.name,
                     numberSize: 15,
                     compactRow: true,
