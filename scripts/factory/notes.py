@@ -352,7 +352,7 @@ class ModelBudget:
         })
 
     def call(self, payload, key, request, *, notes_hash=None):
-        if not key:
+        if not key or not self.save:
             return None, self.stats()
         limit = payload.get("max_completion_tokens") or payload["max_tokens"]
         estimate = cost_upper_bound_usd(payload["model"], payload["messages"], limit)

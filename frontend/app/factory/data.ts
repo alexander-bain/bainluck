@@ -1,8 +1,9 @@
-import { factoryEventKinds, factoryMoods, type Change, type ChecksQueue, type CrewHabits, type FactoryData, type FloorEvent } from "./types";
+import { factoryEventKinds, factoryMoods, type Change, type ChecksQueue, type CrewHabits, type FactoryData, type FactoryPicture, type FloorEvent } from "./types";
 import { pacificDay, stationNames, stations, transferId } from "./activity";
 
 export const FACTORY_DATA_URL =
   "https://github.com/alexander-bain/bainluck/releases/download/factory-data/factory.json";
+export const FACTORY_PICTURE_BASE = FACTORY_DATA_URL.slice(0, FACTORY_DATA_URL.lastIndexOf("/") + 1);
 const MAX_CACHE_AGE_MS = 2 * 60_000;
 
 export interface FactoryRead {
@@ -95,6 +96,19 @@ function verifiedCrew(payload: FactoryData) {
     if (habits && validHabits(habits, through)) builders[member] = habits;
   }
   if (Object.keys(builders).length) return { since: week.since, builders };
+}
+
+function verifiedPictures(payload: FactoryData) {
+  if (!Array.isArray(payload.pictures)) return;
+  const count = (value: number) => Number.isSafeInteger(value) && value >= 0;
+  const seen = new Map<string, FactoryPicture>();
+  for (const picture of payload.pictures) {
+    if (!picture || !/^\d{4}-\d{2}-\d{2}$/.test(picture.day) ||
+        !(Date.parse(picture.as_of) <= Date.parse(payload.generated_at)) ||
+        pacificDay(picture.as_of) !== picture.day || !count(picture.floor) || !count(picture.shipped)) continue;
+    seen.set(picture.day, { day: picture.day, as_of: picture.as_of, floor: picture.floor, shipped: picture.shipped });
+  }
+  return [...seen.values()].sort((a, b) => b.day.localeCompare(a.day)).slice(0, 7);
 }
 
 function notesForSnapshot(payload: FactoryData) {
@@ -259,6 +273,7 @@ export function validateSnapshot(payload: FactoryData): FactoryData {
   const speech = speechForSnapshot(payload);
   const replay = verifiedReplay(payload);
   const crew = verifiedCrew(payload);
+  const pictures = verifiedPictures(payload);
   const { checks_queue: rawQueue, ...signals } = payload.signals;
   const checksQueue = verifiedChecksQueue(rawQueue);
   const usage = payload.model_usage;
@@ -276,6 +291,7 @@ export function validateSnapshot(payload: FactoryData): FactoryData {
     ...(payload.events ? { events: payload.events } : {}),
     ...(replay ? { day_replay: replay } : {}),
     ...(crew ? { crew_week: crew } : {}),
+    ...(pictures?.length ? { pictures } : {}),
     ...(payload.injury_clock ? { injury_clock: payload.injury_clock } : {}),
     ...(payload.stops ? { stops: payload.stops } : {}),
     ...(notes ? { notes } : {}),

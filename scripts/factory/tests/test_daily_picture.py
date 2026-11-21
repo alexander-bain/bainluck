@@ -1,13 +1,16 @@
 import base64
 from datetime import datetime, timezone
+import io
 from pathlib import Path
 import sys
 import unittest
 from unittest.mock import Mock, patch
+from contextlib import redirect_stdout
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from daily_picture import asset_label, asset_name, gallery, metered_picture, picture_request, quote
+from collect import main, publish_daily_picture
 from notes import ModelBudget, meter_body
 from llm_models import image_model_for_task
 
@@ -118,3 +121,27 @@ class DailyPictureTests(unittest.TestCase):
             )
         self.assertEqual(receipt["status"], "unpriced")
         self.request.assert_not_called()
+
+    def test_manual_master_measurement_bypasses_collecting_and_publishing(self):
+        api = Mock()
+        api.metrics.return_value = {"github_api_calls": 2}
+        with patch.dict("os.environ", {
+            "FACTORY_MEASURE_PICTURE": "true", "GITHUB_EVENT_NAME": "workflow_dispatch",
+        }), patch("sys.argv", ["collect.py", "--publish", "--output", "/unused"]), patch(
+            "collect.authorize_publication"
+        ) as authorize, patch("collect.GitHub", return_value=api), patch(
+            "collect.read_published", return_value=({"id": 1}, self.snapshot, {})
+        ), patch("collect.metered_picture", return_value=(None, {"status": "measured"})) as measure, patch(
+            "collect.collect"
+        ) as collect_floor, patch("collect.publish_asset") as publish, redirect_stdout(io.StringIO()) as out:
+            main()
+        authorize.assert_called_once()
+        self.assertTrue(measure.call_args.kwargs["sample"])
+        collect_floor.assert_not_called()
+        publish.assert_not_called()
+        self.assertIn('"status": "measured"', out.getvalue())
+
+    def test_upload_is_disabled_with_the_shipped_switch(self):
+        api = Mock()
+        self.assertIsNone(publish_daily_picture(api, {}, None))
+        api.request.assert_not_called()

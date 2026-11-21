@@ -11,7 +11,7 @@ import subprocess
 from urllib.request import Request, urlopen
 
 from model import PACIFIC, STATIONS, instant
-from notes import LABELS
+from notes import COLLECTOR_DAILY_CALLS, LABELS, MONTHLY_COST_MICROS
 from signals import on_floor
 from llm_models import UnsupportedModelError, image_model_for_task
 
@@ -213,6 +213,8 @@ def metered_picture(snapshot, budget, key, *, sample=False, enabled=DAILY_PICTUR
     if sample and (reserve > MEASUREMENT_MAX_MICROS
                    or meter["month_micros"] + reserve > MEASUREMENT_MONTH_MICROS):
         return None, {**receipt, "status": "over-measurement-budget"}
+    if meter["calls"] >= COLLECTOR_DAILY_CALLS or meter["month_micros"] + reserve > MONTHLY_COST_MICROS:
+        return None, {**receipt, "status": "no-reservation"}
     try:
         if not sample and not prepare():
             return None, {**receipt, "status": "text-check-unavailable"}
