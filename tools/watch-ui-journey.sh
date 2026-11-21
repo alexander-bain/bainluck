@@ -328,6 +328,8 @@ xcodebuild test-without-building "${XCODE_ARGS[@]}" "-only-testing:$WARMUP_CASE"
   -test-timeouts-enabled YES -default-test-execution-time-allowance 240 \
   -maximum-test-execution-time-allowance 240 \
   > "$OUT/tests-warmup.log" 2>&1 || echo "warm-up exit $? (not judged)" >> "$OUT/preflight.log"
+xcrun simctl terminate "$TEST_UDID" com.bainluck.Bain-Luck.watchkitapp >/dev/null 2>&1 || true
+wait_services_ready "$TEST_UDID" com.apple.Carousel || true
 PHASE='BainLuckWatchUITests full suite from the same built products'
 python3 "$ROOT/tools/watch_ui_stage.py" phase --output-dir "$OUT" --phase "$PHASE"
 # The hang watchdog stops xcodebuild only when a test has overrun and the log then
