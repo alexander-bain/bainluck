@@ -326,7 +326,7 @@ class TestStrategy1Survives:
     """
 
     @pytest.mark.parametrize(
-        "market,expected_yes",
+        "market,_old_subject",
         [
             ("Will Anthropic IPO first?", "Anthropic"),
             ("Will OpenAI IPO before 2027?", "OpenAI"),
@@ -347,10 +347,12 @@ class TestStrategy1Survives:
         ],
     )
     def test_a_genuine_extraction_is_not_read_as_a_restatement(
-        self, market, expected_yes
+        self, market, _old_subject
     ):
-        assert humanize_binary_outcome_name("Yes", market) == expected_yes
-        assert humanize_binary_outcome_name("No", market) == f"Not {expected_yes}"
+        # #13270 — binary markets keep canonical Yes/No and never manufacture
+        # "Not <subject>" labels.
+        assert humanize_binary_outcome_name("Yes", market) == "Yes"
+        assert humanize_binary_outcome_name("No", market) == "No"
 
 
 class TestNothingElseMoved:
@@ -383,5 +385,5 @@ class TestNothingElseMoved:
         assert humanize_binary_outcome_name("", "Will X happen?") == ""
         assert humanize_binary_outcome_name("Yes", None) == "Yes"
         assert humanize_binary_outcome_name("YES", "Will Anthropic IPO first?") == (
-            "Anthropic"
+            "Yes"
         )
