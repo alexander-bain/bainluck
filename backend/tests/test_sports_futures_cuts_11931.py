@@ -284,20 +284,22 @@ class TestWithheldTradesCache:
         engine, db, queries = _make_db_with_snapshots()
         try:
             async def _run():
-                # Cold L1 + L2 -> DB query populates both L1 and L2
+                # Cold L1 + L2 -> DB query populates both L1 and L2 with `read_at`
                 rows1 = await futures_route._newest_venue_trade_rows(
                     db, "polymarket", [11, 13]
                 )
                 assert len(queries) == 1
                 assert sorted((oid, float(p)) for oid, p in rows1) == [(13, 0.72)]
-                assert (
-                    json.loads(fake_redis.store["withheld_trades:v1:polymarket:11"])
-                    == []
+                entry_11 = json.loads(
+                    fake_redis.store["withheld_trades:v2:polymarket:11"]
                 )
-                assert json.loads(
-                    fake_redis.store["withheld_trades:v1:polymarket:13"]
-                ) == [0.72]
-                assert fake_redis.ttls["withheld_trades:v1:polymarket:13"] == 60
+                entry_13 = json.loads(
+                    fake_redis.store["withheld_trades:v2:polymarket:13"]
+                )
+                assert entry_11["prices"] == []
+                assert entry_13["prices"] == [0.72]
+                assert isinstance(entry_13["read_at"], float)
+                assert fake_redis.ttls["withheld_trades:v2:polymarket:13"] == 60
 
                 # Simulate a second dyno (empty L1) -> hits Redis L2, zero new DB queries
                 wtc.clear_withheld_trades_cache()
@@ -316,6 +318,66 @@ class TestWithheldTradesCache:
                 )
                 assert len(queries) == 2
                 assert sorted((oid, float(p)) for oid, p in rows3) == [(13, 0.72)]
+
+            asyncio.run(_run())
+        finally:
+            engine.dispose()
+
+    def test_second_process_l2_copy_expires_at_60s_from_db_read_not_copy(
+        self, monkeypatch
+    ):
+        """#13253 review guard: Process B copying from L2 at 59s MUST miss by 61s."""
+        monkeypatch.setenv("WITHHELD_TRADES_CACHE_ENABLED", "1")
+        monkeypatch.setenv("WITHHELD_TRADES_CACHE_SHARED_ENABLED", "1")
+        fake_redis = _FakeAsyncRedis()
+
+        async def _fake_shared():
+            return fake_redis
+
+        monkeypatch.setattr(wtc, "_shared_redis", _fake_shared)
+        clock = {"wall": 1_763_680_000.0, "mono": 1000.0}
+        monkeypatch.setattr(wtc.time, "time", lambda: clock["wall"])
+        monkeypatch.setattr(wtc.time, "monotonic", lambda: clock["mono"])
+
+        engine, db, queries = _make_db_with_snapshots()
+        try:
+            async def _run():
+                # t = 0s: Process A reads DB and writes L1 + L2 (read_at = t=0)
+                rows_a = await futures_route._newest_venue_trade_rows(
+                    db, "polymarket", [13]
+                )
+                assert len(queries) == 1
+                assert sorted((oid, float(p)) for oid, p in rows_a) == [(13, 0.72)]
+
+                # t = 59s: Process B (empty L1) hits L2 and keeps remaining 1s in L1
+                clock["wall"] += 59.0
+                clock["mono"] += 59.0
+                wtc.clear_withheld_trades_cache()
+                rows_b59 = await futures_route._newest_venue_trade_rows(
+                    db, "polymarket", [13]
+                )
+                assert len(queries) == 1
+                assert rows_b59 == [(13, 0.72)]
+
+                # t = 59.5s: still within the 60s bound from t=0 -> Process B hits L1
+                clock["wall"] += 0.5
+                clock["mono"] += 0.5
+                rows_b595 = await futures_route._newest_venue_trade_rows(
+                    db, "polymarket", [13]
+                )
+                assert len(queries) == 1
+                assert rows_b595 == [(13, 0.72)]
+
+                # t = 61s: past 60s from original DB read -> Process B MUST miss
+                # both L1 and L2 (even if Redis hasn't evicted the key yet) and
+                # re-query the DB.
+                clock["wall"] += 1.5
+                clock["mono"] += 1.5
+                rows_b61 = await futures_route._newest_venue_trade_rows(
+                    db, "polymarket", [13]
+                )
+                assert len(queries) == 2
+                assert sorted((oid, float(p)) for oid, p in rows_b61) == [(13, 0.72)]
 
             asyncio.run(_run())
         finally:

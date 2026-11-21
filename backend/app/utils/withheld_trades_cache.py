@@ -41,7 +41,7 @@ WITHHELD_TRADES_CACHE_ENV = "WITHHELD_TRADES_CACHE_ENABLED"
 WITHHELD_TRADES_CACHE_SHARED_ENV = "WITHHELD_TRADES_CACHE_SHARED_ENABLED"
 WITHHELD_TRADES_CACHE_TTL_SECONDS = 60.0
 _L1_MAX_ENTRIES = 8192
-_L2_PREFIX = "withheld_trades:v1"
+_L2_PREFIX = "withheld_trades:v2"
 
 _l1_lock = threading.Lock()
 _l1_cache: OrderedDict[tuple[int, str, int], tuple[float, list[float | None]]] = (
@@ -81,13 +81,25 @@ def _l1_get(engine_key: int, venue: str, outcome_id: int) -> list[float | None] 
 
 
 def _l1_set_many(
-    engine_key: int, venue: str, by_outcome: dict[int, list[float | None]]
+    engine_key: int,
+    venue: str,
+    by_outcome: dict[int, list[float | None]],
+    *,
+    ttl_by_outcome: dict[int, float] | None = None,
 ) -> None:
     if not by_outcome:
         return
-    expires_at = time.monotonic() + WITHHELD_TRADES_CACHE_TTL_SECONDS
+    now_mono = time.monotonic()
     with _l1_lock:
         for oid, prices in by_outcome.items():
+            ttl = (
+                ttl_by_outcome.get(oid, WITHHELD_TRADES_CACHE_TTL_SECONDS)
+                if ttl_by_outcome is not None
+                else WITHHELD_TRADES_CACHE_TTL_SECONDS
+            )
+            if ttl <= 0.0:
+                continue
+            expires_at = now_mono + min(ttl, WITHHELD_TRADES_CACHE_TTL_SECONDS)
             key = (engine_key, venue, oid)
             _l1_cache[key] = (expires_at, list(prices))
             _l1_cache.move_to_end(key)
@@ -99,7 +111,8 @@ def _l2_key(venue: str, outcome_id: int) -> str:
     return f"{_L2_PREFIX}:{venue}:{outcome_id}"
 
 
-def _decode_prices(raw: Any) -> list[float | None] | None:
+def _decode_l2_entry(raw: Any) -> tuple[list[float | None], float] | None:
+    """Decode a shared-cache entry into ``(prices, read_at_epoch_s)``."""
     if raw is None:
         return None
     try:
@@ -107,17 +120,25 @@ def _decode_prices(raw: Any) -> list[float | None] | None:
         parsed = json.loads(text)
     except (ValueError, TypeError):
         return None
-    if not isinstance(parsed, list):
+    if not isinstance(parsed, dict):
+        return None
+    raw_prices = parsed.get("prices")
+    read_at = parsed.get("read_at")
+    if (
+        not isinstance(raw_prices, list)
+        or not isinstance(read_at, (int, float))
+        or isinstance(read_at, bool)
+    ):
         return None
     out: list[float | None] = []
-    for item in parsed:
+    for item in raw_prices:
         if item is None:
             out.append(None)
         elif isinstance(item, (int, float)) and not isinstance(item, bool):
             out.append(float(item))
         else:
             return None
-    return out
+    return out, float(read_at)
 
 
 async def _shared_redis():
@@ -174,18 +195,29 @@ async def resolve_cached_venue_trades(
     if not raw_vals or len(raw_vals) != len(l1_misses):
         return hits, l1_misses
 
+    now_wall = time.time()
     l2_hits: dict[int, list[float | None]] = {}
+    l2_remaining_ttl: dict[int, float] = {}
     still_missed: list[int] = []
     for oid, raw in zip(l1_misses, raw_vals):
-        decoded = _decode_prices(raw)
-        if decoded is not None:
-            hits[oid] = decoded
-            l2_hits[oid] = decoded
-        else:
+        decoded = _decode_l2_entry(raw)
+        if decoded is None:
             still_missed.append(oid)
+            continue
+        prices, read_at = decoded
+        # Remaining lifetime from the original DB read, never a fresh 60s from
+        # the L2 copy (#13253 review: prevents 2x TTL across two web processes).
+        remaining = (read_at + WITHHELD_TRADES_CACHE_TTL_SECONDS) - now_wall
+        if remaining <= 0.0:
+            still_missed.append(oid)
+            continue
+        capped = min(remaining, WITHHELD_TRADES_CACHE_TTL_SECONDS)
+        hits[oid] = prices
+        l2_hits[oid] = prices
+        l2_remaining_ttl[oid] = capped
 
     if l2_hits:
-        _l1_set_many(engine_key, venue, l2_hits)
+        _l1_set_many(engine_key, venue, l2_hits, ttl_by_outcome=l2_remaining_ttl)
     return hits, still_missed
 
 
@@ -200,6 +232,7 @@ async def store_cached_venue_trades(
     if not queried_ids or not withheld_trades_cache_enabled():
         return
 
+    read_at = time.time()
     grouped: dict[int, list[float | None]] = {int(oid): [] for oid in queried_ids}
     for oid, price in fetched_rows:
         oid_int = int(oid)
@@ -221,7 +254,8 @@ async def store_cached_venue_trades(
         async def _write_pipeline() -> None:
             pipe = client.pipeline(transaction=False)
             for oid, prices in grouped.items():
-                pipe.setex(_l2_key(venue, oid), ttl, json.dumps(prices))
+                payload = json.dumps({"prices": prices, "read_at": read_at})
+                pipe.setex(_l2_key(venue, oid), ttl, payload)
             await pipe.execute()
 
         await bounded_redis_call(_write_pipeline, treat_none_as_miss=False)
