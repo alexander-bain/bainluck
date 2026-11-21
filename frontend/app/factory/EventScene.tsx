@@ -30,7 +30,7 @@ export default function EventScene({
     >
       <div className={styles.eventAction}>
         {event.kind === "commit" && event.builder && event.builder !== "Other" && (
-          <Worker state="working" station="Write" identity={event.builder} />
+          <Worker state="working" identity={event.builder} />
         )}
         {(event.kind === "live" || event.kind === "deploy" || event.kind === "merge") && (
           <Truck size={20} />
