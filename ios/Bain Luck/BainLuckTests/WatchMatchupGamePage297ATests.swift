@@ -607,5 +607,187 @@ final class WatchMatchupGamePage297ATests: XCTestCase {
         XCTAssertEqual(finalHomeWinTile.supportingLine, "Pregame 69%")
         XCTAssertEqual(finalHomeWinPage.home.pregameText, "Pregame 69%")
     }
+
+    func testLook1CFinalPregameRowFitsFirstScreenAcross41mm45mmAnd46mm() throws {
+        let knicksWolves = try decodeGame(#"""
+        {
+          "id": 15351901,
+          "away_team": "New York Knicks",
+          "home_team": "Minnesota Timberwolves",
+          "away_team_data": {"team_id": 18, "abbreviation": "NY", "primary_color": "#006BB6", "secondary_color": "#F58426"},
+          "home_team_data": {"team_id": 16, "abbreviation": "MIN", "primary_color": "#0C2340", "secondary_color": "#78BE20"},
+          "status": "final",
+          "sport": "basketball_nba",
+          "away_score": 102,
+          "home_score": 99,
+          "score_observed_at": "2026-11-20T05:10:00Z",
+          "prematch_odds": {"away_probability": 0.53, "home_probability": 0.47}
+        }
+        """#)
+        let soccerDraw = try decodeGame(#"""
+        {
+          "id": 15351902,
+          "away_team": "Arsenal",
+          "home_team": "Chelsea",
+          "away_team_data": {"team_id": 359, "abbreviation": "ARS", "primary_color": "#EF0107", "secondary_color": "#FFFFFF"},
+          "home_team_data": {"team_id": 363, "abbreviation": "CHE", "primary_color": "#034694", "secondary_color": "#FFFFFF"},
+          "status": "completed",
+          "sport": "soccer_epl",
+          "away_score": 1,
+          "home_score": 1,
+          "score_observed_at": "2026-11-20T05:10:00Z",
+          "prematch_odds": {"away_probability": 0.31, "draw_probability": 0.28, "home_probability": 0.41}
+        }
+        """#)
+        let crests: [Int: Data?] = [
+            18: crestData(abbr: "NY", fill: UIColor(red: 0.96, green: 0.52, blue: 0.15, alpha: 1)),
+            16: crestData(abbr: "MIN", fill: UIColor(red: 0.05, green: 0.14, blue: 0.25, alpha: 1)),
+            359: crestData(abbr: "ARS", fill: UIColor(red: 0.94, green: 0.0, blue: 0.03, alpha: 1)),
+            363: crestData(abbr: "CHE", fill: UIColor(red: 0.01, green: 0.27, blue: 0.58, alpha: 1)),
+        ]
+        let knicksModel = WatchMatchupGameHeroModel297A.build(
+            from: knicksWolves,
+            now: now,
+            timeZone: pt,
+            crestForTeamID: { crests[$0] ?? nil }
+        )
+        let soccerDrawModel = WatchMatchupGameHeroModel297A.build(
+            from: soccerDraw,
+            now: now,
+            timeZone: pt,
+            crestForTeamID: { crests[$0] ?? nil }
+        )
+
+        // Observed watchOS inline nav-bar top reserve ("8:39 / Your game" at 64.5 pt
+        // once WatchPinnedHomeView12640 removes the extra 10 pt spacing below `watch.pins.top`).
+        let topNavReserve: CGFloat = 64.5
+        let cases: [(label: String, width: CGFloat, height: CGFloat)] = [
+            ("41 mm", 176, 215),
+            ("45 mm", 198, 242),
+            ("46 mm", 208, 248),
+        ]
+
+        for watchCase in cases {
+            let contentWidth = watchCase.width - 12 // matches WatchPinnedHomeView12640 .padding(.horizontal, 6)
+            let hero = WatchMatchupGamePageHeroView297A(model: knicksModel, caseWidth: watchCase.width)
+                .frame(width: contentWidth)
+                .environment(\.colorScheme, .dark)
+            let host = hostForMeasurement(hero, at: .large)
+            host.overrideUserInterfaceStyle = .dark
+            let measured = host.sizeThatFits(in: CGSize(width: contentWidth, height: 1000))
+            let available = watchCase.height - topNavReserve
+            XCTAssertLessThanOrEqual(
+                measured.height,
+                available,
+                "\(watchCase.label) Final hero (\(measured.height) pt) must fit inside first screen (\(available) pt below inline nav bar)"
+            )
+
+            let drawHero = WatchMatchupGamePageHeroView297A(model: soccerDrawModel, caseWidth: watchCase.width)
+                .frame(width: contentWidth)
+                .environment(\.colorScheme, .dark)
+            let drawHost = hostForMeasurement(drawHero, at: .large)
+            drawHost.overrideUserInterfaceStyle = .dark
+            let drawMeasured = drawHost.sizeThatFits(in: CGSize(width: contentWidth, height: 1000))
+            XCTAssertLessThanOrEqual(
+                drawMeasured.height,
+                available + 2,
+                "\(watchCase.label) 3-way soccer Draw Final hero (\(drawMeasured.height) pt) must fit inside first screen"
+            )
+        }
+
+        // Render framed comparison strip across all 3 Watch case sizes with exact nav-bar chrome.
+        let strip = HStack(alignment: .top, spacing: 14) {
+            ForEach(cases, id: \.label) { watchCase in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("\(watchCase.label) (\(Int(watchCase.width))×\(Int(watchCase.height)))")
+                        .font(.caption.bold())
+                        .foregroundStyle(.white.opacity(0.85))
+                    ZStack(alignment: .top) {
+                        Color.black
+                        VStack(alignment: .leading, spacing: 0) {
+                            VStack(alignment: .trailing, spacing: 0) {
+                                Text("8:39")
+                                    .font(.system(size: 13, weight: .semibold).monospacedDigit())
+                                    .foregroundStyle(.white)
+                                Text("Your game")
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .foregroundStyle(.white.opacity(0.65))
+                            }
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                            .padding(.trailing, 10)
+                            .frame(height: topNavReserve, alignment: .bottom)
+                            .padding(.bottom, 4)
+
+                            WatchMatchupGamePageHeroView297A(model: knicksModel, caseWidth: watchCase.width)
+                                .padding(.horizontal, 6)
+                        }
+                    }
+                    .frame(width: watchCase.width, height: watchCase.height, alignment: .top)
+                    .clipped()
+                    .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 28, style: .continuous)
+                            .strokeBorder(Color.white.opacity(0.26), lineWidth: 1.5)
+                    )
+                }
+            }
+        }
+        .padding(16)
+        .background(Color(red: 0.06, green: 0.07, blue: 0.09))
+        .environment(\.colorScheme, .dark)
+
+        let host = hostForMeasurement(strip, at: .large)
+        host.overrideUserInterfaceStyle = .dark
+        let fitting = host.sizeThatFits(in: CGSize(width: 900, height: 600))
+        let renderSize = CGSize(width: ceil(fitting.width), height: ceil(fitting.height))
+        host.view.frame = CGRect(origin: .zero, size: renderSize)
+
+        let window: UIWindow
+        if let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first {
+            window = UIWindow(windowScene: scene)
+        } else {
+            window = UIWindow(frame: host.view.frame)
+        }
+        window.frame = host.view.frame
+        window.overrideUserInterfaceStyle = .dark
+        window.rootViewController = host
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        let until = Date().addingTimeInterval(0.25)
+        repeat {
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.015))
+        } while Date() < until
+
+        let fmt = UIGraphicsImageRendererFormat()
+        fmt.scale = 2.0
+        let img = UIGraphicsImageRenderer(bounds: host.view.bounds, format: fmt).image { ctx in
+            if !host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true) {
+                host.view.layer.render(in: ctx.cgContext)
+            }
+        }
+
+        let req = VNRecognizeTextRequest()
+        req.recognitionLevel = .accurate
+        try VNImageRequestHandler(cgImage: XCTUnwrap(img.cgImage), options: [:]).perform([req])
+        let ocrLines = (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+        let joined = ocrLines.joined(separator: "\n")
+        XCTAssertFalse(ocrLines.contains(where: { $0.contains("…") || $0.contains("...") }), "Zero ellipsis expected: \(joined)")
+        XCTAssertEqual(joined.components(separatedBy: "Pregame 53%").count - 1, 3, "All 3 Watch sizes must show complete 'Pregame 53%': \(joined)")
+        XCTAssertEqual(joined.components(separatedBy: "Pregame 47%").count - 1, 3, "All 3 Watch sizes must show complete 'Pregame 47%': \(joined)")
+
+        if let outDir = ProcessInfo.processInfo.environment["BUILDER_C_RENDER_DIR_297A"], !outDir.isEmpty {
+            let dirURL = URL(fileURLWithPath: outDir, isDirectory: true)
+            try FileManager.default.createDirectory(at: dirURL, withIntermediateDirectories: true)
+            if let png = img.pngData() {
+                try png.write(to: dirURL.appendingPathComponent("watch-final-fit-41-45-46mm.png"))
+            }
+        }
+    }
     #endif
 }
