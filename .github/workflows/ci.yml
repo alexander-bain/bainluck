@@ -263,6 +263,8 @@ jobs:
       - uses: actions/checkout@v6
       - name: Check call keywords across backend/app (#13281)
         run: python3 .github/scripts/check_call_keywords.py backend/app
+      - name: Post-deploy smoke rollback stand-in 500 dry-run (#13283)
+        run: python3 .github/scripts/post_deploy_smoke_rollback.py --self-test-500
       - uses: actions/setup-python@v7
         if: needs.change-scope.outputs.live == 'true'
         with:
@@ -5410,6 +5412,9 @@ jobs:
     concurrency:
       group: heroku-deploy
       cancel-in-progress: false
+    outputs:
+      deployed: ${{ steps.heroku_deploy.outputs.deployed }}
+      prev_live_sha: ${{ steps.heroku_deploy.outputs.prev_live_sha }}
     env:
       HEROKU_API_KEY: ${{ secrets.HEROKU_API_KEY }}
       GH_TOKEN: ${{ github.token }}
@@ -5439,7 +5444,8 @@ jobs:
           SCOPE_HEAD: ${{ needs.change-scope.outputs.head }}
         run: python3 tools/release/verify_fast.py
 
-      - name: Deploy to Heroku (never-backwards guarded)
+      - id: heroku_deploy
+        name: Deploy to Heroku (never-backwards guarded)
         run: |
           # Never-backwards guard (L2-57, reference point repaired for #3171).
           #
@@ -5513,6 +5519,7 @@ jobs:
           check_source_veto
           if git push heroku "$GITHUB_SHA:refs/heads/master"; then
             echo "Deployed $GITHUB_SHA."
+            { echo "deployed=true"; echo "prev_live_sha=${LIVE:-}"; } >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -5546,6 +5553,7 @@ jobs:
             check_source_veto
             git push heroku "$GITHUB_SHA:refs/heads/master"
             echo "Deployed $GITHUB_SHA."
+            { echo "deployed=true"; echo "prev_live_sha=${LIVE_NOW:-}"; } >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -5565,6 +5573,7 @@ jobs:
             echo "no newer commit to rewind past. History diverged; forcing."
             check_source_veto
             git push heroku "$GITHUB_SHA:refs/heads/master" --force
+            { echo "deployed=true"; echo "prev_live_sha=${LIVE_NOW:-}"; } >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -5574,3 +5583,24 @@ jobs:
           echo "could rewind a newer production, so this fails closed. Deploy by hand once the"
           echo "divergence is understood."
           exit 1
+
+  post-deploy-smoke-dry-run:
+    needs: [deploy]
+    if: always() && github.ref == 'refs/heads/master' && github.event_name == 'push' && needs.deploy.result == 'success' && needs.deploy.outputs.deployed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - name: Post-deploy smoke rollback check (dry-run only, #13283)
+        env:
+          AUTO_ROLLBACK_ENABLED: ${{ vars.AUTO_ROLLBACK_ENABLED }}
+          EXPECTED_SHA: ${{ github.sha }}
+          PREV_LIVE_SHA: ${{ needs.deploy.outputs.prev_live_sha }}
+        run: |
+          python3 .github/scripts/post_deploy_smoke_rollback.py \
+            --dry-run \
+            --base-url https://api.bainluck.com \
+            --expected-sha "$EXPECTED_SHA" \
+            --prev-sha "$PREV_LIVE_SHA"
