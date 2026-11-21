@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowDown,
@@ -33,7 +33,7 @@ import styles from "./factory.module.css";
 import Worker, { type WorkerState } from "./Worker";
 import EventScene from "./EventScene";
 import CrateJourney from "./CrateJourney";
-import FactoryMascot from "./FactoryMascot";
+import FactoryMascot, { MascotMove, mascotAction } from "./FactoryMascot";
 import InjurySign from "./InjurySign";
 import { builderOfDay, clipboard, median } from "./signs";
 import { useDayReplay } from "./useDayReplay";
@@ -160,10 +160,12 @@ function StackLight({
   verdict,
   hold,
   now,
+  children,
 }: {
   verdict: FloorVerdict;
   hold?: Stop;
   now: string;
+  children?: ReactNode;
 }) {
   const waited = hold && stopWaitText(hold, now);
   return (
@@ -183,7 +185,7 @@ function StackLight({
         {waited && <small className={styles.stopOrigin}>{waited}</small>}
         {hold && <HoldOrigin stop={hold} />}
       </div>
-      <FactoryMascot level={verdict.level} />
+      {children}
     </div>
   );
 }
@@ -262,6 +264,8 @@ export default function FactoryFloor({
     data?.generated_at, tape, motion && !replay.session && !transfer,
   );
   const playing = replay.session ? replay.playing : transfer ?? livePlaying;
+  const mascotCanMove = motion && !selectedCrate && !selectedGroup;
+  const mascotMove = mascotCanMove && playing ? mascotAction(playing.event) : undefined;
 
   useEffect(() => {
     document.title = tabTitle;
@@ -350,7 +354,9 @@ export default function FactoryFloor({
         <header className={styles.heading}>
           <h1>The Factory</h1>
         </header>
-        <StackLight verdict={verdict} now={now} />
+        <StackLight verdict={verdict} now={now}>
+          <FactoryMascot level={verdict.level} pose="asleep" />
+        </StackLight>
         <section className={styles.unavailable}>
           <h2>{"The floor can't be read right now"}</h2>
           <p>
@@ -567,7 +573,15 @@ export default function FactoryFloor({
         </div>
       </header>
 
-      <StackLight verdict={verdict} hold={holds[0]} now={now} />
+      <StackLight verdict={verdict} hold={holds[0]} now={now}>
+        {!mascotMove && (
+          <FactoryMascot
+            level={verdict.level}
+            pose={clockedIn.size ? "standing" : "asleep"}
+            moving={mascotCanMove && clockedIn.size > 0 && verdict.level !== "red"}
+          />
+        )}
+      </StackLight>
       {replay.session && (
         <div className={styles.replayBar}>
             <button type="button" onClick={replay.close}>Close replay</button>
@@ -909,6 +923,9 @@ export default function FactoryFloor({
                     })}
                     {reducedMotion === false && !behind && playing?.event.line === line && (
                       <EventScene key={playing.event.id} {...playing} />
+                    )}
+                    {mascotMove && playing?.event.line === line && (
+                      <MascotMove key={`mascot-${playing.event.id}`} {...playing} pose={mascotMove} />
                     )}
                     <div
                       className={styles.belts}

@@ -175,15 +175,75 @@
 [data-verdict="amber"] .stackLight [data-light="amber"] { background: #ffd58c; }
 [data-verdict="red"] .stackLight [data-light="red"] { background: #ff838d; }
 .mascot {
+  display: block;
   flex: none;
-  width: 43px;
-  height: 26px;
+  width: 46px;
+  aspect-ratio: 1;
   margin-inline-start: auto;
-  fill: none;
-  stroke: currentColor;
-  stroke-width: 1.6;
-  stroke-linecap: round;
-  stroke-linejoin: round;
+  background: url("/factory/mascot-sprites.webp") 0 0 / 400% 400% no-repeat;
+}
+.mascot[data-mascot="red"] { background-position-x: 66.6667%; }
+.mascot[data-mascot-pose="walking"] { background-position-y: 33.3333%; }
+.mascot[data-mascot-pose="pushing"] { background-position-y: 66.6667%; }
+.mascot[data-mascot-pose="jumping"] { background-position-y: 100%; }
+.mascot[data-mascot-pose="asleep"] { background-position: 100% 100%; }
+.mascot[data-mascot-motion]:not([data-mascot-pose="jumping"]) {
+  animation: mascotSteps var(--mascot-stride, 720ms) steps(1, end) infinite;
+}
+.mascot:is([data-mascot-pose="walking"], [data-mascot-pose="pushing"]) {
+  --mascot-stride: 420ms;
+}
+.mascot[data-mascot-motion][data-mascot-pose="jumping"] {
+  animation: mascotJump var(--event-length) steps(1, end) both;
+}
+@keyframes mascotSteps {
+  from { background-position-x: 0; }
+  25% { background-position-x: 33.3333%; }
+  50% { background-position-x: 66.6667%; }
+  75%, to { background-position-x: 100%; }
+}
+@keyframes mascotJump {
+  from { background-position-x: 0; }
+  25% { background-position-x: 33.3333%; }
+  65%, to { background-position-x: 66.6667%; }
+}
+.mascotRoute {
+  --event-column: calc((100% + var(--lane-gap)) / 6);
+  position: absolute;
+  z-index: 5;
+  bottom: 8px;
+  left: calc(var(--event-column) * var(--event-start));
+  width: calc(var(--event-column) - var(--lane-gap));
+  display: grid;
+  justify-items: center;
+  pointer-events: none;
+}
+.mascotRoute[data-mascot-action="pushing"] {
+  animation: eventTravel var(--event-length) linear both;
+}
+.mascotAction { position: relative; }
+.mascotAction .mascot { width: 77px; }
+.mascotRoute[data-reverse] .mascot { transform: scaleX(-1); }
+.mascotRoute[data-mascot-action="walking"] .mascotAction {
+  animation: mascotWalk var(--event-length) linear both;
+}
+.mascotCrate {
+  position: absolute;
+  bottom: 12px;
+  inset-inline-end: 0;
+  padding: 0 2px;
+  color: white;
+  background: #63391f;
+  border-radius: 2px;
+  font-size: 8px;
+  font-weight: 700;
+}
+.mascotRoute[data-reverse] .mascotCrate {
+  inset-inline: 0 auto;
+}
+@keyframes mascotWalk {
+  from { transform: translateX(-10px); }
+  to { transform: translateX(12px); }
 }
 .unavailable {
   padding: 26px;

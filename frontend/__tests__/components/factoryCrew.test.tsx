@@ -677,29 +677,33 @@ it("keeps a followed crate flagged after a reload and shows its observed station
   }
 });
 
-it("gives the single workshop cat the stack light's pose in each state", async () => {
+it("keeps one mascot by the stack light and rests it after a quiet read", async () => {
   const reduce = watchMotion();
   const container = document.createElement("div");
   const root = createRoot(container);
   const clear: FactoryData = { ...snapshot, stops: [], signals: { tests: "passing", testflight: "success" } };
-  const cat = (level: string) => {
-    const cats = container.querySelectorAll("[data-mascot]");
-    expect(cats).toHaveLength(1);
-    expect(cats[0].getAttribute("data-mascot")).toBe(level);
-    expect(cats[0].closest("[data-verdict]")?.getAttribute("data-verdict")).toBe(level);
-    return cats[0].innerHTML;
+  const mascot = (level: string) => {
+    const figures = container.querySelectorAll<HTMLElement>("[data-mascot-pose]");
+    expect(figures).toHaveLength(1);
+    expect(figures[0].dataset.mascot).toBe(level);
+    expect(figures[0].closest("[data-verdict]")?.getAttribute("data-verdict")).toBe(level);
+    return figures[0].dataset;
   };
   try {
     await act(async () => root.render(<FactoryFloor data={snapshot} lastGoodAt={now} renderedAt={now} />));
-    const held = cat("red");
+    expect(mascot("red").mascotPose).toBe("standing");
+    expect(mascot("red").mascotMotion).toBeUndefined();
     await act(async () => reduce());
     await act(async () => { jest.advanceTimersByTime(16_000); });
-    expect(cat("red")).toBe(held);
+    expect(mascot("red").mascotMotion).toBeUndefined();
     await act(async () => root.render(<FactoryFloor data={snapshot} readFailed lastGoodAt={now} renderedAt={now} />));
-    const paused = cat("amber");
-    expect(paused).not.toBe(held);
-    await act(async () => root.render(<FactoryFloor data={clear} lastGoodAt={now} renderedAt={now} />));
-    expect(cat("green")).not.toBe(paused);
+    expect(mascot("amber").mascotMotion).toBeUndefined();
+    const quiet = {
+      ...clear,
+      changes: clear.changes.map(change => ({ ...change, last_activity: "2026-11-18T17:40:00Z" })),
+    };
+    await act(async () => root.render(<FactoryFloor data={quiet} lastGoodAt={now} renderedAt={now} />));
+    expect(mascot("green").mascotPose).toBe("asleep");
   } finally {
     await act(async () => root.unmount());
   }
@@ -723,9 +727,12 @@ it("starts a real transfer when an open page receives a newer read", async () =>
     await act(async () => { jest.advanceTimersByTime(1); });
     expect(container.querySelector(selector)?.textContent).toContain("#12998");
     expect(container.querySelector('[data-arriving="true"]')?.textContent).toContain("#12998");
+    expect(container.querySelector('[data-mascot-action="pushing"]')?.textContent).toContain("#12998");
+    expect(container.querySelectorAll("[data-mascot-pose]")).toHaveLength(1);
     await act(async () => { jest.advanceTimersByTime(1500); });
     expect(container.querySelector(selector)).toBeNull();
     expect(container.querySelector('[data-arriving="true"]')).toBeNull();
+    expect(container.querySelector('[data-mascot-action="pushing"]')).toBeNull();
     await act(async () => root.render(<FactoryFloor data={after} lastGoodAt={next} renderedAt={next} />));
     await act(async () => { jest.advanceTimersByTime(1); });
     expect(container.querySelector(selector)).toBeNull();

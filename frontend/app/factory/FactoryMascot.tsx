@@ -1,36 +1,56 @@
-import styles from "./factory.module.css";
+import type { CSSProperties } from "react";
+import { stations } from "./activity";
+import type { FloorEvent } from "./types";
 import type { FloorVerdict } from "./verdict";
+import styles from "./factory.module.css";
 
-const poses = {
-  green: {
-    ears: "M28 16 29 5l8 5 9-6 2 13",
-    eyes: "M33 16v2m9-2v2M35 21q3 3 6 0",
-    tail: "M23 27C9 31 5 21 13 15c4-3 6-2 6 1",
-  },
-  amber: {
-    ears: "m28 16-2-9 10 4 10-5 2 11",
-    eyes: "M33 18h2m6-2h2m-8 6h5",
-    tail: "M23 27C9 31 6 20 15 21",
-  },
-  red: {
-    ears: "m28 16-5-6 13 2 13-3-1 8",
-    eyes: "m33 18 3 1m5 0 3-1m-9 6q3-3 6 0",
-    tail: "M23 27C8 29 5 27 10 25c3-1 5 0 4 2",
-  },
-};
+export type MascotAction = "walking" | "pushing" | "jumping";
 
-export default function FactoryMascot({ level }: { level: FloorVerdict["level"] }) {
-  const pose = poses[level];
+export function mascotAction(event: FloorEvent): MascotAction | undefined {
+  if (event.kind === "live") return "jumping";
+  if (event.from && event.from !== event.station) return "pushing";
+  if (event.kind === "commit") return "walking";
+}
+
+export default function FactoryMascot({ level, pose, moving = false }: {
+  level?: FloorVerdict["level"];
+  pose: MascotAction | "standing" | "asleep";
+  moving?: boolean;
+}) {
   return (
-    <svg className={styles.mascot} viewBox="0 0 55 33" aria-hidden="true" data-mascot={level}>
-      <title>Workshop cat</title>
-      <path d={pose.tail} />
-      <path d="M21 28q-4-9 4-12l7 1q7 1 10 12H20z" fill="var(--paper)" />
-      <path d={pose.ears} fill="var(--paper)" />
-      <path d="M28 16q6-10 20 0v5q0 5-10 5t-10-5z" fill="var(--paper)" />
-      <path d={pose.eyes} />
-      <path d="M29 26l9 2" stroke="var(--workshop-copper)" />
-      <circle cx="32" cy="28" r="2" fill="currentColor" stroke="none" />
-    </svg>
+    <span
+      className={styles.mascot}
+      aria-hidden="true"
+      data-mascot={level}
+      data-mascot-pose={pose}
+      data-mascot-motion={moving || undefined}
+    />
+  );
+}
+
+export function MascotMove({ event, clipMs, pose }: {
+  event: FloorEvent;
+  clipMs: number;
+  pose: MascotAction;
+}) {
+  const end = stations.indexOf(event.station);
+  const start = pose === "pushing" && event.from ? stations.indexOf(event.from) : end;
+  return (
+    <div
+      className={styles.mascotRoute}
+      aria-hidden="true"
+      data-mascot-action={pose}
+      data-reverse={end < start || undefined}
+      style={{
+        "--event-start": start,
+        "--event-steps": end - start,
+        "--event-length": `${clipMs}ms`,
+      } as CSSProperties}
+    >
+      <div className={styles.mascotAction}>
+        <FactoryMascot pose={pose} moving />
+        {pose === "pushing" && <span className={styles.mascotCrate}>#{event.number}</span>}
+      </div>
+    </div>
   );
 }

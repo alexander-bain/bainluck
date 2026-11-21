@@ -14,7 +14,7 @@ export default function CrateJourney({ changes, through }: { changes: Change[]; 
   return (
     <section className={styles.crateJourney} aria-labelledby="crate-journey-title">
       <h4 id="crate-journey-title">Crate journey</h4>
-      <p>Only recorded stops appear here. Times span the first and last reads at a station.</p>
+      <p>Times show the first and last reads at each recorded station.</p>
       {changes.map(({ line, journey }) => (
         <div key={line}>
           <h5>{line}</h5>
