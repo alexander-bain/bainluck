@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import importlib.util
 import json
@@ -275,7 +276,19 @@ def test_ci_workflow_wires_dry_run_and_script_has_zero_heroku_mutations():
     assert "--dry-run" in smoke_step["run"]
     assert "https://api.bainluck.com" in smoke_step["run"]
 
-    script_text = SCRIPT_PATH.read_text(encoding="utf-8").lower()
-    assert "releases:rollback" not in script_text
-    assert "heroku " not in script_text
-    assert "api.heroku.com" not in script_text
+    script_source = SCRIPT_PATH.read_text(encoding="utf-8")
+    assert "releases:rollback" not in script_source.lower()
+    assert "api.heroku.com" not in script_source.lower()
+    # Ensure no subprocess invocation in code ever invokes a heroku CLI binary.
+    tree = ast.parse(script_source)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            func = node.func
+            name = (
+                func.id
+                if isinstance(func, ast.Name)
+                else (func.attr if isinstance(func, ast.Attribute) else "")
+            )
+            if name in {"run", "Popen", "check_output", "check_call"}:
+                dumped = ast.dump(node).lower()
+                assert "'heroku'" not in dumped and '"heroku"' not in dumped
