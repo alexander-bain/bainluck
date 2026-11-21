@@ -29,13 +29,9 @@ BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
-DEFAULT_BENCHMARK_FIXTURE = (
-    BACKEND_DIR / "data" / "discover" / "fun-scout-benchmark-2026-11-19.json"
-)
-
-from app.services.llm_models import CLAUDE_OPUS_MODEL, CLAUDE_SONNET_MODEL
-from app.services.llm_request import JobBudget
-from app.utils.discover_fun_scout import (
+from app.services.llm_models import CLAUDE_OPUS_MODEL, CLAUDE_SONNET_MODEL  # noqa: E402
+from app.services.llm_request import JobBudget  # noqa: E402
+from app.utils.discover_fun_scout import (  # noqa: E402
     SCOUT_ANTHROPIC_API_KEY_ENV,
     SCOUT_RUN_CAP_USD,
     ScoutMarketRow,
@@ -46,11 +42,16 @@ from app.utils.discover_fun_scout import (
     check_scout_anthropic_key_status,
     estimate_fun_scout_spend,
     evaluate_scout_against_seed_sets,
+    evaluate_tagging_pass_against_seed_sets,
     format_fun_scout_pre_run_spend_line,
     run_nightly_fun_scout,
     run_scout_tagging_pass,
 )
-from app.utils.discover_fun_tags import load_fun_markets_registry
+from app.utils.discover_fun_tags import load_fun_markets_registry  # noqa: E402
+
+DEFAULT_BENCHMARK_FIXTURE = (
+    BACKEND_DIR / "data" / "discover" / "fun-scout-benchmark-2026-11-19.json"
+)
 
 
 def _parse_dt(raw: Any) -> datetime | None:
@@ -192,6 +193,12 @@ def main(argv: list[str] | None = None) -> int:
         nargs="+",
         default=[CLAUDE_SONNET_MODEL, CLAUDE_OPUS_MODEL],
     )
+    parser.add_argument(
+        "--dump-tagged-json",
+        type=Path,
+        default=None,
+        help="Optional path to save the first-pass tagged candidates as JSON.",
+    )
     args = parser.parse_args(argv)
 
     if args.check_key:
@@ -263,6 +270,37 @@ def main(argv: list[str] | None = None) -> int:
         f"\nShared tagging pass complete: {len(tagged)} candidates tagged from {len(markets)} markets; "
         f"actual_tag_cost=${shared_tag_cost:.4f}"
     )
+    tag_eval = evaluate_tagging_pass_against_seed_sets(tagged, markets)
+    print(
+        f"First-pass seed survival (unique): {tag_eval['unique_seed_survived']}/"
+        f"{tag_eval['unique_seed_in_input']} present "
+        f"(of {tag_eval['unique_seed_total']} total):"
+    )
+    for row in tag_eval["groups"]:
+        print(
+            f"  * {row['seed_group']}: survived={row['survived_first_pass']}/"
+            f"{row['in_input']} in_input (seed={row['seed_size']})"
+        )
+    if args.dump_tagged_json is not None:
+        args.dump_tagged_json.parent.mkdir(parents=True, exist_ok=True)
+        args.dump_tagged_json.write_text(
+            json.dumps(
+                [
+                    {
+                        "market_id": t.market_id,
+                        "fun_group": t.fun_group,
+                        "is_fun_single": t.is_fun_single,
+                        "set_hint": t.set_hint,
+                        "reason": t.reason,
+                    }
+                    for t in tagged
+                ],
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        print(f"Saved tagged list to {args.dump_tagged_json}")
 
     prior = args.prior_month_usd + shared_tag_cost
     total_actual_usd = shared_tag_cost
