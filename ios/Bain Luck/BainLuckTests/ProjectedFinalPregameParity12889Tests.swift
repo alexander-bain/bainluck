@@ -221,8 +221,8 @@ final class ProjectedFinalPregameParity12889Tests: XCTestCase {
                 forecast: afterSeries.latest.home,
                 phase: afterSeries.phase
             ),
-            "115.5 projected",
-            "finished games print the sportsbook's last projection before completion"
+            "116 projected",
+            "finished games round the sportsbook's last projection to a whole number (#13266)"
         )
     }
 
