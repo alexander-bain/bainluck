@@ -2592,34 +2592,89 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   color: var(--ink);
 }
 .worker[data-floor-figure] { --crew-aspect: .61; }
-.worker[data-floor-figure][data-identity="S"] { --crew-aspect: .59; --crew-idle: idleSpeed 5.2s; --crew-rest: -7deg; }
-.worker[data-floor-figure][data-identity="B"] { --crew-aspect: .54; --crew-idle: idleSign 6.4s; --crew-rest: 4deg; }
-.worker[data-floor-figure][data-identity="C"] { --crew-aspect: .64; --crew-idle: idleChair 5.7s; --crew-rest: 0deg; }
-.worker[data-floor-figure][data-identity="D"] { --crew-aspect: .60; --crew-idle: idleAtlas 5.5s; --crew-rest: -5deg; }
-.worker[data-floor-figure][data-identity="E"] { --crew-aspect: .75; --crew-idle: idleBoots 4.8s; --crew-rest: 6deg; }
-.worker[data-floor-figure][data-identity="F"] { --crew-aspect: .73; --crew-idle: idleEasel 6.8s; --crew-rest: 0deg; }
-.worker[data-floor-figure][data-identity="W"] { --crew-aspect: .54; --crew-idle: idleSpare 6.2s; --crew-rest: -9deg; }
-.worker[data-floor-figure][data-identity="Fable"] { --crew-aspect: .59; --crew-idle: idleForeman 7.1s; --crew-rest: 3deg; }
+/* CSS Modules scopes the bare keyframe names in the -animation property. */
+.worker[data-floor-figure][data-identity="S"] {
+  --crew-aspect: .59;
+  --crew-idle-animation: idleSpeed;
+  --crew-idle-length: 5.2s;
+  --crew-rest: -7deg;
+}
+.worker[data-floor-figure][data-identity="B"] {
+  --crew-aspect: .54;
+  --crew-idle-animation: idleSign;
+  --crew-idle-length: 6.4s;
+  --crew-rest: 4deg;
+}
+.worker[data-floor-figure][data-identity="C"] {
+  --crew-aspect: .64;
+  --crew-idle-animation: idleChair;
+  --crew-idle-length: 5.7s;
+  --crew-rest: 0deg;
+}
+.worker[data-floor-figure][data-identity="D"] {
+  --crew-aspect: .60;
+  --crew-idle-animation: idleAtlas;
+  --crew-idle-length: 5.5s;
+  --crew-rest: -5deg;
+}
+.worker[data-floor-figure][data-identity="E"] {
+  --crew-aspect: .75;
+  --crew-idle-animation: idleBoots;
+  --crew-idle-length: 4.8s;
+  --crew-rest: 6deg;
+}
+.worker[data-floor-figure][data-identity="F"] {
+  --crew-aspect: .73;
+  --crew-idle-animation: idleEasel;
+  --crew-idle-length: 6.8s;
+  --crew-rest: 0deg;
+}
+.worker[data-floor-figure][data-identity="W"] {
+  --crew-aspect: .54;
+  --crew-idle-animation: idleSpare;
+  --crew-idle-length: 6.2s;
+  --crew-rest: -9deg;
+}
+.worker[data-floor-figure][data-identity="Fable"] {
+  --crew-aspect: .59;
+  --crew-idle-animation: idleForeman;
+  --crew-idle-length: 7.1s;
+  --crew-rest: 3deg;
+}
 
 .worker[data-floor-figure][data-worker="asleep"] .workerFigure {
   opacity: .9;
   transform: rotate(var(--crew-rest)) scaleY(.97);
 }
 .factory[data-motion="running"] .floorWorker .worker:not([data-worker="asleep"]) .workerFigure {
-  animation: var(--crew-idle) ease-in-out infinite;
+  animation: var(--crew-idle-animation) var(--crew-idle-length) ease-in-out infinite;
 }
 .factory[data-motion="running"] .floorWorker .worker[data-worker="asleep"] .workerFigure {
-  animation: var(--crew-idle) ease-in-out infinite;
-  animation-duration: 8s;
+  animation: var(--crew-idle-animation) 8s ease-in-out infinite;
 }
-@keyframes idleSpeed { 0%, 87%, 100% { rotate: 0deg; } 93% { rotate: 2deg; } }
-@keyframes idleSign { 0%, 80%, 100% { translate: 0 0; } 90% { translate: 0 -2px; } }
-@keyframes idleChair { 0%, 100% { rotate: -1deg; } 50% { rotate: 1deg; } }
-@keyframes idleAtlas { 0%, 78%, 100% { scale: 1; } 89% { scale: 1.03 1; } }
-@keyframes idleBoots { 0%, 72%, 94%, 100% { rotate: 0deg; } 83% { rotate: -2deg; } }
-@keyframes idleEasel { 0%, 70%, 100% { rotate: 0deg; } 85% { rotate: 1.5deg; } }
-@keyframes idleSpare { 0%, 83%, 100% { translate: 0 0; } 90% { translate: 1px 0; } }
-@keyframes idleForeman { 0%, 77%, 100% { rotate: 0deg; } 89% { rotate: -2deg; } }
+@keyframes idleSpeed {
+  0%, 87%, 100% { translate: 0; rotate: 0deg; }
+  93% { translate: 3px; rotate: 2deg; }
+}
+@keyframes idleSign { 0%, 80%, 100% { translate: 0; } 90% { translate: 0 -3px; } }
+@keyframes idleChair {
+  0%, 100% { translate: 0; rotate: -1deg; }
+  50% { translate: 3px; rotate: 1deg; }
+}
+@keyframes idleAtlas { 0%, 78%, 100% { scale: 1; } 89% { scale: 1.12 1; } }
+@keyframes idleBoots {
+  0%, 72%, 94%, 100% { translate: 0; rotate: 0deg; }
+  83% { translate: -3px; rotate: -2deg; }
+}
+@keyframes idleEasel {
+  0%, 70%, 100% { translate: 0; rotate: 0deg; }
+  85% { translate: 0 -3px; rotate: 2deg; }
+}
+@keyframes idleSpare { 0%, 83%, 100% { translate: 0; } 90% { translate: 3px; } }
+@keyframes idleForeman {
+  0%, 77%, 100% { translate: 0; rotate: 0deg; }
+  89% { translate: 0 3px; rotate: -2deg; }
+}
 
 .crewStrip .eventScene {
   top: auto;

@@ -1,5 +1,7 @@
 /** @jest-environment jsdom */
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import React, { act } from "react";
 import { createRoot } from "react-dom/client";
 import FactoryFloor from "@/app/factory/FactoryFloor";
@@ -128,6 +130,20 @@ beforeEach(() => {
   jest.useFakeTimers().setSystemTime(new Date(now));
 });
 afterEach(() => jest.useRealTimers());
+
+it("keeps each CSS animation name property a bare keyframe name", () => {
+  const css = readFileSync(resolve(__dirname, "../../app/factory/factory.module.css"), "utf8");
+  const properties = new Set(
+    Array.from(css.matchAll(/\banimation(?:-name)?:\s*var\((--[\w-]+)\)/g), match => match[1]),
+  );
+  const keyframes = Array.from(css.matchAll(/@keyframes\s+([\w-]+)\s*\{/g), match => match[1]);
+  expect(properties).toContain("--crew-idle-animation");
+  for (const property of properties) {
+    const declarations = Array.from(css.matchAll(new RegExp(property + ":\\s*([^;}]+)", "g")));
+    expect(declarations.length).toBeGreaterThan(0);
+    for (const [, value] of declarations) expect(keyframes).toContain(value.trim());
+  }
+});
 
 function watchMotion() {
   let reduced = false;
