@@ -6,6 +6,7 @@ import {
   ArrowDown,
   ArrowLeft,
   ArrowRight,
+  BookOpen,
   Check,
   CheckCheck,
   ChevronRight,
@@ -16,6 +17,7 @@ import {
   ListChecks,
   PackageOpen,
   Pause,
+  Search,
   Server,
   Smartphone,
   Trophy,
@@ -81,10 +83,10 @@ const lineIcons = { Server, Website: Monitor, Apps: Smartphone };
 const stationIcons = {
   Write: Hammer,
   Test: ListChecks,
-  Review: ClipboardCheck,
+  Review: Search,
   "Merge line": PackageOpen,
   Ship: Truck,
-  Live: Check,
+  Live: BookOpen,
 };
 const engineering: Record<Station, string> = {
   Write: "writing",
@@ -732,14 +734,16 @@ export default function FactoryFloor({
                   className={styles.lineRow}
                   data-factory-row={line}
                 >
-                  <div className={styles.lineName}>
-                    <LineIcon size={20} strokeWidth={1.6} />
-                    <strong>{line}</strong>
-                    {line === "Apps" && data.signals.testflight_post && (
-                      <span className={styles.buildPlate}>
-                        TestFlight build {data.signals.testflight_post.build}
-                      </span>
-                    )}
+                  <div className={styles.lineRail}>
+                    <div className={styles.lineName}>
+                      <LineIcon size={20} strokeWidth={1.6} />
+                      <strong>{line}</strong>
+                      {line === "Apps" && data.signals.testflight_post && (
+                        <span className={styles.buildPlate}>
+                          TestFlight build {data.signals.testflight_post.build}
+                        </span>
+                      )}
+                    </div>
                   </div>
                   <div className={styles.machines}>
                     {stations.map((station) => {
