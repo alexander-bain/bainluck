@@ -473,3 +473,121 @@ def clean_served_questions(payload):
         for item in payload:
             clean_served_questions(item)
     return payload
+
+
+_UNDERSCORE_BLANK = re.compile(r"_{2,}")
+_LOW_DIRECTION_WORDS = frozenset({"below", "under", "at most"})
+_NON_FILLER_OUTCOMES = frozenset({"yes", "no", "other"})
+
+_BARE_HIT_SLOT = re.compile(
+    r"\A(?!(?:Will|What\s+will)\b)(?P<subject>.+?)\s+hit\s*" + _UNDERSCORE_BLANK.pattern + r"\s*(?P<tail>.*?)\s*\?\Z",
+    re.IGNORECASE,
+)
+_NO_VERB_DIRECTIONAL = re.compile(
+    r"\A(?!(?:Will|What\s+will)\b)(?P<subject>.+?)\s+(?P<comp>above|over|at\s+least|below|under|at\s+most)\s*"
+    + _UNDERSCORE_BLANK.pattern
+    + r"\s*(?P<tail>.*?)\s*\?\Z",
+    re.IGNORECASE,
+)
+_LEADING_COUNT_BLANK = re.compile(
+    r"\AWill\s+" + _UNDERSCORE_BLANK.pattern + r"\s+(?P<noun>\S+)\s+(?P<rest>.+?)\s*\?\Z"
+)
+_VERB_COUNT_BLANK = re.compile(
+    r"\AWill\s+(?P<subject>.+?)\s+(?P<verb>reach|go\s+down\s+on)\s+"
+    + _UNDERSCORE_BLANK.pattern
+    + r"\s+(?P<unit>(?:barrels(?:\s+per\s+day)?|\S+))\s+(?P<tail>(?:in|by|on|before|during|through)\b.+?)\s*\?\Z"
+)
+
+
+def _normalize_question_spacing(text: str) -> str:
+    collapsed = re.sub(r"\s+", " ", text).strip()
+    return re.sub(r"\s+\?", "?", collapsed)
+
+
+def fill_underscore_blanks(
+    name: str | None,
+    lead_outcome_name: str | None = None,
+    *,
+    outcome_count: int | None = None,
+) -> str | None:
+    """Eliminate remaining underscore template blanks (``__`` / ``___``) at display boundaries.
+
+    When a market represents a single threshold row (``outcome_count == 1`` with a
+    non-boolean ``lead_outcome_name``), substitutes the threshold into the blank
+    so the row states its own threshold ("OpenAI IPO closing market cap above $800B?").
+    When a market lists multiple ladder rungs or lacks a single threshold label,
+    rewrites remaining directional/hit/count templates into blank-free questions
+    that agree with every shown outcome row on both cards and set pages.
+    """
+    if not name or "__" not in name:
+        return name
+
+    filler = (lead_outcome_name or "").strip()
+    usable_filler = bool(filler) and filler.lower() not in _NON_FILLER_OUTCOMES
+    if outcome_count == 1 and usable_filler:
+        # Strip duplicate leading comparator word from the outcome if the title
+        # already placed that comparator right before the blank.
+        m_blank = _UNDERSCORE_BLANK.search(name)
+        adj_filler = filler
+        if m_blank is not None:
+            before = name[: m_blank.start()].rstrip().lower()
+            for comp in ("at least", "at most", "above", "below", "over", "under"):
+                if before.endswith(comp) and adj_filler.lower().startswith(comp + " "):
+                    adj_filler = adj_filler[len(comp) + 1 :].strip()
+                    break
+        if adj_filler:
+            substituted = _UNDERSCORE_BLANK.sub(f" {adj_filler} ", name, count=1)
+            if "__" not in substituted:
+                return _normalize_question_spacing(substituted)
+
+    stripped = name.strip()
+
+    m_hit = _BARE_HIT_SLOT.match(stripped)
+    if m_hit is not None:
+        tail = m_hit.group("tail").strip()
+        if not tail or tail.split()[0].lower() in _OBJECT_SLOT_TAIL_OPENERS:
+            head = f"What will {m_hit.group('subject').strip()} hit"
+            return _normalize_question_spacing(f"{head} {tail}?" if tail else f"{head}?")
+
+    m_dir = _NO_VERB_DIRECTIONAL.match(stripped)
+    if m_dir is not None and not re.search(r"\b(?:closes|close|finish|finishes)\Z", m_dir.group("subject").strip(), re.IGNORECASE):
+        comp_norm = re.sub(r"\s+", " ", m_dir.group("comp").strip().lower())
+        q_word = "How low" if comp_norm in _LOW_DIRECTION_WORDS else "How high"
+        subj = m_dir.group("subject").strip()
+        tail = m_dir.group("tail").strip()
+        return _normalize_question_spacing(
+            f"{q_word} will {subj} go {tail}?" if tail else f"{q_word} will {subj} go?"
+        )
+
+    m_lead_cnt = _LEADING_COUNT_BLANK.match(stripped)
+    if m_lead_cnt is not None:
+        return _normalize_question_spacing(
+            f"How many {m_lead_cnt.group('noun')} will {m_lead_cnt.group('rest')}?"
+        )
+
+    m_verb_cnt = _VERB_COUNT_BLANK.match(stripped)
+    if m_verb_cnt is not None:
+        verb_raw = re.sub(r"\s+", " ", m_verb_cnt.group("verb").strip().lower())
+        verb_inf = "go down" if verb_raw.startswith("go down") else verb_raw
+        return _normalize_question_spacing(
+            f"How many {m_verb_cnt.group('unit')} will {m_verb_cnt.group('subject').strip()} "
+            f"{verb_inf} {m_verb_cnt.group('tail').strip()}?"
+        )
+
+    cleaned = _UNDERSCORE_BLANK.sub(" ", stripped)
+    return _normalize_question_spacing(cleaned)
+
+
+def fill_market_display_name_blank(
+    name: str | None,
+    lead_outcome_name: str | None = None,
+    *,
+    outcome_count: int | None = None,
+) -> str | None:
+    """Apply :func:`clean_market_display_name` and then eliminate any remaining ``__``/``___`` blanks."""
+    cleaned = clean_market_display_name(name)
+    return fill_underscore_blanks(
+        cleaned,
+        lead_outcome_name=lead_outcome_name,
+        outcome_count=outcome_count,
+    )

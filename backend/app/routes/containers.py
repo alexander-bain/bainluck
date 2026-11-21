@@ -470,6 +470,7 @@ async def _hydrate_market_cards(
     from app.routes.events import _format_futures_for_search
     from app.routes.futures import withheld_price_outcome_ids_for_markets
     from app.utils.container_game_winner import RELATED_LINK_LIMIT, related_link_presentation
+    from app.utils.market_display_name import fill_market_display_name_blank
 
     with _time_stage("market_rows"):
         markets = (
@@ -493,6 +494,17 @@ async def _hydrate_market_cards(
     for m in markets:
         try:
             card = _format_futures_for_search(m, withheld.get(m.id))
+            top_outs = card.get("top_outcomes") or ()
+            lead_out_name = (
+                top_outs[0].get("name")
+                if top_outs and isinstance(top_outs[0], dict)
+                else None
+            )
+            card["name"] = fill_market_display_name_blank(
+                card.get("name"),
+                lead_outcome_name=lead_out_name,
+                outcome_count=card.get("outcome_count"),
+            )
             if nfl_week:
                 card["collection_link_presentation"] = related_link_presentation(
                     m.market_type, m.name, m.external_id
