@@ -2346,8 +2346,17 @@ struct OddsChartView: View {
         // neither prints no number at the end (its newest price is the hero's,
         // with its own currentness).
         let finishedEnd = (liveSplit == nil && soccerThreeLine == nil)
-            ? Self.finishedEnd9483(dataPoints: dataPoints, checkpoints: checkpoints,
-                                   finished: EventState.isFinished(status))
+            ? Self.finishedEnd9483(
+                dataPoints: dataPoints,
+                checkpoints: checkpoints,
+                finished: EventState.isFinished(status),
+                settledDraw: Self.isSettledDraw9483(
+                    status: status,
+                    homeScore: homeScore,
+                    awayScore: awayScore,
+                    servedSettledResult: servedSettledResult
+                )
+            )
             : nil
         let endLine = checkpoints?.survivors
             ?? dataPoints.filter { $0.source == Self.primarySource(in: dataPoints) }
@@ -5248,12 +5257,22 @@ extension OddsChartView {
         return "\(homeShort) \(printed.home)"
     }
 
+    /// #11449 — A finished match whose settled outcome is a draw never stamps
+    /// a single team's last pre-whistle win chance (`NAP 67%`) onto a home-only
+    /// fallback chart. Uses the page's authoritative `EventOutcome.resolve`.
+    static func isSettledDraw9483(status: String?, homeScore: Int?, awayScore: Int?,
+                                  servedSettledResult: String?) -> Bool {
+        EventOutcome.resolve(status: status, homeScore: homeScore, awayScore: awayScore,
+                             servedResult: servedSettledResult) == .draw
+    }
+
     /// The end of a finished game's line: the resting checkpoint endpoint
     /// under a mount, else the primary line's last reading. Nil before the
-    /// game is over (a live page's end is its edge marker's).
+    /// game is over (a live page's end is its edge marker's) or when settled as
+    /// a draw (where stamping a team's chance beside the final line is false).
     static func finishedEnd9483(dataPoints: [ChartDataPoint], checkpoints: PublicationCheckpointMount4974?,
-                                finished: Bool) -> (date: Date, probability: Double)? {
-        guard finished else { return nil }
+                                finished: Bool, settledDraw: Bool = false) -> (date: Date, probability: Double)? {
+        guard finished, !settledDraw else { return nil }
         if let checkpoints {
             guard let end = checkpoints.resting, let date = end.date, let probability = end.probability
             else { return nil }
@@ -5281,8 +5300,17 @@ extension OddsChartView {
     /// geometry, so neither can move it.
     private func finishedEndKeyReading9483(dataPoints: [ChartDataPoint]) -> (text: String, ink: Color)? {
         let checkpoints = checkpointMount(for: dataPoints)
-        guard let end = Self.finishedEnd9483(dataPoints: dataPoints, checkpoints: checkpoints,
-                                             finished: EventState.isFinished(status)),
+        guard let end = Self.finishedEnd9483(
+            dataPoints: dataPoints,
+            checkpoints: checkpoints,
+            finished: EventState.isFinished(status),
+            settledDraw: Self.isSettledDraw9483(
+                status: status,
+                homeScore: homeScore,
+                awayScore: awayScore,
+                servedSettledResult: servedSettledResult
+            )
+        ),
               let text = Self.endKeyReading9483(
                 end, ink: Self.primaryInk9483(dataPoints: dataPoints, checkpoints: checkpoints,
                                               gameStart: gameStartDate),
