@@ -11,7 +11,7 @@ Property ID is read from the GA4_PROPERTY_ID env var.
 import json
 import logging
 import os
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -252,3 +252,54 @@ def get_user_retention(
         order_by_metric="activeUsers",
         descending=True,
     )
+
+
+def get_cohort_retention(
+    days: int = 14,
+    *,
+    max_offset: int = 7,
+    today: date | None = None,
+) -> list[dict[str, Any]]:
+    """Return GA4 daily first-session cohorts across offsets 0..max_offset (#13261 Row 3).
+
+    GA4 Data API allows up to 20 cohorts per request; clamp to [1, 14] daily cohorts
+    ending on ``today`` so Day-2 (offset 1) and Day-7 (offset 6) retention can be
+    computed accurately from ``firstSessionDate``.
+    """
+    from google.analytics.data_v1beta.types import (
+        Cohort,
+        CohortSpec,
+        CohortsRange,
+        RunReportRequest,
+    )
+
+    client = _get_client()
+    anchor = today or datetime.now(timezone.utc).date()
+    cohort_count = max(1, min(int(days), 14))
+    cohorts = []
+    for offset in range(cohort_count - 1, -1, -1):
+        day_str = (anchor - timedelta(days=offset)).isoformat()
+        cohorts.append(
+            Cohort(
+                name=day_str,
+                dimension="firstSessionDate",
+                date_range=_date_range(day_str, day_str),
+            )
+        )
+
+    request = RunReportRequest(
+        property=_property(),
+        dimensions=[_dim("cohort"), _dim("cohortNthDay")],
+        metrics=[_met("cohortActiveUsers"), _met("cohortTotalUsers")],
+        cohort_spec=CohortSpec(
+            cohorts=cohorts,
+            cohorts_range=CohortsRange(
+                granularity=CohortsRange.Granularity.DAILY,
+                start_offset=0,
+                end_offset=max(1, int(max_offset)),
+            ),
+        ),
+        limit=500,
+    )
+    response = client.run_report(request)
+    return _rows_to_dicts(response)
