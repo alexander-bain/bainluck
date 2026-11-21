@@ -17,10 +17,17 @@ from app.utils.container_machinery import (
     discover_machinery_candidate_paths,
     load_machinery_definition,
 )
-from app.utils.discover_bundles import assemble_discover_comparison_bundles
+from pathlib import Path
+
+from app.utils.discover_bundles import (
+    _make_theme_bundle_item,
+    _public_member_item,
+    assemble_discover_comparison_bundles,
+)
 from app.utils.market_display_name import (
     clean_market_display_name,
     fill_market_display_name_blank,
+    fill_template_blanks,
     fill_underscore_blanks,
 )
 
@@ -224,15 +231,237 @@ def test_feed_trace_bundle_and_machinery_never_contain_blanks() -> None:
     assert "___" not in hydrated["card"]["name"]
 
 
-def test_machinery_candidate_definitions_have_no_underscore_blanks() -> None:
+def test_machinery_candidate_definitions_have_no_underscore_or_ellipsis_blanks() -> None:
     for path in discover_machinery_candidate_paths():
         defn = load_machinery_definition(path)
         raw = json.dumps(defn)
         assert "___" not in raw, f"{path.name} contains ___"
+        assert "..." not in raw, f"{path.name} contains ..."
+        assert "…" not in raw, f"{path.name} contains …"
 
 
 def test_fill_underscore_blanks_noop_preserves_normal_titles_and_ellipses() -> None:
     normal = "Will SpaceX launch humans to Mars before 2030?"
     assert fill_underscore_blanks(normal) == normal
+    assert fill_market_display_name_blank(normal) == normal
     with_ellipsis = "Wait... will this pass?"
     assert fill_underscore_blanks(with_ellipsis) == with_ellipsis
+    assert fill_market_display_name_blank(with_ellipsis) == with_ellipsis
+
+
+def test_ellipsis_templates_including_ceasefire_parenthetical_and_all_live_benchmark_markets() -> None:
+    # #13393: "US x Iran Effective Ceasefire begins by...? (2 week pause)"
+    raw_ceasefire = "US x Iran Effective Ceasefire begins by...? (2 week pause)"
+    # Single shown deadline on a row says the deadline in place:
+    assert (
+        fill_market_display_name_blank(raw_ceasefire, "December 31", single_row=True)
+        == "US x Iran Effective Ceasefire begins by December 31? (2 week pause)"
+    )
+    # Multi-deadline open form keeps the parenthetical qualifier and drops "..." / "…":
+    assert (
+        fill_market_display_name_blank(raw_ceasefire, "December 31", outcome_count=3)
+        == "US x Iran Effective Ceasefire begins? (2 week pause)"
+    )
+    assert fill_template_blanks(raw_ceasefire, "By December 31", single_row=True) == (
+        "US x Iran Effective Ceasefire begins by December 31? (2 week pause)"
+    )
+
+    samples = [
+        ("US-Iran Final Nuclear Deal by…?", "June 30", 3, "US-Iran Final Nuclear Deal?"),
+        (
+            "Israeli airspace closed by...? (Excluding Holiday Closures)",
+            "December 31",
+            3,
+            "Israeli airspace closed? (Excluding Holiday Closures)",
+        ),
+        (
+            "Houthis capture Taiz by...? (castle)",
+            "December 31",
+            3,
+            "Houthis capture Taiz? (castle)",
+        ),
+        (
+            "Where will the next US-Iran senior diplomatic meeting take place...?",
+            "Oman",
+            4,
+            "Where will the next US-Iran senior diplomatic meeting take place?",
+        ),
+        (
+            "Merriam-Webster Word of the Year 2026 contains...?",
+            "larping",
+            4,
+            "What will Merriam-Webster Word of the Year 2026 contain?",
+        ),
+        (
+            "Oxford Word of the Year 2026 contains...?",
+            "AI",
+            4,
+            "What will Oxford Word of the Year 2026 contain?",
+        ),
+    ]
+    for raw, lead, count, expected in samples:
+        actual = fill_market_display_name_blank(raw, lead, outcome_count=count)
+        assert actual == expected
+        assert "..." not in actual and "…" not in actual and "__" not in actual
+
+    # Check the 3,424 live markets in fun-scout-benchmark: zero blanks or ellipsis templates survive.
+    bench_path = (
+        Path(__file__).resolve().parents[1]
+        / "data"
+        / "discover"
+        / "fun-scout-benchmark-2026-11-19.json"
+    )
+    bench = json.loads(bench_path.read_text(encoding="utf-8"))
+    for entry in bench.get("markets") or ():
+        title = str(entry.get("title") or "")
+        rendered_open = fill_market_display_name_blank(title, "December 31", outcome_count=3)
+        rendered_single = fill_market_display_name_blank(title, "December 31", single_row=True)
+        for rendered in (rendered_open, rendered_single):
+            assert rendered and "..." not in rendered and "…" not in rendered and "__" not in rendered, (
+                title,
+                rendered,
+            )
+
+
+@pytest.mark.asyncio
+async def test_bundle_member_single_row_puts_level_and_deadline_in_title_while_set_page_keeps_open_form(
+    monkeypatch,
+) -> None:
+    # 1. Comparison / Theme bundle compact row puts the shown level ("$800B") or
+    # shown deadline ("December 31") right in the row's title (#13390 follow-up + #13393).
+    openai_member = {
+        "type": "futures",
+        "score": 82.0,
+        "_raw_market_name": "OpenAI IPO closing market cap above ___ ?",
+        "reason": "OpenAI IPO closing market cap above ___ ?",
+        "data": {
+            "id": 115379,
+            "name": fill_market_display_name_blank(
+                "OpenAI IPO closing market cap above ___ ?", "$800B", outcome_count=7
+            ),
+            "top_outcomes": [
+                {"id": 1636888, "name": "$800B", "probability": 0.68},
+                {"id": 1636889, "name": "$1T", "probability": 0.595},
+            ],
+            "discover_card": {
+                "suggested_format": "threshold_heatmap",
+                "comparison_theme": "ipo_valuation",
+                "bundle_candidate": True,
+                "threshold_points": [
+                    {"value": 800, "label": "$800B", "probability": 0.68},
+                    {"value": 1000, "label": "$1T", "probability": 0.42},
+                ],
+            },
+        },
+    }
+    anthropic_member = {
+        "type": "futures",
+        "score": 81.0,
+        "_raw_market_name": "Anthropic IPO closing market cap above ___ ?",
+        "reason": "",
+        "data": {
+            "id": 115380,
+            "name": fill_market_display_name_blank(
+                "Anthropic IPO closing market cap above ___ ?", "$500B", outcome_count=5
+            ),
+            "top_outcomes": [{"id": 2, "name": "$500B", "probability": 0.72}],
+            "discover_card": {
+                "suggested_format": "threshold_heatmap",
+                "comparison_theme": "ipo_valuation",
+                "bundle_candidate": True,
+                "threshold_points": [
+                    {"value": 500, "label": "$500B", "probability": 0.72},
+                    {"value": 800, "label": "$800B", "probability": 0.45},
+                ],
+            },
+        },
+    }
+    comp_bundles = assemble_discover_comparison_bundles([openai_member, anthropic_member])
+    assert comp_bundles
+    comp_names = [it["data"]["name"] for it in comp_bundles[0]["data"]["items"]]
+    assert comp_names == [
+        "OpenAI IPO closing market cap above $800B?",
+        "Anthropic IPO closing market cap above $500B?",
+    ]
+    assert comp_bundles[0]["data"]["debug_bundles"]["member_names"] == comp_names
+    # Original open-form dict outside the bundle is never mutated.
+    assert openai_member["data"]["name"] == "How high will OpenAI IPO closing market cap go?"
+
+    # 2. Middle East theme bundle member fills the ceasefire deadline while multi-row page keeps open form.
+    ceasefire_member = {
+        "type": "futures",
+        "score": 84.0,
+        "_raw_market_name": "US x Iran Effective Ceasefire begins by...? (2 week pause)",
+        "reason": "",
+        "data": {
+            "id": 69603905,
+            "name": fill_market_display_name_blank(
+                "US x Iran Effective Ceasefire begins by...? (2 week pause)",
+                "December 31",
+                outcome_count=3,
+            ),
+            "top_outcomes": [
+                {"id": 260868679, "name": "December 31", "probability": 0.765},
+                {"id": 260851406, "name": "November 30", "probability": 0.44},
+            ],
+            "_quality_story_key": "story:middle_east_conflict",
+        },
+    }
+    iran_other = {
+        "type": "futures",
+        "score": 85.0,
+        "_raw_market_name": "Will the U.S. invade Iran before 2027?",
+        "reason": "",
+        "data": {
+            "id": 113232,
+            "name": "Will the U.S. invade Iran before 2027?",
+            "top_outcomes": [{"id": 1628892, "name": "Yes", "probability": 0.075}],
+        },
+    }
+    theme_bundle = _make_theme_bundle_item(
+        "story:middle_east_conflict", [iran_other, ceasefire_member]
+    )
+    assert theme_bundle is not None
+    theme_names = [it["data"]["name"] for it in theme_bundle["data"]["items"]]
+    assert "US x Iran Effective Ceasefire begins by December 31? (2 week pause)" in theme_names
+    assert "..." not in json.dumps(theme_bundle)
+    assert "…" not in json.dumps(theme_bundle)
+    assert "___" not in json.dumps(theme_bundle)
+
+    # 3. Threshold heatmap picks the marked rung (date = earliest >= 50%, numeric = highest >= 50%).
+    heatmap_member = {
+        "type": "futures",
+        "_raw_market_name": "Trump approval rating at least ___ on November 20?",
+        "data": {
+            "id": 999111,
+            "name": "How high will Trump approval rating go on November 20?",
+            "top_outcomes": [{"id": 1, "name": "40%+", "probability": 0.90}],
+            "discover_card": {
+                "suggested_format": "threshold_heatmap",
+                "threshold_points": [
+                    {"label": "40%+", "value": 40, "probability": 0.90, "source": "outcome"},
+                    {"label": "45%+", "value": 45, "probability": 0.62, "source": "outcome"},
+                    {"label": "50%+", "value": 50, "probability": 0.25, "source": "outcome"},
+                ],
+            },
+        },
+    }
+    pub_heatmap = _public_member_item(heatmap_member)
+    assert pub_heatmap["data"]["name"] == "Trump approval rating at least 45%+ on November 20?"
+
+    # 4. Full detail page & container set hydration keep open form where every deadline/level is listed.
+    async def _no_withheld(_db, _markets):
+        return {}
+
+    monkeypatch.setattr("app.routes.futures.withheld_price_outcome_ids_for_markets", _no_withheld)
+    ceasefire_orm = _orm_market(
+        69603905,
+        "US x Iran Effective Ceasefire begins by...? (2 week pause)",
+        [(260868679, "December 31", 0.765), (260851406, "November 30", 0.44)],
+    )
+    cards, _, failed = await _hydrate_market_cards(_FakeSession([ceasefire_orm]), [69603905])
+    assert failed == {}
+    assert cards[69603905]["name"] == "US x Iran Effective Ceasefire begins? (2 week pause)"
+    assert _format_market_detail(ceasefire_orm, None, set())["name"] == (
+        "US x Iran Effective Ceasefire begins? (2 week pause)"
+    )

@@ -136,10 +136,13 @@ export function answerIsNegative(name: string | null | undefined): boolean {
  *
  * @param hero    the outcome the percentage speaks for (`heroOutcome`'s pick)
  * @param caption the sentence already rendered under the question
+ * @param title   optional row title; when the level/deadline is already named
+ *                inside the row's own title, do not repeat it underneath
  */
 export function rowAnswerLabel(
   hero: HeroCandidate | null | undefined,
   caption: string | null | undefined,
+  title?: string | null,
 ): string | null {
   const name = (hero?.name ?? "").replace(/\s+/g, " ").trim();
   if (!name) return null;
@@ -147,6 +150,7 @@ export function rowAnswerLabel(
   // #9876 — a negative answer is never left to the caption. The caption is
   // grey and can be clamped away, and the reader scans the bold column.
   if (answerIsNegative(name)) return name;
+  if (title && captionNames(title, name)) return null;
   if (captionNames(caption, name)) return null;
   return name;
 }

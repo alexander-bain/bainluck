@@ -113,4 +113,33 @@ describe("#4396 — rowAnswerLabel names the answer only where the caption did n
       expect(orphans.length).toBe(7);
     });
   });
+
+  describe("compact row title already naming its single level or deadline (#13390 / #13393)", () => {
+    it("drops the small label when the row title already states the level or deadline", () => {
+      expect(
+        rowAnswerLabel(
+          { name: "$800B", probability: 0.68 },
+          "",
+          "OpenAI IPO closing market cap above $800B?",
+        ),
+      ).toBeNull();
+      expect(
+        rowAnswerLabel(
+          { name: "December 31", probability: 0.765 },
+          "",
+          "US x Iran Effective Ceasefire begins by December 31? (2 week pause)",
+        ),
+      ).toBeNull();
+    });
+
+    it("still displays negative answers even when words overlap the title", () => {
+      expect(
+        rowAnswerLabel(
+          { name: "No IPO before January 2027", probability: 0.85 },
+          "",
+          "OpenAI IPO closing market cap",
+        ),
+      ).toBe("No IPO before January 2027");
+    });
+  });
 });
