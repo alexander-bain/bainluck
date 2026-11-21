@@ -135,6 +135,18 @@ export interface Jam {
   source?: Stop["source"];
 }
 
+export type ChecksQueue = { machines: number } & (
+  | { unavailable: true }
+  | {
+      unavailable?: false;
+      machines_busy?: number;
+      running: number;
+      waiting: number;
+      longest_wait_minutes: number | null;
+      queued_without_jobs: number;
+    }
+);
+
 export interface FactoryData {
   schema_version: number;
   generated_at: string;
@@ -157,6 +169,7 @@ export interface FactoryData {
   signals: {
     tests: string;
     testflight: string;
+    checks_queue?: ChecksQueue;
     tests_at?: string;
     last_merged_at?: Partial<Record<Line, string>>;
     testflight_post?: { build: number; at: string };

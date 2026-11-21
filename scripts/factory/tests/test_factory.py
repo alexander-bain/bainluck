@@ -540,17 +540,19 @@ class FactoryRules(unittest.TestCase):
         self.assertTrue(floor_changed({}, current))
 
     def test_unchanged_floor_skips_both_uploads_and_still_prints_metrics(self):
+        queue = {"machines": 40, "unavailable": True}
         previous = {
             "generated_at": "2026-11-18T01:00:00Z",
             "changes": [],
             "jams": [],
             "events": [],
+            "signals": {"checks_queue": queue},
         }
         budget = ModelBudget("", None, now=instant(previous["generated_at"]))
         previous["notes"], _ = make_notes(previous, [], {}, budget, None)
         previous["speech"], _ = make_speech(previous, {}, budget, None)
         previous["model_usage"] = {"day": budget.state()["day"], "calls": 0}
-        current = {**previous, "generated_at": "2026-11-18T01:05:00Z"}
+        current = {**deepcopy(previous), "generated_at": "2026-11-18T01:05:00Z"}
         api = MagicMock()
         api.pages.return_value = []
         api.metrics.return_value = {"github_api_calls": 3}
@@ -570,6 +572,8 @@ class FactoryRules(unittest.TestCase):
             "collect.collect", return_value={"pulls": []}
         ), patch(
             "collect.build", return_value=current
+        ), patch(
+            "collect.machine_queue", return_value={"display": queue, "master_jobs": None}
         ), patch(
             "collect.ModelBudget", return_value=budget
         ), patch(

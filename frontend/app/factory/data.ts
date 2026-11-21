@@ -1,4 +1,4 @@
-import { factoryEventKinds, factoryMoods, type Change, type FactoryData, type FloorEvent } from "./types";
+import { factoryEventKinds, factoryMoods, type Change, type ChecksQueue, type FactoryData, type FloorEvent } from "./types";
 import { stationNames, stations } from "./activity";
 
 export const FACTORY_DATA_URL =
@@ -23,6 +23,22 @@ function isProgress(done?: number, total?: number) {
   return typeof done === "number" && typeof total === "number" &&
     Number.isSafeInteger(done) && Number.isSafeInteger(total) &&
     done >= 0 && total > 0 && done <= total;
+}
+
+function verifiedChecksQueue(queue?: ChecksQueue): ChecksQueue | undefined {
+  if (!queue || !Number.isSafeInteger(queue.machines) || queue.machines <= 0) return;
+  const isCount = (value: unknown) =>
+    typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
+  if (
+    queue.unavailable ||
+    ![queue.running, queue.waiting, queue.queued_without_jobs].every(isCount) ||
+    (queue.longest_wait_minutes !== null &&
+      (queue.waiting === 0 || !isCount(queue.longest_wait_minutes)))
+  ) {
+    return { machines: queue.machines, unavailable: true };
+  }
+  const { machines_busy: busy, ...reading } = queue;
+  return isCount(busy) ? queue : reading;
 }
 
 function isEvent(event: FloorEvent) {
@@ -203,6 +219,8 @@ function validateSnapshot(payload: FactoryData): FactoryData {
     throw new Error("Snapshot incomplete");
   const notes = notesForSnapshot(payload);
   const speech = speechForSnapshot(payload);
+  const { checks_queue: rawQueue, ...signals } = payload.signals;
+  const checksQueue = verifiedChecksQueue(rawQueue);
   const usage = payload.model_usage;
   const modelUsage = usage && /^\d{4}-\d{2}-\d{2}$/.test(usage.day) &&
     Number.isSafeInteger(usage.calls) && usage.calls >= 0 && usage.calls <= 200
@@ -223,7 +241,7 @@ function validateSnapshot(payload: FactoryData): FactoryData {
     ...(modelUsage ? { model_usage: modelUsage } : {}),
     changes: payload.changes.map((change) => withVerifiedJourney(change, Date.parse(payload.generated_at))),
     jams: payload.jams,
-    signals: payload.signals,
+    signals: { ...signals, ...(checksQueue ? { checks_queue: checksQueue } : {}) },
     coverage: payload.coverage,
   };
 }
