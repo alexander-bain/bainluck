@@ -1065,6 +1065,10 @@ ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S = 21600.0
 ROUNDUP_MACHINERY_LIVE_STALE_TTL_S = 300.0
 ROUNDUP_STANDING_NON_LIVE_STALE_TTL_S = 21600.0
 ROUNDUP_STANDING_LIVE_STALE_TTL_S = 300.0
+#: #12529: Non-live standing round-ups warmed by Celery Beat hold a 300s fresh
+#: window (above the 120s host cadence) so cold Discover builds read Redis MGET
+#: with zero Postgres wait, while live standing round-ups keep the 60s ceiling.
+ROUNDUP_STANDING_PREWARM_FRESH_TTL_S = 300.0
 #: Per-producer timeout for a genuinely cold public machinery grouping (no
 #: Redis copy, e.g. a live slate whose 5m TTL expired during an outage).
 ROUNDUP_MACHINERY_COLD_TIMEOUT_SECONDS = 1.5
@@ -1074,6 +1078,11 @@ ROUNDUP_MACHINERY_COLD_TIMEOUT_SECONDS = 1.5
 #: 120s host beats. TTL outlives the 120s host beat by 2.5x.
 MACHINERY_LIVE_SLUGS_KEY = "bainluck:roundup:machinery:live_slugs"
 MACHINERY_LIVE_SLUGS_TTL_S = 300
+#: Companion 30s-rail live-slug + armed-slug hashes for standing round-ups (#12529).
+STANDING_LIVE_SLUGS_KEY = "bainluck:roundup_standing:live_slugs"
+STANDING_LIVE_SLUGS_TTL_S = 300
+STANDING_WARM_SLUGS_KEY = "bainluck:roundup_standing:warm_slugs"
+STANDING_WARM_SLUGS_TTL_S = 86_400
 MACHINERY_IMMINENT_START_WINDOW_S = 180.0
 _TERMINAL_EVENT_STATUSES = frozenset(
     {"final", "completed", "closed", "cancelled", "canceled", "postponed"}
@@ -1300,6 +1309,8 @@ def store_roundup_cache_sync(
     ts: float,
     feed_item: Optional[dict[str, Any]],
     container_payload: Optional[dict[str, Any]],
+    *,
+    prewarm_fresh_ttl_s: Optional[float] = None,
 ) -> bool:
     """Publish a roundup cache entry + live-slug registration via sync Redis.
 
@@ -1309,8 +1320,19 @@ def store_roundup_cache_sync(
     """
     if rc is None or not hasattr(rc, "set"):
         return False
+    prod = ROUNDUP_PRODUCERS.get(slug)
+    rule_cfg = prod.rule if (prod is not None and isinstance(prod.rule, Mapping)) else {}
+    if rule_cfg.get("cache") == "none" or rule_cfg.get("producer") == "yardstick_pair":
+        return False
     ttl_s = _roundup_cache_ttl_seconds(slug, container_payload)
     stale_ttl_s = _roundup_cache_stale_ttl_seconds(slug, container_payload)
+    if (
+        prewarm_fresh_ttl_s is not None
+        and not _is_machinery_producer_slug(slug)
+        and container_payload is not None
+        and not _roundup_payload_needs_live_rail(container_payload, now_ts=ts)
+    ):
+        ttl_s = min(float(stale_ttl_s), max(float(ttl_s), float(prewarm_fresh_ttl_s)))
     try:
         encoded = _encode_roundup_cache_entry(
             ts=ts,
@@ -1320,15 +1342,18 @@ def store_roundup_cache_sync(
             container_payload=container_payload,
         )
         rc.set(_redis_cache_key(slug), encoded, ex=int(stale_ttl_s))
-        if _is_machinery_producer_slug(slug) and container_payload is not None:
+        if container_payload is not None:
+            is_mach = _is_machinery_producer_slug(slug)
+            live_hash = MACHINERY_LIVE_SLUGS_KEY if is_mach else STANDING_LIVE_SLUGS_KEY
+            live_ttl = MACHINERY_LIVE_SLUGS_TTL_S if is_mach else STANDING_LIVE_SLUGS_TTL_S
             if _roundup_payload_needs_live_rail(container_payload, now_ts=ts):
                 if hasattr(rc, "hset"):
-                    rc.hset(MACHINERY_LIVE_SLUGS_KEY, slug, str(ts))
+                    rc.hset(live_hash, slug, str(ts))
                 if hasattr(rc, "expire"):
-                    rc.expire(MACHINERY_LIVE_SLUGS_KEY, MACHINERY_LIVE_SLUGS_TTL_S)
+                    rc.expire(live_hash, live_ttl)
             else:
                 if hasattr(rc, "hdel"):
-                    rc.hdel(MACHINERY_LIVE_SLUGS_KEY, slug)
+                    rc.hdel(live_hash, slug)
         return True
     except Exception:  # noqa: BLE001 — cache write is best-effort
         logger.warning(
@@ -1369,12 +1394,60 @@ def store_roundup_clean_empty_sync(
             clean_empty_reason=reason,
         )
         rc.set(_redis_cache_key(slug), encoded, ex=int(lifetime_s))
-        if _is_machinery_producer_slug(slug) and hasattr(rc, "hdel"):
-            rc.hdel(MACHINERY_LIVE_SLUGS_KEY, slug)
+        if hasattr(rc, "hdel"):
+            live_hash = (
+                MACHINERY_LIVE_SLUGS_KEY
+                if _is_machinery_producer_slug(slug)
+                else STANDING_LIVE_SLUGS_KEY
+            )
+            rc.hdel(live_hash, slug)
         return True
     except Exception:  # noqa: BLE001 — cache write is best-effort
         logger.warning(
             "roundup_containers: sync Redis clean-empty write failed for %s",
+            slug,
+            exc_info=True,
+        )
+        return False
+
+
+def store_roundup_nothing_to_show_sync(
+    rc: Any,
+    slug: str,
+    ts: float,
+    *,
+    reason: Optional[str] = None,
+    ttl_s: float = ROUNDUP_STANDING_PREWARM_FRESH_TTL_S,
+    lifetime_s: float = ROUNDUP_STANDING_NON_LIVE_STALE_TTL_S,
+) -> bool:
+    """Record a standing producer's cacheable empty result via sync Redis (#12529).
+
+    Used by Celery prewarm workers so cold Discover builds read the shared MGET
+    instead of spending per-producer DB time on intentionally empty round-ups.
+    """
+    if rc is None or not hasattr(rc, "set"):
+        return False
+    prod = ROUNDUP_PRODUCERS.get(slug)
+    rule_cfg = prod.rule if (prod is not None and isinstance(prod.rule, Mapping)) else {}
+    if rule_cfg.get("cache") == "none" or rule_cfg.get("producer") == "yardstick_pair":
+        return False
+    try:
+        encoded = _encode_roundup_cache_entry(
+            ts=ts,
+            ttl_s=float(ttl_s),
+            stale_ttl_s=float(lifetime_s),
+            feed_item=None,
+            container_payload=None,
+            nothing_to_show=True,
+            nothing_to_show_reason=reason,
+        )
+        rc.set(_redis_cache_key(slug), encoded, ex=int(lifetime_s))
+        if hasattr(rc, "hdel") and not _is_machinery_producer_slug(slug):
+            rc.hdel(STANDING_LIVE_SLUGS_KEY, slug)
+        return True
+    except Exception:  # noqa: BLE001 — cache write is best-effort
+        logger.warning(
+            "roundup_containers: sync Redis nothing-to-show write failed for %s",
             slug,
             exc_info=True,
         )
@@ -3919,35 +3992,57 @@ async def add_roundup_feed_items(
     else:
         public_producers = producers
         preview_producers = []
-    produced: list[dict[str, Any]] = []
     now_ts, _ = _normalize_roundup_now(now)
+    # #12529: Skip disabled and out-of-window producers up front so seasonal
+    # retired producers never burn stage budget or trigger false `dropped_no_copy`.
+    public_producers = [
+        p
+        for p in public_producers
+        if (p.enabled is None or p.enabled())
+        and (p.valid_from is None or now_ts >= p.valid_from)
+        and (p.valid_until is None or now_ts < p.valid_until)
+    ]
     machinery_producers = [
         p
         for p in public_producers
         if _is_machinery_producer_slug(p.slug) and (p.enabled is None or p.enabled())
     ]
     machinery_incomplete = False
+    # #12529: Evaluate intentionally uncacheable producers (e.g. `yardstick_pair`,
+    # rule `cache == "none"`) first so cached round-ups can never starve them into
+    # `dropped_no_copy`, while placing every card back into `public_producers` order.
+    def _is_no_cache_producer(prod: RoundupProducer) -> bool:
+        rcfg = prod.rule if isinstance(prod.rule, Mapping) else {}
+        return rcfg.get("cache") == "none" or rcfg.get("producer") == "yardstick_pair"
+
+    indexed_public = list(enumerate(public_producers))
+    eval_order = [
+        *(pair for pair in indexed_public if _is_no_cache_producer(pair[1])),
+        *(pair for pair in indexed_public if not _is_no_cache_producer(pair[1])),
+    ]
+    slot_results: dict[int, dict[str, Any]] = {}
     # One batched Redis MGET up front hydrates every warm machinery grouping
     # and standing round-up across a cold dyno restart in a single round-trip
     # instead of 20+ sequential Redis GETs and serial 0.5s DB timeouts.
     public_prefetched, public_shared_ok = await _prefetch_shared_roundup_entries(
         public_producers, db
     )
-    for idx, producer in enumerate(public_producers):
+    for loop_idx, (orig_idx, producer) in enumerate(eval_order):
         elapsed = time.perf_counter() - started
         remaining = stage_budget - elapsed
         if remaining <= 0:
             kept_after_budget = 0
             quiet_after_budget = 0
             dropped_after_budget = 0
-            rem_producers = public_producers[idx:]
+            rem_entries = eval_order[loop_idx:]
+            rem_producers = [p for _, p in rem_entries]
             if public_shared_ok:
                 prefetched_shared, shared_read_ok = public_prefetched, True
             else:
                 prefetched_shared, shared_read_ok = await _prefetch_shared_roundup_entries(
                     rem_producers, db
                 )
-            for rem_producer in rem_producers:
+            for rem_idx, rem_producer in rem_entries:
                 quiet_meta: dict[str, Any] = {}
                 last_good = await _load_last_good_roundup_copy(
                     rem_producer,
@@ -3961,7 +4056,7 @@ async def add_roundup_feed_items(
                 )
                 if last_good is not None:
                     fi_lg, _cp_lg, _age_lg, _keep_lg = last_good
-                    produced.append(fi_lg)
+                    slot_results[rem_idx] = fi_lg
                     kept_after_budget += 1
                     _record_roundup_read_failure(
                         rem_producer.slug,
@@ -4012,11 +4107,11 @@ async def add_roundup_feed_items(
                 "(budget_seconds=%.3f, stage_budget=%.3f, produced=%d, "
                 "kept_last_good=%d, quiet=%d, dropped_no_copy=%d, failed_10m=%d, "
                 "dropped_10m=%d, nothing_to_show_10m=%d)",
-                idx,
-                len(public_producers),
+                loop_idx,
+                len(eval_order),
                 budget_seconds,
                 stage_budget,
-                len(produced),
+                len(slot_results),
                 kept_after_budget,
                 quiet_after_budget,
                 dropped_after_budget,
@@ -4075,7 +4170,7 @@ async def add_roundup_feed_items(
             )
             if last_good is not None:
                 fi_lg, _cp_lg, age_lg, keep_lg = last_good
-                produced.append(fi_lg)
+                slot_results[orig_idx] = fi_lg
                 stats_10m = _record_roundup_read_failure(
                     producer.slug,
                     kept_last_good=True,
@@ -4150,7 +4245,7 @@ async def add_roundup_feed_items(
             )
             if last_good is not None:
                 fi_lg, _cp_lg, age_lg, keep_lg = last_good
-                produced.append(fi_lg)
+                slot_results[orig_idx] = fi_lg
                 stats_10m = _record_roundup_read_failure(
                     producer.slug,
                     kept_last_good=True,
@@ -4207,7 +4302,10 @@ async def add_roundup_feed_items(
             )
             continue
         if feed_item is not None and container_payload is not None:
-            produced.append(feed_item)
+            slot_results[orig_idx] = feed_item
+    produced: list[dict[str, Any]] = [
+        slot_results[idx] for idx in sorted(slot_results)
+    ]
 
     # Goal Step 7 (#12288): all-or-nothing during cold-restart warm-up for PUBLIC
     # machinery groupings. If any registered public machinery grouping timed out,
@@ -4481,9 +4579,17 @@ def render_machinery_prewarm_bundle(
         return None
 
     mach_live = payload_contains_live_event(mach_base_body)
-    m_ttl, m_stale_ttl = feed_response_cache_ttls(
-        my_teams_only=False, identified=False, live=mach_live
+    mach_input_age_s = (
+        max(0.0, float(now_ts) - float(mach_age_origin)) if mach_live else 0.0
     )
+    m_ttl, m_stale_ttl = feed_response_cache_ttls(
+        my_teams_only=False,
+        identified=False,
+        live=mach_live,
+        oldest_artifact_age_s=mach_input_age_s,
+    )
+    if mach_live and (m_ttl <= 0 or m_stale_ttl <= 0):
+        return None
     page_payload["cache"] = build_feed_cache_metadata(
         "miss",
         ttl_seconds=m_ttl,

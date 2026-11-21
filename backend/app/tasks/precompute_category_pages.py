@@ -11,12 +11,18 @@ is missing.
 """
 
 import contextlib
+import contextvars
 import json
 import logging
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 
 logger = logging.getLogger(__name__)
+
+_PREWARM_PENDING_MACH_BASES_VAR: contextvars.ContextVar[dict[str, dict] | None] = (
+    contextvars.ContextVar("_PREWARM_PENDING_MACH_BASES_VAR", default=None)
+)
 
 # Redis key prefix and TTL (2 hours — task runs every 1h, so there's overlap)
 CACHE_PREFIX = "bainluck:category:"
@@ -366,6 +372,13 @@ async def _precompute_discover_candidate_base():
         logger.exception("Championship probabilities pre-warm failed")
         champ_result = "error"
 
+    standing_roundups_result = None
+    try:
+        standing_roundups_result = await _prewarm_standing_roundups()
+    except Exception:
+        logger.exception("Standing round-ups pre-warm failed")
+        standing_roundups_result = "error"
+
     try:
         prewarm_result = await _prewarm_discover_feed_responses()
     except Exception:
@@ -375,6 +388,7 @@ async def _precompute_discover_candidate_base():
     return {
         "candidate_base": base_result,
         "champ_probs": champ_result,
+        "standing_roundups": standing_roundups_result,
         "feed_prewarm": prewarm_result,
     }
 
@@ -958,6 +972,8 @@ def _live_prewarm_labels(rc) -> set[str]:
 #: opposite move — it is the route's own answer, carried forward, and it cannot
 #: drift from the key the request path reads because it IS that key.
 FEED_PREWARM_SHAPE_KEYS_KEY = "bainluck:precompute:feed_prewarm:shape_keys"
+FEED_PREWARM_PAGE_BASE_KEYS_KEY = "bainluck:precompute:feed_prewarm:page_base_keys"
+FEED_PREWARM_MACHINERY_KEYS_KEY = "bainluck:precompute:feed_prewarm:machinery_keys"
 
 #: TTL on that hash. NOT a dead-man's switch (unlike the liveness hash): a
 #: remembered key going stale is harmless, because a shape's key changes only
@@ -968,13 +984,31 @@ FEED_PREWARM_SHAPE_KEYS_KEY = "bainluck:precompute:feed_prewarm:shape_keys"
 FEED_PREWARM_SHAPE_KEYS_TTL_S = 86_400
 
 
+def _record_shape_key_in_hash(rc, hash_key: str, label: str, cache_key: str) -> None:
+    """Remember one route-resolved cache key inside a named Redis hash. Never raises."""
+    try:
+        rc.hset(hash_key, label, cache_key)
+        rc.expire(hash_key, FEED_PREWARM_SHAPE_KEYS_TTL_S)
+    except Exception:
+        logger.debug("shape-key marker write failed for %s (%s)", label, hash_key, exc_info=True)
+
+
 def _record_shape_cache_key(rc, label: str, cache_key: str) -> None:
     """Remember the route-resolved cache key for one shape. Never raises."""
-    try:
-        rc.hset(FEED_PREWARM_SHAPE_KEYS_KEY, label, cache_key)
-        rc.expire(FEED_PREWARM_SHAPE_KEYS_KEY, FEED_PREWARM_SHAPE_KEYS_TTL_S)
-    except Exception:
-        logger.debug("shape-key marker write failed for %s", label, exc_info=True)
+    _record_shape_key_in_hash(rc, FEED_PREWARM_SHAPE_KEYS_KEY, label, cache_key)
+
+
+def _decode_redis_key_hash(raw: Any) -> dict[str, str]:
+    known: dict[str, str] = {}
+    if not isinstance(raw, dict):
+        return known
+    for label_raw, key_raw in raw.items():
+        label = (
+            label_raw.decode() if isinstance(label_raw, (bytes, bytearray)) else str(label_raw)
+        )
+        key = key_raw.decode() if isinstance(key_raw, (bytes, bytearray)) else str(key_raw)
+        known[label] = key
+    return known
 
 
 def _absent_prewarm_labels(rc, *, exclude: set[str] | None = None) -> set[str]:
@@ -1030,13 +1064,28 @@ def _absent_prewarm_labels(rc, *, exclude: set[str] | None = None) -> set[str]:
     # can be shown to be doing the work, because mutating either leaves the
     # other holding the line. LAT-P112's mutation battery found exactly that
     # and this is the collapse it forced.
-    known: dict[str, str] = {}
-    for label_raw, key_raw in raw.items():
-        label = (
-            label_raw.decode() if isinstance(label_raw, (bytes, bytearray)) else str(label_raw)
-        )
-        key = key_raw.decode() if isinstance(key_raw, (bytes, bytearray)) else str(key_raw)
-        known[label] = key
+    known = _decode_redis_key_hash(raw)
+
+    # #12529: Discover web/app readers skip `feed_cache:*` and read
+    # ONLY `feed:pagebase:*:stale` or `feed:machinery_pagebase:*:stale`. Check
+    # those armed hashes too (failing closed when empty so unit-test mocks are
+    # unaffected), still probing `:stale` mirrors only.
+    try:
+        known_pb = _decode_redis_key_hash(rc.hgetall(FEED_PREWARM_PAGE_BASE_KEYS_KEY) or {})
+    except Exception:
+        known_pb = {}
+
+    known_mach: dict[str, str] = {}
+    try:
+        from app.routes.containers import containers_read_enabled
+        from app.utils.container_machinery import container_machinery_enabled
+
+        if container_machinery_enabled() and containers_read_enabled():
+            known_mach = _decode_redis_key_hash(
+                rc.hgetall(FEED_PREWARM_MACHINERY_KEYS_KEY) or {}
+            )
+    except Exception:
+        known_mach = {}
 
     absent: set[str] = set()
     for label in candidates:
@@ -1050,9 +1099,22 @@ def _absent_prewarm_labels(rc, *, exclude: set[str] | None = None) -> set[str]:
         try:
             if not rc.exists(f"{cache_key}:stale"):
                 absent.add(label)
+                continue
         except Exception:
             logger.debug("shape-absence probe failed for %s", label, exc_info=True)
             continue
+        # #12529: Discover web/app readers skip `feed_cache:*` and
+        # read `feed:pagebase:*:stale` or `feed:machinery_pagebase:*:stale`.
+        for extra_key in (known_pb.get(label), known_mach.get(label)):
+            if not extra_key or extra_key == cache_key:
+                continue
+            try:
+                if not rc.exists(f"{extra_key}:stale"):
+                    absent.add(label)
+                    break
+            except Exception:
+                logger.debug("shape-absence probe failed for %s", label, exc_info=True)
+                break
     return absent
 
 # The exact anonymous first-paint requests the clients issue:
@@ -1109,9 +1171,22 @@ def _absent_prewarm_labels(rc, *, exclude: set[str] | None = None) -> set[str]:
 # trap one indirection deeper, so `test_feed_prewarm.py` asserts the declaration
 # rather than trusting a default.
 FEED_PREWARM_SHAPES: tuple[dict, ...] = (
+    # #12529: Both Discover shapes sit FIRST so Wave 1 of `_prewarm_live_feed_shapes`
+    # (`CONCURRENCY=3`) always starts them ahead of Sports shapes instead of starving
+    # Wave 2 behind 3 Sports builds whenever live games span both tabs. `sports_native`
+    # and `sports_native_events` remain in Wave 2.
     {
         "label": "discover",
         "limit": 20,
+        "offset": 0,
+        "event_pct": 0.15,
+        "mode": None,
+        "include_events": True,
+        "include_futures": True,
+    },
+    {
+        "label": "discover_native",
+        "limit": 50,
         "offset": 0,
         "event_pct": 0.15,
         "mode": None,
@@ -1124,15 +1199,6 @@ FEED_PREWARM_SHAPES: tuple[dict, ...] = (
         "offset": 0,
         "event_pct": None,
         "mode": "sports",
-        "include_events": True,
-        "include_futures": True,
-    },
-    {
-        "label": "discover_native",
-        "limit": 50,
-        "offset": 0,
-        "event_pct": 0.15,
-        "mode": None,
         "include_events": True,
         "include_futures": True,
     },
@@ -1562,9 +1628,9 @@ async def _prewarm_feed_shape(
     # at up to 360s forever, and a live score inside it with it. Same failure
     # shape LAT-P001 closed on the key builder — two writers, one of them quietly
     # disagreeing — which is why both now go through one function.
-    live = payload_contains_live_event(payload)
+    _slice_live = payload_contains_live_event(payload)
     ttl, stale_ttl = feed_response_cache_ttls(
-        my_teams_only=False, identified=False, live=live
+        my_teams_only=False, identified=False, live=_slice_live
     )
 
     # --- #3841: MEASURE the age of the inputs, and do not spend it -----------
@@ -1629,6 +1695,8 @@ async def _prewarm_feed_shape(
     )
 
     _mach_base_ctx = request.scope.get(FEED_PREWARM_MACHINERY_BASE_SCOPE_KEY)
+    _pb_key_recorded: str | None = None
+    _mach_pub_res: dict | None = None
     if isinstance(_mach_base_ctx, dict) and _mach_base_ctx.get("page_base_key"):
         try:
             _pb_key = str(_mach_base_ctx["page_base_key"])
@@ -1636,7 +1704,8 @@ async def _prewarm_feed_shape(
             _pb_lg_body = _mach_base_ctx.get(
                 "page_base_last_good_body"
             ) or strip_live_and_started_items_for_last_good(
-                _mach_base_ctx["page_base_body"]
+                _mach_base_ctx["page_base_body"],
+                now=_time.time(),
             )
             _pb_lg_json = dumps_feed_cache(_pb_lg_body)
             _pb_fresh = int(_mach_base_ctx.get("page_base_fresh_ttl") or ttl)
@@ -1649,6 +1718,7 @@ async def _prewarm_feed_shape(
                 _pb_lg_ttl,
                 encode_base_last_good(_pb_lg_json),
             )
+            _pb_key_recorded = _pb_key
         except Exception:
             logger.debug("Sync page-base publish failed for %s", label, exc_info=True)
         if (
@@ -1657,7 +1727,7 @@ async def _prewarm_feed_shape(
             and shape.get("include_futures")
         ):
             try:
-                _publish_machinery_feed_from_prewarm_base(
+                _mach_pub_res = _publish_machinery_feed_from_prewarm_base(
                     rc,
                     mach_base=_mach_base_ctx,
                     label=label,
@@ -1668,16 +1738,57 @@ async def _prewarm_feed_shape(
                     label,
                     exc_info=True,
                 )
-    # #2236: the shape's liveness is recorded by the writer that just measured
-    # it. Whichever pass called this — the 120s one or the republish one — the live set
-    # now describes the payload actually on the key, so the republish pass can
-    # never be selecting on a belief no warmer holds.
+                _mach_pub_res = {"outcome": "error"}
+            _needs_post_gather_resplice = (
+                not isinstance(_mach_pub_res, dict)
+                or _mach_pub_res.get("outcome") != "ok"
+                or bool(_mach_pub_res.get("live"))
+            )
+            if _needs_post_gather_resplice:
+                _pending_sink = _PREWARM_PENDING_MACH_BASES_VAR.get()
+                if _pending_sink is not None:
+                    _pending_sink[label] = {
+                        "mach_base": _mach_base_ctx,
+                        "force_retry": (
+                            not isinstance(_mach_pub_res, dict)
+                            or _mach_pub_res.get("outcome") != "ok"
+                        ),
+                    }
+    # #2236 + #12529: A shape's page base / spliced `:machinery` deck can hold
+    # live events at seats >= 20 even when its 20-card slice has `live=False`.
+    # Enroll any shape whose slice, page base, OR spliced machinery deck is live
+    # so web Discover (`limit=20`) never falls off the 30s live rail during games.
+    _base_live = bool(
+        isinstance(_mach_base_ctx, dict)
+        and payload_contains_live_event(_mach_base_ctx.get("page_base_body"))
+    )
+    _mach_live = bool(
+        isinstance(_mach_pub_res, dict)
+        and _mach_pub_res.get("outcome") == "ok"
+        and _mach_pub_res.get("live")
+    )
+    live = bool(_slice_live or _base_live or _mach_live)
     _record_shape_liveness(rc, label, live)
     # LAT-P112: carry the key the route just resolved forward, so the punctual
     # republish pass can ask whether this shape's entry has GONE without re-deriving
     # a key of its own. Written here and only here, from the scope readback two
     # statements above — the same value that was just published to.
     _record_shape_cache_key(rc, label, cache_key)
+    if _pb_key_recorded:
+        _record_shape_key_in_hash(
+            rc, FEED_PREWARM_PAGE_BASE_KEYS_KEY, label, _pb_key_recorded
+        )
+    if (
+        isinstance(_mach_pub_res, dict)
+        and _mach_pub_res.get("outcome") == "ok"
+        and _mach_pub_res.get("page_base_key")
+    ):
+        _record_shape_key_in_hash(
+            rc,
+            FEED_PREWARM_MACHINERY_KEYS_KEY,
+            label,
+            str(_mach_pub_res["page_base_key"]),
+        )
     # #3315: and carry forward WHAT IT RENDERED, so the hourly price sweep can
     # select on "a reader is looking at this" instead of on a volume floor that
     # stood in for it. Every shape here is `offset = 0`, so this set IS page one.
@@ -1707,7 +1818,7 @@ async def _prewarm_feed_shape(
     # be explained by elapsed build time and is a page the ceiling exists to
     # stop. A constant already sized against measurement (LAT-P179: 1.4s worst
     # observed lateness over 21 samples, so ~7x it), not a number chosen here.
-    if live and _artifact_age_s is not None:
+    if _slice_live and _artifact_age_s is not None:
         _total_age_s = _artifact_age_s + stale_ttl
         if _artifact_age_s > FEED_LIVE_REPUBLISH_MIN_HEADROOM_S:
             logger.warning(
@@ -1880,6 +1991,13 @@ async def _prewarm_discover_feed_responses():
 
     from app.utils.feed_cache import FEED_PREWARM_MIN_VIABLE_BUILD_S
 
+    # #12529: Warm public machinery groupings BEFORE the feed-shape loop so the
+    # very first `discover` and `discover_native` builds splice warm Redis copies
+    # in pure Python (<5 ms) instead of hitting `incomplete` on a cold pass.
+    machinery_public_result = await _prewarm_machinery_roundups(
+        deadline_s=15.0, stage="public", rc=rc
+    )
+
     targets = _prewarm_targets()
     budget_left = FEED_PREWARM_PASS_BUDGET_S
     shapes: dict[str, dict] = {}
@@ -1893,11 +2011,31 @@ async def _prewarm_discover_feed_responses():
         shapes[label] = await warm(rc, deadline_s=deadline_s)
         budget_left = max(0.0, budget_left - (_time.monotonic() - started))
 
-    # #12288: keep the 5 machinery roundup Redis caches warm in parallel when
-    # CONTAINER_MACHINERY_SLICE1_ENABLED=true so website & iOS 1.0.7+ `machinery=1`
-    # Discover splices and `/collections/machinery-*` opens hit warm Redis (<20 ms)
-    # without ever modifying the 1.0.6-safe Discover base cache.
-    machinery_result = await _prewarm_machinery_roundups()
+    # Warm preview groupings AFTER public shapes so preview work never delays
+    # public Discover, then expose combined summary on the feed-prewarm report.
+    machinery_preview_result = await _prewarm_machinery_roundups(
+        deadline_s=10.0, stage="preview", rc=rc
+    )
+    if machinery_public_result.get("outcome") == "disabled":
+        machinery_result = machinery_public_result
+    else:
+        combined_slugs = {
+            **(machinery_public_result.get("slugs") or {}),
+            **(machinery_preview_result.get("slugs") or {}),
+        }
+        machinery_result = {
+            "outcome": (
+                "ok"
+                if (
+                    machinery_public_result.get("outcome") == "ok"
+                    or machinery_preview_result.get("outcome") == "ok"
+                )
+                else machinery_public_result.get("outcome", "empty")
+            ),
+            "warmed": int(machinery_public_result.get("warmed") or 0)
+            + int(machinery_preview_result.get("warmed") or 0),
+            "slugs": combined_slugs,
+        }
 
     report = {
         "ran_at": datetime.now(timezone.utc).isoformat(),
@@ -1923,6 +2061,7 @@ async def _prewarm_machinery_roundups(
     deadline_s: float = 25.0,
     *,
     slugs: list[str] | set[str] | tuple[str, ...] | None = None,
+    stage: str | None = None,
     rc: object | None = None,
 ) -> dict:
     """Warm registered `machinery-*` roundup caches into shared Redis in parallel."""
@@ -1967,6 +2106,16 @@ async def _prewarm_machinery_roundups(
     if slug_filter is not None:
         public_producers = all_machinery
         preview_producers = []
+    elif stage == "public":
+        public_producers = [
+            p for p in all_machinery if getattr(p, "stage", "public") == "public"
+        ]
+        preview_producers = []
+    elif stage == "preview":
+        public_producers = []
+        preview_producers = [
+            p for p in all_machinery if getattr(p, "stage", "public") == "preview"
+        ]
     else:
         public_producers = [
             p for p in all_machinery if getattr(p, "stage", "public") == "public"
@@ -1979,11 +2128,12 @@ async def _prewarm_machinery_roundups(
         return {"outcome": "empty", "warmed": 0, "slugs": {}}
 
     wall_started = _time.monotonic()
+    db_sem = asyncio.Semaphore(3)
 
     async def _warm_one(prod) -> tuple[str, dict]:
         t0 = _time.monotonic()
         try:
-            async with get_task_session(
+            async with db_sem, get_task_session(
                 statement_timeout_ms=max(1000, int(deadline_s * 1000))
             ) as db:
                 import inspect as _inspect
@@ -2423,6 +2573,278 @@ async def _prewarm_live_machinery_roundups(rc, *, deadline_s: float = 20.0) -> d
     }
 
 
+async def _prewarm_standing_roundups(
+    deadline_s: float = 15.0,
+    *,
+    slugs: list[str] | set[str] | tuple[str, ...] | None = None,
+    rc: object | None = None,
+) -> dict:
+    """Warm cacheable standing round-ups into shared Redis (#12529).
+
+    Excludes uncacheable producers (``rule.cache == 'none'`` or ``yardstick_pair``)
+    so live comparisons still re-compute per request while the remaining ~20
+    standing producers resolve via Redis MGET with zero Discover drop-offs.
+    """
+    import asyncio
+    import time as _time
+    from collections.abc import Mapping
+
+    from app.routes.containers import containers_read_enabled
+    from app.tasks.base import get_task_session
+    from app.utils.roundup_containers import (
+        ROUNDUP_PRODUCERS,
+        ROUNDUP_STANDING_PREWARM_FRESH_TTL_S,
+        STANDING_WARM_SLUGS_KEY,
+        STANDING_WARM_SLUGS_TTL_S,
+        _is_machinery_producer_slug,
+        _roundup_payload_has_live_event,
+        evaluate_roundup_producer,
+        store_roundup_cache_sync,
+        store_roundup_nothing_to_show_sync,
+        verify_roundup_cache_sync,
+    )
+
+    if not containers_read_enabled():
+        return {"outcome": "disabled", "warmed": 0}
+
+    sync_rc = rc
+    if sync_rc is None:
+        try:
+            from app.tasks.redis_state import get_redis_client
+
+            sync_rc = get_redis_client()
+        except Exception:  # noqa: BLE001 — test environments without Redis
+            sync_rc = None
+
+    slug_filter = set(slugs) if slugs is not None else None
+    now_ts = _time.time()
+
+    def _is_cacheable_standing(prod) -> bool:
+        if _is_machinery_producer_slug(prod.slug):
+            return False
+        if prod.enabled is not None and not prod.enabled():
+            return False
+        if (prod.valid_from is not None and now_ts < prod.valid_from) or (
+            prod.valid_until is not None and now_ts >= prod.valid_until
+        ):
+            return False
+        rule_cfg = prod.rule if isinstance(prod.rule, Mapping) else {}
+        if rule_cfg.get("cache") == "none" or rule_cfg.get("producer") == "yardstick_pair":
+            return False
+        return slug_filter is None or prod.slug in slug_filter
+
+    producers = [p for p in ROUNDUP_PRODUCERS.values() if _is_cacheable_standing(p)]
+    if not producers:
+        return {"outcome": "empty", "warmed": 0, "slugs": {}}
+
+    wall_started = _time.monotonic()
+    db_sem = asyncio.Semaphore(3)
+
+    async def _warm_one(prod) -> tuple[str, dict]:
+        t0 = _time.monotonic()
+        try:
+            async with db_sem, get_task_session(
+                statement_timeout_ms=max(1000, int(deadline_s * 1000))
+            ) as db:
+                import inspect as _inspect
+
+                eval_meta: dict[str, Any] = {}
+                eval_kwargs: dict[str, Any] = {"force_refresh": True}
+                if (
+                    "outcome_meta"
+                    in _inspect.signature(evaluate_roundup_producer).parameters
+                ):
+                    eval_kwargs["outcome_meta"] = eval_meta
+                fi, cp = await asyncio.wait_for(
+                    evaluate_roundup_producer(prod, db, **eval_kwargs),
+                    timeout=deadline_s,
+                )
+                elapsed_ms = round((_time.monotonic() - t0) * 1000.0, 1)
+                ok = fi is not None and cp is not None
+                redis_written = False
+                redis_read_back = False
+                redis_ttl_s = None
+                outcome_label = "ok" if ok else "refused"
+                if ok and sync_rc is not None:
+                    redis_written = store_roundup_cache_sync(
+                        sync_rc,
+                        prod.slug,
+                        _time.time(),
+                        fi,
+                        cp,
+                        prewarm_fresh_ttl_s=ROUNDUP_STANDING_PREWARM_FRESH_TTL_S,
+                    )
+                    if redis_written:
+                        redis_read_back, redis_ttl_s = verify_roundup_cache_sync(
+                            sync_rc, prod.slug
+                        )
+                        if hasattr(sync_rc, "hset"):
+                            try:
+                                sync_rc.hset(
+                                    STANDING_WARM_SLUGS_KEY, prod.slug, "1"
+                                )
+                                if hasattr(sync_rc, "expire"):
+                                    sync_rc.expire(
+                                        STANDING_WARM_SLUGS_KEY,
+                                        STANDING_WARM_SLUGS_TTL_S,
+                                    )
+                            except Exception:
+                                pass
+                elif not ok and eval_meta.get("clean_empty") is True:
+                    outcome_label = "nothing_to_show"
+                    if sync_rc is not None:
+                        redis_written = store_roundup_nothing_to_show_sync(
+                            sync_rc,
+                            prod.slug,
+                            _time.time(),
+                            reason=eval_meta.get("reason"),
+                        )
+                        if redis_written and hasattr(sync_rc, "hset"):
+                            try:
+                                sync_rc.hset(
+                                    STANDING_WARM_SLUGS_KEY, prod.slug, "1"
+                                )
+                                if hasattr(sync_rc, "expire"):
+                                    sync_rc.expire(
+                                        STANDING_WARM_SLUGS_KEY,
+                                        STANDING_WARM_SLUGS_TTL_S,
+                                    )
+                            except Exception:
+                                pass
+                return prod.slug, {
+                    "outcome": outcome_label,
+                    "reason": eval_meta.get("reason"),
+                    "elapsed_ms": elapsed_ms,
+                    "live": bool(_roundup_payload_has_live_event(cp)) if ok else False,
+                    "redis_written": redis_written,
+                    "redis_read_back": redis_read_back,
+                    "redis_ttl_s": redis_ttl_s,
+                }
+        except asyncio.TimeoutError:
+            elapsed_ms = round((_time.monotonic() - t0) * 1000.0, 1)
+            logger.warning(
+                "Standing roundup pre-warm timeout for %s after %.1fs",
+                prod.slug,
+                deadline_s,
+            )
+            return prod.slug, {
+                "outcome": "timeout",
+                "elapsed_ms": elapsed_ms,
+                "live": False,
+                "redis_written": False,
+                "redis_read_back": False,
+                "redis_ttl_s": None,
+            }
+        except Exception as exc:  # noqa: BLE001
+            elapsed_ms = round((_time.monotonic() - t0) * 1000.0, 1)
+            logger.warning("Standing roundup pre-warm failed for %s: %s", prod.slug, exc)
+            return prod.slug, {
+                "outcome": "error",
+                "elapsed_ms": elapsed_ms,
+                "live": False,
+                "redis_written": False,
+                "redis_read_back": False,
+                "redis_ttl_s": None,
+            }
+
+    pairs = await asyncio.gather(*(_warm_one(p) for p in producers))
+    results = dict(pairs)
+    wall_ms = round((_time.monotonic() - wall_started) * 1000.0, 1)
+    total_db_ms = round(sum(float(v.get("elapsed_ms") or 0.0) for v in results.values()), 1)
+    warmed = sum(1 for v in results.values() if v.get("outcome") == "ok")
+    return {
+        "outcome": "ok" if warmed else "empty",
+        "warmed": warmed,
+        "wall_ms": wall_ms,
+        "total_db_ms": total_db_ms,
+        "slugs": results,
+    }
+
+
+async def _prewarm_live_standing_roundups(rc, *, deadline_s: float = 15.0) -> dict:
+    """Refresh live or armed-absent standing round-ups on the 30s realtime rail (#12529).
+
+    Fails closed (returns `idle` with zero `exists` / DB calls) until either
+    `STANDING_LIVE_SLUGS_KEY` or `STANDING_WARM_SLUGS_KEY` has been populated.
+    """
+    import time as _time
+    from collections.abc import Mapping
+
+    from app.routes.containers import containers_read_enabled
+    from app.utils.roundup_containers import (
+        ROUNDUP_PRODUCERS,
+        STANDING_LIVE_SLUGS_KEY,
+        STANDING_WARM_SLUGS_KEY,
+        _is_machinery_producer_slug,
+        _redis_cache_key,
+    )
+
+    if not containers_read_enabled():
+        return {"outcome": "disabled", "warmed": 0}
+
+    try:
+        raw_live = rc.hgetall(STANDING_LIVE_SLUGS_KEY) or {}
+        raw_warm = rc.hgetall(STANDING_WARM_SLUGS_KEY) or {}
+    except Exception:
+        return {"outcome": "idle", "warmed": 0}
+
+    live_decoded = _decode_redis_key_hash(raw_live)
+    warm_decoded = _decode_redis_key_hash(raw_warm)
+    if not live_decoded and not warm_decoded:
+        return {"outcome": "idle", "warmed": 0}
+
+    now_ts = _time.time()
+    registered_set = {
+        p.slug
+        for p in ROUNDUP_PRODUCERS.values()
+        if not _is_machinery_producer_slug(p.slug)
+        and (p.enabled is None or p.enabled())
+        and (p.valid_from is None or now_ts >= p.valid_from)
+        and (p.valid_until is None or now_ts < p.valid_until)
+        and (
+            (p.rule if isinstance(p.rule, Mapping) else {}).get("cache") != "none"
+            and (p.rule if isinstance(p.rule, Mapping) else {}).get("producer")
+            != "yardstick_pair"
+        )
+    }
+    live_slugs = sorted(s for s in live_decoded if s in registered_set)
+    absent_slugs: list[str] = []
+    for slug in sorted(s for s in warm_decoded if s in registered_set and s not in live_slugs):
+        try:
+            if not rc.exists(_redis_cache_key(slug)):
+                absent_slugs.append(slug)
+        except Exception:
+            continue
+
+    if not live_slugs and not absent_slugs:
+        return {"outcome": "idle", "warmed": 0, "live_slugs": [], "absent_slugs": []}
+
+    started = _time.monotonic()
+    combined_slugs: dict[str, dict] = {}
+    warmed = 0
+    if live_slugs and deadline_s >= 1.0:
+        res_live = await _prewarm_standing_roundups(
+            deadline_s=deadline_s, slugs=live_slugs, rc=rc
+        )
+        combined_slugs.update(res_live.get("slugs") or {})
+        warmed += int(res_live.get("warmed") or 0)
+    remaining_s = deadline_s - (_time.monotonic() - started)
+    if absent_slugs and remaining_s >= 1.5:
+        res_absent = await _prewarm_standing_roundups(
+            deadline_s=remaining_s, slugs=absent_slugs, rc=rc
+        )
+        combined_slugs.update(res_absent.get("slugs") or {})
+        warmed += int(res_absent.get("warmed") or 0)
+
+    return {
+        "outcome": "ok" if warmed else "empty",
+        "warmed": warmed,
+        "live_slugs": live_slugs,
+        "absent_slugs": absent_slugs,
+        "slugs": combined_slugs,
+    }
+
+
 async def _prewarm_live_feed_shapes():
     """Republish live shapes (#2236) and rebuild any shape that has GONE (LAT-P112).
 
@@ -2644,17 +3066,59 @@ async def _prewarm_live_feed_shapes():
     # out of 20s) never starve machinery refreshes to <1.5s. Zero Redis/DB work
     # when machinery is switched off, and <2ms idle when all 5 keys are fresh.
     machinery_live_result: dict = {"outcome": "disabled", "warmed": 0}
+    standing_live_result: dict = {"outcome": "idle", "warmed": 0}
+    pending_mach_bases: dict[str, dict] = {}
 
     async def _run_machinery_live() -> None:
-        nonlocal machinery_live_result
-        machinery_live_result = await _prewarm_live_machinery_roundups(
-            rc, deadline_s=min(20.0, float(FEED_LIVE_REPUBLISH_BUDGET_S))
+        nonlocal machinery_live_result, standing_live_result
+        machinery_live_result, standing_live_result = await asyncio.gather(
+            _prewarm_live_machinery_roundups(
+                rc, deadline_s=min(20.0, float(FEED_LIVE_REPUBLISH_BUDGET_S))
+            ),
+            _prewarm_live_standing_roundups(
+                rc, deadline_s=min(15.0, float(FEED_LIVE_REPUBLISH_BUDGET_S))
+            ),
         )
 
-    await asyncio.gather(
-        *(_republish(label, shape) for label, shape in targets),
-        _run_machinery_live(),
-    )
+    pending_token = _PREWARM_PENDING_MACH_BASES_VAR.set(pending_mach_bases)
+    try:
+        await asyncio.gather(
+            *(_republish(label, shape) for label, shape in targets),
+            _run_machinery_live(),
+        )
+    finally:
+        _PREWARM_PENDING_MACH_BASES_VAR.reset(pending_token)
+
+    # #12529: If a Discover build finished ahead of `_prewarm_live_machinery_roundups`
+    # with `incomplete`, OR carried live machinery groupings whose cache was then
+    # refreshed during `gather`, re-run the pure-Python `<5 ms` splice now so
+    # `:machinery` receives the fresh live timestamp/TTL.
+    _mach_warmed_n = int(machinery_live_result.get("warmed") or 0)
+    for pending_label, pending_entry in pending_mach_bases.items():
+        if not isinstance(pending_entry, dict) or "mach_base" not in pending_entry:
+            continue
+        if not pending_entry.get("force_retry") and _mach_warmed_n <= 0:
+            continue
+        try:
+            retry_res = _publish_machinery_feed_from_prewarm_base(
+                rc, mach_base=pending_entry["mach_base"], label=pending_label
+            )
+            if isinstance(retry_res, dict) and retry_res.get("outcome") == "ok":
+                if retry_res.get("page_base_key"):
+                    _record_shape_key_in_hash(
+                        rc,
+                        FEED_PREWARM_MACHINERY_KEYS_KEY,
+                        pending_label,
+                        str(retry_res["page_base_key"]),
+                    )
+                if retry_res.get("live"):
+                    _record_shape_liveness(rc, pending_label, True)
+        except Exception:
+            logger.debug(
+                "Post-gather machinery splice retry failed for %s",
+                pending_label,
+                exc_info=True,
+            )
 
     # The idle pass reports too, and that is deliberate (gotcha #53). "Nothing was
     # live" and "this beat has not run since the deploy" are different facts with
@@ -2687,6 +3151,8 @@ async def _prewarm_live_feed_shapes():
     }
     if machinery_live_result.get("outcome") != "disabled":
         report["machinery"] = machinery_live_result
+    if standing_live_result.get("outcome") not in {"disabled", "idle"}:
+        report["standing"] = standing_live_result
     try:
         rc.setex(
             FEED_LIVE_PREWARM_STATUS_KEY,
