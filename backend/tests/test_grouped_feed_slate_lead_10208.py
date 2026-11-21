@@ -190,6 +190,15 @@ class TestTheSlateRead:
         assert re.search(r"ORDER BY anon_1\.postseason, anon_1\.tier, anon_1\.commence_time", sql)
         assert sql.rstrip().endswith("LIMIT 20")
 
+    async def test_market_read_is_bounded_before_the_cross_league_ranking(self):
+        session = _SlateSession([])
+        await grouped_feed_slate(session, [], 20)
+        sql = _sql(session.statements[0])
+        assert "grouped_slate_games AS MATERIALIZED" in sql
+        assert "JOIN LATERAL" in sql
+        assert "futures_markets.event_id = grouped_slate_games.event_id" in sql
+        assert f"LIMIT {SLATE_MARKETS_PER_EVENT}" in sql
+
     async def test_only_unfinished_tier_1_and_2_games_and_never_the_game_card_question(self):
         session = _SlateSession([])
         await grouped_feed_slate(session, [], 20)

@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import re
+from time import perf_counter
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -12,7 +13,7 @@ from types import SimpleNamespace
 from typing import NamedTuple, Optional, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import select, and_, or_, func, exists, union
+from sqlalchemy import select, and_, or_, func, exists, union, true
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload, selectinload
 
@@ -3172,72 +3173,90 @@ async def grouped_feed_slate(db: AsyncSession, filters: list, limit: int):
     """
     from app.utils.highlights import get_league_tier, tier_12_sport_keys
     from sqlalchemy import case
-    from sqlalchemy.orm import aliased
 
     tier_keys = sorted(tier_12_sport_keys())
     if not tier_keys:
         return [], {}
     tier1_keys = [k for k in tier_keys if get_league_tier(k) == 1]
     now = datetime.now(timezone.utc)
-    # Aliased so the #10064 `exists(Event ...)` clause in `filters` stays
-    # correlated on the market alone, exactly as in the pool query.
-    game = aliased(Event)
-    league = aliased(Sport)
-    ranked = (
+    # Find the small slate first, then use the event-id index to read at most
+    # four eligible markets per game before ranking across leagues.
+    postseason = case((Event.llm_importance.in_(_SLATE_POSTSEASON), 0), else_=1)
+    games = (
+        select(
+            Event.id.label("event_id"),
+            Sport.key.label("league_key"),
+            postseason.label("postseason"),
+            case((Sport.key.in_(tier1_keys), 1), else_=2).label("tier"),
+            Event.commence_time,
+        )
+        .join(Sport, Sport.id == Event.sport_id)
+        .where(
+            Event.status.in_(("scheduled", "live")),
+            Event.commence_time >= now - SLATE_WINDOW_BEFORE,
+            Event.commence_time <= now + SLATE_WINDOW_AFTER,
+            Sport.key.in_(tier_keys),
+        )
+        .cte("grouped_slate_games")
+        .prefix_with("MATERIALIZED")
+    )
+    duel_priority = case((FuturesMarket.market_type == "duel", 1), else_=0)
+    game_markets = (
         select(
             FuturesMarket.id.label("market_id"),
-            FuturesMarket.event_id.label("event_id"),
-            case((game.llm_importance.in_(_SLATE_POSTSEASON), 0), else_=1).label("postseason"),
-            case((league.key.in_(tier1_keys), 1), else_=2).label("tier"),
-            game.commence_time.label("commence_time"),
+            duel_priority.label("duel_priority"),
+            FuturesMarket.updated_at,
+        )
+        .where(
+            FuturesMarket.event_id == games.c.event_id,
+            *filters,
+            ~and_(
+                FuturesMarket.group_type == "kalshi_event",
+                FuturesMarket.market_type == "duel",
+            ),
+            or_(
+                FuturesMarket.group_type.is_(None),
+                FuturesMarket.group_type != "polymarket_event",
+            ),
+        )
+        .correlate(games)
+        .order_by(duel_priority, FuturesMarket.updated_at.desc(), FuturesMarket.id)
+        .limit(SLATE_MARKETS_PER_EVENT)
+        .lateral("grouped_slate_markets")
+    )
+    ranked = (
+        select(
+            game_markets.c.market_id,
+            games.c.event_id,
+            games.c.postseason,
+            games.c.tier,
+            games.c.commence_time,
             # Inside a game, the questions the game card does NOT already ask
             # come first: totals, player props, prop legs before `duel`s (the
             # moneyline leg and spreads), so a duel only fills a slot a game
             # has no other question for.
             func.row_number()
             .over(
-                partition_by=FuturesMarket.event_id,
+                partition_by=games.c.event_id,
                 order_by=(
-                    case((FuturesMarket.market_type == "duel", 1), else_=0),
-                    FuturesMarket.updated_at.desc(),
+                    game_markets.c.duel_priority,
+                    game_markets.c.updated_at.desc(),
+                    game_markets.c.market_id,
                 ),
             )
             .label("rn"),
             func.dense_rank()
             .over(
-                partition_by=league.key,
+                partition_by=games.c.league_key,
                 order_by=(
-                    case((game.llm_importance.in_(_SLATE_POSTSEASON), 0), else_=1),
-                    game.commence_time,
-                    FuturesMarket.event_id,
+                    games.c.postseason,
+                    games.c.commence_time,
+                    games.c.event_id,
                 ),
             )
             .label("league_rank"),
         )
-        .join(game, game.id == FuturesMarket.event_id)
-        .join(league, league.id == game.sport_id)
-        .where(
-            and_(*filters),
-            game.status.in_(("scheduled", "live")),
-            game.commence_time >= now - SLATE_WINDOW_BEFORE,
-            game.commence_time <= now + SLATE_WINDOW_AFTER,
-            league.key.in_(tier_keys),
-            # The game's own winner market is the question the game card above
-            # the strip already asks ("Game 1: Chicago WS vs Cleveland", Kalshi
-            # `kalshi_event` × `duel`); the slate brings the game's OTHER
-            # questions. It stays eligible through the recency pool as before.
-            ~and_(
-                FuturesMarket.group_type == "kalshi_event",
-                FuturesMarket.market_type == "duel",
-            ),
-            # Polymarket's game WRAPPER is a container whose legs are its own
-            # sub-markets; the strip withholds it (#9466), so here it would only
-            # spend a slot that yields no card.
-            or_(
-                FuturesMarket.group_type.is_(None),
-                FuturesMarket.group_type != "polymarket_event",
-            ),
-        )
+        .select_from(games.join(game_markets, true()))
         .subquery()
     )
     stmt = (
@@ -3514,6 +3533,7 @@ async def grouped_feed(
     response.headers[GROUPED_FEED_CACHE_HEADER] = (
         "prewarm" if _prewarm_rebuild else "miss"
     )
+    build_started = perf_counter()
 
     filters = [
         FuturesMarket.status.in_(["active", "open"]),
@@ -3559,8 +3579,10 @@ async def grouped_feed(
     # current major-game slate, which the recency pool alone never reaches.
     slate_market_ids: list = []
     slate_market_event: dict = {}
+    started = perf_counter()
     if sports_only and not sport and not category:
         slate_market_ids, slate_market_event = await grouped_feed_slate(db, filters, limit)
+    slate_ms = (perf_counter() - started) * 1000
 
     stmt = (
         select(FuturesMarket)
@@ -3593,8 +3615,10 @@ async def grouped_feed(
             .join(pool_ids, FuturesMarket.id == pool_ids.c.id)
             .order_by(FuturesMarket.updated_at.desc())
         )
+    started = perf_counter()
     result = await db.execute(stmt)
     markets = result.scalars().unique().all()
+    pool_ms = (perf_counter() - started) * 1000
     if slate_market_ids:
         # Slate rows first, in slate order, so the ungrouped pass's `[:limit]`
         # can never cut the very rows the lead below is built from.
@@ -3603,7 +3627,9 @@ async def grouped_feed(
             markets, key=lambda m: slate_rank.get(m.id, len(slate_rank))
         )
     # #9466: a game container's legs are copies of its own sub-markets.
+    started = perf_counter()
     container_parent_ids = await _grouped_feed_container_parent_ids(db, markets)
+    parents_ms = (perf_counter() - started) * 1000
 
     market_dicts = []
     outcome_dicts = []
@@ -3669,7 +3695,9 @@ async def grouped_feed(
     # #4153 — one Polymarket container group is ONE question, not one card per
     # member. Loaded here rather than detected from `market_dicts` because the
     # fold needs the group's whole membership; see `load_container_field_folds`.
+    started = perf_counter()
     container_folds = await load_container_field_folds(db, market_dicts)
+    folds_ms = (perf_counter() - started) * 1000
 
     grouped_market_ids = set()
     grouped_outcome_ids = set()
@@ -3968,6 +3996,11 @@ async def grouped_feed(
     if payload["feed"]:
         await _publish_grouped_feed_cache(_cache_key, payload)
 
+    response.headers["Server-Timing"] = (
+        f"grouped-slate;dur={slate_ms:.1f}, grouped-pool;dur={pool_ms:.1f}, "
+        f"grouped-parents;dur={parents_ms:.1f}, grouped-folds;dur={folds_ms:.1f}, "
+        f"grouped-build;dur={(perf_counter() - build_started) * 1000:.1f}"
+    )
     return payload
 
 

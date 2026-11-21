@@ -1179,17 +1179,17 @@ FEED_PREWARM_SHAPES: tuple[dict, ...] = (
 #: than rediscovered.
 GROUPED_FEED_PREWARM_SHAPES: tuple[dict, ...] = (
     {
-        "label": "grouped_native",
-        "category": None,
-        "sport": None,
-        "sports_only": False,
-        "limit": 20,
-    },
-    {
         "label": "grouped_web",
         "category": None,
         "sport": None,
         "sports_only": True,
+        "limit": 20,
+    },
+    {
+        "label": "grouped_native",
+        "category": None,
+        "sport": None,
+        "sports_only": False,
         "limit": 20,
     },
 )
@@ -1838,11 +1838,14 @@ def _prewarm_targets() -> list[tuple[str, object]]:
         (s["label"], functools.partial(_prewarm_feed_shape, dict(s)))
         for s in FEED_PREWARM_SHAPES
     ]
-    targets += [
+    grouped_targets = [
         (s["label"], functools.partial(_prewarm_grouped_feed_shape, dict(s)))
         for s in GROUPED_FEED_PREWARM_SHAPES
     ]
-    return targets
+    # A release can invalidate the shared grouped cache. Warm the reader's
+    # Sports key before the other builds spend this pass's time budget.
+    web_grouped, *other_grouped = grouped_targets
+    return [web_grouped, *targets, *other_grouped]
 
 
 async def _prewarm_discover_feed_responses():
