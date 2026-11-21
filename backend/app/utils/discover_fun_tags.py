@@ -111,6 +111,8 @@ class FunMarketEntry:
     event_date: Optional[date] = None
     unblended_twin_ids: tuple[int, ...] = ()
     short_label: Optional[str] = None
+    headline_phrase: Optional[str] = None
+    headline_with_phrase: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -309,6 +311,8 @@ def _load_registry_from_path(path: Path) -> FunMarketsRegistry:
             )
         twins = tuple(int(tid) for tid in (item.get("unblended_twin_ids") or []))
         raw_short_label = str(item.get("short_label") or "").strip()
+        raw_headline_phrase = str(item.get("headline_phrase") or "").strip()
+        raw_headline_with_phrase = str(item.get("headline_with_phrase") or "").strip()
         entry = FunMarketEntry(
             market_id=market_id,
             title=str(item.get("title") or "").strip(),
@@ -319,6 +323,8 @@ def _load_registry_from_path(path: Path) -> FunMarketsRegistry:
             event_date=_parse_iso_date(item.get("event_date")),
             unblended_twin_ids=twins,
             short_label=raw_short_label or None,
+            headline_phrase=raw_headline_phrase or None,
+            headline_with_phrase=raw_headline_with_phrase or None,
         )
         markets[market_id] = entry
         ordered_ids.append(market_id)
@@ -392,20 +398,26 @@ def fun_market_headline_phrase(
     market_id: int, *, sub_tag: Optional[str] = None
 ) -> Optional[str]:
     """Return an optional plain-speech headline phrase template for a curated grouping row."""
-    if not sub_tag:
-        return None
-    _, _, phrases_by_tag_mid, _ = _load_curated_grouping_sets()
-    return phrases_by_tag_mid.get((sub_tag.strip().lower(), int(market_id)))
+    if sub_tag:
+        _, _, phrases_by_tag_mid, _ = _load_curated_grouping_sets()
+        curated = phrases_by_tag_mid.get((sub_tag.strip().lower(), int(market_id)))
+        if curated:
+            return curated
+    entry = get_fun_market_entry(market_id)
+    return entry.headline_phrase if entry is not None else None
 
 
 def fun_market_headline_with_phrase(
     market_id: int, *, sub_tag: Optional[str] = None
 ) -> Optional[str]:
     """Return an optional per-row phrase meant to follow 'with ' in a headline."""
-    if not sub_tag:
-        return None
-    _, _, _, with_phrases_by_tag_mid = _load_curated_grouping_sets()
-    return with_phrases_by_tag_mid.get((sub_tag.strip().lower(), int(market_id)))
+    if sub_tag:
+        _, _, _, with_phrases_by_tag_mid = _load_curated_grouping_sets()
+        curated = with_phrases_by_tag_mid.get((sub_tag.strip().lower(), int(market_id)))
+        if curated:
+            return curated
+    entry = get_fun_market_entry(market_id)
+    return entry.headline_with_phrase if entry is not None else None
 
 
 def fun_entry_allows_extreme_odds(entry: Optional[FunMarketEntry]) -> bool:

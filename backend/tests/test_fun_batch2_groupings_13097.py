@@ -332,5 +332,5 @@ async def test_batch2_headlines_use_short_labels_leading_answers_and_long_shots_
     assert sp_items[1]["title"] == "Next country on the Moon: United States"
     assert sp_fi["data"]["roundup"]["machinery_card"]["title"] == (
         "Blue Origin beating SpaceX to the Moon leads the race to the Moon and Mars at 68%, "
-        "with Next country on the Moon: United States at 57%"
+        "with the United States as the next country on the Moon at 57%"
     )
