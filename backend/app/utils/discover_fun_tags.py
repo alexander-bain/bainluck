@@ -67,6 +67,7 @@ class FunMarketEntry:
     set_only: bool = False
     event_date: Optional[date] = None
     unblended_twin_ids: tuple[int, ...] = ()
+    short_label: Optional[str] = None
 
 
 @dataclass(frozen=True)
@@ -264,6 +265,7 @@ def _load_registry_from_path(path: Path) -> FunMarketsRegistry:
                 f"fun_markets.json market {market_id} has invalid discover_category {discover_category!r}"
             )
         twins = tuple(int(tid) for tid in (item.get("unblended_twin_ids") or []))
+        raw_short_label = str(item.get("short_label") or "").strip()
         entry = FunMarketEntry(
             market_id=market_id,
             title=str(item.get("title") or "").strip(),
@@ -273,6 +275,7 @@ def _load_registry_from_path(path: Path) -> FunMarketsRegistry:
             set_only=bool(item.get("set_only", False)),
             event_date=_parse_iso_date(item.get("event_date")),
             unblended_twin_ids=twins,
+            short_label=raw_short_label or None,
         )
         markets[market_id] = entry
         ordered_ids.append(market_id)
@@ -325,6 +328,14 @@ def fun_tags_for_market(market_id: int) -> tuple[str, ...]:
     """Return the set sub-tags for ``market_id`` (empty tuple if untagged)."""
     entry = get_fun_market_entry(market_id)
     return entry.sub_tags if entry is not None else ()
+
+
+def fun_market_short_label(market_id: int) -> Optional[str]:
+    """Return the sentence-ready short label for a fun-tagged market, if defined."""
+    entry = get_fun_market_entry(market_id)
+    if entry is None:
+        return None
+    return entry.short_label
 
 
 def fun_entry_allows_extreme_odds(entry: Optional[FunMarketEntry]) -> bool:

@@ -20,7 +20,8 @@
     "unsolved-problems": "Big unsolved problems in science, math, and AI.",
     "who-shows-up": "Hosts, guests, magazine covers, and Michelin stars.",
     "everyday-prices": "Everyday consumer prices people recognise immediately.",
-    "engagements": "Celebrity engagement markets (allowed as a set under Ruling 273: B)."
+    "engagements": "Celebrity engagement markets (allowed as a set under Ruling 273: B).",
+    "pop-culture": "Standing pop-culture and entertainment markets outside release trackers."
   },
   "concluded_events": [
     {
@@ -46,7 +47,8 @@
       "unblended_twin_ids": [
         113503,
         13792362
-      ]
+      ],
+      "short_label": "U.S. confirming aliens"
     },
     "113504": {
       "market_id": 113504,
@@ -56,7 +58,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "culture",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Jesus Christ returning before 2027"
     },
     "109295": {
       "market_id": 109295,
@@ -68,7 +71,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "culture",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Taylor Swift meeting Pope Leo XIV"
     },
     "34191685": {
       "market_id": 34191685,
@@ -78,7 +82,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "culture",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Earth being flat"
     },
     "108218": {
       "market_id": 108218,
@@ -90,7 +95,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "tech",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Elon Musk visiting Mars"
     },
     "9997262": {
       "market_id": 9997262,
@@ -100,7 +106,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "tech",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Satoshi's identity proven"
     },
     "112828": {
       "market_id": 112828,
@@ -110,7 +117,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "culture",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Major meteor strike before 2030"
     },
     "109398": {
       "market_id": 109398,
@@ -120,7 +128,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "weather",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Magnitude 8 California earthquake"
     },
     "108339": {
       "market_id": 108339,
@@ -131,7 +140,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Trump on SNL"
     },
     "66925975": {
       "market_id": 66925975,
@@ -141,7 +151,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "culture",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Bryan Johnson dunking before 2027"
     },
     "109633": {
       "market_id": 109633,
@@ -153,7 +164,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Elon Musk cast in Superman"
     },
     "112833": {
       "market_id": 112833,
@@ -163,7 +175,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "culture",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Costco raising its hot dog price"
     },
     "109343": {
       "market_id": 109343,
@@ -176,7 +189,8 @@
       "set_only": false,
       "unblended_twin_ids": [
         57418931
-      ]
+      ],
+      "short_label": "Kim Kardashian passing the bar"
     },
     "52755889": {
       "market_id": 52755889,
@@ -186,7 +200,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "MrBeast hitting 1B subscribers"
     },
     "109316": {
       "market_id": 109316,
@@ -197,7 +212,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "culture",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Elon Musk buying a major sports team"
     },
     "56762760": {
       "market_id": 56762760,
@@ -207,7 +223,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "culture",
-      "set_only": false
+      "set_only": false,
+      "short_label": "LA28 Olympics running as scheduled"
     },
     "67734839": {
       "market_id": 67734839,
@@ -220,7 +237,8 @@
       "set_only": false,
       "unblended_twin_ids": [
         70465175
-      ]
+      ],
+      "short_label": "Trump declassifying new UFO files"
     },
     "33282766": {
       "market_id": 33282766,
@@ -230,7 +248,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Joe Rogan joining 60 Minutes"
     },
     "63336261": {
       "market_id": 63336261,
@@ -241,7 +260,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "tech",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Jeff Bezos going to space before 2028"
     },
     "30587891": {
       "market_id": 30587891,
@@ -251,7 +271,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "New Banksy mural by December 31"
     },
     "109309": {
       "market_id": 109309,
@@ -261,7 +282,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Debut (Taylor's Version)"
     },
     "109310": {
       "market_id": 109310,
@@ -271,7 +293,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Reputation (Taylor's Version)"
     },
     "109291": {
       "market_id": 109291,
@@ -281,7 +304,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Blake Lively and Taylor Swift seen together"
     },
     "109294": {
       "market_id": 109294,
@@ -291,7 +315,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "culture",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Pope Leo XIV's 2026 visits"
     },
     "65544835": {
       "market_id": 65544835,
@@ -301,7 +326,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "culture",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Nobel Peace Prize 2027"
     },
     "69863846": {
       "market_id": 69863846,
@@ -311,7 +337,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "tech",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Elon Musk's weekly post count"
     },
     "109315": {
       "market_id": 109315,
@@ -321,7 +348,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "tech",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Elon Musk's net worth before 2027"
     },
     "52755535": {
       "market_id": 52755535,
@@ -331,7 +359,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "tech",
-      "set_only": false
+      "set_only": false,
+      "short_label": "World's second trillionaire"
     },
     "109412": {
       "market_id": 109412,
@@ -341,7 +370,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "tech",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Elon Musk buying Ryanair"
     },
     "109490": {
       "market_id": 109490,
@@ -351,7 +381,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "tech",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Elon Musk out as Tesla CEO before 2027"
     },
     "109489": {
       "market_id": 109489,
@@ -364,7 +395,8 @@
       "set_only": false,
       "unblended_twin_ids": [
         113017
-      ]
+      ],
+      "short_label": "Tesla Optimus released this year"
     },
     "113343": {
       "market_id": 113343,
@@ -374,7 +406,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Half-Life 3 announced"
     },
     "109247": {
       "market_id": 109247,
@@ -387,7 +420,8 @@
       "set_only": false,
       "unblended_twin_ids": [
         113426
-      ]
+      ],
+      "short_label": "The Winds of Winter announced"
     },
     "114237": {
       "market_id": 114237,
@@ -397,7 +431,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "New Stranger Things episode"
     },
     "108494": {
       "market_id": 108494,
@@ -410,7 +445,8 @@
       "set_only": false,
       "unblended_twin_ids": [
         5769697
-      ]
+      ],
+      "short_label": "Elder Scrolls VI"
     },
     "109540": {
       "market_id": 109540,
@@ -420,7 +456,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "PS6 announced"
     },
     "112760": {
       "market_id": 112760,
@@ -433,7 +470,8 @@
       "set_only": false,
       "unblended_twin_ids": [
         13792922
-      ]
+      ],
+      "short_label": "Frank Ocean's next album"
     },
     "59693617": {
       "market_id": 59693617,
@@ -446,7 +484,8 @@
       "set_only": false,
       "unblended_twin_ids": [
         60207712
-      ]
+      ],
+      "short_label": "Drake's next album"
     },
     "109347": {
       "market_id": 109347,
@@ -456,7 +495,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Robert Downey Jr. back as Iron Man"
     },
     "108239": {
       "market_id": 108239,
@@ -466,17 +506,19 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Johnny Depp in Pirates"
     },
     "108275": {
       "market_id": 108275,
       "title": "Will The Simpsons announce it is ending?",
       "sub_tags": [
-        "long-awaited"
+        "pop-culture"
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "The Simpsons ending announced"
     },
     "109380": {
       "market_id": 109380,
@@ -486,7 +528,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "New Fast & Furious film announced"
     },
     "67717832": {
       "market_id": 67717832,
@@ -496,17 +539,19 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "GTA VI on PC"
     },
     "108306": {
       "market_id": 108306,
       "title": "What genre will Beyonce’s next album be?",
       "sub_tags": [
-        "long-awaited"
+        "pop-culture"
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Beyoncé's next album genre"
     },
     "27467306": {
       "market_id": 27467306,
@@ -520,7 +565,8 @@
       "set_only": false,
       "unblended_twin_ids": [
         109264
-      ]
+      ],
+      "short_label": "TIME Person of the Year 2026"
     },
     "108254": {
       "market_id": 108254,
@@ -530,7 +576,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "culture",
-      "set_only": false
+      "set_only": false,
+      "short_label": "TIME Person of the Decade"
     },
     "109517": {
       "market_id": 109517,
@@ -540,7 +587,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Top Spotify artist in 2026"
     },
     "70733200": {
       "market_id": 70733200,
@@ -553,7 +601,8 @@
       "set_only": false,
       "unblended_twin_ids": [
         109508
-      ]
+      ],
+      "short_label": "Top Spotify song in 2026"
     },
     "8431009": {
       "market_id": 8431009,
@@ -563,7 +612,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "culture",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Merriam-Webster Word of the Year 2026"
     },
     "109614": {
       "market_id": 109614,
@@ -573,7 +623,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Game of the Year 2026"
     },
     "113355": {
       "market_id": 113355,
@@ -583,7 +634,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Highest-grossing movie of 2026"
     },
     "113334": {
       "market_id": 113334,
@@ -593,7 +645,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "culture",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Richest person at year-end 2026"
     },
     "113358": {
       "market_id": 113358,
@@ -606,7 +659,8 @@
       "set_only": false,
       "unblended_twin_ids": [
         109358
-      ]
+      ],
+      "short_label": "2026 hottest-year ranking"
     },
     "68858738": {
       "market_id": 68858738,
@@ -616,7 +670,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Miss Universe 2026"
     },
     "26513138": {
       "market_id": 26513138,
@@ -626,7 +681,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "culture",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Most expensive artwork sold in 2026"
     },
     "70400892": {
       "market_id": 70400892,
@@ -636,7 +692,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "culture",
-      "set_only": false
+      "set_only": false,
+      "short_label": "World Happiness Report 2027 leader"
     },
     "70170349": {
       "market_id": 70170349,
@@ -647,7 +704,8 @@
       "fun_bucket": "odd",
       "discover_category": "weather",
       "set_only": true,
-      "event_date": "2026-12-25"
+      "event_date": "2026-12-25",
+      "short_label": "Denver"
     },
     "70170353": {
       "market_id": 70170353,
@@ -658,7 +716,8 @@
       "fun_bucket": "odd",
       "discover_category": "weather",
       "set_only": true,
-      "event_date": "2026-12-25"
+      "event_date": "2026-12-25",
+      "short_label": "NYC"
     },
     "70170345": {
       "market_id": 70170345,
@@ -669,7 +728,8 @@
       "fun_bucket": "odd",
       "discover_category": "weather",
       "set_only": true,
-      "event_date": "2026-12-25"
+      "event_date": "2026-12-25",
+      "short_label": "Philadelphia"
     },
     "70170343": {
       "market_id": 70170343,
@@ -680,7 +740,8 @@
       "fun_bucket": "odd",
       "discover_category": "weather",
       "set_only": true,
-      "event_date": "2026-12-25"
+      "event_date": "2026-12-25",
+      "short_label": "Seattle"
     },
     "67804457": {
       "market_id": 67804457,
@@ -690,7 +751,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "\"All I Want for Christmas Is You\" Hot 100 rank"
     },
     "70239521": {
       "market_id": 70239521,
@@ -701,7 +763,8 @@
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
       "set_only": false,
-      "event_date": "2026-12-25"
+      "event_date": "2026-12-25",
+      "short_label": "NFL Christmas Day halftime show"
     },
     "108237": {
       "market_id": 108237,
@@ -711,7 +774,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Next James Bond theme artist"
     },
     "108263": {
       "market_id": 108263,
@@ -721,7 +785,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Next Bond girl"
     },
     "108258": {
       "market_id": 108258,
@@ -731,7 +796,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Next James Bond villain"
     },
     "108260": {
       "market_id": 108260,
@@ -741,7 +807,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Next Moneypenny"
     },
     "109473": {
       "market_id": 109473,
@@ -751,7 +818,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "tech",
-      "set_only": false
+      "set_only": false,
+      "short_label": "NASA landing on the Moon"
     },
     "108247": {
       "market_id": 108247,
@@ -761,7 +829,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "tech",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Next country on the Moon"
     },
     "108300": {
       "market_id": 108300,
@@ -771,7 +840,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "tech",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Blue Origin beating SpaceX to the Moon"
     },
     "108273": {
       "market_id": 108273,
@@ -781,7 +851,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "tech",
-      "set_only": false
+      "set_only": false,
+      "short_label": "SpaceX landing on Mars before 2030"
     },
     "108309": {
       "market_id": 108309,
@@ -791,7 +862,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "tech",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Starship launching humans to Mars before 2030"
     },
     "108236": {
       "market_id": 108236,
@@ -801,7 +873,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "tech",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Humanoid robot on Mars before a human"
     },
     "109599": {
       "market_id": 109599,
@@ -811,7 +884,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "tech",
-      "set_only": false
+      "set_only": false,
+      "short_label": "New interstellar visitor before 2027"
     },
     "68313448": {
       "market_id": 68313448,
@@ -824,7 +898,8 @@
       "set_only": false,
       "unblended_twin_ids": [
         56775565
-      ]
+      ],
+      "short_label": "Super Bowl halftime performers"
     },
     "67792474": {
       "market_id": 67792474,
@@ -834,7 +909,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Jay-Z's halftime opener"
     },
     "52755798": {
       "market_id": 52755798,
@@ -844,7 +920,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Big Game commercial brands"
     },
     "70239540": {
       "market_id": 70239540,
@@ -854,7 +931,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Big Game commercial appearances"
     },
     "60481087": {
       "market_id": 60481087,
@@ -864,7 +942,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Dancing with the Stars Season 35 winner"
     },
     "70160350": {
       "market_id": 70160350,
@@ -874,7 +953,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "The Voice Season 30 winner"
     },
     "113356": {
       "market_id": 113356,
@@ -884,7 +964,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Biggest 2026 opening weekend"
     },
     "5398277": {
       "market_id": 5398277,
@@ -894,7 +975,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Rotten Tomatoes scores for new releases"
     },
     "109214": {
       "market_id": 109214,
@@ -904,7 +986,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Avengers: Doomsday cast"
     },
     "59172754": {
       "market_id": 59172754,
@@ -914,7 +997,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Dune vs Avengers Rotten Tomatoes score"
     },
     "108505": {
       "market_id": 108505,
@@ -927,7 +1011,8 @@
       "set_only": false,
       "unblended_twin_ids": [
         20566631
-      ]
+      ],
+      "short_label": "Coachella 2027 headliner"
     },
     "112792": {
       "market_id": 112792,
@@ -937,7 +1022,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "tech",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Next Millennium Prize awarded"
     },
     "53049401": {
       "market_id": 53049401,
@@ -947,7 +1033,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "tech",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Riemann hypothesis solved"
     },
     "108232": {
       "market_id": 108232,
@@ -957,7 +1044,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "tech",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Nuclear fusion achieved"
     },
     "112826": {
       "market_id": 112826,
@@ -967,7 +1055,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "tech",
-      "set_only": false
+      "set_only": false,
+      "short_label": "First useful quantum computer"
     },
     "112835": {
       "market_id": 112835,
@@ -977,7 +1066,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "tech",
-      "set_only": false
+      "set_only": false,
+      "short_label": "OpenAI achieving AGI"
     },
     "62368061": {
       "market_id": 62368061,
@@ -987,7 +1077,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "SNL Season 52 hosts"
     },
     "109287": {
       "market_id": 109287,
@@ -997,7 +1088,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Joe Rogan Experience 2026 guests"
     },
     "56775621": {
       "market_id": 56775621,
@@ -1007,7 +1099,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Vogue 2026 cover models"
     },
     "67804475": {
       "market_id": 67804475,
@@ -1017,7 +1110,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": false
+      "set_only": false,
+      "short_label": "NYC 2026 Michelin stars"
     },
     "65521937": {
       "market_id": 65521937,
@@ -1027,7 +1121,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "culture",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Disneyland ticket price"
     },
     "70170648": {
       "market_id": 70170648,
@@ -1037,7 +1132,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "culture",
-      "set_only": false
+      "set_only": false,
+      "short_label": "McDonald's Big Mac price"
     },
     "70170650": {
       "market_id": 70170650,
@@ -1047,7 +1143,8 @@
       ],
       "fun_bucket": "odd",
       "discover_category": "culture",
-      "set_only": false
+      "set_only": false,
+      "short_label": "Chipotle chicken burrito price"
     },
     "109385": {
       "market_id": 109385,
@@ -1057,7 +1154,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": true
+      "set_only": true,
+      "short_label": "Timothée Chalamet & Kylie Jenner"
     },
     "113658": {
       "market_id": 113658,
@@ -1067,7 +1165,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": true
+      "set_only": true,
+      "short_label": "Katy Perry & Justin Trudeau"
     },
     "186640": {
       "market_id": 186640,
@@ -1077,7 +1176,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": true
+      "set_only": true,
+      "short_label": "Tom Brady & Alix Earle"
     },
     "109388": {
       "market_id": 109388,
@@ -1087,7 +1187,8 @@
       ],
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
-      "set_only": true
+      "set_only": true,
+      "short_label": "Kim Kardashian & Lewis Hamilton"
     }
   }
 }

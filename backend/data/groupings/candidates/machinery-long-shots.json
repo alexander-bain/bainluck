@@ -22,7 +22,7 @@
     "extra_llm_categories": ["culture", "tech", "politics", "economics", "weather", "basketball"],
     "card_rows": 3,
     "card_section_key": "long_shots_board",
-    "headline_predicate": "leads the long shots people talk about",
+    "headline_predicate": "is the likeliest long shot",
     "sections": [
       {
         "key": "long_shots_board",
@@ -32,6 +32,8 @@
         "atom_query": {
           "kind": "markets",
           "fun_sub_tag": "long-shot",
+          "max_lead_probability": 0.20,
+          "min_lifetime_volume": 10000,
           "exclude_tokens": [
             "divorce",
             "pregnant",
