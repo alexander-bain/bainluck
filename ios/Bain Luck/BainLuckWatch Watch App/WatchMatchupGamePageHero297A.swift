@@ -27,6 +27,7 @@ nonisolated struct WatchMatchupGameHeroModel297A: Equatable, Sendable {
         let crestPNG: Data?
         let fillHex: String
         let inkHex: String
+        let barHex: String
         let currentPercentText: String?
         let currentShare: Double?
         let score: Int?
@@ -93,6 +94,8 @@ nonisolated struct WatchMatchupGameHeroModel297A: Equatable, Sendable {
             awaySecondaryHex: game.awaySecondaryColor,
             homeSecondaryHex: game.homeSecondaryColor
         )
+        let awayTextInk = Self.readableHeroInkHex(inkPair.away, overFillHex: bgPair.away)
+        let homeTextInk = Self.readableHeroInkHex(inkPair.home, overFillHex: bgPair.home)
 
         let awayCrest = game.awayCompactIdentity.flatMap { crestForTeamID($0.teamID) }
         let homeCrest = game.homeCompactIdentity.flatMap { crestForTeamID($0.teamID) }
@@ -115,7 +118,7 @@ nonisolated struct WatchMatchupGameHeroModel297A: Equatable, Sendable {
                 away: Side(
                     abbreviation: awayAbbr, shortName: shortPair.away,
                     teamID: game.awayCompactIdentity?.teamID, crestPNG: awayCrest,
-                    fillHex: bgPair.away, inkHex: inkPair.away,
+                    fillHex: bgPair.away, inkHex: awayTextInk, barHex: inkPair.away,
                     currentPercentText: nil, currentShare: nil,
                     score: validScores?.away ?? game.awayScore,
                     pregameText: nil, isWinner: false, isLoser: false
@@ -123,7 +126,7 @@ nonisolated struct WatchMatchupGameHeroModel297A: Equatable, Sendable {
                 home: Side(
                     abbreviation: homeAbbr, shortName: shortPair.home,
                     teamID: game.homeCompactIdentity?.teamID, crestPNG: homeCrest,
-                    fillHex: bgPair.home, inkHex: inkPair.home,
+                    fillHex: bgPair.home, inkHex: homeTextInk, barHex: inkPair.home,
                     currentPercentText: nil, currentShare: nil,
                     score: validScores?.home ?? game.homeScore,
                     pregameText: nil, isWinner: false, isLoser: false
@@ -152,12 +155,6 @@ nonisolated struct WatchMatchupGameHeroModel297A: Equatable, Sendable {
             let awayPregameText = pregamePair.away.map { "Pregame \($0)%" }
             let homePregameText = pregamePair.home.map { "Pregame \($0)%" }
             let drawPregameText = drawPregamePct.map { "Pregame Draw \($0)%" }
-            let bottom: String = {
-                if let validScores {
-                    return "Final \u{00B7} \(awayAbbr) \(validScores.away)\u{2013}\(validScores.home) \(homeAbbr)"
-                }
-                return "Final"
-            }()
             return WatchMatchupGameHeroModel297A(
                 stage: .after,
                 topBadgeText: "FINAL",
@@ -167,7 +164,7 @@ nonisolated struct WatchMatchupGameHeroModel297A: Equatable, Sendable {
                 away: Side(
                     abbreviation: awayAbbr, shortName: shortPair.away,
                     teamID: game.awayCompactIdentity?.teamID, crestPNG: awayCrest,
-                    fillHex: bgPair.away, inkHex: inkPair.away,
+                    fillHex: bgPair.away, inkHex: awayTextInk, barHex: inkPair.away,
                     currentPercentText: nil, currentShare: nil,
                     score: validScores?.away ?? game.awayScore.flatMap { $0 >= 0 ? $0 : nil },
                     pregameText: awayPregameText,
@@ -177,7 +174,7 @@ nonisolated struct WatchMatchupGameHeroModel297A: Equatable, Sendable {
                 home: Side(
                     abbreviation: homeAbbr, shortName: shortPair.home,
                     teamID: game.homeCompactIdentity?.teamID, crestPNG: homeCrest,
-                    fillHex: bgPair.home, inkHex: inkPair.home,
+                    fillHex: bgPair.home, inkHex: homeTextInk, barHex: inkPair.home,
                     currentPercentText: nil, currentShare: nil,
                     score: validScores?.home ?? game.homeScore.flatMap { $0 >= 0 ? $0 : nil },
                     pregameText: homePregameText,
@@ -191,8 +188,8 @@ nonisolated struct WatchMatchupGameHeroModel297A: Equatable, Sendable {
                 liveScoreExplanation: nil,
                 finalScoreUnavailable: validScores == nil,
                 probabilityUnavailableText: nil,
-                bottomSummaryText: bottom,
-                scoreAsOfText: scoreAsOf,
+                bottomSummaryText: nil,
+                scoreAsOfText: nil,
                 probabilityAsOfText: nil
             )
         }
@@ -251,14 +248,14 @@ nonisolated struct WatchMatchupGameHeroModel297A: Equatable, Sendable {
             away: Side(
                 abbreviation: awayAbbr, shortName: shortPair.away,
                 teamID: game.awayCompactIdentity?.teamID, crestPNG: awayCrest,
-                fillHex: bgPair.away, inkHex: inkPair.away,
+                fillHex: bgPair.away, inkHex: awayTextInk, barHex: inkPair.away,
                 currentPercentText: chances.awayText, currentShare: chances.awayShare,
                 score: validAwayScore, pregameText: nil, isWinner: false, isLoser: false
             ),
             home: Side(
                 abbreviation: homeAbbr, shortName: shortPair.home,
                 teamID: game.homeCompactIdentity?.teamID, crestPNG: homeCrest,
-                fillHex: bgPair.home, inkHex: inkPair.home,
+                fillHex: bgPair.home, inkHex: homeTextInk, barHex: inkPair.home,
                 currentPercentText: chances.homeText, currentShare: chances.homeShare,
                 score: validHomeScore, pregameText: nil, isWinner: false, isLoser: false
             ),
@@ -350,6 +347,32 @@ nonisolated struct WatchMatchupGameHeroModel297A: Equatable, Sendable {
             return "\(prefix) as of \(compact)"
         }
         return "\(prefix) as of \(clockText(observedAt, timeZone: timeZone))"
+    }
+
+    /// Relative luminance of the hero scrim-composited team field (`0.54` black
+    /// scrim over `fillHex`, the midpoint of `diagonalSplitBackground`).
+    static func scrimSurfaceLuminance(fillHex: String) -> Double {
+        guard let rgb = ProbabilityBarPalette.rgb(fillHex) else {
+            return TeamTextContrast.darkSurfaceLuminance
+        }
+        let retain = 1.0 - 0.54
+        func linearChannel(_ v: Int) -> Double {
+            let srgb = (Double(v) / 255.0) * retain
+            return srgb <= 0.04045 ? srgb / 12.92 : pow((srgb + 0.055) / 1.055, 2.4)
+        }
+        return 0.2126 * linearChannel(rgb.r) + 0.7152 * linearChannel(rgb.g) + 0.0722 * linearChannel(rgb.b)
+    }
+
+    /// Ensures percentage text ink satisfies `TeamTextContrast.minimumRatio`
+    /// (`3.0:1`) directly against its own scrim-darkened team field; promotes
+    /// failing inks (e.g. Arsenal red on dark red) to `"#FFFFFF"`.
+    static func readableHeroInkHex(_ candidateHex: String, overFillHex fillHex: String) -> String {
+        let surfaceL = scrimSurfaceLuminance(fillHex: fillHex)
+        if let ratio = TeamTextContrast.contrast(candidateHex, againstSurfaceLuminance: surfaceL),
+           ratio >= TeamTextContrast.minimumRatio {
+            return candidateHex
+        }
+        return "#FFFFFF"
     }
 }
 
@@ -619,59 +642,95 @@ struct WatchMatchupGamePageHeroView297A: View {
     // MARK: - Final Scores & Pregame (Look 1C)
 
     private var finalNumbersRow: some View {
-        VStack(spacing: 4) {
-            HStack(alignment: .top, spacing: 6) {
-                finalSideColumn(model.away, alignment: .leading)
+        VStack(spacing: 2) {
+            if model.away.isWinner || model.away.isLoser || model.home.isWinner || model.home.isLoser || model.isTiedFinal {
+                HStack(alignment: .center, spacing: 6) {
+                    finalOutcomeBadge(model.away)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    finalOutcomeBadge(model.home)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+            }
+            if model.away.score != nil || model.home.score != nil {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Group {
+                        if let awayScore = model.away.score {
+                            Text("\(awayScore)")
+                                .font(.system(size: isCompact41mm ? 22 : 26, weight: .black, design: .rounded).monospacedDigit())
+                                .foregroundStyle(model.away.isLoser ? Color.white.opacity(0.75) : Color.white)
+                                .lineLimit(1)
+                        }
+                    }
                     .frame(maxWidth: .infinity, alignment: .leading)
-                finalSideColumn(model.home, alignment: .trailing)
+                    Group {
+                        if let homeScore = model.home.score {
+                            Text("\(homeScore)")
+                                .font(.system(size: isCompact41mm ? 22 : 26, weight: .black, design: .rounded).monospacedDigit())
+                                .foregroundStyle(model.home.isLoser ? Color.white.opacity(0.75) : Color.white)
+                                .lineLimit(1)
+                        }
+                    }
                     .frame(maxWidth: .infinity, alignment: .trailing)
+                }
+            }
+            if model.away.pregameText != nil || model.home.pregameText != nil {
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Group {
+                        if let awayPre = model.away.pregameText {
+                            Text(awayPre)
+                                .font(.system(size: isCompact41mm ? 10 : 11, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(Color.white.opacity(0.86))
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    Group {
+                        if let homePre = model.home.pregameText {
+                            Text(homePre)
+                                .font(.system(size: isCompact41mm ? 10 : 11, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(Color.white.opacity(0.86))
+                                .multilineTextAlignment(.trailing)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                }
             }
             if let drawPre = model.drawPregameText, !model.away.isWinner && !model.home.isWinner {
                 Text(drawPre)
                     .font(.system(size: dynamicTypeSize.isAccessibilitySize ? 13 : 10.5, weight: .semibold).monospacedDigit())
                     .foregroundStyle(Color.white.opacity(0.88))
                     .fixedSize(horizontal: false, vertical: true)
+                    .padding(.top, 2)
             }
         }
         .accessibilityIdentifier("watch.game.hero.final-row")
     }
 
-    private func finalSideColumn(_ side: WatchMatchupGameHeroModel297A.Side, alignment: HorizontalAlignment) -> some View {
-        VStack(alignment: alignment, spacing: 2) {
-            if side.isWinner {
-                HStack(spacing: 3) {
-                    Image(systemName: "checkmark")
-                        .font(.system(size: 8.5, weight: .black))
-                    Text("WON")
-                        .font(.system(size: 9.5, weight: .black))
-                }
-                .foregroundStyle(Color.black)
-                .padding(.horizontal, 6)
+    @ViewBuilder
+    private func finalOutcomeBadge(_ side: WatchMatchupGameHeroModel297A.Side) -> some View {
+        if side.isWinner {
+            HStack(spacing: 3) {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 8.5, weight: .black))
+                Text("WON")
+                    .font(.system(size: 9.5, weight: .black))
+            }
+            .foregroundStyle(Color.black)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Capsule().fill(Self.rgbColor("#34D399")))
+        } else if side.isLoser {
+            Text("LOST")
+                .font(.system(size: 9.5, weight: .bold))
+                .foregroundStyle(Color.white.opacity(0.68))
                 .padding(.vertical, 2)
-                .background(Capsule().fill(Self.rgbColor("#34D399")))
-            } else if side.isLoser {
-                Text("LOST")
-                    .font(.system(size: 9.5, weight: .bold))
-                    .foregroundStyle(Color.white.opacity(0.68))
-            } else if model.isTiedFinal {
-                Text("DRAW")
-                    .font(.system(size: 9.5, weight: .bold))
-                    .foregroundStyle(Color.white.opacity(0.82))
-            }
-
-            if let score = side.score {
-                Text("\(score)")
-                    .font(.system(size: isCompact41mm ? 22 : 26, weight: .black, design: .rounded).monospacedDigit())
-                    .foregroundStyle(side.isLoser ? Color.white.opacity(0.75) : Color.white)
-                    .lineLimit(1)
-            }
-
-            if let pregame = side.pregameText {
-                Text(pregame)
-                    .font(.system(size: isCompact41mm ? 10 : 11, weight: .semibold).monospacedDigit())
-                    .foregroundStyle(Color.white.opacity(0.86))
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+        } else if model.isTiedFinal {
+            Text("DRAW")
+                .font(.system(size: 9.5, weight: .bold))
+                .foregroundStyle(Color.white.opacity(0.82))
+                .padding(.vertical, 2)
         }
     }
 
@@ -782,7 +841,7 @@ struct WatchMatchupGamePageHeroView297A: View {
                     RoundedRectangle(cornerRadius: 3.5, style: .continuous)
                         .fill(model.away.currentShare == nil && model.isThreeWaySoccer
                               ? Color.white.opacity(0.24)
-                              : Self.rgbColor(model.away.inkHex))
+                              : Self.rgbColor(model.away.barHex))
                         .frame(width: max(4, awayW))
                     if drawShare > 0 {
                         Rectangle()
@@ -790,7 +849,7 @@ struct WatchMatchupGamePageHeroView297A: View {
                             .frame(width: max(3, drawW))
                     }
                     RoundedRectangle(cornerRadius: 3.5, style: .continuous)
-                        .fill(Self.rgbColor(model.home.inkHex))
+                        .fill(Self.rgbColor(model.home.barHex))
                         .frame(width: max(4, homeW))
                 }
                 .clipShape(Capsule())

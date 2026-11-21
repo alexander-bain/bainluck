@@ -188,9 +188,36 @@ final class WatchMatchupGamePage297ATests: XCTestCase {
         XCTAssertEqual(finalModel.home.pregameText, "Pregame 46%")
         XCTAssertFalse(finalModel.showsProbabilityBar)
         XCTAssertNil(finalModel.probabilityAsOfText)
-        XCTAssertEqual(finalModel.bottomSummaryText, "Final · BOS 123–101 PHI")
-        XCTAssertFalse((finalModel.bottomSummaryText ?? "").contains("Closed"))
-        XCTAssertFalse((finalModel.away.pregameText ?? "").contains("Closed"))
+        XCTAssertNil(finalModel.scoreAsOfText, "Settled means settled: finished games must not show 'Score as of'")
+        XCTAssertNil(finalModel.bottomSummaryText, "Finished games must not show a third 'Final · BOS 123–101 PHI' score line")
+
+        // Scrim contrast check: Arsenal red (#EF0107) on darkened red field promotes text ink to #FFFFFF (>= 3.0)
+        // while keeping Arsenal red on the bar.
+        let arsenalChelsea = try decodeGame(#"""
+        {
+          "id": 21703,
+          "away_team": "Arsenal",
+          "home_team": "Chelsea",
+          "away_team_data": {"team_id": 359, "abbreviation": "ARS", "primary_color": "#EF0107", "secondary_color": "#FFFFFF"},
+          "home_team_data": {"team_id": 363, "abbreviation": "CHE", "primary_color": "#034694", "secondary_color": "#FFFFFF"},
+          "status": "live",
+          "sport": "soccer_epl",
+          "away_score": 1,
+          "home_score": 2,
+          "hero_probability": 0.58,
+          "hero_probability_away": 0.19,
+          "current_odds": {"home_probability": 0.58, "away_probability": 0.19, "draw_probability": 0.23}
+        }
+        """#)
+        let soccerContrastModel = WatchMatchupGameHeroModel297A.build(from: arsenalChelsea, now: now, timeZone: pt, crestForTeamID: { _ in nil })
+        XCTAssertEqual(soccerContrastModel.away.inkHex, "#FFFFFF")
+        XCTAssertEqual(soccerContrastModel.home.inkHex, "#FFFFFF")
+        XCTAssertNotEqual(soccerContrastModel.away.barHex, "#FFFFFF", "Bar segment keeps Arsenal red")
+        let awayScrimContrast = TeamTextContrast.contrast(
+            soccerContrastModel.away.inkHex,
+            againstSurfaceLuminance: WatchMatchupGameHeroModel297A.scrimSurfaceLuminance(fillHex: soccerContrastModel.away.fillHex)
+        )
+        XCTAssertGreaterThanOrEqual(awayScrimContrast ?? 0, TeamTextContrast.minimumRatio)
 
         // Closed unverified: keeps "Closed · result unverified", no checkmark, no bar
         let closedGame = try decodeGame(#"""
@@ -409,7 +436,8 @@ final class WatchMatchupGamePage297ATests: XCTestCase {
             let req = VNRecognizeTextRequest()
             req.recognitionLevel = .accurate
             try VNImageRequestHandler(cgImage: XCTUnwrap(img.cgImage), options: [:]).perform([req])
-            let ocrLines = (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+            let obs = req.results ?? []
+            let ocrLines = obs.compactMap { $0.topCandidates(1).first?.string }
             let joined = ocrLines.joined(separator: "\n")
 
             XCTAssertFalse(
@@ -418,6 +446,22 @@ final class WatchMatchupGamePage297ATests: XCTestCase {
             )
             XCTAssertTrue(joined.contains("Pregame 54%") || joined.contains("54%"), "Final must display Pregame 54% (\(sizeSpec.tag)); got:\n\(joined)")
             XCTAssertFalse(joined.contains("Closed"), "Look 1C Final must never print Closed (\(sizeSpec.tag)); got:\n\(joined)")
+            XCTAssertFalse(joined.contains("BOS 123"), "Look 1C Final must not print a third 'Final · BOS 123–101 PHI' score line (\(sizeSpec.tag)); got:\n\(joined)")
+            XCTAssertEqual(
+                joined.components(separatedBy: "Score as of").count - 1,
+                4,
+                "Only the two Live specimens (2 x 2 cases = 4) should carry 'Score as of', never Final (\(sizeSpec.tag)); got:\n\(joined)"
+            )
+            if sizeSpec.tag == "default" {
+                let finalScores = obs.filter { o in
+                    let s = o.topCandidates(1).first?.string ?? ""
+                    return s == "123" || s == "101"
+                }
+                XCTAssertGreaterThanOrEqual(finalScores.count, 4, "Expected both 41 mm and 45 mm Final scores 123 & 101 in OCR: \(ocrLines)")
+                let ys = finalScores.map(\.boundingBox.midY).sorted()
+                // Each Watch case has 123 & 101 on the exact same row (within 0.01 normalized image height)
+                XCTAssertLessThan(abs(ys[0] - ys[1]), 0.015, "Final scores 123 & 101 must align horizontally: \(ys)")
+            }
 
             if let outDir = ProcessInfo.processInfo.environment["BUILDER_C_RENDER_DIR_297A"], !outDir.isEmpty {
                 let dirURL = URL(fileURLWithPath: outDir, isDirectory: true)
