@@ -117,7 +117,7 @@ async def test_all_seven_preview_sets_remain_preview_and_every_row_reads_as_sent
 
     for slug in SEVEN_PREVIEW_SLUGS:
         defn = load_machinery_definition(paths_by_slug[slug])
-        assert defn["stage"] == "preview", f"{slug} must remain stage='preview'"
+        assert defn["stage"] == "public", f"{slug} must be stage='public' under 324: A"
         sec = defn["rule"]["sections"][0]
         sub_tag = sec["atom_query"]["fun_sub_tag"]
         cat = str(defn.get("category") or "tech")

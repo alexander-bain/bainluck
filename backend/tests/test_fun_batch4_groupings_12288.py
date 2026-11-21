@@ -49,7 +49,7 @@ def _sample_batch4_markets() -> list[dict]:
         # Set 2: 2026-27 Championship Races (6 rows)
         {"id": 57792807, "name": "NCAA Football: 2026 Heisman Award Winner", "status": "open", "source": "polymarket", "category": "football", "outcomes": [{"id": 201, "name": "Jeremiah Smith", "probability": 0.63}]},
         {"id": 66031970, "name": "NBA: 2026-27 MVP", "status": "open", "source": "polymarket", "category": "basketball", "outcomes": [{"id": 202, "name": "Victor Wembanyama", "probability": 0.39}]},
-        {"id": 70732924, "name": "UEFA Champions League: 2027 Champion", "status": "open", "source": "polymarket", "category": "soccer", "outcomes": [{"id": 203, "name": "Barcelona", "probability": 0.22}]},
+        {"id": 70732924, "name": "UEFA Champions League: 2027 Champion", "status": "open", "source": "polymarket", "category": "soccer", "outcomes": [{"id": 203, "name": "Barcelona", "probability": 0.18}]},
         {"id": 20569230, "name": "NBA: 2027 Champion", "status": "open", "source": "polymarket", "category": "basketball", "outcomes": [{"id": 204, "name": "San Antonio Spurs", "probability": 0.21}]},
         {"id": 86832, "name": "NFL Super Bowl Winner", "status": "open", "source": "odds_api", "category": "football", "outcomes": [{"id": 205, "name": "San Francisco 49ers", "probability": 0.14}]},
         {"id": 52755659, "name": "2026-27 Stanley Cup Final Winner", "status": "open", "source": "kalshi", "category": "hockey", "outcomes": [{"id": 206, "name": "Carolina Hurricanes", "probability": 0.14}]},
@@ -102,7 +102,7 @@ def test_batch4_definitions_are_preview_non_politics_with_verified_pd_or_cc0_art
         assert slug in paths_by_slug
         defn = load_machinery_definition(paths_by_slug[slug])
         assert "market_id" not in json.dumps(defn)
-        assert defn["stage"] == "preview"
+        assert defn["stage"] == "public"
         assert defn["category"] != "politics"
         rule = defn["rule"]
         assert rule.get("suppress_card_photo") is True
@@ -152,7 +152,7 @@ async def test_batch4_four_preview_sets_build_with_plain_speech_headlines_and_pa
         defn = load_machinery_definition(paths_by_slug[slug])
         prod = build_container_machinery_producer(defn)
         res = await produce_container_machinery(db, defn, now=NOW)
-        assert res.machinery_card["stage"] == "preview"
+        assert res.machinery_card["stage"] == "public"
         assert res.machinery_card["image_url"] == defn["rule"]["card_image_url"]
         assert res.title == expected_title
         assert ": " not in res.title
@@ -162,3 +162,26 @@ async def test_batch4_four_preview_sets_build_with_plain_speech_headlines_and_pa
         c_p, p_p = _compute_member_number_parity(fi, cp)
         assert c_p["passes"] is True and p_p["passes"] is True
         assert fi["data"]["image_url"] == defn["rule"]["card_image_url"]
+        if slug == "machinery-big-championships-2027":
+            card_rows = res.machinery_card["rows"]
+            assert len(card_rows) == 3
+            assert (card_rows[0].get("art") or {}).get("url") == (
+                "https://a.espncdn.com/i/headshots/college-football/players/full/5079720.png"
+            )
+            assert all(str((r.get("art") or {}).get("url") or "").strip() for r in card_rows)
+
+
+@pytest.mark.asyncio
+async def test_benchmark_strip_drops_partial_row_art_instead_of_leaving_empty_slot() -> None:
+    paths_by_slug = {p.stem: p for p in discover_machinery_candidate_paths()}
+    defn = load_machinery_definition(paths_by_slug["machinery-big-championships-2027"])
+    markets = _sample_batch4_markets()
+    for m in markets:
+        if m["id"] == 70732924:
+            m["outcomes"] = [{"id": 203, "name": "Unlisted Club FC", "probability": 0.25}]
+    db = {"events": [], "markets": markets, "paired_sets": {}, "market_histories": {}}
+    res = await produce_container_machinery(db, defn, now=NOW)
+    card_rows = res.machinery_card["rows"]
+    assert len(card_rows) == 3
+    assert all((r.get("art") or {}).get("url") is None for r in card_rows)
+    assert all((r.get("art") or {}).get("kind") == "monogram" for r in card_rows)

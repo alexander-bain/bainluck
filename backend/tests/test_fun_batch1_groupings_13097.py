@@ -308,7 +308,7 @@ async def test_more_sets_excludes_preview_stage_under_public_set(monkeypatch: An
         reset_roundup_cache_for_tests()
         _seed_producer("machinery-oscars-best-picture", "Oscars Best Picture", "entertainment", "public")
         _seed_producer("machinery-fed-and-macro", "Fed & Macro", "economics", "public")
-        _seed_producer("machinery-long-shots", "Long Shots People Talk About", "entertainment", "preview")
+        _seed_producer("machinery-synthetic-preview-fixture", "Synthetic Preview Set", "entertainment", "preview")
 
         cards = await select_more_sets(
             fake_db,

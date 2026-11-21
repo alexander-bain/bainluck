@@ -101,7 +101,7 @@ def test_batch2_candidate_files_are_discovered_as_preview_with_clean_metadata():
     for slug in BATCH2_SLUGS:
         assert slug in paths_by_slug, f"Missing candidate file for {slug}"
         defn = load_machinery_definition(paths_by_slug[slug])
-        assert defn["stage"] == "preview"
+        assert defn["stage"] == "public"
         rule = defn["rule"]
         assert rule.get("headline_predicate"), f"{slug} must set headline_predicate"
         assert rule.get("suppress_card_photo") is True
