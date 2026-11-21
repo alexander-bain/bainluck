@@ -556,6 +556,38 @@ it("keeps lane speech, its pose and the daily count readable with motion off", a
   }
 });
 
+it("rotates one visible floor bubble between workers and holds it under reduced motion", async () => {
+  const reduce = watchMotion();
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const data: FactoryData = {
+    ...snapshot,
+    speech: {
+      B: { text: "The scoreboard gets a fresh coat. #12998 is in checks.", mood: "working", source: "model" },
+      S: { text: "The labels get a polish. #12999 is at the loading dock.", mood: "waiting", source: "model" },
+    },
+  };
+  const bubbles = () => Array.from(container.querySelectorAll("[data-floor-speech]"));
+  try {
+    await act(async () => root.render(<FactoryFloor data={data} lastGoodAt={now} renderedAt={now} />));
+    expect(bubbles()).toHaveLength(1);
+    expect(bubbles()[0].getAttribute("data-floor-speech")).toBe("S");
+    expect(bubbles()[0].textContent).toContain("The labels get a polish.");
+
+    await act(async () => { jest.advanceTimersByTime(8_000); });
+    expect(bubbles()).toHaveLength(1);
+    expect(bubbles()[0].getAttribute("data-floor-speech")).toBe("B");
+    expect(bubbles()[0].textContent).toContain("The scoreboard gets a fresh coat.");
+
+    await act(async () => reduce());
+    await act(async () => { jest.advanceTimersByTime(16_000); });
+    expect(bubbles()).toHaveLength(1);
+    expect(bubbles()[0].getAttribute("data-floor-speech")).toBe("B");
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
+
 it("starts a real transfer when an open page receives a newer read", async () => {
   watchMotion();
   const container = document.createElement("div");

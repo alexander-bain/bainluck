@@ -76,6 +76,7 @@ enum FuturesAtlasPresentation11666 {
         case noRecentProbability(lastRecordedText: String?)
         case won
         case lost
+        case out
         case resultUnconfirmed(lastRecordedText: String?)
 
         var primaryLabel: String {
@@ -88,6 +89,8 @@ enum FuturesAtlasPresentation11666 {
                 return EventAtlasStates11666.wonWithCheck
             case .lost:
                 return EventAtlasStates11666.lostWithCross
+            case .out:
+                return "Out"
             case .resultUnconfirmed:
                 return EventAtlasStates11666.resultNotConfirmed
             }
@@ -418,6 +421,7 @@ enum FuturesAtlasPresentation11666 {
             leaderOutcomeId = orderedOutcomes.first?.id
         case .twoWayDuel, .mutuallyExclusiveField, .participationField:
             orderedOutcomes = market.outcomes.sorted { a, b in
+                if (a.isOut == true) != (b.isOut == true) { return a.isOut != true }
                 let lhs = a.probability ?? -1
                 let rhs = b.probability ?? -1
                 if lhs != rhs { return lhs > rhs }
@@ -464,6 +468,7 @@ enum FuturesAtlasPresentation11666 {
         now: Date,
         timeZone: TimeZone
     ) -> RowDisplayValue {
+        if outcome.isOut == true { return .out }
         let rowValue = FuturesDetailRowValue.of(
             outcome,
             marketStatus: market.status,
@@ -781,9 +786,10 @@ enum FuturesAtlasPresentation11666 {
         let selectedOutcome = market.outcomes.first(where: { $0.id == presentation.header.selectedOutcomeId })
             ?? futuresDetailHeroOutcome(market)
         let effectiveProbability: Double?
-        if case .noRecentProbability = presentation.header.primaryDisplay {
+        switch presentation.header.primaryDisplay {
+        case .noRecentProbability, .out:
             effectiveProbability = nil
-        } else {
+        default:
             effectiveProbability = selectedOutcome?.probability
         }
         return VerifiedTitleChartExpectation(
@@ -1304,7 +1310,7 @@ struct FuturesAtlasHeadlineCard192A: View {
             Text(row.displayValue.primaryLabel)
                 .font(.subheadline.weight(.bold))
                 .foregroundStyle(DS.emerald)
-        case .lost, .noRecentProbability, .resultUnconfirmed:
+        case .lost, .out, .noRecentProbability, .resultUnconfirmed:
             Text(row.displayValue.primaryLabel)
                 .font(.caption.weight(.medium))
                 .foregroundStyle(DS.textSecondary)
@@ -1591,7 +1597,7 @@ struct FuturesAtlasHeaderCardView11666: View {
             return .system(size: 38, weight: .black, design: .rounded)
         case .won, .lost:
             return .title.weight(.bold)
-        case .noRecentProbability, .resultUnconfirmed:
+        case .out, .noRecentProbability, .resultUnconfirmed:
             return .headline.weight(.semibold)
         }
     }
@@ -1602,7 +1608,7 @@ struct FuturesAtlasHeaderCardView11666: View {
             return DS.textPrimary
         case .won:
             return DS.emerald
-        case .lost, .noRecentProbability, .resultUnconfirmed:
+        case .lost, .out, .noRecentProbability, .resultUnconfirmed:
             return DS.textSecondary
         }
     }
@@ -1833,7 +1839,7 @@ struct FuturesAtlasBodyCardView11666: View {
                 if dynamicTypeSize.isAccessibilitySize {
                     VStack(alignment: .leading, spacing: 4) {
                         HStack(spacing: 6) {
-                            if showRank {
+                            if showRank && row.displayValue != .out {
                                 Text("#\(row.rank)")
                                     .font(.caption.weight(.semibold).monospacedDigit())
                                     .foregroundStyle(isFirst ? DS.emerald : DS.textMuted)
@@ -1861,7 +1867,7 @@ struct FuturesAtlasBodyCardView11666: View {
                     }
                 } else {
                     HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        if showRank {
+                        if showRank && row.displayValue != .out {
                             Text("#\(row.rank)")
                                 .font(.caption.weight(.semibold).monospacedDigit())
                                 .foregroundStyle(isFirst ? DS.emerald : DS.textMuted)
@@ -1922,7 +1928,7 @@ struct FuturesAtlasBodyCardView11666: View {
         switch value {
         case .won:
             return DS.emerald
-        case .lost, .noRecentProbability, .resultUnconfirmed:
+        case .lost, .out, .noRecentProbability, .resultUnconfirmed:
             return DS.textSecondary
         case .chance:
             return isLeading ? DS.emerald : DS.textPrimary
@@ -2099,7 +2105,7 @@ struct FuturesAtlasFullFieldSheetView11666: View {
                             onSelectOutcome(row.id)
                         } label: {
                             HStack(alignment: .firstTextBaseline, spacing: 8) {
-                                if showsRank {
+                                if showsRank && row.displayValue != .out {
                                     Text("#\(row.rank)")
                                         .font(.caption.weight(.semibold).monospacedDigit())
                                         .foregroundStyle(.secondary)

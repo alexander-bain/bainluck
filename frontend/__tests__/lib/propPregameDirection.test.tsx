@@ -262,7 +262,7 @@ describe("the settled card is ranked by surprise and no longer annotated with it
     React.createElement(PropDivergenceRail, { playerProps: DODGERS, status: "completed" }),
   );
 
-  it("no bare 'NN pts' anywhere a sighted reader can see it", () => {
+  it("no bare 'NN points' anywhere a sighted reader can see it", () => {
     expect(settledRail).not.toMatch(/\d+\s*pts/);
   });
 
@@ -289,7 +289,7 @@ describe("the settled card is ranked by surprise and no longer annotated with it
     const detail = renderToStaticMarkup(
       React.createElement(PropDivergenceDetail, { playerProps: DODGERS, status: "completed" }),
     );
-    expect(detail).toMatch(/\d+ pts from the mark/);
+    expect(detail).toMatch(/\d+ points from the mark/);
     // and it is ONLY in the sr-only line — never in a visible cell
     const visibleText = detail.replace(/<p class="sr-only">.*?<\/p>/g, " ");
     expect(visibleText).not.toMatch(/\d+\s*pts/);

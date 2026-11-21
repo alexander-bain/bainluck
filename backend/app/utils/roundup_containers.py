@@ -46,6 +46,8 @@ __all__ = [
     "ROUNDUP_CACHE_TTL_S",
     "ROUNDUP_NOVELTY_SEAT_CAP",
     "ROUNDUP_PREWARM_STAGE_BUDGET_SECONDS",
+    "ROUNDUP_PREVIEW_PRODUCER_TIMEOUT_SECONDS",
+    "ROUNDUP_PREVIEW_STAGE_BUDGET_SECONDS",
     "ROUNDUP_PRODUCERS",
     "ROUNDUP_PRODUCER_TIMEOUT_SECONDS",
     "ROUNDUP_READ_BUDGET_SECONDS",
@@ -160,6 +162,10 @@ ROUNDUP_CACHE_TTL_S = 60.0
 ROUNDUP_PRODUCER_TIMEOUT_SECONDS = 0.5
 ROUNDUP_READ_BUDGET_SECONDS = 2.5
 ROUNDUP_PREWARM_STAGE_BUDGET_SECONDS = 10.0
+#: Best-effort budget for cold `"stage": "preview"` groupings on `machinery=preview`
+#: requests; kept strictly outside the public stage budget and public all-or-nothing gate.
+ROUNDUP_PREVIEW_PRODUCER_TIMEOUT_SECONDS = 3.5
+ROUNDUP_PREVIEW_STAGE_BUDGET_SECONDS = 12.0
 #: #13103 Part 3 item 3 — server-picked follow-on sets attached to GET /api/containers/{slug}.
 MORE_SETS_LIMIT = 2
 MORE_SETS_BUDGET_SECONDS = 0.35
@@ -942,9 +948,16 @@ def _redis_cache_key(slug: str) -> str:
 
 
 ROUNDUP_READ_FAILURE_WINDOW_S = 600.0
-#: Rolling 10-minute ledger of Discover round-up read failures on this process:
-#: ``(ts, slug, kept_last_good, reason)`` (#13146). Bounded so memory is O(1).
-_roundup_read_failures: deque[tuple[float, str, bool, str]] = deque(maxlen=5000)
+#: Rolling 10-minute ledger of Discover round-up read outcomes when refresh
+#: times out, errors, or hits stage budget on this process:
+#: ``(ts, slug, outcome_kind, reason)`` where ``outcome_kind`` is one of
+#: ``"kept_last_good"``, ``"dropped_no_copy"``, or ``"had_nothing_to_show"``.
+#: Bounded so memory is O(1).
+_roundup_read_failures: deque[tuple[float, str, str, str]] = deque(maxlen=5000)
+#: Local companion marker for unexpired ``(ts, None, None)`` entries in
+#: ``_roundup_local_cache`` that came from a clean "nothing to show" refusal
+#: (never a timeout/error refusal), keyed identically to ``_roundup_local_cache``.
+_roundup_nothing_to_show_local: dict[tuple[str, Any], tuple[float, Optional[str]]] = {}
 
 
 def _prune_roundup_read_failures(now_ts: float) -> None:
@@ -958,34 +971,50 @@ def _record_roundup_read_failure(
     *,
     kept_last_good: bool,
     reason: str,
+    had_nothing_to_show: bool = False,
     now: Optional[float | datetime] = None,
 ) -> dict[str, int]:
-    """Record a failed Discover round-up read and return the rolling 10-minute counts."""
+    """Record a Discover round-up read fallback/loss and return rolling 10-minute counts."""
     ts, _ = _normalize_roundup_now(now)
     _prune_roundup_read_failures(ts)
-    _roundup_read_failures.append((ts, str(slug), bool(kept_last_good), str(reason)))
+    if kept_last_good:
+        outcome_kind = "kept_last_good"
+    elif had_nothing_to_show:
+        outcome_kind = "had_nothing_to_show"
+    else:
+        outcome_kind = "dropped_no_copy"
+    _roundup_read_failures.append((ts, str(slug), outcome_kind, str(reason)))
     return get_roundup_read_failure_stats_10m(now=ts)
 
 
 def get_roundup_read_failure_stats_10m(
     now: Optional[float | datetime] = None,
 ) -> dict[str, int]:
-    """Return failed Discover round-up read counts over the last 10 minutes (#13146).
+    """Return Discover round-up read counts over the last 10 minutes (#13146).
 
-    - ``failed``: total round-up reads that timed out or errored on this process
-      in the last 10 minutes.
+    Splits round-ups that cleanly had nothing to show from ones where a reader
+    actually lost a card, so ``dropped_no_copy > 0`` can be used as an alarm:
+
+    - ``failed``: ``kept_last_good + dropped_no_copy`` (reads where a card was
+      at risk or lost due to timeout, error, or stage budget).
     - ``kept_last_good``: failed reads where a valid last good copy under its
       keep-time was kept in the list instead of dropping the card.
-    - ``dropped_no_copy``: failed reads where no good copy under keep-time
-      existed, so the round-up was left out as a last resort.
+    - ``dropped_no_copy``: failed reads where a reader actually lost a card
+      (no last good copy under keep-time and not known to have nothing to show).
+    - ``had_nothing_to_show``: timed-out/errored/budget-exhausted reads whose
+      unexpired prior state cleanly had nothing to show (never inflates
+      ``dropped_no_copy`` or ``failed``).
     """
     ts, _ = _normalize_roundup_now(now)
     _prune_roundup_read_failures(ts)
     kept = 0
     dropped = 0
-    for _ev_ts, _slug, was_kept, _reason in _roundup_read_failures:
-        if was_kept:
+    nothing_to_show = 0
+    for _ev_ts, _slug, outcome_kind, _reason in _roundup_read_failures:
+        if outcome_kind == "kept_last_good":
             kept += 1
+        elif outcome_kind == "had_nothing_to_show":
+            nothing_to_show += 1
         else:
             dropped += 1
     return {
@@ -993,11 +1022,13 @@ def get_roundup_read_failure_stats_10m(
         "failed": kept + dropped,
         "kept_last_good": kept,
         "dropped_no_copy": dropped,
+        "had_nothing_to_show": nothing_to_show,
     }
 
 
 def reset_roundup_cache_for_tests() -> None:
     _roundup_local_cache.clear()
+    _roundup_nothing_to_show_local.clear()
     _roundup_read_failures.clear()
 
 
@@ -1234,6 +1265,8 @@ def _encode_roundup_cache_entry(
     container_payload: Optional[dict[str, Any]],
     clean_empty: bool = False,
     clean_empty_reason: Optional[str] = None,
+    nothing_to_show: bool = False,
+    nothing_to_show_reason: Optional[str] = None,
 ) -> str:
     payload: dict[str, Any] = {
         "built_at": ts,
@@ -1246,6 +1279,10 @@ def _encode_roundup_cache_entry(
         payload["clean_empty"] = True
         if clean_empty_reason:
             payload["clean_empty_reason"] = str(clean_empty_reason)
+    if nothing_to_show:
+        payload["nothing_to_show"] = True
+        if nothing_to_show_reason:
+            payload["nothing_to_show_reason"] = str(nothing_to_show_reason)
     return json.dumps(
         payload,
         separators=(",", ":"),
@@ -1401,6 +1438,8 @@ async def _store_roundup_cache_entry(
     db: Any,
     *,
     keep_tombstone: bool = False,
+    nothing_to_show: bool = False,
+    nothing_to_show_reason: Optional[str] = None,
 ) -> None:
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1421,6 +1460,10 @@ async def _store_roundup_cache_entry(
         copy.deepcopy(feed_item),
         copy.deepcopy(container_payload),
     )
+    if feed_item is None and container_payload is None and nothing_to_show:
+        _roundup_nothing_to_show_local[cache_key] = (ts, nothing_to_show_reason)
+    else:
+        _roundup_nothing_to_show_local.pop(cache_key, None)
     if isinstance(db, AsyncSession):
         try:
             encoded = _encode_roundup_cache_entry(
@@ -1429,6 +1472,10 @@ async def _store_roundup_cache_entry(
                 stale_ttl_s=redis_ex_s,
                 feed_item=feed_item,
                 container_payload=container_payload,
+                nothing_to_show=bool(
+                    feed_item is None and container_payload is None and nothing_to_show
+                ),
+                nothing_to_show_reason=nothing_to_show_reason,
             )
         except (TypeError, ValueError):
             logger.warning(
@@ -1615,6 +1662,7 @@ async def _load_last_good_roundup_copy(
 
     if quiet_out is not None:
         quiet_out["clean_empty"] = False
+        quiet_out["nothing_to_show"] = False
         quiet_out["reason"] = None
 
     if producer.enabled is not None and not producer.enabled():
@@ -1636,7 +1684,8 @@ async def _load_last_good_roundup_copy(
         producer.slug,
         "live" if isinstance(db, AsyncSession) else id(db),
     )
-    # Candidate tuple: (built_at, feed_item, container_payload, stored_stale_ttl, from_shared, clean_empty, clean_empty_reason)
+    # Candidate tuple: (built_at, feed_item, container_payload, stored_stale_ttl,
+    #                   from_shared, clean_empty, clean_empty_reason, nothing_to_show, nts_reason)
     local_candidate: Optional[
         tuple[
             float,
@@ -1646,11 +1695,30 @@ async def _load_last_good_roundup_copy(
             bool,
             bool,
             Optional[str],
+            bool,
+            Optional[str],
         ]
     ] = None
     cached = _roundup_local_cache.get(cache_key)
     if cached is not None:
-        local_candidate = (float(cached[0]), cached[1], cached[2], None, False, False, None)
+        local_nts = _roundup_nothing_to_show_local.get(cache_key)
+        is_local_nts = bool(
+            cached[1] is None
+            and cached[2] is None
+            and local_nts is not None
+            and float(local_nts[0]) == float(cached[0])
+        )
+        local_candidate = (
+            float(cached[0]),
+            cached[1],
+            cached[2],
+            None,
+            False,
+            False,
+            None,
+            is_local_nts,
+            local_nts[1] if is_local_nts and local_nts is not None else None,
+        )
 
     shared_candidate: Optional[
         tuple[
@@ -1659,6 +1727,8 @@ async def _load_last_good_roundup_copy(
             Optional[dict[str, Any]],
             Optional[float],
             bool,
+            bool,
+            Optional[str],
             bool,
             Optional[str],
         ]
@@ -1714,6 +1784,10 @@ async def _load_last_good_roundup_copy(
                         str(raw.get("clean_empty_reason"))
                         if raw.get("clean_empty_reason")
                         else None,
+                        raw.get("nothing_to_show") is True,
+                        str(raw.get("nothing_to_show_reason"))
+                        if raw.get("nothing_to_show_reason")
+                        else None,
                     )
             except Exception:  # noqa: BLE001 — malformed shared entry fails open/closed per flag
                 logger.debug(
@@ -1736,10 +1810,24 @@ async def _load_last_good_roundup_copy(
     if chosen is None:
         return None
 
-    built_at, fi, cp, stored_stale_ttl, from_shared, is_clean_empty, ce_reason = chosen
+    (
+        built_at,
+        fi,
+        cp,
+        stored_stale_ttl,
+        from_shared,
+        is_clean_empty,
+        ce_reason,
+        is_nothing_to_show,
+        nts_reason,
+    ) = chosen
     if fi is None or cp is None:
         if from_shared:
             _roundup_local_cache[cache_key] = (built_at, None, None)
+            if is_nothing_to_show:
+                _roundup_nothing_to_show_local[cache_key] = (built_at, nts_reason)
+            else:
+                _roundup_nothing_to_show_local.pop(cache_key, None)
         if is_clean_empty and quiet_out is not None:
             quiet_keep_s = (
                 float(stored_stale_ttl)
@@ -1748,7 +1836,17 @@ async def _load_last_good_roundup_copy(
             )
             if max(0.0, ts - built_at) < quiet_keep_s:
                 quiet_out["clean_empty"] = True
+                quiet_out["nothing_to_show"] = True
                 quiet_out["reason"] = ce_reason
+        elif is_nothing_to_show and quiet_out is not None:
+            nts_keep_s = (
+                float(stored_stale_ttl)
+                if isinstance(stored_stale_ttl, (int, float)) and stored_stale_ttl > 0
+                else ROUNDUP_STANDING_NON_LIVE_STALE_TTL_S
+            )
+            if max(0.0, ts - built_at) < nts_keep_s:
+                quiet_out["nothing_to_show"] = True
+                quiet_out["reason"] = nts_reason
         return None
 
     keep_s = _roundup_effective_keep_seconds(
@@ -1961,6 +2059,8 @@ async def evaluate_roundup_producer(
                 None,
                 db,
                 keep_tombstone=True,
+                nothing_to_show=True,
+                nothing_to_show_reason=reason_text,
             )
         return None, None
 
@@ -1995,6 +2095,8 @@ async def evaluate_roundup_producer(
                 None,
                 db,
                 keep_tombstone=True,
+                nothing_to_show=True,
+                nothing_to_show_reason="empty_payload",
             )
         return None, None
 
@@ -3191,6 +3293,32 @@ def _is_machinery_roundup_item(item: Mapping[str, Any]) -> bool:
     return slug.startswith("machinery-")
 
 
+def _is_preview_producer(producer: RoundupProducer) -> bool:
+    """Return True when a producer is staged as ``preview`` (never on public Discover)."""
+    return str(getattr(producer, "stage", "public") or "public").strip().lower() == "preview"
+
+
+def _is_preview_roundup_item(item: Mapping[str, Any]) -> bool:
+    """Return True when a composed feed item belongs to a ``stage="preview"`` grouping."""
+    slug = _roundup_item_slug(item)
+    if slug:
+        prod = ROUNDUP_PRODUCERS.get(slug)
+        if prod is not None and _is_preview_producer(prod):
+            return True
+    data = item.get("data") if isinstance(item.get("data"), Mapping) else None
+    roundup = (
+        data.get("roundup")
+        if isinstance(data, Mapping) and isinstance(data.get("roundup"), Mapping)
+        else None
+    )
+    card = (
+        roundup.get("machinery_card")
+        if isinstance(roundup, Mapping) and isinstance(roundup.get("machinery_card"), Mapping)
+        else None
+    )
+    return isinstance(card, Mapping) and str(card.get("stage") or "").strip().lower() == "preview"
+
+
 def _roundup_slug_variants(slug: str) -> set[str]:
     clean = str(slug or "").strip().lower()
     if not clean:
@@ -3768,27 +3896,34 @@ async def add_roundup_feed_items(
             p for p in ROUNDUP_PRODUCERS.values() if not _is_machinery_producer_slug(p.slug)
         ]
     if not include_preview:
-        producers = [
-            p for p in producers if getattr(p, "stage", "public") != "preview"
-        ]
+        producers = [p for p in producers if not _is_preview_producer(p)]
     if not producers:
         return items
+    # Keep public producers strictly ahead of preview producers so a slow or
+    # cold preview set can never consume the public stage budget or trigger
+    # the public all-or-nothing drop.
+    if include_preview:
+        public_producers = [p for p in producers if not _is_preview_producer(p)]
+        preview_producers = [p for p in producers if _is_preview_producer(p)]
+    else:
+        public_producers = producers
+        preview_producers = []
     produced: list[dict[str, Any]] = []
     now_ts, _ = _normalize_roundup_now(now)
     machinery_producers = [
         p
-        for p in producers
+        for p in public_producers
         if _is_machinery_producer_slug(p.slug) and (p.enabled is None or p.enabled())
     ]
     machinery_incomplete = False
-    for idx, producer in enumerate(producers):
+    for idx, producer in enumerate(public_producers):
         elapsed = time.perf_counter() - started
         remaining = stage_budget - elapsed
         if remaining <= 0:
             kept_after_budget = 0
             quiet_after_budget = 0
             dropped_after_budget = 0
-            rem_producers = producers[idx:]
+            rem_producers = public_producers[idx:]
             prefetched_shared, shared_read_ok = await _prefetch_shared_roundup_entries(
                 rem_producers, db
             )
@@ -3818,6 +3953,27 @@ async def add_roundup_feed_items(
                     # #13184/#13186 follow-up: an unexpired quiet mark means the
                     # grouping is properly empty, not missing/incomplete.
                     quiet_after_budget += 1
+                    _record_roundup_read_failure(
+                        rem_producer.slug,
+                        kept_last_good=False,
+                        had_nothing_to_show=True,
+                        reason="budget_exhausted",
+                        now=now_ts,
+                    )
+                elif quiet_meta.get("nothing_to_show") is True and not (
+                    _is_machinery_producer_slug(rem_producer.slug)
+                    and (rem_producer.enabled is None or rem_producer.enabled())
+                ):
+                    # Standing round-up cleanly had nothing to show — split from
+                    # dropped_no_copy so dropped_no_copy alarms only on lost cards.
+                    quiet_after_budget += 1
+                    _record_roundup_read_failure(
+                        rem_producer.slug,
+                        kept_last_good=False,
+                        had_nothing_to_show=True,
+                        reason="budget_exhausted",
+                        now=now_ts,
+                    )
                 else:
                     if _is_machinery_producer_slug(rem_producer.slug) and (
                         rem_producer.enabled is None or rem_producer.enabled()
@@ -3834,9 +3990,10 @@ async def add_roundup_feed_items(
             logger.warning(
                 "Discover round-up stage budget exhausted after %d/%d producers "
                 "(budget_seconds=%.3f, stage_budget=%.3f, produced=%d, "
-                "kept_last_good=%d, quiet=%d, dropped_no_copy=%d, failed_10m=%d, dropped_10m=%d)",
+                "kept_last_good=%d, quiet=%d, dropped_no_copy=%d, failed_10m=%d, "
+                "dropped_10m=%d, nothing_to_show_10m=%d)",
                 idx,
-                len(producers),
+                len(public_producers),
                 budget_seconds,
                 stage_budget,
                 len(produced),
@@ -3845,6 +4002,7 @@ async def add_roundup_feed_items(
                 dropped_after_budget,
                 stats_10m["failed"],
                 stats_10m["dropped_no_copy"],
+                stats_10m["had_nothing_to_show"],
             )
             break
         per_timeout = min(remaining, ROUNDUP_PRODUCER_TIMEOUT_SECONDS)
@@ -3870,7 +4028,10 @@ async def add_roundup_feed_items(
                         "roundup_containers: rollback after timeout failed for %s",
                         producer.slug,
                     )
-            last_good = await _load_last_good_roundup_copy(producer, db, now=now)
+            timeout_quiet: dict[str, Any] = {}
+            last_good = await _load_last_good_roundup_copy(
+                producer, db, now=now, quiet_out=timeout_quiet
+            )
             if last_good is not None:
                 fi_lg, _cp_lg, age_lg, keep_lg = last_good
                 produced.append(fi_lg)
@@ -3888,6 +4049,25 @@ async def add_roundup_feed_items(
                     keep_lg,
                     stats_10m["failed"],
                     stats_10m["kept_last_good"],
+                    stats_10m["dropped_no_copy"],
+                )
+                continue
+            if timeout_quiet.get("clean_empty") is True or (
+                timeout_quiet.get("nothing_to_show") is True and not is_mach_prod
+            ):
+                stats_10m = _record_roundup_read_failure(
+                    producer.slug,
+                    kept_last_good=False,
+                    had_nothing_to_show=True,
+                    reason="timeout",
+                    now=now_ts,
+                )
+                logger.info(
+                    "Discover round-up read timed out for %s; prior copy had nothing to show "
+                    "(reason=%s, nothing_to_show_10m=%d, dropped_10m=%d)",
+                    producer.slug,
+                    timeout_quiet.get("reason") or "nothing_to_show",
+                    stats_10m["had_nothing_to_show"],
                     stats_10m["dropped_no_copy"],
                 )
                 continue
@@ -3923,7 +4103,10 @@ async def add_roundup_feed_items(
                         "roundup_containers: rollback after error failed for %s",
                         producer.slug,
                     )
-            last_good = await _load_last_good_roundup_copy(producer, db, now=now)
+            error_quiet: dict[str, Any] = {}
+            last_good = await _load_last_good_roundup_copy(
+                producer, db, now=now, quiet_out=error_quiet
+            )
             if last_good is not None:
                 fi_lg, _cp_lg, age_lg, keep_lg = last_good
                 produced.append(fi_lg)
@@ -3943,6 +4126,25 @@ async def add_roundup_feed_items(
                     stats_10m["kept_last_good"],
                     stats_10m["dropped_no_copy"],
                     exc_info=True,
+                )
+                continue
+            if error_quiet.get("clean_empty") is True or (
+                error_quiet.get("nothing_to_show") is True and not is_mach_prod
+            ):
+                stats_10m = _record_roundup_read_failure(
+                    producer.slug,
+                    kept_last_good=False,
+                    had_nothing_to_show=True,
+                    reason="error",
+                    now=now_ts,
+                )
+                logger.info(
+                    "Discover round-up read errored for %s; prior copy had nothing to show "
+                    "(reason=%s, nothing_to_show_10m=%d, dropped_10m=%d)",
+                    producer.slug,
+                    error_quiet.get("reason") or "nothing_to_show",
+                    stats_10m["had_nothing_to_show"],
+                    stats_10m["dropped_no_copy"],
                 )
                 continue
             if is_mach_prod:
@@ -3966,19 +4168,119 @@ async def add_roundup_feed_items(
         if feed_item is not None and container_payload is not None:
             produced.append(feed_item)
 
-    # Goal Step 7 (#12288): five or none during cold-restart warm-up.
-    # If any registered machinery grouping timed out, errored, or was skipped
-    # by stage budget exhaustion, drop all partial machinery cards from this
-    # response (standing round-ups stay untouched) rather than serving 2/5 or 3/5.
+    # Goal Step 7 (#12288): all-or-nothing during cold-restart warm-up for PUBLIC
+    # machinery groupings. If any registered public machinery grouping timed out,
+    # errored, or was skipped by stage budget exhaustion, drop all partial public
+    # machinery cards (standing round-ups stay untouched). Preview groupings run
+    # separately below and never trigger this drop.
     if machinery_incomplete and machinery_producers:
-        ready_mach = sum(1 for it in produced if _is_machinery_roundup_item(it))
+        ready_mach = sum(
+            1
+            for it in produced
+            if _is_machinery_roundup_item(it) and not _is_preview_roundup_item(it)
+        )
         if ready_mach > 0:
-            produced = [it for it in produced if not _is_machinery_roundup_item(it)]
+            produced = [
+                it
+                for it in produced
+                if not (_is_machinery_roundup_item(it) and not _is_preview_roundup_item(it))
+            ]
             logger.warning(
                 "Discover machinery groupings incomplete (%d/%d ready); serving none until all ready",
                 ready_mach,
                 len(machinery_producers),
             )
+
+    # Best-effort preview pass (`machinery=preview`): serve every warm preview
+    # copy first via batched MGET, then build cold preview sets under a bounded
+    # preview budget. A slow or failing preview set is skipped without dropping
+    # the six public groupings or any other preview set that built.
+    if preview_producers:
+        prefetched_preview, preview_shared_ok = await _prefetch_shared_roundup_entries(
+            preview_producers, db
+        )
+        cold_preview_producers: list[RoundupProducer] = []
+        for prev_prod in preview_producers:
+            if prev_prod.enabled is not None and not prev_prod.enabled():
+                continue
+            prev_quiet: dict[str, Any] = {}
+            warm_copy = await _load_last_good_roundup_copy(
+                prev_prod,
+                db,
+                now=now,
+                local_only=False,
+                fail_closed_on_shared_error=True,
+                prefetched_shared=prefetched_preview.get(prev_prod.slug),
+                shared_read_ok=preview_shared_ok,
+                quiet_out=prev_quiet,
+            )
+            if warm_copy is not None:
+                fi_warm, _cp_warm, _age_warm, _keep_warm = warm_copy
+                produced.append(fi_warm)
+            elif prev_quiet.get("clean_empty") is True:
+                continue
+            else:
+                cold_preview_producers.append(prev_prod)
+
+        if cold_preview_producers:
+            preview_started = time.perf_counter()
+            preview_budget = min(
+                max(0.0, float(budget_seconds) - (preview_started - started)),
+                max(stage_cap, ROUNDUP_PREVIEW_STAGE_BUDGET_SECONDS),
+            )
+            for prev_prod in cold_preview_producers:
+                prev_remaining = preview_budget - (time.perf_counter() - preview_started)
+                if prev_remaining <= 0:
+                    logger.warning(
+                        "Discover preview grouping %s skipped (preview budget exhausted); "
+                        "keeping built groupings",
+                        prev_prod.slug,
+                    )
+                    break
+                prev_timeout = min(
+                    prev_remaining, ROUNDUP_PREVIEW_PRODUCER_TIMEOUT_SECONDS
+                )
+                try:
+                    prev_fi, prev_cp = await asyncio.wait_for(
+                        evaluate_roundup_producer(
+                            prev_prod, db, now=now, allow_stale=True
+                        ),
+                        timeout=prev_timeout,
+                    )
+                except asyncio.TimeoutError:
+                    if hasattr(db, "rollback") and callable(db.rollback):
+                        try:
+                            await db.rollback()
+                        except Exception:  # noqa: BLE001
+                            logger.debug(
+                                "roundup_containers: rollback after preview timeout failed for %s",
+                                prev_prod.slug,
+                            )
+                    logger.warning(
+                        "Discover preview grouping %s timed out after %.2fs; "
+                        "keeping public and built preview groupings",
+                        prev_prod.slug,
+                        prev_timeout,
+                    )
+                    continue
+                except Exception:  # noqa: BLE001
+                    if hasattr(db, "rollback") and callable(db.rollback):
+                        try:
+                            await db.rollback()
+                        except Exception:  # noqa: BLE001
+                            logger.debug(
+                                "roundup_containers: rollback after preview error failed for %s",
+                                prev_prod.slug,
+                            )
+                    logger.warning(
+                        "Discover preview grouping %s failed on preview build; "
+                        "keeping public and built preview groupings",
+                        prev_prod.slug,
+                        exc_info=True,
+                    )
+                    continue
+                if prev_fi is not None and prev_cp is not None:
+                    produced.append(prev_fi)
 
     if not produced:
         return items

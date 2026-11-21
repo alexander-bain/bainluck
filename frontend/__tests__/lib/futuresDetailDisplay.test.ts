@@ -52,7 +52,7 @@ describe("movementExplanation", () => {
       probability: 0.42,
       opening_probability: 0.30,
     });
-    expect(s).toBe("Gavin Newsom up 12.0 pts from opening.");
+    expect(s).toBe("Gavin Newsom up 12.0 points from opening.");
   });
 
   test("down when current < opening", () => {
@@ -61,7 +61,7 @@ describe("movementExplanation", () => {
       probability: 0.55,
       opening_probability: 0.70,
     });
-    expect(s).toBe("Arsenal down 15.0 pts from opening.");
+    expect(s).toBe("Arsenal down 15.0 points from opening.");
   });
 
   test("roughly flat for sub-1pt moves", () => {
@@ -80,7 +80,7 @@ describe("movementExplanation", () => {
       opening_probability: null,
       probability_change_24h: 0.05,
     });
-    expect(s).toBe("Dodgers up 5.0 pts in the last 24h.");
+    expect(s).toBe("Dodgers up 5.0 points in the last 24h.");
   });
 
   test("null when there is nothing to say", () => {
@@ -96,7 +96,7 @@ describe("movementExplanation", () => {
       probability: 0.20,
       opening_probability: 0.08,
     });
-    expect(s).toBe("Yes up 12.0 pts from opening.");
+    expect(s).toBe("Yes up 12.0 points from opening.");
   });
 });
 

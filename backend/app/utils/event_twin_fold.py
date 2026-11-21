@@ -170,7 +170,10 @@ from app.utils.proven_duplicates import merge_opening_line
 from app.utils.search_fixture_dedup import FIXTURE_TIME_WINDOW_HOURS
 from app.utils.soccer_team_matching import club_alias_tokens, soccer_pair_matches
 from app.utils.sport_keys import is_season_variant, league_identity
-from app.utils.venue_club_spellings import VENUE_CLUB_SPELLINGS
+from app.utils.venue_club_spellings import (
+    LEAGUE_CLUB_SPELLINGS,
+    VENUE_CLUB_SPELLINGS,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -399,10 +402,27 @@ def _is_ncaa_college_league(league: Any) -> bool:
     return "ncaa" in low or "college-" in low
 
 
+#: #13238: sport-scoped squashed spellings (e.g. EuroLeague "FC Barcelona
+#: Bàsquet" -> "barcelona") keyed by ``league_identity(sport_key)`` so they
+#: never fire on another sport (such as La Liga soccer).
+_LEAGUE_SQUASHED: dict[str, dict[str, str]] = {
+    league_identity(sport_key) or sport_key: {
+        _squash_spelling(left): _squash_spelling(right)
+        for left, right in mapping.items()
+    }
+    for sport_key, mapping in LEAGUE_CLUB_SPELLINGS.items()
+}
+
+
 def _squash_for_league(name: Optional[str], league: Any) -> str:
     if _is_ncaa_college_league(league):
         return _college_squash(name)
-    return _squash(name)
+    base = _squash(name)
+    if base and isinstance(league, str):
+        league_map = _LEAGUE_SQUASHED.get(league)
+        if league_map:
+            return league_map.get(base, base)
+    return base
 
 
 team_name_fold_key = _squash

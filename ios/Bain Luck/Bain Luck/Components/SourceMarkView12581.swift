@@ -273,13 +273,26 @@ struct SourceMarkSheet: View {
 
     private func row(_ line: Line) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text(line.name).font(.body)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(line.name)
+                    .font(.body)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let age = line.age {
+                    Text(age)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             Spacer(minLength: 8)
             if let price = line.price {
-                Text(price).font(.body.weight(.semibold)).monospacedDigit()
-            }
-            if let age = line.age {
-                Text(age).font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                Text(price)
+                    .font(.body.weight(.semibold))
+                    .monospacedDigit()
+                    .multilineTextAlignment(.trailing)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .layoutPriority(1)
             }
         }
         .accessibilityElement(children: .combine)

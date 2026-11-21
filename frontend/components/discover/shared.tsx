@@ -91,7 +91,7 @@ export function MovementBadge({
   prob,
   onDark = false,
   timeframeLabel,
-  unit = "pts",
+  unit = "points",
 }: {
   m: number | null | undefined;
   prob?: number | null;

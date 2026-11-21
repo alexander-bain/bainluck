@@ -242,6 +242,9 @@ struct WatchHomeView: View {
                 Text(resultText)
                     .font(.system(size: 10, weight: .semibold).monospacedDigit())
                     .foregroundStyle(.secondary)
+            } else if let scoreline = game.scoreline {
+                Text(scoreline)
+                    .font(.system(size: 12, weight: .semibold))
             }
         }
         .padding(8)

@@ -641,6 +641,14 @@ struct OddsChartView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     /// #925 — false only under a raster (see `chartScrubSurfaces`).
     @Environment(\.chartScrubSurfaces) private var scrubSurfaces
+    /// #12628 — one timezone shared across x-axis ticks, scrub/tap readouts, and VoiceOver speech.
+    @Environment(\.timeZone) private var chartTimeZone
+
+    private var chartCalendar: Calendar {
+        var c = Calendar.current
+        c.timeZone = chartTimeZone
+        return c
+    }
 
     /// #10830 — the phone's inline plot (260 through build 46; Alex: "win
     /// probability needs more V space"). Paid for by the Live Activity row and
@@ -742,11 +750,13 @@ struct OddsChartView: View {
         if TennisChartReading9483.applies(sportKey: sportKey) {
             return .chart(playStart: nil, gameFinished: EventState.isFinished(status),
                           readoutPoints: dataPoints.filter { $0.source == source },
-                          checkpoints: checkpoints)
+                          checkpoints: checkpoints,
+                          timeZone: chartTimeZone)
         }
         return .chart(playStart: sinceStartDate, gameFinished: EventState.isFinished(status),
                       readoutPoints: dataPoints.filter { $0.source == source },
-                      checkpoints: checkpoints)
+                      checkpoints: checkpoints,
+                      timeZone: chartTimeZone)
     }
 
     /// #9483 tennis — the chart's readout series as the tennis panel reads it,
@@ -2315,12 +2325,14 @@ struct OddsChartView: View {
             plotWidth: Self.axisPlanWidth(
                 own: plotWidth.wrappedValue,
                 pageNarrowest: sharesPageAxis ? pageAxisPlotWidth : 0),
+            calendar: chartCalendar,
             labelScale: axisFontSize / 9)
         let ticks = Self.xAxisContextTicks(
             for: domain, plan: plan,
             plotWidth: Self.axisPlanWidth(own: plotWidth.wrappedValue,
                 pageNarrowest: sharesPageAxis ? pageAxisPlotWidth : 0),
-            labelScale: axisFontSize / 9)
+            labelScale: axisFontSize / 9,
+            calendar: chartCalendar)
         // #4974 — neither runs under a checkpoint mount. The balance ink would
         // draw the blend a second time, uncut, and color a crossing of 50% that
         // nothing recorded; the live split is a live page's, and a mount is a
@@ -2334,8 +2346,17 @@ struct OddsChartView: View {
         // neither prints no number at the end (its newest price is the hero's,
         // with its own currentness).
         let finishedEnd = (liveSplit == nil && soccerThreeLine == nil)
-            ? Self.finishedEnd9483(dataPoints: dataPoints, checkpoints: checkpoints,
-                                   finished: EventState.isFinished(status))
+            ? Self.finishedEnd9483(
+                dataPoints: dataPoints,
+                checkpoints: checkpoints,
+                finished: EventState.isFinished(status),
+                settledDraw: Self.isSettledDraw9483(
+                    status: status,
+                    homeScore: homeScore,
+                    awayScore: awayScore,
+                    servedSettledResult: servedSettledResult
+                )
+            )
             : nil
         let endLine = checkpoints?.survivors
             ?? dataPoints.filter { $0.source == Self.primarySource(in: dataPoints) }
@@ -2444,7 +2465,13 @@ struct OddsChartView: View {
                         LiveChartEdgeMarker(
                             selection: selection, proxy: proxy, plotFrame: plotFrame,
                             tail: liveSplit.tail, segments: liveSplit.segments,
-                            label: "\(homeShort) \(liveEdge.homeLabel)",
+                            label: LiveChartEdgeMarkerPlan.endpointLabel(
+                                homeShort: homeShort,
+                                awayShort: awayShort,
+                                reading: liveEdge,
+                                sides: axis.sides,
+                                fallbackAwayLabel: pairedAwayLabel9483
+                            ),
                             rising: Self.liveEdgeRising(priceActivity, showsPreview: liveEdgeShowsPreview),
                             lineColor: colorForSource(liveSplit.source, sources: sources),
                             lineStyle: strokeStyleForSource(liveSplit.source, sources: sources),
@@ -4351,16 +4378,24 @@ struct OddsChartView: View {
         let component: Calendar.Component
         let count: Int
         let labelStyle: LabelStyle
+        var timeZone: TimeZone = .autoupdatingCurrent
 
         var format: Date.FormatStyle {
+            format(in: timeZone)
+        }
+
+        func format(in timeZone: TimeZone) -> Date.FormatStyle {
+            var style: Date.FormatStyle
             switch labelStyle {
-            case .timeOfDay: return .dateTime.hour().minute()
-            case .hourOfDay: return .dateTime.hour()
-            case .dayAndHour: return .dateTime.weekday(.abbreviated).hour()
-            case .dayAndTime: return .dateTime.weekday(.abbreviated).hour().minute()
-            case .calendarDay: return .dateTime.month(.abbreviated).day()
-            case .monthAndYear: return .dateTime.month(.abbreviated).year()
+            case .timeOfDay: style = .dateTime.hour().minute()
+            case .hourOfDay: style = .dateTime.hour()
+            case .dayAndHour: style = .dateTime.weekday(.abbreviated).hour()
+            case .dayAndTime: style = .dateTime.weekday(.abbreviated).hour().minute()
+            case .calendarDay: style = .dateTime.month(.abbreviated).day()
+            case .monthAndYear: style = .dateTime.month(.abbreviated).year()
             }
+            style.timeZone = timeZone
+            return style
         }
     }
 
@@ -4553,11 +4588,14 @@ struct OddsChartView: View {
                 : ticks <= Double(maxTicks(for: style)) / Double(max(labelScale, 1))
             if fits {
                 return XAxisPlan(
-                    component: candidate.component, count: candidate.count, labelStyle: style)
+                    component: candidate.component, count: candidate.count,
+                    labelStyle: style, timeZone: calendar.timeZone)
             }
         }
         let last = xAxisStrides[xAxisStrides.count - 1]
-        return XAxisPlan(component: last.component, count: last.count, labelStyle: .calendarDay)
+        return XAxisPlan(
+            component: last.component, count: last.count,
+            labelStyle: .calendarDay, timeZone: calendar.timeZone)
     }
 
     /// The width a chart's time axis is PLANNED on (#1833): its own plot, capped
@@ -5219,12 +5257,22 @@ extension OddsChartView {
         return "\(homeShort) \(printed.home)"
     }
 
+    /// #11449 — A finished match whose settled outcome is a draw never stamps
+    /// a single team's last pre-whistle win chance (`NAP 67%`) onto a home-only
+    /// fallback chart. Uses the page's authoritative `EventOutcome.resolve`.
+    static func isSettledDraw9483(status: String?, homeScore: Int?, awayScore: Int?,
+                                  servedSettledResult: String?) -> Bool {
+        EventOutcome.resolve(status: status, homeScore: homeScore, awayScore: awayScore,
+                             servedResult: servedSettledResult) == .draw
+    }
+
     /// The end of a finished game's line: the resting checkpoint endpoint
     /// under a mount, else the primary line's last reading. Nil before the
-    /// game is over (a live page's end is its edge marker's).
+    /// game is over (a live page's end is its edge marker's) or when settled as
+    /// a draw (where stamping a team's chance beside the final line is false).
     static func finishedEnd9483(dataPoints: [ChartDataPoint], checkpoints: PublicationCheckpointMount4974?,
-                                finished: Bool) -> (date: Date, probability: Double)? {
-        guard finished else { return nil }
+                                finished: Bool, settledDraw: Bool = false) -> (date: Date, probability: Double)? {
+        guard finished, !settledDraw else { return nil }
         if let checkpoints {
             guard let end = checkpoints.resting, let date = end.date, let probability = end.probability
             else { return nil }
@@ -5252,8 +5300,17 @@ extension OddsChartView {
     /// geometry, so neither can move it.
     private func finishedEndKeyReading9483(dataPoints: [ChartDataPoint]) -> (text: String, ink: Color)? {
         let checkpoints = checkpointMount(for: dataPoints)
-        guard let end = Self.finishedEnd9483(dataPoints: dataPoints, checkpoints: checkpoints,
-                                             finished: EventState.isFinished(status)),
+        guard let end = Self.finishedEnd9483(
+            dataPoints: dataPoints,
+            checkpoints: checkpoints,
+            finished: EventState.isFinished(status),
+            settledDraw: Self.isSettledDraw9483(
+                status: status,
+                homeScore: homeScore,
+                awayScore: awayScore,
+                servedSettledResult: servedSettledResult
+            )
+        ),
               let text = Self.endKeyReading9483(
                 end, ink: Self.primaryInk9483(dataPoints: dataPoints, checkpoints: checkpoints,
                                               gameStart: gameStartDate),

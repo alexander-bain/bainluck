@@ -357,8 +357,11 @@ class TestGamePricePolicy:
     @pytest.mark.parametrize("rail", GAMES_RAIL_KEYS)
     @pytest.mark.parametrize("slot", ["primary", "stale"])
     async def test_legacy_game_prices_rebuild_with_current_policy(self, client, rail, slot):
-        opening_only = _format_game_brief(FakeEvent(opening=0.58, opening_away=0.42), SPORT)
-        same_current_event = FakeEvent(espn=0.58, opening=0.58, opening_away=0.42)
+        # #13131: `SPORT` is soccer (three-way), so a priced fixture carries
+        # a real draw share (`0.58 + 0.20 = 0.78`, draw `0.22`) instead of a
+        # two-way `0.58 / 0.42` pair with no draw.
+        opening_only = _format_game_brief(FakeEvent(opening=0.58, opening_away=0.20), SPORT)
+        same_current_event = FakeEvent(espn=0.58, opening=0.58, opening_away=0.20)
         same_current_event.id += 1
         same_current = _format_game_brief(same_current_event, SPORT)
         legacy_game = {
@@ -380,9 +383,15 @@ class TestGamePricePolicy:
         assert response == cached_response == rebuilt
         assert "current_odds" not in response[rail][0]
         assert response[rail][0]["opening_odds"] == {
-            "home_probability": 0.58, "away_probability": 0.42
+            "home_probability": 0.58, "away_probability": 0.20
         }
-        assert response[rail][1]["current_odds"] == response[rail][1]["opening_odds"]
+        assert response[rail][1]["current_odds"]["home_probability"] == pytest.approx(
+            response[rail][1]["opening_odds"]["home_probability"]
+        )
+        assert response[rail][1]["current_odds"]["away_probability"] == pytest.approx(
+            response[rail][1]["opening_odds"]["away_probability"]
+        )
+        assert response[rail][1]["current_odds"]["draw_probability"] == pytest.approx(0.22)
 
     async def test_outage_does_not_resurrect_a_legacy_game_mirror(self, client):
         legacy = _mirror(built_ago_seconds=6600)

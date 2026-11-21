@@ -121,7 +121,7 @@ export function TeamFutureRow({ item }: { item: TeamFutureItem }) {
             }`}
           >
             {item.probability_change_24h! > 0 ? "+" : "-"}
-            {formatMovementPoints(item.probability_change_24h)} pts
+            {formatMovementPoints(item.probability_change_24h)} points
           </div>
         )}
       </div>

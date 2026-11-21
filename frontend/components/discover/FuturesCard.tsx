@@ -769,7 +769,7 @@ export function FuturesCard({ item, data, liked, setLiked, onDismiss, trending, 
   // aria-says-one-thing/eye-says-another split #4066 fixed one card over. Both
   // render sites (the hero and the photo-scrim variant) read this one string.
   const movementStr = movementPts != null && Math.abs(movementPts) >= HERO_MIN_MOVEMENT_POINTS && !probIsPlaceholder
-    ? `${movementUp ? "↑" : "↓"} ${movementDisplay} pts`
+    ? `${movementUp ? "↑" : "↓"} ${movementDisplay} ${movementDisplay === "1" || movementDisplay === "1.0" ? "point" : "points"}`
     : null;
   // L2-156 Item 3 — explain the arrow: it's a 24h probability move, not a rank change.
   const movementTitle = movementDisplay != null

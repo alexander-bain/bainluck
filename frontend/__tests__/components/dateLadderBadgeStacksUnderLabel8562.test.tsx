@@ -49,8 +49,8 @@ describe("#8562 a date ladder's badge moves under its label", () => {
 
   test("the badges still print, with their unit and their spoken form", () => {
     const html = render(warsh);
-    expect(html).toContain("▲4.5 pts");
-    expect(html).toContain("▲22.0 pts");
+    expect(html).toContain("▲4.5 points");
+    expect(html).toContain("▲22.0 points");
     expect(html).toContain('aria-label="up 22.0 points"');
     // the un-moved rung prints no badge line at all
     expect(html.match(/▲/g)).toHaveLength(2);
@@ -59,7 +59,7 @@ describe("#8562 a date ladder's badge moves under its label", () => {
   test("ONE label width on every rung, wide enough for the badge line under it", () => {
     const widths = labelWidths(render(warsh));
     expect(widths).toEqual(
-      Array(3).fill("clamp(2.75rem, max(calc(11ch + 0.75rem), calc(9ch + 0.5rem)), 45%)"),
+      Array(3).fill("clamp(2.75rem, max(calc(11ch + 0.75rem), calc(12ch + 0.5rem)), 45%)"),
     );
   });
 
@@ -80,7 +80,7 @@ describe("#8562 controls — the ladders the first half fixed stay inline", () =
     expect(stackedCells(html)).toEqual([]);
     const slots = slotWidths(html);
     expect(slots).toHaveLength(4);
-    expect(new Set(slots)).toEqual(new Set(["calc(8ch + 0.5rem)"]));
+    expect(new Set(slots)).toEqual(new Set(["calc(11ch + 0.5rem)"]));
     expect(labelWidths(html)).toEqual(Array(4).fill("clamp(2.75rem, calc(4ch + 0.75rem), 45%)"));
   });
 

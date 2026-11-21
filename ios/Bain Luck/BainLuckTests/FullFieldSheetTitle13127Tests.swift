@@ -106,6 +106,52 @@ final class FullFieldSheetTitle13127Tests: XCTestCase {
         return (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
     }
 
+    func testGrammysVenueLossShowsOutAfterTheContenders() async throws {
+        let payload = """
+        {
+          "id": 58492243,
+          "name": "Grammys 2027: Song of the Year Winner",
+          "category": "entertainment",
+          "status": "open",
+          "mutually_exclusive": true,
+          "outcomes": [
+            {"id": 217003204, "name": "I Just Might — Bruno Mars", "probability": 0.0,
+             "is_winner": false, "resolution_source": "api_settlement", "is_out": true},
+            {"id": 217003206, "name": "the cure — Olivia Rodrigo", "probability": 0.2405},
+            {"id": 217003202, "name": "Man I Need — Olivia Dean", "probability": 0.1165}
+          ]
+        }
+        """
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let market = try decoder.decode(FuturesMarketDetail.self, from: Data(payload.utf8))
+        let presentation = FuturesAtlasPresentation11666.build(market: market)
+        let row = try XCTUnwrap(presentation.body.allRows.last)
+        XCTAssertEqual(row.id, 217003204)
+        XCTAssertEqual(row.displayValue.primaryLabel, "Out")
+        XCTAssertNil(row.displayValue.asOfText)
+        XCTAssertNil(row.openingText)
+        XCTAssertEqual(presentation.header.selectedOutcomeId, 217003206)
+
+        let sheet = FuturesAtlasFullFieldSheetView11666(
+            marketTitle: presentation.header.marketTitle,
+            subtitleBadge: presentation.body.subtitleBadge,
+            rows: presentation.body.allRows,
+            selectedOutcomeId: presentation.header.selectedOutcomeId,
+            showsRank: true,
+            onSelectOutcome: { _ in }
+        )
+        let image = try await captureSheetSnapshot(sheet, scheme: .light)
+        let text = try recognizeLines(in: image).joined(separator: " ")
+        XCTAssertTrue(text.contains("Out"))
+        XCTAssertFalse(text.contains("#3"))
+
+        let attachment = XCTAttachment(image: image)
+        attachment.name = "13127-grammys-out-390"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
+
     func testFullFieldSheetWrapsGrammysSongOfTheYearTitleWithZeroEllipsis() async throws {
         let market = try grammysSongOfTheYearMarket()
         let presentation = FuturesAtlasPresentation11666.build(market: market)

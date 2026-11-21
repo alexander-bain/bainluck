@@ -311,7 +311,7 @@ describe("CombinedFeedCard (/sports Top Markets, grouped) — rendered markup", 
   // moved to the new one. A third unit change cannot hollow them out either.
   const ZERO_IN_ANY_UNIT = [
     "0.0%",
-    "0.0 pts",
+    "0.0 points",
   ];
 
   it("renders NO zero badge for a move that would print as zero", () => {
@@ -348,13 +348,13 @@ describe("CombinedFeedCard (/sports Top Markets, grouped) — rendered markup", 
     // things this control is about — are byte-identical before and after, which
     // is what makes the edit legitimate rather than a rewrite to fit the ship.
     expect(badges(renderCombined([["Los Angeles Dodgers", 0.00149]]))).toEqual([
-      "+0.1 pts",
+      "+0.1 points",
     ]);
     expect(badges(renderCombined([["Tampa Bay Rays", -0.001251]]))).toEqual([
-      "-0.1 pts",
+      "-0.1 points",
     ]);
-    expect(badges(renderCombined([["The Odyssey", -0.07]]))).toEqual(["-7.0 pts"]);
-    expect(badges(renderCombined([["Big Mover", 0.64]]))).toEqual(["+64.0 pts"]);
+    expect(badges(renderCombined([["The Odyssey", -0.07]]))).toEqual(["-7.0 points"]);
+    expect(badges(renderCombined([["Big Mover", 0.64]]))).toEqual(["+64.0 points"]);
   });
 
   it("CONTROL (green on master too) — a null movement was always silent", () => {

@@ -156,7 +156,7 @@ describe("#7710 a season-futures row never rounds a live price into an absolute"
     // grammar just because its price is high.
     expect(text).toContain("Prop");
     expect(text).not.toContain("What hit");
-    expect(text).toContain("-0.3 pts");
+    expect(text).toContain("-0.3 points");
   });
 
   test("CONTROL: a settled winner still prints a plain 100% under ✓ Won", () => {
