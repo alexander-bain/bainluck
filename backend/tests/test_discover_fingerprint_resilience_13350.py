@@ -187,3 +187,267 @@ async def test_published_themes_lkg_backoff_and_singleflight(monkeypatch):
     finally:
         for coro in scheduled:
             coro.close()
+
+
+async def test_fingerprint_lkg_expires_after_ten_minutes_for_process_and_redis(
+    monkeypatch,
+):
+    import json
+
+    fc._reset_fingerprint_cache_for_tests()
+    fake, scheduled = _install_fake_redis(monkeypatch)
+    clock = {"mono": 1000.0, "wall": 2_000_000.0}
+    monkeypatch.setattr(fc.time, "monotonic", lambda: clock["mono"])
+    monkeypatch.setattr(fc.time, "time", lambda: clock["wall"])
+    try:
+        healthy = _Session(value="4:1")
+        fp = await fc.feed_collections_cache_fingerprint(healthy, max_age_seconds=5.0)
+        assert fp is not None
+        await _drain(scheduled)
+
+        # Fail within 10 min: process copy survives.
+        clock["mono"] += 120.0
+        clock["wall"] += 120.0
+        failing = _Session(error=RuntimeError("db down"))
+        assert (
+            await fc.feed_collections_cache_fingerprint(failing, max_age_seconds=5.0)
+            == fp
+        )
+        assert fc.get_fingerprint_cache_status()["state"] == "fallback"
+
+        # Past 10 min without a successful read: process LKG expires -> None.
+        clock["mono"] = 1601.0
+        clock["wall"] = 2_000_601.0
+        fc._fingerprint_retry_after = 0.0
+        assert (
+            await fc.feed_collections_cache_fingerprint(failing, max_age_seconds=5.0)
+            is None
+        )
+        assert fc.get_fingerprint_cache_status()["state"] == "fallback_expired"
+
+        # Fresh Redis envelope (< 10 min old) rescues cold worker with true age;
+        # >= 10 min old Redis envelope returns None.
+        fc._reset_fingerprint_cache_for_tests()
+        clock["mono"] = 2000.0
+        clock["wall"] = 3_000_250.0
+        fake.store[fc.FINGERPRINT_REDIS_LKG_KEY] = json.dumps(
+            {"v": 1, "fp": fp, "read_at": 3_000_000.0}
+        )
+        rescued = await fc.feed_collections_cache_fingerprint(
+            failing, max_age_seconds=5.0
+        )
+        assert rescued == fp
+        status = fc.get_fingerprint_cache_status()
+        assert status["state"] == "fallback"
+        assert status["source"] == "fallback_redis"
+        assert status["copy_age_seconds"] == 250.0
+
+        fc._reset_fingerprint_cache_for_tests()
+        clock["wall"] = 3_000_601.0
+        assert (
+            await fc.feed_collections_cache_fingerprint(failing, max_age_seconds=5.0)
+            is None
+        )
+    finally:
+        for coro in scheduled:
+            coro.close()
+
+
+async def test_published_themes_lkg_expires_after_ten_minutes_for_process_and_redis(
+    monkeypatch,
+):
+    import json
+
+    tcr._reset_published_cache_for_tests()
+    fake, scheduled = _install_fake_redis(monkeypatch)
+    clock = {"mono": 1000.0, "wall": 2_000_000.0}
+    monkeypatch.setattr(tcr.time, "monotonic", lambda: clock["mono"])
+    monkeypatch.setattr(tcr.time, "time", lambda: clock["wall"])
+    try:
+        healthy = _Session(rows=[(101, "ai", 18)])
+        pub = await tcr.read_published_themes(
+            max_age_seconds=5.0, session_factory=lambda: healthy
+        )
+        assert pub is not None
+        await _drain(scheduled)
+
+        clock["mono"] += 120.0
+        clock["wall"] += 120.0
+        failing = _Session(error=RuntimeError("db down"))
+        assert (
+            await tcr.read_published_themes(
+                max_age_seconds=5.0, session_factory=lambda: failing
+            )
+            == pub
+        )
+        assert tcr.get_published_themes_cache_status()["state"] == "fallback"
+
+        clock["mono"] = 1601.0
+        clock["wall"] = 2_000_601.0
+        tcr._published_retry_after = 0.0
+        assert (
+            await tcr.read_published_themes(
+                max_age_seconds=5.0, session_factory=lambda: failing
+            )
+            is None
+        )
+        assert tcr.get_published_themes_cache_status()["state"] == "fallback_expired"
+
+        tcr._reset_published_cache_for_tests()
+        clock["mono"] = 2000.0
+        clock["wall"] = 3_000_240.0
+        fake.store[tcr.THEME_PUBLICATION_REDIS_LKG_KEY] = json.dumps(
+            {"v": 1, "read_at": 3_000_000.0, "themes": [[101, "ai", 18]]}
+        )
+        rescued = await tcr.read_published_themes(
+            max_age_seconds=5.0, session_factory=lambda: failing
+        )
+        assert rescued == pub
+        status = tcr.get_published_themes_cache_status()
+        assert status["state"] == "fallback"
+        assert status["source"] == "fallback_redis"
+        assert status["copy_age_seconds"] == 240.0
+
+        tcr._reset_published_cache_for_tests()
+        clock["wall"] = 3_000_601.0
+        assert (
+            await tcr.read_published_themes(
+                max_age_seconds=5.0, session_factory=lambda: failing
+            )
+            is None
+        )
+    finally:
+        for coro in scheduled:
+            coro.close()
+
+
+async def test_fallback_logs_one_error_after_five_minutes_and_resets_on_recovery(
+    monkeypatch, caplog
+):
+    import logging
+
+    fc._reset_fingerprint_cache_for_tests()
+    tcr._reset_published_cache_for_tests()
+    clock = {"mono": 1000.0, "wall": 2_000_000.0}
+    monkeypatch.setattr(fc.time, "monotonic", lambda: clock["mono"])
+    monkeypatch.setattr(fc.time, "time", lambda: clock["wall"])
+    monkeypatch.setattr(tcr.time, "monotonic", lambda: clock["mono"])
+    monkeypatch.setattr(tcr.time, "time", lambda: clock["wall"])
+
+    healthy_fp = _Session(value="4:1")
+    healthy_th = _Session(rows=[(101, "ai", 18)])
+    await fc.feed_collections_cache_fingerprint(healthy_fp, max_age_seconds=5.0)
+    await tcr.read_published_themes(
+        max_age_seconds=5.0, session_factory=lambda: healthy_th
+    )
+
+    failing = _Session(error=RuntimeError("db down"))
+    with caplog.at_level(logging.ERROR):
+        # First failure at t=1010 -> fallback starts, no ERROR yet.
+        clock["mono"] = 1010.0
+        clock["wall"] = 2_000_010.0
+        await fc.feed_collections_cache_fingerprint(failing, max_age_seconds=5.0)
+        await tcr.read_published_themes(
+            max_age_seconds=5.0, session_factory=lambda: failing
+        )
+        assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
+
+        # Still under 5 min (t=1309) -> still no ERROR.
+        clock["mono"] = 1309.0
+        clock["wall"] = 2_000_309.0
+        await fc.feed_collections_cache_fingerprint(failing, max_age_seconds=5.0)
+        await tcr.read_published_themes(
+            max_age_seconds=5.0, session_factory=lambda: failing
+        )
+        assert [r for r in caplog.records if r.levelno >= logging.ERROR] == []
+
+        # At t=1310 (300s of fallback) -> ONE ERROR each, never repeated at t=1320.
+        clock["mono"] = 1310.0
+        clock["wall"] = 2_000_310.0
+        await fc.feed_collections_cache_fingerprint(failing, max_age_seconds=5.0)
+        await tcr.read_published_themes(
+            max_age_seconds=5.0, session_factory=lambda: failing
+        )
+        await fc.feed_collections_cache_fingerprint(failing, max_age_seconds=5.0)
+        await tcr.read_published_themes(
+            max_age_seconds=5.0, session_factory=lambda: failing
+        )
+        errs = [r for r in caplog.records if r.levelno >= logging.ERROR]
+        assert len(errs) == 2
+
+    # Recovery clears fallback state; a future 5-min episode logs once again.
+    clock["mono"] = 1320.0
+    clock["wall"] = 2_000_320.0
+    fc._fingerprint_retry_after = 0.0
+    tcr._published_retry_after = 0.0
+    await fc.feed_collections_cache_fingerprint(healthy_fp, max_age_seconds=5.0)
+    await tcr.read_published_themes(
+        max_age_seconds=5.0, session_factory=lambda: healthy_th
+    )
+    assert fc.get_fingerprint_cache_status()["state"] == "fresh"
+    assert tcr.get_published_themes_cache_status()["state"] == "fresh"
+
+
+async def test_health_surfaces_discover_publication_reads_and_asyncmock_session(
+    monkeypatch,
+):
+    import json
+    from unittest.mock import AsyncMock, MagicMock
+
+    from app.routes import health as health_route
+
+    fc._reset_fingerprint_cache_for_tests()
+    tcr._reset_published_cache_for_tests()
+    clock = {"mono": 500.0, "wall": 1_000_000.0}
+    monkeypatch.setattr(fc.time, "monotonic", lambda: clock["mono"])
+    monkeypatch.setattr(tcr.time, "monotonic", lambda: clock["mono"])
+
+    # AsyncMock DB double must not raise TypeError on begin_nested().
+    mock_res = MagicMock()
+    mock_res.scalar.return_value = "4:1"
+    mock_session = AsyncMock()
+    mock_session.execute.return_value = mock_res
+    fp = await fc.feed_collections_cache_fingerprint(mock_session, max_age_seconds=5.0)
+    assert isinstance(fp, str) and fp
+
+    class _Conn:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return False
+
+        async def execute(self, *_args):
+            return None
+
+    class _FakeEngine:
+        def connect(self):
+            return _Conn()
+
+    fake_rc = MagicMock()
+    fake_rc.ping.return_value = True
+    monkeypatch.setattr("app.services.database.engine", _FakeEngine())
+    monkeypatch.setattr("app.tasks.redis_state.get_redis_client", lambda: fake_rc)
+
+    clock["mono"] = 502.5
+    resp = await health_route.api_health_check()
+    body = json.loads(resp.body.decode("utf-8"))
+    pub = body["discover_publication_reads"]
+    assert pub["collections_fingerprint"]["state"] == "fresh"
+    assert pub["collections_fingerprint"]["copy_age_seconds"] == 2.5
+    assert pub["published_themes"]["state"] == "uninitialized"
+
+    # Trigger fallback and verify health reports it without extra I/O.
+    clock["mono"] = 512.5
+    await fc.feed_collections_cache_fingerprint(
+        _Session(error=RuntimeError("db down")), max_age_seconds=5.0
+    )
+    clock["mono"] = 520.0
+    resp2 = await health_route.api_health_check()
+    body2 = json.loads(resp2.body.decode("utf-8"))
+    fp_status = body2["discover_publication_reads"]["collections_fingerprint"]
+    assert fp_status["state"] == "fallback"
+    assert fp_status["source"] == "fallback_process"
+    assert fp_status["copy_age_seconds"] == 20.0
+    assert fp_status["fallback_duration_seconds"] == 7.5
+

@@ -7,7 +7,9 @@ No reserved slot, score bonus, assembly, or publication decision lives here.
 
 import asyncio
 import hashlib
+import json
 import logging
+import math
 import time
 from typing import Optional
 
@@ -22,13 +24,18 @@ logger = logging.getLogger(__name__)
 COLLECTION_READ_BUDGET_SECONDS = 0.25
 FINGERPRINT_READ_BUDGET_SECONDS = 0.5
 FINGERPRINT_FAILURE_BACKOFF_SECONDS = 5.0
+FINGERPRINT_LKG_MAX_AGE_SECONDS = 600.0
+FINGERPRINT_FALLBACK_ERROR_LOG_SECONDS = 300.0
 FINGERPRINT_REDIS_LKG_KEY = "feed:collections_fingerprint:lkg:v1"
-FINGERPRINT_REDIS_LKG_TTL_SECONDS = 3600
+FINGERPRINT_REDIS_LKG_TTL_SECONDS = 600
 FINGERPRINT_UNAVAILABLE = "unverified"
 _FINGERPRINT_SINGLEFLIGHT_KEY = "feed_collections:fingerprint"
 
 _fingerprint_cache: tuple[float, str] | None = None
 _fingerprint_retry_after: float = 0.0
+_fingerprint_fallback_since: Optional[float] = None
+_fingerprint_fallback_error_logged: bool = False
+_fingerprint_source: str = "uninitialized"
 
 #: #10003: what a cached collection-bearing page is keyed on. One row per
 #: discoverable published root hub, as ``id:membership_revision``. The revision
@@ -67,10 +74,15 @@ def feed_collections_enabled(
 
 
 def _reset_fingerprint_cache_for_tests() -> None:
-    """Clear the process-local fingerprint memo and failure backoff."""
+    """Clear the process-local fingerprint memo, backoff, and fallback state."""
     global _fingerprint_cache, _fingerprint_retry_after
+    global _fingerprint_fallback_since, _fingerprint_fallback_error_logged
+    global _fingerprint_source
     _fingerprint_cache = None
     _fingerprint_retry_after = 0.0
+    _fingerprint_fallback_since = None
+    _fingerprint_fallback_error_logged = False
+    _fingerprint_source = "uninitialized"
 
 
 def _is_postgres_async_session(db) -> bool:
@@ -83,30 +95,137 @@ def _is_postgres_async_session(db) -> bool:
     return getattr(getattr(bind, "dialect", None), "name", None) == "postgresql"
 
 
-async def _read_redis_lkg_fingerprint() -> Optional[str]:
-    """Read the durable last-known-good collection fingerprint from Redis."""
-    return await _rc.read_redis_lkg_text(FINGERPRINT_REDIS_LKG_KEY)
+async def _read_redis_lkg_fingerprint() -> Optional[tuple[str, float]]:
+    """Read durable LKG collection fingerprint + age (s) from Redis, or None."""
+    raw = await _rc.read_redis_lkg_text(FINGERPRINT_REDIS_LKG_KEY)
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except Exception:
+        return None
+    if not isinstance(parsed, dict):
+        return None
+    fp = parsed.get("fp")
+    read_at = parsed.get("read_at")
+    if (
+        not isinstance(fp, str)
+        or not fp
+        or isinstance(read_at, bool)
+        or not isinstance(read_at, (int, float))
+        or not math.isfinite(float(read_at))
+    ):
+        return None
+    age = max(0.0, time.time() - float(read_at))
+    if age >= FINGERPRINT_LKG_MAX_AGE_SECONDS:
+        return None
+    return fp, age
 
 
 def _remember_redis_lkg_fingerprint(fingerprint: str) -> None:
-    """Persist the healthy fingerprint to Redis LKG without blocking callers."""
+    """Persist healthy fingerprint + wall-clock read timestamp to Redis LKG."""
     if not fingerprint:
         return
+    encoded = json.dumps(
+        {"v": 1, "fp": fingerprint, "read_at": round(time.time(), 3)},
+        separators=(",", ":"),
+    )
     _rc.write_redis_lkg_text(
-        FINGERPRINT_REDIS_LKG_KEY, FINGERPRINT_REDIS_LKG_TTL_SECONDS, fingerprint
+        FINGERPRINT_REDIS_LKG_KEY, FINGERPRINT_REDIS_LKG_TTL_SECONDS, encoded
     )
 
 
-async def _fallback_lkg_fingerprint(max_age_seconds: float) -> Optional[str]:
-    """Return process LKG, else Redis LKG; never raise."""
-    global _fingerprint_cache
+def _maybe_log_fallback_error(now: float, copy_age: Optional[float]) -> None:
+    global _fingerprint_fallback_error_logged
+    if (
+        _fingerprint_fallback_since is not None
+        and not _fingerprint_fallback_error_logged
+        and (now - _fingerprint_fallback_since) >= FINGERPRINT_FALLBACK_ERROR_LOG_SECONDS
+    ):
+        _fingerprint_fallback_error_logged = True
+        logger.error(
+            "Discover collection fingerprint fallback active for %.0fs (copy_age_s=%s)",
+            now - _fingerprint_fallback_since,
+            f"{copy_age:.0f}" if copy_age is not None else "none",
+        )
+
+
+async def _fallback_lkg_fingerprint(now: Optional[float] = None) -> Optional[str]:
+    """Return unexpired process or Redis LKG (< 10 min), else None."""
+    global _fingerprint_cache, _fingerprint_source
+    t = time.monotonic() if now is None else float(now)
     if _fingerprint_cache is not None:
-        return _fingerprint_cache[1]
-    redis_fp = await _read_redis_lkg_fingerprint()
-    if redis_fp is not None:
-        # Store aged so the next request past backoff still refreshes from DB.
-        _fingerprint_cache = (time.monotonic() - max_age_seconds, redis_fp)
-    return redis_fp
+        age = max(0.0, t - _fingerprint_cache[0])
+        if age < FINGERPRINT_LKG_MAX_AGE_SECONDS:
+            if _fingerprint_source != "fallback_redis":
+                _fingerprint_source = "fallback_process"
+            _maybe_log_fallback_error(t, age)
+            return _fingerprint_cache[1]
+        _fingerprint_cache = None
+
+    redis_hit = await _read_redis_lkg_fingerprint()
+    if redis_hit is not None:
+        redis_fp, redis_age = redis_hit
+        _fingerprint_cache = (t - redis_age, redis_fp)
+        _fingerprint_source = "fallback_redis"
+        _maybe_log_fallback_error(t, redis_age)
+        return redis_fp
+
+    _fingerprint_source = "fallback_expired"
+    _maybe_log_fallback_error(t, None)
+    return None
+
+
+def _record_fingerprint_healthy(fp: str) -> None:
+    global _fingerprint_cache, _fingerprint_retry_after
+    global _fingerprint_fallback_since, _fingerprint_fallback_error_logged
+    global _fingerprint_source
+    _fingerprint_cache = (time.monotonic(), fp)
+    _fingerprint_retry_after = 0.0
+    _fingerprint_fallback_since = None
+    _fingerprint_fallback_error_logged = False
+    _fingerprint_source = "fresh"
+
+
+def _record_fingerprint_failed(now_fail: float) -> None:
+    global _fingerprint_retry_after, _fingerprint_fallback_since
+    _fingerprint_retry_after = now_fail + FINGERPRINT_FAILURE_BACKOFF_SECONDS
+    if _fingerprint_fallback_since is None:
+        _fingerprint_fallback_since = now_fail
+
+
+def get_fingerprint_cache_status(*, now: Optional[float] = None) -> dict:
+    """Zero-I/O fallback visibility snapshot for ``/api/health``."""
+    t = time.monotonic() if now is None else float(now)
+    copy_age = (
+        max(0.0, t - _fingerprint_cache[0])
+        if _fingerprint_cache is not None
+        else None
+    )
+    fallback_duration = (
+        max(0.0, t - _fingerprint_fallback_since)
+        if _fingerprint_fallback_since is not None
+        else None
+    )
+    if _fingerprint_fallback_since is not None:
+        state = (
+            "fallback"
+            if copy_age is not None and copy_age < FINGERPRINT_LKG_MAX_AGE_SECONDS
+            else "fallback_expired"
+        )
+    elif _fingerprint_source == "fresh" and _fingerprint_cache is not None:
+        state = "fresh"
+    else:
+        state = "uninitialized"
+    return {
+        "state": state,
+        "source": _fingerprint_source,
+        "copy_age_seconds": round(copy_age, 1) if copy_age is not None else None,
+        "fallback_duration_seconds": (
+            round(fallback_duration, 1) if fallback_duration is not None else None
+        ),
+        "max_age_seconds": FINGERPRINT_LKG_MAX_AGE_SECONDS,
+    }
 
 
 async def feed_collections_cache_fingerprint(
@@ -117,24 +236,26 @@ async def feed_collections_cache_fingerprint(
     #10003 + #13350. ``add_feed_collections`` reads publication on every BUILD;
     this lets a built page be reused while that publication state holds, with
     bounded query timeout, singleflight refresh, 5 s failure backoff, and
-    process/Redis last-known-good fallback so a slow or failing DB check never
-    switches Discover's cache off.
+    process/Redis last-known-good fallback (capped at 10 min) so a slow or
+    failing DB check never switches Discover's cache off.
 
     When ``max_age_seconds == 0.0`` (default / prewarm / strict tests), no LKG
     fallback is returned on failure, preserving ``None`` -> did not verify.
     """
-    global _fingerprint_cache, _fingerprint_retry_after
+    global _fingerprint_fallback_since
     now = time.monotonic()
     max_age_seconds = min(max(0.0, float(max_age_seconds)), 5.0)
     timeout_s = max(0.0, float(budget_seconds))
 
     if max_age_seconds > 0:
-        if _fingerprint_cache is not None and (
-            now - _fingerprint_cache[0] < max_age_seconds or now < _fingerprint_retry_after
+        if (
+            _fingerprint_cache is not None
+            and _fingerprint_source == "fresh"
+            and (now - _fingerprint_cache[0]) < max_age_seconds
         ):
             return _fingerprint_cache[1]
         if now < _fingerprint_retry_after:
-            return await _fallback_lkg_fingerprint(max_age_seconds)
+            return await _fallback_lkg_fingerprint(now)
 
     async def _query_db() -> Optional[str]:
         if timeout_s <= 0:
@@ -165,7 +286,7 @@ async def feed_collections_cache_fingerprint(
                         return raw
 
                 raw = await asyncio.wait_for(_pg_run(), timeout=timeout_s + 0.25)
-            else:
+            elif isinstance(db, AsyncSession):
                 async def _generic_run():
                     async with db.begin_nested():
                         return (
@@ -176,6 +297,16 @@ async def feed_collections_cache_fingerprint(
                         ).scalar()
 
                 raw = await asyncio.wait_for(_generic_run(), timeout=timeout_s)
+            else:
+                async def _double_run():
+                    return (
+                        await db.execute(
+                            text(_FINGERPRINT_SQL),
+                            {"slug_pattern": container_discovery.DISCOVERABLE_SLUG_PATTERN},
+                        )
+                    ).scalar()
+
+                raw = await asyncio.wait_for(_double_run(), timeout=timeout_s)
         except asyncio.CancelledError:
             raise
         except Exception:
@@ -210,19 +341,22 @@ async def feed_collections_cache_fingerprint(
         except asyncio.CancelledError:
             raise
         except Exception:
+            # Waiter timed out or leader failed; fall back to LKG.
             pass
-        return await _fallback_lkg_fingerprint(max_age_seconds)
+        if _fingerprint_fallback_since is None:
+            _fingerprint_fallback_since = time.monotonic()
+        return await _fallback_lkg_fingerprint()
 
     try:
         fp = await _query_db()
         if fp is not None:
-            _fingerprint_cache = (time.monotonic(), fp)
-            _fingerprint_retry_after = 0.0
+            _record_fingerprint_healthy(fp)
             _remember_redis_lkg_fingerprint(fp)
             _rc.finish_build(_FINGERPRINT_SINGLEFLIGHT_KEY, fut, result=fp)
             return fp
-        _fingerprint_retry_after = time.monotonic() + FINGERPRINT_FAILURE_BACKOFF_SECONDS
-        fallback = await _fallback_lkg_fingerprint(max_age_seconds)
+        now_fail = time.monotonic()
+        _record_fingerprint_failed(now_fail)
+        fallback = await _fallback_lkg_fingerprint(now_fail)
         _rc.finish_build(_FINGERPRINT_SINGLEFLIGHT_KEY, fut, result=fallback)
         return fallback
     except BaseException as exc:

@@ -167,6 +167,23 @@ async def api_health_check():
         )
         roundup_reads_10m = None
 
+    discover_publication_reads = None
+    try:
+        from app.utils.feed_collections import get_fingerprint_cache_status
+        from app.utils.theme_collection_ref import get_published_themes_cache_status
+
+        discover_publication_reads = {
+            "collections_fingerprint": get_fingerprint_cache_status(),
+            "published_themes": get_published_themes_cache_status(),
+        }
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).debug(
+            "api_health_check: discover_publication_reads unavailable", exc_info=True
+        )
+        discover_publication_reads = None
+
     from fastapi.responses import JSONResponse
     return JSONResponse(
         status_code=code,
@@ -186,6 +203,7 @@ async def api_health_check():
             # on this web process (pure in-memory, 0 I/O), split into kept vs
             # last-resort drops so any lane can watch one number on /api/health.
             "roundup_reads_10m": roundup_reads_10m,
+            "discover_publication_reads": discover_publication_reads,
             "commit": GIT_COMMIT,
             "uptime_seconds": int(time.time() - _PROCESS_START),
             "dyno": DYNO,

@@ -67,6 +67,7 @@ import asyncio
 import hashlib
 import json
 import logging
+import math
 import time
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Iterable, Mapping, Optional
@@ -90,8 +91,10 @@ THEME_REF_READ_BUDGET_SECONDS = 0.25
 #: build, not just a link. It gets a little more room than the per-build read.
 THEME_PUBLICATION_READ_BUDGET_SECONDS = 0.5
 THEME_PUBLICATION_FAILURE_BACKOFF_SECONDS = 5.0
+THEME_PUBLICATION_LKG_MAX_AGE_SECONDS = 600.0
+THEME_PUBLICATION_FALLBACK_ERROR_LOG_SECONDS = 300.0
 THEME_PUBLICATION_REDIS_LKG_KEY = "feed:published_themes:lkg:v1"
-THEME_PUBLICATION_REDIS_LKG_TTL_SECONDS = 3600
+THEME_PUBLICATION_REDIS_LKG_TTL_SECONDS = 600
 _THEME_PUBLICATION_SINGLEFLIGHT_KEY = "theme_collection_ref:published"
 #: Each cleanup step (rollback/close, then invalidate) on a read's own session.
 #: Off the request path, so this only bounds how long a connection is held.
@@ -306,28 +309,46 @@ _PUBLISHED_SQL = text(
 
 _published_cache: Optional[tuple[float, PublishedThemes]] = None
 _published_retry_after: float = 0.0
+_published_fallback_since: Optional[float] = None
+_published_fallback_error_logged: bool = False
+_published_source: str = "uninitialized"
 
 
-def _decode_published_themes_lkg(raw: Any) -> Optional[PublishedThemes]:
+def _decode_published_themes_lkg(
+    raw: Any, *, now_wall: Optional[float] = None
+) -> Optional[tuple[PublishedThemes, float]]:
     if isinstance(raw, bytes):
         raw = raw.decode("utf-8", errors="ignore")
     if not isinstance(raw, str) or not raw:
         return None
     try:
         parsed = json.loads(raw)
-        if not isinstance(parsed, list):
+        if not isinstance(parsed, dict):
+            return None
+        read_at = parsed.get("read_at")
+        rows = parsed.get("themes")
+        if (
+            isinstance(read_at, bool)
+            or not isinstance(read_at, (int, float))
+            or not math.isfinite(float(read_at))
+            or not isinstance(rows, list)
+        ):
+            return None
+        wall = time.time() if now_wall is None else float(now_wall)
+        age = max(0.0, wall - float(read_at))
+        if age >= THEME_PUBLICATION_LKG_MAX_AGE_SECONDS:
             return None
         items = tuple(
             PublishedTheme(int(row[0]), str(row[1]), int(row[2]))
-            for row in parsed
+            for row in rows
             if isinstance(row, (list, tuple)) and len(row) == 3
         )
-        return PublishedThemes(items)
+        return PublishedThemes(items), age
     except Exception:
         return None
 
 
-async def _read_redis_lkg_themes() -> Optional[PublishedThemes]:
+async def _read_redis_lkg_themes() -> Optional[tuple[PublishedThemes, float]]:
     return _decode_published_themes_lkg(
         await _rc.read_redis_lkg_text(THEME_PUBLICATION_REDIS_LKG_KEY)
     )
@@ -335,7 +356,11 @@ async def _read_redis_lkg_themes() -> Optional[PublishedThemes]:
 
 def _remember_redis_lkg_themes(published: PublishedThemes) -> None:
     encoded = json.dumps(
-        [[t.container_id, t.slug, t.revision] for t in published.themes],
+        {
+            "v": 1,
+            "read_at": round(time.time(), 3),
+            "themes": [[t.container_id, t.slug, t.revision] for t in published.themes],
+        },
         separators=(",", ":"),
     )
     _rc.write_redis_lkg_text(
@@ -345,14 +370,96 @@ def _remember_redis_lkg_themes(published: PublishedThemes) -> None:
     )
 
 
-async def _fallback_lkg_themes(max_age_seconds: float) -> Optional[PublishedThemes]:
-    global _published_cache
+def _maybe_log_published_fallback_error(now: float, copy_age: Optional[float]) -> None:
+    global _published_fallback_error_logged
+    if (
+        _published_fallback_since is not None
+        and not _published_fallback_error_logged
+        and (now - _published_fallback_since) >= THEME_PUBLICATION_FALLBACK_ERROR_LOG_SECONDS
+    ):
+        _published_fallback_error_logged = True
+        logger.error(
+            "Discover published themes fallback active for %.0fs (copy_age_s=%s)",
+            now - _published_fallback_since,
+            f"{copy_age:.0f}" if copy_age is not None else "none",
+        )
+
+
+async def _fallback_lkg_themes(now: Optional[float] = None) -> Optional[PublishedThemes]:
+    global _published_cache, _published_source
+    t = time.monotonic() if now is None else float(now)
     if _published_cache is not None:
-        return _published_cache[1]
-    redis_themes = await _read_redis_lkg_themes()
-    if redis_themes is not None:
-        _published_cache = (time.monotonic() - max_age_seconds, redis_themes)
-    return redis_themes
+        age = max(0.0, t - _published_cache[0])
+        if age < THEME_PUBLICATION_LKG_MAX_AGE_SECONDS:
+            if _published_source != "fallback_redis":
+                _published_source = "fallback_process"
+            _maybe_log_published_fallback_error(t, age)
+            return _published_cache[1]
+        _published_cache = None
+
+    redis_hit = await _read_redis_lkg_themes()
+    if redis_hit is not None:
+        redis_themes, redis_age = redis_hit
+        _published_cache = (t - redis_age, redis_themes)
+        _published_source = "fallback_redis"
+        _maybe_log_published_fallback_error(t, redis_age)
+        return redis_themes
+
+    _published_source = "fallback_expired"
+    _maybe_log_published_fallback_error(t, None)
+    return None
+
+
+def _record_published_healthy(published: PublishedThemes) -> None:
+    global _published_cache, _published_retry_after
+    global _published_fallback_since, _published_fallback_error_logged
+    global _published_source
+    _published_cache = (time.monotonic(), published)
+    _published_retry_after = 0.0
+    _published_fallback_since = None
+    _published_fallback_error_logged = False
+    _published_source = "fresh"
+
+
+def _record_published_failed(now_fail: float) -> None:
+    global _published_retry_after, _published_fallback_since
+    _published_retry_after = now_fail + THEME_PUBLICATION_FAILURE_BACKOFF_SECONDS
+    if _published_fallback_since is None:
+        _published_fallback_since = now_fail
+
+
+def get_published_themes_cache_status(*, now: Optional[float] = None) -> dict:
+    """Zero-I/O fallback visibility snapshot for ``/api/health``."""
+    t = time.monotonic() if now is None else float(now)
+    copy_age = (
+        max(0.0, t - _published_cache[0])
+        if _published_cache is not None
+        else None
+    )
+    fallback_duration = (
+        max(0.0, t - _published_fallback_since)
+        if _published_fallback_since is not None
+        else None
+    )
+    if _published_fallback_since is not None:
+        state = (
+            "fallback"
+            if copy_age is not None and copy_age < THEME_PUBLICATION_LKG_MAX_AGE_SECONDS
+            else "fallback_expired"
+        )
+    elif _published_source == "fresh" and _published_cache is not None:
+        state = "fresh"
+    else:
+        state = "uninitialized"
+    return {
+        "state": state,
+        "source": _published_source,
+        "copy_age_seconds": round(copy_age, 1) if copy_age is not None else None,
+        "fallback_duration_seconds": (
+            round(fallback_duration, 1) if fallback_duration is not None else None
+        ),
+        "max_age_seconds": THEME_PUBLICATION_LKG_MAX_AGE_SECONDS,
+    }
 
 
 async def read_published_themes(
@@ -364,21 +471,23 @@ async def read_published_themes(
     """The published, registry-maintained theme containers, or None.
 
     When ``max_age_seconds > 0`` (request path), uses singleflight coalescing,
-    5 s failure backoff, and process/Redis last-known-good fallback so a slow or
-    failing side read never switches the Discover cache off. When
-    ``max_age_seconds == 0.0`` (default / prewarm / strict tests), no stale LKG
-    fallback is used on failure.
+    5 s failure backoff, and process/Redis last-known-good fallback (capped at
+    10 min) so a slow or failing side read never switches the Discover cache off.
+    When ``max_age_seconds == 0.0`` (default / prewarm / strict tests), no stale
+    LKG fallback is used on failure.
     """
-    global _published_cache, _published_retry_after
+    global _published_fallback_since
     now = time.monotonic()
     max_age_seconds = min(max(0.0, float(max_age_seconds)), 5.0)
     if max_age_seconds > 0:
-        if _published_cache is not None and (
-            now - _published_cache[0] < max_age_seconds or now < _published_retry_after
+        if (
+            _published_cache is not None
+            and _published_source == "fresh"
+            and (now - _published_cache[0]) < max_age_seconds
         ):
             return _published_cache[1]
         if now < _published_retry_after:
-            return await _fallback_lkg_themes(max_age_seconds)
+            return await _fallback_lkg_themes(now)
 
     budget = min(budget_seconds, THEME_PUBLICATION_READ_BUDGET_SECONDS)
 
@@ -423,21 +532,22 @@ async def read_published_themes(
         except asyncio.CancelledError:
             raise
         except Exception:
+            # Waiter timed out or leader failed; fall back to LKG.
             pass
-        return await _fallback_lkg_themes(max_age_seconds)
+        if _published_fallback_since is None:
+            _published_fallback_since = time.monotonic()
+        return await _fallback_lkg_themes()
 
     try:
         published = await _query()
         if published is not None:
-            _published_cache = (time.monotonic(), published)
-            _published_retry_after = 0.0
+            _record_published_healthy(published)
             _remember_redis_lkg_themes(published)
             _rc.finish_build(_THEME_PUBLICATION_SINGLEFLIGHT_KEY, fut, result=published)
             return published
-        _published_retry_after = (
-            time.monotonic() + THEME_PUBLICATION_FAILURE_BACKOFF_SECONDS
-        )
-        fallback = await _fallback_lkg_themes(max_age_seconds)
+        now_fail = time.monotonic()
+        _record_published_failed(now_fail)
+        fallback = await _fallback_lkg_themes(now_fail)
         _rc.finish_build(_THEME_PUBLICATION_SINGLEFLIGHT_KEY, fut, result=fallback)
         return fallback
     except BaseException as exc:
@@ -870,5 +980,10 @@ async def attach_search_family_collection_refs(
 
 def _reset_published_cache_for_tests() -> None:
     global _published_cache, _published_retry_after
+    global _published_fallback_since, _published_fallback_error_logged
+    global _published_source
     _published_cache = None
     _published_retry_after = 0.0
+    _published_fallback_since = None
+    _published_fallback_error_logged = False
+    _published_source = "uninitialized"
