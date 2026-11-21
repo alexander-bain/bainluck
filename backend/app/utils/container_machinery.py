@@ -1391,7 +1391,7 @@ def _format_fun_lead_answer_label(base_title: str, lead_ans: str) -> tuple[str, 
     - Non-date answers (e.g. ``United States``) keep ``"<base>: United States"``
       with ``is_date_timing_row = False``.
     """
-    ans = lead_ans.strip()
+    ans = lead_ans.strip().rstrip("?").strip()
     if not ans or ans.lower() in {"yes", "no"}:
         return base_title, False
     m_prep = _PREP_DATE_OUTCOME_RE.match(ans)
@@ -1419,6 +1419,7 @@ def _hydrate_market_visual_item(
     resolver: SubjectArtResolver,
     content_kind: Optional[str] = None,
     use_fun_short_label: bool = False,
+    fun_sub_tag: Optional[str] = None,
 ) -> dict[str, Any]:
     mid = int(market["id"])
     if "top_outcomes" in market and isinstance(market["top_outcomes"], (list, tuple)):
@@ -1555,7 +1556,7 @@ def _hydrate_market_visual_item(
     if use_fun_short_label:
         from app.utils.discover_fun_tags import fun_market_short_label
 
-        base_title = fun_market_short_label(mid)
+        base_title = fun_market_short_label(mid, sub_tag=fun_sub_tag)
     if not base_title:
         base_title = clean_card_face_title(_clean_section_market_label(clean_raw_name))
 
@@ -1570,9 +1571,27 @@ def _hydrate_market_visual_item(
             display_title, lead_ans
         )
 
+    headline_phrase: Optional[str] = None
+    if fun_sub_tag:
+        from app.utils.discover_fun_tags import fun_market_headline_phrase
+
+        raw_phrase = str(fun_market_headline_phrase(mid, sub_tag=fun_sub_tag) or "").strip()
+        if raw_phrase:
+            lead_ans_clean = (
+                str(outcomes_out[0].get("name") or "").strip().rstrip("?").strip()
+                if outcomes_out
+                else ""
+            )
+            if "{answer}" in raw_phrase:
+                if lead_ans_clean and lead_ans_clean.lower() not in {"yes", "no"}:
+                    headline_phrase = raw_phrase.replace("{answer}", lead_ans_clean)
+            else:
+                headline_phrase = raw_phrase
+
     return {
         "market_id": mid,
         "title": display_title,
+        "headline_phrase": headline_phrase,
         "raw_title": clean_raw_name,
         "is_date_timing_row": is_date_timing_row,
         "href": f"/futures/{mid}",
@@ -3173,10 +3192,13 @@ def _build_dynamic_title_from_set(
         group_name = str(definition.get("name") or "").strip().rstrip("?")
         rule_pred = str(rule_dict.get("headline_predicate") or "").strip()
         if lead_o is not None:
-            lead_t = str(lead_bm.get("title") or "").strip()
+            lead_phrase = str(lead_bm.get("headline_phrase") or "").strip()
+            lead_t = lead_phrase or str(lead_bm.get("title") or "").strip()
             lead_p = int(lead_o["rendered_percent"])
             verb = "lead" if " & " in lead_t else "leads"
-            if rule_pred:
+            if lead_phrase:
+                lead_clause = f"{lead_phrase} is at {lead_p}%"
+            elif rule_pred:
                 lead_clause = f"{lead_t} {rule_pred} at {lead_p}%"
             elif group_name:
                 lead_clause = f"{lead_t} {verb} {group_name} at {lead_p}%"
@@ -3186,7 +3208,10 @@ def _build_dynamic_title_from_set(
                 sec_bm = headline_pool[1]
                 sec_o = _fav_outcome(sec_bm)
                 if sec_o is not None:
-                    sec_t = str(sec_bm.get("title") or "").strip()
+                    sec_t = (
+                        str(sec_bm.get("headline_phrase") or "").strip()
+                        or str(sec_bm.get("title") or "").strip()
+                    )
                     sec_p = int(sec_o["rendered_percent"])
                     return f"{lead_clause}, with {sec_t} at {sec_p}%"
             return lead_clause
@@ -3715,7 +3740,8 @@ async def produce_container_machinery(
 
         # aq_kind == "markets"
         explicit_ck = str(aq.get("content_kind") or "").strip().lower() or None
-        use_fun_short = bool(str(aq.get("fun_sub_tag") or "").strip())
+        fun_sub_tag_val = str(aq.get("fun_sub_tag") or "").strip() or None
+        use_fun_short = bool(fun_sub_tag_val)
         matched = [
             _hydrate_market_visual_item(
                 m,
@@ -3723,6 +3749,7 @@ async def produce_container_machinery(
                 resolver=resolver,
                 content_kind=explicit_ck,
                 use_fun_short_label=use_fun_short,
+                fun_sub_tag=fun_sub_tag_val,
             )
             for m in all_markets
             if (MEMBER_MARKET, int(m["id"])) not in seen_member_keys

@@ -1,0 +1,56 @@
+{
+  "slug": "machinery-2026-summed-up",
+  "stage": "preview",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_window",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "CULTURE · 2026",
+  "name": "How 2026 gets summed up",
+  "category": "entertainment",
+  "tag": "CULTURE",
+  "section_title": "2026 in One Board",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "extra_llm_categories": [
+      "culture",
+      "tech"
+    ],
+    "card_rows": 3,
+    "card_section_key": "summed_up_2026",
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fc/Minimal_vinyl_player_%28Unsplash%29.jpg/1280px-Minimal_vinyl_player_%28Unsplash%29.jpg",
+    "card_image_alt": "Minimalist silver turntable playing a vinyl record",
+    "card_image_credit": "Lee Campbell (CC0 1.0 Public Domain, Wikimedia Commons)",
+    "card_image_author": "Lee Campbell",
+    "card_image_license": "CC0 1.0 Public Domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Minimal_vinyl_player_(Unsplash).jpg",
+    "headline_exclude_date_rows": true,
+    "sections": [
+      {
+        "key": "summed_up_2026",
+        "title": "2026 in One Board",
+        "item_noun": "picks",
+        "note": "The songs, albums, words, games, and names shaping how 2026 gets remembered.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch3-2026-summed-up",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 12,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}
