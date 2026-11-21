@@ -180,5 +180,66 @@ class LaunchNeverAcceptedTests(unittest.TestCase):
         self.assertIn("if: always()", step)
 
 
+CLOCKFACE_CASE = "Test Case '-[BainLuckWatchUITests.WidgetTapJourneyTests testColdActualWidgetTapRetainsOfflineReading]'"
+CLOCKFACE_OVERRUN = (
+    f"{CLOCKFACE_CASE} started.\n"
+    "    t =     0.00s Start Test at 2026-11-21 18:59:28.538\n"
+    + "".join(
+        f"    t = {i*62+17:7.2f}s         Wait for com.apple.clockface to idle\n"
+        f"    t = {i*62+77:7.2f}s App animations complete notification not received, will attempt to continue.\n"
+        for i in range(8)
+    )
+    + f"{CLOCKFACE_CASE} exceeded execution time allowance of 9 minutes. The test may have hung.\n"
+    + "Restarting after unexpected exit, crash, or test timeout; summary will include totals from previous launches.\n"
+    + "** TEST EXECUTE FAILED **\n"
+)
+
+
+class ClockfaceIdleRetryTests(unittest.TestCase):
+    def test_verbatim_clockface_nine_minute_overrun_is_retried(self):
+        reason = infra.infra_abort(CLOCKFACE_OVERRUN)
+        self.assertIsNotNone(reason)
+        self.assertIn("com.apple.clockface", reason)
+        self.assertIn("testColdActualWidgetTapRetainsOfflineReading", reason)
+
+    def test_three_clockface_stalls_below_threshold_are_not_retried(self):
+        fewer = (
+            f"{CLOCKFACE_CASE} started.\n"
+            + "".join(
+                f"    t = {i*62+17:7.2f}s         Wait for com.apple.clockface to idle\n"
+                f"    t = {i*62+77:7.2f}s App animations complete notification not received, will attempt to continue.\n"
+                for i in range(3)
+            )
+            + f"{CLOCKFACE_CASE} exceeded execution time allowance of 9 minutes.\n"
+        )
+        self.assertIsNone(infra.infra_abort(fewer))
+
+    def test_in_app_idle_timeouts_are_never_retried(self):
+        in_app = (
+            f"{CLOCKFACE_CASE} started.\n"
+            + "".join(
+                f"    t = {i*62+17:7.2f}s         Wait for com.bainluck.Bain-Luck.watchkitapp to idle\n"
+                f"    t = {i*62+77:7.2f}s App animations complete notification not received, will attempt to continue.\n"
+                for i in range(8)
+            )
+            + f"{CLOCKFACE_CASE} exceeded execution time allowance of 9 minutes.\n"
+        )
+        self.assertIsNone(infra.infra_abort(in_app))
+
+    def test_real_assertion_failure_beside_clockface_overrun_is_never_retried(self):
+        failed = "/x/WidgetTapJourneyTests.swift:679: error: -[BainLuckWatchUITests.WidgetTapJourneyTests testActualCircularLauncherAndTap] : failed\n"
+        self.assertIsNone(infra.infra_abort(failed + CLOCKFACE_OVERRUN))
+        self.assertIsNone(infra.infra_abort("WATCH_UI_ACTUAL_CIRCULAR_LAUNCHER=FAIL\n" + CLOCKFACE_OVERRUN))
+
+    def test_clockface_overrun_beside_launch_never_accepted_overrun_is_retried(self):
+        self.assertIsNotNone(infra.infra_abort(LAUNCH_NEVER_ACCEPTED + "\n" + CLOCKFACE_OVERRUN))
+
+    def test_harness_wires_clockface_recovery_receipt_and_retry_preservation(self):
+        harness = (ROOT / "tools/watch-ui-journey.sh").read_text()
+        self.assertIn('--watch-udid "$TEST_UDID"', harness)
+        self.assertIn('--clockface-receipt "$OUT/clockface-recovery.json"', harness)
+        self.assertIn("clockface-recovery-infra-abort.json", harness)
+
+
 if __name__ == "__main__":
     unittest.main()

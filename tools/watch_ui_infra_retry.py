@@ -40,6 +40,9 @@ STEP = re.compile(r"^\s+t =\s+[0-9.]+s\s+(\S.*?)\s*$")
 APP_LAUNCH = "Launch com.bainluck.Bain-Luck.watchkitapp"
 # System-side step XCTest may log before it sends the request; our app has not started.
 BEFORE_REQUEST = "Waiting for system app quiescence"
+CLOCKFACE_IDLE = "Wait for com.apple.clockface to idle"
+CLOCKFACE_ANIM_TIMEOUT = "App animations complete notification not received, will attempt to continue."
+CLOCKFACE_STALL_THRESHOLD = 4
 
 
 def overran_in_launch_request(log: str, suite: str, case: str) -> bool:
@@ -56,6 +59,22 @@ def overran_in_launch_request(log: str, suite: str, case: str) -> bool:
     return bool(steps) and steps[-1] == APP_LAUNCH
 
 
+def overran_in_clockface_idle_hang(log: str, suite: str, case: str) -> bool:
+    """True when the overrun test lost at least 4 x 60 s waiting for com.apple.clockface idle."""
+    name = f"Test Case '-[BainLuckWatchUITests.{suite} {case}]'"
+    end = log.find(f"{name} exceeded execution time allowance")
+    start = log.rfind(f"{name} started.", 0, end)
+    if start < 0 or end < 0:
+        return False
+    lines = log[start:end].splitlines()
+    stalls = sum(
+        1
+        for i in range(len(lines) - 1)
+        if CLOCKFACE_IDLE in lines[i] and CLOCKFACE_ANIM_TIMEOUT in lines[i + 1]
+    )
+    return stalls >= CLOCKFACE_STALL_THRESHOLD
+
+
 def infra_abort(log: str) -> str | None:
     """The simulator signature that ended this run, or None if a retry is not allowed."""
     if any(pattern.search(log) for pattern in REAL_FAILURE):
@@ -65,6 +84,20 @@ def infra_abort(log: str) -> str | None:
         if all(overran_in_launch_request(log, suite, case) for suite, case in overruns):
             suite, case = overruns[0]
             return f"the simulator never accepted the Watch app's launch in {suite}/{case}"
+        if all(
+            overran_in_launch_request(log, suite, case)
+            or overran_in_clockface_idle_hang(log, suite, case)
+            for suite, case in overruns
+        ):
+            clockface_cases = [
+                f"{suite}/{case}"
+                for suite, case in overruns
+                if overran_in_clockface_idle_hang(log, suite, case)
+            ]
+            return (
+                "com.apple.clockface stopped reporting animation idle "
+                f"({len(clockface_cases)} overrun case(s): {', '.join(clockface_cases)})"
+            )
         return None
     for pattern in CONNECTION_LOST:
         match = pattern.search(log)
