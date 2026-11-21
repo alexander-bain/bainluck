@@ -1,5 +1,8 @@
 import SwiftUI
 import WidgetKit
+#if os(watchOS)
+import WatchKit
+#endif
 
 /// #12640 — Pins-driven Watch home screen (1.0.7, option A: phone sends pin IDs, Watch reads public endpoints).
 /// Lists live games first, upcoming games soonest first, markets in pin order, and finished games most recent first.
@@ -12,6 +15,7 @@ struct WatchPinnedHomeView12640: View {
     @State private var choosingOutcome = false
     @State private var showingHandoffHelp = false
     @State private var showingMoreActions = false
+    @State private var crestRevision = 0
 
     var body: some View {
         ScrollViewReader { scroll in
@@ -339,19 +343,33 @@ struct WatchPinnedHomeView12640: View {
     }
 
     private func selectedEventView(_ game: WatchSelectedGame) -> some View {
-        TimelineView(.periodic(from: .now, by: 15)) { context in
+        let _ = crestRevision
+        let watchCaseWidth: CGFloat = {
+            #if os(watchOS)
+            return WKInterfaceDevice.current().screenBounds.width
+            #else
+            return 198
+            #endif
+        }()
+        return TimelineView(.periodic(from: .now, by: 15)) { context in
             let now = context.date
-            let model = WatchWristTileModel12616.build(game.wristTileInput12616, now: now)
+            let model = WatchMatchupGameHeroModel297A.build(from: game, now: now)
             VStack(alignment: .leading, spacing: 8) {
-                WatchWristTileView12616(
+                WatchMatchupGamePageHeroView297A(
                     model: model,
-                    isAccessibilitySize: dynamicTypeSize.isAccessibilitySize,
-                    identifierPrefix: "watch.pins.selected.event"
-                ) {
-                    EmptyView()
-                }
+                    caseWidth: watchCaseWidth
+                )
 
                 selectedActionButtons(allowsOutcomeChoice: false, outcomeCount: 0)
+            }
+        }
+        .task(id: "\(game.id)-\(game.awayLogoURL ?? "")-\(game.homeLogoURL ?? "")") {
+            let wanted: [(teamID: Int, logo: String?)] = [
+                (game.awayCompactIdentity?.teamID ?? 0, game.awayLogoURL),
+                (game.homeCompactIdentity?.teamID ?? 0, game.homeLogoURL),
+            ]
+            if await WatchMatchupCrests217.fetchMissing(wanted) {
+                crestRevision &+= 1
             }
         }
     }
