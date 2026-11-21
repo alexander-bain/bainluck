@@ -234,6 +234,14 @@ def read_meter(body, now):
     elif notes_calls:
         raise ValueError("Invalid Factory model meter")
     meter.update(last_at=last, last_facts=facts)
+    if "picture_sample" in saved:
+        if saved["picture_sample"] is not True:
+            raise ValueError("Invalid Factory picture meter")
+        meter["picture_sample"] = True
+    if "picture_day" in saved:
+        if date.fromisoformat(saved["picture_day"]) > saved_day:
+            raise ValueError("Invalid Factory picture meter")
+        meter["picture_day"] = saved["picture_day"]
     if month == meter["month"]:
         meter["month_micros"] = month_micros
     if saved_day == today:
@@ -266,7 +274,7 @@ def model_request(payload, key):
 
 
 class ModelBudget:
-    """Serialize both consumers against the meter in the release description."""
+    """Meter model calls in the release description."""
 
     def __init__(self, body, save, *, now=None):
         self.body = body
@@ -297,22 +305,20 @@ class ModelBudget:
         self.save(body)
         self.body = body
 
-    def call(self, payload, key, request, *, notes_hash=None):
+    def reserve(self, cost, *, notes_hash=None, picture=None, month_limit=None):
         meter = self.state()
+        now = self.now
+        day = now.astimezone(PACIFIC).date().isoformat()
+        limit = MONTHLY_COST_MICROS if month_limit is None else min(month_limit, MONTHLY_COST_MICROS)
         if (
-            not key or not self.save or not meter
+            not self.save or not meter or meter["day"] != day
             or meter["calls"] >= COLLECTOR_DAILY_CALLS
             or (notes_hash is not None and meter["notes_calls"] >= DAILY_CALLS)
+            or (picture == "sample" and meter.get("picture_sample"))
+            or (picture == "daily" and meter.get("picture_day") == day)
+            or meter["month_micros"] + cost > limit
         ):
-            return None, self.stats()
-        now = self.now
-        if now.astimezone(PACIFIC).date().isoformat() != meter["day"]:
-            return None, self.stats()
-        limit = payload.get("max_completion_tokens") or payload["max_tokens"]
-        estimate = cost_upper_bound_usd(payload["model"], payload["messages"], limit)
-        cost = math.ceil(estimate * 1_000_000)
-        if meter["month_micros"] + cost > MONTHLY_COST_MICROS:
-            return None, self.stats()
+            return None
         reserved = {
             **meter,
             "calls": meter["calls"] + 1,
@@ -323,13 +329,35 @@ class ModelBudget:
             reserved.update(
                 notes_calls=meter["notes_calls"] + 1, last_at=iso(now), last_facts=notes_hash,
             )
+        if picture == "sample":
+            reserved["picture_sample"] = True
+        if picture == "daily":
+            reserved["picture_day"] = day
         try:
             # Record the reservation before sending the request. The master
             # publisher is serialized even when the visible floor is unchanged.
             self.persist(reserved)
         except Exception:
+            return None
+        if self.now.astimezone(PACIFIC).date().isoformat() == day:
+            return meter, reserved
+        return None
+
+    def settle(self, reservation, spent):
+        meter, reserved = reservation
+        self.persist({
+            **reserved,
+            "micros": meter["micros"] + spent,
+            "month_micros": meter["month_micros"] + spent,
+        })
+
+    def call(self, payload, key, request, *, notes_hash=None):
+        if not key:
             return None, self.stats()
-        if self.now.astimezone(PACIFIC).date().isoformat() != reserved["day"]:
+        limit = payload.get("max_completion_tokens") or payload["max_tokens"]
+        estimate = cost_upper_bound_usd(payload["model"], payload["messages"], limit)
+        reservation = self.reserve(math.ceil(estimate * 1_000_000), notes_hash=notes_hash)
+        if not reservation:
             return None, self.stats()
         stats = {**self.stats(), "tokens_in": None, "tokens_out": None}
         try:
@@ -340,15 +368,9 @@ class ModelBudget:
                 stats.update(tokens_in=usage.prompt_tokens, tokens_out=usage.completion_tokens)
                 spent = math.ceil(measured * 1_000_000)
                 try:
-                    self.persist({
-                        **reserved,
-                        "micros": meter["micros"] + spent,
-                        "month_micros": meter["month_micros"] + spent,
-                    })
-                    stats.update(
-                        day_cost_usd=(meter["micros"] + spent) / 1_000_000,
-                        month_cost_usd=(meter["month_micros"] + spent) / 1_000_000,
-                    )
+                    self.settle(reservation, spent)
+                    stats.update(day_cost_usd=self.stats()["day_cost_usd"],
+                                 month_cost_usd=self.stats()["month_cost_usd"])
                 except Exception:
                     pass  # The saved upper bound still covers this attempt.
             return json.loads(response["choices"][0]["message"]["content"]), stats

@@ -19,6 +19,9 @@ import urllib.parse
 from model import build, instant, iso, public_title, PACIFIC, TRUSTED
 from ci_queue import attach_machine_reason, machine_queue
 from crew import add_crew_week, add_day_replay
+from daily_picture import (
+    DAILY_PICTURE_ENABLED, asset_label, asset_name, gallery, metered_picture,
+)
 from events import add_events
 from journeys import add_journeys
 from signs import add_signs, switched_off, wrong_numbers
@@ -54,7 +57,7 @@ class GitHub:
         self.lock = threading.Lock()
         self.started_at = time.monotonic()
 
-    def request(self, endpoint, data=None, method=None, binary=None, timeout=30):
+    def request(self, endpoint, data=None, method=None, binary=None, timeout=30, content_type=None):
         method = method or ("POST" if data is not None or binary is not None else "GET")
         graphql_read = (
             endpoint == "graphql"
@@ -81,7 +84,7 @@ class GitHub:
                 "Authorization": f"Bearer {self.token}",
                 "Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2022-11-28",
-                "Content-Type": (
+                "Content-Type": content_type or (
                     "application/octet-stream"
                     if binary is not None
                     else "application/json"
@@ -858,6 +861,15 @@ def publish_asset(api, release, name, payload):
     )
 
 
+def publish_daily_picture(api, release, picture):
+    if not DAILY_PICTURE_ENABLED:
+        return None
+    record, content = picture
+    query = urllib.parse.urlencode({"name": asset_name(record), "label": asset_label(record)})
+    url = release["upload_url"].split("{")[0] + "?" + query
+    return api.request(url, method="POST", binary=content, content_type="image/webp")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
@@ -869,6 +881,11 @@ def main():
     args = parser.parse_args()
     if args.publish:
         authorize_publication()
+    measurement = os.getenv("FACTORY_MEASURE_PICTURE", "false") == "true"
+    if measurement and (
+        not args.publish or os.getenv("GITHUB_EVENT_NAME") != "workflow_dispatch"
+    ):
+        parser.error("A picture measurement requires a manual master run")
     api = GitHub(read_only=not args.publish)
     note_stats = {
         "tokens_in": 0,
@@ -877,6 +894,7 @@ def main():
         "day_cost_usd": None,
     }
     speech_stats = note_stats.copy()
+    picture_stats = {"status": "off"}
     try:
         previous = json.loads(args.previous.read_text()) if args.previous else {}
         cache_file = json.loads(args.cache_input.read_text()) if args.cache_input else {}
@@ -886,6 +904,20 @@ def main():
         release, summaries = None, None
         if args.publish:
             release, previous, cache = read_published(api)
+
+        def save_meter(body):
+            api.request(
+                f"repos/{REPO}/releases/{release['id']}", {"body": body}, method="PATCH"
+            )
+
+        key = os.environ.get("OPENAI_API_KEY") if args.publish else None
+        budget = ModelBudget((release or {}).get("body") or "", save_meter if release else None)
+        if measurement:
+            # No snapshot collection, text requests, or asset publication on this path.
+            _, picture_stats = metered_picture(previous, budget, key, sample=True)
+            return
+
+        if args.publish:
             summaries = api.pages("pulls?state=open&sort=updated&direction=desc")
         snapshot = collect(api, previous, cache, summaries)
         result = build(snapshot, previous)
@@ -899,19 +931,24 @@ def main():
         if snapshot.get("master_ci_active"):
             attach_machine_reason(result, queue["master_jobs"])
 
-        def save_meter(body):
-            api.request(
-                f"repos/{REPO}/releases/{release['id']}", {"body": body}, method="PATCH"
-            )
-
-        key = os.environ.get("OPENAI_API_KEY") if args.publish else None
-        budget = ModelBudget((release or {}).get("body") or "", save_meter if release else None)
         result["notes"], note_stats = make_notes(
             result, snapshot["pulls"], previous.get("notes") or {}, budget, key
         )
         result["speech"], speech_stats = make_speech(
             result, previous.get("speech") or {}, budget, key
         )
+        if args.publish and release:
+            assets = list(release.get("assets", []))
+            if DAILY_PICTURE_ENABLED:
+                picture, picture_stats = metered_picture(result, budget, key)
+                if picture:
+                    try:
+                        assets.append(publish_daily_picture(api, release, picture))
+                        picture_stats["status"] = "published"
+                    except (urllib.error.URLError, TimeoutError, ValueError):
+                        picture_stats["status"] = "upload-failed"
+            if records := gallery(assets, budget.now):
+                result["pictures"] = records
         meter = budget.state()
         if meter:
             result["model_usage"] = {"day": meter["day"], "calls": meter["calls"]}
@@ -960,6 +997,7 @@ def main():
     finally:
         print("FACTORY_NOTES " + json.dumps(note_stats))
         print("FACTORY_SPEECH " + json.dumps(speech_stats))
+        print("FACTORY_PICTURE " + json.dumps(picture_stats))
         print("FACTORY_METRICS " + json.dumps(api.metrics()))
 
 
