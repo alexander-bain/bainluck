@@ -57,12 +57,155 @@ async def _cache_set(key: str, data: Any, ttl_seconds: int) -> None:
 CACHE_TTL_STANDARD = 3600  # 1 hour
 CACHE_TTL_REALTIME = 300   # 5 minutes
 
+# ---------------------------------------------------------------------------
+# Shared classification & period helpers (#13261 Row 1)
+# ---------------------------------------------------------------------------
+
+_PERIOD_START_MAP: dict[str, str] = {
+    "7d": "7daysAgo",
+    "14d": "14daysAgo",
+    "30d": "30daysAgo",
+    "90d": "90daysAgo",
+}
+
+_DISCOVER_EVENT_NAMES: frozenset[str] = frozenset({
+    # Live event names (#13261)
+    "feed_card_action",
+    "feed_card_impression",
+    "prediction_submit",
+    "prediction_make",
+    "session_open",
+    "return_visit",
+    "shared_link_open",
+    "scroll_depth",
+    "search",
+    "search_result_click",
+    # Legacy names preserved for historical continuity
+    "page_view",
+    "scroll",
+    "feed_card_click",
+    "feed_card_view",
+    "higher_lower_play",
+    "higher_lower_result",
+    "discover_swipe",
+    "discover_card_click",
+    "discover_scroll_depth",
+    "engagement_time",
+    "session_start",
+    "first_visit",
+})
+
+_FUNNEL_VISIT_EVENTS: frozenset[str] = frozenset({
+    "session_start",
+    "first_visit",
+    "page_view",
+    "session_open",
+    "screen_view",
+})
+_FUNNEL_INTERACT_EVENTS: frozenset[str] = frozenset({
+    "feed_card_action",
+    "feed_card_impression",
+    "discover_swipe",
+    "discover_card_click",
+    "feed_card_click",
+    "feed_card_view",
+    "discover_scroll_depth",
+    "scroll_depth",
+    "search",
+    "search_result_click",
+    "shared_link_open",
+})
+_FUNNEL_GUESS_EVENTS: frozenset[str] = frozenset({
+    "prediction_submit",
+    "prediction_make",
+    "higher_lower_play",
+    "higher_lower_result",
+})
+_FUNNEL_SIGNUP_EVENTS: frozenset[str] = frozenset({"sign_up", "login"})
+
+
+def _period_to_start_date(period: str, *, default: str = "30daysAgo") -> str:
+    return _PERIOD_START_MAP.get(str(period or "").strip().lower(), default)
+
+
+def _is_discover_event(event_name: str) -> bool:
+    name = str(event_name or "").strip()
+    return (
+        name in _DISCOVER_EVENT_NAMES
+        or name.startswith(("discover_", "higher_lower_", "feed_", "prediction_"))
+    )
+
+
+def _classify_funnel_stage(event_name: str) -> str | None:
+    name = str(event_name or "").strip()
+    if name in _FUNNEL_VISIT_EVENTS:
+        return "visit"
+    if name in _FUNNEL_INTERACT_EVENTS or name.startswith(("discover_", "feed_card_")):
+        return "interact"
+    if name in _FUNNEL_GUESS_EVENTS or name.startswith(("higher_lower_", "prediction_")):
+        return "guess"
+    if name in _FUNNEL_SIGNUP_EVENTS:
+        return "signup"
+    return None
+
+
+def _normalize_analytics_platform(raw_platform: str | None, event_name: str = "") -> str:
+    """Split GA4 platform into canonical buckets: web, ios, watch, or other."""
+    if str(event_name or "").strip().lower().startswith("watch_"):
+        return "watch"
+    plat = str(raw_platform or "").strip().lower()
+    if plat == "web":
+        return "web"
+    if plat in {"ios", "iphone", "ipad"}:
+        return "ios"
+    if plat in {"watch", "watchos"}:
+        return "watch"
+    if plat == "android":
+        return "android"
+    return "other"
+
+
+def _classify_page_section(path: str) -> str:
+    """Sort URL paths into reader-facing product sections (#13261 Row 1)."""
+    p = str(path or "").strip()
+    if not p or p == "(not set)":
+        return "app_screen"
+    if p in ("/", "/discover") or p.startswith("/discover/"):
+        return "discover"
+    if p == "/events" or p.startswith("/events/") or p.startswith("/event/"):
+        return "events"
+    if p == "/search" or p.startswith("/search/"):
+        return "search"
+    if p == "/collections" or p.startswith("/collections/"):
+        return "collections"
+    if p == "/my-stuff" or p.startswith("/my-stuff/"):
+        return "my_stuff"
+    if p.startswith("/sports") or p.startswith("/sport/"):
+        return "sports"
+    if p.startswith("/weather"):
+        return "weather"
+    if p.startswith("/politics"):
+        return "politics"
+    if p.startswith("/entertainment"):
+        return "entertainment"
+    if p.startswith("/economics"):
+        return "economics"
+    if p.startswith("/calibration"):
+        return "calibration"
+    if p.startswith("/admin"):
+        return "admin"
+    if p.startswith("/futures") or p.startswith("/market/"):
+        return "futures"
+    if p.startswith("/team"):
+        return "teams"
+    return "other"
+
 
 @router.get("/analytics/overview")
 async def analytics_overview(
     request: Request,
     secret: str = Query(None, description="Admin secret"),
-    period: str = Query("7d", description="Period: 7d or 30d"),
+    period: str = Query("7d", description="Period: 7d, 14d, or 30d"),
 ):
     """Key site metrics: DAU, sessions, avg session duration, bounce rate, top pages."""
     _check_admin_secret(secret, request=request)
@@ -74,7 +217,7 @@ async def analytics_overview(
 
     from app.services.ga4_api import get_engagement_metrics, get_top_pages
 
-    start_date = "7daysAgo" if period == "7d" else "30daysAgo"
+    start_date = _period_to_start_date(period, default="30daysAgo")
 
     try:
         engagement = get_engagement_metrics(start_date=start_date, end_date="today")
@@ -97,9 +240,9 @@ async def analytics_overview(
 async def analytics_discover(
     request: Request,
     secret: str = Query(None, description="Admin secret"),
-    period: str = Query("7d", description="Period: 7d or 30d"),
+    period: str = Query("7d", description="Period: 7d, 14d, or 30d"),
 ):
-    """Discover-specific metrics: feed loads, card events, scroll depth, H/L plays."""
+    """Discover-specific metrics: feed loads, card events, scroll depth, predictions."""
     _check_admin_secret(secret, request=request)
 
     cache_key = f"discover:{period}"
@@ -109,7 +252,7 @@ async def analytics_discover(
 
     from app.services.ga4_api import run_report
 
-    start_date = "7daysAgo" if period == "7d" else "30daysAgo"
+    start_date = _period_to_start_date(period, default="30daysAgo")
 
     try:
         # Discover page views
@@ -127,7 +270,7 @@ async def analytics_discover(
             if any(p in r.get("pagePath", "") for p in ["/discover", "/", "/sports"])
         ]
 
-        # Custom events: feed interactions, H/L plays, scroll depth
+        # Custom events: live feed_card_action / feed_card_impression / prediction_submit + legacy
         events_data = run_report(
             dimensions=["eventName"],
             metrics=["eventCount", "totalUsers"],
@@ -136,19 +279,31 @@ async def analytics_discover(
             limit=100,
             order_by_metric="eventCount",
         )
-        # Filter to Discover-relevant events
-        discover_event_names = {
-            "page_view", "scroll", "feed_card_click", "feed_card_view",
-            "higher_lower_play", "higher_lower_result", "discover_swipe",
-            "discover_card_click", "discover_scroll_depth",
-            "engagement_time", "session_start", "first_visit",
-        }
         discover_events = [
             r for r in events_data
-            if r.get("eventName", "") in discover_event_names
-            or r.get("eventName", "").startswith("discover_")
-            or r.get("eventName", "").startswith("higher_lower_")
+            if _is_discover_event(r.get("eventName", ""))
         ]
+
+        # Platform breakdown (web vs iOS vs Watch)
+        platform_events = run_report(
+            dimensions=["platform", "eventName"],
+            metrics=["eventCount", "totalUsers"],
+            start_date=start_date,
+            end_date="today",
+            limit=200,
+            order_by_metric="eventCount",
+        )
+        by_platform: dict[str, dict[str, Any]] = {}
+        for row in platform_events:
+            ev = row.get("eventName", "")
+            if not _is_discover_event(ev):
+                continue
+            plat = _normalize_analytics_platform(row.get("platform"), ev)
+            bucket = by_platform.setdefault(
+                plat, {"platform": plat, "events": 0, "users": 0}
+            )
+            bucket["events"] += int(row.get("eventCount", 0))
+            bucket["users"] = max(bucket["users"], int(row.get("totalUsers", 0)))
 
         # Daily trend for feed loads
         daily_feed = run_report(
@@ -166,6 +321,7 @@ async def analytics_discover(
         "period": period,
         "discoverPages": discover_paths,
         "discoverEvents": discover_events,
+        "byPlatform": sorted(by_platform.values(), key=lambda r: -r["events"]),
         "dailyTrend": daily_feed,
     }
 
@@ -202,7 +358,7 @@ async def analytics_realtime(
 async def analytics_retention(
     request: Request,
     secret: str = Query(None, description="Admin secret"),
-    period: str = Query("30d", description="Period: 7d, 30d, or 90d"),
+    period: str = Query("30d", description="Period: 7d, 14d, 30d, or 90d"),
 ):
     """Daily/weekly retention cohorts: new vs returning users."""
     _check_admin_secret(secret, request=request)
@@ -214,8 +370,7 @@ async def analytics_retention(
 
     from app.services.ga4_api import get_user_retention
 
-    period_map = {"7d": "7daysAgo", "30d": "30daysAgo", "90d": "90daysAgo"}
-    start_date = period_map.get(period, "30daysAgo")
+    start_date = _period_to_start_date(period, default="30daysAgo")
 
     try:
         raw_data = get_user_retention(start_date=start_date, end_date="today")
@@ -266,7 +421,7 @@ async def analytics_retention(
 async def analytics_funnel(
     request: Request,
     secret: str = Query(None, description="Admin secret"),
-    period: str = Query("7d", description="Period: 7d or 30d"),
+    period: str = Query("7d", description="Period: 7d, 14d, or 30d"),
 ):
     """Discover conversion funnel: visit -> swipe/interact -> guess -> sign-up."""
     _check_admin_secret(secret, request=request)
@@ -278,7 +433,7 @@ async def analytics_funnel(
 
     from app.services.ga4_api import run_report
 
-    start_date = "7daysAgo" if period == "7d" else "30daysAgo"
+    start_date = _period_to_start_date(period, default="30daysAgo")
 
     try:
         # Get event counts for funnel stages
@@ -308,29 +463,18 @@ async def analytics_funnel(
             end_date="today",
             limit=200,
         )
+
+        # Get platform breakdown (web vs iOS vs Watch)
+        platform_events = run_report(
+            dimensions=["platform", "eventName"],
+            metrics=["eventCount", "totalUsers"],
+            start_date=start_date,
+            end_date="today",
+            limit=200,
+        )
     except Exception as exc:
         logger.error("GA4 funnel query failed: %s", exc)
         raise HTTPException(status_code=502, detail=f"GA4 API error: {exc}")
-
-    # Map event names to funnel stages
-    visit_events = {"session_start", "first_visit", "page_view"}
-    interact_events = {
-        "discover_swipe", "discover_card_click", "feed_card_click",
-        "feed_card_view", "discover_scroll_depth",
-    }
-    guess_events = {"higher_lower_play", "higher_lower_result"}
-    signup_events = {"sign_up", "login"}
-
-    def _classify_stage(event_name: str) -> str | None:
-        if event_name in visit_events:
-            return "visit"
-        if event_name in interact_events or event_name.startswith("discover_"):
-            return "interact"
-        if event_name in guess_events or event_name.startswith("higher_lower_"):
-            return "guess"
-        if event_name in signup_events:
-            return "signup"
-        return None
 
     # Build funnel totals
     stage_totals: dict[str, dict[str, int]] = {
@@ -345,7 +489,7 @@ async def analytics_funnel(
         event_name = row.get("eventName", "")
         count = int(row.get("eventCount", 0))
         users = int(row.get("totalUsers", 0))
-        stage = _classify_stage(event_name)
+        stage = _classify_funnel_stage(event_name)
         if stage:
             stage_totals[stage]["events"] += count
             stage_totals[stage]["users"] = max(stage_totals[stage]["users"], users)
@@ -381,7 +525,7 @@ async def analytics_funnel(
         date = row.get("date", "")
         event_name = row.get("eventName", "")
         users = int(row.get("totalUsers", 0))
-        stage = _classify_stage(event_name)
+        stage = _classify_funnel_stage(event_name)
         if not stage:
             continue
         if date not in daily_funnel:
@@ -396,12 +540,31 @@ async def analytics_funnel(
         device = row.get("deviceCategory", "unknown")
         event_name = row.get("eventName", "")
         users = int(row.get("totalUsers", 0))
-        stage = _classify_stage(event_name)
+        stage = _classify_funnel_stage(event_name)
         if not stage:
             continue
         if device not in device_funnel:
             device_funnel[device] = {"device": device, "visit": 0, "interact": 0, "guess": 0, "signup": 0}
         device_funnel[device][stage] = max(device_funnel[device].get(stage, 0), users)
+
+    # Platform breakdown (web vs iOS vs Watch)
+    platform_funnel: dict[str, dict[str, Any]] = {}
+    for row in platform_events:
+        event_name = row.get("eventName", "")
+        stage = _classify_funnel_stage(event_name)
+        if not stage:
+            continue
+        plat = _normalize_analytics_platform(row.get("platform"), event_name)
+        users = int(row.get("totalUsers", 0))
+        if plat not in platform_funnel:
+            platform_funnel[plat] = {
+                "platform": plat,
+                "visit": 0,
+                "interact": 0,
+                "guess": 0,
+                "signup": 0,
+            }
+        platform_funnel[plat][stage] = max(platform_funnel[plat].get(stage, 0), users)
 
     result = {
         "period": period,
@@ -409,6 +572,9 @@ async def analytics_funnel(
         "eventBreakdown": sorted(event_breakdown, key=lambda e: -e["eventCount"]),
         "dailyTrend": sorted_daily,
         "byDevice": list(device_funnel.values()),
+        "byPlatform": sorted(
+            platform_funnel.values(), key=lambda r: -int(r.get("visit", 0))
+        ),
     }
 
     await _cache_set(cache_key, result, CACHE_TTL_STANDARD)
@@ -419,7 +585,7 @@ async def analytics_funnel(
 async def analytics_pages(
     request: Request,
     secret: str = Query(None, description="Admin secret"),
-    period: str = Query("7d", description="Period: 7d or 30d"),
+    period: str = Query("7d", description="Period: 7d, 14d, or 30d"),
 ):
     """Page-level engagement: views, users, duration, grouped by section."""
     _check_admin_secret(secret, request=request)
@@ -431,7 +597,7 @@ async def analytics_pages(
 
     from app.services.ga4_api import run_report
 
-    start_date = "7daysAgo" if period == "7d" else "30daysAgo"
+    start_date = _period_to_start_date(period, default="30daysAgo")
 
     try:
         pages_data = run_report(
@@ -460,30 +626,6 @@ async def analytics_pages(
         logger.error("GA4 pages query failed: %s", exc)
         raise HTTPException(status_code=502, detail=f"GA4 API error: {exc}")
 
-    # Classify pages into sections
-    def _classify_section(path: str) -> str:
-        if path in ("/", "/discover") or path.startswith("/discover"):
-            return "discover"
-        if path.startswith("/sports") or path.startswith("/event/"):
-            return "sports"
-        if path.startswith("/weather"):
-            return "weather"
-        if path.startswith("/politics"):
-            return "politics"
-        if path.startswith("/entertainment"):
-            return "entertainment"
-        if path.startswith("/economics"):
-            return "economics"
-        if path.startswith("/calibration"):
-            return "calibration"
-        if path.startswith("/admin"):
-            return "admin"
-        if path.startswith("/futures") or path.startswith("/market/"):
-            return "futures"
-        if path.startswith("/team"):
-            return "teams"
-        return "other"
-
     # Build page rows
     page_rows: list[dict[str, Any]] = []
     section_totals: dict[str, dict[str, float]] = {}
@@ -495,7 +637,7 @@ async def analytics_pages(
         duration = float(row.get("averageSessionDuration", 0))
         bounce = float(row.get("bounceRate", 0))
         engaged = int(row.get("engagedSessions", 0))
-        section = _classify_section(path)
+        section = _classify_page_section(path)
 
         page_rows.append({
             "path": path,
@@ -532,7 +674,7 @@ async def analytics_pages(
         date = row.get("date", "")
         path = row.get("pagePath", "")
         views = int(row.get("screenPageViews", 0))
-        section = _classify_section(path)
+        section = _classify_page_section(path)
         if date not in daily_by_section:
             daily_by_section[date] = {"date": date}
         daily_by_section[date][section] = (
