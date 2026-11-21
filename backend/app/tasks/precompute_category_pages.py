@@ -1066,7 +1066,7 @@ def _absent_prewarm_labels(rc, *, exclude: set[str] | None = None) -> set[str]:
     # and this is the collapse it forced.
     known = _decode_redis_key_hash(raw)
 
-    # #12529: `_opening_seating` web/app readers skip `feed_cache:*` and read
+    # #12529: Discover web/app readers skip `feed_cache:*` and read
     # ONLY `feed:pagebase:*:stale` or `feed:machinery_pagebase:*:stale`. Check
     # those armed hashes too (failing closed when empty so unit-test mocks are
     # unaffected), still probing `:stale` mirrors only.
@@ -1103,7 +1103,7 @@ def _absent_prewarm_labels(rc, *, exclude: set[str] | None = None) -> set[str]:
         except Exception:
             logger.debug("shape-absence probe failed for %s", label, exc_info=True)
             continue
-        # #12529: `_opening_seating` web/app readers skip `feed_cache:*` and
+        # #12529: Discover web/app readers skip `feed_cache:*` and
         # read `feed:pagebase:*:stale` or `feed:machinery_pagebase:*:stale`.
         for extra_key in (known_pb.get(label), known_mach.get(label)):
             if not extra_key or extra_key == cache_key:
