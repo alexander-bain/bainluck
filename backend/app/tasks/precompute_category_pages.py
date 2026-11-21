@@ -1620,9 +1620,9 @@ async def _prewarm_feed_shape(
     # at up to 360s forever, and a live score inside it with it. Same failure
     # shape LAT-P001 closed on the key builder — two writers, one of them quietly
     # disagreeing — which is why both now go through one function.
-    live = payload_contains_live_event(payload)
+    _slice_live = payload_contains_live_event(payload)
     ttl, stale_ttl = feed_response_cache_ttls(
-        my_teams_only=False, identified=False, live=live
+        my_teams_only=False, identified=False, live=_slice_live
     )
 
     # --- #3841: MEASURE the age of the inputs, and do not spend it -----------
@@ -1696,7 +1696,8 @@ async def _prewarm_feed_shape(
             _pb_lg_body = _mach_base_ctx.get(
                 "page_base_last_good_body"
             ) or strip_live_and_started_items_for_last_good(
-                _mach_base_ctx["page_base_body"]
+                _mach_base_ctx["page_base_body"],
+                now=_time.time(),
             )
             _pb_lg_json = dumps_feed_cache(_pb_lg_body)
             _pb_fresh = int(_mach_base_ctx.get("page_base_fresh_ttl") or ttl)
@@ -1750,8 +1751,8 @@ async def _prewarm_feed_shape(
         and _mach_pub_res.get("outcome") == "ok"
         and _mach_pub_res.get("live")
     )
-    _effective_live = bool(live or _base_live or _mach_live)
-    _record_shape_liveness(rc, label, _effective_live)
+    live = bool(_slice_live or _base_live or _mach_live)
+    _record_shape_liveness(rc, label, live)
     # LAT-P112: carry the key the route just resolved forward, so the punctual
     # republish pass can ask whether this shape's entry has GONE without re-deriving
     # a key of its own. Written here and only here, from the scope readback two
@@ -1801,7 +1802,7 @@ async def _prewarm_feed_shape(
     # be explained by elapsed build time and is a page the ceiling exists to
     # stop. A constant already sized against measurement (LAT-P179: 1.4s worst
     # observed lateness over 21 samples, so ~7x it), not a number chosen here.
-    if live and _artifact_age_s is not None:
+    if _slice_live and _artifact_age_s is not None:
         _total_age_s = _artifact_age_s + stale_ttl
         if _artifact_age_s > FEED_LIVE_REPUBLISH_MIN_HEADROOM_S:
             logger.warning(

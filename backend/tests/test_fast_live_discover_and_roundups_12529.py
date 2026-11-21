@@ -230,15 +230,27 @@ async def test_add_roundup_feed_items_skips_disabled_and_runs_yardstick_before_b
     async def _slow_cached(_db, *, now=None):
         await asyncio.sleep(0.08)
         return rc_mod.RoundupMembers(
-            members=[{"type": "market", "id": 1, "destination": "/futures/1", "card": {"id": 1, "name": "Cached"}}],
-            rows=[{"market_id": 1, "outcome_id": 1, "label": "Cached", "probability": 0.5, "rendered_percent": 50}],
+            members=[
+                {"type": "market", "id": 1, "destination": "/futures/1", "card": {"id": 1, "name": "Cached A"}},
+                {"type": "market", "id": 11, "destination": "/futures/11", "card": {"id": 11, "name": "Cached B"}},
+            ],
+            rows=[
+                {"market_id": 1, "outcome_id": 1, "label": "Cached A", "probability": 0.5, "rendered_percent": 50},
+                {"market_id": 11, "outcome_id": 11, "label": "Cached B", "probability": 0.4, "rendered_percent": 40},
+            ],
             title="Cached Card",
         )
 
     async def _fast_yardstick(_db, *, now=None):
         return rc_mod.RoundupMembers(
-            members=[{"type": "market", "id": 2, "destination": "/futures/2", "card": {"id": 2, "name": "Scale"}}],
-            rows=[{"market_id": 2, "outcome_id": 2, "label": "Scale", "probability": 0.4, "rendered_percent": 40}],
+            members=[
+                {"type": "market", "id": 2, "destination": "/futures/2", "card": {"id": 2, "name": "Scale A"}},
+                {"type": "market", "id": 3, "destination": "/futures/3", "card": {"id": 3, "name": "Scale B"}},
+            ],
+            rows=[
+                {"market_id": 2, "outcome_id": 2, "label": "Scale A", "probability": 0.4, "rendered_percent": 40},
+                {"market_id": 3, "outcome_id": 3, "label": "Scale B", "probability": 0.39, "rendered_percent": 39},
+            ],
             title="For scale Card",
         )
 
@@ -247,7 +259,7 @@ async def test_add_roundup_feed_items_skips_disabled_and_runs_yardstick_before_b
         "slow-first": _make_standing_producer("slow-first", produce_fn=_slow_cached),
         "for-scale-test": _make_standing_producer(
             "for-scale-test",
-            rule={"producer": "yardstick_pair", "cache": "none"},
+            rule={"cache": "none"},
             produce_fn=_fast_yardstick,
         ),
     }
