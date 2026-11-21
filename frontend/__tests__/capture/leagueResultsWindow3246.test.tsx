@@ -1,9 +1,11 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { fetchEvents, setAuthTokenGetter } from "@/lib/api";
+import type { EventsResponse } from "@/lib/types";
 
 let mockFetchers: Array<() => Promise<unknown>> = [];
 let mockEvents: unknown[] = [];
+let mockInfinitePages: EventsResponse[] | undefined;
 jest.mock("swr", () => ({
   __esModule: true,
   default: (key: unknown, fetcher: () => Promise<unknown>) => {
@@ -11,6 +13,18 @@ jest.mock("swr", () => ({
     if (key === "sports") return { data: { sports: [] } };
     mockFetchers.push(fetcher);
     return { data: { events: mockEvents }, isLoading: false, mutate: () => {} };
+  },
+}));
+jest.mock("swr/infinite", () => ({
+  __esModule: true,
+  default: (
+    getKey: (index: number, previousPage: EventsResponse | null) => readonly unknown[] | null,
+    fetcher: (key: readonly unknown[]) => Promise<unknown>,
+  ) => {
+    const key = getKey(0, null);
+    if (!key) return {};
+    mockFetchers.push(() => fetcher(key));
+    return { data: mockInfinitePages, size: 1, isLoading: false, mutate: () => {} };
   },
 }));
 jest.mock("@/hooks", () => ({
@@ -28,6 +42,7 @@ beforeEach(() => {
   jest.useFakeTimers({ now, doNotFake: ["nextTick"] });
   mockFetchers = [];
   mockEvents = [];
+  mockInfinitePages = undefined;
   setAuthTokenGetter(null);
   global.fetch = jest.fn().mockResolvedValue({
     ok: true, json: async () => ({ events: [] }),
@@ -61,6 +76,17 @@ test("an active league keeps one request and the 14-day upcoming window", async 
   await mockFetchers[0]();
   expect(requests()[0].searchParams.get("days")).toBe("14");
   expect(requests()[0].searchParams.get("past_days")).toBe("7");
+});
+
+test("Other Soccer can continue after an empty folded page without requesting a wider window", async () => {
+  mockInfinitePages = [{ events: [], count: 50, next_offset: 50 }];
+  const html = renderToStaticMarkup(<SportPage params={{ key: "soccer_other" }} />);
+  expect(html).toContain("Show more games");
+  expect(mockFetchers).toHaveLength(1);
+  await mockFetchers[0]();
+  expect(requests().map(url => Object.fromEntries(url.searchParams))).toEqual([{
+    sport: "soccer_other", days: "14", past_days: "1", limit: "50", league_page: "true",
+  }]);
 });
 
 test("fetchEvents preserves an explicit zero-day results window", async () => {

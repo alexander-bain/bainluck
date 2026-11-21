@@ -424,6 +424,7 @@ export interface Event {
 export interface EventsResponse {
   events: Event[];
   count: number;
+  next_offset?: number | null;
 }
 
 export interface BookmakerOddsDetail {
