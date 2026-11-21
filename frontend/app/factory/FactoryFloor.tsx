@@ -11,7 +11,6 @@ import {
   ChevronRight,
   CircleCheck,
   ClipboardCheck,
-  Cog,
   Flag,
   Hammer,
   ListChecks,
@@ -21,7 +20,6 @@ import {
   Smartphone,
   Trophy,
   Truck,
-  Wind,
   X,
   Monitor,
 } from "lucide-react";
@@ -353,7 +351,9 @@ export default function FactoryFloor({
         data-motion="paused"
       >
         <header className={styles.heading}>
-          <h1>The Factory</h1>
+          <div className={styles.titlePlate}>
+            <h1>The Factory</h1>
+          </div>
         </header>
         <StackLight verdict={verdict} now={now}>
           <FactoryMascot level={verdict.level} pose="asleep" />
@@ -482,9 +482,9 @@ export default function FactoryFloor({
     }
   }
 
-  function workerFigure(id: NamedBuilder, station: Station, fallback: WorkerState) {
+  function workerFigure(id: NamedBuilder, fallback: WorkerState) {
     const voice = data?.speech?.[id];
-    const figure = <Worker identity={id} station={station} state={voice?.mood ?? fallback} />;
+    const figure = <Worker identity={id} state={voice?.mood ?? fallback} />;
     if (!voice) return figure;
     return (
       <button
@@ -544,10 +544,6 @@ export default function FactoryFloor({
       data-motion={motion ? "running" : "paused"}
     >
       <header className={styles.heading}>
-        <div className={styles.workshopIdle} aria-hidden="true">
-          <Cog className={styles.idleGear} size={27} />
-          <Wind className={styles.idleSteam} size={22} />
-        </div>
         <div className={styles.titlePlate}>
           <h1>The Factory</h1>
           <p className={styles.intro}>
@@ -702,12 +698,14 @@ export default function FactoryFloor({
                 const Icon = stationIcons[station];
                 return (
                   <div key={station}>
-                    <Icon className={styles.stationIcon} size={14} aria-hidden="true" />
-                    <strong>{stationNames[station]}</strong>
-                    <span>{engineering[station]}</span>
+                    <div className={styles.stationSign}>
+                      <Icon size={21} aria-hidden="true" />
+                      <strong>{stationNames[station]}</strong>
+                      <span>{engineering[station]}</span>
+                    </div>
                     {station === "Review" && (
                       <div className={styles.inspectionDesk}>
-                        <Worker station="Review" identity="Fable" state="idle" />
+                        <Worker identity="Fable" state="idle" />
                         <span>Foreman</span>
                       </div>
                     )}
@@ -828,7 +826,7 @@ export default function FactoryFloor({
                               >
                                 {dockBuilders.slice(0, 3).map((builder) => (
                                   <li key={builder} title={names[builder]}>
-                                    {workerFigure(builder, station, "waiting")}
+                                    {workerFigure(builder, "waiting")}
                                   </li>
                                 ))}
                                 {dockBuilders.length > 3 && (
@@ -836,7 +834,7 @@ export default function FactoryFloor({
                                 )}
                               </ul>
                             ) : workerId ? (
-                              workerFigure(workerId, station, workerState)
+                              workerFigure(workerId, workerState)
                             ) : (
                               <Icon
                                 className={styles.stationObject}
