@@ -9,7 +9,8 @@
     "flagcdn.com",
     "coverartarchive.org",
     "archive.org",
-    "static.tvmaze.com"
+    "static.tvmaze.com",
+    "api.bainluck.com"
   ],
   "entries": [
     {
@@ -1605,6 +1606,18 @@
       "author": "TVMaze contributors",
       "license": "CC BY-SA 4.0",
       "source_page": "https://www.tvmaze.com/shows/44933/severance"
+    },
+    {
+      "entity_key": "who-gets-engaged-ring",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Who Gets Engaged — stacked engagement ring and wedding bands",
+      "url": "https://api.bainluck.com/api/containers/machinery-who-gets-engaged/card-art.jpg",
+      "credit": "Rawpixel (CC0 1.0 Public Domain, rawpixel.com #5906428)",
+      "author": "Rawpixel (CC0 public domain contributor)",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://www.rawpixel.com/image/5906428/ring-free-public-domain-cc0-photo"
     }
   ]
 }
