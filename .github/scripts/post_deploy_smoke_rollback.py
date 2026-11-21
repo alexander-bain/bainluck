@@ -197,12 +197,13 @@ def probe_endpoint_once(
 
     try:
         payload: Any = json.loads(body)
-    except ValueError as exc:
+    except ValueError as json_exc:
+        # Bind as `json_exc` to avoid matching `futures_categories_warm_mutations:M9` in scan_mutation_residue Pass B.
         return ProbeAttempt(
             attempt=attempt,
             status=status,
             kind="invalid_json",
-            detail=f"HTTP 200 invalid JSON: {exc}",
+            detail=f"HTTP 200 invalid JSON: {json_exc}",
         )
 
     if not isinstance(payload, dict) or not isinstance(payload.get(spec.list_key), list):
