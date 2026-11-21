@@ -1462,6 +1462,46 @@ def sanitize_discover_feed_item(item: dict[str, Any]) -> dict[str, Any]:
             sanitize_discover_feed_item(sub) if isinstance(sub, dict) else sub
             for sub in (raw_data.get("items") or [])
         ]
+        # Machinery groupings can explicitly suppress card photography (e.g. map-only
+        # weather sets or named-couple sets without a verified photo of the named pair)
+        # so neither generic domain fallbacks nor member stock photos leak onto the card.
+        roundup_meta = raw_data.get("roundup") if isinstance(raw_data.get("roundup"), dict) else None
+        mc_meta = roundup_meta.get("machinery_card") if isinstance(roundup_meta, dict) else None
+        if isinstance(mc_meta, dict) and mc_meta.get("suppress_card_photo") is True:
+            cleared_sub_items = []
+            for sub in sub_items:
+                if isinstance(sub, dict) and isinstance(sub.get("data"), dict):
+                    cleared_sub_items.append(
+                        {
+                            **sub,
+                            "data": {
+                                **sub["data"],
+                                "image_url": None,
+                                "image_presentation": None,
+                                "image_monogram": None,
+                                "image_credit": None,
+                                "image_author": None,
+                                "image_license": None,
+                                "image_source_page": None,
+                            },
+                        }
+                    )
+                else:
+                    cleared_sub_items.append(sub)
+            return {
+                **item,
+                "data": {
+                    **raw_data,
+                    "items": cleared_sub_items,
+                    "image_url": None,
+                    "image_presentation": None,
+                    "image_monogram": None,
+                    "image_credit": None,
+                    "image_author": None,
+                    "image_license": None,
+                    "image_source_page": None,
+                },
+            }
         # Resolve bundle-level representative art for non-roundup / audit consumers
         # (`RoundupCard.tsx` deliberately renders text + bars only per Oct 6 R4).
         bundle_img: str | None = None
