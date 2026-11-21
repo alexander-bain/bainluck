@@ -65,6 +65,13 @@ const lines: Line[] = ["Server", "Website", "Apps"];
 const PAGE_REFRESH_MS = 60_000;
 const SPEECH_INTERVAL_MS = 8_000;
 const FOLLOWED_CRATES_KEY = "factory-followed-crates-v1";
+const pacificPostingTime = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/Los_Angeles",
+  month: "short",
+  day: "numeric",
+  hour: "numeric",
+  minute: "2-digit",
+});
 type NamedBuilder = Exclude<Builder, "Other">;
 const builders: { key: NamedBuilder; name: string }[] = [
   { key: "S", name: "Speed" },
@@ -427,6 +434,7 @@ export default function FactoryFloor({
   const holds = stops.filter((stop) => stop.kind === "hold");
   const waits = stops.filter((stop) => stop.kind !== "hold");
   const serverHold = holds.find((stop) => stop.line === "Server");
+  const testFlightPost = data.signals.testflight_post;
   const notes =
     data.notes?.snapshot_at === data.generated_at ? data.notes : null;
   const noteCredit =
@@ -738,9 +746,12 @@ export default function FactoryFloor({
                     <div className={styles.lineName}>
                       <LineIcon size={20} strokeWidth={1.6} />
                       <strong>{line}</strong>
-                      {line === "Apps" && data.signals.testflight_post && (
+                      {line === "Apps" && testFlightPost && Number.isFinite(Date.parse(testFlightPost.at)) && (
                         <span className={styles.buildPlate}>
-                          TestFlight build {data.signals.testflight_post.build}
+                          TestFlight build {testFlightPost.build}
+                          <time dateTime={testFlightPost.at}>
+                            Posted {pacificPostingTime.format(new Date(testFlightPost.at))} PT
+                          </time>
                         </span>
                       )}
                     </div>
