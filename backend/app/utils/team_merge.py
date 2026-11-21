@@ -316,6 +316,9 @@ _FK_STATEMENTS = [
      "AND u2.relation_type = uf.relation_type)"),
     "DELETE FROM user_favorites WHERE team_id = :src",
     "UPDATE team_identity_mapping SET team_id = :tgt WHERE team_id = :src",
+    # #13229: flatten any redirect chain whose canonical target is itself being
+    # folded into a newer canonical team before deleting the retired row.
+    "UPDATE retired_team_redirects SET canonical_team_id = :tgt WHERE canonical_team_id = :src",
 ]
 
 

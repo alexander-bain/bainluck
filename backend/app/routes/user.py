@@ -1080,7 +1080,18 @@ async def add_favorite(
     ))
     await db.flush()
 
-    logger.info(f"Added favorite: user={user.id} team={target_team_id} type={body.relation_type}")
+    safe_relation_type = {
+        "follow": "follow",
+        "local": "local",
+        "alma_mater": "alma_mater",
+        "rival": "rival",
+    }[body.relation_type]
+    logger.info(
+        "Added favorite: user=%d team=%d type=%s",
+        int(user.id),
+        int(target_team_id),
+        safe_relation_type,
+    )
     return {"status": "added"}
 
 
@@ -1127,7 +1138,18 @@ async def remove_favorite(
     if result.rowcount == 0:
         raise HTTPException(status_code=404, detail="Favorite not found")
 
-    logger.info(f"Removed favorite: user={user.id} team={target_team_id} type={relation_type}")
+    safe_relation_type = {
+        "follow": "follow",
+        "local": "local",
+        "alma_mater": "alma_mater",
+        "rival": "rival",
+    }[relation_type]
+    logger.info(
+        "Removed favorite: user=%d team=%d type=%s",
+        int(user.id),
+        int(target_team_id),
+        safe_relation_type,
+    )
     return {"status": "removed"}
 
 
