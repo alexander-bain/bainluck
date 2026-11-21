@@ -17,6 +17,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from functools import lru_cache
 from typing import Callable, Iterable, Literal, Optional, Sequence
 
 from app.utils.card_integrity import is_anonymized_market
@@ -2108,6 +2109,10 @@ _MARGIN_TURNOUT_TICKER_RE = re.compile(
 )
 
 
+_PRES_TURNOUT_PRES_RE = re.compile(r"\bpresident")
+_PRES_TURNOUT_US_RE = re.compile(r"\b(u\.?s\.?|united states|american)\b")
+
+
 def _is_us_presidential_turnout(name: str) -> bool:
     """Carve-out: US presidential voter turnout may surface (Alex 2026-06-24).
 
@@ -2117,9 +2122,9 @@ def _is_us_presidential_turnout(name: str) -> bool:
     low = (name or "").lower()
     if "turnout" not in low:
         return False
-    if not re.search(r"\bpresident", low):
+    if not _PRES_TURNOUT_PRES_RE.search(low):
         return False
-    return bool(re.search(r"\b(u\.?s\.?|united states|american)\b", low))
+    return bool(_PRES_TURNOUT_US_RE.search(low))
 
 
 # Artist annual stream-count markets — Lane 2 Queue L2-2 (2026-06-24), the next
@@ -2810,27 +2815,35 @@ class MarketQuality:
     explanation_required: bool = False
 
 
+_NORM_URL_RE = re.compile(r"https?://\S+")
+_NORM_RANK_RE = re.compile(r"#(\d{1,2})\b")
+_NORM_NUM_RE = re.compile(r"\$?\d+(?:,\d{3})*(?:\.\d+)?%?")
+_NORM_MONTH_RE = re.compile(rf"\b({_MONTH_RE})\b")
+_NORM_YEAR_RE = re.compile(r"\b\d{4}\b")
+_NORM_NON_ALNUM_RE = re.compile(r"[^a-z0-9<>]+")
+_NORM_WS_RE = re.compile(r"\s+")
+_PROPER_TOKENS_RE = re.compile(r"\b[A-Z][a-z]{2,}\b")
+
+
+def _replace_norm_rank(match: re.Match[str]) -> str:
+    rank = int(match.group(1))
+    return f"<rank{_RANK_WORDS[rank]}>" if rank in _RANK_WORDS else "<rankother>"
+
+
+@lru_cache(maxsize=4096)
 def _normalized_text(text: str) -> str:
     text = text.lower()
-    text = re.sub(r"https?://\S+", " ", text)
+    text = _NORM_URL_RE.sub(" ", text)
     # Preserve #N ranking patterns (e.g., "#1 Netflix Show" vs "#2 Netflix
     # Show") so that different rankings get distinct family keys. Without
     # this, both collapse to "<num> netflix show" and dedup kills one.
     # Use a non-numeric placeholder so the subsequent <num> pass won't eat it.
-    text = re.sub(
-        r"#(\d{1,2})\b",
-        lambda m: (
-            f"<rank{_RANK_WORDS[int(m.group(1))]}>"
-            if int(m.group(1)) in _RANK_WORDS
-            else "<rankother>"
-        ),
-        text,
-    )
-    text = re.sub(r"\$?\d+(?:,\d{3})*(?:\.\d+)?%?", "<num>", text)
-    text = re.sub(rf"\b({_MONTH_RE})\b", "<month>", text)
-    text = re.sub(r"\b\d{4}\b", "<year>", text)
-    text = re.sub(r"[^a-z0-9<>]+", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
+    text = _NORM_RANK_RE.sub(_replace_norm_rank, text)
+    text = _NORM_NUM_RE.sub("<num>", text)
+    text = _NORM_MONTH_RE.sub("<month>", text)
+    text = _NORM_YEAR_RE.sub("<year>", text)
+    text = _NORM_NON_ALNUM_RE.sub(" ", text)
+    return _NORM_WS_RE.sub(" ", text).strip()
 
 
 def _numbers(text: str) -> list[float]:
@@ -2917,11 +2930,60 @@ _OFFICE_NOUNS = frozenset(
 )
 
 
+_STORY_MIDEAST_RE = re.compile(
+    r"\b(iran|iranian|israel|hormuz|uranium|enrichment|nuclear deal|airspace|gaza)\b"
+)
+_STORY_PUTIN_RE = re.compile(r"\b(putin|president|regime|fall|collapse)\b")
+_STORY_2028_RE = re.compile(r"\b(president|presidential|nominee|election)\b")
+_STORY_PRESIDENTIAL_RE = re.compile(r"\bpresidential\b")
+_STORY_MAYORAL_RE = re.compile(r"\b((mayoral|mayor)\s+election|mayor\s+winner)\b")
+_STORY_EARNINGS_1_RE = re.compile(r"\b(beat|miss|report|quarterly)\b.*\bearnings\b")
+_STORY_EARNINGS_2_RE = re.compile(r"\bearnings\b.*\b(beat|miss|report|quarterly)\b")
+_STORY_OIL_RE = re.compile(r"\b(wti|crude oil|brent oil|oil)\b")
+_STORY_ALIENS_RE = re.compile(r"\b(aliens?|ufo|extraterrestrial)\b")
+_STORY_SPACEX_IPO_RE = re.compile(r"\b(ipo|public|bank)\b")
+_STORY_SPACEX_LAUNCH_RE = re.compile(r"\b(starship|launch|launches)\b")
+_STORY_BB_HOT100_RE = re.compile(r"\bbillboard\s+hot\s+100\b")
+_STORY_BB_200_RE = re.compile(r"\bbillboard\s+200\b")
+_STORY_SPOTIFY_RE = re.compile(r"\bspotify\b")
+_STORY_BB_RE = re.compile(r"\bbillboard\b")
+_STORY_BASKETBALL_FINALS_RE = re.compile(r"\b(nba finals?|wnba finals?)\b")
+_STORY_WORLD_CUP_RE = re.compile(r"\b(fifa\s+)?world cup\b")
+_STORY_UFC_TITLE_RE = re.compile(r"\bufc\b.*\b(title|champion|main event)\b")
+_STORY_TENNIS_SLAM_RE = re.compile(
+    r"\b(wimbledon|french open|australian open|roland garros|grand slam)\b"
+)
+_STORY_US_OPEN_RE = re.compile(r"\bus open\b")
+_STORY_AI_RE = re.compile(
+    r"\b(openai|gpt|claude(?!\s+monet)|deepseek|gemini|ai model|best ai)\b"
+)
+_STORY_OSCARS_RE = re.compile(r"\b(oscars?|academy awards?)\b")
+_STORY_GRAMMYS_RE = re.compile(r"\bgrammys?\b")
+_STORY_EMMYS_RE = re.compile(r"\bemmys?\b")
+_STORY_GOLDEN_GLOBES_RE = re.compile(r"\bgolden globes?\b")
+_STORY_MET_GALA_RE = re.compile(r"\bmet gala\b")
+_STORY_DRAKE_RE = re.compile(r"\b(drake|iceman)\b")
+_STORY_GOV_STAKES_RE = re.compile(r"\bfederal government\b.*\btake a stake\b")
+_FAMILY_MAYORAL_CI_RE = re.compile(
+    r"\b((mayoral|mayor)\s+election|mayor\s+winner)\b", re.IGNORECASE
+)
+_FAMILY_PRES_EXCLUDE_RE = re.compile(
+    r"\b(president|presidential|trump|biden|obama|2028)\b", re.IGNORECASE
+)
+_FAMILY_ENT_STREAM_RE = re.compile(
+    r"streams up this week|weekly streams", re.IGNORECASE
+)
+_FAMILY_ENT_CHART_RE = re.compile(
+    r"billboard|weekly top|spotify", re.IGNORECASE
+)
+_FAMILY_RANGE_RE = re.compile(r"<num>(?:\s*(?:to|and|-)\s*<num>)+")
+
+
 def _has_named_salient_entity(name: str, *, ignore_office_nouns: bool = False) -> bool:
     # Proper-case words are a useful salience hint for people, teams, companies,
     # places, and diseases. Exclude title-case boilerplate by requiring either
     # multiple proper tokens or a known high-salience pattern.
-    proper_tokens = re.findall(r"\b[A-Z][a-z]{2,}\b", name)
+    proper_tokens = _PROPER_TOKENS_RE.findall(name)
     stop = _STOPWORDS | _OFFICE_NOUNS if ignore_office_nouns else _STOPWORDS
     filtered = [t for t in proper_tokens if t.lower() not in stop]
     return len(filtered) >= 2 or bool(
@@ -2932,10 +2994,7 @@ def _has_named_salient_entity(name: str, *, ignore_office_nouns: bool = False) -
 def _story_key(name: str, category: str) -> str | None:
     lower = name.lower()
 
-    if re.search(
-        r"\b(iran|iranian|israel|hormuz|uranium|enrichment|nuclear deal|airspace|gaza)\b",
-        lower,
-    ):
+    if _STORY_MIDEAST_RE.search(lower):
         return "story:middle_east_conflict"
 
     if ("russia" in lower and "ukraine" in lower) or _RUSSIA_WAR_TERRITORY_RE.search(
@@ -2943,22 +3002,18 @@ def _story_key(name: str, category: str) -> str | None:
     ):
         return "story:russia_ukraine"
 
-    if "russia" in lower and re.search(
-        r"\b(putin|president|regime|fall|collapse)\b", lower
-    ):
+    if "russia" in lower and _STORY_PUTIN_RE.search(lower):
         return "story:russia_ukraine"
 
-    if "2028" in lower and re.search(
-        r"\b(president|presidential|nominee|election)\b", lower
-    ):
+    if "2028" in lower and _STORY_2028_RE.search(lower):
         return "story:us_2028_election"
 
-    if _REGIONAL_US_ELECTION_RE.search(name) and not re.search(
-        r"\bpresidential\b", lower
+    if _REGIONAL_US_ELECTION_RE.search(name) and not _STORY_PRESIDENTIAL_RE.search(
+        lower
     ):
         return "story:regional_us_elections"
 
-    if re.search(r"\b((mayoral|mayor)\s+election|mayor\s+winner)\b", lower):
+    if _STORY_MAYORAL_RE.search(lower):
         return "story:regional_us_elections"
 
     # #7494. TWO ARMS, because the container this key feeds is US-specific by
@@ -2989,52 +3044,50 @@ def _story_key(name: str, category: str) -> str | None:
     if _MACRO_PRICE_RATE_RE.search(lower) and not _NON_US_JURISDICTION_RE.search(lower):
         return "story:macro_rates"
 
-    if re.search(r"\b(beat|miss|report|quarterly)\b.*\bearnings\b", lower) or re.search(
-        r"\bearnings\b.*\b(beat|miss|report|quarterly)\b", lower
-    ):
+    if _STORY_EARNINGS_1_RE.search(lower) or _STORY_EARNINGS_2_RE.search(lower):
         return "story:single_stock_earnings"
 
-    if re.search(r"\b(wti|crude oil|brent oil|oil)\b", lower):
+    if _STORY_OIL_RE.search(lower):
         return "story:oil"
 
-    if re.search(r"\b(aliens?|ufo|extraterrestrial)\b", lower):
+    if _STORY_ALIENS_RE.search(lower):
         return "story:aliens_disclosure"
 
-    if "spacex" in lower and re.search(r"\b(ipo|public|bank)\b", lower):
+    if "spacex" in lower and _STORY_SPACEX_IPO_RE.search(lower):
         return "story:spacex_ipo"
 
-    if "spacex" in lower and re.search(r"\b(starship|launch|launches)\b", lower):
+    if "spacex" in lower and _STORY_SPACEX_LAUNCH_RE.search(lower):
         return "story:spacex_launches"
 
     if "ipo" in lower:
         return "story:ipo_markets"
 
-    if re.search(r"\bbillboard\s+hot\s+100\b", lower):
+    if _STORY_BB_HOT100_RE.search(lower):
         return "story:billboard_hot100"
 
-    if re.search(r"\bbillboard\s+200\b", lower):
+    if _STORY_BB_200_RE.search(lower):
         return "story:billboard_200"
 
-    if re.search(r"\bspotify\b", lower):
+    if _STORY_SPOTIFY_RE.search(lower):
         return "story:spotify_charts"
 
-    if re.search(r"\bbillboard\b", lower):
+    if _STORY_BB_RE.search(lower):
         return "story:music_charts"
 
     if is_daily_direction_filler(name):
         return "story:daily_equity_direction"
 
-    if re.search(r"\b(nba finals?|wnba finals?)\b", lower):
+    if _STORY_BASKETBALL_FINALS_RE.search(lower):
         return "story:basketball_finals_path"
 
-    if re.search(r"\b(fifa\s+)?world cup\b", lower):
+    if _STORY_WORLD_CUP_RE.search(lower):
         return "story:fifa_world_cup"
 
     ufc_event = ufc_event_story_key(name)
     if ufc_event is not None:
         return ufc_event
 
-    if re.search(r"\bufc\b.*\b(title|champion|main event)\b", lower):
+    if _STORY_UFC_TITLE_RE.search(lower):
         return "story:ufc_events"
 
     # #4554 — a Slam's NAME is tennis only when the MARKET is. "AFC Wimbledon vs.
@@ -3045,43 +3098,39 @@ def _story_key(name: str, category: str) -> str | None:
     # "tennis" (2,332 rows, none null), and every other match was a mis-filing:
     # 590 AFC Wimbledon soccer rows, golf's "career Grand Slam", a baseball grand
     # slam and esports' "ESL Grand Slam". The same gate as the US Open rule below.
-    if category == "tennis" and re.search(
-        r"\b(wimbledon|french open|australian open|roland garros|grand slam)\b", lower
-    ):
+    if category == "tennis" and _STORY_TENNIS_SLAM_RE.search(lower):
         return "story:grand_slam_tennis"
 
     # "US Open" is tennis when the category is tennis (not golf)
-    if category == "tennis" and re.search(r"\bus open\b", lower):
+    if category == "tennis" and _STORY_US_OPEN_RE.search(lower):
         return "story:grand_slam_tennis"
 
     # #8742: "Claude Monet's artwork break auction record" is not about a model.
-    if re.search(
-        r"\b(openai|gpt|claude(?!\s+monet)|deepseek|gemini|ai model|best ai)\b", lower
-    ):
+    if _STORY_AI_RE.search(lower):
         return "story:ai"
 
-    if re.search(r"\b(oscars?|academy awards?)\b", lower):
+    if _STORY_OSCARS_RE.search(lower):
         return "story:oscars"
 
-    if re.search(r"\bgrammys?\b", lower):
+    if _STORY_GRAMMYS_RE.search(lower):
         return "story:grammys"
 
-    if re.search(r"\bemmys?\b", lower):
+    if _STORY_EMMYS_RE.search(lower):
         return "story:emmys"
 
-    if re.search(r"\bgolden globes?\b", lower):
+    if _STORY_GOLDEN_GLOBES_RE.search(lower):
         return "story:golden_globes"
 
-    if re.search(r"\bmet gala\b", lower):
+    if _STORY_MET_GALA_RE.search(lower):
         return "story:met_gala"
 
     if _is_us_federal_power(name):
         return "story:us_federal_power"
 
-    if category == "entertainment" and re.search(r"\b(drake|iceman)\b", lower):
+    if category == "entertainment" and _STORY_DRAKE_RE.search(lower):
         return "story:drake_iceman"
 
-    if re.search(r"\bfederal government\b.*\btake a stake\b", lower):
+    if _STORY_GOV_STAKES_RE.search(lower):
         return "story:us_government_stakes"
 
     if "truist championship" in lower:
@@ -3170,18 +3219,8 @@ def classify_market_quality(
     obscure = bool(_OBSCURE_PROCEDURAL_RE.search(name))
     regional_election = (
         bool(_REGIONAL_US_ELECTION_RE.search(name))
-        or bool(
-            re.search(
-                r"\b((mayoral|mayor)\s+election|mayor\s+winner)\b",
-                name,
-                re.IGNORECASE,
-            )
-        )
-    ) and not re.search(
-        r"\b(president|presidential|trump|biden|obama|2028)\b",
-        name,
-        re.IGNORECASE,
-    )
+        or bool(_FAMILY_MAYORAL_CI_RE.search(name))
+    ) and not _FAMILY_PRES_EXCLUDE_RE.search(name)
 
     # ── #1958: ADMISSION DECISION for `regional_us_election + salient_entity` ──
     #
@@ -3375,15 +3414,14 @@ def classify_market_quality(
 
     family_key = normalized
     if entertainment_metric:
-        if re.search(r"streams up this week|weekly streams", name, re.IGNORECASE):
+        if _FAMILY_ENT_STREAM_RE.search(name):
             family_key = "entertainment:streaming_metric"
-        elif re.search(r"billboard|weekly top|spotify", name, re.IGNORECASE):
+        elif _FAMILY_ENT_CHART_RE.search(name):
             family_key = "entertainment:chart_metric"
         else:
             family_key = "entertainment:metric"
     if ladder_or_bucket:
-        family_key = re.sub(r"<num>(?:\s*(?:to|and|-)\s*<num>)+", "<range>", normalized)
-        family_key = re.sub(r"<num>", "<num>", family_key)
+        family_key = _FAMILY_RANGE_RE.sub("<range>", normalized)
     alt_data_metric = _ALT_DATA_METRIC_RE.search(normalized)
     if alt_data_metric:
         # AFTER the ladder rewrite, deliberately. Every one of these markets

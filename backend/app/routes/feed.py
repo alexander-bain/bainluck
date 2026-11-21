@@ -15693,6 +15693,14 @@ async def _score_futures(
     # market/outcome rows are loaded fresh and every runtime filter, scoring,
     # personalization, diversity, and page op run unchanged below.
     from app.utils import candidate_base as _candidate_base
+    from app.utils.discover_fun_tags import (
+        check_fun_still_ahead,
+        check_fun_taste_guard,
+        fun_entry_allows_extreme_odds,
+        get_fun_market_entry,
+        is_discover_fun_admission_enabled as _is_fun_admission_on,
+        resolve_fun_effective_category,
+    )
     from app.utils.event_awards import grammy_nominee_fields, prefer_grammy_nominee_fields
 
     # Queue 305 (#1475): the #1090 thin-pool broaden pass re-scores the SAME
@@ -15705,9 +15713,6 @@ async def _score_futures(
     # relaxed scoring loop below still runs (that IS the point of #1090), and
     # membership/order are unchanged (the base is config-independent, so a fresh
     # reload would return the identical rows in the identical order).
-    from app.utils.discover_fun_tags import (
-        is_discover_fun_admission_enabled as _is_fun_admission_on,
-    )
 
     _fun_admission_on = bool(
         not category_filter
@@ -15901,8 +15906,15 @@ async def _score_futures(
                 ),
             )
 
+        # #12529: market_load is in LIVENESS_INERT_NAMESPACES (its TTL is 120s and
+        # its age is never charged against the live ceiling / page-base headroom).
+        # Opt it out of the 10s ambient warm-rail bound so every 40s live prewarm
+        # reuses Redis L2 instead of running a 2.3-4.7s cold Postgres rebuild.
         _snapshot_payload = await _pic.get_or_build(
-            "market_load", _snapshot_key, _build_market_rows
+            "market_load",
+            _snapshot_key,
+            _build_market_rows,
+            max_age_s=_pic.shared_build_ttl_s("market_load"),
         )
         # A payload this build cannot read is a MISS, never an empty feed: an
         # unreadable shape must send us back through the builder, not report
@@ -16464,14 +16476,6 @@ async def _score_futures(
                 and not my_teams_only
                 and market.id in fun_admission_ids
             ):
-                from app.utils.discover_fun_tags import (
-                    check_fun_still_ahead,
-                    check_fun_taste_guard,
-                    fun_entry_allows_extreme_odds,
-                    get_fun_market_entry,
-                    resolve_fun_effective_category,
-                )
-
                 _candidate_fun_entry = get_fun_market_entry(market.id)
                 if _candidate_fun_entry is not None:
                     _fun_taste_ok, _ = check_fun_taste_guard(market.name)

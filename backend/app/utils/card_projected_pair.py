@@ -158,6 +158,10 @@ CARD_PROJECTION_READ_CAP_MS = 1500
 CARD_PROJECTION_DEADLINE_MARGIN_MS = 500
 #: Below this, the read is not started at all.
 CARD_PROJECTION_MIN_READ_MS = 50
+#: Chunk size for uncached card projected-pair reads so one cold build never sends
+#: 100-200 IDs into one `latest_odds_per_bookmaker_query` savepoint and lose all progress
+#: to `statement_timeout`.
+CARD_PROJECTION_BATCH_SIZE = 25
 
 
 def card_projection_wanted(
@@ -469,7 +473,7 @@ def scheduled_card_pair(latest_rows: Iterable[Any], recent_rows: Iterable[Any], 
 
 CARD_PROJECTION_CACHE_ENV = "CARD_PROJECTION_CACHE_ENABLED"
 CARD_PROJECTION_CACHE_SHARED_ENV = "CARD_PROJECTION_CACHE_SHARED_ENABLED"
-CARD_PROJECTION_CACHE_TTL_SECONDS = 60
+CARD_PROJECTION_CACHE_TTL_SECONDS = 180
 _CARD_CACHE_L1_MAX_ENTRIES = 2048
 _CARD_CACHE_L2_PREFIX = "card_proj:v1"
 _CARD_CACHE_ABSENT = {"_absent": True}
@@ -824,17 +828,78 @@ async def read_card_projected_pairs_bounded(
         cached_pairs, uncached_cards, miss_keys = await _resolve_cached_scheduled_cards(wanted)
         if not uncached_cards:
             return cached_pairs
-        uncached_wanted = {int(c["id"]): c for c in uncached_cards}
     else:
-        uncached_wanted = wanted
+        uncached_cards = list(wanted.values())
 
-    async with db.begin_nested() as savepoint:
-        await db.execute(text(f"SET LOCAL statement_timeout = '{int(timeout_ms)}ms'"))
-        fresh_pairs, errored_ids = await _read_card_projected_pairs_uncached(db, uncached_wanted)
-        await savepoint.rollback()
+    # Live cards first so if a cold multi-batch read exhausts its budget, live cards keep
+    # their pairs while scheduled cards progressively fill L1 + L2 chunk by chunk.
+    ordered_uncached = [
+        c
+        for c in uncached_cards
+        if c.get("served_status") == "live" or c.get("stored_status") == "live"
+    ] + [
+        c
+        for c in uncached_cards
+        if not (c.get("served_status") == "live" or c.get("stored_status") == "live")
+    ]
+    batch_size = max(1, int(CARD_PROJECTION_BATCH_SIZE))
+    batches = [
+        ordered_uncached[idx : idx + batch_size]
+        for idx in range(0, len(ordered_uncached), batch_size)
+    ]
 
-    if use_cache and miss_keys:
-        await _store_cached_scheduled_cards(miss_keys, fresh_pairs, skip_ids=errored_ids)
+    deadline = time.monotonic() + (int(timeout_ms) / 1000.0)
+    fresh_pairs: dict[int, dict] = {}
+    completed_cards = 0
+    for batch_idx, batch in enumerate(batches):
+        if batch_idx == 0:
+            batch_timeout_ms = int(timeout_ms)
+        else:
+            remaining_ms = int((deadline - time.monotonic()) * 1000)
+            if remaining_ms < CARD_PROJECTION_MIN_READ_MS:
+                logger.warning(
+                    "card_projected_pair budget exhausted after %d/%d cards (%d/%d batches)",
+                    completed_cards,
+                    len(ordered_uncached),
+                    batch_idx,
+                    len(batches),
+                )
+                break
+            batch_timeout_ms = min(int(timeout_ms), remaining_ms)
+
+        batch_wanted = {int(c["id"]): c for c in batch}
+        try:
+            async with db.begin_nested() as savepoint:
+                await db.execute(
+                    text(f"SET LOCAL statement_timeout = '{batch_timeout_ms}ms'")
+                )
+                batch_pairs, batch_errored = await _read_card_projected_pairs_uncached(
+                    db, batch_wanted
+                )
+                await savepoint.rollback()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "card_projected_pair batch %d/%d (size=%d, completed_cards=%d) aborted: %s",
+                batch_idx + 1,
+                len(batches),
+                len(batch),
+                completed_cards,
+                exc,
+            )
+            break
+
+        fresh_pairs.update(batch_pairs)
+        completed_cards += len(batch)
+        if use_cache and miss_keys:
+            batch_miss_keys = {
+                eid: miss_keys[eid] for eid in batch_wanted if eid in miss_keys
+            }
+            if batch_miss_keys:
+                await _store_cached_scheduled_cards(
+                    batch_miss_keys, batch_pairs, skip_ids=batch_errored
+                )
 
     if cached_pairs:
         cached_pairs.update(fresh_pairs)

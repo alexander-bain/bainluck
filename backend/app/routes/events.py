@@ -7,6 +7,7 @@ import os
 import re
 import time
 import unicodedata
+import zlib
 from collections import Counter
 from types import SimpleNamespace
 from contextlib import asynccontextmanager, suppress
@@ -37682,7 +37683,13 @@ async def _build_team_lookup(db: AsyncSession, team_names: list[str]) -> dict:
     behind the response. Only an empty cache still blocks — a first request in a
     fresh process has no stale value, and shipping a search with no logos to
     save 400 ms is a worse answer, not a faster one.
+
+    #12529: when L1 is cold in a freshly-forked worker, check a compact
+    compressed Redis L2 slot (`_TEAM_LOOKUP_L2_KEY`) carrying the plain
+    `TeamSnapshot` rows + `computed_at` timestamp (inheriting remaining TTL so
+    L1 + L2 never stack past `_TEAM_CACHE_TTL`). Fails open to Postgres.
     """
+    import asyncio
     import time
 
     global _team_cache, _team_cache_time
@@ -37703,6 +37710,16 @@ async def _build_team_lookup(db: AsyncSession, team_names: list[str]) -> dict:
             # plain comprehension here returns a bare dict and silently strips
             # it on the path that serves almost every request.
             return _as_lookup(_team_cache).subset(names_set)
+    else:
+        l2_client = _team_lookup_l2_client()
+        if l2_client is not None:
+            l2_hit = await asyncio.to_thread(_read_team_lookup_l2, l2_client)
+            if l2_hit is not None:
+                full_lookup, computed_at = l2_hit
+                age_s = max(0.0, time.time() - computed_at)
+                _team_cache = full_lookup
+                _team_cache_time = now - age_s
+                return _as_lookup(full_lookup).subset(names_set)
 
     # Load all teams with ESPN data — single simple query
     result = await db.execute(_enriched_teams_stmt())
@@ -37710,9 +37727,163 @@ async def _build_team_lookup(db: AsyncSession, team_names: list[str]) -> dict:
 
     _team_cache = full_lookup
     _team_cache_time = now
+    l2_client = _team_lookup_l2_client()
+    if l2_client is not None:
+        await asyncio.to_thread(
+            _write_team_lookup_l2, l2_client, _last_shaped_team_snapshots, time.time()
+        )
 
     # Return only the subset matching requested names
     return _as_lookup(full_lookup).subset(names_set)
+
+
+_TEAM_LOOKUP_L2_KEY = "bainluck:team_lookup:v1"
+_TEAM_LOOKUP_L2_ENABLED_ENV = "TEAM_LOOKUP_SHARED_CACHE_ENABLED"
+
+
+def _team_lookup_l2_enabled() -> bool:
+    raw = os.environ.get(_TEAM_LOOKUP_L2_ENABLED_ENV, "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _team_lookup_l2_client():
+    """Bounded sync Redis client for shared team-lookup L2, or None (fail-open)."""
+    if not _team_lookup_l2_enabled():
+        return None
+    if not (os.getenv("REDIS_URL") or os.getenv("REDIS_TLS_URL")):
+        return None
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        return get_redis_client(socket_timeout=0.5, fast_fail=True)
+    except Exception:
+        return None
+
+
+def _encode_standings_updated_at(val: object) -> object:
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        return ["dt", val.isoformat()]
+    return ["str", str(val)]
+
+
+def _decode_standings_updated_at(val: object) -> object:
+    if val is None:
+        return None
+    if isinstance(val, list) and len(val) == 2:
+        kind, raw = val
+        if kind == "dt" and isinstance(raw, str):
+            return datetime.fromisoformat(raw)
+        if kind == "str" and isinstance(raw, str):
+            return raw
+    return None
+
+
+def _encode_team_snapshots_l2(
+    snapshots: Sequence[TeamSnapshot], computed_at: float
+) -> bytes:
+    rows = [
+        [
+            s.id,
+            s.sport_id,
+            s.sport_key,
+            s.name,
+            s.slug,
+            s.abbreviation,
+            s.primary_color,
+            s.secondary_color,
+            s.logo_url_small,
+            s.logo_url_large,
+            s.current_record,
+            list(s.alternate_names or ()),
+            s.standings_data,
+            _encode_standings_updated_at(s.standings_updated_at),
+            s.season_stats,
+            s.espn_id,
+        ]
+        for s in snapshots
+    ]
+    payload = {"v": 1, "computed_at": float(computed_at), "teams": rows}
+    raw_json = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    return zlib.compress(raw_json, level=1)
+
+
+def _decode_team_snapshots_l2(
+    raw: bytes | bytearray | str | None, *, now_epoch: float | None = None
+) -> tuple[list[TeamSnapshot], float] | None:
+    if raw is None:
+        return None
+    try:
+        data_bytes = bytes(raw) if isinstance(raw, (bytes, bytearray)) else raw.encode("latin1")
+        parsed = json.loads(zlib.decompress(data_bytes).decode("utf-8"))
+    except Exception:
+        return None
+    if not isinstance(parsed, dict) or parsed.get("v") != 1:
+        return None
+    computed_at = parsed.get("computed_at")
+    if isinstance(computed_at, bool) or not isinstance(computed_at, (int, float)):
+        return None
+    now = time.time() if now_epoch is None else now_epoch
+    age_s = now - float(computed_at)
+    if age_s < 0 or age_s >= _TEAM_CACHE_TTL:
+        return None
+    raw_rows = parsed.get("teams")
+    if not isinstance(raw_rows, list):
+        return None
+    snapshots: list[TeamSnapshot] = []
+    try:
+        for r in raw_rows:
+            if not isinstance(r, list) or len(r) != 16:
+                return None
+            snapshots.append(
+                TeamSnapshot(
+                    id=r[0],
+                    sport_id=r[1],
+                    sport_key=r[2],
+                    name=r[3],
+                    slug=r[4],
+                    abbreviation=r[5],
+                    primary_color=r[6],
+                    secondary_color=r[7],
+                    logo_url_small=r[8],
+                    logo_url_large=r[9],
+                    current_record=r[10],
+                    alternate_names=tuple(r[11] or ()),
+                    standings_data=r[12],
+                    standings_updated_at=_decode_standings_updated_at(r[13]),
+                    season_stats=r[14],
+                    espn_id=r[15],
+                )
+            )
+    except Exception:
+        return None
+    return snapshots, float(computed_at)
+
+
+def _read_team_lookup_l2(client) -> tuple[dict, float] | None:
+    try:
+        raw = client.get(_TEAM_LOOKUP_L2_KEY)
+    except Exception:
+        logger.debug("team_lookup L2 read skipped", exc_info=True)
+        return None
+    decoded = _decode_team_snapshots_l2(raw)
+    if decoded is None:
+        return None
+    snapshots, computed_at = decoded
+    return _dedupe_team_name_lookup(snapshots), computed_at
+
+
+def _write_team_lookup_l2(
+    client, snapshots: Sequence[TeamSnapshot], computed_at: float
+) -> bool:
+    try:
+        blob = _encode_team_snapshots_l2(snapshots, computed_at)
+        client.setex(_TEAM_LOOKUP_L2_KEY, _TEAM_CACHE_TTL, blob)
+        return True
+    except Exception:
+        logger.debug("team_lookup L2 write skipped", exc_info=True)
+        return False
 
 
 def _enriched_teams_stmt():
@@ -37755,6 +37926,14 @@ TEAM_LOOKUP_COLUMNS = (
 )
 
 
+def _extract_team_snapshots(rows) -> list[TeamSnapshot]:
+    """Copy `(Team, sport_key)` ORM pairs into detached `TeamSnapshot` objects."""
+    return [_snapshot_team(t, sport_key=k) for t, k in rows]
+
+
+_last_shaped_team_snapshots: tuple[TeamSnapshot, ...] = ()
+
+
 def _shape_team_lookup(rows) -> dict:
     """`(Team, sport_key)` rows → the name→`TeamSnapshot` lookup the cache holds.
 
@@ -37767,7 +37946,9 @@ def _shape_team_lookup(rows) -> dict:
     `.sport_id` / `.alternate_names` reads happen here, inside the live-session
     window, instead of at some later request's mercy.
     """
-    snapshots = [_snapshot_team(t, sport_key=k) for t, k in rows]
+    global _last_shaped_team_snapshots
+    snapshots = _extract_team_snapshots(rows)
+    _last_shaped_team_snapshots = tuple(snapshots)
     # Cross-league ambiguity guard — see `_dedupe_team_name_lookup`.
     return _dedupe_team_name_lookup(snapshots)
 
@@ -37775,6 +37956,7 @@ def _shape_team_lookup(rows) -> dict:
 async def _rebuild_team_lookup() -> None:
     """Refresh `_team_cache` on its own session. Raises on failure, so the
     caller's handler can log it and leave the previous value in place."""
+    import asyncio
     import time
 
     from app.services.database import async_session_maker
@@ -37787,6 +37969,11 @@ async def _rebuild_team_lookup() -> None:
 
     _team_cache = full_lookup
     _team_cache_time = time.monotonic()
+    l2_client = _team_lookup_l2_client()
+    if l2_client is not None:
+        await asyncio.to_thread(
+            _write_team_lookup_l2, l2_client, _last_shaped_team_snapshots, time.time()
+        )
 
 
 def _compute_standings_context(
