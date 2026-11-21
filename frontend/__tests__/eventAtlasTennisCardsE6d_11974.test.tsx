@@ -1,0 +1,1012 @@
+import React from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import {
+  dedupeCandidatesBySource,
+  matchTennisPlayerSide,
+  tennisCards,
+  tennisCardsApply,
+  type TennisExactScoreCard,
+  type TennisSetsCard,
+} from "@/lib/tennisEventCards";
+import {
+  buildStoryCardDetailsSheetProps,
+  EventCardView,
+} from "@/components/event/NFLEventCards";
+import type { LadderCard } from "@/lib/nbaEventCards";
+
+const FINISHED_TENNIS_MATRIX = {
+  contract: "10238.v1",
+  display_scope: "game",
+  questions: [
+    {
+      question_key: "m:68960551",
+      kind: "named_options",
+      label: "Djokovic vs. Hijikata: Match O/U 21.5",
+      market_name: "Djokovic vs. Hijikata: Match O/U 21.5",
+      source_array: "totals",
+      period: { key: "full_game", label: "Game" },
+      options: [
+        {
+          option_key: "o:258615150",
+          label: "Over",
+          side: "category",
+          market_ids: [68960551],
+          contributor_outcome_ids: [258615150],
+          published: {
+            value: null,
+            value_state: "result",
+            basis: "result",
+            source: "polymarket",
+            observed_at: "2026-11-04T17:08:25.252507+00:00",
+          },
+          result: { state: "won", evidence_kind: "settled_grade_fields" },
+          pregame_reading: {
+            state: "available",
+            reason: null,
+            probability: 0.57,
+            observed_at: "2026-11-04T13:47:08.597576+00:00",
+            basis: "pregame_pin",
+            outcome_id: 258615150,
+          },
+        },
+      ],
+    },
+    {
+      question_key: "m:68960552",
+      kind: "named_options",
+      label: "Djokovic vs. Hijikata: Match O/U 22.5",
+      market_name: "Djokovic vs. Hijikata: Match O/U 22.5",
+      source_array: "totals",
+      period: { key: "full_game", label: "Game" },
+      options: [
+        {
+          option_key: "o:258615152",
+          label: "Over",
+          side: "category",
+          market_ids: [68960552],
+          contributor_outcome_ids: [258615152],
+          published: {
+            value: null,
+            value_state: "result",
+            basis: "result",
+            source: "polymarket",
+            observed_at: "2026-11-04T17:08:25.252507+00:00",
+          },
+          result: { state: "won", evidence_kind: "settled_grade_fields" },
+          pregame_reading: {
+            state: "available",
+            reason: null,
+            probability: 0.475,
+            observed_at: "2026-11-04T13:47:08.546155+00:00",
+            basis: "pregame_pin",
+            outcome_id: 258615152,
+          },
+        },
+      ],
+    },
+    {
+      question_key: "m:68960553",
+      kind: "named_options",
+      label: "Djokovic vs. Hijikata: Match O/U 23.5",
+      market_name: "Djokovic vs. Hijikata: Match O/U 23.5",
+      source_array: "totals",
+      period: { key: "full_game", label: "Game" },
+      options: [
+        {
+          option_key: "o:258615154",
+          label: "Over",
+          side: "category",
+          market_ids: [68960553],
+          contributor_outcome_ids: [258615154],
+          published: {
+            value: null,
+            value_state: "result",
+            basis: "result",
+            source: "polymarket",
+            observed_at: "2026-11-04T17:08:25.252507+00:00",
+          },
+          result: { state: "won", evidence_kind: "settled_grade_fields" },
+          pregame_reading: {
+            state: "available",
+            reason: null,
+            probability: 0.4,
+            observed_at: "2026-11-04T13:47:08.558576+00:00",
+            basis: "pregame_pin",
+            outcome_id: 258615154,
+          },
+        },
+      ],
+    },
+    // Out-of-order Set 2 before Set 1 to prove numeric set sorting
+    {
+      question_key: "m:69079339",
+      kind: "named_options",
+      label: "Set 2 Winner: Novak Djokovic vs Rinky Hijikata",
+      market_name: "Set 2 Winner: Novak Djokovic vs Rinky Hijikata",
+      source_array: "other",
+      options: [
+        {
+          option_key: "o:259075056",
+          label: "Rinky Hijikata",
+          side: "away",
+          market_ids: [69079339],
+          contributor_outcome_ids: [259075056],
+          published: {
+            value: null,
+            value_state: "result",
+            basis: "result",
+            source: "polymarket",
+            observed_at: "2026-11-04T17:08:25.252507+00:00",
+          },
+          result: { state: "won", evidence_kind: "settled_grade_fields" },
+          pregame_reading: {
+            state: "unavailable",
+            reason: "no_pregame_pin",
+            probability: null,
+            observed_at: null,
+            basis: null,
+            outcome_id: null,
+          },
+        },
+        {
+          option_key: "o:259075055",
+          label: "Novak Djokovic",
+          side: "home",
+          market_ids: [69079339],
+          contributor_outcome_ids: [259075055],
+          published: {
+            value: null,
+            value_state: "result",
+            basis: "result",
+            source: "polymarket",
+            observed_at: "2026-11-04T17:08:25.252507+00:00",
+          },
+          result: { state: "lost", evidence_kind: "verdict_is_provable" },
+          pregame_reading: {
+            state: "unavailable",
+            reason: "no_pregame_pin",
+            probability: null,
+            observed_at: null,
+            basis: null,
+            outcome_id: null,
+          },
+        },
+      ],
+    },
+    {
+      question_key: "m:68960548",
+      kind: "named_options",
+      label: "Set 1 Winner: Novak Djokovic vs Rinky Hijikata",
+      market_name: "Set 1 Winner: Novak Djokovic vs Rinky Hijikata",
+      source_array: "other",
+      options: [
+        {
+          option_key: "o:258615144",
+          label: "Novak Djokovic",
+          side: "home",
+          market_ids: [68960548],
+          contributor_outcome_ids: [258615144],
+          published: {
+            value: null,
+            value_state: "result",
+            basis: "result",
+            source: "polymarket",
+            observed_at: "2026-11-04T17:08:25.252507+00:00",
+          },
+          result: { state: "won", evidence_kind: "settled_grade_fields" },
+          pregame_reading: {
+            state: "available",
+            reason: null,
+            probability: 0.72,
+            observed_at: "2026-11-04T13:47:08.539145+00:00",
+            basis: "pregame_pin",
+            outcome_id: 258615144,
+          },
+        },
+        {
+          option_key: "o:258615145",
+          label: "Rinky Hijikata",
+          side: "away",
+          market_ids: [68960548],
+          contributor_outcome_ids: [258615145],
+          published: {
+            value: null,
+            value_state: "result",
+            basis: "result",
+            source: "polymarket",
+            observed_at: "2026-11-04T17:08:25.252507+00:00",
+          },
+          result: { state: "lost", evidence_kind: "verdict_is_provable" },
+          pregame_reading: {
+            state: "available",
+            reason: null,
+            probability: 0.28,
+            observed_at: "2026-11-04T13:47:08.539145+00:00",
+            basis: "pregame_pin",
+            outcome_id: 258615145,
+          },
+        },
+      ],
+    },
+    {
+      question_key: "m:68941401",
+      kind: "named_options",
+      label: "Novak Djokovic vs Rinky Hijikata: Exact Match Score",
+      market_name: "Novak Djokovic vs Rinky Hijikata: Exact Match Score",
+      source_array: "other",
+      options: [
+        {
+          option_key: "o:258532623",
+          label: "Rinky Hijikata wins 2-1",
+          side: "category",
+          market_ids: [68941401],
+          contributor_outcome_ids: [258532623],
+          published: {
+            value: null,
+            value_state: "result",
+            basis: "result",
+            source: "kalshi",
+            observed_at: "2026-11-05T20:52:00.025756+00:00",
+          },
+          result: { state: "won", evidence_kind: "settled_grade_fields" },
+          pregame_reading: {
+            state: "available",
+            reason: null,
+            probability: 0.14,
+            observed_at: "2026-11-04T13:47:08.539145+00:00",
+            basis: "pregame_pin",
+            outcome_id: 258532623,
+          },
+        },
+        {
+          option_key: "o:258532621",
+          label: "Novak Djokovic wins 2-0",
+          side: "category",
+          market_ids: [68941401],
+          contributor_outcome_ids: [258532621],
+          published: {
+            value: null,
+            value_state: "result",
+            basis: "result",
+            source: "kalshi",
+            observed_at: "2026-11-05T20:52:00.025756+00:00",
+          },
+          result: { state: "lost", evidence_kind: "verdict_is_provable" },
+          pregame_reading: {
+            state: "available",
+            reason: null,
+            probability: 0.52,
+            observed_at: "2026-11-04T13:47:08.539145+00:00",
+            basis: "pregame_pin",
+            outcome_id: 258532621,
+          },
+        },
+        {
+          option_key: "o:258532622",
+          label: "Novak Djokovic wins 2-1",
+          side: "category",
+          market_ids: [68941401],
+          contributor_outcome_ids: [258532622],
+          published: {
+            value: null,
+            value_state: "result",
+            basis: "result",
+            source: "kalshi",
+            observed_at: "2026-11-05T20:52:00.025756+00:00",
+          },
+          result: { state: "lost", evidence_kind: "verdict_is_provable" },
+          pregame_reading: {
+            state: "available",
+            reason: null,
+            probability: 0.24,
+            observed_at: "2026-11-04T13:47:08.539145+00:00",
+            basis: "pregame_pin",
+            outcome_id: 258532622,
+          },
+        },
+        {
+          option_key: "o:258532624",
+          label: "Rinky Hijikata wins 2-0",
+          side: "category",
+          market_ids: [68941401],
+          contributor_outcome_ids: [258532624],
+          published: {
+            value: null,
+            value_state: "result",
+            basis: "result",
+            source: "kalshi",
+            observed_at: "2026-11-05T20:52:00.025756+00:00",
+          },
+          result: { state: "lost", evidence_kind: "verdict_is_provable" },
+          pregame_reading: {
+            state: "available",
+            reason: null,
+            probability: 0.1,
+            observed_at: "2026-11-04T13:47:08.539145+00:00",
+            basis: "pregame_pin",
+            outcome_id: 258532624,
+          },
+        },
+      ],
+    },
+  ],
+};
+
+describe("#11974 Step E6d — Tennis story cards", () => {
+  it("gates tennisCardsApply on atlasMode and tennis_ sport keys", () => {
+    expect(tennisCardsApply("tennis_atp_paris_masters", true)).toBe(true);
+    expect(tennisCardsApply("tennis_wta", true)).toBe(true);
+    expect(tennisCardsApply("tennis_atp_paris_masters", false)).toBe(false);
+    expect(tennisCardsApply("soccer_epl", true)).toBe(false);
+    expect(tennisCardsApply(null, true)).toBe(false);
+  });
+
+  it("builds Set-by-set, Exact match score, and Total games cards for finished tennis without inventing unquoted sets or using set scores as games actual", () => {
+    const cards = tennisCards({
+      sportKey: "tennis_atp_paris_masters",
+      atlasMode: true,
+      status: "completed",
+      commenceTime: "2026-11-04T14:00:00Z",
+      homeTeam: "Novak Djokovic",
+      awayTeam: "Rinky Hijikata",
+      homeShort: "Djokovic",
+      awayShort: "Hijikata",
+      // Event scores are 1-2 in sets, NEVER total games!
+      homeScore: 1,
+      awayScore: 2,
+      gameMarkets: null,
+      questionMatrix: FINISHED_TENNIS_MATRIX,
+      nowMs: Date.parse("2026-11-05T22:00:00Z"),
+    });
+
+    expect(cards.map((c) => c.id)).toEqual([
+      "tennis:sets",
+      "tennis:exactScore",
+      "total",
+    ]);
+
+    const setsCard = cards[0] as TennisSetsCard;
+    expect(setsCard.title).toBe("The match, set by set");
+    // Only Set 1 and Set 2 are supplied; Set 3 is NOT invented from the 2-1 match score
+    expect(setsCard.sets.map((s) => s.setNumber)).toEqual([1, 2]);
+    expect(setsCard.sets[0].winnerName).toBe("Novak Djokovic");
+    expect(setsCard.sets[0].home.pregameProbability).toBe(0.72);
+    expect(setsCard.sets[1].winnerName).toBe("Rinky Hijikata");
+
+    const exactCard = cards[1] as TennisExactScoreCard;
+    expect(exactCard.title).toBe("Hijikata in three sets");
+    expect(exactCard.winningOutcome?.scoreLabel).toBe("Hijikata 2–1");
+    expect(exactCard.outcomes).toHaveLength(4);
+
+    const totalCard = cards[2] as LadderCard;
+    expect(totalCard.unit).toBe("games");
+    // CRITICAL TRUTH GUARD: tennis set scores (1 + 2 = 3) must NEVER become total games actual
+    expect(totalCard.actual).toBeNull();
+    expect(totalCard.points.map((p) => p.x)).toEqual([21.5, 22.5, 23.5]);
+  });
+
+  it("renders the Tennis deck and builds AtlasDetailsSheet props for step and tile selections", () => {
+    const cards = tennisCards({
+      sportKey: "tennis_atp_paris_masters",
+      atlasMode: true,
+      status: "completed",
+      commenceTime: "2026-11-04T14:00:00Z",
+      homeTeam: "Novak Djokovic",
+      awayTeam: "Rinky Hijikata",
+      homeShort: "Djokovic",
+      awayShort: "Hijikata",
+      homeScore: 1,
+      awayScore: 2,
+      gameMarkets: null,
+      questionMatrix: FINISHED_TENNIS_MATRIX,
+      nowMs: Date.parse("2026-11-05T22:00:00Z"),
+    });
+
+    const teams = {
+      homeName: "Novak Djokovic",
+      awayName: "Rinky Hijikata",
+      homeShort: "Djokovic",
+      awayShort: "Hijikata",
+      homeColor: "#1D4ED8",
+      awayColor: "#0F766E",
+    };
+
+    const setsHtml = renderToStaticMarkup(
+      <EventCardView
+        card={cards[0]}
+        teams={teams}
+        selection={{}}
+        onSelect={jest.fn()}
+        onDetails={jest.fn()}
+        atlasMode
+      />,
+    );
+    expect(setsHtml).toContain("tennis-sets-card");
+    expect(setsHtml).toContain("The match, set by set");
+    expect(setsHtml).toContain("Novak Djokovic");
+    expect(setsHtml).toContain("72% pregame");
+    expect(setsHtml).toContain("Rinky Hijikata");
+
+    const exactHtml = renderToStaticMarkup(
+      <EventCardView
+        card={cards[1]}
+        teams={teams}
+        selection={{}}
+        onSelect={jest.fn()}
+        onDetails={jest.fn()}
+        atlasMode
+      />,
+    );
+    expect(exactHtml).toContain("tennis-exact-score-card");
+    expect(exactHtml).toContain("Hijikata in three sets");
+    expect(exactHtml).toContain("✓ Won");
+
+    const totalHtml = renderToStaticMarkup(
+      <EventCardView
+        card={cards[2]}
+        teams={teams}
+        selection={{}}
+        onSelect={jest.fn()}
+        onDetails={jest.fn()}
+        atlasMode
+      />,
+    );
+    expect(totalHtml).toContain("Total games");
+    expect(totalHtml).toContain("tennis-total-games-actual-absent");
+    expect(totalHtml).toContain("Actual final");
+
+    const setSheet = buildStoryCardDetailsSheetProps({
+      card: cards[0],
+      rowId: "set:1",
+      teams,
+    });
+    expect(setSheet?.subjectName).toBe("Set 1 Winner · Novak Djokovic");
+    expect(setSheet?.isSettled).toBe(true);
+    expect(setSheet?.settledResult).toBe("won");
+    expect(setSheet?.openingProbability).toBe(0.72);
+
+    const exactSheet = buildStoryCardDetailsSheetProps({
+      card: cards[1],
+      rowId: "o:258532623",
+      teams,
+    });
+    expect(exactSheet?.subjectName).toBe("Rinky Hijikata wins 2-1");
+    expect(exactSheet?.isSettled).toBe(true);
+    expect(exactSheet?.settledResult).toBe("won");
+    expect(exactSheet?.openingProbability).toBe(0.14);
+    expect(exactSheet?.source).toBe("kalshi");
+  });
+
+  it("enforces phase-strict number rules and #11125 single-contributor contract (pregame_reading only after final; pregame_mark only on fallbacks, never opening_probability)", () => {
+    // 1. After final: matrix option with comparison.baseline but pregame_reading unavailable -> null
+    //    Fallback other/totals rows with opening_probability but no pregame_mark -> null
+    const afterCards = tennisCards({
+      sportKey: "tennis_atp",
+      atlasMode: true,
+      status: "completed",
+      commenceTime: "2026-11-04T14:00:00Z",
+      homeTeam: "Novak Djokovic",
+      awayTeam: "Rinky Hijikata",
+      homeShort: "Djokovic",
+      awayShort: "Hijikata",
+      homeScore: 2,
+      awayScore: 0,
+      nowMs: Date.parse("2026-11-05T22:00:00Z"),
+      questionMatrix: {
+        contract: "10238.v1",
+        display_scope: "game",
+        questions: [
+          {
+            question_key: "m:1",
+            kind: "named_options",
+            label: "Set 1 Winner",
+            market_name: "Set 1 Winner",
+            options: [
+              {
+                option_key: "o:1",
+                label: "Novak Djokovic",
+                side: "home",
+                published: { value: null, value_state: "result", source: "kalshi" },
+                result: { state: "won", evidence_kind: "settled_grade_fields" },
+                comparison: {
+                  state: "comparable",
+                  baseline: { basis: "pregame_pin", value: 0.75, observed_at: "2026-11-04T13:00:00Z" },
+                },
+                pregame_reading: {
+                  state: "unavailable",
+                  reason: "multiple_contributors",
+                  probability: null,
+                },
+              },
+              {
+                option_key: "o:2",
+                label: "Rinky Hijikata",
+                side: "away",
+                published: { value: null, value_state: "result", source: "kalshi" },
+                result: { state: "lost", evidence_kind: "verdict_is_provable" },
+                pregame_reading: { state: "unavailable", probability: null },
+              },
+            ],
+          },
+        ],
+      },
+      gameMarkets: {
+        other: [
+          {
+            market_name: "Exact Match Score",
+            outcome_name: "Novak Djokovic wins 2-0",
+            opening_probability: 0.55,
+            pregame_mark: null,
+            is_winner: true,
+            resolution_source: "kalshi",
+            source: "kalshi",
+          },
+          {
+            market_name: "Exact Match Score",
+            outcome_name: "Rinky Hijikata wins 2-0",
+            opening_probability: 0.15,
+            pregame_mark: 0.12,
+            is_winner: false,
+            resolution_source: "kalshi",
+            source: "kalshi",
+          },
+        ],
+        totals: [
+          {
+            market_name: "Match O/U 21.5",
+            threshold: 21.5,
+            outcome_name: "Over",
+            opening_probability: 0.61,
+            pregame_mark: null,
+            is_winner: true,
+            resolution_source: "kalshi",
+            source: "kalshi",
+          },
+          {
+            market_name: "Match O/U 22.5",
+            threshold: 22.5,
+            outcome_name: "Over",
+            opening_probability: 0.49,
+            pregame_mark: 0.44,
+            is_winner: false,
+            resolution_source: "kalshi",
+            source: "kalshi",
+          },
+        ],
+      },
+    });
+
+    const setsCard = afterCards.find((c) => c.id === "tennis:sets") as TennisSetsCard;
+    expect(setsCard.sets[0].home.pregameProbability).toBeNull();
+
+    const exactCard = afterCards.find((c) => c.id === "tennis:exactScore") as TennisExactScoreCard;
+    const djok20 = exactCard.outcomes.find((o) => o.scoreLabel === "Djokovic 2–0");
+    const hiji20 = exactCard.outcomes.find((o) => o.scoreLabel === "Hijikata 2–0");
+    expect(djok20?.pregameProbability).toBeNull();
+    expect(hiji20?.pregameProbability).toBe(0.12);
+
+    const totalCard = afterCards.find((c) => c.id === "total") as LadderCard;
+    const p215 = totalCard.points.find((p) => p.x === 21.5);
+    const p225 = totalCard.points.find((p) => p.x === 22.5);
+    expect(p215?.chance).toBeNull();
+    expect(p225?.chance).toBe(0.44);
+  });
+
+  it("withholds multi-source unblended probabilities (even with source: null) and omits cards with nothing to show", () => {
+    const emptyCards = tennisCards({
+      sportKey: "tennis_atp",
+      atlasMode: true,
+      status: "scheduled",
+      commenceTime: "2026-11-07T14:00:00Z",
+      homeTeam: "Novak Djokovic",
+      awayTeam: "Rinky Hijikata",
+      homeShort: "Djokovic",
+      awayShort: "Hijikata",
+      homeScore: null,
+      awayScore: null,
+      nowMs: Date.parse("2026-11-06T12:00:00Z"),
+      gameMarkets: {
+        other: [
+          {
+            market_name: "Exact Match Score",
+            outcome_name: "Novak Djokovic wins 2-0",
+            probability: 0.55,
+            source: null,
+          },
+          {
+            market_name: "Exact Match Score",
+            outcome_name: "Novak Djokovic wins 2-0",
+            probability: 0.49,
+            source: null,
+          },
+          {
+            market_name: "Exact Match Score",
+            outcome_name: "Rinky Hijikata wins 2-0",
+            probability: 0.15,
+            source: "kalshi",
+          },
+          {
+            market_name: "Exact Match Score",
+            outcome_name: "Rinky Hijikata wins 2-0",
+            probability: 0.19,
+            source: "polymarket",
+          },
+        ],
+      },
+    });
+    // Both outcomes had multiple unblended rows and no settled verdict -> card has nothing to show and is not drawn
+    expect(emptyCards).toEqual([]);
+  });
+
+  it("routes settlement through outcomeRowVerdict and marks outcomes Pending when venues disagree", () => {
+    const cards = tennisCards({
+      sportKey: "tennis_atp",
+      atlasMode: true,
+      status: "completed",
+      commenceTime: "2026-11-04T14:00:00Z",
+      homeTeam: "Novak Djokovic",
+      awayTeam: "Rinky Hijikata",
+      homeShort: "Djokovic",
+      awayShort: "Hijikata",
+      homeScore: 2,
+      awayScore: 1,
+      nowMs: Date.parse("2026-11-05T22:00:00Z"),
+      gameMarkets: {
+        other: [
+          // Disagreement on Exact Match Score 2-0: one venue says won, another says lost
+          {
+            market_name: "Exact Match Score",
+            outcome_name: "Novak Djokovic wins 2-0",
+            pregame_mark: 0.52,
+            is_winner: true,
+            resolution_source: "kalshi",
+            source: "kalshi",
+          },
+          {
+            market_name: "Exact Match Score",
+            outcome_name: "Novak Djokovic wins 2-0",
+            pregame_mark: 0.50,
+            is_winner: false,
+            resolution_source: "polymarket",
+            source: "polymarket",
+          },
+          // Ungraded row (resolution_source: null) -> Pending after final, never Lost
+          {
+            market_name: "Exact Match Score",
+            outcome_name: "Rinky Hijikata wins 2-1",
+            pregame_mark: 0.14,
+            is_winner: false,
+            resolution_source: null,
+            source: "kalshi",
+          },
+        ],
+      },
+    });
+
+    const exactCard = cards.find((c) => c.id === "tennis:exactScore") as TennisExactScoreCard;
+    expect(exactCard).toBeDefined();
+    expect(exactCard.winningOutcome).toBeNull();
+    const djok20 = exactCard.outcomes.find((o) => o.scoreLabel === "Djokovic 2–0");
+    const hiji21 = exactCard.outcomes.find((o) => o.scoreLabel === "Hijikata 2–1");
+    expect(djok20?.result).toBe("pending");
+    expect(djok20?.pregameProbability).toBeNull(); // multi-source unblended withheld
+    expect(djok20?.source).toBeNull();
+    expect(hiji21?.result).toBe("pending");
+
+    const teams = {
+      homeName: "Novak Djokovic",
+      awayName: "Rinky Hijikata",
+      homeShort: "Djokovic",
+      awayShort: "Hijikata",
+      homeColor: "#1D4ED8",
+      awayColor: "#0F766E",
+    };
+    const html = renderToStaticMarkup(
+      <EventCardView
+        card={exactCard}
+        teams={teams}
+        selection={{}}
+        onSelect={jest.fn()}
+        onDetails={jest.fn()}
+        atlasMode
+      />,
+    );
+    expect(html).toContain("Pending");
+    expect(html).not.toContain("✓ Won");
+    expect(html).not.toContain("✗ Lost");
+
+    const sheetProps = buildStoryCardDetailsSheetProps({
+      card: exactCard,
+      rowId: djok20?.optionKey,
+      teams,
+    });
+    expect(sheetProps?.isSettled).toBe(false);
+    expect(sheetProps?.settledResult).toBeNull();
+    expect(sheetProps?.source).toBeNull();
+  });
+
+  it("matches tennis player sides across 4 tiers, rejects <3 char substrings and shared-surname ambiguity, and respects explicit side overrides", () => {
+    // 1. Exact full-name match + accent/whitespace normalization
+    expect(
+      matchTennisPlayerSide(
+        "  Carlos   Alcaráz ",
+        "Carlos Alcaraz",
+        "Jannik Sinner",
+        "Alcaraz",
+        "Sinner",
+      ),
+    ).toBe("home");
+
+    // 2. Exact short-name match
+    expect(
+      matchTennisPlayerSide(
+        "Sinner",
+        "Carlos Alcaraz",
+        "Jannik Sinner",
+        "Alcaraz",
+        "Sinner",
+      ),
+    ).toBe("away");
+
+    // 3. Full-name substring match (>= 3 chars succeeds, < 3 chars rejected)
+    expect(
+      matchTennisPlayerSide(
+        "Carlos Alcaraz Garfia",
+        "Carlos Alcaraz",
+        "Jannik Sinner",
+        "Alcaraz",
+        "Sinner",
+      ),
+    ).toBe("home");
+    expect(
+      matchTennisPlayerSide(
+        "Al",
+        "Carlos Alcaraz",
+        "Jannik Sinner",
+        "Alcaraz",
+        "Sinner",
+      ),
+    ).toBeNull();
+
+    // 4. Token / surname match + shared-surname ambiguity returning null
+    expect(
+      matchTennisPlayerSide(
+        "J. Sinner",
+        "Carlos Alcaraz",
+        "Jannik Sinner",
+        "Alcaraz",
+        "Sinner",
+      ),
+    ).toBe("away");
+    expect(
+      matchTennisPlayerSide(
+        "Williams",
+        "Venus Williams",
+        "Serena Williams",
+        "V. Williams",
+        "S. Williams",
+      ),
+    ).toBeNull();
+
+    // Shared-surname ambiguity omits the unresolvable outcome while explicit rawOpt.side wins
+    const cards = tennisCards({
+      sportKey: "tennis_wta",
+      atlasMode: true,
+      status: "scheduled",
+      commenceTime: "2026-11-08T18:00:00Z",
+      homeTeam: "Venus Williams",
+      awayTeam: "Serena Williams",
+      homeShort: "V. Williams",
+      awayShort: "S. Williams",
+      homeScore: null,
+      awayScore: null,
+      nowMs: Date.parse("2026-11-08T12:00:00Z"),
+      questionMatrix: {
+        contract: "10238.v1",
+        display_scope: "game",
+        questions: [
+          {
+            question_key: "m:9001",
+            kind: "named_options",
+            label: "Set 1 Winner",
+            market_name: "Set 1 Winner",
+            source_array: "other",
+            options: [
+              // Ambiguous "Williams" with explicit side="home" -> resolves via explicit side override
+              {
+                option_key: "o:9001-home",
+                label: "Williams",
+                side: "home",
+                published: {
+                  value: 0.44,
+                  value_state: "quoted",
+                  basis: "recent_quote",
+                  source: "kalshi",
+                  observed_at: "2026-11-08T11:55:00Z",
+                },
+                result: { state: "open", evidence_kind: "open_event" },
+              },
+              {
+                option_key: "o:9001-away",
+                label: "Serena Williams",
+                side: "away",
+                published: {
+                  value: 0.56,
+                  value_state: "quoted",
+                  basis: "recent_quote",
+                  source: "kalshi",
+                  observed_at: "2026-11-08T11:55:00Z",
+                },
+                result: { state: "open", evidence_kind: "open_event" },
+              },
+            ],
+          },
+          {
+            question_key: "m:9002",
+            kind: "named_options",
+            label: "Exact Match Score",
+            market_name: "Exact Match Score",
+            source_array: "other",
+            options: [
+              // Ambiguous "Williams wins 2-0" with no explicit home/away side -> omitted
+              {
+                option_key: "o:9002-ambig",
+                label: "Williams wins 2-0",
+                side: "category",
+                published: {
+                  value: 0.30,
+                  value_state: "quoted",
+                  basis: "recent_quote",
+                  source: "kalshi",
+                  observed_at: "2026-11-08T11:55:00Z",
+                },
+                result: { state: "open", evidence_kind: "open_event" },
+              },
+              {
+                option_key: "o:9002-venus",
+                label: "Venus Williams wins 2-0",
+                side: "category",
+                published: {
+                  value: 0.28,
+                  value_state: "quoted",
+                  basis: "recent_quote",
+                  source: "kalshi",
+                  observed_at: "2026-11-08T11:55:00Z",
+                },
+                result: { state: "open", evidence_kind: "open_event" },
+              },
+              {
+                option_key: "o:9002-serena",
+                label: "Serena Williams wins 2-1",
+                side: "category",
+                published: {
+                  value: 0.25,
+                  value_state: "quoted",
+                  basis: "recent_quote",
+                  source: "kalshi",
+                  observed_at: "2026-11-08T11:55:00Z",
+                },
+                result: { state: "open", evidence_kind: "open_event" },
+              },
+            ],
+          },
+        ],
+      },
+      gameMarkets: null,
+    });
+
+    const setsCard = cards.find((c) => c.id === "tennis:sets") as TennisSetsCard;
+    expect(setsCard?.sets[0]?.home.pregameProbability).toBeCloseTo(0.44, 5);
+    const exactCard = cards.find((c) => c.id === "tennis:exactScore") as TennisExactScoreCard;
+    expect(exactCard?.outcomes.map((o) => o.scoreLabel)).toEqual([
+      "V. Williams 2–0",
+      "S. Williams 2–1",
+    ]);
+  });
+
+  it("dedupes same-source candidate variants while preserving multi-source OptionDetail metadata on total-games ladders", () => {
+    const raw = [
+      { source: "Kalshi", prob: 0.61 },
+      { source: " kalshi ", prob: 0.61 },
+      { source: "Polymarket", prob: 0.58 },
+    ];
+    const deduped = dedupeCandidatesBySource(raw, (item) => item.source);
+    expect(deduped).toEqual([
+      { source: "Kalshi", prob: 0.61 },
+      { source: "Polymarket", prob: 0.58 },
+    ]);
+
+    const cards = tennisCards({
+      sportKey: "tennis_atp",
+      atlasMode: true,
+      status: "scheduled",
+      commenceTime: "2026-11-08T18:00:00Z",
+      homeTeam: "Novak Djokovic",
+      awayTeam: "Rinky Hijikata",
+      homeShort: "Djokovic",
+      awayShort: "Hijikata",
+      homeScore: null,
+      awayScore: null,
+      nowMs: Date.parse("2026-11-08T12:00:00Z"),
+      gameMarkets: {
+        totals: [
+          // 21.5 has duplicate rows from the SAME source (case/whitespace variants) -> prints 57%, sourceCount=1
+          {
+            market_name: "Match Total Games",
+            outcome_name: "Over 21.5",
+            threshold: 21.5,
+            over_probability: 0.57,
+            source: "Kalshi",
+            observed_at: "2026-11-08T11:55:00Z",
+          },
+          {
+            market_name: "Match Total Games",
+            outcome_name: "Over 21.5",
+            threshold: 21.5,
+            over_probability: 0.57,
+            source: " kalshi ",
+            observed_at: "2026-11-08T11:55:00Z",
+          },
+          // 22.5 has two distinct unblended sources ("kalshi" + "polymarket") -> chance=null, sourceCount=2, source=null
+          {
+            market_name: "Match Total Games",
+            outcome_name: "Over 22.5",
+            threshold: 22.5,
+            over_probability: 0.49,
+            source: "kalshi",
+            observed_at: "2026-11-08T11:55:00Z",
+          },
+          {
+            market_name: "Match Total Games",
+            outcome_name: "Over 22.5",
+            threshold: 22.5,
+            over_probability: 0.46,
+            source: "polymarket",
+            observed_at: "2026-11-08T11:55:00Z",
+          },
+          {
+            market_name: "Match Total Games",
+            outcome_name: "Over 23.5",
+            threshold: 23.5,
+            over_probability: 0.39,
+            source: "kalshi",
+            observed_at: "2026-11-08T11:55:00Z",
+          },
+        ],
+      },
+    });
+
+    const totalGames = cards.find((c) => c.kind === "ladder") as LadderCard;
+    expect(totalGames).toBeDefined();
+    const opt215 = totalGames.points.find((p) => p.x === 21.5);
+    const opt225 = totalGames.points.find((p) => p.x === 22.5);
+    expect(opt215?.chance).toBeCloseTo(0.57, 5);
+    expect(opt225?.chance).toBeNull();
+
+    const teams = {
+      homeName: "Novak Djokovic",
+      awayName: "Rinky Hijikata",
+      homeShort: "Djokovic",
+      awayShort: "Hijikata",
+      homeColor: "#1D4ED8",
+      awayColor: "#0F766E",
+    };
+    const sheet215 = buildStoryCardDetailsSheetProps({
+      card: totalGames,
+      rowId: opt215?.optionKey,
+      teams,
+    });
+    expect(sheet215?.sourceCount).toBe(1);
+    expect(sheet215?.source?.toLowerCase()).toBe("kalshi");
+
+    const sheet225 = buildStoryCardDetailsSheetProps({
+      card: totalGames,
+      rowId: opt225?.optionKey,
+      teams,
+    });
+    expect(sheet225?.sourceCount).toBe(2);
+    expect(sheet225?.source).toBeNull();
+    expect(sheet225?.openingProbability).toBeNull();
+    expect(sheet225?.lastProbability).toBeNull();
+  });
+});
