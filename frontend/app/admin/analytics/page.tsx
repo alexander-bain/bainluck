@@ -116,6 +116,13 @@ interface FunnelData {
     guess: number;
     signup: number;
   }>;
+  byPlatform?: Array<{
+    platform: string;
+    visit: number;
+    interact: number;
+    guess: number;
+    signup: number;
+  }>;
 }
 
 interface RetentionDay {
@@ -209,6 +216,11 @@ const STAGE_COLORS: Record<string, string> = {
 
 const SECTION_COLORS: Record<string, string> = {
   discover: "#3b82f6",
+  events: "#0ea5e9",
+  search: "#eab308",
+  collections: "#a855f7",
+  my_stuff: "#10b981",
+  app_screen: "#64748b",
   sports: "#22c55e",
   weather: "#06b6d4",
   politics: "#ef4444",
@@ -858,6 +870,41 @@ function FunnelTab({ data }: { data: FunnelData }) {
           </table>
         </div>
       </MetricSection>
+
+      {/* Platform breakdown (web vs iOS vs Watch) */}
+      {data.byPlatform && data.byPlatform.length > 0 && (
+        <MetricSection
+          question="How does the funnel split across platforms?"
+          status="good"
+          summary={data.byPlatform.length + " platforms"}
+          ideal="Healthy engagement across web, iOS, and Watch."
+        >
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="border-b border-surface-border">
+                  <th className="text-left py-2 px-2 text-text-muted font-medium">Platform</th>
+                  <th className="text-right py-2 px-2 text-text-muted font-medium">Visit</th>
+                  <th className="text-right py-2 px-2 text-text-muted font-medium">Interact</th>
+                  <th className="text-right py-2 px-2 text-text-muted font-medium">Guess</th>
+                  <th className="text-right py-2 px-2 text-text-muted font-medium">Sign Up</th>
+                </tr>
+              </thead>
+              <tbody>
+                {data.byPlatform.map((row) => (
+                  <tr key={row.platform} className="border-b border-surface-border/50">
+                    <td className="py-1.5 px-2 font-mono text-text-secondary">{row.platform}</td>
+                    <td className="py-1.5 px-2 text-right text-text-primary font-medium">{formatNum(row.visit)}</td>
+                    <td className="py-1.5 px-2 text-right text-text-primary">{formatNum(row.interact)}</td>
+                    <td className="py-1.5 px-2 text-right text-text-primary">{formatNum(row.guess)}</td>
+                    <td className="py-1.5 px-2 text-right text-text-muted">{formatNum(row.signup)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </MetricSection>
+      )}
     </div>
   );
 }
@@ -1278,7 +1325,7 @@ export default function AnalyticsPage() {
       { refreshInterval: 300000 }
     );
 
-  const retentionPeriod = period === "7d" ? "7d" : "30d";
+  const retentionPeriod = period === "7d" || period === "14d" ? period : "30d";
   const { data: retentionData, error: retentionError, isLoading: retentionLoading } =
     useSWR<RetentionData>(
       activeTab === "retention"
@@ -1384,6 +1431,7 @@ export default function AnalyticsPage() {
             className="px-3 py-2 rounded-lg bg-surface-elevated border border-surface-border text-xs text-text-primary"
           >
             <option value="7d">Last 7 days</option>
+            <option value="14d">Last 14 days</option>
             <option value="30d">Last 30 days</option>
           </select>
         )}
