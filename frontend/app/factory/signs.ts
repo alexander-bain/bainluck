@@ -1,4 +1,20 @@
-import type { Change, Injury, InjuryClock } from "./types";
+import type { Builder, Change, Injury, InjuryClock } from "./types";
+
+export function builderOfDay(shipped: readonly Change[]) {
+  const delivered = new Map<Exclude<Builder, "Other">, Set<number>>();
+  for (const change of shipped) {
+    if (change.builder === "Other") continue;
+    const changes = delivered.get(change.builder) ?? new Set<number>();
+    changes.add(change.number);
+    delivered.set(change.builder, changes);
+  }
+  const count = Math.max(0, ...Array.from(delivered.values(), (changes) => changes.size));
+  if (!count) return null;
+  return {
+    count,
+    builders: Array.from(delivered).filter(([, changes]) => changes.size === count).map(([builder]) => builder),
+  };
+}
 
 export function injuryHours(read: InjuryClock | undefined, through: string) {
   if (!read?.available) return null;

@@ -12,12 +12,14 @@ import {
   CircleCheck,
   ClipboardCheck,
   Cog,
+  Flag,
   Hammer,
   ListChecks,
   PackageOpen,
   Pause,
   Server,
   Smartphone,
+  Trophy,
   Truck,
   Wind,
   X,
@@ -30,8 +32,10 @@ import type { Builder, Change, FactoryData, Jam, Line, Station, Stop } from "./t
 import styles from "./factory.module.css";
 import Worker, { type WorkerState } from "./Worker";
 import EventScene from "./EventScene";
+import CrateJourney from "./CrateJourney";
+import FactoryMascot from "./FactoryMascot";
 import InjurySign from "./InjurySign";
-import { clipboard, median } from "./signs";
+import { builderOfDay, clipboard, median } from "./signs";
 import { useDayReplay } from "./useDayReplay";
 import { useReplayJournal } from "./replayJournal";
 import { LIVE_TRANSITION_MS, remainingEvents, transfersSince } from "./liveTransfers";
@@ -59,6 +63,7 @@ import {
 const lines: Line[] = ["Server", "Website", "Apps"];
 const PAGE_REFRESH_MS = 60_000;
 const SPEECH_INTERVAL_MS = 8_000;
+const FOLLOWED_CRATES_KEY = "factory-followed-crates-v1";
 type NamedBuilder = Exclude<Builder, "Other">;
 const builders: { key: NamedBuilder; name: string }[] = [
   { key: "S", name: "Speed" },
@@ -95,7 +100,8 @@ const shelfKeys = ["held", "parked", "bot", "side"] as const;
 type Shelf = (typeof shelfKeys)[number];
 type CrateGroup =
   | { line: Line; station: Station }
-  | { shelf: Shelf };
+  | { shelf: Shelf }
+  | { following: true };
 
 function crateKey(line: Line, number: number) {
   return `${line}/${number}`;
@@ -177,6 +183,7 @@ function StackLight({
         {waited && <small className={styles.stopOrigin}>{waited}</small>}
         {hold && <HoldOrigin stop={hold} />}
       </div>
+      <FactoryMascot level={verdict.level} />
     </div>
   );
 }
@@ -216,6 +223,7 @@ export default function FactoryFloor({
   const [now, setNow] = useState(renderedAt);
   const [selectedCrate, selectCrate] = useState<string | null>(null);
   const [selectedGroup, selectGroup] = useState<CrateGroup | null>(null);
+  const [followed, setFollowed] = useState<number[]>([]);
   const [speaker, setSpeaker] = useState<NamedBuilder>();
   const [knownGoodAt, setKnownGoodAt] = useState(lastGoodAt);
   const [lastShown, setLastShown] = useState(snapshot);
@@ -265,6 +273,17 @@ export default function FactoryFloor({
     const timer = window.setTimeout(() => setSpeaker(next.key), SPEECH_INTERVAL_MS);
     return () => window.clearTimeout(timer);
   }, [motion, currentSpeaker, speakers, replay.session, selectedCrate, selectedGroup]);
+
+  useEffect(() => {
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem(FOLLOWED_CRATES_KEY) ?? "[]");
+      if (Array.isArray(saved)) setFollowed([...new Set(saved.filter(
+        (value): value is number => typeof value === "number" && Number.isSafeInteger(value) && value > 0,
+      ))]);
+    } catch {
+      // Following still works for this visit if storage is unavailable.
+    }
+  }, []);
 
   useEffect(() => {
     if (data) setLastShown(data);
@@ -348,6 +367,11 @@ export default function FactoryFloor({
   const shipped = data.changes.filter(
     (c) => c.station === "Live" && c.live_at && pacificDay(c.live_at) === today,
   );
+  const canRankDeliveries = !behind && pacificDay(data.generated_at) === today && data.coverage.length === 0;
+  const dayLeader = canRankDeliveries ? builderOfDay(shipped) : null;
+  const dayLeaders = dayLeader ? new Intl.ListFormat("en-US").format(
+    builders.filter(({ key }) => dayLeader.builders.includes(key)).map(({ name }) => name),
+  ) : null;
   const onFloor = data.changes.filter(onActiveFloor);
   const recordTime = behind ? data.generated_at : now;
   const clockedIn = new Set(
@@ -414,14 +438,16 @@ export default function FactoryFloor({
   const selected = data.changes.find(
     (c) => crateKey(c.line, c.number) === selectedCrate,
   );
-  const selectedLines = selected
-    ? lines.filter((line) =>
-        data.changes.some((change) => change.number === selected.number && change.line === line),
-      )
-    : [];
+  const selectedCopies = selected ? data.changes.filter((change) => change.number === selected.number) : [];
+  const selectedLines = lines.filter((line) => selectedCopies.some((change) => change.line === line));
+  const followingGroup = selectedGroup && "following" in selectedGroup;
+  const followedChanges = followingGroup ? uniqueChanges(data.changes.filter((change) => followed.includes(change.number))) : [];
+  const outsideRead = followingGroup ? followed.filter((number) => !followedChanges.some((change) => change.number === number)) : [];
   const group = selectedGroup && (
     "shelf" in selectedGroup
       ? shelves[selectedGroup.shelf]
+      : "following" in selectedGroup
+      ? { title: "Followed crates", changes: followedChanges, note: undefined }
       : {
           title: `${selectedGroup.line} · ${stationNames[selectedGroup.station]}`,
           changes: bayCrates(
@@ -437,6 +463,16 @@ export default function FactoryFloor({
     detail.current?.close();
     selectCrate(null);
     selectGroup(null);
+  }
+
+  function toggleFollowed(number: number) {
+    const next = followed.includes(number) ? followed.filter((value) => value !== number) : [...followed, number];
+    setFollowed(next);
+    try {
+      localStorage.setItem(FOLLOWED_CRATES_KEY, JSON.stringify(next));
+    } catch {
+      // The flag remains visible for this visit.
+    }
   }
 
   function workerFigure(id: NamedBuilder, station: Station, fallback: WorkerState) {
@@ -466,13 +502,14 @@ export default function FactoryFloor({
       <button
         key={key}
         data-arriving={arriving || undefined}
+        data-followed={followed.includes(change.number) || undefined}
         type="button"
         className={`${styles.crate} ${styles[`builder${change.builder}`]}`}
         data-crate={change.number}
         data-station={`${change.line}/${change.station}`}
         data-line={change.line}
         title={change.title}
-        aria-label={`${names[change.builder]}, change ${change.number}, ${change.title}${change.testflight_build ? `, TestFlight build ${change.testflight_build}` : ""}${change.sent_back ? ", sent back" : ""}${change.unsure ? ", unsure" : ""}`}
+        aria-label={`${names[change.builder]}, change ${change.number}, ${change.title}${change.testflight_build ? `, TestFlight build ${change.testflight_build}` : ""}${change.sent_back ? ", sent back" : ""}${change.unsure ? ", unsure" : ""}${followed.includes(change.number) ? ", followed" : ""}`}
         aria-pressed={selectedCrate === key}
         onClick={() => selectCrate(key)}
       >
@@ -901,7 +938,20 @@ export default function FactoryFloor({
             })}
           </div>
         </div>
-        <p className={styles.floorKey}>A crate is one change.</p>
+        <div className={styles.floorFooter}>
+          <p className={styles.floorKey}>A crate is one change.</p>
+          <aside className={styles.builderDay} aria-label="Builder of the day">
+            <Trophy size={14} aria-hidden="true" />
+            <div>
+              <strong>Builder of the day</strong>{" "}
+              {dayLeader ? (
+                <span>{dayLeaders} · {dayLeader.count} {dayLeader.count === 1 ? "change" : "changes"} live{dayLeader.builders.length > 1 ? " each" : ""}</span>
+              ) : (
+                <span>{canRankDeliveries ? "No deliveries by a named lane yet" : "Delivery records are incomplete"}</span>
+              )}
+            </div>
+          </aside>
+        </div>
         {(selected || group) && (
           <dialog
             className={styles.detail}
@@ -928,6 +978,15 @@ export default function FactoryFloor({
                         : stationNames[selected.station]}
                 </span>
                 <h3 id="factory-change-title">{selected.title}</h3>
+                <button
+                  type="button"
+                  className={styles.followAction}
+                  aria-pressed={followed.includes(selected.number)}
+                  onClick={() => toggleFollowed(selected.number)}
+                >
+                  <Flag size={15} aria-hidden="true" />
+                  {followed.includes(selected.number) ? "Stop following" : "Follow this crate"}
+                </button>
                 {selectedLines.length > 1 && (
                   <p>
                     This change appears on the{" "}
@@ -944,6 +1003,7 @@ export default function FactoryFloor({
                 {selected.approvals?.bot && <p>Bot approved.</p>}
                 {selected.approvals?.fable && <p>Fable cleared.</p>}
                 {selected.unsure && <p>Unsure. {selected.reasons.join(" ")}</p>}
+                <CrateJourney changes={selectedCopies} through={data.generated_at} />
                 <a
                   href={`https://github.com/alexander-bain/bainluck/pull/${selected.number}`}
                   target="_blank"
@@ -958,7 +1018,17 @@ export default function FactoryFloor({
                 {group.note && <p>{group.note}</p>}
                 {group.changes.length ? (
                   <div className={styles.groupCrates}>{group.changes.map(crate)}</div>
-                ) : <p>No changes here.</p>}
+                ) : outsideRead.length === 0 && <p>No changes here.</p>}
+                {outsideRead.length > 0 && (
+                  <ul className={styles.outsideRead}>
+                    {outsideRead.map((number) => (
+                      <li key={number}>
+                        <span>#{number} is outside the latest read.</span>
+                        <button type="button" onClick={() => toggleFollowed(number)}>Stop following #{number}</button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
               </div>
             )}
             <button
@@ -982,6 +1052,11 @@ export default function FactoryFloor({
             </button>
           ))}
         </section>
+        {followed.length > 0 && (
+          <button type="button" className={styles.followedCrates} aria-haspopup="dialog" onClick={() => selectGroup({ following: true })}>
+            <Flag size={14} aria-hidden="true" /> Followed crates <strong>{followed.length}</strong>
+          </button>
+        )}
       </section>
 
       <div className={styles.records}>

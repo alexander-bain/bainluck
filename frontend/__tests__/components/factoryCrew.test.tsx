@@ -14,7 +14,7 @@ import type { Change, FactoryData, FloorEvent } from "@/app/factory/types";
 import { useEventPlayer } from "@/app/factory/playback";
 import { useDayReplay } from "@/app/factory/useDayReplay";
 import { replayReading, useReplayJournal } from "@/app/factory/replayJournal";
-import { clipboard, hours, injuryHours } from "@/app/factory/signs";
+import { builderOfDay, clipboard, hours, injuryHours } from "@/app/factory/signs";
 import { factoryTabTitle, floorVerdict } from "@/app/factory/verdict";
 
 jest.mock("next/navigation", () => {
@@ -583,6 +583,123 @@ it("rotates one visible floor bubble between workers and holds it under reduced 
     await act(async () => { jest.advanceTimersByTime(16_000); });
     expect(bubbles()).toHaveLength(1);
     expect(bubbles()[0].getAttribute("data-floor-speech")).toBe("B");
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
+
+it("ranks named builders by distinct delivered changes and keeps ties", () => {
+  const delivery = (builder: Change["builder"], number: number) => ({ ...base, builder, number });
+  const first = delivery("B", 13021);
+  expect(builderOfDay([
+    first, { ...first, line: "Website" }, delivery("B", 13022),
+    delivery("D", 13023), delivery("D", 13024), delivery("E", 13025),
+    delivery("Other", 13026), delivery("Other", 13027), delivery("Other", 13028),
+  ])).toEqual({ builders: ["B", "D"], count: 2 });
+  expect(builderOfDay([delivery("Other", 13026)])).toBeNull();
+});
+
+it("only displays a daily leader for deliveries recorded today with complete coverage", async () => {
+  watchMotion();
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const live = snapshot.changes[3];
+  const data = {
+    ...snapshot,
+    changes: [live, { ...live, line: "Website" as const }, {
+      ...live, number: 13028, builder: "D" as const, live_at: "2026-11-18T07:59:00Z",
+    }],
+  };
+  const sign = () => container.querySelector('[aria-label="Builder of the day"]')?.textContent;
+  try {
+    await act(async () => root.render(<FactoryFloor data={data} lastGoodAt={now} renderedAt={now} />));
+    expect(sign()).toContain("Apple · 1 change live");
+    const incomplete = { ...data, coverage: ["Server deployment could not be confirmed."] };
+    await act(async () => root.render(<FactoryFloor data={incomplete} lastGoodAt={now} renderedAt={now} />));
+    expect(sign()).toContain("Delivery records are incomplete");
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
+
+it("keeps a followed crate flagged after a reload and shows its observed station times", async () => {
+  watchMotion()();
+  const container = document.createElement("div");
+  let root = createRoot(container);
+  const stubbed = ["showModal", "close"] as const;
+  const original = stubbed.map((name) => Object.getOwnPropertyDescriptor(HTMLDialogElement.prototype, name));
+  stubbed.forEach((name) => Object.defineProperty(HTMLDialogElement.prototype, name, {
+    configurable: true,
+    value(this: HTMLDialogElement) { this.open = name === "showModal"; },
+  }));
+  const key = "factory-followed-crates-v1";
+  localStorage.removeItem(key);
+  const button = (label: string) => Array.from(container.querySelectorAll("button")).find(
+    (el) => el.textContent?.trim() === label || el.getAttribute("aria-label") === label,
+  )!;
+  const crate = (parent: ParentNode = container) => parent.querySelector<HTMLButtonElement>('[data-crate="12998"]')!;
+  try {
+    await act(async () => root.render(<FactoryFloor data={snapshot} lastGoodAt={now} renderedAt={now} />));
+    await act(async () => crate().click());
+    expect(container.querySelector("dialog")?.textContent).toContain("Station times are missing for this line.");
+    await act(async () => button("Follow this crate").click());
+    expect(crate().dataset.followed).toBe("true");
+    expect(localStorage.getItem(key)).toBe("[12998]");
+    await act(async () => root.unmount());
+    root = createRoot(container);
+
+    const moved: FactoryData = {
+      ...snapshot,
+      changes: [{ ...base, station: "Review", journey: [
+        { station: "Test", first_seen_at: "2026-11-18T17:50:00Z", last_seen_at: "2026-11-18T17:55:00Z" },
+        { station: "Review", first_seen_at: now },
+      ] }],
+    };
+    await act(async () => root.render(<FactoryFloor data={moved} lastGoodAt={now} renderedAt={now} />));
+    expect(crate().closest('[data-bay="Review"]')).not.toBeNull();
+    expect(crate().dataset.followed).toBe("true");
+    await act(async () => button("Followed crates 1").click());
+    const dialog = container.querySelector("dialog")!;
+    await act(async () => crate(dialog).click());
+    expect(dialog.textContent).toContain("5 min between reads");
+    expect(dialog.textContent).toContain("Inspection");
+    await act(async () => button("Stop following").click());
+    expect(localStorage.getItem(key)).toBe("[]");
+    expect(crate().dataset.followed).toBeUndefined();
+  } finally {
+    await act(async () => root.unmount());
+    localStorage.removeItem(key);
+    stubbed.forEach((name, index) => {
+      const descriptor = original[index];
+      if (descriptor) Object.defineProperty(HTMLDialogElement.prototype, name, descriptor);
+      else Reflect.deleteProperty(HTMLDialogElement.prototype, name);
+    });
+  }
+});
+
+it("gives the single workshop cat the stack light's pose in each state", async () => {
+  const reduce = watchMotion();
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const clear: FactoryData = { ...snapshot, stops: [], signals: { tests: "passing", testflight: "success" } };
+  const cat = (level: string) => {
+    const cats = container.querySelectorAll("[data-mascot]");
+    expect(cats).toHaveLength(1);
+    expect(cats[0].getAttribute("data-mascot")).toBe(level);
+    expect(cats[0].closest("[data-verdict]")?.getAttribute("data-verdict")).toBe(level);
+    return cats[0].innerHTML;
+  };
+  try {
+    await act(async () => root.render(<FactoryFloor data={snapshot} lastGoodAt={now} renderedAt={now} />));
+    const held = cat("red");
+    await act(async () => reduce());
+    await act(async () => { jest.advanceTimersByTime(16_000); });
+    expect(cat("red")).toBe(held);
+    await act(async () => root.render(<FactoryFloor data={snapshot} readFailed lastGoodAt={now} renderedAt={now} />));
+    const paused = cat("amber");
+    expect(paused).not.toBe(held);
+    await act(async () => root.render(<FactoryFloor data={clear} lastGoodAt={now} renderedAt={now} />));
+    expect(cat("green")).not.toBe(paused);
   } finally {
     await act(async () => root.unmount());
   }

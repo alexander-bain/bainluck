@@ -1,4 +1,4 @@
-import { factoryEventKinds, factoryMoods, type FactoryData, type FloorEvent } from "./types";
+import { factoryEventKinds, factoryMoods, type Change, type FactoryData, type FloorEvent } from "./types";
 import { stationNames, stations } from "./activity";
 
 export const FACTORY_DATA_URL =
@@ -80,6 +80,21 @@ function speechForSnapshot(payload: FactoryData): FactoryData["speech"] {
     ) speech[lane] = { text: line.text, mood: line.mood, source: line.source };
   }
   return Object.keys(speech).length ? speech : undefined;
+}
+
+function withVerifiedJourney(change: Change, through: number): Change {
+  const { journey, ...rest } = change;
+  let latest = -Infinity;
+  if (!Array.isArray(journey) || !journey.length || !journey.every((visit, index) => {
+    if (!visit || !stations.includes(visit.station)) return false;
+    const first = Date.parse(visit.first_seen_at);
+    const last = visit.last_seen_at === undefined ? through : Date.parse(visit.last_seen_at);
+    if (!(first >= latest && first <= last && last <= through)) return false;
+    if (visit.last_seen_at === undefined && (index !== journey.length - 1 || visit.station !== change.station)) return false;
+    latest = last;
+    return true;
+  })) return rest;
+  return change;
 }
 
 function validateSnapshot(payload: FactoryData): FactoryData {
@@ -206,7 +221,7 @@ function validateSnapshot(payload: FactoryData): FactoryData {
     ...(notes ? { notes } : {}),
     ...(speech ? { speech } : {}),
     ...(modelUsage ? { model_usage: modelUsage } : {}),
-    changes: payload.changes,
+    changes: payload.changes.map((change) => withVerifiedJourney(change, Date.parse(payload.generated_at))),
     jams: payload.jams,
     signals: payload.signals,
     coverage: payload.coverage,

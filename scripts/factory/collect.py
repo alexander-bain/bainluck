@@ -19,6 +19,7 @@ import urllib.parse
 from model import build, instant, iso, public_title, PACIFIC, TRUSTED
 from ci_queue import attach_machine_reason, machine_queue
 from events import add_events
+from journeys import add_journeys
 from signs import add_signs, switched_off, wrong_numbers
 from notes import ModelBudget, make_notes
 from speech import make_speech
@@ -887,6 +888,7 @@ def main():
         snapshot = collect(api, previous, cache, summaries)
         result = build(snapshot, previous)
         add_events(result, snapshot, previous, cache)
+        add_journeys(result, previous)
         add_signs(result, snapshot, previous)
         if snapshot.get("master_ci_active") and any(
             s["kind"] == "line-stalled" for s in result["stops"]

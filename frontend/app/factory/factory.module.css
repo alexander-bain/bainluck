@@ -174,6 +174,17 @@
 [data-verdict="green"] .stackLight [data-light="green"] { background: #6edbae; }
 [data-verdict="amber"] .stackLight [data-light="amber"] { background: #ffd58c; }
 [data-verdict="red"] .stackLight [data-light="red"] { background: #ff838d; }
+.mascot {
+  flex: none;
+  width: 43px;
+  height: 26px;
+  margin-inline-start: auto;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
 .unavailable {
   padding: 26px;
   border: 1px solid var(--edge);
@@ -1574,6 +1585,27 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 .lineName { align-self: start; padding: 5px 3px; }
 .floorKey { padding-block-end: 4px; }
 
+.floorFooter {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.builderDay {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin: 0 var(--floor-inset) 4px;
+  max-width: 100%;
+  color: var(--ink);
+  font-size: 11px;
+  line-height: 1.3;
+}
+
+.builderDay svg { flex: none; color: var(--workshop-copper); }
+.builderDay span { color: var(--secondary); }
+
 .machine {
   position: relative;
   background: var(--housing);
@@ -1584,6 +1616,32 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 
 .beltSegment { border-color: var(--workshop-enamel); }
 .crate[data-arriving="true"] { visibility: hidden; }
+.crate[data-followed="true"] { box-shadow: inset 0 0 0 1px var(--workshop-rim); }
+
+.followAction,
+.followedCrates {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  color: var(--green);
+  background: var(--paper);
+  border: 1px solid var(--workshop-copper);
+  border-radius: 6px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.followedCrates { margin: 4px var(--floor-inset) 7px; }
+.followAction[aria-pressed="true"] svg { fill: currentColor; }
+
+.crateJourney { margin: 10px 0; padding-top: 8px; border-top: 1px solid var(--edge); }
+.crateJourney h4, .crateJourney h5 { margin: 0; }
+.crateJourney h5 { font-size: 12px; }
+.crateJourney ol, .outsideRead { margin: 5px 0; padding-inline-start: 1.4em; }
+.crateJourney li { margin-bottom: 4px; }
+.crateJourney li span { display: block; color: var(--secondary); font-size: 11px; }
+.outsideRead button { margin-inline-start: 6px; text-decoration: underline; }
 
 .voiceButton {
   display: inline-flex;
