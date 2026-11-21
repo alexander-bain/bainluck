@@ -1625,6 +1625,7 @@ async def _prewarm_feed_shape(
         FEED_PREWARM_MACHINERY_BASE_SCOPE_KEY,
         encode_base_last_good,
         feed_page_base_last_good_key,
+        strip_live_and_started_items_for_last_good,
     )
 
     _mach_base_ctx = request.scope.get(FEED_PREWARM_MACHINERY_BASE_SCOPE_KEY)
@@ -1632,6 +1633,12 @@ async def _prewarm_feed_shape(
         try:
             _pb_key = str(_mach_base_ctx["page_base_key"])
             _pb_json = dumps_feed_cache(_mach_base_ctx["page_base_body"])
+            _pb_lg_body = _mach_base_ctx.get(
+                "page_base_last_good_body"
+            ) or strip_live_and_started_items_for_last_good(
+                _mach_base_ctx["page_base_body"]
+            )
+            _pb_lg_json = dumps_feed_cache(_pb_lg_body)
             _pb_fresh = int(_mach_base_ctx.get("page_base_fresh_ttl") or ttl)
             _pb_stale = int(_mach_base_ctx.get("page_base_stale_ttl") or stale_ttl)
             _pb_lg_ttl = int(_mach_base_ctx.get("page_base_last_good_ttl") or stale_ttl)
@@ -1640,7 +1647,7 @@ async def _prewarm_feed_shape(
             rc.setex(
                 feed_page_base_last_good_key(_pb_key),
                 _pb_lg_ttl,
-                encode_base_last_good(_pb_json),
+                encode_base_last_good(_pb_lg_json),
             )
         except Exception:
             logger.debug("Sync page-base publish failed for %s", label, exc_info=True)

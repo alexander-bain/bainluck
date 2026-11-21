@@ -265,10 +265,10 @@ from app.utils.feed_cache import (
     feed_page_base_enabled,
     feed_page_base_last_good_key,
     feed_page_base_last_good_max_age_s,
-    feed_page_base_last_good_ttl_s,
     feed_response_cache_key,
     feed_response_cache_ttl,
     feed_response_cache_ttls,
+    strip_live_and_started_items_for_last_good,
     inert_principal_share_enabled,
     live_total_age_headroom_s,
     payload_contains_live_event,
@@ -7401,16 +7401,23 @@ async def get_feed(
                         strict_artifact_age_s=_strict_age_s,
                     )
                     _page_base_json = dumps_feed_cache(_page_base_body)
-                    # #11259: durable emergency copy kept up to 6h for mixed
-                    # decks (live/started games are stripped past 60s at read
-                    # time), or 60s when every item in the deck is live.
-                    _base_last_good_ttl = feed_page_base_last_good_ttl_s(
-                        _page_base_body
+                    # #11259: strip live and started event cards BEFORE writing
+                    # the durable emergency copy so no live score is ever stored
+                    # for 6h, and derive its TTL directly from the #2216 live
+                    # helper (60s if a live-only deck remains live, 6h when the
+                    # written copy has no live cards).
+                    _base_last_good_body = strip_live_and_started_items_for_last_good(
+                        _page_base_body, now=_age_origin
+                    )
+                    _base_last_good_json = dumps_feed_cache(_base_last_good_body)
+                    _base_last_good_ttl = feed_page_base_last_good_max_age_s(
+                        live=payload_contains_live_event(_base_last_good_body)
                     )
 
                     async def _publish_feed_page_base(
                         _client=_shared_redis,
                         _json=_page_base_json,
+                        _lg_json=_base_last_good_json,
                         _key=_page_base_key,
                         _fresh_ttl=_base_fresh_ttl,
                         _stale_ttl=_base_stale_ttl,
@@ -7424,7 +7431,7 @@ async def get_feed(
                                 f"{_key}:stale", _stale_ttl, _json
                             )
                         )
-                        _last_good_wire = encode_base_last_good(_json)
+                        _last_good_wire = encode_base_last_good(_lg_json)
                         await _rc.bounded_redis_call(
                             lambda: _client.setex(
                                 feed_page_base_last_good_key(_key),
@@ -7438,6 +7445,7 @@ async def get_feed(
                         request.scope[FEED_PREWARM_MACHINERY_BASE_SCOPE_KEY] = {
                             "page_base_key": _page_base_key,
                             "page_base_body": _page_base_body,
+                            "page_base_last_good_body": _base_last_good_body,
                             "page_base_fresh_ttl": _base_fresh_ttl,
                             "page_base_stale_ttl": _base_stale_ttl,
                             "page_base_last_good_ttl": _base_last_good_ttl,
@@ -7476,13 +7484,18 @@ async def get_feed(
                         )
                         _mach_base_json = dumps_feed_cache(_mach_base_body)
                         _mach_base_key = feed_machinery_page_base_key(_page_base_key)
-                        _mach_last_good_ttl = feed_page_base_last_good_ttl_s(
-                            _mach_base_body
+                        _mach_last_good_body = strip_live_and_started_items_for_last_good(
+                            _mach_base_body, now=_age_origin
+                        )
+                        _mach_last_good_json = dumps_feed_cache(_mach_last_good_body)
+                        _mach_last_good_ttl = feed_page_base_last_good_max_age_s(
+                            live=payload_contains_live_event(_mach_last_good_body)
                         )
 
                         async def _publish_machinery_feed_page_base(
                             _client=_shared_redis,
                             _json=_mach_base_json,
+                            _lg_json=_mach_last_good_json,
                             _key=_mach_base_key,
                             _fresh_ttl=_mach_fresh_ttl,
                             _stale_ttl=_mach_stale_ttl,
@@ -7494,7 +7507,7 @@ async def get_feed(
                             await _rc.bounded_redis_call(
                                 lambda: _client.setex(f"{_key}:stale", _stale_ttl, _json)
                             )
-                            _mach_lg_wire = encode_base_last_good(_json)
+                            _mach_lg_wire = encode_base_last_good(_lg_json)
                             await _rc.bounded_redis_call(
                                 lambda: _client.setex(
                                     feed_page_base_last_good_key(_key),
@@ -7548,13 +7561,17 @@ async def get_feed(
                     oldest_artifact_age_s=_consumed_age_s,
                     strict_artifact_age_s=_strict_age_s,
                 )
+                _fb_last_good_body = strip_live_and_started_items_for_last_good(
+                    _fb_page_base_body, now=_age_origin
+                )
                 request.scope[FEED_PREWARM_MACHINERY_BASE_SCOPE_KEY] = {
                     "page_base_key": _fb_page_base_key,
                     "page_base_body": _fb_page_base_body,
+                    "page_base_last_good_body": _fb_last_good_body,
                     "page_base_fresh_ttl": _fb_fresh,
                     "page_base_stale_ttl": _fb_stale,
-                    "page_base_last_good_ttl": feed_page_base_last_good_ttl_s(
-                        _fb_page_base_body
+                    "page_base_last_good_ttl": feed_page_base_last_good_max_age_s(
+                        live=payload_contains_live_event(_fb_last_good_body)
                     ),
                     "cache_shape": dict(_cache_shape),
                     "limit": limit,

@@ -778,40 +778,33 @@ def _item_is_stale_live_or_started(item: Any, *, now: float) -> bool:
     return False
 
 
-def base_has_non_live_items(base: Any) -> bool:
-    """#11259: whether a page base carries at least one non-live card.
+def strip_live_and_started_items_for_last_good(
+    base: Any, *, now: float | None = None
+) -> Any:
+    """#11259: strip live and already-started event cards BEFORE writing ``:last_good``.
 
-    Determines the Redis retention TTL for ``:last_good``: a mixed Discover
-    deck keeps its 6h emergency retention even while one game is live (because
-    ``base_from_last_good`` strips only the live/started games past 60s), while
-    a live-only deck keeps the 60s live ceiling.
+    For a mixed Discover deck (non-live cards + one or more live/started games),
+    stripping on write guarantees no live score is ever persisted into the 6h
+    emergency Redis copy, while allowing ``feed_page_base_last_good_max_age_s(
+    live=payload_contains_live_event(stripped))`` to derive the 6h TTL cleanly
+    through the #2216 live-ceiling helper.
+
+    When every item in the deck is live/started (a live-only deck), returns
+    ``base`` unchanged so ``payload_contains_live_event`` remains ``True`` and
+    the live-ceiling helper clamps retention to 60s.
     """
     if not isinstance(base, dict):
-        return False
+        return base
     items = base.get("items")
     if not isinstance(items, list) or not items:
-        return False
-    for item in items:
-        if not isinstance(item, dict):
-            continue
-        data = item.get("data")
-        status = (
-            str(data.get("status") or "").strip().lower()
-            if isinstance(data, dict)
-            else ""
-        )
-        if status not in {"live", "in_progress", "halftime"}:
-            return True
-    return False
-
-
-def feed_page_base_last_good_ttl_s(base: Any) -> int:
-    """#11259: Redis ``setex`` TTL for a durable ``:last_good`` page base."""
-    if base_has_non_live_items(base):
-        return FEED_PAGE_BASE_LAST_GOOD_MAX_AGE_SECONDS
-    return feed_page_base_last_good_max_age_s(
-        live=payload_contains_live_event(base)
-    )
+        return base
+    ts = time.time() if now is None else float(now)
+    kept = [
+        it for it in items if not _item_is_stale_live_or_started(it, now=ts)
+    ]
+    if not kept or len(kept) == len(items):
+        return base
+    return {**base, "items": kept, "total": len(kept)}
 
 
 def base_from_last_good(

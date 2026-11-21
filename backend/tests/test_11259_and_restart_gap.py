@@ -15,8 +15,11 @@ from app.utils.feed_cache import (
     FEED_PAGE_BASE_BUILT_AT_FIELD,
     FEED_PAGE_BASE_LAST_GOOD_MAX_AGE_SECONDS,
     base_from_last_good,
+    dumps_feed_cache,
     encode_base_last_good,
-    feed_page_base_last_good_ttl_s,
+    feed_page_base_last_good_max_age_s,
+    payload_contains_live_event,
+    strip_live_and_started_items_for_last_good,
 )
 from app.utils.roundup_containers import (
     ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S,
@@ -74,11 +77,34 @@ def test_11259_six_hour_emergency_retention_strips_live_and_started_cards_only()
         },
     ]
 
-    # Mixed deck keeps 6h Redis retention; live-only deck stays at 60s.
-    assert feed_page_base_last_good_ttl_s({"items": items}) == 21600
+    # Mixed deck strips live/started cards BEFORE write, so the written copy
+    # holds zero live cards and derives 6h TTL through the #2216 live helper;
+    # live-only deck stays live and clamps to 60s.
+    stripped_mixed = strip_live_and_started_items_for_last_good(
+        {"items": items, "total": len(items)}, now=NOW
+    )
+    assert payload_contains_live_event(stripped_mixed) is False
     assert (
-        feed_page_base_last_good_ttl_s(
-            {"items": [{"type": "event", "data": {"id": 201, "status": "live"}}]}
+        feed_page_base_last_good_max_age_s(
+            live=payload_contains_live_event(stripped_mixed)
+        )
+        == 21600
+    )
+    assert [it["data"]["id"] for it in stripped_mixed["items"]] == [
+        101,
+        203,
+        "machinery-fed-and-macro",
+    ]
+
+    live_only = {
+        "items": [{"type": "event", "data": {"id": 201, "status": "live"}}],
+        "total": 1,
+    }
+    stripped_live_only = strip_live_and_started_items_for_last_good(live_only, now=NOW)
+    assert payload_contains_live_event(stripped_live_only) is True
+    assert (
+        feed_page_base_last_good_max_age_s(
+            live=payload_contains_live_event(stripped_live_only)
         )
         == FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS
     )
@@ -94,6 +120,79 @@ def test_11259_six_hour_emergency_retention_strips_live_and_started_cards_only()
 
     # Past 6 hours: fails closed.
     assert base_from_last_good(_wire_base(items, age_s=21601), now=NOW) == (None, None)
+
+
+def test_11259_emergency_copy_written_with_live_game_has_no_live_score_after_61s() -> None:
+    """Fable verdict #13307: write a page with a live game + score into the
+    emergency copy, read it back after 61 seconds, and verify no live score
+    exists in either the stored blob or the read-back page."""
+    written_at = NOW
+    page_with_live_game = {
+        "items": [
+            {"type": "futures", "data": {"id": 501, "name": "Fed decision", "status": "open"}},
+            {
+                "type": "event",
+                "data": {
+                    "id": 999,
+                    "home_team": "Celtics",
+                    "away_team": "76ers",
+                    "status": "live",
+                    "home_score": 88,
+                    "away_score": 84,
+                },
+            },
+            {
+                "type": "event",
+                "data": {
+                    "id": 998,
+                    "home_team": "Lakers",
+                    "away_team": "Knicks",
+                    "status": "scheduled",
+                    "commence_time": _iso(written_at + 30),  # starts before t+61s
+                    "home_score": 0,
+                    "away_score": 0,
+                },
+            },
+            {
+                "type": "event",
+                "data": {
+                    "id": 997,
+                    "home_team": "Bulls",
+                    "away_team": "Heat",
+                    "status": "scheduled",
+                    "commence_time": _iso(written_at + 3600),
+                },
+            },
+        ],
+        "total": 4,
+        FEED_PAGE_BASE_BUILT_AT_FIELD: written_at,
+    }
+
+    # Write path strips live & already-started cards before persisting for 6h.
+    lg_body = strip_live_and_started_items_for_last_good(
+        page_with_live_game, now=written_at
+    )
+    lg_json = dumps_feed_cache(lg_body)
+    lg_ttl = feed_page_base_last_good_max_age_s(
+        live=payload_contains_live_event(lg_body)
+    )
+    assert lg_ttl == FEED_PAGE_BASE_LAST_GOOD_MAX_AGE_SECONDS
+    assert '"home_score": 88' not in lg_json and '"home_score":88' not in lg_json
+    assert payload_contains_live_event(lg_body) is False
+
+    wire = encode_base_last_good(lg_json)
+
+    # Read back 61 seconds later: live game (999) is absent AND the game that
+    # crossed kickoff at t+30s (998) is stripped at read time; non-live items survive.
+    served, origin = base_from_last_good(wire, now=written_at + 61.0)
+    assert served is not None and origin == written_at
+    assert payload_contains_live_event(served) is False
+    served_ids = [it["data"]["id"] for it in served["items"]]
+    assert served_ids == [501, 997]
+    for it in served["items"]:
+        data = it["data"]
+        assert str(data.get("status") or "").lower() not in {"live", "in_progress", "halftime"}
+        assert "home_score" not in data and "away_score" not in data
 
 
 @pytest.mark.asyncio
