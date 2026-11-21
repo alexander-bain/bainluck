@@ -129,6 +129,18 @@ class TestMachineQueue(unittest.TestCase):
         self.assertEqual(queue["longest_wait_minutes"], 10)
         self.assertEqual(queue["queued_without_jobs"], 1)
 
+    def test_counts_the_named_hosted_watch_image_but_excludes_self_hosted_jobs(self):
+        self.queued += [{"id": 3, "status": "queued"}, {"id": 4, "status": "queued"}]
+        self.jobs[3] = [queued_job(3, "2026-11-19T02:05:00Z")]
+        self.jobs[3][0]["labels"] = ["xcode-27"]
+        self.jobs[4] = [queued_job(4, "2026-11-19T02:00:00Z")]
+        self.jobs[4][0]["labels"] = ["self-hosted", "xcode-27"]
+        self.jobs[2][94]["labels"] = ["xcode-27"]
+        queue = self.measured()
+        self.assertEqual(queue["display"]["waiting"], 2)
+        self.assertEqual(queue["display"]["longest_wait_minutes"], 15)
+        self.assertEqual(queue["master_jobs"], {"running": 40, "waiting": 96})
+
     def test_a_wait_with_no_timestamp_keeps_the_count_and_omits_the_longest_time(self):
         self.jobs[1][0].pop("created_at")
         queue = self.measured()["display"]

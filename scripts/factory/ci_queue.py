@@ -11,7 +11,10 @@ from signals import moment
 HOSTED_MACHINE_CAPACITY = 40
 PAGE_SIZE = 100
 RUN_SEARCH_LIMIT = 1000
-HOSTED_LABEL = re.compile(r"(?:ubuntu|windows|macos)-[a-z0-9.]+(?:-[a-z0-9.]+)*", re.I)
+# Watch uses a named GitHub-hosted image as well as the standard images.
+HOSTED_LABEL = re.compile(
+    r"xcode-27|(?:ubuntu|windows|macos)-[a-z0-9.]+(?:-[a-z0-9.]+)*", re.I
+)
 
 
 def _page(api, endpoint: str, query: dict[str, str], number: int) -> dict:
