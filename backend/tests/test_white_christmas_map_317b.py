@@ -8,10 +8,18 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from PIL import Image
 
-from app.routes.containers import _MAP_PNG_CACHE, get_container_map_png
-from app.utils.container_machinery import (
-    load_machinery_definition,
+from app.routes.containers import (
+    _MAP_PNG_CACHE,
+    get_container_card_art_jpg,
+    get_container_map_png,
 )
+from app.utils.container_machinery import (
+    build_container_machinery_producer,
+    load_machinery_definition,
+    produce_container_machinery,
+)
+from app.utils.discover_image_policy import sanitize_discover_feed_item
+from app.utils.roundup_containers import compose_roundup_feed_item
 from app.utils.white_christmas_map import (
     WHITE_CHRISTMAS_CITIES,
     WHITE_CHRISTMAS_MAP_URL,
@@ -89,9 +97,12 @@ def test_white_christmas_definition_stays_preview_and_points_to_map() -> None:
 
 
 @pytest.mark.asyncio
-async def test_container_map_png_route_serves_png_and_404s_unknown_slug() -> None:
+async def test_container_map_png_route_serves_png_and_404s_unknown_slug(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from fastapi import HTTPException
 
+    monkeypatch.setenv("CONTAINER_MACHINERY_SLICE1_ENABLED", "1")
     _MAP_PNG_CACHE.clear()
     with pytest.raises(HTTPException) as exc:
         await get_container_map_png(slug="machinery-fed-and-macro", db=AsyncMock())
@@ -128,5 +139,131 @@ async def test_container_map_png_route_serves_png_and_404s_unknown_slug() -> Non
         )
     assert resp.media_type == "image/png"
     assert resp.headers.get("Cache-Control") == "public, max-age=300"
+    assert "machinery-white-christmas" in _MAP_PNG_CACHE
     img = Image.open(io.BytesIO(resp.body))
     assert img.size == (1080, 540)
+
+
+def test_fallback_map_omits_lower_higher_legend_bar() -> None:
+    """When no live snow chances are supplied, leave the qualitative scale bar off."""
+    live_png = render_white_christmas_map_png({"pittsburgh": 0.44, "seattle": 0.10})
+    fallback_png = render_white_christmas_map_png({})
+
+    live_img = Image.open(io.BytesIO(live_png))
+    fallback_img = Image.open(io.BytesIO(fallback_png))
+
+    # Bottom-left legend bar band (1080x540 coordinates: x=145..268, y=500..512).
+    # In live mode the gradient bar is brightly drawn; in fallback mode it is plain ocean background.
+    live_band = [
+        live_img.getpixel((x, 506)) for x in range(150, 265, 5)
+    ]
+    fallback_band = [
+        fallback_img.getpixel((x, 506)) for x in range(150, 265, 5)
+    ]
+    # Bright cyan/snow pixels appear on the live gradient bar, never on the fallback ocean strip.
+    assert max(r + g + b for r, g, b in live_band) > 550
+    assert max(r + g + b for r, g, b in fallback_band) < 200
+
+
+@pytest.mark.asyncio
+async def test_fallback_map_is_not_cached_and_returns_no_store() -> None:
+    """Fallback draws must not be kept in memory or HTTP caches for 5 minutes."""
+    _MAP_PNG_CACHE.clear()
+    with (
+        patch(
+            "app.utils.roundup_containers._load_last_good_roundup_copy",
+            new=AsyncMock(return_value=None),
+        ),
+        patch(
+            "app.utils.roundup_containers.ROUNDUP_PRODUCERS",
+            {"machinery-white-christmas": AsyncMock(load=AsyncMock(return_value=None))},
+        ),
+    ):
+        resp = await get_container_map_png(
+            slug="machinery-white-christmas", db=AsyncMock()
+        )
+    assert resp.media_type == "image/png"
+    assert resp.headers.get("Cache-Control") == "no-store"
+    assert "machinery-white-christmas" not in _MAP_PNG_CACHE
+
+
+@pytest.mark.asyncio
+async def test_who_gets_engaged_ring_candidate_b_wired_with_source_and_licence() -> None:
+    """Decision 318 (Candidate B): Rawpixel #5906428 CC0 ring wired on Who Gets Engaged."""
+    from datetime import datetime, timezone
+    from fastapi import HTTPException
+
+    defn = load_machinery_definition(
+        "data/groupings/candidates/machinery-who-gets-engaged.json"
+    )
+    assert defn["stage"] == "preview"
+    assert (
+        defn["rule"]["card_image_url"]
+        == "https://api.bainluck.com/api/containers/machinery-who-gets-engaged/card-art.jpg"
+    )
+    assert defn["rule"]["card_image_license"] == "CC0 1.0 Public Domain"
+    assert (
+        defn["rule"]["card_image_source_page"]
+        == "https://www.rawpixel.com/image/5906428/ring-free-public-domain-cc0-photo"
+    )
+
+    resp = await get_container_card_art_jpg(slug="machinery-who-gets-engaged")
+    assert resp.media_type == "image/jpeg"
+    assert resp.headers.get("Cache-Control") == "public, max-age=86400"
+    img = Image.open(io.BytesIO(resp.body))
+    assert img.format == "JPEG"
+    assert img.size == (1024, 683)
+
+    with pytest.raises(HTTPException) as exc:
+        await get_container_card_art_jpg(slug="machinery-white-christmas")
+    assert exc.value.status_code == 404
+
+    db = {
+        "events": [],
+        "markets": [
+            {
+                "id": 109618,
+                "name": "Sydney Sweeney and Scooter Braun: Engaged this year?",
+                "status": "open",
+                "source": "kalshi",
+                "category": "entertainment",
+                "image_url": "https://images.pexels.com/photos/123/pexels-photo-123.jpeg",
+                "outcomes": [{"id": 1, "name": "Yes", "probability": 0.35}],
+            },
+            {
+                "id": 109385,
+                "name": "Timothée Chalamet and Kylie Jenner: Engaged in 2026?",
+                "status": "open",
+                "source": "kalshi",
+                "category": "entertainment",
+                "outcomes": [{"id": 2, "name": "Yes", "probability": 0.13}],
+            },
+            {
+                "id": 113658,
+                "name": "Katy Perry and Justin Trudeau engaged by end of 2026?",
+                "status": "open",
+                "source": "polymarket",
+                "category": "other",
+                "outcomes": [{"id": 3, "name": "Yes", "probability": 0.07}],
+            },
+        ],
+        "paired_sets": {},
+        "market_histories": {},
+    }
+    prod = build_container_machinery_producer(defn)
+    res = await produce_container_machinery(
+        db, defn, now=datetime(2026, 11, 21, 14, 0, tzinfo=timezone.utc)
+    )
+    assert res.machinery_card["image_url"] == defn["rule"]["card_image_url"]
+    assert res.machinery_card["image_license"] == "CC0 1.0 Public Domain"
+    assert res.machinery_card["image_source_page"] == defn["rule"]["card_image_source_page"]
+    assert res.sections[0]["visual_block"]["hero_image_url"] == defn["rule"]["card_image_url"]
+    assert res.sections[0]["visual_block"]["hero_image_license"] == "CC0 1.0 Public Domain"
+
+    feed_item = compose_roundup_feed_item(prod, res)
+    sanitized = sanitize_discover_feed_item(feed_item)
+    assert sanitized["data"]["image_url"] == defn["rule"]["card_image_url"]
+    assert sanitized["data"]["image_license"] == "CC0 1.0 Public Domain"
+    assert sanitized["data"]["image_source_page"] == defn["rule"]["card_image_source_page"]
+    for sub in sanitized["data"]["items"]:
+        assert sub["data"]["image_url"] is None

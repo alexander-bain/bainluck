@@ -2570,6 +2570,18 @@ def backfill_team_logos(self):
     return run_async(_backfill_team_logos())
 
 
+@celery_app.task(bind=True, soft_time_limit=120, time_limit=150, name="app.tasks.sync_espn_standings_records")
+def sync_espn_standings_records(self):
+    """#13241: refresh college basketball Team.current_record from ESPN standings.
+
+    Updates existing Team rows matched by verified `(sport_id, espn_id)` only;
+    never creates Team rows and leaves rows untouched when ESPN is dark or
+    serving preseason standings.
+    """
+    from app.tasks.espn_sync import _sync_espn_standings_records
+    return _tracked_run("sync_espn_standings_records", _sync_espn_standings_records())
+
+
 @celery_app.task(bind=True, soft_time_limit=900, time_limit=960, name="app.tasks.ensure_perf_indexes")
 def ensure_perf_indexes(self):
     """#1197: build the missing team-route event indexes CONCURRENTLY at runtime
@@ -8408,6 +8420,15 @@ celery_app.conf.beat_schedule = {
     "backfill-team-logos": {
         "task": "app.tasks.backfill_team_logos",
         "schedule": crontab(minute=15, hour="*/6"),
+    },
+    # #13241: refresh college basketball Team.current_record from ESPN's v2
+    # standings endpoint every 2 hours (2 HTTP GETs, existing teams by espn_id
+    # only). Minute :23 avoids the :31-:44 settlement sweep window and even
+    # minutes on `background`.
+    "sync-espn-standings-records": {
+        "task": "app.tasks.sync_espn_standings_records",
+        "schedule": crontab(minute=23, hour="*/2"),
+        "options": {"queue": "background"},
     },
     "heartbeat": {
         "task": "app.tasks.heartbeat",
