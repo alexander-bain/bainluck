@@ -48,7 +48,8 @@
         113503,
         13792362
       ],
-      "short_label": "U.S. confirming aliens"
+      "short_label": "U.S. confirming aliens",
+      "headline_with_phrase": "the U.S. confirming aliens {answer}"
     },
     "113504": {
       "market_id": 113504,
@@ -59,7 +60,8 @@
       "fun_bucket": "odd",
       "discover_category": "culture",
       "set_only": false,
-      "short_label": "Jesus Christ returning before 2027"
+      "short_label": "Jesus Christ returning before 2027",
+      "headline_with_phrase": "Jesus Christ returning before 2027"
     },
     "109295": {
       "market_id": 109295,
@@ -72,7 +74,8 @@
       "fun_bucket": "odd",
       "discover_category": "culture",
       "set_only": false,
-      "short_label": "Taylor Swift meeting Pope Leo XIV"
+      "short_label": "Taylor Swift meeting Pope Leo XIV",
+      "headline_with_phrase": "Taylor Swift meeting Pope Leo XIV before 2027"
     },
     "34191685": {
       "market_id": 34191685,
@@ -83,7 +86,8 @@
       "fun_bucket": "odd",
       "discover_category": "culture",
       "set_only": false,
-      "short_label": "Earth being flat"
+      "short_label": "Earth being flat",
+      "headline_with_phrase": "Earth proving to be flat"
     },
     "108218": {
       "market_id": 108218,
@@ -96,7 +100,8 @@
       "fun_bucket": "odd",
       "discover_category": "tech",
       "set_only": false,
-      "short_label": "Elon Musk visiting Mars"
+      "short_label": "Elon Musk visiting Mars",
+      "headline_with_phrase": "Elon Musk visiting Mars in his lifetime"
     },
     "9997262": {
       "market_id": 9997262,
@@ -107,7 +112,8 @@
       "fun_bucket": "odd",
       "discover_category": "tech",
       "set_only": false,
-      "short_label": "Satoshi's identity proven"
+      "short_label": "Satoshi's identity proven",
+      "headline_with_phrase": "Satoshi's identity proven {answer}"
     },
     "112828": {
       "market_id": 112828,
@@ -118,7 +124,8 @@
       "fun_bucket": "odd",
       "discover_category": "culture",
       "set_only": false,
-      "short_label": "Major meteor strike before 2030"
+      "short_label": "Major meteor strike before 2030",
+      "headline_with_phrase": "a major meteor strike before 2030"
     },
     "109398": {
       "market_id": 109398,
@@ -129,7 +136,8 @@
       "fun_bucket": "odd",
       "discover_category": "weather",
       "set_only": false,
-      "short_label": "Magnitude 8 California earthquake"
+      "short_label": "Magnitude 8 California earthquake",
+      "headline_with_phrase": "a magnitude 8 California earthquake {answer}"
     },
     "108339": {
       "market_id": 108339,
@@ -141,7 +149,8 @@
       "fun_bucket": "odd",
       "discover_category": "entertainment",
       "set_only": false,
-      "short_label": "Trump on SNL"
+      "short_label": "Trump on SNL",
+      "headline_with_phrase": "Trump on SNL"
     },
     "66925975": {
       "market_id": 66925975,
@@ -152,7 +161,8 @@
       "fun_bucket": "odd",
       "discover_category": "culture",
       "set_only": false,
-      "short_label": "Bryan Johnson dunking before 2027"
+      "short_label": "Bryan Johnson dunking before 2027",
+      "headline_with_phrase": "Bryan Johnson dunking before 2027"
     },
     "109633": {
       "market_id": 109633,
@@ -165,7 +175,8 @@
       "fun_bucket": "odd",
       "discover_category": "entertainment",
       "set_only": false,
-      "short_label": "Elon Musk cast in Superman"
+      "short_label": "Elon Musk cast in Superman",
+      "headline_with_phrase": "Elon Musk cast in the next Superman film"
     },
     "112833": {
       "market_id": 112833,
@@ -176,7 +187,8 @@
       "fun_bucket": "odd",
       "discover_category": "culture",
       "set_only": false,
-      "short_label": "Costco raising its hot dog price"
+      "short_label": "Costco raising its hot dog price",
+      "headline_with_phrase": "Costco raising its hot dog price {answer}"
     },
     "109343": {
       "market_id": 109343,
@@ -190,7 +202,8 @@
       "unblended_twin_ids": [
         57418931
       ],
-      "short_label": "Kim Kardashian passing the bar"
+      "short_label": "Kim Kardashian passing the bar",
+      "headline_with_phrase": "Kim Kardashian passing the bar before 2027"
     },
     "52755889": {
       "market_id": 52755889,
@@ -201,7 +214,8 @@
       "fun_bucket": "odd",
       "discover_category": "entertainment",
       "set_only": false,
-      "short_label": "MrBeast hitting 1B subscribers"
+      "short_label": "MrBeast hitting 1B subscribers",
+      "headline_with_phrase": "MrBeast hitting 1B subscribers"
     },
     "109316": {
       "market_id": 109316,
@@ -213,7 +227,8 @@
       "fun_bucket": "odd",
       "discover_category": "culture",
       "set_only": false,
-      "short_label": "Elon Musk buying a major sports team"
+      "short_label": "Elon Musk buying a major sports team",
+      "headline_with_phrase": "Elon Musk buying a major sports team before 2027"
     },
     "56762760": {
       "market_id": 56762760,
@@ -224,7 +239,8 @@
       "fun_bucket": "odd",
       "discover_category": "culture",
       "set_only": false,
-      "short_label": "LA28 Olympics running as scheduled"
+      "short_label": "LA28 Olympics running as scheduled",
+      "headline_with_phrase": "the LA28 Olympics running as scheduled"
     },
     "67734839": {
       "market_id": 67734839,
@@ -238,7 +254,8 @@
       "unblended_twin_ids": [
         70465175
       ],
-      "short_label": "Trump declassifying new UFO files"
+      "short_label": "Trump declassifying new UFO files",
+      "headline_with_phrase": "Trump declassifying new UFO files"
     },
     "33282766": {
       "market_id": 33282766,
@@ -249,7 +266,8 @@
       "fun_bucket": "odd",
       "discover_category": "entertainment",
       "set_only": false,
-      "short_label": "Joe Rogan joining 60 Minutes"
+      "short_label": "Joe Rogan joining 60 Minutes",
+      "headline_with_phrase": "Joe Rogan joining 60 Minutes"
     },
     "63336261": {
       "market_id": 63336261,
@@ -261,7 +279,8 @@
       "fun_bucket": "odd",
       "discover_category": "tech",
       "set_only": false,
-      "short_label": "Jeff Bezos going to space before 2028"
+      "short_label": "Jeff Bezos going to space before 2028",
+      "headline_with_phrase": "Jeff Bezos going to space before 2028"
     },
     "30587891": {
       "market_id": 30587891,
@@ -272,7 +291,8 @@
       "fun_bucket": "odd",
       "discover_category": "entertainment",
       "set_only": false,
-      "short_label": "New Banksy mural by December 31"
+      "short_label": "New Banksy mural by December 31",
+      "headline_with_phrase": "a new Banksy mural by Dec 31"
     },
     "109309": {
       "market_id": 109309,
@@ -407,7 +427,8 @@
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
       "set_only": false,
-      "short_label": "Half-Life 3 announced"
+      "short_label": "Half-Life 3 announced",
+      "headline_with_phrase": "Half-Life 3 announced before 2027"
     },
     "109247": {
       "market_id": 109247,
@@ -421,7 +442,8 @@
       "unblended_twin_ids": [
         113426
       ],
-      "short_label": "The Winds of Winter announced"
+      "short_label": "The Winds of Winter announced",
+      "headline_with_phrase": "a release date for The Winds of Winter"
     },
     "114237": {
       "market_id": 114237,
@@ -432,7 +454,9 @@
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
       "set_only": false,
-      "short_label": "New Stranger Things episode"
+      "short_label": "New Stranger Things episode",
+      "headline_phrase": "A new Stranger Things episode {answer}",
+      "headline_with_phrase": "a new Stranger Things episode {answer}"
     },
     "108494": {
       "market_id": 108494,
@@ -446,7 +470,9 @@
       "unblended_twin_ids": [
         5769697
       ],
-      "short_label": "Elder Scrolls VI"
+      "short_label": "Elder Scrolls VI",
+      "headline_phrase": "Elder Scrolls VI released {answer}",
+      "headline_with_phrase": "Elder Scrolls VI released {answer}"
     },
     "109540": {
       "market_id": 109540,
@@ -457,7 +483,8 @@
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
       "set_only": false,
-      "short_label": "PS6 announced"
+      "short_label": "PS6 announced",
+      "headline_with_phrase": "the PS6 announced this year"
     },
     "112760": {
       "market_id": 112760,
@@ -471,7 +498,9 @@
       "unblended_twin_ids": [
         13792922
       ],
-      "short_label": "Frank Ocean's next album"
+      "short_label": "Frank Ocean's next album",
+      "headline_phrase": "Frank Ocean's next album released {answer}",
+      "headline_with_phrase": "Frank Ocean's next album released {answer}"
     },
     "59693617": {
       "market_id": 59693617,
@@ -485,7 +514,9 @@
       "unblended_twin_ids": [
         60207712
       ],
-      "short_label": "Drake's next album"
+      "short_label": "Drake's next album",
+      "headline_phrase": "Drake's next album released {answer}",
+      "headline_with_phrase": "Drake's next album released {answer}"
     },
     "109347": {
       "market_id": 109347,
@@ -496,7 +527,8 @@
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
       "set_only": false,
-      "short_label": "Robert Downey Jr. back as Iron Man"
+      "short_label": "Robert Downey Jr. back as Iron Man",
+      "headline_with_phrase": "Robert Downey Jr. back as Iron Man"
     },
     "108239": {
       "market_id": 108239,
@@ -507,7 +539,8 @@
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
       "set_only": false,
-      "short_label": "Johnny Depp in Pirates"
+      "short_label": "Johnny Depp in Pirates",
+      "headline_with_phrase": "Johnny Depp in Pirates"
     },
     "108275": {
       "market_id": 108275,
@@ -529,7 +562,8 @@
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
       "set_only": false,
-      "short_label": "New Fast & Furious film announced"
+      "short_label": "New Fast & Furious film announced",
+      "headline_with_phrase": "a new Fast & Furious film announced in 2026"
     },
     "67717832": {
       "market_id": 67717832,
@@ -540,7 +574,9 @@
       "fun_bucket": "entertainment",
       "discover_category": "entertainment",
       "set_only": false,
-      "short_label": "GTA VI on PC"
+      "short_label": "GTA VI on PC",
+      "headline_phrase": "GTA VI released on PC {answer}",
+      "headline_with_phrase": "GTA VI released on PC {answer}"
     },
     "108306": {
       "market_id": 108306,
@@ -819,7 +855,8 @@
       "fun_bucket": "odd",
       "discover_category": "tech",
       "set_only": false,
-      "short_label": "NASA landing on the Moon"
+      "short_label": "NASA landing on the Moon",
+      "headline_with_phrase": "NASA landing on the Moon"
     },
     "108247": {
       "market_id": 108247,
@@ -830,7 +867,9 @@
       "fun_bucket": "odd",
       "discover_category": "tech",
       "set_only": false,
-      "short_label": "Next country on the Moon"
+      "short_label": "Next country on the Moon",
+      "headline_phrase": "{cap_the_answer} as the next country on the Moon",
+      "headline_with_phrase": "{the_answer} as the next country on the Moon"
     },
     "108300": {
       "market_id": 108300,
@@ -841,7 +880,8 @@
       "fun_bucket": "odd",
       "discover_category": "tech",
       "set_only": false,
-      "short_label": "Blue Origin beating SpaceX to the Moon"
+      "short_label": "Blue Origin beating SpaceX to the Moon",
+      "headline_with_phrase": "Blue Origin beating SpaceX to the Moon"
     },
     "108273": {
       "market_id": 108273,
@@ -852,7 +892,8 @@
       "fun_bucket": "odd",
       "discover_category": "tech",
       "set_only": false,
-      "short_label": "SpaceX landing on Mars before 2030"
+      "short_label": "SpaceX landing on Mars before 2030",
+      "headline_with_phrase": "SpaceX landing on Mars before 2030"
     },
     "108309": {
       "market_id": 108309,
@@ -863,7 +904,8 @@
       "fun_bucket": "odd",
       "discover_category": "tech",
       "set_only": false,
-      "short_label": "Starship launching humans to Mars before 2030"
+      "short_label": "Starship launching humans to Mars before 2030",
+      "headline_with_phrase": "Starship launching humans to Mars before 2030"
     },
     "108236": {
       "market_id": 108236,
@@ -874,7 +916,8 @@
       "fun_bucket": "odd",
       "discover_category": "tech",
       "set_only": false,
-      "short_label": "Humanoid robot on Mars before a human"
+      "short_label": "Humanoid robot on Mars before a human",
+      "headline_with_phrase": "a humanoid robot walking on Mars before a human"
     },
     "109599": {
       "market_id": 109599,
@@ -885,7 +928,8 @@
       "fun_bucket": "odd",
       "discover_category": "tech",
       "set_only": false,
-      "short_label": "New interstellar visitor before 2027"
+      "short_label": "New interstellar visitor before 2027",
+      "headline_with_phrase": "a new interstellar visitor confirmed before 2027"
     },
     "68313448": {
       "market_id": 68313448,
