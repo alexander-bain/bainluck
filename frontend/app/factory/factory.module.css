@@ -2036,7 +2036,7 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 
   .factory {
     --screen-type: clamp(12px, min(1.042vw, 1.852vh), 44px);
-    --screen-gap: calc(var(--screen-type) * 0.3);
+    --screen-gap: calc(var(--screen-type) * 0.2);
     --line-column: calc(var(--screen-type) * 7);
     --lane-gap: calc(var(--screen-type) * 0.38);
     --floor-inset: calc(var(--screen-type) * 0.75);
@@ -2088,7 +2088,28 @@ details[open] > .summary > svg { transform: rotate(90deg); }
     display: flex;
     flex-direction: column;
   }
-  .sectionHeading { padding-block: calc(var(--screen-gap) * 1.35) 2px; }
+  .sectionHeading {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 2.05fr) minmax(0, 1fr) max-content;
+    gap: 5px 10px;
+    padding-block: calc(var(--screen-gap) * 1.35) 2px;
+  }
+  .floorActions { flex-direction: column; align-items: flex-end; gap: 3px; }
+  .checksQueue {
+    grid-template-columns: max-content minmax(34px, 1fr) auto;
+    padding: 3px 6px;
+    column-gap: 6px;
+    font-size: var(--screen-type);
+    line-height: 1.12;
+  }
+  .queueHeading h3 { font-size: var(--screen-type); }
+  .checksQueue > small {
+    grid-column: 3;
+    grid-row: 1;
+    justify-self: end;
+  }
+  .queueCounts { column-gap: 8px; }
+  .checksQueue > p:not(.queueHelp) { grid-column: 2 / -1; }
   .tapHint { font-size: var(--screen-type); }
   .floorSpeech > .worker {
     width: calc(var(--screen-type) * 1.65);
@@ -2202,7 +2223,7 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 }
 
 @media (min-width: 1000px) and (min-height: 680px) and (max-height: 800px) {
-  .factory { --screen-type: 12px; --line-column: 96px; }
+  .factory { --screen-type: 11.5px; --screen-gap: 2px; --line-column: 96px; }
   .heading { min-height: 58px; }
   .titlePlate,
   .injurySign,
@@ -2224,6 +2245,8 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 @media (min-width: 1000px) and (min-height: 1100px) and (orientation: portrait) {
   .factory { --screen-type: 16px; }
   .heading { min-height: 160px; }
+  .sectionHeading { display: flex; flex-wrap: wrap; }
+  .checksQueue { order: 2; flex: 1 0 100%; }
   .stationSign { min-height: 104px; }
   .lineName { margin-top: 24px; }
   .lineRail::before { inset-block-start: 76px; }
