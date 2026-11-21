@@ -202,9 +202,10 @@ struct MediumLiveGamesView: View {
                             .fixedSize(horizontal: true, vertical: false)
                     }
                     Spacer(minLength: 2)
-                    // #5363 + #13162: keep probability pair on one uncut line ("93-7"), never wrapping onto "-7".
+                    // #5363 + #13162 + #13392: keep probability pair on one uncut line ("93-7"), never wrapping onto "-7",
+                    // and include the percent sign on single-outcome fallback ("RMA 52%").
                     Text(game.awayProb.map { "\($0)-\(game.homeProb)" }
-                         ?? "\(game.homeAbbrev) \(game.homeProb)")
+                         ?? "\(game.homeAbbrev) \(game.homeProb)%")
                         .font(.system(size: 9, weight: .medium, design: .rounded).monospacedDigit())
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
