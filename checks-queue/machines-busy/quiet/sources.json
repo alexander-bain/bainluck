@@ -1,0 +1,12 @@
+{
+  "queueObservedAt": "2026-11-21T04:09:39.760601+00:00",
+  "snapshotPublishedAt": "2026-11-21T04:08:18.671964Z",
+  "queueDisplay": {
+    "machines": 40,
+    "machines_busy": 36,
+    "running": 4,
+    "waiting": 0,
+    "longest_wait_minutes": null,
+    "queued_without_jobs": 26
+  }
+}
