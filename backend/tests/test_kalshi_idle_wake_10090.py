@@ -273,7 +273,7 @@ async def test_ticks_on_a_cooled_cohort_attempt_nothing_and_keep_the_work_ceilin
 
     async def refused_once(self, session, values, **kwargs):
         attempts.append((time.monotonic(), dict(values)))
-        if len(attempts) == 1:
+        if len(attempts) <= 2:
             raise _LockTimeout("canceling statement due to lock timeout")
         async for result in original_phase(self, session, values, **kwargs):
             yield result
@@ -284,12 +284,16 @@ async def test_ticks_on_a_cooled_cohort_attempt_nothing_and_keep_the_work_ceilin
         game = socket_for({GAME_A})
         await _right_after_a_probe(flushes)
         await game.deliver("ticker", {"market_ticker": GAME_A, "price_dollars": "0.61"})
-        await _until(lambda: attempts, "the refused write")
+        await _until(
+            lambda: len(attempts) == 2
+            and owners[0].lock_retry_until.get(WINNER, 0) > attempts[1][0],
+            "the refused short probe, then its refused ordinary attempt",
+        )
         until = owners[0].lock_retry_until[WINNER]
         refused_at, work = time.monotonic(), owners[0].flush_work
         seen = len(flushes)
         ticks = 0
-        while blend._mono() < until - 0.2:
+        while blend._mono() < until - 0.4:
             await game.deliver("ticker", {"market_ticker": GAME_A, "price_dollars": "0.61"})
             ticks += 1
             await asyncio.sleep(0.05)
@@ -297,7 +301,8 @@ async def test_ticks_on_a_cooled_cohort_attempt_nothing_and_keep_the_work_ceilin
         woken = len(flushes) - seen
         print(f"EVIDENCE cooled ticks: {ticks} ticks, {woken} flushes in {elapsed:.2f}s, "
               f"counted work +{owners[0].flush_work - work}")
-        assert len(attempts) == 1  # nothing written while the cohort cools
+        assert ticks > 0
+        assert [t for t, _ in attempts[2:] if t < until] == []  # nothing written while the cohort cools
         assert owners[0].flush_work - work <= int(elapsed / period) + 1
         await _until(lambda: _written(writes, WINNER), "the retry after the deadline")
     finally:
