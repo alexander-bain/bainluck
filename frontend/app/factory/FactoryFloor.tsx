@@ -29,12 +29,12 @@ import { useScrollDepth } from "@/hooks/useScrollDepth";
 import { useEngagementTime } from "@/hooks/useEngagementTime";
 import type { Builder, Change, FactoryData, Jam, Line, Station, Stop } from "./types";
 import styles from "./factory.module.css";
-import Worker, { type WorkerState } from "./Worker";
+import Worker from "./Worker";
 import EventScene from "./EventScene";
 import BuilderNamePanel from "./BuilderNamePanel";
 import CrewCard from "./CrewCard";
 import DailyPictures from "./DailyPictures";
-import { crewPose } from "./crewMotion";
+import { crewAction, crewPose, placeCrew, type FloorCrew } from "./crewMotion";
 import {
   builders, holdAuthorName, nameableBuilders, useBuilderNames,
   type FactoryNames, type NameableBuilder, type NamedBuilder,
@@ -49,8 +49,8 @@ import { useFactoryDisplay } from "./useFactoryDisplay";
 import type { FactoryDisplayReading } from "./displayReading";
 import { validateSnapshot } from "./data";
 import { useReplayJournal } from "./replayJournal";
-import { LIVE_TRANSITION_MS, remainingEvents, transfersSince } from "./liveTransfers";
-import { crossesSegment, eventText, useEventPlayer } from "./playback";
+import { remainingEvents, transfersSince } from "./liveTransfers";
+import { crossesSegment, eventText, WALK_PER_STATION_MS, useEventPlayer } from "./playback";
 import { factoryTabTitle, floorVerdict, type FloorVerdict } from "./verdict";
 import {
   stations,
@@ -275,13 +275,14 @@ export default function FactoryFloor(initial: {
   const tape = useMemo(() => remainingEvents(data?.events, moves), [data?.events, moves]);
   const transfer = useEventPlayer(
     data?.generated_at, moves, motion && !replay.session,
-    LIVE_TRANSITION_MS * Math.max(1, moves.length),
+    WALK_PER_STATION_MS * Math.max(1, moves.length),
   );
   const livePlaying = useEventPlayer(
     data?.generated_at, tape, motion && !replay.session && !transfer,
   );
   const playing = replay.session ? replay.playing : transfer ?? livePlaying;
   const sceneVisible = motion && !selectedCrate && !selectedGroup && !selectedCrew;
+  const sceneActor = sceneVisible && playing ? crewAction(playing.event)?.identity : undefined;
   const mascotMove = sceneVisible && playing ? mascotAction(playing.event) : undefined;
   const quiet = Boolean(data && !behind && !data.changes.some(change =>
     onActiveFloor(change) && (change.checks_running || recentlyActive(change.last_activity, now))) &&
@@ -478,6 +479,8 @@ export default function FactoryFloor(initial: {
     ? notes.floor
     : null;
   const visible = [...onFloor, ...shipped];
+  const floorCrew = placeCrew(data, recordTime, visible);
+  const resting = floorCrew.filter(person => !person.position);
   const jams = data.jams.filter(
     (jam) =>
       Date.parse(jam.qualifies_at) <= Date.parse(now) &&
@@ -526,19 +529,27 @@ export default function FactoryFloor(initial: {
     }
   }
 
-  function workerFigure(id: NameableBuilder, pose: WorkerState) {
+  function openCrewCard(id: NameableBuilder) {
+    if (id !== "Fable" && data?.speech?.[id]) setSpeaker(id);
+    selectCrew(id);
+  }
+
+  function workerFigure({ identity: id, pose }: FloorCrew) {
+    const away = sceneActor === id;
     return (
       <button
+        key={id}
         type="button"
-        className={styles.voiceButton}
+        className={`${styles.voiceButton} ${styles.floorWorker}`}
         aria-label={`Meet ${names[id]}`}
+        title={names[id]}
         aria-haspopup="dialog"
-        onClick={() => {
-          if (id !== "Fable" && data?.speech?.[id]) setSpeaker(id);
-          selectCrew(id);
-        }}
+        aria-hidden={away || undefined}
+        data-away={away || undefined}
+        tabIndex={away ? -1 : undefined}
+        onClick={() => openCrewCard(id)}
       >
-        <Worker identity={id} state={pose} />
+        <Worker identity={id} state={pose} onFloor />
       </button>
     );
   }
@@ -704,11 +715,10 @@ export default function FactoryFloor(initial: {
           <ChecksQueue queue={data.signals.checks_queue} />
           {currentSpeaker && currentSpeech && (
             <div className={styles.floorSpeech} id="factory-speech" data-floor-speech={currentSpeaker}>
-              {workerFigure(currentSpeaker, crewPose(data, currentSpeaker, recordTime, visible.filter(
-                change => change.builder === currentSpeaker,
-              )).pose)}
               <p className={styles.speechBubble} data-source={currentSpeech.source}>
-                <strong>{names[currentSpeaker]}</strong>{" "}{currentSpeech.text}
+                <button type="button" onClick={() => openCrewCard(currentSpeaker)} aria-haspopup="dialog">
+                  <strong>{names[currentSpeaker]}</strong>
+                </button>{" "}{currentSpeech.text}
               </p>
             </div>
           )}
@@ -773,7 +783,6 @@ export default function FactoryFloor(initial: {
                     </div>
                     {station === "Review" && (
                       <div className={styles.inspectionDesk}>
-                        {workerFigure("Fable", foremanPose.pose)}
                         <span>{nameEditor.custom.Fable?.trim() ? names.Fable : "Foreman"}</span>
                       </div>
                     )}
@@ -786,8 +795,11 @@ export default function FactoryFloor(initial: {
                 );
               })}
             </div>
-            {lines.map((line) => {
+            {lines.map((line, lineIndex) => {
               const LineIcon = lineIcons[line];
+              const restHere = resting.slice(lineIndex * 3, (lineIndex + 1) * 3);
+              const crewHere = floorCrew.filter(person => person.position?.line === line);
+              const eventHere = sceneVisible && playing?.event.line === line ? playing : null;
               const lineShipped = shipped.filter((c) => c.line === line);
               const last = lineShipped.reduce<string | null>(
                 (value, c) =>
@@ -813,6 +825,12 @@ export default function FactoryFloor(initial: {
                         </span>
                       )}
                     </div>
+                    {restHere.length > 0 && (
+                      <div className={styles.crewRest} data-rest-bench>
+                        <span>Rest bench</span>
+                        <div>{restHere.map(workerFigure)}</div>
+                      </div>
+                    )}
                   </div>
                   <div className={styles.machines}>
                     {stations.map((station) => {
@@ -840,25 +858,15 @@ export default function FactoryFloor(initial: {
                       const workerState = workerId
                         ? crewPose(data, workerId, recordTime, changes.filter(change => change.builder === workerId)).pose
                         : activity.worker;
-                      const dockBuilders =
-                        station === "Merge line"
-                          ? [
-                              ...new Set(
-                                changes
-                                  .map((c) => c.builder)
-                                  .filter(
-                                    (builder): builder is NamedBuilder =>
-                                      builder !== "Other",
-                                  ),
-                              ),
-                            ]
-                          : [];
                       const backup = bayAlerts.some((alert) => alert.crowded);
                       const jammed = activeJams.some(
                         (j) =>
                           j.station === station &&
                           (j.kind === "crowd" ? backup : j.line === line),
                       );
+                      const bayState = behind ? "Paused" :
+                        station === "Ship" && changes.some(c => c.merge_announced_at) ? "Merge announced" :
+                        bayAlert && !activity.stop ? "Needs attention" : activity.label;
                       return (
                         <div
                           key={station}
@@ -882,22 +890,8 @@ export default function FactoryFloor(initial: {
                             </div>
                           )}
                           <div className={styles.machineTop}>
-                            {dockBuilders.length ? (
-                              <ul
-                                className={styles.dockCrew}
-                                aria-label={`${line} loading dock queue: ${dockBuilders.map((builder) => names[builder]).join(", ")}`}
-                              >
-                                {dockBuilders.slice(0, 3).map((builder) => (
-                                  <li key={builder} title={names[builder]}>
-                                    {workerFigure(builder, "waiting")}
-                                  </li>
-                                ))}
-                                {dockBuilders.length > 3 && (
-                                  <li>+{dockBuilders.length - 3}</li>
-                                )}
-                              </ul>
-                            ) : workerId ? (
-                              workerFigure(workerId, workerState)
+                            {workerId ? (
+                              <span className={styles.bayWorkerName}>{names[workerId]}</span>
                             ) : (
                               <Icon
                                 className={styles.stationObject}
@@ -905,9 +899,6 @@ export default function FactoryFloor(initial: {
                                 strokeWidth={1.4}
                                 aria-hidden="true"
                               />
-                            )}
-                            {workerId && !dockBuilders.length && (
-                              <span className={styles.bayWorkerName}>{names[workerId]}</span>
                             )}
                             <span className={styles.baySignals}>
                               <span
@@ -923,15 +914,9 @@ export default function FactoryFloor(initial: {
                                 }
                                 aria-hidden="true"
                               />
-                              <span>
-                                {behind
-                                  ? "Paused"
-                                  : station === "Ship" &&
-                                      changes.some((c) => c.merge_announced_at)
-                                    ? "Merge announced"
-                                    : bayAlert && !activity.stop
-                                      ? "Needs attention"
-                                      : activity.label}
+                              <span title={bayState}>
+                                {bayState === "Needs attention" ? "Attention" :
+                                  bayState === "Checks running" ? "Testing" : bayState}
                               </span>
                             </span>
                           </div>
@@ -979,12 +964,21 @@ export default function FactoryFloor(initial: {
                         </div>
                       );
                     })}
-                    {sceneVisible && playing?.event.line === line && (
-                      <EventScene key={playing.event.id} {...playing} foreman={names.Fable} />
-                    )}
-                    {mascotMove && playing?.event.line === line && (
-                      <MascotMove key={`mascot-${playing.event.id}`} {...playing} pose={mascotMove} />
-                    )}
+                    <div className={styles.crewStrip} data-crew-strip={line} data-occupied={Boolean(crewHere.length || eventHere)}>
+                      <div className={styles.crewStops}>
+                        {stations.map(station => (
+                          <div key={station} className={styles.crewStop} data-crew-station={station}>
+                            {crewHere.filter(person => person.position?.station === station).map(workerFigure)}
+                          </div>
+                        ))}
+                      </div>
+                      {eventHere && (
+                        <EventScene key={eventHere.event.id} {...eventHere} foreman={names.Fable} />
+                      )}
+                      {mascotMove && eventHere && (
+                        <MascotMove key={`mascot-${eventHere.event.id}`} {...eventHere} pose={mascotMove} alongside={Boolean(sceneActor)} />
+                      )}
+                    </div>
                     <div
                       className={styles.belts}
                       data-belts="true"
