@@ -59,6 +59,22 @@ struct ContainerHubView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+        .toolbar {
+            if isPubliclyShareable {
+                ToolbarItem(placement: .confirmationAction) {
+                    ShareLink(
+                        item: shareURL,
+                        subject: Text(effectiveShareTitle)
+                    ) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 14))
+                    }
+                    .accessibilityLabel("Share")
+                    .accessibilityIdentifier("hub.shareButton")
+                    .recordsShareOpened { recordShareOpened() }
+                }
+            }
+        }
         .task {
             // Returning revalidates publication/lifecycle while retaining the
             // existing view model and anchor. No new hub or loading skeleton.
@@ -67,11 +83,67 @@ struct ContainerHubView: View {
         }
     }
 
-    private var effectiveNavigationTitle: String {
-        if GroupingMachineryGate12288.isMachineryCandidateSlug(vm.slug), displayName.count > 28 {
+    static func shareLinkURL(slug: String) -> URL {
+        URL(string: collectionShareURL(slug)) ?? bainLuckFallbackURL
+    }
+
+    private var shareURL: URL {
+        Self.shareLinkURL(slug: vm.slug)
+    }
+
+    private var effectiveShareTitle: String {
+        if case .loaded(let presentation) = vm.state,
+           let title = presentation.title?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !title.isEmpty {
+            return title
+        }
+        let trimmed = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Bain Luck" : trimmed
+    }
+
+    private func recordShareOpened() {
+        ShareInstrumentation.recordShareOpened(
+            itemType: "collection",
+            itemId: vm.slug,
+            itemName: effectiveShareTitle,
+            category: nil,
+            surface: .collectionDetail
+        )
+    }
+
+    private var isPubliclyShareable: Bool {
+        guard case .loaded(let presentation) = vm.state,
+              presentation.response.state == .published else {
+            return false
+        }
+        return true
+    }
+
+    static func resolvedNavigationTitle(displayName: String, slug: String, loadedTitle: String?) -> String {
+        if let loaded = loadedTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !loaded.isEmpty {
+            if GroupingMachineryGate12288.isMachineryCandidateSlug(slug), loaded.count > 28 {
+                return ""
+            }
+            return loaded
+        }
+        let trimmed = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed == "Collection" {
             return ""
         }
-        return displayName
+        if GroupingMachineryGate12288.isMachineryCandidateSlug(slug), trimmed.count > 28 {
+            return ""
+        }
+        return trimmed
+    }
+
+    private var effectiveNavigationTitle: String {
+        let loadedTitle: String?
+        if case .loaded(let presentation) = vm.state {
+            loadedTitle = presentation.title
+        } else {
+            loadedTitle = nil
+        }
+        return Self.resolvedNavigationTitle(displayName: displayName, slug: vm.slug, loadedTitle: loadedTitle)
     }
 
     private func hub(_ presentation: ContainerHubPresentation) -> some View {
@@ -83,11 +155,12 @@ struct ContainerHubView: View {
                         .foregroundStyle(hubTextPrimary)
                         .fixedSize(horizontal: false, vertical: true)
                 }
-                if let subtitle = presentation.subtitle {
-                    Text(subtitle)
+                if let reasonLine = presentation.headerReasonLine {
+                    Text(reasonLine)
                         .font(.subheadline)
                         .foregroundStyle(hubTextSecondary)
                         .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("hub.reasonLine")
                 }
                 if let note = presentation.note {
                     Text(note)
@@ -98,10 +171,6 @@ struct ContainerHubView: View {
                 if presentation.response.edition?.isTheme == true, presentation.isPartial {
                     Button("Retry unavailable markets") { Task { await vm.load() } }
                         .disabled(vm.isRefreshing)
-                }
-                if let counts = presentation.countLabel {
-                    Text(counts).font(.subheadline).foregroundStyle(hubTextSecondary)
-                        .accessibilityIdentifier("hub.loadedCount")
                 }
                 if vm.refreshError != nil {
                     Text("Couldn’t refresh. Showing the last loaded collection.")
@@ -120,6 +189,20 @@ struct ContainerHubView: View {
                         .background(hubCardBg, in: RoundedRectangle(cornerRadius: 12))
                     }
                     .buttonStyle(.plain)
+                    .contextMenu {
+                        CollectionContextMenuItems(
+                            slug: child.slug,
+                            onShare: {
+                                ShareInstrumentation.recordShareOpened(
+                                    itemType: "collection",
+                                    itemId: child.slug,
+                                    itemName: child.name,
+                                    category: nil,
+                                    surface: .discoverCard
+                                )
+                            }
+                        )
+                    }
                     .id("container:\(child.slug)")
                 }
                 if !vm.pairedMetricSets.isEmpty {
@@ -192,6 +275,13 @@ struct ContainerHubView: View {
                             }
                         }
                     }
+                }
+                if let pagerCount = presentation.pagerCountLabel {
+                    Text(pagerCount)
+                        .font(.subheadline)
+                        .foregroundStyle(hubTextSecondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .accessibilityIdentifier("hub.loadedCount")
                 }
                 if vm.pageError != nil {
                     Text("Couldn’t load more markets. Try again.").font(.subheadline).foregroundStyle(hubTextSecondary)
@@ -348,6 +438,20 @@ struct ContainerHubCollectionLink: View {
                 .background(ContainerHubThemeTokens.cardBg(colorScheme), in: RoundedRectangle(cornerRadius: 12))
             }
             .buttonStyle(.plain)
+            .contextMenu {
+                CollectionContextMenuItems(
+                    slug: collection.slug,
+                    onShare: {
+                        ShareInstrumentation.recordShareOpened(
+                            itemType: "collection",
+                            itemId: collection.slug,
+                            itemName: collection.name,
+                            category: nil,
+                            surface: .discoverCard
+                        )
+                    }
+                )
+            }
         }
     }
 }

@@ -1221,6 +1221,15 @@ struct DiscoverView: View {
                             )
                     }
                 }
+                .contextMenu {
+                    discoverGroupCardMenu(
+                        title: title,
+                        items: items,
+                        kind: kind,
+                        theme: theme,
+                        collectionRef: collectionRef
+                    )
+                }
             case .single(let item):
                 if let pairedSet = item.pairedMetricSet, !pairedSet.entries.isEmpty {
                     SwipeToDismiss(
@@ -2109,6 +2118,55 @@ struct DiscoverView: View {
         if let matchedByTitle = feedItems.first(where: { $0.bundle?.kind == "roundup" && $0.bundle?.title == title })?.bundle,
            matchedByTitle.admitsRoundupCard {
             return matchedByTitle
+        }
+        return nil
+    }
+
+    static func groupCollectionSlug(
+        title: String,
+        kind: String?,
+        theme: String?,
+        collectionRef: FeedThemeCollectionRef?,
+        groupItems: [FeedItem],
+        feedItems: [FeedItem]
+    ) -> String? {
+        if let slug = collectionRef?.slug.trimmingCharacters(in: .whitespacesAndNewlines), !slug.isEmpty {
+            return slug
+        }
+        if kind == "roundup",
+           let roundupBundle = resolveRoundupBundle(
+               title: title,
+               collectionRef: collectionRef,
+               groupItems: groupItems,
+               feedItems: feedItems
+           ) {
+            if let slug = roundupBundle.roundupContract?.machineryCard?.slug.trimmingCharacters(in: .whitespacesAndNewlines), !slug.isEmpty {
+                return slug
+            }
+            if let slug = roundupBundle.roundupCollectionRef?.slug.trimmingCharacters(in: .whitespacesAndNewlines), !slug.isEmpty {
+                return slug
+            }
+        }
+        if let groupBundle = resolveGroupBundle(
+            title: title,
+            kind: kind,
+            theme: theme,
+            collectionRef: collectionRef,
+            groupItems: groupItems,
+            feedItems: feedItems
+        ) {
+            if let slug = groupBundle.themeCollectionRef?.slug.trimmingCharacters(in: .whitespacesAndNewlines), !slug.isEmpty {
+                return slug
+            }
+            if let slug = groupBundle.roundupCollectionRef?.slug.trimmingCharacters(in: .whitespacesAndNewlines), !slug.isEmpty {
+                return slug
+            }
+            if let slug = groupBundle.roundupContract?.machineryCard?.slug.trimmingCharacters(in: .whitespacesAndNewlines), !slug.isEmpty {
+                return slug
+            }
+            if let setId = groupBundle.pairedMetricSet?.setId, setId.hasPrefix("oscars-") {
+                return "oscars-2027"
+            }
         }
         return nil
     }
@@ -3355,6 +3413,64 @@ struct DiscoverView: View {
     }
 
     @ViewBuilder
+    private func discoverGroupCardMenu(
+        title: String,
+        items: [FeedItem],
+        kind: String?,
+        theme: String?,
+        collectionRef: FeedThemeCollectionRef?
+    ) -> some View {
+        let lessLikeThisAction: () -> Void = {
+            guard case .signedIn = feedbackAuthState else {
+                inviteSignInForFeedback()
+                return
+            }
+            if let primary = items.first {
+                recordInteraction(for: primary, action: .unlike, source: "context_menu")
+            }
+            hideForSession(ids: Self.dismissKeys(forGroupOf: items))
+        }
+
+        if let setSlug = Self.groupCollectionSlug(
+            title: title,
+            kind: kind,
+            theme: theme,
+            collectionRef: collectionRef,
+            groupItems: items,
+            feedItems: vm.items
+        ) {
+            CollectionContextMenuItems(
+                slug: setSlug,
+                onCopyLink: {
+                    if let primary = items.first {
+                        recordInteraction(for: primary, action: .share, source: "copy_link")
+                    }
+                },
+                onShare: {
+                    if let primary = items.first {
+                        recordInteraction(for: primary, action: .share, source: ShareSurface.discoverCard.rawValue)
+                    } else {
+                        ShareInstrumentation.recordShareOpened(
+                            itemType: "collection",
+                            itemId: setSlug,
+                            itemName: title,
+                            category: nil,
+                            surface: .discoverCard
+                        )
+                    }
+                },
+                onLessLikeThis: lessLikeThisAction
+            )
+        } else {
+            Button {
+                lessLikeThisAction()
+            } label: {
+                Label("Less Like This", systemImage: "hand.thumbsdown")
+            }
+        }
+    }
+
+    @ViewBuilder
     private func discoverCardMenu(_ item: FeedItem) -> some View {
         CardContextMenu(
             item: item,
@@ -3362,6 +3478,9 @@ struct DiscoverView: View {
             showsShareSectionDivider: false,
             onCopyLink: { _ in
                 recordInteraction(for: item, action: .share, source: "copy_link")
+            },
+            onShare: { _ in
+                recordInteraction(for: item, action: .share, source: ShareSurface.discoverCard.rawValue)
             },
             onLessLikeThis: {
                 guard case .signedIn = feedbackAuthState else {
