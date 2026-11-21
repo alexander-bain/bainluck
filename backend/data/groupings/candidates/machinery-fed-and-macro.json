@@ -21,6 +21,13 @@
     "materialize": "read-time",
     "card_rows": 3,
     "card_section_key": "jan_fomc",
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/89/Eccles_Building_%2826088200676%29.jpg/960px-Eccles_Building_%2826088200676%29.jpg",
+    "card_image_alt": "Marble facade of the Marriner S. Eccles Federal Reserve Board Building in Washington, D.C.",
+    "card_image_credit": "Board of Governors of the Federal Reserve System (Public domain, Wikimedia Commons)",
+    "card_image_author": "Board of Governors of the Federal Reserve System",
+    "card_image_license": "Public domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Eccles_Building_(26088200676).jpg",
     "sections": [
       {
         "key": "jan_fomc",

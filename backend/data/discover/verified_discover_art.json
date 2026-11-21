@@ -1668,6 +1668,54 @@
       "source_page": "https://commons.wikimedia.org/wiki/File:NASA%27s_SpaceX_Europa_Clipper_Launch_(KSC-20241014-PH-FMX01_0001).jpg"
     },
     {
+      "entity_key": "public-next-james-bond",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "The Next James Bond Film — Tower Bridge in London at twilight",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/30/Tower_Bride_at_dusk_2016-unsplash_%282%29.jpg/960px-Tower_Bride_at_dusk_2016-unsplash_%282%29.jpg",
+      "credit": "Susan Yin (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Susan Yin",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Tower_Bride_at_dusk_2016-unsplash_(2).jpg"
+    },
+    {
+      "entity_key": "public-oscars-best-picture",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Oscars Best Picture — red velvet movie theater seats",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/41/Disused_Cinema_%28Unsplash%29.jpg/1280px-Disused_Cinema_%28Unsplash%29.jpg",
+      "credit": "Felix Mooneeram (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Felix Mooneeram",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Disused_Cinema_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "public-2028-presidential",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "2028 Presidential Race — aerial view of the White House (Carol M. Highsmith)",
+      "url": "https://api.bainluck.com/api/containers/machinery-2028-presidential/card-art.jpg",
+      "credit": "Carol M. Highsmith (Public domain, Library of Congress / Wikimedia Commons)",
+      "author": "Carol M. Highsmith",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Aerial_view_of_the_White_House.jpg"
+    },
+    {
+      "entity_key": "public-fed-and-macro",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Fed & U.S. Macro — Marriner S. Eccles Federal Reserve Board Building",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/89/Eccles_Building_%2826088200676%29.jpg/960px-Eccles_Building_%2826088200676%29.jpg",
+      "credit": "Board of Governors of the Federal Reserve System (Public domain, Wikimedia Commons)",
+      "author": "Board of Governors of the Federal Reserve System",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Eccles_Building_(26088200676).jpg"
+    },
+    {
       "entity_key": "batch2-long-shots",
       "aliases": [],
       "kind": "topic",

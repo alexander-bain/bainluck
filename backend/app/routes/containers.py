@@ -647,6 +647,9 @@ _CARD_ART_ASSETS: dict[str, tuple[str, str]] = {
     # Decision 318 (Candidate B): Rawpixel #5906428, CC0 1.0 Public Domain
     # Source: https://www.rawpixel.com/image/5906428/ring-free-public-domain-cc0-photo
     "machinery-who-gets-engaged": ("who_gets_engaged_ring_cc0.jpg", "image/jpeg"),
+    # Carol M. Highsmith, Library of Congress (highsm.04919), Public domain ({{PD-Highsmith}})
+    # Source: https://commons.wikimedia.org/wiki/File:Aerial_view_of_the_White_House.jpg
+    "machinery-2028-presidential": ("presidential_2028_white_house_pd.jpg", "image/jpeg"),
 }
 
 

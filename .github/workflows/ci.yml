@@ -5588,7 +5588,7 @@ jobs:
     needs: [deploy]
     if: always() && github.ref == 'refs/heads/master' && github.event_name == 'push' && needs.deploy.result == 'success' && needs.deploy.outputs.deployed == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
         with:
