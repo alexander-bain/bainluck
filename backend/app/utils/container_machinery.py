@@ -1589,24 +1589,55 @@ def _hydrate_market_visual_item(
             lead_ans_for_phrase = f"{m_prep_ans.group(1).lower()} {_abbreviate_month_names(m_prep_ans.group(2).strip())}"
         elif _BARE_MONTH_DAY_RE.match(lead_ans_clean):
             lead_ans_for_phrase = f"by {_abbreviate_month_names(lead_ans_clean)}"
+        elif _BARE_MONTH_YEAR_OR_YEAR_RE.match(lead_ans_clean):
+            lead_ans_for_phrase = f"in {_abbreviate_month_names(lead_ans_clean)}"
         else:
             lead_ans_for_phrase = lead_ans_clean
+        _THE_COUNTRIES = frozenset(
+            {
+                "united states",
+                "u.s.",
+                "us",
+                "united kingdom",
+                "uk",
+                "netherlands",
+                "philippines",
+                "uae",
+                "united arab emirates",
+            }
+        )
+        ans_with_the = (
+            f"the {lead_ans_for_phrase}"
+            if lead_ans_for_phrase.lower() in _THE_COUNTRIES
+            else lead_ans_for_phrase
+        )
+        ans_cap_the = (
+            f"The {lead_ans_for_phrase}"
+            if lead_ans_for_phrase.lower() in _THE_COUNTRIES
+            else lead_ans_for_phrase
+        )
+
+        def _render_tpl(tpl: str) -> Optional[str]:
+            if any(tok in tpl for tok in ("{answer}", "{the_answer}", "{cap_the_answer}")):
+                if not lead_ans_clean or lead_ans_clean.lower() in {"yes", "no"}:
+                    return None
+                return (
+                    tpl.replace("{answer}", lead_ans_for_phrase)
+                    .replace("{the_answer}", ans_with_the)
+                    .replace("{cap_the_answer}", ans_cap_the)
+                    .rstrip("?")
+                    .strip()
+                )
+            return tpl.rstrip("?").strip()
+
         raw_phrase = str(fun_market_headline_phrase(mid, sub_tag=fun_sub_tag) or "").strip()
         if raw_phrase:
-            if "{answer}" in raw_phrase:
-                if lead_ans_clean and lead_ans_clean.lower() not in {"yes", "no"}:
-                    headline_phrase = raw_phrase.replace("{answer}", lead_ans_for_phrase)
-            else:
-                headline_phrase = raw_phrase
+            headline_phrase = _render_tpl(raw_phrase)
         raw_with_phrase = str(
             fun_market_headline_with_phrase(mid, sub_tag=fun_sub_tag) or ""
         ).strip()
         if raw_with_phrase:
-            if "{answer}" in raw_with_phrase:
-                if lead_ans_clean and lead_ans_clean.lower() not in {"yes", "no"}:
-                    headline_with_phrase = raw_with_phrase.replace("{answer}", lead_ans_for_phrase)
-            else:
-                headline_with_phrase = raw_with_phrase
+            headline_with_phrase = _render_tpl(raw_with_phrase)
 
     return {
         "market_id": mid,
@@ -3212,9 +3243,12 @@ def _build_dynamic_title_from_set(
         lead_o = _fav_outcome(lead_bm)
         group_name = str(definition.get("name") or "").strip().rstrip("?")
         rule_pred = str(rule_dict.get("headline_predicate") or "").strip()
+        rule_secs = rule_dict.get("sections")
+        first_sec = rule_secs[0] if isinstance(rule_secs, Sequence) and rule_secs else {}
+        item_noun = str((first_sec.get("item_noun") if isinstance(first_sec, Mapping) else None) or "categories").strip()
         if lead_o is not None:
-            lead_phrase = str(lead_bm.get("headline_phrase") or "").strip()
-            lead_t = lead_phrase or str(lead_bm.get("title") or "").strip()
+            lead_phrase = str(lead_bm.get("headline_phrase") or "").strip().rstrip("?").strip()
+            lead_t = (lead_phrase or str(lead_bm.get("title") or "").strip()).rstrip("?").strip()
             lead_p = int(lead_o["rendered_percent"])
             verb = "lead" if " & " in lead_t else "leads"
             if lead_phrase:
@@ -3226,14 +3260,57 @@ def _build_dynamic_title_from_set(
             else:
                 lead_clause = f"{lead_t} {verb} at {lead_p}%"
             if len(headline_pool) >= 2:
+                lead_ans_raw = str(lead_o.get("name") or "").strip()
+                lead_ans_key = _norm_key(lead_ans_raw)
+                lead_is_date_or_bool = lead_ans_key in {"yes", "no"} or bool(
+                    _PREP_DATE_OUTCOME_RE.match(lead_ans_raw)
+                    or _BARE_MONTH_DAY_RE.match(lead_ans_raw)
+                    or _BARE_MONTH_YEAR_OR_YEAR_RE.match(lead_ans_raw)
+                )
                 sec_bm = headline_pool[1]
                 sec_o = _fav_outcome(sec_bm)
+
+                def _sec_text_for(item_bm: Mapping[str, Any]) -> str:
+                    return (
+                        str(item_bm.get("headline_with_phrase") or "").strip()
+                        or str(item_bm.get("headline_phrase") or "").strip()
+                        or str(item_bm.get("title") or "").strip()
+                    ).rstrip("?").strip()
+
+                sec_t_initial = _sec_text_for(sec_bm)
+                repeats_lead_answer = bool(
+                    lead_ans_key
+                    and not lead_is_date_or_bool
+                    and len(lead_ans_raw) >= 3
+                    and lead_ans_raw.lower() in lead_clause.lower()
+                    and lead_ans_raw.lower() in sec_t_initial.lower()
+                )
+                if repeats_lead_answer:
+                    for cand_bm in headline_pool[1:]:
+                        cand_o = _fav_outcome(cand_bm)
+                        if cand_o is None:
+                            continue
+                        cand_sec_t = _sec_text_for(cand_bm)
+                        if (
+                            _norm_key(str(cand_o.get("name") or "")) != lead_ans_key
+                            and lead_ans_raw.lower() not in cand_sec_t.lower()
+                        ):
+                            sec_bm = cand_bm
+                            sec_o = cand_o
+                            break
+                    else:
+                        same_count = sum(
+                            1
+                            for it in headline_pool
+                            if (_fav_outcome(it) or {}).get("name")
+                            and _norm_key(str((_fav_outcome(it) or {})["name"])) == lead_ans_key
+                        )
+                        if same_count >= 2:
+                            if lead_phrase or not rule_pred:
+                                return f"{lead_phrase or lead_t} is at {lead_p}%, leading {same_count} of {len(headline_pool)} {item_noun}"
+                            return f"{lead_t} {rule_pred} at {lead_p}%, with {lead_ans_raw} leading {same_count} of {len(headline_pool)} {item_noun}"
                 if sec_o is not None:
-                    sec_t = (
-                        str(sec_bm.get("headline_with_phrase") or "").strip()
-                        or str(sec_bm.get("headline_phrase") or "").strip()
-                        or str(sec_bm.get("title") or "").strip()
-                    )
+                    sec_t = _sec_text_for(sec_bm)
                     sec_p = int(sec_o["rendered_percent"])
                     return f"{lead_clause}, with {sec_t} at {sec_p}%"
             return lead_clause

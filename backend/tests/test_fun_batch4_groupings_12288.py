@@ -132,7 +132,7 @@ async def test_batch4_four_preview_sets_build_with_plain_speech_headlines_and_pa
     expected_titles = {
         "machinery-game-awards-2026": (
             "Grand Theft Auto VI for Best Game Direction is at 84%, "
-            "with Grand Theft Auto VI for Best Narrative at 79%"
+            "with Big Walk for Best Multiplayer at 68%"
         ),
         "machinery-big-championships-2027": (
             "Jeremiah Smith for the Heisman Trophy is at 63%, "
