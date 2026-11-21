@@ -55,6 +55,39 @@ _VALID_DISCOVER_CATEGORIES = frozenset(
 FUN_MARKETS_DATA_PATH = (
     Path(__file__).resolve().parents[2] / "data" / "discover" / "fun_markets.json"
 )
+CURATED_GROUPING_SETS_PATH = (
+    Path(__file__).resolve().parents[2] / "data" / "groupings" / "batch3_curated_sets.json"
+)
+
+
+@lru_cache(maxsize=1)
+def _load_curated_grouping_sets() -> tuple[
+    dict[str, tuple[int, ...]],
+    dict[tuple[str, int], str],
+    dict[tuple[str, int], str],
+]:
+    """Load curated Batch 3 sub-tag memberships, short labels, and headline phrases."""
+    ids_by_tag: dict[str, tuple[int, ...]] = {}
+    labels_by_tag_mid: dict[tuple[str, int], str] = {}
+    phrases_by_tag_mid: dict[tuple[str, int], str] = {}
+    if not CURATED_GROUPING_SETS_PATH.is_file():
+        return ids_by_tag, labels_by_tag_mid, phrases_by_tag_mid
+    raw = json.loads(CURATED_GROUPING_SETS_PATH.read_text(encoding="utf-8"))
+    for tag, spec in (raw.get("sets") or {}).items():
+        tag_k = str(tag).strip().lower()
+        ordered: list[int] = []
+        for entry in (spec or {}).get("entries") or ():
+            mid = int(entry["id"])
+            if mid not in ordered:
+                ordered.append(mid)
+            sl = str(entry.get("short_label") or "").strip()
+            if sl:
+                labels_by_tag_mid[(tag_k, mid)] = sl
+            hp = str(entry.get("headline_phrase") or "").strip()
+            if hp:
+                phrases_by_tag_mid[(tag_k, mid)] = hp
+        ids_by_tag[tag_k] = tuple(ordered)
+    return ids_by_tag, labels_by_tag_mid, phrases_by_tag_mid
 
 
 @dataclass(frozen=True)
@@ -330,12 +363,29 @@ def fun_tags_for_market(market_id: int) -> tuple[str, ...]:
     return entry.sub_tags if entry is not None else ()
 
 
-def fun_market_short_label(market_id: int) -> Optional[str]:
+def fun_market_short_label(
+    market_id: int, *, sub_tag: Optional[str] = None
+) -> Optional[str]:
     """Return the sentence-ready short label for a fun-tagged market, if defined."""
+    if sub_tag:
+        _, labels_by_tag_mid, _ = _load_curated_grouping_sets()
+        curated = labels_by_tag_mid.get((sub_tag.strip().lower(), int(market_id)))
+        if curated:
+            return curated
     entry = get_fun_market_entry(market_id)
     if entry is None:
         return None
     return entry.short_label
+
+
+def fun_market_headline_phrase(
+    market_id: int, *, sub_tag: Optional[str] = None
+) -> Optional[str]:
+    """Return an optional plain-speech headline phrase template for a curated grouping row."""
+    if not sub_tag:
+        return None
+    _, _, phrases_by_tag_mid = _load_curated_grouping_sets()
+    return phrases_by_tag_mid.get((sub_tag.strip().lower(), int(market_id)))
 
 
 def fun_entry_allows_extreme_odds(entry: Optional[FunMarketEntry]) -> bool:
@@ -387,6 +437,9 @@ def fun_market_ids_for_sub_tag(sub_tag: str) -> tuple[int, ...]:
     target = (sub_tag or "").strip().lower()
     if not target:
         return ()
+    curated_ids, _, _ = _load_curated_grouping_sets()
+    if target in curated_ids:
+        return curated_ids[target]
     registry = load_fun_markets_registry()
     return tuple(
         mid

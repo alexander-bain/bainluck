@@ -19,7 +19,9 @@
     "producer": "container_machinery",
     "refusal": "all-or-nothing",
     "materialize": "read-time",
-    "extra_llm_categories": ["culture"],
+    "extra_llm_categories": [
+      "culture"
+    ],
     "card_rows": 3,
     "card_section_key": "cast_delayed_cancelled",
     "suppress_card_photo": true,
@@ -37,45 +39,14 @@
         "note": "Major film castings, release delays, and TV cancellations priced for 2026.",
         "atom_query": {
           "kind": "markets",
-          "market_ids": [
-            109214,
-            56867561,
-            108506,
-            70150106,
-            70150102,
-            70150103,
-            109250,
-            108275,
-            59172754
-          ],
-          "short_labels": {
-            "109214": "Avengers: Doomsday cast",
-            "56867561": "Avengers: Secret Wars delayed",
-            "108506": "Miles Morales cast",
-            "70150106": "The Brave and the Bold cast",
-            "70150102": "Disney's Princess Tiana cast",
-            "70150103": "Emily Henry's Happy Place cast",
-            "109250": "TV shows cancelled this year",
-            "108275": "The Simpsons ending announced",
-            "59172754": "Dune vs Avengers score"
-          },
-          "headline_phrases": {
-            "109214": "{answer} in Avengers: Doomsday",
-            "56867561": "Avengers: Secret Wars getting delayed",
-            "108506": "{answer} as Miles Morales",
-            "70150106": "{answer} in The Brave and the Bold",
-            "70150102": "{answer} as Princess Tiana",
-            "70150103": "{answer} in Happy Place",
-            "109250": "{answer} getting cancelled",
-            "108275": "The Simpsons announcing its end",
-            "59172754": "{answer} topping Rotten Tomatoes"
-          },
+          "fun_sub_tag": "batch3-cast-delayed-cancelled",
           "shape": "any",
           "order_by": "lead_prob_desc",
           "min_items": 3,
           "max_items": 12,
           "max_outcomes": 1,
-          "initial_visible_limit": 3
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
         }
       }
     ]

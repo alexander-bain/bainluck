@@ -19,7 +19,12 @@
     "producer": "container_machinery",
     "refusal": "all-or-nothing",
     "materialize": "read-time",
-    "extra_llm_categories": ["culture", "tech", "politics", "economics"],
+    "extra_llm_categories": [
+      "culture",
+      "tech",
+      "politics",
+      "economics"
+    ],
     "card_rows": 3,
     "card_section_key": "elon_musk_side_quests",
     "suppress_card_photo": true,
@@ -38,28 +43,14 @@
         "note": "From Mars and Superman to Ryanair and Tesla Optimus — chance each happens.",
         "atom_query": {
           "kind": "markets",
-          "market_ids": [
-            109633,
-            109412,
-            109316,
-            108218,
-            109490,
-            109489
-          ],
-          "short_labels": {
-            "109633": "Cast in the next Superman film",
-            "109412": "Buying Ryanair",
-            "109316": "Buying a major sports team before 2027",
-            "108218": "Visiting Mars in his lifetime",
-            "109490": "Out as Tesla CEO before 2027",
-            "109489": "Tesla Optimus released this year"
-          },
+          "fun_sub_tag": "batch3-elon-musk-side-quests",
           "shape": "binary",
           "order_by": "lead_prob_desc",
           "min_items": 3,
           "max_items": 10,
           "max_outcomes": 1,
-          "initial_visible_limit": 3
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
         }
       }
     ]

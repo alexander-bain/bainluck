@@ -19,7 +19,9 @@
     "producer": "container_machinery",
     "refusal": "all-or-nothing",
     "materialize": "read-time",
-    "extra_llm_categories": ["culture"],
+    "extra_llm_categories": [
+      "culture"
+    ],
     "card_rows": 3,
     "card_section_key": "stage_and_cover",
     "suppress_card_photo": true,
@@ -37,36 +39,14 @@
         "note": "Festival headliners, late-night hosts, podcast guests, and Vogue covers.",
         "atom_query": {
           "kind": "markets",
-          "market_ids": [
-            62368061,
-            109296,
-            109287,
-            56775621,
-            108505,
-            108504
-          ],
-          "short_labels": {
-            "62368061": "SNL Season 52 host",
-            "109296": "Call Her Daddy guest",
-            "109287": "Joe Rogan Experience guest",
-            "56775621": "Vogue 2026 cover",
-            "108505": "Coachella 2027 headliner",
-            "108504": "Rolling Loud Miami headliner"
-          },
-          "headline_phrases": {
-            "62368061": "{answer} hosting SNL",
-            "109296": "{answer} on Call Her Daddy",
-            "109287": "{answer} on Joe Rogan",
-            "56775621": "{answer} on the Vogue cover",
-            "108505": "{answer} headlining Coachella 2027",
-            "108504": "{answer} headlining Rolling Loud"
-          },
+          "fun_sub_tag": "batch3-stage-and-cover",
           "shape": "any",
           "order_by": "lead_prob_desc",
           "min_items": 3,
           "max_items": 10,
           "max_outcomes": 1,
-          "initial_visible_limit": 3
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
         }
       }
     ]

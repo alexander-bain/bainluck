@@ -19,7 +19,10 @@
     "producer": "container_machinery",
     "refusal": "all-or-nothing",
     "materialize": "read-time",
-    "extra_llm_categories": ["culture", "tech"],
+    "extra_llm_categories": [
+      "culture",
+      "tech"
+    ],
     "card_rows": 3,
     "card_section_key": "summed_up_2026",
     "suppress_card_photo": true,
@@ -38,45 +41,14 @@
         "note": "The songs, albums, words, games, and names shaping how 2026 gets remembered.",
         "atom_query": {
           "kind": "markets",
-          "market_ids": [
-            27467306,
-            8431009,
-            109517,
-            70733200,
-            71373602,
-            109527,
-            109614,
-            109537,
-            52755613
-          ],
-          "short_labels": {
-            "27467306": "TIME Person of the Year",
-            "8431009": "Merriam-Webster Word of the Year",
-            "109517": "Top Spotify artist",
-            "70733200": "Top Spotify song",
-            "71373602": "Top U.S. Spotify album",
-            "109527": "Spotify 2026 Wrapped",
-            "109614": "Game of the Year",
-            "109537": "#2 most searched person on Google",
-            "52755613": "Top U.S. streamed song"
-          },
-          "headline_phrases": {
-            "27467306": "{answer} for TIME Person of the Year",
-            "8431009": "{answer} for Word of the Year",
-            "109517": "{answer} as Spotify's top artist",
-            "70733200": "{answer} as Spotify's top song",
-            "71373602": "{answer} as the top U.S. Spotify album",
-            "109527": "Spotify 2026 Wrapped releasing {answer}",
-            "109614": "{answer} for Game of the Year",
-            "109537": "{answer} as #2 most searched on Google",
-            "52755613": "{answer} as the top U.S. streamed song"
-          },
+          "fun_sub_tag": "batch3-2026-summed-up",
           "shape": "any",
           "order_by": "lead_prob_desc",
           "min_items": 3,
           "max_items": 12,
           "max_outcomes": 1,
-          "initial_visible_limit": 3
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
         }
       }
     ]

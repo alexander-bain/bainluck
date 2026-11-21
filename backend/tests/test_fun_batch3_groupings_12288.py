@@ -19,6 +19,7 @@ from app.utils.container_machinery import (
     load_machinery_definition,
     produce_container_machinery,
 )
+from app.utils.discover_fun_tags import fun_market_ids_for_sub_tag
 from app.utils.discover_image_policy import sanitize_discover_feed_item
 from app.utils.roundup_containers import (
     compose_roundup_container,
@@ -36,7 +37,7 @@ BATCH3_SLUGS = (
 
 
 def _sample_batch3_markets() -> list[dict]:
-    return [
+    rows = [
         # Set 1: How 2026 gets summed up (9 rows)
         {"id": 27467306, "name": "TIME Person of the Year 2026", "status": "open", "source": "polymarket", "category": "entertainment", "outcomes": [{"id": 101, "name": "James Talarico", "probability": 0.25}, {"id": 102, "name": "Zohran Mamdani", "probability": 0.22}]},
         {"id": 8431009, "name": "Merriam-Webster Word of the Year 2026?", "status": "open", "source": "kalshi", "category": "entertainment", "outcomes": [{"id": 103, "name": "larping", "probability": 0.20}, {"id": 104, "name": "Agentic", "probability": 0.11}]},
@@ -78,9 +79,14 @@ def _sample_batch3_markets() -> list[dict]:
         # Dropped second-trillionaire row (must NOT appear in Musk side quests):
         {"id": 52755535, "name": "Who will be the world's second trillionaire?", "status": "open", "source": "kalshi", "category": "economics", "outcomes": [{"id": 499, "name": "Jeff Bezos", "probability": 0.25}]},
     ]
+    for r in rows:
+        r.setdefault("volume", 50000)
+    return rows
 
 
 def test_batch3_definitions_are_preview_with_verified_pd_or_cc0_art_and_no_venue_names() -> None:
+    import json
+
     paths_by_slug = {p.stem: p for p in discover_machinery_candidate_paths()}
     expected_counts = {
         "machinery-2026-summed-up": 9,
@@ -91,6 +97,7 @@ def test_batch3_definitions_are_preview_with_verified_pd_or_cc0_art_and_no_venue
     for slug in BATCH3_SLUGS:
         assert slug in paths_by_slug
         defn = load_machinery_definition(paths_by_slug[slug])
+        assert "market_id" not in json.dumps(defn)
         assert defn["stage"] == "preview"
         rule = defn["rule"]
         assert rule.get("suppress_card_photo") is True
@@ -100,7 +107,8 @@ def test_batch3_definitions_are_preview_with_verified_pd_or_cc0_art_and_no_venue
         assert "cc0" in lic or "public domain" in lic
         assert str(rule.get("card_image_author") or "").strip()
         sec = rule["sections"][0]
-        assert len(sec["atom_query"]["market_ids"]) == expected_counts[slug]
+        sub_tag = sec["atom_query"]["fun_sub_tag"]
+        assert len(fun_market_ids_for_sub_tag(sub_tag)) == expected_counts[slug]
         for venue in ("kalshi", "polymarket"):
             assert venue not in str(sec.get("note") or "").lower()
             assert venue not in str(rule.get("headline_predicate") or "").lower()

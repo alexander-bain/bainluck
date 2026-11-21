@@ -1122,23 +1122,6 @@ def _market_matches_query(
             if title_years and max(title_years) > max_year:
                 return False
 
-    explicit_ids_raw = query.get("market_ids")
-    if isinstance(explicit_ids_raw, (list, tuple)) and explicit_ids_raw:
-        from app.utils.discover_fun_tags import check_fun_taste_guard
-
-        allowed_explicit_ids = {
-            int(x) for x in explicit_ids_raw if isinstance(x, int) and not isinstance(x, bool)
-        }
-        mid_val = market.get("id")
-        if not isinstance(mid_val, int) or mid_val not in allowed_explicit_ids:
-            return False
-        taste_ok, _ = check_fun_taste_guard(
-            str(market.get("name") or market.get("title") or ""),
-            market.get("description"),
-        )
-        if not taste_ok:
-            return False
-
     fun_sub_tag = str(query.get("fun_sub_tag") or "").strip()
     if fun_sub_tag:
         from app.utils.discover_fun_tags import (
@@ -1436,8 +1419,7 @@ def _hydrate_market_visual_item(
     resolver: SubjectArtResolver,
     content_kind: Optional[str] = None,
     use_fun_short_label: bool = False,
-    short_labels: Optional[Mapping[str, str]] = None,
-    headline_phrases: Optional[Mapping[str, str]] = None,
+    fun_sub_tag: Optional[str] = None,
 ) -> dict[str, Any]:
     mid = int(market["id"])
     if "top_outcomes" in market and isinstance(market["top_outcomes"], (list, tuple)):
@@ -1571,31 +1553,29 @@ def _hydrate_market_visual_item(
     card_copy["member_page_numbers"] = mpn
 
     base_title: Optional[str] = None
-    if isinstance(short_labels, Mapping):
-        explicit_short = str(short_labels.get(str(mid)) or "").strip()
-        if explicit_short:
-            base_title = explicit_short
-    if not base_title and use_fun_short_label:
+    if use_fun_short_label:
         from app.utils.discover_fun_tags import fun_market_short_label
 
-        base_title = fun_market_short_label(mid)
+        base_title = fun_market_short_label(mid, sub_tag=fun_sub_tag)
     if not base_title:
         base_title = clean_card_face_title(_clean_section_market_label(clean_raw_name))
 
     display_title = base_title
     is_date_timing_row = False
-    # On single-number fun strips (`fun_sub_tag` or curated `market_ids` + `max_outcomes == 1`),
-    # a non-Yes/No ("when"/"which") market's row and headline must name its
+    # On single-number fun strips (`fun_sub_tag` + `max_outcomes == 1`), a
+    # non-Yes/No ("when"/"which") market's row and headline must name its
     # leading answer cleanly alongside the number (Item 5 / #13224).
-    if (use_fun_short_label or isinstance(short_labels, Mapping)) and max_outcomes == 1 and not shape_is_yes and outcomes_out:
+    if use_fun_short_label and max_outcomes == 1 and not shape_is_yes and outcomes_out:
         lead_ans = str(outcomes_out[0].get("name") or "").strip()
         display_title, is_date_timing_row = _format_fun_lead_answer_label(
             display_title, lead_ans
         )
 
     headline_phrase: Optional[str] = None
-    if isinstance(headline_phrases, Mapping):
-        raw_phrase = str(headline_phrases.get(str(mid)) or "").strip()
+    if fun_sub_tag:
+        from app.utils.discover_fun_tags import fun_market_headline_phrase
+
+        raw_phrase = str(fun_market_headline_phrase(mid, sub_tag=fun_sub_tag) or "").strip()
         if raw_phrase:
             lead_ans_clean = (
                 str(outcomes_out[0].get("name") or "").strip().rstrip("?").strip()
@@ -2322,13 +2302,10 @@ async def _load_snapshot_from_db(
         title_volume_by_mid: dict[int, float] = {}
         if needs_markets and market_sections:
             fun_tag_sections: list[Mapping[str, Any]] = []
-            explicit_id_sections: list[Mapping[str, Any]] = []
             non_fun_sections: list[Mapping[str, Any]] = []
             for aq in market_sections:
                 if str(aq.get("fun_sub_tag") or "").strip():
                     fun_tag_sections.append(aq)
-                elif isinstance(aq.get("market_ids"), (list, tuple)) and aq.get("market_ids"):
-                    explicit_id_sections.append(aq)
                 else:
                     non_fun_sections.append(aq)
             if fun_tag_sections:
@@ -2337,10 +2314,6 @@ async def _load_snapshot_from_db(
                 for aq in fun_tag_sections:
                     tag_ids = fun_market_ids_for_sub_tag(str(aq["fun_sub_tag"]).strip())
                     title_matched_mids.update(int(mid_i) for mid_i in tag_ids)
-            for aq in explicit_id_sections:
-                for mid_i in aq.get("market_ids") or ():
-                    if isinstance(mid_i, int) and not isinstance(mid_i, bool):
-                        title_matched_mids.add(int(mid_i))
 
             cat_pool = (
                 _category_llm_pool_for_definition(definition)
@@ -3767,15 +3740,8 @@ async def produce_container_machinery(
 
         # aq_kind == "markets"
         explicit_ck = str(aq.get("content_kind") or "").strip().lower() or None
-        use_fun_short = bool(str(aq.get("fun_sub_tag") or "").strip())
-        explicit_short_labels = (
-            aq.get("short_labels") if isinstance(aq.get("short_labels"), Mapping) else None
-        )
-        explicit_headline_phrases = (
-            aq.get("headline_phrases")
-            if isinstance(aq.get("headline_phrases"), Mapping)
-            else None
-        )
+        fun_sub_tag_val = str(aq.get("fun_sub_tag") or "").strip() or None
+        use_fun_short = bool(fun_sub_tag_val)
         matched = [
             _hydrate_market_visual_item(
                 m,
@@ -3783,8 +3749,7 @@ async def produce_container_machinery(
                 resolver=resolver,
                 content_kind=explicit_ck,
                 use_fun_short_label=use_fun_short,
-                short_labels=explicit_short_labels,
-                headline_phrases=explicit_headline_phrases,
+                fun_sub_tag=fun_sub_tag_val,
             )
             for m in all_markets
             if (MEMBER_MARKET, int(m["id"])) not in seen_member_keys
