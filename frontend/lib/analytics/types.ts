@@ -1080,6 +1080,22 @@ export interface AnalyticsEventMap {
   session_open: SessionOpenParams;
   feed_exit: FeedExitParams;
   search_no_results: SearchNoResultsParams;
+
+  // Follow & Pin (#13261 row 5)
+  follow_team: FollowTeamParams;
+  pin_item: PinItemParams;
+}
+
+export interface FollowTeamParams {
+  action: 'follow' | 'unfollow';
+  sport?: string;
+  relation_type?: 'follow' | 'local' | 'alma_mater' | 'rival';
+  surface?: 'onboarding' | 'preferences' | 'team_page';
+}
+
+export interface PinItemParams {
+  item_type: 'event' | 'market';
+  action: 'pin' | 'unpin';
 }
 
 export type AnalyticsEventName = keyof AnalyticsEventMap;

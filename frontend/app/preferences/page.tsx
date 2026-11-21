@@ -13,6 +13,7 @@ import {
   fetchFuturesByIds,
 } from "@/lib/api";
 import { usePinnedEvents, usePinnedFutures, usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+import { trackFollowTeam } from "@/lib/analytics/followPin";
 import { useCategoryInterests, getInterestLabel, isChosenLevel } from "@/hooks/useCategoryInterests";
 import {
   resolvePrincipal,
@@ -415,6 +416,12 @@ function TeamChip({
     setRemoving(true);
     try {
       await removeFavorite(team.team_id, team.relation_type);
+      trackFollowTeam({
+        action: "unfollow",
+        sport: team.sport_key,
+        relation_type: team.relation_type,
+        surface: "preferences",
+      });
       onRemove();
     } catch (err) {
       console.error("Failed to remove:", err);
