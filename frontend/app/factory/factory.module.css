@@ -1487,6 +1487,10 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 .lineName > .buildPlate {
   color: #183530;
 }
+.buildPlate time {
+  display: block;
+  margin-block-start: 2px;
+}
 .builderCard > small {
   margin-top: -5px;
   color: var(--secondary);

@@ -440,6 +440,28 @@ it("puts the same sourced hold on the stack light, bay, note and tab", async () 
   }
 });
 
+it("labels the TestFlight build with the Pacific time of the recorded post", async () => {
+  watchMotion();
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const postedAt = "2026-11-17T23:05:00Z";
+  const data = {
+    ...snapshot,
+    signals: { ...snapshot.signals, testflight_post: { build: 5832, at: postedAt } },
+  };
+
+  try {
+    await act(async () =>
+      root.render(<FactoryFloor data={data} lastGoodAt={now} renderedAt={now} />),
+    );
+    const postingTime = container.querySelector(`time[datetime="${postedAt}"]`);
+    expect(postingTime?.parentElement?.textContent).toContain("TestFlight build 5832");
+    expect(postingTime?.textContent).toBe("Posted Nov 17, 3:05 PM PT");
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
+
 it("uses amber for a missing reading or a stopped refresh and green only for a verified clear floor", () => {
   const clear = {
     ...snapshot,
