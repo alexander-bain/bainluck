@@ -108,6 +108,17 @@ nonisolated enum CardTeamNameSizing {
         return min(baseRecordSize, maxAllowed)
     }
 
+    /// Widest single word across `names` at `(fontSize, weight)`, used to decide
+    /// whether an optional inline `Proj.` column fits without ever shrinking the
+    /// uniform card team-name size (#13013 `246: A`).
+    static func widestWordWidth(
+        names: [String],
+        fontSize: CGFloat,
+        weight: Font.Weight = .bold
+    ) -> CGFloat {
+        maxSingleWordWidth(names: names, fontSize: fontSize, weight: weight)
+    }
+
     /// Widest single word across `names` at `fontSize`, used by three-way cards (#13121)
     /// to decide whether a full-size club name fits beside trailing columns or should
     /// grow vertically rather than shrinking below a two-way card's type size.
