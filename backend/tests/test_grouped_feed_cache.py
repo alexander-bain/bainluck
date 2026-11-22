@@ -14,7 +14,9 @@ identical logs, so the equality has to be asserted rather than observed.
 
 import ast
 import inspect
+import logging
 import textwrap
+from contextlib import asynccontextmanager
 from importlib import import_module
 
 import pytest
@@ -177,6 +179,48 @@ def test_prewarm_passes_every_grouped_feed_parameter_explicitly():
         "be a Query object at runtime and would poison the cache key"
     )
     assert not (passed - expected)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("label", "header_present", "log_stages"),
+    [
+        ("grouped_web", True, True),
+        ("grouped_web", False, False),
+        ("grouped_native", True, False),
+    ],
+)
+async def test_sports_prewarm_logs_the_route_stage_timings(
+    monkeypatch, caplog, label, header_present, log_stages
+):
+    stages = (
+        "grouped-slate;dur=12000.0, grouped-pool;dur=7000.0, "
+        "grouped-parents;dur=1500.0, grouped-folds;dur=300.0, "
+        "grouped-build;dur=20800.0"
+    )
+
+    @asynccontextmanager
+    async def local_session():
+        yield object()
+
+    async def build(*, response, **kwargs):
+        if header_present:
+            response.headers["Server-Timing"] = stages
+        return {"feed": [{}]}
+
+    monkeypatch.setattr("app.tasks.base.get_task_session", local_session)
+    monkeypatch.setattr("app.routes.futures.grouped_feed", build)
+    shape = next(shape for shape in pcp.GROUPED_FEED_PREWARM_SHAPES if shape["label"] == label)
+
+    with caplog.at_level(logging.INFO, logger=pcp.logger.name):
+        result = await pcp._prewarm_grouped_feed_shape(shape, None)
+
+    assert result["outcome"] == "ok"
+    (line,) = [
+        message for message in caplog.messages
+        if message.startswith(f"Pre-warmed grouped-feed {label} ")
+    ]
+    assert line.endswith(stages if log_stages else "(1 items)")
 
 
 @pytest.mark.parametrize(
