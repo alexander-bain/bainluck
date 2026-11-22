@@ -476,26 +476,36 @@ def clean_served_questions(payload):
 
 
 _UNDERSCORE_BLANK = re.compile(r"_{2,}")
+_ELLIPSIS_BLANK = re.compile(r"(?:\.{3,}|…)")
+_ANY_TEMPLATE_BLANK = re.compile(r"(?:_{2,}|\.{3,}|…)")
 _LOW_DIRECTION_WORDS = frozenset({"below", "under", "at most"})
 _NON_FILLER_OUTCOMES = frozenset({"yes", "no", "other"})
+_LEADING_FILLER_WORDS = ("by", "on", "at", "through", "as", "at least", "at most", "above", "below", "over", "under")
 
 _BARE_HIT_SLOT = re.compile(
-    r"\A(?!(?:Will|What\s+will)\b)(?P<subject>.+?)\s+hit\s*" + _UNDERSCORE_BLANK.pattern + r"\s*(?P<tail>.*?)\s*\?\Z",
+    r"\A(?!(?:Will|What\s+will)\b)(?P<subject>.+?)\s+hit\s*" + _ANY_TEMPLATE_BLANK.pattern + r"\s*(?P<tail>.*?)\s*\?\Z",
     re.IGNORECASE,
 )
 _NO_VERB_DIRECTIONAL = re.compile(
     r"\A(?!(?:Will|What\s+will)\b)(?P<subject>.+?)\s+(?P<comp>above|over|at\s+least|below|under|at\s+most)\s*"
-    + _UNDERSCORE_BLANK.pattern
+    + _ANY_TEMPLATE_BLANK.pattern
     + r"\s*(?P<tail>.*?)\s*\?\Z",
     re.IGNORECASE,
 )
 _LEADING_COUNT_BLANK = re.compile(
-    r"\AWill\s+" + _UNDERSCORE_BLANK.pattern + r"\s+(?P<noun>\S+)\s+(?P<rest>.+?)\s*\?\Z"
+    r"\AWill\s+" + _ANY_TEMPLATE_BLANK.pattern + r"\s+(?P<noun>\S+)\s+(?P<rest>.+?)\s*\?\Z"
 )
 _VERB_COUNT_BLANK = re.compile(
     r"\AWill\s+(?P<subject>.+?)\s+(?P<verb>reach|go\s+down\s+on)\s+"
-    + _UNDERSCORE_BLANK.pattern
+    + _ANY_TEMPLATE_BLANK.pattern
     + r"\s+(?P<unit>(?:barrels(?:\s+per\s+day)?|\S+))\s+(?P<tail>(?:in|by|on|before|during|through)\b.+?)\s*\?\Z"
+)
+_TRAILING_TEMPLATE_ELLIPSIS = re.compile(
+    r"(?:\s*(?:\.{3,}|…)\s*)(\??)\s*(\([^()]+\))?\s*\Z"
+)
+_CONTAINS_TRAILING_ELLIPSIS = re.compile(
+    r"\A(?P<subject>.+?)\s+contains\s*(?:\.{3,}|…)\s*(\??)\s*(\([^()]+\))?\s*\Z",
+    re.IGNORECASE,
 )
 
 
@@ -504,40 +514,144 @@ def _normalize_question_spacing(text: str) -> str:
     return re.sub(r"\s+\?", "?", collapsed)
 
 
+_UPPER_COMPARE_PREPS = ("at least", "above", "over")
+_LOWER_COMPARE_PREPS = ("at most", "below", "under")
+_UPPER_FILLER_SUFFIX_RE = re.compile(
+    r"(?:\s*\+|\s+or\s+(?:above|more|higher))\s*\Z", re.IGNORECASE
+)
+_LOWER_FILLER_SUFFIX_RE = re.compile(
+    r"\s+or\s+(?:below|less|lower|under)\s*\Z", re.IGNORECASE
+)
+_UPPER_FILLER_PREFIX_RE = re.compile(
+    r"^(?:more\s+than|at\s+least|above|over|>=|>)\s+", re.IGNORECASE
+)
+_LOWER_FILLER_PREFIX_RE = re.compile(
+    r"^(?:less\s+than|at\s+most|below|under|<=|<)\s+", re.IGNORECASE
+)
+
+
+def _ends_with_phrase(before_low: str, phrase: str) -> bool:
+    return before_low == phrase or before_low.endswith(" " + phrase)
+
+
+def _trim_duplicate_filler_prefix(before_text: str, filler: str) -> str:
+    before_low = before_text.rstrip().lower()
+    adj = filler.strip()
+    for word in sorted(_LEADING_FILLER_WORDS, key=len, reverse=True):
+        if _ends_with_phrase(before_low, word) and adj.lower().startswith(word + " "):
+            adj = adj[len(word) + 1 :].strip()
+            break
+    if any(_ends_with_phrase(before_low, p) for p in _UPPER_COMPARE_PREPS):
+        no_prefix = _UPPER_FILLER_PREFIX_RE.sub("", adj).strip()
+        if no_prefix:
+            adj = no_prefix
+        stripped = _UPPER_FILLER_SUFFIX_RE.sub("", adj).strip()
+        if stripped:
+            adj = stripped
+    elif any(_ends_with_phrase(before_low, p) for p in _LOWER_COMPARE_PREPS):
+        no_prefix = _LOWER_FILLER_PREFIX_RE.sub("", adj).strip()
+        if no_prefix:
+            adj = no_prefix
+        stripped = _LOWER_FILLER_SUFFIX_RE.sub("", adj).strip()
+        if stripped:
+            adj = stripped
+    return adj
+
+
+def _strip_or_fill_trailing_ellipsis(
+    text: str,
+    *,
+    filler: str,
+    usable_filler: bool,
+    fill_single: bool,
+) -> str:
+    """Resolve trailing ``...`` / ``…`` blanks (including Unicode ``…`` and trailing parens)."""
+    stripped = text.strip()
+    m_trail = _TRAILING_TEMPLATE_ELLIPSIS.search(stripped)
+    if m_trail is None:
+        return text
+
+    prefix = stripped[: m_trail.start()].rstrip(" ,;:-")
+    q_mark = m_trail.group(1) or ""
+    paren = (m_trail.group(2) or "").strip()
+    if not prefix:
+        return text
+
+    # Check if the trailing ellipsis is governed by a measured preposition.
+    matched_prep: str | None = None
+    lowered = prefix.lower()
+    for prep in _STRIPPABLE_PREPOSITIONS:
+        if lowered.endswith(" " + prep):
+            matched_prep = prep
+            break
+
+    if matched_prep is not None:
+        if fill_single and usable_filler:
+            adj_filler = _trim_duplicate_filler_prefix(prefix, filler)
+            if adj_filler:
+                out = f"{prefix} {adj_filler}{q_mark or '?'}"
+                return _normalize_question_spacing(f"{out} {paren}" if paren else out)
+        head = prefix[: -(len(matched_prep) + 1)].rstrip(" ,;:-")
+        if head:
+            out = f"{head}{q_mark or '?'}"
+            return _normalize_question_spacing(f"{out} {paren}" if paren else out)
+
+    m_contains = _CONTAINS_TRAILING_ELLIPSIS.match(stripped)
+    if m_contains is not None:
+        subj = m_contains.group("subject").strip()
+        c_paren = (m_contains.group(3) or "").strip()
+        out = f"What will {subj} contain?"
+        return _normalize_question_spacing(f"{out} {c_paren}" if c_paren else out)
+
+    # Otherwise drop only the ellipsis dots before the question mark (e.g. "take place...?").
+    out = f"{prefix}{q_mark or '?'}"
+    return _normalize_question_spacing(f"{out} {paren}" if paren else out)
+
+
 def fill_underscore_blanks(
     name: str | None,
     lead_outcome_name: str | None = None,
     *,
     outcome_count: int | None = None,
+    single_row: bool = False,
 ) -> str | None:
-    """Eliminate remaining underscore template blanks (``__`` / ``___``) at display boundaries.
+    """Eliminate remaining template blanks (``__`` / ``___`` / ``...`` / ``…``) at display boundaries.
 
-    When a market represents a single threshold row (``outcome_count == 1`` with a
-    non-boolean ``lead_outcome_name``), substitutes the threshold into the blank
-    so the row states its own threshold ("OpenAI IPO closing market cap above $800B?").
-    When a market lists multiple ladder rungs or lacks a single threshold label,
-    rewrites remaining directional/hit/count templates into blank-free questions
-    that agree with every shown outcome row on both cards and set pages.
+    When a market represents a single shown level/deadline (``single_row=True`` or
+    ``outcome_count == 1`` with a non-boolean ``lead_outcome_name``), substitutes the
+    level/deadline into the blank so the row states what its number belongs to
+    ("OpenAI IPO closing market cap above $800B?",
+    "US x Iran Effective Ceasefire begins by December 31? (2 week pause)").
+    When a market lists multiple levels/deadlines (or lacks a usable label), rewrites
+    templates into blank-free open questions that agree with every shown outcome row.
     """
-    if not name or "__" not in name:
+    if not name or not _ANY_TEMPLATE_BLANK.search(name):
         return name
 
     filler = (lead_outcome_name or "").strip()
     usable_filler = bool(filler) and filler.lower() not in _NON_FILLER_OUTCOMES
-    if outcome_count == 1 and usable_filler:
-        # Strip duplicate leading comparator word from the outcome if the title
-        # already placed that comparator right before the blank.
+    fill_single = bool(single_row or outcome_count == 1)
+
+    if _TRAILING_TEMPLATE_ELLIPSIS.search(name.strip()):
+        resolved_ellipsis = _strip_or_fill_trailing_ellipsis(
+            name,
+            filler=filler,
+            usable_filler=usable_filler,
+            fill_single=fill_single,
+        )
+        if resolved_ellipsis != name:
+            return resolved_ellipsis
+
+    if fill_single and usable_filler and _UNDERSCORE_BLANK.search(name):
         m_blank = _UNDERSCORE_BLANK.search(name)
-        adj_filler = filler
-        if m_blank is not None:
-            before = name[: m_blank.start()].rstrip().lower()
-            for comp in ("at least", "at most", "above", "below", "over", "under"):
-                if before.endswith(comp) and adj_filler.lower().startswith(comp + " "):
-                    adj_filler = adj_filler[len(comp) + 1 :].strip()
-                    break
+        adj_filler = (
+            _trim_duplicate_filler_prefix(name[: m_blank.start()], filler)
+            if m_blank is not None
+            else filler
+        )
         if adj_filler:
             substituted = _UNDERSCORE_BLANK.sub(f" {adj_filler} ", name, count=1)
-            if "__" not in substituted:
+            if not _ANY_TEMPLATE_BLANK.search(substituted):
                 return _normalize_question_spacing(substituted)
 
     stripped = name.strip()
@@ -574,8 +688,11 @@ def fill_underscore_blanks(
             f"{verb_inf} {m_verb_cnt.group('tail').strip()}?"
         )
 
-    cleaned = _UNDERSCORE_BLANK.sub(" ", stripped)
-    return _normalize_question_spacing(cleaned)
+    if _UNDERSCORE_BLANK.search(stripped):
+        cleaned = _UNDERSCORE_BLANK.sub(" ", stripped)
+        return _normalize_question_spacing(cleaned)
+
+    return name
 
 
 def fill_market_display_name_blank(
@@ -583,11 +700,36 @@ def fill_market_display_name_blank(
     lead_outcome_name: str | None = None,
     *,
     outcome_count: int | None = None,
+    single_row: bool = False,
 ) -> str | None:
-    """Apply :func:`clean_market_display_name` and then eliminate any remaining ``__``/``___`` blanks."""
+    """Apply :func:`clean_market_display_name` and then eliminate remaining ``__``/``___``/``...``/``…`` blanks."""
+    if not name:
+        return name
+
+    filler = (lead_outcome_name or "").strip()
+    usable_filler = bool(filler) and filler.lower() not in _NON_FILLER_OUTCOMES
+    fill_single = bool(single_row or outcome_count == 1)
+
+    # On single-row / single-level cards, fill the blank in place BEFORE
+    # `clean_market_display_name` strips the governing preposition ("by...?")
+    # or turns directional frames into open "How high..." questions.
+    if fill_single and usable_filler and _ANY_TEMPLATE_BLANK.search(name):
+        filled_raw = fill_underscore_blanks(
+            name,
+            lead_outcome_name=filler,
+            outcome_count=outcome_count,
+            single_row=True,
+        )
+        if filled_raw and not _ANY_TEMPLATE_BLANK.search(filled_raw):
+            return rewrite_question_colon_display(filled_raw)
+
     cleaned = clean_market_display_name(name)
     return fill_underscore_blanks(
         cleaned,
         lead_outcome_name=lead_outcome_name,
         outcome_count=outcome_count,
+        single_row=single_row,
     )
+
+
+fill_template_blanks = fill_market_display_name_blank
