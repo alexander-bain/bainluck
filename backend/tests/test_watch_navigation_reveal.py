@@ -1067,7 +1067,7 @@ XCODE_27_2_CURRENT_SHA256 = {
     "PickerReturnJourneyTests.swift": "8e23abbce48fc2c47f382fdde2985f414236026caa03987535b91b8524e361bc",
     "PickerSelectedStateJourneyTests.swift": "129ad9836cfe7eee86f8aa024fd09b00e0a8ad2f8c145c19be1d3e7e851073b5",
     "WatchDiagnosticsJourneyTests.swift": "9f6fd014300264b8a817e8b8c42caebc91e15457c1d305ca06018c67c62fdb68",
-    "WidgetTapJourneyTests.swift": "7eb8243fa38e0d4caef85b6ffd30f5326a4060670c46539d9a8e43dfb7bc367f",
+    "WidgetTapJourneyTests.swift": "3d22d65b850dc87dd35c9991f780063f1ca3998f2870d8a1fabc2b8320a2e4b1",
 }
 XCODE_27_2_PREVIOUS_SHA256 = {
     "LargeTextRecoveryJourneyTests.swift": "3b01a4864451d948c659a8236b85f8548138ca646a259739414a72ff3df7658a",
@@ -1617,6 +1617,97 @@ XCODE_27_2_LATER_TRANSFORMS = {
 }""",
             1,
         ),
+        (
+            """    @MainActor
+    private func requireSiriModularEditor(in host: XCUIApplication, didReenter: inout Bool) throws {
+        let editors = host.otherElements.matching(NSPredicate(format: "identifier BEGINSWITH %@", "ActiveEditMode-"))
+        let namedEditors = host.scrollViews.matching(NSPredicate(format: "label ==[c] %@", "siri modular"))
+        let library = host.otherElements["Face Library View"].firstMatch
+        let arrived = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            editors.count == 1 || library.exists
+        }, object: host)
+        try freshFaceRequire(XCTWaiter.wait(for: [arrived], timeout: 15) == .completed,
+                             "Siri Modular editor or named library did not arrive", host: host)
+        if library.exists {
+            try freshFaceRequire(!didReenter, "Siri Modular editor returned to library more than once", host: host)
+            let title = host.staticTexts["Switcher Face Title"].firstMatch
+            let previews = host.scrollViews.matching(NSPredicate(format: "label ==[c] %@", "siri modular, Customizable"))
+            let preview = previews.firstMatch
+            let edits = host.buttons.matching(identifier: "Edit")
+            let edit = edits.firstMatch
+            try freshFaceRequire(title.exists && title.label == "Siri Modular"
+                                 && previews.count == 1 && preview.isHittable
+                                 && host.frame.contains(CGPoint(x: preview.frame.midX, y: preview.frame.midY))
+                                 && edits.count == 1 && edit.isHittable && host.frame.contains(edit.frame),
+                                 "Editor return has no exact Siri Modular preview and unique visible Edit", host: host)
+            freshFaceCapture(host, name: "Siri Modular editor returned to named library before one Edit")
+            didReenter = true
+            edit.tap()
+            print("WATCH_EDITOR_LIBRARY_REENTRY=1")
+        }
+        let editing = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            editors.count == 1 && namedEditors.count == 1 && !library.exists
+        }, object: host)
+        try freshFaceRequire(XCTWaiter.wait(for: [editing], timeout: 15) == .completed,
+                             "Siri Modular is not in its actual editor before page search", host: host)
+    }""",
+            """    @MainActor
+    private func requireSiriModularEditor(in host: XCUIApplication, didReenter: inout Bool) throws {
+        let editors = host.otherElements.matching(NSPredicate(format: "identifier BEGINSWITH %@", "ActiveEditMode-"))
+        let namedEditors = host.scrollViews.matching(NSPredicate(format: "label ==[c] %@", "siri modular"))
+        let library = host.otherElements["Face Library View"].firstMatch
+        let face = host.otherElements["Watch Face"].firstMatch
+        func reenterFromNamedLibrary() throws {
+            try freshFaceRequire(!didReenter, "Siri Modular editor returned to library more than once", host: host)
+            let title = host.staticTexts["Switcher Face Title"].firstMatch
+            let previews = host.scrollViews.matching(NSPredicate(format: "label ==[c] %@", "siri modular, Customizable"))
+            let preview = previews.firstMatch
+            let edits = host.buttons.matching(identifier: "Edit")
+            let edit = edits.firstMatch
+            try freshFaceRequire(title.exists && title.label == "Siri Modular"
+                                 && previews.count == 1 && preview.isHittable
+                                 && host.frame.contains(CGPoint(x: preview.frame.midX, y: preview.frame.midY))
+                                 && edits.count == 1 && edit.isHittable && host.frame.contains(edit.frame),
+                                 "Editor return has no exact Siri Modular preview and unique visible Edit", host: host)
+            freshFaceCapture(host, name: "Siri Modular editor returned to named library before one Edit")
+            didReenter = true
+            edit.tap()
+            print("WATCH_EDITOR_LIBRARY_REENTRY=1")
+        }
+        let arrived = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            editors.count == 1 || library.exists
+        }, object: host)
+        try freshFaceRequire(XCTWaiter.wait(for: [arrived], timeout: 15) == .completed,
+                             "Siri Modular editor or named library did not arrive", host: host)
+        if library.exists {
+            try reenterFromNamedLibrary()
+        }
+        let editing = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            editors.count == 1 && namedEditors.count == 1 && !library.exists
+        }, object: host)
+        var inEditor = XCTWaiter.wait(for: [editing], timeout: 15) == .completed
+        // Run 45056826927 att2 (widgets): Carousel's transient ActiveEditMode-15
+        // exited straight to the newly added Watch Face before the named editor
+        // scroll view settled. Re-enter once via the Watch Face long press and
+        // require the exact named Siri Modular library preview + Edit button.
+        if !inEditor && !didReenter && editors.count == 0 && (library.exists || face.exists) {
+            if !library.exists && face.exists {
+                freshFaceCapture(host, name: "Siri Modular editor exited to Watch Face before single reentry")
+                host.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.22)).press(forDuration: 2)
+                try freshFaceRequire(library.waitForExistence(timeout: 15),
+                                     "Long press on Watch Face did not open Face Library for Siri Modular reentry", host: host)
+            }
+            try reenterFromNamedLibrary()
+            let reentered = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                editors.count == 1 && namedEditors.count == 1 && !library.exists
+            }, object: host)
+            inEditor = XCTWaiter.wait(for: [reentered], timeout: 15) == .completed
+        }
+        try freshFaceRequire(inEditor,
+                             "Siri Modular is not in its actual editor before page search", host: host)
+    }""",
+            1,
+        ),
     ],
 }
 for _name, _blocks in XCODE_27_2_LATER_TRANSFORMS.items():
@@ -1681,6 +1772,8 @@ def test_widgets_3sigs_fail_closed_and_retain_obligations():
         "private func terminateAfterLeavingForeground(_ app: XCUIApplication)",
         "object: nil",
         'XCTAssertEqual(app.state, .notRunning, "Watch app cleanup must stop the app")',
+        '"Long press on Watch Face did not open Face Library for Siri Modular reentry"',
+        '"Editor return has no exact Siri Modular preview and unique visible Edit"',
     ):
         assert token in widget
         with pytest.raises(AssertionError):
