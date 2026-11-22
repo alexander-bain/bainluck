@@ -290,8 +290,11 @@ export function validateSnapshot(payload: FactoryData): FactoryData {
   const crew = verifiedCrew(payload);
   const posts = verifiedCrewPosts(payload);
   const pictures = verifiedPictures(payload);
-  const { checks_queue: rawQueue, ...signals } = payload.signals;
+  const { checks_queue: rawQueue, testflight_post: postedBuild, ...signals } = payload.signals;
   const checksQueue = verifiedChecksQueue(rawQueue);
+  const testFlight = postedBuild && Number.isSafeInteger(postedBuild.build) && postedBuild.build > 0 &&
+    /^[a-f0-9]{40}$/.test(postedBuild.commit) && Date.parse(postedBuild.at) <= Date.parse(payload.generated_at)
+    ? { build: postedBuild.build, at: postedBuild.at, commit: postedBuild.commit } : undefined;
   const usage = payload.model_usage;
   const modelUsage = usage && /^\d{4}-\d{2}-\d{2}$/.test(usage.day) &&
     Number.isSafeInteger(usage.calls) && usage.calls >= 0 && usage.calls <= 200
@@ -316,7 +319,11 @@ export function validateSnapshot(payload: FactoryData): FactoryData {
     ...(modelUsage ? { model_usage: modelUsage } : {}),
     changes: payload.changes.map((change) => withVerifiedJourney(change, Date.parse(payload.generated_at))),
     jams: payload.jams,
-    signals: { ...signals, ...(checksQueue ? { checks_queue: checksQueue } : {}) },
+    signals: {
+      ...signals,
+      ...(checksQueue ? { checks_queue: checksQueue } : {}),
+      ...(testFlight ? { testflight_post: testFlight } : {}),
+    },
     coverage: payload.coverage,
   };
 }

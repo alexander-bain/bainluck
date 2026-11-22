@@ -7,6 +7,7 @@ import {
   stationNames,
   time,
 } from "./activity";
+import type { GitHubActivity } from "./githubActivity";
 import type { FactoryData, Line, Station, Stop } from "./types";
 
 type BayAlert = {
@@ -22,6 +23,31 @@ export type FloorVerdict = {
   text: string;
   bays: BayAlert[];
 };
+
+const ACTIVITY_GRACE_MS = 15 * 60_000;
+const MAX_ACTIVITY_AGE_MS = 10 * 60_000;
+
+export function floorReadingState(
+  data: FactoryData,
+  readFailed: boolean,
+  now: string,
+  activity?: GitHubActivity,
+) {
+  const published = Date.parse(data.generated_at);
+  const clock = Date.parse(now);
+  const activityAge = clock - Date.parse(activity?.checkedAt ?? "");
+  const recent = activityAge >= 0 && activityAge <= MAX_ACTIVITY_AGE_MS ? activity : undefined;
+  const masterAt = Date.parse(recent?.masterAt ?? "");
+  const ciAt = recent?.ciAt === null ? -Infinity : Date.parse(recent?.ciAt ?? "");
+  const collectorAt = Date.parse(recent?.collector?.at ?? "");
+  if ((recent?.collector?.failed && collectorAt > published && collectorAt <= clock) ||
+      [masterAt, ciAt].some(at => at > published + ACTIVITY_GRACE_MS && at <= clock)) return "failed";
+  if (readFailed) return "last-known";
+  if (!readerBehind(data, now)) return "current";
+  if (collectorAt <= clock && masterAt <= published && ciAt <= published)
+    return "quiet";
+  return "last-known";
+}
 
 function elapsed(now: string, since: string) {
   const seconds = (Date.parse(now) - Date.parse(since)) / 1000;
@@ -56,10 +82,16 @@ export function floorVerdict(
   data: FactoryData | null,
   readFailed: boolean,
   now: string,
+  activity?: GitHubActivity,
 ): FloorVerdict {
   if (!data) return { level: "amber", text: "The floor can't be read right now.", bays: [] };
-  if (readFailed || readerBehind(data, now)) {
+  const state = floorReadingState(data, readFailed, now, activity);
+  if (state === "failed") {
     return { level: "amber", text: "Not updating.", bays: [] };
+  }
+  if (state === "quiet") return { level: "green", text: "The floor is quiet.", bays: [] };
+  if (state === "last-known") {
+    return { level: "amber", text: "Showing the last published floor.", bays: [] };
   }
 
   const bays: BayAlert[] = shownStops(data).map((stop) => ({

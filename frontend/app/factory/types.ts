@@ -198,7 +198,7 @@ export interface FactoryData {
     checks_queue?: ChecksQueue;
     tests_at?: string;
     last_merged_at?: Partial<Record<Line, string>>;
-    testflight_post?: { build: number; at: string };
+    testflight_post?: { build: number; at: string; commit: string };
   };
   coverage: string[];
 }
