@@ -24,6 +24,7 @@
     ],
     "card_rows": 3,
     "card_section_key": "cast_delayed_cancelled",
+    "hide_row_art": true,
     "suppress_card_photo": true,
     "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/ce/Movie_theater_seats_%28Unsplash%29.jpg/1280px-Movie_theater_seats_%28Unsplash%29.jpg",
     "card_image_alt": "Rows of monochrome movie theater seats",
