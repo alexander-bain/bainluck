@@ -107,7 +107,7 @@ export function stopWaitText(stop: Stop, now: string) {
       )
     : null;
   return stop.number && minutes !== null
-    ? `#${stop.number} has waited ${minutes < 60 ? `${minutes} ${minutes === 1 ? "minute" : "minutes"}` : duration(minutes * 60)} for ${stop.station === "Review" ? "inspection" : "a turn at the loading dock"}.`
+    ? `#${stop.number} has waited ${minutes < 60 ? `${minutes} ${minutes === 1 ? "minute" : "minutes"}` : duration(minutes * 60)} for ${stop.station === "Review" ? "inspection" : "a merge"}.`
     : null;
 }
 
@@ -117,7 +117,7 @@ export function stopText(stop: Stop, now: string) {
   if (stop.kind === "line-stalled")
     return waited
       ? `${stop.line}: nothing merged for ${age}. ${waited}`
-      : `${stop.line} loading dock has stalled.`;
+      : `${stop.line} loading dock is waiting for a merge.`;
   if (stop.kind === "announced")
     return stop.number
       ? `#${stop.number} was announced for a merge at ${time(stop.since)} PT and is still waiting.`
@@ -129,16 +129,14 @@ export function stopText(stop: Stop, now: string) {
   return waited ?? `${stop.line} inspection needs attention.`;
 }
 
-export function machineText(queue: Stop["machines"]) {
-  return (
-    queue &&
-    `Waiting for GitHub’s test machines. ${queue.running} jobs running, ${queue.waiting} waiting in this repo.`
-  );
-}
-
 export function recentlyActive(at: string, now: string) {
   const age = Date.parse(now) - Date.parse(at);
   return age >= 0 && age <= 15 * 60_000;
+}
+
+export function recentLaneUpdate(at: string, now: string) {
+  const age = Date.parse(now) - Date.parse(at);
+  return age >= 0 && age <= 3 * 60 * 60_000;
 }
 
 export function recentTransfers(data: FactoryData, now: string) {

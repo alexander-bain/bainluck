@@ -108,7 +108,6 @@ const snapshot: FactoryData = {
       level: "amber",
       number: 12997,
       waiting_since: "2026-11-18T17:21:00Z",
-      machines: { running: 40, waiting: 95 },
     },
   ],
   jams: [],
@@ -181,9 +180,8 @@ it("keeps the same crate, hold, machine queue, build and caption information und
     const text = floor.textContent;
     expect(text).toContain("test_floor");
     expect(text).toContain(
-      "#12999 has waited 40 minutes for a turn at the loading dock.",
+      "#12999 has waited 40 minutes for a merge.",
     );
-    expect(text).toContain("40 jobs running, 95 waiting");
     expect(text).toContain("TestFlight build 5801 is posted.");
     expect(text).toContain("Written by a model from the counts on this page");
     expect(
@@ -302,7 +300,7 @@ it("offers the recorded crew cards and replays an earlier move when the fresh fl
     crew_week: { since: at, builders: { B: { changes: 2, stations: ["Test"], hours: [9] } } },
   }} lastGoodAt={now} renderedAt={now} />));
   try {
-    expect(rootElement.querySelectorAll("[data-crew]")).toHaveLength(8);
+    expect(rootElement.querySelectorAll("[data-crew]")).toHaveLength(9);
     expect(rootElement.querySelector('[data-crew="B"]')?.textContent).toContain("Recorded changes shipped this week2");
     expect(rootElement.textContent).toContain("9:00 AM PT · Website");
     await act(async () => reduce());

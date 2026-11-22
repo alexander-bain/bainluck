@@ -1424,6 +1424,7 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   color: #a8b9c7;
 }
 .builderW { background: #496246; }
+.builderFactory { background: var(--workshop-copper); color: var(--paper); flex-wrap: wrap; }
 .worker[data-identity="S"] { --portrait: url("/factory/crew/speed.webp"); }
 .worker[data-identity="B"] { --portrait: url("/factory/crew/builder-b.webp"); }
 .worker[data-identity="C"] { --portrait: url("/factory/crew/builder-c.webp"); }
@@ -2362,6 +2363,8 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 .builderCard[data-crew="E"] { --apron: #365a7e; }
 .builderCard[data-crew="F"] { --apron: #385371; }
 .builderCard[data-crew="W"] { --apron: #535b37; }
+.builderCard[data-crew="Factory"] { --apron: var(--workshop-copper); }
+.builderCard[data-crew="Factory"] > .nameTag { color: var(--paper); }
 .builderCard[data-crew="Fable"] { --apron: #834b57; }
 .builders {
   grid-template-columns: repeat(4, minmax(0, 1fr));

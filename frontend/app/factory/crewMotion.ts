@@ -1,5 +1,5 @@
 import { crewActivity, onActiveFloor, recentlyActive } from "./activity";
-import { nameableBuilders, type NameableBuilder } from "./builderNames";
+import { nameableBuilders, type CrewIdentity, type NameableBuilder } from "./builderNames";
 import type { Change, FactoryData, FloorEvent, Line, Station } from "./types";
 import type { WorkerState } from "./Worker";
 
@@ -40,7 +40,7 @@ export function crewAction(event: FloorEvent): {
 } | undefined {
   if (event.kind === "fable") return { identity: "Fable", state: "working", move: "work" };
   const identity = event.builder;
-  if (!identity || identity === "Other") return;
+  if (!identity || identity === "Other" || identity === "Factory") return;
   if (event.kind === "returned" || (event.kind === "check" && event.outcome === "failed"))
     return { identity, state: "stuck", move: "slump" };
   if (event.kind === "live" || (event.kind === "move" && event.station === "Live")) {
@@ -57,7 +57,7 @@ export function crewAction(event: FloorEvent): {
   }
 }
 
-export function crewPose(data: FactoryData, identity: NameableBuilder, now: string, changes: Change[]) {
+export function crewPose(data: FactoryData, identity: CrewIdentity, now: string, changes: Change[]) {
   const recent = (data.events ?? []).filter(event => recentlyActive(event.observed_at, now));
   if (identity === "Fable") {
     return {

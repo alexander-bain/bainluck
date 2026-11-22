@@ -70,9 +70,7 @@ function stopReason(stop: Stop, now: string) {
     case "master":
       return `shared tests failed at ${time(stop.since)} PT`;
     case "line-stalled":
-      return stop.machines
-        ? `waiting for GitHub’s test machines with ${stop.machines.running} jobs running and ${stop.machines.waiting} waiting`
-        : `nothing has merged for ${elapsed(now, stop.since)}`;
+      return `${stop.number ? `#${stop.number} is` : "changes are"} waiting for a merge`;
     case "announced":
       return `${stop.number ? `#${stop.number} is` : "a change is"} still waiting after its announced merge`;
     case "review-waiting":

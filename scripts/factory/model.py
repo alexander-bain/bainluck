@@ -10,10 +10,13 @@ BUILDERS = {
     "speed/": "S",
     "codex/": "B",
     "ios/": "C",
+    "builder-c/": "C",
+    "bc/": "C",
     "atlas/": "D",
     "builder-e/": "E",
     "apple/": "F",
     "weebey/": "W",
+    "factory/": "Factory",
 }
 TRUSTED = {"OWNER", "MEMBER", "COLLABORATOR"}
 PACIFIC = ZoneInfo("America/Los_Angeles")
@@ -28,8 +31,7 @@ def iso(value):
 
 
 def public_title(title):
-    # Titles are the only free text that leaves the collector. Never publish
-    # discussion bodies, author identities, URLs from comments, or email addresses.
+    # Keep account identifiers and the repository owner's name out of public text.
     title = re.sub(r"[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}", "[email removed]", title)
     title = re.sub(r"(?<!\w)@[\w-]+(?:\[bot\])?", "[account removed]", title)
     title = re.sub(r"\bAlex(?:ander)?(?: Bain)?\b", "the founder", title, flags=re.I)

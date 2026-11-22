@@ -36,8 +36,8 @@ import CrewCard from "./CrewCard";
 import DailyPictures from "./DailyPictures";
 import { crewAction, crewPose, placeCrew, type FloorCrew } from "./crewMotion";
 import {
-  builders, holdAuthorName, nameableBuilders, useBuilderNames,
-  type FactoryNames, type NameableBuilder, type NamedBuilder,
+  builders, crewIdentities, holdAuthorName, useBuilderNames,
+  type CrewIdentity, type FactoryNames, type NamedBuilder,
 } from "./builderNames";
 import CrateJourney from "./CrateJourney";
 import ChecksQueue from "./ChecksQueue";
@@ -64,11 +64,11 @@ import {
   stopWaitText,
   bayActivity,
   crewActivity,
-  machineText,
   beltFlowing,
   shownStops,
   knownOrigin,
   onActiveFloor,
+  recentLaneUpdate,
   recentlyActive,
 } from "./activity";
 
@@ -153,9 +153,6 @@ function notice(stop: Stop, now: string, names: FactoryNames) {
       <span aria-hidden="true">{stop.level === "red" ? "■" : "▲"}</span>{" "}
       {stopText(stop, now)}
       {stop.test && <code className={styles.stopOrigin}>{stop.test}</code>}
-      {stop.machines && (
-        <small className={styles.stopOrigin}>{machineText(stop.machines)}</small>
-      )}
       {stop.kind === "hold" && <HoldOrigin stop={stop} names={names} />}
     </p>
   );
@@ -232,7 +229,7 @@ export default function FactoryFloor(initial: {
   }, [initial.renderedAt]);
   const [selectedCrate, selectCrate] = useState<string | null>(null);
   const [selectedGroup, selectGroup] = useState<CrateGroup | null>(null);
-  const [selectedCrew, selectCrew] = useState<NameableBuilder | null>(null);
+  const [selectedCrew, selectCrew] = useState<CrewIdentity | null>(null);
   const [followed, setFollowed] = useState<number[]>([]);
   const [speaker, setSpeaker] = useState<NamedBuilder>();
   const { names, ...nameEditor } = useBuilderNames();
@@ -268,9 +265,23 @@ export default function FactoryFloor(initial: {
   const journal = useReplayJournal(data, today);
   const replay = useDayReplay(motion);
   const speech = data?.speech;
-  const speakers = useMemo(() => builders.filter(key => speech?.[key]), [speech]);
-  const currentSpeaker = speakers.find(key => key === speaker) ?? speakers[0];
-  const currentSpeech = currentSpeaker && speech?.[currentSpeaker];
+  const laneUpdates = useMemo(() => {
+    const updates: NonNullable<FactoryData["lane_updates"]> = {};
+    if (!data?.lane_updates) return updates;
+    const lanesOnFloor = new Set(data.changes.filter(onActiveFloor).map(change => change.builder));
+    for (const lane of builders) {
+      const post = data.lane_updates[lane];
+      if (post && !lanesOnFloor.has(lane) && recentLaneUpdate(post.at, now)) updates[lane] = post;
+    }
+    return updates;
+  }, [data, now]);
+  const speakers = useMemo(() => builders.filter(key => laneUpdates[key] || speech?.[key]), [laneUpdates, speech]);
+  const currentSpeaker = speakers.find(key => key === speaker) ??
+    speakers.find(key => laneUpdates[key]) ?? speakers[0];
+  const currentUpdate = currentSpeaker && laneUpdates[currentSpeaker];
+  const currentSpeech = currentSpeaker && (currentUpdate
+    ? { text: currentUpdate.text, source: "lane" }
+    : speech?.[currentSpeaker]);
   const firstTransferRead = useRef(data?.generated_at);
   firstTransferRead.current ??= data?.generated_at;
   const firstRead = firstTransferRead.current;
@@ -545,8 +556,8 @@ export default function FactoryFloor(initial: {
     }
   }
 
-  function openCrewCard(id: NameableBuilder) {
-    if (id !== "Fable" && data?.speech?.[id]) setSpeaker(id);
+  function openCrewCard(id: CrewIdentity) {
+    if (id !== "Fable" && (laneUpdates[id] || speech?.[id])) setSpeaker(id);
     selectCrew(id);
   }
 
@@ -570,7 +581,7 @@ export default function FactoryFloor(initial: {
     );
   }
 
-  function crewCard(id: NameableBuilder, titleId?: string) {
+  function crewCard(id: CrewIdentity, titleId?: string) {
     const lane = visible.filter(change => change.builder === id);
     const status = id === "Fable" ? foremanPose : crewPose(data!, id, recordTime, lane);
     return (
@@ -582,6 +593,7 @@ export default function FactoryFloor(initial: {
         clockedIn={id === "Fable" ? foremanPose.pose === "working" : clockedIn.has(id)}
         number={status.change?.number}
         post={id === "Fable" ? undefined : data?.crew_posts?.[id]}
+        update={id === "Fable" ? undefined : laneUpdates[id]}
         voice={id === "Fable" ? undefined : data?.speech?.[id]}
         habits={data?.crew_week?.builders[id]}
         now={recordTime}
@@ -1224,7 +1236,7 @@ export default function FactoryFloor(initial: {
             )} PT. Busiest hours use recorded commits, deliveries and looks.</p>
           )}
           <div className={styles.builders}>
-            {nameableBuilders.map(id => crewCard(id))}
+            {crewIdentities.map(id => crewCard(id))}
           </div>
         </details>
 
