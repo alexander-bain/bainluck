@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 _KEY = "bainluck:onboarding:team-league-members:1"
 _READY = "ready"
 _SNAPSHOT_TTL_S = 7 * 24 * 60 * 60
-_BOOTSTRAP_CLAIM_TTL_S = 60 * 60
+_BOOTSTRAP_CLAIM_TTL_S = 10 * 60
 _REBUILD_TASK = "app.tasks.refresh_onboarding_team_membership"
 
 _game_sides = (
