@@ -59,5 +59,7 @@ async def get_paired_metric_by_market(
     matched_set_id = find_paired_set_id_for_market(market_id)
     if not matched_set_id:
         return {"set": None}
-    loaded = await load_live_paired_metric_sets(db, set_ids=[matched_set_id])
+    loaded = await load_live_paired_metric_sets(
+        db, set_ids=[matched_set_id], display_market_id=market_id,
+    )
     return {"set": loaded.get(matched_set_id)}

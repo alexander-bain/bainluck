@@ -229,6 +229,12 @@ struct FuturesDetailView: View {
                                     .contextualTipHero10876(type: "future", id: marketId, scrollSpace: Self.scrollSpace)
 
                                 VStack(spacing: 20) {
+                                    if market.outcomePricesAreIndependent == true {
+                                        Text("Each row is its own market.")
+                                            .font(.subheadline)
+                                            .foregroundStyle(DS.textSecondary)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                    }
                                     if let pairedSet = viewModel.pairedMetricSet, !pairedSet.entries.isEmpty {
                                         DiscoverPairedMetricCardView(
                                             set: pairedSet,

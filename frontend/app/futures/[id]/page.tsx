@@ -1391,6 +1391,10 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         />
       )}
 
+      {market.outcome_prices_are_independent && (
+        <p className="text-sm text-text-secondary">Each row is its own market.</p>
+      )}
+
       {pairedMetricSet && (
         <section data-testid="futures-paired-award-category-section">
           <AwardCategoryPairedCard

@@ -1306,6 +1306,7 @@ export interface FuturesMarketsResponse {
 
 export interface FuturesMarketDetailResponse extends FuturesMarket {
   outcomes: FuturesOutcome[];
+  outcome_prices_are_independent?: boolean;
   display_category?: string;
   /** #8892: on a game container, the id of the match-winner outcome a hero leads
    *  with. Null everywhere else; absent on builds before #8894. */

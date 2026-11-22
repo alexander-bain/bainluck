@@ -24,6 +24,7 @@ Authority's 2026-10-02T16:20Z readback (#9387 comment 5956494541):
 from __future__ import annotations
 
 import copy
+import json
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -452,6 +453,63 @@ def by_name(payload, name, key="outcomes"):
 NEW_DETAIL_KEYS = {"representation", "question_identity", "contributing_sources"}
 NEW_OUTCOME_KEYS = {"contributing_sources", "observed_at", "aggregation_rule"}
 VERIFIED = "verified_title"
+
+
+async def test_current_title_field_serves_same_rows_to_detail_chart_and_paired_card_11995(
+    monkeypatch, tmp_path,
+):
+    from app.routes import paired_metrics
+    from app.services import paired_metric_register
+
+    names = ("Buffalo Bills", "Los Angeles Rams", "San Francisco 49ers")
+    qualifier = _market(
+        71000000, "kalshi", "KXPLAYOFF-27", "Playoff qualifiers",
+        [_outcome(110 + index, name, 0.82, KALSHI_AT) for index, name in enumerate(names)],
+        me=False,
+    )
+    registry = tmp_path / "sets.json"
+    registry.write_text(json.dumps({"sets": {"title": {
+        "stage_1_market": {"id": qualifier.id}, "stage_2_market": {"id": ODDS_ID},
+        "entries": [{"subject": name, "stage_1_outcome": name, "stage_2_outcome": name}
+                    for name in names],
+    }}}))
+    monkeypatch.setattr(paired_metrics, "find_paired_set_id_for_market", lambda market_id: "title")
+    monkeypatch.setattr(paired_metric_register, "PAIRED_METRIC_REGISTER_PATH", registry)
+    markets = trio(extra=(qualifier,))
+
+    board, _ = await detail(ODDS_ID, markets, VERIFIED)
+    chart, _ = await timeline(ODDS_ID, markets, VERIFIED)
+    with _at():
+        pair = (await paired_metrics.get_paired_metric_by_market(ODDS_ID, db=_DB(markets)))["set"]
+
+    for name in names:
+        page = by_name(board, name)
+        chart_row = next(row for row in chart["outcomes"] if row["id"] == page["id"])
+        card_row = next(row for row in pair["entries"] if row["subject"] == name)
+        assert page["rendered_percent"] == chart_row["rendered_percent"] == card_row["stage_2_rendered_percent"]
+        assert page["probability"] == chart_row["current_probability"] == card_row["stage_2_probability"]
+        assert card_row["stage_1_probability"] == 0.82
+
+
+@pytest.mark.parametrize("prices,independent", [
+    ((0.52, 0.31, 0.27), False),
+    ((0.52, 0.31, None), True),
+    ((0.52, 0.31, 0.15, 0.01, 0.01), True),
+])
+async def test_incomplete_field_labels_its_individual_markets_11995(prices, independent):
+    market = _market(71000001, "kalshi", "KXWIN-27", "Award winner", [
+        _outcome(200 + index, f"Nominee {index}", price, KALSHI_AT)
+        for index, price in enumerate(prices)
+    ])
+    market.market_type = "field"
+
+    board, _ = await detail(market.id, [market], "source")
+
+    assert board.get("outcome_prices_are_independent", False) is independent
+    if independent:
+        assert [row["probability"] for row in board["outcomes"]] == list(prices)
+    else:
+        assert sum(row["rendered_percent"] for row in board["outcomes"]) == 100
 
 
 class TestVerifiedTitleGameDate12530:

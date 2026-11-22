@@ -105,6 +105,7 @@ nonisolated struct PairedSubjectEntry: Decodable, Equatable, Identifiable, Senda
     let stage2MarketId: Int
     let stage2Outcome: String?
     let stage2Probability: Double?
+    var stage2RenderedPercent: Int? = nil
     let missingStage1Reason: String?
     let missingStage2Reason: String?
     let art: PairedArtAsset?
@@ -156,6 +157,7 @@ nonisolated struct PairedSubjectEntry: Decodable, Equatable, Identifiable, Senda
         self.stage2MarketId = c.decodeFirst(Int.self, keys: ["stage2MarketId", "stage_2_market_id"]) ?? 0
         self.stage2Outcome = c.decodeFirst(String.self, keys: ["stage2Outcome", "stage_2_outcome"])
         self.stage2Probability = c.decodeFirst(Double.self, keys: ["stage2Probability", "stage_2_probability"])
+        self.stage2RenderedPercent = c.decodeFirst(Int.self, keys: ["stage2RenderedPercent", "stage_2_rendered_percent"])
         self.missingStage1Reason = c.decodeFirst(String.self, keys: ["missingStage1Reason", "missing_stage_1_reason"])
         self.missingStage2Reason = c.decodeFirst(String.self, keys: ["missingStage2Reason", "missing_stage_2_reason"])
         self.art = c.decodeFirst(PairedArtAsset.self, keys: ["art"])

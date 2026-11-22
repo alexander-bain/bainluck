@@ -472,6 +472,12 @@ def hydrate_paired_metric_set_from_markets(
                 stage_2_winner_subject = str(entry.get("subject") or "")
 
         hydrated_entry = hydrate_paired_metric_entry(entry, verified_sources=verified_sources)
+        if out_s2 is not None and (display := out_s2.get("detail_display")) is not None:
+            hydrated_entry["stage_2_probability"] = display.get("probability")
+            hydrated_entry["stage_2_rendered_percent"] = display.get("rendered_percent")
+            hydrated_entry["stage_2_source_mark"] = (
+                display.get("source_mark") or no_source_mark("no_probability")
+            )
         for stage, settled, outcome in (
             ("stage_1", stage_1_settled, out_s1_k),
             ("stage_2", stage_2_settled, out_s2),
@@ -566,10 +572,11 @@ async def load_live_paired_metric_sets(
     set_ids: Sequence[str] | None = None,
     prefix: str | None = None,
     register_path: Path | None = None,
+    display_market_id: int | None = None,
 ) -> dict[str, dict[str, Any]]:
     """Query PostgreSQL once for all referenced markets and return live-hydrated paired sets."""
     from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
+    from sqlalchemy.orm import joinedload, selectinload
 
     from app.models.models import FuturesMarket
 
@@ -612,6 +619,8 @@ async def load_live_paired_metric_sets(
             .options(selectinload(FuturesMarket.outcomes))
             .where(FuturesMarket.id.in_(sorted(market_ids)))
         )
+        if display_market_id in market_ids:
+            stmt = stmt.options(joinedload(FuturesMarket.sport))
         rows = (await db.execute(stmt)).scalars().all()
         for fm in rows:
             if isinstance(fm, Mapping):
@@ -621,7 +630,32 @@ async def load_live_paired_metric_sets(
             elif getattr(fm, "id", None) is not None:
                 mid = int(fm.id)
                 if mid in market_ids:
-                    markets_by_id[mid] = serialize_futures_market_for_pairing(fm)
+                    serialized = serialize_futures_market_for_pairing(fm)
+                    if (
+                        mid == display_market_id
+                        and fm.status in {"open", "active"}
+                        and fm.mutually_exclusive is True
+                    ):
+                        # Keep venue inputs for the source sheet and take the title
+                        # column from the full detail field for the open page.
+                        from app.routes.futures import (
+                            _apply_verified_title_to_detail,
+                            _format_market_detail,
+                            _resolve_verified_title,
+                            _withheld_price_outcome_ids,
+                        )
+
+                        detail = _format_market_detail(
+                            fm, None, await _withheld_price_outcome_ids(db, fm),
+                            normalize_numbers=False,
+                        )
+                        _apply_verified_title_to_detail(
+                            detail, await _resolve_verified_title(db, fm), fm,
+                        )
+                        displayed = {row["id"]: row for row in detail["outcomes"]}
+                        for row in serialized["outcomes"]:
+                            row["detail_display"] = displayed.get(row["id"], {})
+                    markets_by_id[mid] = serialized
 
     hydrated_sets: dict[str, dict[str, Any]] = {}
     for sid, sdata in selected_raw.items():

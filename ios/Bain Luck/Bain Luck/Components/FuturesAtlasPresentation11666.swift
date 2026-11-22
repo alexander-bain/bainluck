@@ -1003,6 +1003,12 @@ struct FuturesAtlasPageView11666: View {
             )
             .contextualTipHero10876(type: "future", id: marketId, scrollSpace: FuturesDetailView.scrollSpace)
 
+            if market.outcomePricesAreIndependent == true {
+                Text("Each row is its own market.")
+                    .font(.subheadline)
+                    .foregroundStyle(DS.textSecondary)
+            }
+
             if let pairedSet = pairedMetricSet, !pairedSet.entries.isEmpty {
                 DiscoverPairedMetricCardView(
                     set: pairedSet,
