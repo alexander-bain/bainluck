@@ -28,6 +28,9 @@ struct ContainerHubView: View {
     let displayName: String
     @StateObject private var vm: ContainerHubViewModel
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @State private var gridWidth: CGFloat = 0
 
     private var hubSurface: Color { ContainerHubThemeTokens.surface(colorScheme) }
     private var hubCardBg: Color { ContainerHubThemeTokens.cardBg(colorScheme) }
@@ -75,7 +78,12 @@ struct ContainerHubView: View {
     }
 
     private func hub(_ presentation: ContainerHubPresentation) -> some View {
-        ScrollView {
+        let hubColumnCount = ContainerHubGridLayout13417.columnCount(
+            horizontalSizeClass: horizontalSizeClass,
+            dynamicTypeSize: dynamicTypeSize,
+            availableWidth: gridWidth > 0 ? gridWidth : nil
+        )
+        return ScrollView {
             LazyVStack(alignment: .leading, spacing: 16) {
                 if let title = presentation.title {
                     Text(title)
@@ -108,7 +116,7 @@ struct ContainerHubView: View {
                         .font(.subheadline).foregroundStyle(hubTextSecondary)
                     Button("Try refresh again") { Task { await vm.load() } }
                 }
-                ForEach(presentation.children) { child in
+                cardColumns(presentation.children, columnCount: hubColumnCount) { child in
                     NavigationLink(value: Route.containerHub(slug: child.slug, name: child.name)) {
                         HStack {
                             Text(child.name).font(.headline)
@@ -135,7 +143,7 @@ struct ContainerHubView: View {
                             }
                             .padding(.top, 4)
                         }
-                        ForEach(vm.pairedMetricSets) { pairedSet in
+                        cardColumns(vm.pairedMetricSets, columnCount: hubColumnCount, spacing: 14) { pairedSet in
                             DiscoverPairedMetricCardView(
                                 set: pairedSet,
                                 form: .pairedBarsTop5Expandable,
@@ -155,7 +163,8 @@ struct ContainerHubView: View {
                         Section {
                             MachinerySectionBlockView(
                                 visualBlock: visualBlock,
-                                members: section.members
+                                members: section.members,
+                                columnCount: hubColumnCount
                             )
                         } header: {
                             VStack(alignment: .leading, spacing: 3) {
@@ -179,7 +188,7 @@ struct ContainerHubView: View {
                             : section.members.filter { !($0.type == "market" && coveredIds.contains($0.memberId)) }
                         if !visibleMembers.isEmpty {
                             Section {
-                                ForEach(visibleMembers) { member in
+                                cardColumns(visibleMembers, columnCount: hubColumnCount) { member in
                                     memberCard(member, presentation: presentation)
                                         .id(member.id)
                                 }
@@ -212,12 +221,50 @@ struct ContainerHubView: View {
                 }
             }
             .scrollTargetLayout()
+            .background(
+                GeometryReader { geo in
+                    Color.clear
+                        .onAppear { gridWidth = geo.size.width }
+                        .onChange(of: geo.size.width) { _, newValue in
+                            gridWidth = newValue
+                        }
+                }
+            )
             .padding(18)
             .frame(maxWidth: 900, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
         .scrollPosition(id: Binding(get: { vm.context.scrollMemberId }, set: { vm.scrolled(to: $0) }), anchor: .top)
         .refreshable { await vm.load() }
+    }
+
+    @ViewBuilder
+    private func cardColumns<Item: Identifiable, Card: View>(
+        _ items: [Item],
+        columnCount: Int,
+        spacing: CGFloat = ContainerHubGridLayout13417.spacing,
+        @ViewBuilder card: @escaping (Item) -> Card
+    ) -> some View {
+        if columnCount <= 1 || items.isEmpty {
+            ForEach(items) { item in
+                card(item)
+            }
+        } else {
+            let columns = DiscoverMasonry.columns(cardCount: items.count, columnCount: columnCount)
+            HStack(alignment: .top, spacing: spacing) {
+                ForEach(Array(columns.enumerated()), id: \.offset) { _, indices in
+                    let columnItems = indices.map { items[$0] }
+                    LazyVStack(alignment: .leading, spacing: spacing) {
+                        ForEach(columnItems) { item in
+                            card(item)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                    .scrollTargetLayout()
+                    .frame(maxWidth: .infinity, alignment: .top)
+                }
+            }
+        }
     }
 
     @ViewBuilder

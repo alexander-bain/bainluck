@@ -584,9 +584,38 @@ struct MachineryHistoryChartCardView: View {
 
 // MARK: - Section Renderer (All 8 Forms)
 
+@ViewBuilder
+private func machineryCardColumns13417<Item: Identifiable, Card: View>(
+    _ items: [Item],
+    columnCount: Int,
+    spacing: CGFloat = ContainerHubGridLayout13417.spacing,
+    @ViewBuilder card: @escaping (Item) -> Card
+) -> some View {
+    if columnCount <= 1 || items.isEmpty {
+        ForEach(items) { item in
+            card(item)
+        }
+    } else {
+        let columns = DiscoverMasonry.columns(cardCount: items.count, columnCount: columnCount)
+        HStack(alignment: .top, spacing: spacing) {
+            ForEach(Array(columns.enumerated()), id: \.offset) { _, indices in
+                let columnItems = indices.map { items[$0] }
+                LazyVStack(alignment: .leading, spacing: spacing) {
+                    ForEach(columnItems) { item in
+                        card(item)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .top)
+            }
+        }
+    }
+}
+
 struct MachinerySectionBlockView: View {
     let visualBlock: MachineryVisualBlock
     let members: [ContainerHubMember]
+    var columnCount: Int = 1
     @Environment(\.machineryPreloadedImages12288) private var preloadedImages
 
     var body: some View {
@@ -606,21 +635,22 @@ struct MachinerySectionBlockView: View {
                 )
             }
         case .probabilityHistoryChart:
-            MachineryHistoryChartSectionView(items: visualBlock.historyItems, limit: limit)
+            MachineryHistoryChartSectionView(items: visualBlock.historyItems, limit: limit, columnCount: columnCount)
         case .coinFlipMatchups:
-            MachineryCoinFlipSectionView(items: visualBlock.eventItems, limit: limit)
+            MachineryCoinFlipSectionView(items: visualBlock.eventItems, limit: limit, columnCount: columnCount)
         case .matchupSlate:
             MachineryMatchupSlateSectionView(
                 members: members,
                 fallbackItems: visualBlock.eventItems,
-                limit: limit
+                limit: limit,
+                columnCount: columnCount
             )
         case .duelBar:
             MachineryDuelBarSectionView(items: visualBlock.marketItems)
         case .contenderSpotlight:
             MachineryContenderSpotlightSectionView(items: visualBlock.marketItems, limit: limit)
         case .siblingFieldsGrid:
-            MachinerySiblingFieldsSectionView(items: visualBlock.marketItems, limit: limit)
+            MachinerySiblingFieldsSectionView(items: visualBlock.marketItems, limit: limit, columnCount: columnCount)
         case .benchmarkStrip:
             MachineryBenchmarkStripSectionView(
                 items: visualBlock.marketItems,
@@ -634,12 +664,13 @@ struct MachinerySectionBlockView: View {
 private struct MachineryHistoryChartSectionView: View {
     let items: [MachineryHistoryChartItem]
     let limit: Int
+    var columnCount: Int = 1
     @State private var expanded = false
 
     var body: some View {
         let shown = expanded ? items : Array(items.prefix(limit))
         VStack(alignment: .leading, spacing: 10) {
-            ForEach(shown) { chart in
+            machineryCardColumns13417(shown, columnCount: columnCount) { chart in
                 MachineryHistoryChartCardView(chart: chart, compact: false)
             }
             MachineryShowAllButton(
@@ -656,6 +687,7 @@ private struct MachineryHistoryChartSectionView: View {
 private struct MachineryCoinFlipSectionView: View {
     let items: [MachineryEventVisualItem]
     let limit: Int
+    var columnCount: Int = 1
     @State private var expanded = false
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -681,7 +713,7 @@ private struct MachineryCoinFlipSectionView: View {
     var body: some View {
         let shown = expanded ? items : Array(items.prefix(limit))
         VStack(alignment: .leading, spacing: 10) {
-            ForEach(shown) { item in
+            machineryCardColumns13417(shown, columnCount: columnCount) { item in
                 let colors = MachineryColorContrast12288.pairHexes(
                     awayHex: item.awayArt?.accentColor,
                     homeHex: item.homeArt?.accentColor,
@@ -805,6 +837,7 @@ private struct MachineryMatchupSlateSectionView: View {
     let members: [ContainerHubMember]
     let fallbackItems: [MachineryEventVisualItem]
     let limit: Int
+    var columnCount: Int = 1
     @State private var expanded = false
     @Environment(\.colorScheme) private var colorScheme
 
@@ -819,7 +852,7 @@ private struct MachineryMatchupSlateSectionView: View {
         if !eventMembers.isEmpty {
             let shown = expanded ? eventMembers : Array(eventMembers.prefix(limit))
             VStack(alignment: .leading, spacing: 10) {
-                ForEach(shown) { member in
+                machineryCardColumns13417(shown, columnCount: columnCount) { member in
                     if case .event(let event) = member.card {
                         NavigationLink(value: Route.eventDetail(id: member.memberId)) {
                             EventCardView(event: event, reason: nil)
@@ -857,7 +890,7 @@ private struct MachineryMatchupSlateSectionView: View {
                 )
             }
         } else if !fallbackItems.isEmpty {
-            MachineryCoinFlipSectionView(items: fallbackItems, limit: limit)
+            MachineryCoinFlipSectionView(items: fallbackItems, limit: limit, columnCount: columnCount)
         }
     }
 }
@@ -1266,6 +1299,7 @@ private struct MachineryContenderSpotlightSectionView: View {
 private struct MachinerySiblingFieldsSectionView: View {
     let items: [MachineryMarketVisualItem]
     let limit: Int
+    var columnCount: Int = 1
     @State private var expanded = false
     @Environment(\.colorScheme) private var colorScheme
     @ScaledMetric(relativeTo: .subheadline) private var titleSize: CGFloat = 14
@@ -1294,7 +1328,7 @@ private struct MachinerySiblingFieldsSectionView: View {
     var body: some View {
         let shown = expanded ? items : Array(items.prefix(limit))
         VStack(alignment: .leading, spacing: 10) {
-            ForEach(shown) { market in
+            machineryCardColumns13417(shown, columnCount: columnCount) { market in
                 let scaleOrd = market.effectiveScaleOrdered
                 let shownOutcomes = Array(market.outcomes.prefix(4))
                 let maxPct = shownOutcomes.map(\.renderedPercent).max() ?? 0
