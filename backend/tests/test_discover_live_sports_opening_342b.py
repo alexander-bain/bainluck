@@ -38,6 +38,7 @@ from app.utils.feed_cache import (
     FEED_RESPONSE_STALE_TTL_LIVE_SECONDS,
     FEED_RESPONSE_TTL_LIVE_SECONDS,
     payload_contains_live_event,
+    strip_live_and_started_items_for_last_good,
 )
 from app.utils.roundup_containers import (
     ROUNDUP_PRODUCERS,
@@ -711,3 +712,35 @@ async def test_342b_feed_route_end_to_end_live_then_final_and_aged_page_base(
         ROUNDUP_PRODUCERS.update(saved_producers)
         rc._reset_last_good_for_tests()
         _roundup_local_cache.clear()
+
+
+def test_strip_live_and_started_items_for_last_good_works_without_now() -> None:
+    """Default ``now=None`` must not raise NameError for missing ``import time``."""
+    base = {
+        "items": [
+            {"type": "event", "data": {"id": 9101, "status": "live"}},
+            {
+                "type": "event",
+                "data": {
+                    "id": 9102,
+                    "status": "scheduled",
+                    "commence_time": "2020-01-01T00:00:00Z",
+                },
+            },
+            {
+                "type": "bundle",
+                "data": {
+                    "id": "roundup:closest-games-tonight",
+                    "items": [{"type": "event", "data": {"id": 9103, "status": "live"}}],
+                },
+            },
+            {"type": "futures", "data": {"id": 9104, "status": "active"}},
+        ],
+        "total": 4,
+    }
+
+    stripped = strip_live_and_started_items_for_last_good(base)
+
+    assert stripped["total"] == 1
+    assert [it["data"]["id"] for it in stripped["items"]] == [9104]
+    assert payload_contains_live_event(stripped) is False
