@@ -1,7 +1,6 @@
 """One metered picture from a fixed, text-only template."""
 
 import base64
-import binascii
 from datetime import timedelta
 import json
 import os
@@ -156,14 +155,61 @@ def image_usage(response, spec):
     return tokens, spent
 
 
+class PictureRefused(ValueError):
+    """A fixed check name, safe to record without the provider response."""
+
+
+def webp_dimensions(content):
+    if (
+        len(content) < 20
+        or content[:4] != b"RIFF"
+        or content[8:12] != b"WEBP"
+        or int.from_bytes(content[4:8], "little") != len(content) - 8
+    ):
+        return None
+    offset = 12
+    canvas = image = None
+    while offset < len(content):
+        if offset + 8 > len(content):
+            return None
+        kind = content[offset:offset + 4]
+        length = int.from_bytes(content[offset + 4:offset + 8], "little")
+        start = offset + 8
+        offset = start + length + (length & 1)
+        if offset > len(content):
+            return None
+        chunk = memoryview(content)[start:start + length]
+        if kind == b"VP8X":
+            if start != 20 or length != 10 or chunk[0] & 2:  # Animated WebP.
+                return None
+            canvas = tuple(1 + int.from_bytes(chunk[i:i + 3], "little") for i in (4, 7))
+        elif kind == b"VP8 ":
+            if image or length <= 10 or chunk[0] & 1 or chunk[3:6] != b"\x9d\x01\x2a":
+                return None
+            image = tuple(int.from_bytes(chunk[i:i + 2], "little") & 0x3FFF for i in (6, 8))
+        elif kind == b"VP8L":
+            if image or length <= 5 or chunk[0] != 0x2F or chunk[4] >> 5:
+                return None
+            bits = int.from_bytes(chunk[1:5], "little")
+            image = (1 + (bits & 0x3FFF), 1 + ((bits >> 14) & 0x3FFF))
+    return image if image and all(image) and canvas in (None, image) else None
+
+
 def picture_bytes(response):
-    images = response["data"]
-    if len(images) != 1:
-        raise ValueError("Expected exactly one Factory picture")
-    content = base64.b64decode(images[0]["b64_json"], validate=True)
-    if (not 12 < len(content) <= MAX_WEBP_BYTES
-        or content[:4] != b"RIFF" or content[8:12] != b"WEBP"):
-        raise ValueError("The Factory picture is outside the WebP size limit")
+    images = response.get("data") if isinstance(response, dict) else None
+    if not isinstance(images, list) or len(images) != 1:
+        raise PictureRefused("picture-count-invalid")
+    try:
+        content = base64.b64decode(images[0]["b64_json"], validate=True)
+    except (KeyError, TypeError, ValueError):
+        raise PictureRefused("image-data-invalid") from None
+    if len(content) > MAX_WEBP_BYTES:
+        raise PictureRefused("image-too-large")
+    size = webp_dimensions(content)
+    if size is None:
+        raise PictureRefused("not-a-webp-image")
+    if f"{size[0]}x{size[1]}" != SIZE:
+        raise PictureRefused("wrong-image-size")
     return content
 
 
@@ -205,9 +251,12 @@ def metered_picture(snapshot, budget, key, *, sample=False, enabled=DAILY_PICTUR
 
     try:
         spec = image_model_for_task("factory_picture")
-        record, payload = picture_request(snapshot, spec)
-    except (UnsupportedModelError, ValueError):
+    except UnsupportedModelError:
         return None, {"status": "unpriced", "mode": mode}
+    try:
+        record, payload = picture_request(snapshot, spec)
+    except ValueError:
+        return None, {"status": "prompt-too-large", "mode": mode}
     receipt = {**quote(spec), "mode": mode}
     reserve = receipt["reserve_micros"]
     if reserve > PICTURE_MAX_MICROS:
@@ -229,9 +278,12 @@ def metered_picture(snapshot, budget, key, *, sample=False, enabled=DAILY_PICTUR
     receipt["month_before_micros"] = reservation[0]["month_micros"]
     try:
         response, request_id = request(payload, key)
-        tokens, spent = image_usage(response, spec)
     except Exception:
-        # The reservation survives errors where chargeable usage is unknown.
+        # The reservation survives when a paid request's outcome is unknown.
+        return None, {**receipt, "status": "request-failed", **budget.stats()}
+    try:
+        tokens, spent = image_usage(response, spec)
+    except (KeyError, TypeError, ValueError):
         return None, {**receipt, "status": "usage-unavailable", **budget.stats()}
     receipt.update(tokens=tokens, used_micros=spent)
     if request_id and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", request_id):
@@ -247,13 +299,17 @@ def metered_picture(snapshot, budget, key, *, sample=False, enabled=DAILY_PICTUR
         return None, {**receipt, "status": "price-over-reservation"}
     try:
         content = picture_bytes(response)
-        if sample:
-            return (record, content), {**receipt, "status": "measured"}
-        if check(content):
-            return (record, content), {**receipt, "status": "drawn"}
-    except (ValueError, KeyError, TypeError, binascii.Error, OSError, subprocess.SubprocessError):
-        pass
-    return None, {**receipt, "status": "picture-unusable"}
+    except PictureRefused as refusal:
+        return None, {**receipt, "status": str(refusal)}
+    if sample:
+        return (record, content), {**receipt, "status": "measured"}
+    try:
+        has_no_lettering = check(content)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None, {**receipt, "status": "lettering-check-failed"}
+    if not has_no_lettering:
+        return None, {**receipt, "status": "lettering-found"}
+    return (record, content), {**receipt, "status": "drawn"}
 
 
 if __name__ == "__main__":

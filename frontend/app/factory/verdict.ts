@@ -7,7 +7,7 @@ import {
   stationNames,
   time,
 } from "./activity";
-import type { GitHubActivity } from "./githubActivity";
+import { MACHINE_WAIT_MS, type GitHubActivity } from "./githubActivity";
 import type { FactoryData, Line, Station, Stop } from "./types";
 
 type BayAlert = {
@@ -40,8 +40,10 @@ export function floorReadingState(
   const masterAt = Date.parse(recent?.masterAt ?? "");
   const ciAt = recent?.ciAt === null ? -Infinity : Date.parse(recent?.ciAt ?? "");
   const collectorAt = Date.parse(recent?.collector?.at ?? "");
-  if ((recent?.collector?.failed && collectorAt > published && collectorAt <= clock) ||
-      [masterAt, ciAt].some(at => at > published + ACTIVITY_GRACE_MS && at <= clock)) return "failed";
+  if (recent?.collector?.failed && collectorAt > published && collectorAt <= clock) return "failed";
+  const queuedAt = Date.parse(recent?.collectorQueuedAt ?? "");
+  if (clock - queuedAt > MACHINE_WAIT_MS) return "waiting";
+  if ([masterAt, ciAt].some(at => at > published + ACTIVITY_GRACE_MS && at <= clock)) return "failed";
   if (readFailed) return "last-known";
   if (!readerBehind(data, now)) return "current";
   if (collectorAt <= clock && masterAt <= published && ciAt <= published)
@@ -89,16 +91,19 @@ export function floorVerdict(
   if (state === "failed") {
     return { level: "amber", text: "Not updating.", bays: [] };
   }
-  if (state === "quiet") return { level: "green", text: "The floor is quiet.", bays: [] };
+  if (state === "waiting") {
+    return { level: "amber", text: "The next reading is waiting for a machine.", bays: [] };
+  }
   if (state === "last-known") {
     return { level: "amber", text: "Showing the last published floor.", bays: [] };
   }
 
+  const through = state === "quiet" ? data.generated_at : now;
   const bays: BayAlert[] = shownStops(data).map((stop) => ({
     line: stop.line,
     station: stop.station,
     level: stop.kind === "hold" ? "red" : "amber",
-    text: `${place(stop.station, stop.line)}: ${stopReason(stop, now)}.`,
+    text: `${place(stop.station, stop.line)}: ${stopReason(stop, through)}.`,
   }));
 
   function add(line: Line | null, station: Station, reason: string) {
@@ -119,7 +124,7 @@ export function floorVerdict(
   if (data.signals.testflight === "unknown" || !data.signals.testflight)
     add("Apps", "Ship", "the TestFlight result is missing");
 
-  const clock = Date.parse(now);
+  const clock = Date.parse(through);
   const crowdedStations = new Set(
     data.jams
       .filter((jam) => jam.kind === "crowd" && !jam.ended_at && Date.parse(jam.qualifies_at) <= clock)
@@ -146,6 +151,9 @@ export function floorVerdict(
   }
 
   const first = bays.find((bay) => bay.level === "red") ?? bays[0];
+  if (state === "quiet") {
+    return { level: first?.level ?? "green", text: "The floor is quiet.", bays };
+  }
   if (first) return { level: first.level, text: first.text, bays };
   if (!Array.isArray(data.stops) || data.coverage.length) {
     return {

@@ -49,6 +49,16 @@ it("keeps the last published floor when GitHub evidence is missing or too old", 
   expect(floorReadingState(floor, true, visit, quietActivity)).toBe("last-known");
 });
 
+it("uses the machine wait after 15 minutes and keeps a newer collector failure visible", () => {
+  const overdue = { ...quietActivity, masterAt: "2026-11-22T12:30:00Z" };
+  const atThreshold = { ...overdue, collectorQueuedAt: "2026-11-22T12:45:00Z" };
+  expect(floorReadingState(floor, false, visit, atThreshold)).toBe("failed");
+  const waiting = { ...overdue, collectorQueuedAt: "2026-11-22T12:44:59Z" };
+  expect(floorVerdict(floor, false, visit, waiting).text).toBe("The next reading is waiting for a machine.");
+  const failed = { ...waiting, collector: { at: "2026-11-22T12:52:00Z", failed: true } };
+  expect(floorVerdict(floor, false, visit, failed).text).toBe("Not updating.");
+});
+
 it("reads the newest completed master CI and collector outcomes without credentials", async () => {
   const response = (json: unknown) => ({ ok: true, json: async () => json });
   const run = (updated_at: string, conclusion: string, status = "completed") => ({ updated_at, conclusion, status });
@@ -65,10 +75,66 @@ it("reads the newest completed master CI and collector outcomes without credenti
     masterAt, ciAt, collector: quietActivity.collector,
   });
   expect(read).toHaveBeenCalledTimes(3);
-  expect(read.mock.calls[1][0]).toContain("branch=master&status=completed");
+  expect(read.mock.calls[1][0]).toContain("branch=master");
+  expect(read.mock.calls[1][0]).toContain("status=completed");
   expect(read.mock.calls[1][0]).toContain("event=push");
   for (const [, options] of read.mock.calls) {
     expect(options.headers.Authorization).toBeUndefined();
     expect(options.signal).toBeInstanceOf(AbortSignal);
+  }
+});
+
+it("finds a waiting run behind a full page of newer completed runs", async () => {
+  jest.useFakeTimers({ now: new Date(visit) });
+  try {
+    const response = (json: unknown) => ({ ok: true, json: async () => json });
+    const read = jest.fn()
+      .mockResolvedValueOnce(response({ commit: { committer: { date: masterAt } } }))
+      .mockResolvedValueOnce(response({ workflow_runs: [] }))
+      .mockResolvedValueOnce(response({ workflow_runs: Array.from({ length: 20 }, (_, id) => ({
+        id, status: "completed", conclusion: "cancelled", created_at: "2026-11-22T12:55:00Z",
+      })) }))
+      .mockResolvedValueOnce(response({ workflow_runs: [
+        { id: 42, status: "queued", created_at: "2026-11-22T12:30:00Z" },
+      ] }))
+      .mockResolvedValueOnce(response({ jobs: [{
+        status: "queued", runner_id: null, created_at: "2026-11-22T12:34:00Z", labels: ["ubuntu-latest"],
+      }] }));
+    expect((await readGitHubActivity(read)).collectorQueuedAt).toBe("2026-11-22T12:34:00Z");
+    expect(read.mock.calls[3][0]).toContain("status=queued");
+    expect(read.mock.calls[4][0]).toContain("/actions/runs/42/jobs");
+  } finally {
+    jest.useRealTimers();
+  }
+});
+
+it.each([
+  ["queued", { status: "queued", runner_id: null }, "2026-11-22T12:30:00Z"],
+  ["in_progress", { status: "queued", runner_id: null }, "2026-11-22T12:30:00Z"],
+  ["in_progress", { status: "in_progress", runner_id: 25 }, undefined],
+  ["pending", { status: "queued", runner_id: null }, undefined],
+] as const)("uses job evidence for a %s workflow", async (status, job, expected) => {
+  jest.useFakeTimers({ now: new Date(visit) });
+  try {
+    const response = (json: unknown) => ({ ok: true, json: async () => json });
+    const read = jest.fn()
+      .mockResolvedValueOnce(response({ commit: { committer: { date: masterAt } } }))
+      .mockResolvedValueOnce(response({ workflow_runs: [] }))
+      .mockResolvedValueOnce(response({ workflow_runs: [
+        { id: 42, status, conclusion: null, created_at: "2026-11-22T12:27:00Z" },
+        { id: 41, status: "completed", conclusion: "success", updated_at: "2026-11-22T08:03:14Z" },
+      ] }))
+      .mockResolvedValueOnce(response({ jobs: [{
+        ...job, labels: ["ubuntu-latest"], created_at: "2026-11-22T12:30:00Z",
+      }] }));
+    expect((await readGitHubActivity(read)).collectorQueuedAt).toBe(expected);
+    if (status === "pending") {
+      expect(read).toHaveBeenCalledTimes(3);
+    } else {
+      expect(read).toHaveBeenCalledTimes(4);
+      expect(read.mock.calls[3][0]).toContain("/actions/runs/42/jobs");
+    }
+  } finally {
+    jest.useRealTimers();
   }
 });

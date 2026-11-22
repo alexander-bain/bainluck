@@ -259,6 +259,7 @@ export default function FactoryFloor(initial: {
   );
   const readingState = data && floorReadingState(data, readFailed, now, activity);
   const behind = readingState !== null && readingState !== "current";
+  const pauseBays = readingState === "failed" || readingState === "last-known";
   const motion = !behind && tabVisible && reducedMotion === false;
   const verdict = floorVerdict(data, readFailed, now, activity);
   const tabTitle = factoryTabTitle(verdict);
@@ -416,6 +417,7 @@ export default function FactoryFloor(initial: {
   const readLabel = {
     failed: "Not updating",
     quiet: "Quiet floor",
+    waiting: "Waiting for a machine",
     "last-known": "Last published floor",
     current: shownReadAt ? `Read at ${time(shownReadAt)} PT` : "Read from GitHub",
   }[readingState ?? "current"];
@@ -472,7 +474,7 @@ export default function FactoryFloor(initial: {
       note: "Changes with no activity for three days.",
     },
   };
-  const stops = behind ? [] : shownStops(data);
+  const stops = !behind || readingState === "quiet" ? shownStops(data) : [];
   const holds = stops.filter((stop) => stop.kind === "hold");
   const waits = stops.filter((stop) => stop.kind !== "hold");
   const explained = new Set(stops.map((stop) => `${stop.line}/${stop.station}`));
@@ -629,7 +631,7 @@ export default function FactoryFloor(initial: {
       className={styles.factory}
       data-factory="true"
       data-workshop-light={light}
-      data-reader={behind ? "behind" : "current"}
+      data-reader={pauseBays ? "behind" : "current"}
       data-reading-state={readingState}
       data-motion={motion ? "running" : "paused"}
     >
@@ -881,7 +883,7 @@ export default function FactoryFloor(initial: {
                           j.station === station &&
                           (j.kind === "crowd" ? backup : j.line === line),
                       );
-                      const bayState = behind ? "Paused" :
+                      const bayState = pauseBays ? "Paused" :
                         station === "Ship" && changes.some(c => c.merge_announced_at) ? "Merge announced" :
                         bayAlert && !activity.stop ? "Needs attention" : activity.label;
                       return (
@@ -925,7 +927,7 @@ export default function FactoryFloor(initial: {
                                     ? "stopped"
                                     : bayAlert?.level === "amber"
                                       ? backup ? "crowded" : "caution"
-                                      : !behind && activity.flowing
+                                      : !pauseBays && activity.flowing
                                         ? "flowing"
                                         : "idle"
                                 }

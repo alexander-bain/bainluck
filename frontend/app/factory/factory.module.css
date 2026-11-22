@@ -1277,7 +1277,8 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   opacity: 0.72;
   filter: saturate(0.35);
 }
-.factory[data-reader="behind"]:not([data-reading-state="quiet"]) .statusDot {
+.factory[data-reader="behind"] .statusDot,
+.factory[data-reading-state="waiting"] .statusDot {
   background: var(--amber);
 }
 .stopNotices {
