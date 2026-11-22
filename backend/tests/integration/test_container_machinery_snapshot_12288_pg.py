@@ -716,6 +716,32 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
             sport_id=sid,
             outcomes=outs,
         )
+
+    # 13. #12288 Batch 6 preview groupings (Google's 2026 Year in Search, Pop Culture Oddities, 2026 Box Office Showdown, The 2027 Golden Globes)
+    for mid, ext, name, cat, outs in (
+        (70733266, "PMB6-GACTOR1", "#1 Searched Actor on Google 2026?", "tech", [("Inde Navarrette", 0.47, 0.44), ("Robert Pattinson", 0.15, 0.16)]),
+        (57792616, "PMB6-GATH1", "#1 Searched Athlete on Google 2026?", "tech", [("Erling Braut Haaland", 0.44, 0.41), ("Alysa Liu", 0.09, 0.10)]),
+        (57792681, "PMB6-GMOV1", "#1 Searched Movie on Google 2026?", "entertainment", [("Obsession", 0.38, 0.36), ("The Odyssey", 0.32, 0.33)]),
+        (60634621, "PMB6-GMOV5", "Top 5 Most Searched Movies on Google 2026", "tech", [("The Odyssey", 0.94, 0.91)]),
+        (60634619, "PMB6-GATH5", "Top 5 Most Searched Athletes on Google 2026", "tech", [("Erling Braut Haaland", 0.90, 0.87)]),
+        (67804475, "PMB6-MICHELIN", "Which New York City restaurants earn a Michelin star in 2026?", "entertainment", [("Kabawa", 0.32, 0.30)]),
+        (67804457, "PMB6-AIWFCIY", '"All I Want for Christmas Is You" Hot 100 rank', "entertainment", [("Rank 1 to 2", 0.80, 0.77)]),
+        (108306, "KXB6-BEYGENRE", "What genre will Beyoncé's next album be?", "entertainment", [("Rock", 0.64, 0.61)]),
+        (108254, "KXB6-TIMEPER", "Time's Person of the Decade", "entertainment", [("Elon Musk", 0.35, 0.34)]),
+        (114149, "KXB6-DUNEAV", "Will Dune 3 or Avengers: Doomsday gross more on opening weekend?", "entertainment", [("Avengers: Doomsday", 0.98, 0.96), ("Dune 3", 0.02, 0.04)]),
+        (113355, "KXB6-TOP2026", "Highest grossing movie in 2026?", "entertainment", [("Spider-Man: Brand New Day", 0.91, 0.89)]),
+        (113356, "KXB6-OPEN2026", "Which movie has biggest opening weekend in 2026?", "entertainment", [("Avengers: Doomsday", 0.90, 0.88)]),
+        (70160313, "PMB6-GGACTF", "Golden Globe Winner: Best Actress - Musical or Comedy", "entertainment", [("Julianne Moore", 0.77, 0.75)]),
+        (70160296, "PMB6-GGACTRLS", "Golden Globe Winner: Best Actress in a Limited Series", "entertainment", [("Florence Pugh", 0.72, 0.70)]),
+        (70160294, "PMB6-GGSUPATV", "Golden Globe Winner: Best Supporting Actress on TV", "entertainment", [("Kate O'Flynn", 0.71, 0.68)]),
+    ):
+        await _add_market(
+            market_id=mid,
+            external_id=ext,
+            name=name,
+            category=cat,
+            outcomes=outs,
+        )
     await session.commit()
 
 

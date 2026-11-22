@@ -62,6 +62,7 @@ CURATED_GROUPING_SETS_PATHS: tuple[Path, ...] = (
     CURATED_GROUPING_SETS_PATH,
     Path(__file__).resolve().parents[2] / "data" / "groupings" / "batch4_curated_sets.json",
     Path(__file__).resolve().parents[2] / "data" / "groupings" / "batch5_curated_sets.json",
+    Path(__file__).resolve().parents[2] / "data" / "groupings" / "batch6_curated_sets.json",
 )
 
 
