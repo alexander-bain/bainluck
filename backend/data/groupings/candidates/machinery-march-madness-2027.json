@@ -33,7 +33,7 @@
         "key": "march_madness_2027",
         "title": "Final Four & Poll Favorites",
         "item_noun": "teams",
-        "note": "Programs trading near the top of the AP Poll, Final Four brackets, and national title race.",
+        "note": "Programs near the top of the AP Poll, the Final Four field, and the title race.",
         "atom_query": {
           "kind": "markets",
           "sport_key": "basketball_ncaab",

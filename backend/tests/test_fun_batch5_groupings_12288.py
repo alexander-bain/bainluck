@@ -183,6 +183,7 @@ def test_batch5_definitions_stay_preview_non_politics_with_verified_art_and_zero
             "https://commons.wikimedia.org/wiki/File:"
         )
         sec = rule["sections"][0]
+        assert "trading" not in str(sec.get("note") or "").lower()
         sub_tag = sec["atom_query"]["fun_sub_tag"]
         ids = fun_market_ids_for_sub_tag(sub_tag)
         assert len(ids) == expected_counts[slug]
