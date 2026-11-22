@@ -4,6 +4,7 @@
 import argparse
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from http.client import HTTPException
 import json
 import os
 from pathlib import Path
@@ -31,6 +32,7 @@ from signals import commands_from, crew_posts_from, test_file
 
 REPO = "alexander-bain/bainluck"
 RELEASE = "factory-data"
+READ_FAILURES = (OSError, HTTPException, ValueError)
 FABLE_ACCEPT_SHA = re.compile(
     r"^\*\*Fable(?: look)?(?:\*\*)?[ :—–-]+(?:\*\*)?ACCEPT(?:ED)?\s+at\s+`?([a-f0-9]{7,40})\b",
     re.I,
@@ -42,6 +44,26 @@ RELEASE_HOLD = re.compile(
     r"|until\b[^\n]{0,80}?\b1\.0\.7\b[^\n]{0,40}?\b(?:app store|upload|freeze))",
     re.I,
 )
+
+
+def retry_read(read):
+    for next_attempt in (2, 3):
+        try:
+            return read()
+        except READ_FAILURES as error:
+            if isinstance(error, urllib.error.HTTPError):
+                if error.code != 408 and not 500 <= error.code <= 599:
+                    raise
+                error.close()
+                reason = f"HTTP {error.code}"
+            else:
+                reason = type(error).__name__
+            print(
+                f"FACTORY_READ_RETRY {reason}. Attempt {next_attempt} of 3 in 20 seconds.",
+                file=sys.stderr,
+            )
+            time.sleep(20)
+    return read()
 
 
 class GitHub:
@@ -68,7 +90,8 @@ class GitHub:
             and data
             and not re.search(r"\bmutation\b", data.get("query", ""))
         )
-        if self.read_only and method != "GET" and not graphql_read:
+        is_read = method == "GET" or (method == "POST" and graphql_read)
+        if self.read_only and not is_read:
             raise RuntimeError("This collector run has read-only API access")
         body = (
             binary
@@ -95,8 +118,7 @@ class GitHub:
                 ),
             },
         )
-        attempts = 2 if method == "GET" or (method == "POST" and graphql_read) else 1
-        for attempt in range(attempts):
+        def send():
             with self.lock:
                 self.api_calls += 1
                 self.api_calls_by_resource[
@@ -106,13 +128,12 @@ class GitHub:
                 with urllib.request.urlopen(request, timeout=timeout) as response:
                     self._remember_rate(response.headers)
                     content = response.read()
-                return json.loads(content) if content else None
+                return json.loads(content) if content or is_read else None
             except urllib.error.HTTPError as error:
                 self._remember_rate(error.headers)
-                if attempt + 1 == attempts or not 500 <= error.code <= 599:
-                    raise
-                error.close()
-                time.sleep(1)
+                raise
+
+        return retry_read(send) if is_read else send()
 
     def _remember_rate(self, headers):
         remaining = headers.get("X-RateLimit-Remaining")
@@ -121,15 +142,19 @@ class GitHub:
                 self.rates[headers.get("X-RateLimit-Resource", "core")] = int(remaining)
 
     def public_json(self, url):
-        self.public_reads += 1
-        return read_public(url)
+        def read():
+            with self.lock:
+                self.public_reads += 1
+            return read_public(url)
+
+        return retry_read(read)
 
     def metrics(self):
         try:
             limits = self.request("rate_limit")["resources"]
             self.rates.setdefault("core", limits["core"]["remaining"])
             self.rates.setdefault("graphql", limits["graphql"]["remaining"])
-        except (urllib.error.URLError, ValueError, KeyError):
+        except (OSError, HTTPException, ValueError, KeyError):
             # Keep the last response-header budgets if the final meter read fails.
             pass
         return {
@@ -931,8 +956,12 @@ def main():
             if picture:
                 _, content = picture
                 sample = args.output.with_name("factory-measured-picture.webp")
-                sample.parent.mkdir(parents=True, exist_ok=True)
-                sample.write_bytes(content)
+                try:
+                    sample.parent.mkdir(parents=True, exist_ok=True)
+                    sample.write_bytes(content)
+                except OSError:
+                    picture_stats["status"] = "write-failed"
+                    raise
             return
 
         if args.publish:
@@ -963,10 +992,27 @@ def main():
                 picture, picture_stats = metered_picture(result, budget, key)
                 if picture:
                     try:
-                        assets.append(publish_daily_picture(api, release, picture))
-                        picture_stats["status"] = "published"
-                    except (urllib.error.URLError, TimeoutError, ValueError):
-                        picture_stats["status"] = "upload-failed"
+                        uploaded = publish_daily_picture(api, release, picture)
+                    except urllib.error.HTTPError as error:
+                        picture_stats["status"] = (
+                            "upload-unconfirmed" if error.code == 408 or error.code >= 500
+                            else "upload-failed"
+                        )
+                    except READ_FAILURES:
+                        # A lost reply can follow a successful upload. Keep the
+                        # paid reservation and let the next read reconcile it.
+                        picture_stats["status"] = "upload-unconfirmed"
+                    else:
+                        if (
+                            isinstance(uploaded, dict)
+                            and uploaded.get("name") == asset_name(picture[0])
+                            and uploaded.get("label") == asset_label(picture[0])
+                            and uploaded.get("state") == "uploaded"
+                        ):
+                            assets.append(uploaded)
+                            picture_stats["status"] = "published"
+                        else:
+                            picture_stats["status"] = "upload-unconfirmed"
             if records := gallery(assets, budget.now):
                 result["pictures"] = records
         meter = budget.state()

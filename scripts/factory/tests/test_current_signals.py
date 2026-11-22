@@ -95,3 +95,11 @@ class CurrentSignals(unittest.TestCase):
             "contains": [],
         })
         self.assertEqual(build(self.snapshot)["signals"]["testflight_post"]["build"], 5849)
+
+    def test_builder_c_build_report_requires_the_fixed_line(self):
+        informal, *fixed = self.fixture["build_report_wording"]
+        self.assertEqual(commands_from([informal]), [])
+        self.assertEqual(
+            [(post["build"], post["commit"]) for post in commands_from(fixed)],
+            [(5850, "865d44c9ac"), (5851, "b248129f30"), (5852, "8abcd1cea9")],
+        )

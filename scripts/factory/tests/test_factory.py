@@ -10,6 +10,7 @@ import unittest
 import io
 import tempfile
 from contextlib import redirect_stdout
+from http.client import IncompleteRead
 from urllib.error import HTTPError
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -35,7 +36,7 @@ from collect import (
     GitHub,
     main,
 )
-from unittest.mock import patch, MagicMock
+from unittest.mock import call, patch, MagicMock
 from notes import ModelBudget, make_notes
 from speech import make_speech
 
@@ -51,23 +52,60 @@ class GitHubRequestTests(unittest.TestCase):
             "X-RateLimit-Remaining": "98", "X-RateLimit-Resource": "graphql",
         }
         response.__enter__.return_value.read.return_value = b'{"data": {"history": []}}'
-        with patch("collect.urllib.request.urlopen", side_effect=[error, response]), patch("collect.time.sleep"):
+        with patch("collect.urllib.request.urlopen", side_effect=[error, response]), patch("collect.time.sleep") as delay:
             result = api.request("graphql", {"query": "query { repository { id } }"})
         self.assertEqual(result, {"data": {"history": []}})
         self.assertEqual(api.api_calls, 2)
         self.assertEqual(api.api_calls_by_resource["graphql"], 2)
         self.assertEqual(api.rates["graphql"], 98)
+        delay.assert_called_once_with(20)
 
-    def test_stops_after_two_read_failures_and_never_retries_a_write(self):
+    def test_incomplete_history_body_and_invalid_json_wait_for_a_third_read(self):
+        api = GitHub(token="fake")
+        response = MagicMock()
+        reply = response.__enter__.return_value
+        reply.headers = {}
+        reply.read.side_effect = [
+            IncompleteRead(b'{"data":', 20),
+            b'{"data":',
+            b'{"data":{"history":[]}}',
+        ]
+        with patch("collect.urllib.request.urlopen", return_value=response), patch("collect.time.sleep") as delay:
+            data = api.request("graphql", {"query": "query { repository { id } }"})
+        self.assertEqual(data, {"data": {"history": []}})
+        self.assertEqual(api.api_calls_by_resource["graphql"], 3)
+        self.assertEqual(delay.call_args_list, [call(20), call(20)])
+
+    def test_stops_after_three_read_failures_and_never_retries_a_write(self):
         error = HTTPError("https://api.github.com/example", 502, "Bad Gateway", {}, None)
-        for method, attempts in [("GET", 2), ("PATCH", 1)]:
+        for method, attempts in [("GET", 3), ("PATCH", 1), ("POST", 1)]:
             with self.subTest(method=method):
                 api = GitHub(token="fake", read_only=False)
-                with patch("collect.urllib.request.urlopen", side_effect=error) as send, patch("collect.time.sleep"):
+                with patch("collect.urllib.request.urlopen", side_effect=error) as send, patch("collect.time.sleep") as delay:
                     with self.assertRaises(HTTPError):
                         api.request("example", method=method)
                 self.assertEqual(send.call_count, attempts)
                 self.assertEqual(api.api_calls, attempts)
+                self.assertEqual(delay.call_args_list, [call(20)] * (attempts - 1))
+
+    def test_missing_asset_remains_a_single_read(self):
+        error = HTTPError("https://api.github.com/example", 404, "Not Found", {}, None)
+        api = GitHub(token="fake")
+        with patch("collect.urllib.request.urlopen", side_effect=error) as send, patch("collect.time.sleep") as delay:
+            with self.assertRaises(HTTPError):
+                api.request("example")
+        send.assert_called_once()
+        delay.assert_not_called()
+
+    def test_public_snapshot_reads_retry_transport_errors(self):
+        api = GitHub(token="fake")
+        data = {"generated_at": "2026-11-22T15:55:32Z"}
+        with patch("collect.read_public", side_effect=[IncompleteRead(b'{"data"'), TimeoutError(), data]), patch(
+            "collect.time.sleep"
+        ) as delay:
+            self.assertEqual(api.public_json("https://example.invalid/factory.json"), data)
+        self.assertEqual(api.public_reads, 3)
+        self.assertEqual(delay.call_args_list, [call(20), call(20)])
 
 
 class FactoryCollectorTests(unittest.TestCase):

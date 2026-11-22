@@ -25,7 +25,7 @@ const data = {
   coverage: [],
 } as FactoryData;
 
-it("keeps the old floor motionless without claiming updates stopped when no work finished", () => {
+it("shows real bay states while keeping a quiet floor motionless", () => {
   const renderedAt = "2026-11-18T17:50:00Z";
   const html = renderToStaticMarkup(
     <FactoryFloor
@@ -40,13 +40,43 @@ it("keeps the old floor motionless without claiming updates stopped when no work
       }}
     />,
   );
-  expect(html).toContain('data-reader="behind"');
+  expect(html).toContain('data-reader="current"');
   expect(html).toContain('data-motion="paused"');
   expect(html).toContain('data-reading-state="quiet"');
   expect(html).toContain("Last published 1 hr 51 min ago.");
+  expect(html).toContain('title="Long wait"');
+  expect(html).toContain('title="Idle"');
+  expect(html).not.toContain('title="Paused"');
   expect(html).not.toContain("Updates have stopped.");
   expect(html).toContain('data-factory-row="Server"');
   expect(html).not.toContain("The floor can&#x27;t be read right now");
+});
+
+it("says the next reading is waiting for a machine and reserves Paused for a stopped or unconfirmed read", () => {
+  const now = "2026-11-18T17:50:00Z";
+  const props = { data, lastGoodAt: data.generated_at, renderedAt: now };
+  const activity = {
+    checkedAt: now,
+    masterAt: "2026-11-18T17:27:00Z",
+    ciAt: data.generated_at,
+    collectorQueuedAt: "2026-11-18T17:30:00Z",
+    collector: { at: data.generated_at, failed: false },
+  };
+  const waiting = renderToStaticMarkup(<FactoryFloor {...props} activity={activity} />);
+  expect(waiting).toContain('data-reading-state="waiting"');
+  expect(waiting).toContain("The next reading is waiting for a machine.");
+  expect(waiting).not.toContain("Updates have stopped.");
+  expect(waiting).not.toContain('title="Paused"');
+
+  const failure = { ...activity, collector: { at: "2026-11-18T17:49:00Z", failed: true } };
+  const failed = renderToStaticMarkup(<FactoryFloor {...props} activity={failure} />);
+  expect(failed).toContain('data-reading-state="failed"');
+  expect(failed).toContain("Updates have stopped.");
+  expect(failed).toContain('title="Paused"');
+
+  const lastKnown = renderToStaticMarkup(<FactoryFloor {...props} />);
+  expect(lastKnown).toContain("Showing the last published floor.");
+  expect(lastKnown).toContain('title="Paused"');
 });
 
 it("prints both observed November 18 stoppages at 10 AM Pacific", () => {

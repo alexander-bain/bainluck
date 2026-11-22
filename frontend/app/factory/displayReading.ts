@@ -7,9 +7,9 @@ import { readGitHubActivity, type GitHubActivity } from "./githubActivity";
 const readFactory = createFactoryReader(undefined, load =>
   unstable_cache(load, ["factory-live-v4"], { revalidate: 60 }),
 );
-// Three public API calls per refresh. Five minutes keeps this cache below
-// GitHub's unauthenticated limit while the page still checks the floor each minute.
-const readActivity = unstable_cache(() => readGitHubActivity(), ["factory-github-activity"], { revalidate: 300 });
+// Three public reads per refresh, with a job lookup for a possible wait and
+// a queued-only list when recent runs could hide that wait.
+const readActivity = unstable_cache(() => readGitHubActivity(), ["factory-github-activity-v2"], { revalidate: 300 });
 
 export type FactoryDisplayReading = FactoryRead & {
   activity?: GitHubActivity;
