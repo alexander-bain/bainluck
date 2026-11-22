@@ -422,6 +422,7 @@ def _reset_loaded_request_caches(retained=None):
         ("app.utils.theme_collection_ref", ("_reset_published_cache_for_tests",)),
         ("app.utils.principal_independent_cache", ("clear_shared_builds",)),
         ("app.utils.event_history_cache", ("_reset_for_tests",)),
+        ("app.utils.futures_page_cache", ("_reset_for_tests",)),
         ("app.utils.prematch_reading", ("_reset_prematch_cache_for_tests",)),
         ("app.utils.pregame_projection", ("clear_pregame_projection_cache",)),
         ("app.routes.calibration", ()),

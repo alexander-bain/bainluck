@@ -19,6 +19,7 @@ from sqlalchemy.orm import joinedload, selectinload
 
 from app.models import Event, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Sport, Team
 from app.services import get_db, OddsAPIService
+from app.utils import futures_page_cache as _futures_page_cache
 from app.utils import futures_price_screen, movement_pool, probability_to_american
 from app.utils.durable_venue_receipt import log_durable_venue_serve
 from app.utils.event_awards import (
@@ -4779,6 +4780,33 @@ async def _withheld_price_outcome_ids(
 
 
 @router.get("/{market_id}")
+async def get_futures_market_cached(
+    market_id: int,
+    db: AsyncSession = Depends(get_db),
+    representation: str = Query(
+        REPRESENTATION_SOURCE,
+        description=(
+            "`source` (default) serves this market row alone. `verified_title` "
+            "(#9387) serves one current number per outcome across every venue "
+            "that provably asks the same title question, or source mode when "
+            "that cannot be proved."
+        ),
+    ),
+    fresh: bool = False,
+):
+    """Cached HTTP entry for ``GET /api/futures/{market_id}`` (<= 15 s, singleflight)."""
+    return await _futures_page_cache.serve_cached_or_build(
+        key=_futures_page_cache.detail_key(market_id, representation),
+        fresh=fresh,
+        build=lambda: get_futures_market(
+            market_id=market_id,
+            db=db,
+            representation=representation,
+        ),
+        ttl_for=_futures_page_cache.detail_ttl,
+    )
+
+
 async def get_futures_market(
     market_id: int,
     db: AsyncSession = Depends(get_db),
@@ -5570,6 +5598,23 @@ def _outcome_names_its_team(outcome_name: Optional[str], team_name: Optional[str
 
 
 @router.get("/{market_id}/related-events")
+async def get_related_events_cached(
+    market_id: int,
+    db: AsyncSession = Depends(get_db),
+    fresh: bool = False,
+):
+    """Cached HTTP entry for ``GET /api/futures/{market_id}/related-events`` (<= 60 s)."""
+    return await _futures_page_cache.serve_cached_or_build(
+        key=_futures_page_cache.related_events_key(market_id),
+        fresh=fresh,
+        build=lambda: get_related_events(
+            market_id=market_id,
+            db=db,
+        ),
+        ttl_for=_futures_page_cache.related_events_ttl,
+    )
+
+
 async def get_related_events(
     market_id: int,
     db: AsyncSession = Depends(get_db),
@@ -5978,6 +6023,37 @@ async def get_related_events(
 
 
 @router.get("/{market_id}/progression")
+async def get_progression_cached(
+    market_id: int,
+    top_n: int = Query(32, ge=1, le=64, description="Max participants to return"),
+    golf_card_receipt: Optional[str] = Query(
+        None,
+        max_length=64,
+        description=(
+            "Receipt of the GET /api/golf card snapshot the caller is displaying "
+            "(UX-P271). Golf only. Binds the Win column to that exact snapshot "
+            "rather than to whatever the cache holds at request time, which is not "
+            "the same thing once the card has been served from an HTTP cache. The "
+            "receipt actually applied is echoed back as `golf_card_receipt`."
+        ),
+    ),
+    db: AsyncSession = Depends(get_db),
+    fresh: bool = False,
+):
+    """Cached HTTP entry for ``GET /api/futures/{market_id}/progression`` (<= 60 s)."""
+    return await _futures_page_cache.serve_cached_or_build(
+        key=_futures_page_cache.progression_key(market_id, top_n, golf_card_receipt),
+        fresh=fresh,
+        build=lambda: get_progression(
+            market_id=market_id,
+            top_n=top_n,
+            golf_card_receipt=golf_card_receipt,
+            db=db,
+        ),
+        ttl_for=_futures_page_cache.subroute_ttl,
+    )
+
+
 async def get_progression(
     market_id: int,
     top_n: int = Query(32, ge=1, le=64, description="Max participants to return"),
@@ -8603,7 +8679,7 @@ def _select_charted_outcome_ids(
 
 
 @router.get("/{market_id}/history")
-async def get_futures_history(
+async def get_futures_history_cached(
     market_id: int,
     outcome_id: Optional[int] = Query(None, description="Filter to specific outcome"),
     hours: int = Query(168, description="Hours of history (default 7 days)"),
@@ -8616,6 +8692,45 @@ async def get_futures_history(
     ),
     db: AsyncSession = Depends(get_db),
     history_range: Optional[str] = Query(None, alias="range", description=_FULL_RANGE_DOC),
+    fresh: bool = False,
+):
+    """Cached HTTP entry for ``GET /api/futures/{market_id}/history`` (<= 60 s)."""
+    return await _futures_page_cache.serve_cached_or_build(
+        key=_futures_page_cache.history_key(
+            market_id,
+            outcome_id,
+            hours,
+            top_n,
+            champion,
+            history_range,
+        ),
+        fresh=fresh,
+        build=lambda: get_futures_history(
+            market_id=market_id,
+            outcome_id=outcome_id,
+            hours=hours,
+            top_n=top_n,
+            champion=champion,
+            db=db,
+            history_range=history_range,
+        ),
+        ttl_for=_futures_page_cache.history_ttl,
+    )
+
+
+async def get_futures_history(
+    market_id: int,
+    outcome_id: Optional[int] = Query(None, description="Filter to specific outcome"),
+    hours: int = Query(168, description="Hours of history (default 7 days)"),
+    top_n: int = Query(10, description="Number of top outcomes to return (default 10, max 50)"),
+    champion: Optional[str] = Query(
+        None,
+        description="Settled winner-field champion NAME (#232). When the market carries "
+        "no is_winner grade (odds_api winner fields never do), resolve this outcome's "
+        "evolution line to 1.0. Callers pass the concept's authoritative structural crown.",
+    ),
+    db: AsyncSession = Depends(get_db),
+    history_range: Optional[str] = None,
 ):
     """
     Get historical odds movement for a futures market.
@@ -11252,6 +11367,23 @@ def _outcome_merge_key_from_entry(entry: dict) -> str:
 
 
 @router.get("/groups/{group_id:path}")
+async def get_group_cached(
+    group_id: str,
+    db: AsyncSession = Depends(get_db),
+    fresh: bool = False,
+):
+    """Cached HTTP entry for ``GET /api/futures/groups/{group_id}`` (<= 60 s)."""
+    return await _futures_page_cache.serve_cached_or_build(
+        key=_futures_page_cache.group_key(group_id),
+        fresh=fresh,
+        build=lambda: get_group(
+            group_id=group_id,
+            db=db,
+        ),
+        ttl_for=_futures_page_cache.subroute_ttl,
+    )
+
+
 async def get_group(
     group_id: str,
     db: AsyncSession = Depends(get_db),
