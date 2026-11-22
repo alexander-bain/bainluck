@@ -13,7 +13,7 @@ Pins the two halves of the prerequisite PR before any duplicate-team fold runs:
 2. **Anti-recreation guards on all three ``Team(...)`` creation sites:**
    - ``app.utils.espn_helpers.upsert_team``
    - ``app.tasks.sports._auto_create_missing_teams``
-   - ``app.routes.user.search_teams`` (events fallback)
+   - ``app.routes.user.search_teams`` (saved names and aliases)
    Pinned on all six real short spellings (``"Tottenham"``, ``"Newcastle"``,
    ``"Nottingham"``, ``"Ottawa"``, ``"Toronto"``, ``"Columbus"``) plus nearest
    wrong neighbours (reserve/women's sides under #13202 / 286: B, ambiguous
@@ -415,8 +415,8 @@ class TestCreationGuardsSixRealShortSpellings:
         "short_name,sport_id,expected_id,full_name,espn_id",
         SIX_SHORT_SPELLINGS,
     )
-    async def test_site3_user_search_fallback_does_not_recreate_short_spelling(
-        self, short_name, sport_id, expected_id, full_name, espn_id
+    async def test_site3_user_search_does_not_recreate_short_spelling(
+        self, short_name, sport_id, expected_id, full_name, espn_id, monkeypatch
     ):
         sync, db = _make_session()
         _seed_six_canonical_clubs(sync)
@@ -436,6 +436,10 @@ class TestCreationGuardsSixRealShortSpellings:
         )
         sync.commit()
 
+        async def no_snapshot(candidates):
+            return None
+
+        monkeypatch.setattr(user_route, "onboarding_team_members", no_snapshot)
         results = await user_route.search_teams(q=short_name, db=db)
         assert any(r.id == expected_id for r in results)
         # No duplicate row for the short spelling was minted
@@ -448,8 +452,8 @@ class TestCreationGuardsSixRealShortSpellings:
         assert len(sync.execute(select(Team)).scalars().all()) == before_count
 
     @pytest.mark.asyncio
-    async def test_site3_user_search_fallback_reaches_retired_redirect_when_teams_query_misses(
-        self,
+    async def test_site3_user_search_keeps_the_linked_clubs_retired_name(
+        self, monkeypatch,
     ):
         sync, db = _make_session()
         _seed_six_canonical_clubs(sync)
@@ -477,6 +481,10 @@ class TestCreationGuardsSixRealShortSpellings:
         sync.commit()
         before_count = len(sync.execute(select(Team)).scalars().all())
 
+        async def no_snapshot(candidates):
+            return None
+
+        monkeypatch.setattr(user_route, "onboarding_team_members", no_snapshot)
         results = await user_route.search_teams(q="Spurs", db=db)
         assert any(r.id == 146 and r.name == "Tottenham Hotspur" for r in results)
         assert len(sync.execute(select(Team)).scalars().all()) == before_count
