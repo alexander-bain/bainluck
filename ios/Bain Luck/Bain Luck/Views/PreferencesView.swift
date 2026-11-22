@@ -577,11 +577,13 @@ struct PreferencesView: View {
                     .font(.subheadline)
                     .fontWeight(isActive ? .semibold : .regular)
                     .foregroundStyle(isActive ? .primary : .secondary)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .allowsTightening(true)
                     .minimumScaleFactor(AffinityRowMetrics.nameMinimumScaleFactor)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
-            Spacer()
+            Spacer(minLength: 0)
 
             // Affinity capsules
             HStack(spacing: AffinityRowMetrics.capsuleSpacing) {

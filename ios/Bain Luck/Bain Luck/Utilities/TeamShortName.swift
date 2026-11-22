@@ -1351,4 +1351,87 @@ enum TeamShortName {
         // labels for what is, in the data, one team playing itself.
         return (away, home)
     }
+
+    // MARK: - Futures Chart Labels & Badges (#13386)
+
+    /// Two-word city/place franchise prefixes (e.g. "San Antonio", "New York",
+    /// "Golden State") where taking the last word alone yields a fragment
+    /// ("Antonio", "York", "State") instead of naming the team.
+    private static let twoWordPlacePrefixes: Set<String> = [
+        "san", "santa", "los", "las", "new", "st", "saint", "fort", "ft",
+        "salt", "tampa", "green", "golden", "el", "des", "baton", "grand",
+        "north", "south", "east", "west", "rhode", "long", "palm", "cape",
+        "port", "bay", "kansas", "oklahoma",
+    ]
+
+    /// Leading non-competitor tokens kept verbatim on futures chart labels.
+    private static let nonNameLeadingWords: Set<String> = [
+        "yes", "no", "over", "under", "above", "below",
+        "before", "after", "between", "less", "more", "at",
+    ]
+
+    /// Special two-word place badges where standard two-initial truncation
+    /// does not match the city's familiar mark.
+    private static let twoWordPlaceBadges: [String: String] = [
+        "oklahoma city": "OKC",
+        "st louis": "STL",
+        "saint louis": "STL",
+    ]
+
+    /// True for two-word city/place names such as "San Antonio", "Oklahoma City",
+    /// "New York", "Golden State", or "Tampa Bay", where the last word is part
+    /// of the place rather than a standalone mascot or surname.
+    static func isTwoWordPlaceName(_ name: String) -> Bool {
+        let words = name.split(whereSeparator: \.isWhitespace)
+        guard words.count == 2 else { return false }
+        let first = bareToken(words[0]).lowercased()
+        if twoWordPlacePrefixes.contains(first) {
+            return true
+        }
+        return isNonDistinctiveToken(words[1])
+    }
+
+    /// Whole-word contender label for futures charts without ellipsis truncation.
+    static func futuresChartLabel(_ name: String) -> String {
+        let stripped = name
+            .components(separatedBy: " · ").first?
+            .components(separatedBy: " — ").first?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? name
+        guard !stripped.isEmpty else { return "" }
+        let words = stripped.split(whereSeparator: \.isWhitespace)
+        if stripped.first?.isNumber == true {
+            return stripped
+        }
+        if let first = words.first, nonNameLeadingWords.contains(bareToken(first).lowercased()) {
+            return stripped
+        }
+        if isTwoWordPlaceName(stripped) {
+            return stripped
+        }
+        return short(stripped)
+    }
+
+    /// Two- or three-letter badge initials for a futures contender row. Two-word
+    /// city/place names take one glyph from each word ("San Antonio" -> "SA",
+    /// "Oklahoma City" -> "OKC") rather than chopping the second word alone.
+    static func futuresBadgeInitials(_ name: String) -> String {
+        let stripped = name
+            .components(separatedBy: " · ").first?
+            .components(separatedBy: " — ").first?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? name
+        if isTwoWordPlaceName(stripped) {
+            let words = stripped.split(whereSeparator: \.isWhitespace)
+            let normalizedPlace = words.map { bareToken($0).lowercased() }.joined(separator: " ")
+            if let special = twoWordPlaceBadges[normalizedPlace] {
+                return special
+            }
+            let initials = String(
+                words.compactMap { $0.first(where: { $0.isLetter || $0.isNumber }) }
+            ).uppercased()
+            if !initials.isEmpty {
+                return initials
+            }
+        }
+        return abbreviation(stripped)
+    }
 }

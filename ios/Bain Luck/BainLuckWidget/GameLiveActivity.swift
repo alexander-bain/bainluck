@@ -175,6 +175,12 @@ private struct GameActivityReading {
         guard let value = percent(side) else { return nil }
         return snapshot.headlineNowText(home: side == .home) ?? percentText(value)
     }
+    /// #13392 — Dynamic Island Minimal shows whole percents (`57%`) on one line;
+    /// Lock Screen, Compact, Expanded, and Smart Stack retain tenths (`nowText`).
+    func minimalNowText(_ side: Side) -> String? {
+        guard let value = percent(side) else { return nil }
+        return percentText(value)
+    }
     /// The side the compact views lead with: the favourite of a two-way game, else home.
     var lead: Side {
         guard let pair else { return .home }
@@ -892,8 +898,9 @@ private struct GameActivityMinimal: View {
                 Image(systemName: "flag.checkered")
             } else if reading.snapshot.isTerminal {
                 Image(systemName: "questionmark")
-            } else if let now = reading.nowText(reading.lead) {
+            } else if let now = reading.minimalNowText(reading.lead) {
                 Text(now)
+                    .lineLimit(1)
                     .minimumScaleFactor(0.6)
                     .foregroundStyle(reading.color(reading.lead, onDark: true))
             } else if reading.snapshot.lifecycle == .live,

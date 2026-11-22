@@ -413,6 +413,7 @@ nonisolated struct MachineryHistoryChartItem: Decodable, Equatable, Identifiable
 nonisolated struct MachineryVisualBlock: Decodable, Equatable, Sendable {
     let formId: MachineryFormId
     let initialVisibleLimit: Int
+    let itemNoun: String?
     let pairedMetricSet: PairedMetricSet?
     let eventItems: [MachineryEventVisualItem]
     let marketItems: [MachineryMarketVisualItem]
@@ -422,9 +423,15 @@ nonisolated struct MachineryVisualBlock: Decodable, Equatable, Sendable {
         min(3, max(1, initialVisibleLimit))
     }
 
+    var effectiveItemNoun: String {
+        let trimmed = itemNoun?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? "markets" : trimmed
+    }
+
     init(
         formId: MachineryFormId,
         initialVisibleLimit: Int = 3,
+        itemNoun: String? = nil,
         pairedMetricSet: PairedMetricSet? = nil,
         eventItems: [MachineryEventVisualItem] = [],
         marketItems: [MachineryMarketVisualItem] = [],
@@ -432,6 +439,8 @@ nonisolated struct MachineryVisualBlock: Decodable, Equatable, Sendable {
     ) {
         self.formId = formId
         self.initialVisibleLimit = initialVisibleLimit
+        let trimmed = itemNoun?.trimmingCharacters(in: .whitespacesAndNewlines)
+        self.itemNoun = (trimmed?.isEmpty == false) ? trimmed : nil
         self.pairedMetricSet = pairedMetricSet
         self.eventItems = eventItems
         self.marketItems = marketItems
@@ -444,6 +453,9 @@ nonisolated struct MachineryVisualBlock: Decodable, Equatable, Sendable {
         let resolvedForm = MachineryFormId(rawValue: rawForm) ?? .siblingFieldsGrid
         self.formId = resolvedForm
         self.initialVisibleLimit = c.decodeFirst(Int.self, keys: ["initialVisibleLimit", "initial_visible_limit"]) ?? 3
+        let rawNoun = c.decodeFirst(String.self, keys: ["itemNoun", "item_noun", "unitNoun", "unit_noun"])?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        self.itemNoun = (rawNoun?.isEmpty == false) ? rawNoun : nil
         self.pairedMetricSet = c.decodeFirst(PairedMetricSet.self, keys: ["pairedMetricSet", "paired_metric_set"])
 
         switch resolvedForm {

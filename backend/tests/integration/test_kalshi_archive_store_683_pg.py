@@ -1165,6 +1165,9 @@ async def test_a_thinned_older_live_read_claims_only_the_intervals_its_skipped_c
     assert whole["history_range"]["live_thinned"] is False
 
     # Three instants, cap 1: rank stride 3 keeps the first and the last only.
+    from app.utils import futures_page_cache as _fpc
+
+    _fpc._reset_for_tests()
     monkeypatch.setattr(full_range_live, "OLDER_LIVE_INSTANT_CAP", 1)
     thin = (await c.get(url, params=params)).json()
     assert _live_times(_b(thin)) == {
@@ -1544,6 +1547,9 @@ async def test_cert4141_default_cap_restores_the_adjacent_price_and_discloses_th
     assert whole["history_range"]["live_thinned"] is False
     assert adjacent in _a(whole) and undecided in _a(whole), "positive control"
     assert whole["history_range"]["served_history"] == "complete"
+    from app.utils import futures_page_cache as _fpc
+
+    _fpc._reset_for_tests()
     monkeypatch.setattr(full_range_live, "OLDER_LIVE_INSTANT_CAP", 2000)
     r = await c.get(url, params=params)
     assert r.status_code == 200, r.text
@@ -1867,6 +1873,9 @@ async def test_before_the_migration_the_chart_is_exactly_as_it_was(client, world
                   "kalshi_archive_imports"):
             await conn.execute(text(f"DROP TABLE {t}"))
     reader._presence.update(value=None, checked=0.0)
+    from app.utils import futures_page_cache as _fpc
+
+    _fpc._reset_for_tests()
     without = (
         await c.get(
             f"/api/futures/{ids['market']}/history", params={"hours": HOURS, "top_n": 50}

@@ -180,5 +180,126 @@ class LaunchNeverAcceptedTests(unittest.TestCase):
         self.assertIn("if: always()", step)
 
 
+CLOCKFACE_CASE = "Test Case '-[BainLuckWatchUITests.WidgetTapJourneyTests testColdActualWidgetTapRetainsOfflineReading]'"
+CLOCKFACE_OVERRUN = (
+    f"{CLOCKFACE_CASE} started.\n"
+    "    t =     0.00s Start Test at 2026-11-21 18:59:28.538\n"
+    + "".join(
+        f"    t = {i*62+17:7.2f}s         Wait for com.apple.clockface to idle\n"
+        f"    t = {i*62+77:7.2f}s App animations complete notification not received, will attempt to continue.\n"
+        for i in range(8)
+    )
+    + f"{CLOCKFACE_CASE} exceeded execution time allowance of 9 minutes. The test may have hung.\n"
+    + "Restarting after unexpected exit, crash, or test timeout; summary will include totals from previous launches.\n"
+    + "** TEST EXECUTE FAILED **\n"
+)
+
+
+class ClockfaceIdleRetryTests(unittest.TestCase):
+    def test_verbatim_clockface_nine_minute_overrun_is_retried(self):
+        reason = infra.infra_abort(CLOCKFACE_OVERRUN)
+        self.assertIsNotNone(reason)
+        self.assertIn("com.apple.clockface", reason)
+        self.assertIn("testColdActualWidgetTapRetainsOfflineReading", reason)
+
+    def test_three_clockface_stalls_below_threshold_are_not_retried(self):
+        fewer = (
+            f"{CLOCKFACE_CASE} started.\n"
+            + "".join(
+                f"    t = {i*62+17:7.2f}s         Wait for com.apple.clockface to idle\n"
+                f"    t = {i*62+77:7.2f}s App animations complete notification not received, will attempt to continue.\n"
+                for i in range(3)
+            )
+            + f"{CLOCKFACE_CASE} exceeded execution time allowance of 9 minutes.\n"
+        )
+        self.assertIsNone(infra.infra_abort(fewer))
+
+    def test_in_app_idle_timeouts_are_never_retried(self):
+        in_app = (
+            f"{CLOCKFACE_CASE} started.\n"
+            + "".join(
+                f"    t = {i*62+17:7.2f}s         Wait for com.bainluck.Bain-Luck.watchkitapp to idle\n"
+                f"    t = {i*62+77:7.2f}s App animations complete notification not received, will attempt to continue.\n"
+                for i in range(8)
+            )
+            + f"{CLOCKFACE_CASE} exceeded execution time allowance of 9 minutes.\n"
+        )
+        self.assertIsNone(infra.infra_abort(in_app))
+
+    def test_real_assertion_failure_beside_clockface_overrun_is_never_retried(self):
+        failed = "/x/WidgetTapJourneyTests.swift:679: error: -[BainLuckWatchUITests.WidgetTapJourneyTests testActualCircularLauncherAndTap] : failed\n"
+        self.assertIsNone(infra.infra_abort(failed + CLOCKFACE_OVERRUN))
+        self.assertIsNone(infra.infra_abort("WATCH_UI_ACTUAL_CIRCULAR_LAUNCHER=FAIL\n" + CLOCKFACE_OVERRUN))
+
+    def test_clockface_overrun_beside_launch_never_accepted_overrun_is_retried(self):
+        self.assertIsNotNone(infra.infra_abort(LAUNCH_NEVER_ACCEPTED + "\n" + CLOCKFACE_OVERRUN))
+
+    def test_harness_wires_clockface_recovery_receipt_and_retry_preservation(self):
+        harness = (ROOT / "tools/watch-ui-journey.sh").read_text()
+        self.assertIn('--watch-udid "$TEST_UDID"', harness)
+        self.assertIn('--clockface-receipt "$OUT/clockface-recovery.json"', harness)
+        self.assertIn("clockface-recovery-infra-abort.json", harness)
+
+
+PRE_SESSION_REFUSAL = (
+    "Test Case '-[BainLuckWatchUITests.PickerCurrentGameJourneyTests testAdaptiveScoreShortLiveAtAccessibilitySize]' started.\n"
+    "    t =     0.08s Open com.bainluck.Bain-Luck.watchkitapp\n"
+    "    t =     0.09s     Launch com.bainluck.Bain-Luck.watchkitapp\n"
+    "    t =     0.09s         Waiting for system app quiescence\n"
+    "<unknown>:0: error: -[BainLuckWatchUITests.PickerCurrentGameJourneyTests testAdaptiveScoreShortLiveAtAccessibilitySize] : "
+    "Application 'com.bainluck.Bain-Luck.watchkitapp' does not have a process ID\n"
+    "Test Case '-[BainLuckWatchUITests.PickerCurrentGameJourneyTests testAdaptiveScoreShortLiveAtAccessibilitySize]' failed (70.326 seconds).\n"
+    "Test Case '-[BainLuckWatchUITests.PickerCurrentGameJourneyTests testAlternativeCardSelectionAndCurrentReturnAtAccessibilitySize]' started.\n"
+    "    t =     0.05s         Open com.bainluck.Bain-Luck.watchkitapp\n"
+    "    t =     0.05s             Launch com.bainluck.Bain-Luck.watchkitapp\n"
+    "<unknown>:0: error: -[BainLuckWatchUITests.PickerCurrentGameJourneyTests testAlternativeCardSelectionAndCurrentReturnAtAccessibilitySize] : "
+    "Failed to get background assertion for target app with pid 37670: No failure details provided\n"
+    "Test Case '-[BainLuckWatchUITests.PickerCurrentGameJourneyTests testAlternativeCardSelectionAndCurrentReturnAtAccessibilitySize]' failed (22.957 seconds).\n"
+    "** TEST EXECUTE FAILED **\n"
+)
+
+
+class PreSessionLaunchRefusalTests(unittest.TestCase):
+    def test_verbatim_44945738586_pre_session_launch_refusal_is_retried(self):
+        reason = infra.infra_abort(PRE_SESSION_REFUSAL)
+        self.assertIsNotNone(reason)
+        self.assertIn("refused Watch app launch before automation session start", reason)
+        self.assertIn("testAdaptiveScoreShortLiveAtAccessibilitySize", reason)
+        self.assertIn("testAlternativeCardSelectionAndCurrentReturnAtAccessibilitySize", reason)
+
+    def test_launch_error_after_automation_session_started_is_never_retried(self):
+        after_session = PRE_SESSION_REFUSAL.replace(
+            "<unknown>:0: error: -[BainLuckWatchUITests.PickerCurrentGameJourneyTests testAlternativeCardSelectionAndCurrentReturnAtAccessibilitySize]",
+            "    t =     4.55s Setting up automation session\n"
+            "<unknown>:0: error: -[BainLuckWatchUITests.PickerCurrentGameJourneyTests testAlternativeCardSelectionAndCurrentReturnAtAccessibilitySize]",
+            1,
+        )
+        self.assertIsNone(infra.infra_abort(after_session))
+
+    def test_other_unknown_zero_error_or_crash_is_never_retried(self):
+        other = (
+            "Test Case '-[BainLuckWatchUITests.PickerCurrentGameJourneyTests testAdaptiveScoreShortLiveAtAccessibilitySize]' started.\n"
+            "    t =     0.09s     Launch com.bainluck.Bain-Luck.watchkitapp\n"
+            "<unknown>:0: error: -[BainLuckWatchUITests.PickerCurrentGameJourneyTests testAdaptiveScoreShortLiveAtAccessibilitySize] : "
+            "Test crashed with signal segfault\n"
+            "Test Case '-[BainLuckWatchUITests.PickerCurrentGameJourneyTests testAdaptiveScoreShortLiveAtAccessibilitySize]' failed (5.000 seconds).\n"
+        )
+        self.assertIsNone(infra.infra_abort(other))
+
+    def test_real_assertion_failure_or_fail_marker_beside_launch_refusal_is_never_retried(self):
+        real_err = (
+            "/x/PickerCurrentGameJourneyTests.swift:45: error: "
+            "-[BainLuckWatchUITests.PickerCurrentGameJourneyTests testTeamColorNamesAndMissingFallbackAtStandardSize] : failed\n"
+        )
+        self.assertIsNone(infra.infra_abort(PRE_SESSION_REFUSAL + real_err))
+        self.assertIsNone(infra.infra_abort(PRE_SESSION_REFUSAL + "WATCH_UI_CURRENT_GAME_LARGE=FAIL\n"))
+
+    def test_harness_terminates_warmup_watch_app_and_waits_for_carousel_before_suite(self):
+        harness = (ROOT / "tools/watch-ui-journey.sh").read_text()
+        between = harness.split('>> "$OUT/preflight.log"\n', 1)[1].split("PHASE='BainLuckWatchUITests full suite", 1)[0]
+        self.assertIn('xcrun simctl terminate "$TEST_UDID" com.bainluck.Bain-Luck.watchkitapp', between)
+        self.assertIn('wait_services_ready "$TEST_UDID" com.apple.Carousel', between)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -122,8 +122,8 @@ from app.utils.aggregation import (
 )
 from app.utils.event_taxonomy import compute_event_tags, compute_market_tags
 from app.utils.market_display_name import (
-    clean_market_display_name,
     elided_trailing_preposition,
+    fill_market_display_name_blank,
 )
 from app.utils.hero_probability import resolve_hero
 from app.utils.probability_eligibility import is_refused
@@ -5351,6 +5351,7 @@ async def get_feed(
                         include_machinery=True,
                         machinery_only=True,
                         include_preview=_include_machinery_preview,
+                        apply_opening_mix=bool(_opening_seating),
                     )
                     _base_body = {
                         **_base_body,
@@ -6689,6 +6690,7 @@ async def get_feed(
                     include_machinery=True,
                     machinery_only=True,
                     include_preview=_include_machinery_preview,
+                    apply_opening_mix=bool(_opening_seating),
                 )
             if _capture is not None and feed_items is not _before_roundups:
                 _capture.abandon("roundup_containers")
@@ -10732,7 +10734,11 @@ def _score_market_trace(
     # trace exists to reproduce the card, so its copy is composed from the same
     # string the card prints; the raw stored `name` is served separately by
     # `build_discover_market_trace`.
-    display_name = clean_market_display_name(market.name)
+    display_name = fill_market_display_name_blank(
+        market.name,
+        leader_name,
+        outcome_count=len(outcomes_data),
+    )
     # #6470 — read off the RAW name: `display_name` is that string with
     # this very word removed, so deriving it from the cleaned title would
     # ask the question after deleting the answer.
@@ -14602,7 +14608,11 @@ async def _score_sports_mode_futures(
         # by...?"), so every string a person reads is composed from this and
         # every decision we make is still made from `market.name` — printed vs
         # interpreted, see `clean_market_display_name`.
-        display_name = clean_market_display_name(market.name)
+        display_name = fill_market_display_name_blank(
+            market.name,
+            leader_name,
+            outcome_count=len(outcomes_data),
+        )
         # #6470 — read off the RAW name: `display_name` is that string with
         # this very word removed, so deriving it from the cleaned title would
         # ask the question after deleting the answer.
@@ -15070,6 +15080,7 @@ async def _score_sports_mode_futures(
             "type": "futures",
             "score": personalized_score,
             "_rank_score": rank_score,
+            "_raw_market_name": market.name,
             "reason": reason,
             "headline": headline,
             "context_summary": context_summary,
@@ -16574,7 +16585,11 @@ async def _score_futures(
                 source_count = canonical_source_counts.get(market.canonical_market_key, 1)
 
             # #3513: printed vs interpreted — see `_score_sports_mode_futures`.
-            display_name = clean_market_display_name(market.name)
+            display_name = fill_market_display_name_blank(
+                market.name,
+                leader_name,
+                outcome_count=len(outcomes_data),
+            )
             # #6470 — read off the RAW name: `display_name` is that string with
             # this very word removed, so deriving it from the cleaned title would
             # ask the question after deleting the answer.
@@ -17412,6 +17427,7 @@ async def _score_futures(
                 "type": "futures",
                 "score": personalized_score,
                 "_rank_score": rank_score,
+                "_raw_market_name": market.name,
                 "reason": reason,
                 "headline": headline,
                 "context_summary": context_summary,

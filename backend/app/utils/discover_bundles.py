@@ -29,6 +29,10 @@ from app.utils.feed_market_quality import golf_tournament_display_name
 from app.utils.feed_market_quality import oscars_award_slot
 from app.utils.feed_market_quality import oscars_market_rank_key
 from app.utils.feed_market_quality import ufc_event_display_name
+from app.utils.market_display_name import (
+    _ANY_TEMPLATE_BLANK,
+    fill_market_display_name_blank,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -581,8 +585,36 @@ def _bundle_subtitle(measure: str, count: int) -> str:
     return f"What do these {count} markets say together?"
 
 
+def _bundle_member_single_row_label(data: Mapping[str, Any]) -> Optional[str]:
+    """Return the single level or deadline a collapsed bundle row displays."""
+    dc = data.get("discover_card")
+    if isinstance(dc, Mapping) and dc.get("suggested_format") == "threshold_heatmap":
+        raw_pts = dc.get("threshold_points") or ()
+        priced = [
+            pt
+            for pt in raw_pts
+            if isinstance(pt, Mapping) and pt.get("probability") is not None
+        ]
+        if len(priced) >= 2:
+            priced.sort(key=lambda pt: float(pt.get("value") or 0.0))
+            above50 = [pt for pt in priced if float(pt.get("probability") or 0.0) >= 0.5]
+            if above50:
+                is_date = all(str(pt.get("source") or "") == "date_bucket" for pt in priced)
+                chosen_pt = above50[0] if is_date else above50[-1]
+                lbl = str(chosen_pt.get("label") or "").strip()
+                if lbl:
+                    return lbl
+    top_outs = data.get("top_outcomes") or ()
+    if top_outs and isinstance(top_outs[0], Mapping):
+        lbl = str(top_outs[0].get("name") or "").strip()
+        if lbl:
+            return lbl
+    return None
+
+
 def _public_member_item(item: dict[str, Any]) -> dict[str, Any]:
-    return {
+    raw_name = item.get("_raw_market_name")
+    pub = {
         key: value
         for key, value in item.items()
         if not key.startswith("_")
@@ -595,6 +627,28 @@ def _public_member_item(item: dict[str, Any]) -> dict[str, Any]:
             "_review_decision_penalty",
         }
     }
+    data = pub.get("data")
+    if isinstance(data, Mapping):
+        template_source = (
+            raw_name
+            if isinstance(raw_name, str) and _ANY_TEMPLATE_BLANK.search(raw_name)
+            else data.get("name")
+        )
+        if isinstance(template_source, str) and _ANY_TEMPLATE_BLANK.search(template_source):
+            chosen_label = _bundle_member_single_row_label(data)
+            if chosen_label:
+                filled = fill_market_display_name_blank(
+                    template_source,
+                    chosen_label,
+                    single_row=True,
+                )
+                if filled:
+                    pub["data"] = {
+                        **data,
+                        "name": filled,
+                        "title_states_single_answer": True,
+                    }
+    return pub
 
 
 def _make_bundle_item(
@@ -604,9 +658,10 @@ def _make_bundle_item(
     sort_time = max(float(item.get("_sort_time") or 0) for item in items)
     title = _THEME_TITLES.get(theme, "Comparable market ranges")
     member_ids = [(_futures_data(item)).get("id") for item in items]
+    public_items = [_public_member_item(item) for item in items]
     entities = [
         _market_entity_name(str((_futures_data(item)).get("name") or ""), theme)
-        for item in items
+        for item in public_items
     ]
     subtitle = _bundle_subtitle(measure, len(items))
     return {
@@ -623,14 +678,14 @@ def _make_bundle_item(
             "comparison_theme": theme,
             "item_count": len(items),
             "member_ids": member_ids,
-            "items": [_public_member_item(item) for item in items],
+            "items": public_items,
             "entities": entities,
             "debug_bundles": {
                 "grouped_by": "discover_card.comparison_theme+measure",
                 "theme": theme,
                 "measure": measure,
                 "member_ids": member_ids,
-                "member_names": [(_futures_data(item)).get("name") for item in items],
+                "member_names": [(_futures_data(item)).get("name") for item in public_items],
                 "public_source_disagreement": False,
             },
         },
@@ -1233,6 +1288,7 @@ def _make_theme_bundle_item(
             },
         )
         return None
+    public_items = [_public_member_item(item) for item in ranked]
     return {
         "type": "bundle",
         "score": score,
@@ -1246,7 +1302,7 @@ def _make_theme_bundle_item(
             "shared_question": question,
             "item_count": len(ranked),
             "member_ids": member_ids,
-            "items": [_public_member_item(item) for item in ranked],
+            "items": public_items,
             "debug_bundles": {
                 "grouped_by": "story_key",
                 "story_key": story_key,
@@ -1254,7 +1310,7 @@ def _make_theme_bundle_item(
                 "question_source": question_source,
                 "member_ids": member_ids,
                 "member_names": [
-                    _futures_data(item).get("name") for item in ranked
+                    _futures_data(item).get("name") for item in public_items
                 ],
             },
         },
