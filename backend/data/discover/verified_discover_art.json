@@ -1846,6 +1846,54 @@
       "author": "Estormiz",
       "license": "CC0 1.0 Public Domain",
       "source_page": "https://commons.wikimedia.org/wiki/File:Hockey_Rink_Castren_Sports_Centre_Oulu_20250309.jpg"
+    },
+    {
+      "entity_key": "batch6-google-year-in-search-2026",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Google's 2026 Year in Search — magnifying glass on open encyclopedia beside a small globe",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5f/Magnfying_glass_book_globe.jpg/960px-Magnfying_glass_book_globe.jpg",
+      "credit": "João Silas (Public domain, Wikimedia Commons)",
+      "author": "João Silas",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Magnfying_glass_book_globe.jpg"
+    },
+    {
+      "entity_key": "batch6-pop-culture-oddities",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Pop Culture Oddities — swirling neon light tubes",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5f/Confused_Neon_%28Unsplash%29.jpg/960px-Confused_Neon_%28Unsplash%29.jpg",
+      "credit": "Clem Onojeghuo (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Clem Onojeghuo",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Confused_Neon_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch6-2026-box-office-showdown",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "2026 Box Office Showdown — rows of dark movie theater seats",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/ce/Movie_theater_seats_%28Unsplash%29.jpg/960px-Movie_theater_seats_%28Unsplash%29.jpg",
+      "credit": "Elijah Flores (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Elijah Flores",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Movie_theater_seats_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch6-golden-globes-2027",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "The 2027 Golden Globes — crimson velvet theater stage curtain",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0e/Curtain-939464.jpg/960px-Curtain-939464.jpg",
+      "credit": "tommybuddy (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "tommybuddy",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Curtain-939464.jpg"
     }
   ]
 }

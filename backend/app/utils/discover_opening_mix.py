@@ -88,6 +88,8 @@ _PURE_ODD_SLUGS: frozenset[str] = frozenset(
     {
         "machinery-elon-musk-side-quests",
         "machinery-long-shots",
+        "machinery-google-year-in-search-2026",
+        "machinery-pop-culture-oddities",
     }
 )
 _ODD_SLUGS: frozenset[str] = frozenset(
@@ -109,6 +111,8 @@ _ENTERTAINMENT_SLUGS: frozenset[str] = frozenset(
         "machinery-cast-delayed-cancelled",
         "machinery-game-awards-2026",
         "machinery-long-awaited",
+        "machinery-2026-box-office-showdown",
+        "machinery-golden-globes-2027",
         "roundup-opening-weekend",
         "gta-vi-album-features",
     }

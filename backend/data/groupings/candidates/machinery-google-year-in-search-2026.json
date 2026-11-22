@@ -1,0 +1,79 @@
+{
+  "slug": "machinery-google-year-in-search-2026",
+  "stage": "preview",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_window",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "ODD · SEARCH",
+  "name": "Google's 2026 Year in Search",
+  "category": "entertainment",
+  "tag": "ODD",
+  "section_title": "#1 Searches of 2026",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "extra_llm_categories": [
+      "tech",
+      "culture"
+    ],
+    "card_rows": 3,
+    "card_section_key": "top_1_searches",
+    "card_omit_ids": [
+      60634621,
+      60634622,
+      60634620,
+      60634619
+    ],
+    "hide_row_art": true,
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5f/Magnfying_glass_book_globe.jpg/960px-Magnfying_glass_book_globe.jpg",
+    "card_image_alt": "Magnifying glass resting on an open encyclopedia beside a small globe",
+    "card_image_credit": "João Silas (Public domain, Wikimedia Commons)",
+    "card_image_author": "João Silas",
+    "card_image_license": "Public domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Magnfying_glass_book_globe.jpg",
+    "sections": [
+      {
+        "key": "top_1_searches",
+        "title": "#1 Searches of 2026",
+        "item_noun": "lists",
+        "note": "Which movies, TV shows, actors, and athletes top Google's Year in Search for 2026.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch6-google-year-in-search-top1",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 4,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      },
+      {
+        "key": "top_5_searches",
+        "title": "Top 5 Searches of 2026",
+        "item_noun": "lists",
+        "note": "Names and titles favored to finish inside Google Search's global top five.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch6-google-year-in-search-top5",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 2,
+          "max_items": 4,
+          "max_outcomes": 1,
+          "initial_visible_limit": 4,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,55 @@
+{
+  "slug": "machinery-2026-box-office-showdown",
+  "stage": "preview",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_window",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "ENTERTAINMENT · BOX OFFICE",
+  "name": "2026 Box Office Showdown",
+  "category": "entertainment",
+  "tag": "ENTERTAINMENT",
+  "section_title": "Box Office Contenders",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "extra_llm_categories": [
+      "culture"
+    ],
+    "card_rows": 3,
+    "card_section_key": "box_office",
+    "hide_row_art": true,
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/ce/Movie_theater_seats_%28Unsplash%29.jpg/960px-Movie_theater_seats_%28Unsplash%29.jpg",
+    "card_image_alt": "Rows of dark movie theater seats inside a cinema hall",
+    "card_image_credit": "Elijah Flores (CC0 1.0 Public Domain, Wikimedia Commons)",
+    "card_image_author": "Elijah Flores",
+    "card_image_license": "CC0 1.0 Public Domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Movie_theater_seats_(Unsplash).jpg",
+    "sections": [
+      {
+        "key": "box_office",
+        "title": "Box Office Contenders",
+        "item_noun": "races",
+        "note": "The year's biggest worldwide grosses, opening weekends, and head-to-head matchups.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch6-2026-box-office-showdown",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 10,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}

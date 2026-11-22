@@ -1718,6 +1718,25 @@ _BARE_MONTH_YEAR_OR_YEAR_RE = re.compile(
     rf"^(?:{_MONTH_TOKEN_PATTERN}\s+20\d{{2}}|20\d{{2}})$",
     re.IGNORECASE,
 )
+_RANK_RANGE_OUTCOME_RE = re.compile(r"^Rank\s+(\d+)\s+to\s+(\d+)$", re.IGNORECASE)
+
+
+def _format_rank_range_phrase(lead_ans: str) -> tuple[str, str]:
+    """Turn a bucketed chart-rank answer like ``Rank 1 to 2`` into readable copy.
+
+    Returns ``(bare_phrase, with_article_phrase)`` — e.g. ``("top 2", "the top 2")``
+    when the range begins at 1, or ``("spots 3 to 4", "spots 3 to 4")`` otherwise.
+    """
+    ans = lead_ans.strip().rstrip("?").strip()
+    m = _RANK_RANGE_OUTCOME_RE.match(ans)
+    if m:
+        start = int(m.group(1))
+        end = int(m.group(2))
+        if start == 1:
+            return f"top {end}", f"the top {end}"
+        return f"spots {start} to {end}", f"spots {start} to {end}"
+    lower = ans.lower()
+    return lower, lower
 
 
 def _abbreviate_month_names(text: str) -> str:
@@ -1731,6 +1750,8 @@ def _format_fun_lead_answer_label(base_title: str, lead_ans: str) -> tuple[str, 
     """Format a non-Yes/No fun market's leading answer onto its short label.
 
     Returns ``(display_title, is_date_timing_row)``.
+    - Templates containing ``{rank_slot}`` / ``{the_rank_slot}`` render e.g.
+      ``top 2`` / ``the top 2`` (or ``spots 3 to 4``) inline without appending ``: ...``.
     - Bare month+day answers (e.g. ``December 31``, ``March 31, 2027``) read
       ``"<base> by Dec 31"`` / ``"<base> by Mar 31, 2027"`` (Fable Nov 20 look).
     - Bare month+year or year answers (e.g. ``March 2027``, ``2027``) read
@@ -1741,6 +1762,16 @@ def _format_fun_lead_answer_label(base_title: str, lead_ans: str) -> tuple[str, 
       with ``is_date_timing_row = False``.
     """
     ans = lead_ans.strip().rstrip("?").strip()
+    if "{rank_slot}" in base_title or "{the_rank_slot}" in base_title:
+        rank_slot, the_rank_slot = _format_rank_range_phrase(ans)
+        if not rank_slot:
+            return base_title, False
+        return (
+            base_title.replace("{rank_slot}", rank_slot)
+            .replace("{the_rank_slot}", the_rank_slot)
+            .strip(),
+            False,
+        )
     if not ans or ans.lower() in {"yes", "no"}:
         return base_title, False
     m_prep = _PREP_DATE_OUTCOME_RE.match(ans)
@@ -2003,13 +2034,17 @@ def _hydrate_market_visual_item(
         )
 
         def _render_tpl(tpl: str) -> Optional[str]:
-            if any(tok in tpl for tok in ("{answer}", "{the_answer}", "{cap_the_answer}")):
+            if any(tok in tpl for tok in ("{answer}", "{lower_answer}", "{the_answer}", "{cap_the_answer}", "{rank_slot}", "{the_rank_slot}")):
                 if not lead_ans_clean or lead_ans_clean.lower() in {"yes", "no"}:
                     return None
+                rank_slot, the_rank_slot = _format_rank_range_phrase(lead_ans_clean)
                 return (
                     tpl.replace("{answer}", lead_ans_for_phrase)
+                    .replace("{lower_answer}", lead_ans_for_phrase.lower())
                     .replace("{the_answer}", ans_with_the)
                     .replace("{cap_the_answer}", ans_cap_the)
+                    .replace("{rank_slot}", rank_slot)
+                    .replace("{the_rank_slot}", the_rank_slot)
                     .rstrip("?")
                     .strip()
                 )
