@@ -4922,7 +4922,7 @@ async def get_futures_market(
         and detail.get("source") in {"kalshi", "polymarket"}
         and len(served_outcomes) > 1
         and any(row.get("probability") is not None for row in served_outcomes)
-        and not any(row.get("rendered_percent") is not None for row in served_outcomes)
+        and not any(row.get("rendered_percent") for row in served_outcomes)
     ):
         detail["outcome_prices_are_independent"] = True
     return detail
@@ -5353,7 +5353,9 @@ def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
     requested row's provenance. Badges are renumbered by the canonical
     `assign_display_ranks`, because the client sorts on the value it is given.
     """
-    from app.utils.outcome_display import assign_display_ranks, normalize_display_probs
+    from app.utils.outcome_display import (
+        assign_display_ranks, encode_one_cent_kalshi_bounds, normalize_display_probs,
+    )
     from app.utils.futures_verified_title import apply_title_display
     from app.utils.futures_source_mark import (
         describe_field_normalization, verified_futures_source_mark,
@@ -5418,16 +5420,19 @@ def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
             for key in ("opening_probability", "opening_american_odds", "probability_change_24h"):
                 row[key] = None
     assign_display_ranks(detail["outcomes"])
-    original_prices = {o.id: o.current_probability for o in market.outcomes}
+    source_outcomes = {o.id: o for o in market.outcomes}
     for row in detail["outcomes"]:
         overlay = verdict.overlay.get(row["id"]) if isinstance(verdict, Composition) else None
         describe_field_normalization(
             row["source_mark"],
             input_probability=(
-                overlay.probability if overlay else original_prices.get(row["id"])
+                overlay.probability if overlay else getattr(
+                    source_outcomes.get(row["id"]), "current_probability", None,
+                )
             ),
             displayed_probability=row["probability"],
         )
+    encode_one_cent_kalshi_bounds(market, detail["outcomes"], source_outcomes)
     # The stored sentence was written about the source row's numbers.
     if changed and detail.get("hook_description"):
         detail["hook_description"] = None
@@ -10082,6 +10087,7 @@ def _format_market_detail(
         drop_dominant_field_outcomes,
         drop_incoherent_near_certain,
         drop_unbacked_legs,
+        encode_one_cent_kalshi_bounds,
     )
 
     # Q480: one condition, one outcome. Dropped here, on the ORM rows, because the
@@ -11044,6 +11050,8 @@ def _format_market_detail(
             input_probability=source_outcomes[row["id"]].current_probability,
             displayed_probability=row["probability"],
         )
+    if normalize_numbers:
+        encode_one_cent_kalshi_bounds(market, outcomes, source_outcomes)
 
     # #5906: THE HOOK GOES THROUGH THE SAME GATE THE DISCOVER CARD HAS ALWAYS
     # USED. `routes/feed.py` has run every stored hook past `is_hook_stale`

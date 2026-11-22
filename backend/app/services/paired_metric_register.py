@@ -572,12 +572,8 @@ async def load_live_paired_metric_sets(
     set_ids: Sequence[str] | None = None,
     prefix: str | None = None,
     register_path: Path | None = None,
-    display_market_id: int | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Query PostgreSQL once for all referenced markets and return live-hydrated paired sets."""
-    from sqlalchemy import select
-    from sqlalchemy.orm import joinedload, selectinload
-
+    """Hydrate the paired sets, taking each winner column from its full market field."""
     from app.models.models import FuturesMarket
 
     target = register_path or PAIRED_METRIC_REGISTER_PATH
@@ -614,14 +610,48 @@ async def load_live_paired_metric_sets(
             and not isinstance(m.get("id"), bool)
         }
     elif hasattr(db, "execute"):
-        stmt = (
-            select(FuturesMarket)
-            .options(selectinload(FuturesMarket.outcomes))
-            .where(FuturesMarket.id.in_(sorted(market_ids)))
+        from app.routes.futures import (
+            _apply_verified_title_to_detail,
+            _fleet_newest_observation,
+            _format_market_detail,
+            _resolve_verified_title,
+            _verified_title_market_stmt,
+            out_legs_by_market,
+            withheld_price_outcome_ids_for_markets,
         )
-        if display_market_id in market_ids:
-            stmt = stmt.options(joinedload(FuturesMarket.sport))
-        rows = (await db.execute(stmt)).scalars().all()
+
+        stmt = _verified_title_market_stmt().where(FuturesMarket.id.in_(sorted(market_ids)))
+        rows = (await db.execute(stmt)).unique().scalars().all()
+        winner_ids = {
+            (sdata.get("stage_2_market") or {}).get("id") for sdata in selected_raw.values()
+        }
+        winner_ids.update(
+            entry.get("stage_2_market_id")
+            for sdata in selected_raw.values()
+            for entry in sdata.get("entries") or ()
+            if isinstance(entry, Mapping)
+        )
+        winner_markets = [
+            fm for fm in rows
+            if not isinstance(fm, Mapping)
+            and fm.id in winner_ids
+            and fm.status in {"open", "active"}
+            and fm.mutually_exclusive is True
+        ]
+        displayed_fields = {}
+        if winner_markets:
+            withheld = await withheld_price_outcome_ids_for_markets(db, winner_markets)
+            fleet = await _fleet_newest_observation(db, *winner_markets)
+            out_divisions = await out_legs_by_market(winner_markets)
+            for fm in winner_markets:
+                detail = _format_market_detail(
+                    fm, None, withheld.get(fm.id, set()),
+                    fleet_newest_observation=fleet,
+                    out_division_labels=out_divisions.get(fm.id),
+                    normalize_numbers=False,
+                )
+                _apply_verified_title_to_detail(detail, await _resolve_verified_title(db, fm), fm)
+                displayed_fields[fm.id] = {row["id"]: row for row in detail["outcomes"]}
         for fm in rows:
             if isinstance(fm, Mapping):
                 mid = fm.get("id")
@@ -631,28 +661,7 @@ async def load_live_paired_metric_sets(
                 mid = int(fm.id)
                 if mid in market_ids:
                     serialized = serialize_futures_market_for_pairing(fm)
-                    if (
-                        mid == display_market_id
-                        and fm.status in {"open", "active"}
-                        and fm.mutually_exclusive is True
-                    ):
-                        # Keep venue inputs for the source sheet and take the title
-                        # column from the full detail field for the open page.
-                        from app.routes.futures import (
-                            _apply_verified_title_to_detail,
-                            _format_market_detail,
-                            _resolve_verified_title,
-                            _withheld_price_outcome_ids,
-                        )
-
-                        detail = _format_market_detail(
-                            fm, None, await _withheld_price_outcome_ids(db, fm),
-                            normalize_numbers=False,
-                        )
-                        _apply_verified_title_to_detail(
-                            detail, await _resolve_verified_title(db, fm), fm,
-                        )
-                        displayed = {row["id"]: row for row in detail["outcomes"]}
+                    if (displayed := displayed_fields.get(mid)) is not None:
                         for row in serialized["outcomes"]:
                             row["detail_display"] = displayed.get(row["id"], {})
                     markets_by_id[mid] = serialized

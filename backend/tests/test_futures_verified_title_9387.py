@@ -481,6 +481,10 @@ async def test_current_title_field_serves_same_rows_to_detail_chart_and_paired_c
     chart, _ = await timeline(ODDS_ID, markets, VERIFIED)
     with _at():
         pair = (await paired_metrics.get_paired_metric_by_market(ODDS_ID, db=_DB(markets)))["set"]
+        set_page = (await paired_metrics.list_paired_metrics(
+            ceremony=None, set_id="title", db=_DB(markets),
+        ))["sets"][0]
+    assert pair == set_page
 
     for name in names:
         page = by_name(board, name)
@@ -489,6 +493,30 @@ async def test_current_title_field_serves_same_rows_to_detail_chart_and_paired_c
         assert page["rendered_percent"] == chart_row["rendered_percent"] == card_row["stage_2_rendered_percent"]
         assert page["probability"] == chart_row["current_probability"] == card_row["stage_2_probability"]
         assert card_row["stage_1_probability"] == 0.82
+
+
+@pytest.mark.parametrize("representation", ["source", VERIFIED])
+async def test_independent_kalshi_field_marks_only_the_one_cent_no_bid_ask(representation):
+    prices = (0.52, 0.42, 0.01, 0.01, 0.01)
+    rows = [
+        _outcome(210 + index, f"Film {index}", price, KALSHI_AT)
+        for index, price in enumerate(prices)
+    ]
+    rows[2].current_yes_bid, rows[2].current_yes_ask = 0, 0.01
+    rows[3].current_yes_bid, rows[3].current_yes_ask = 0.01, 0.01
+    market = _market(71000002, "kalshi", "KXOSCARPIC-27", "Award winner", rows)
+    market.market_type = "field"
+
+    page, _ = await detail(market.id, [market], representation)
+    served = {row["id"]: row for row in page["outcomes"]}
+    assert page["outcome_prices_are_independent"]
+    assert [served[row.id]["probability"] for row in rows[:2]] == list(prices[:2])
+    assert 0 < served[rows[2].id]["probability"] < 0.01
+    assert served[rows[2].id]["source_mark"]["sources"][0]["probability"] == 0.01
+    assert served[rows[3].id]["probability"] == served[rows[4].id]["probability"] == 0.01
+    assert rows[2].current_probability == 0.01
+    assert served[rows[2].id]["rendered_percent"] == 0
+    assert all(served[rows[index].id].get("rendered_percent") is None for index in (0, 1, 3, 4))
 
 
 @pytest.mark.parametrize("prices,independent", [

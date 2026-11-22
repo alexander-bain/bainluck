@@ -5007,7 +5007,7 @@ jobs:
         id: db_308_12288_grouping_preview_loads_every_candid
         # Random disposable schema; runs _load_snapshot_from_db and preview error logging over every candidate definition.
         if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
-        run: "python -m pytest tests/integration/test_container_machinery_snapshot_12288_pg.py -v -rs > /tmp/machinerysnapshot12288.txt 2>&1 || {\n  cat /tmp/machinerysnapshot12288.txt\n  exit 1\n}\ncat /tmp/machinerysnapshot12288.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/machinerysnapshot12288.txt; then\n  echo \"::error::#12288 machinery snapshot gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]3 passed([,[:space:]]|$)\" /tmp/machinerysnapshot12288.txt || {\n  echo \"::error::#12288 machinery snapshot gate did not run all three cases\"\n  exit 1\n}\n"
+        run: "python -m pytest tests/integration/test_container_machinery_snapshot_12288_pg.py -v -rs > /tmp/machinerysnapshot12288.txt 2>&1 || {\n  cat /tmp/machinerysnapshot12288.txt\n  exit 1\n}\ncat /tmp/machinerysnapshot12288.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/machinerysnapshot12288.txt; then\n  echo \"::error::#12288 machinery snapshot gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]4 passed([,[:space:]]|$)\" /tmp/machinerysnapshot12288.txt || {\n  echo \"::error::#12288 machinery snapshot gate did not run all four cases\"\n  exit 1\n}\n"
       - name: "#12612 calibration real-Postgres contracts"
         id: db_12612_calibration_contracts
         if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}

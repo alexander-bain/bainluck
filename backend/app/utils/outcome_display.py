@@ -16,7 +16,8 @@ Rules:
 from __future__ import annotations
 
 import re
-from typing import Callable, Sequence, TypeVar
+from math import nextafter
+from typing import Any, Callable, Mapping, Sequence, TypeVar
 
 from app.utils.graded_card import rendered_percent
 from app.utils.ladder_monotonicity import DEC, cumulative_outcome_ladder
@@ -78,6 +79,36 @@ _VENUE_FLOOR_PRICE = 0.01
 def is_venue_floor_price(p) -> bool:
     """True for a leg stored at exactly the one-cent venue floor (#8595)."""
     return p is not None and abs(float(p) - _VENUE_FLOOR_PRICE) < 1e-9
+
+
+def encode_one_cent_kalshi_bounds(
+    market: Any, outcomes: list[dict], source_outcomes: Mapping[int, Any]
+) -> None:
+    """Keep an open no-bid ask below the existing clients' 1% display threshold."""
+    if (
+        getattr(market, "source", None) != "kalshi"
+        or getattr(market, "status", None) not in {"open", "active"}
+        or getattr(market, "mutually_exclusive", None) is not True
+    ):
+        return
+    for row in outcomes:
+        if row.get("probability") != _VENUE_FLOOR_PRICE:
+            continue
+        mark = row.get("source_mark") or {}
+        sources = mark.get("sources") or ()
+        if mark.get("state") != "single" or len(sources) != 1 or sources[0].get("key") != "kalshi":
+            continue
+        source = source_outcomes.get(row["id"])
+        if (
+            getattr(source, "current_yes_bid", None) == 0
+            and is_venue_floor_price(getattr(source, "current_yes_ask", None))
+            and is_venue_floor_price(getattr(source, "current_probability", None))
+            and not getattr(source, "resolution_source", None)
+        ):
+            # Native reads the probability boundary. The web uses the whole
+            # allocation to distinguish a bound from a genuine 1% quote.
+            row["probability"] = nextafter(_VENUE_FLOOR_PRICE, 0.0)
+            row["rendered_percent"] = 0
 
 
 # UX-P126/F5: a field outcome at or above this DISPLAYED probability is never a real
