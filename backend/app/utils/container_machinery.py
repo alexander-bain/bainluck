@@ -1441,6 +1441,45 @@ def _parse_iso_dt_utc(raw: Any) -> Optional[datetime]:
         return None
 
 
+def _finite_volume_number(raw: Any) -> Optional[float]:
+    if not isinstance(raw, (int, float)) or isinstance(raw, bool):
+        return None
+    val = float(raw)
+    return val if math.isfinite(val) else None
+
+
+def _effective_market_volume(
+    volume: Any,
+    *,
+    volume_24h: Any = None,
+    market_metadata: Any = None,
+) -> Optional[float]:
+    """Resolve effective market volume when lifetime ``volume`` is missing (#336-A).
+
+    Uses lifetime ``volume`` when present (preserving an explicit ``0`` so a
+    measured zero-volume market still fails). When lifetime ``volume`` is missing,
+    falls back to positive ``volume_24h`` or a recorded ``traded`` Polymarket
+    ``volume_evidence.gamma_volume`` (since Polymarket sub-market upserts write
+    ``volume_24h`` and ``volume_evidence`` while leaving ``volume`` NULL). A market
+    with neither returns ``None`` so ``missing_volume`` still fails it.
+    """
+    primary = _finite_volume_number(volume)
+    if primary is not None:
+        return primary
+    v24 = _finite_volume_number(volume_24h)
+    if v24 is not None and v24 > 0.0:
+        return v24
+    if isinstance(market_metadata, Mapping):
+        ve = market_metadata.get("volume_evidence")
+        if isinstance(ve, Mapping) and str(ve.get("verdict") or "").strip().lower() == "traded":
+            gv = _finite_volume_number(ve.get("gamma_volume"))
+            if gv is not None:
+                return gv
+    if v24 is not None:
+        return v24
+    return None
+
+
 def _market_matches_query(
     market: Mapping[str, Any],
     query: Mapping[str, Any],
@@ -1489,6 +1528,11 @@ def _market_matches_query(
         )
         if not taste_ok:
             return False
+        eff_vol = _effective_market_volume(
+            market.get("volume"),
+            volume_24h=market.get("volume_24h"),
+            market_metadata=market.get("market_metadata"),
+        )
         raw_min_vol = query.get("min_lifetime_volume")
         min_vol_override = (
             int(raw_min_vol)
@@ -1496,15 +1540,19 @@ def _market_matches_query(
             else None
         )
         trading_ok, _ = check_fun_real_trading(
-            market.get("volume"), min_lifetime_volume=min_vol_override
+            eff_vol, min_lifetime_volume=min_vol_override
         )
         if not trading_ok:
             return False
     else:
         raw_min_vol = query.get("min_lifetime_volume")
         if isinstance(raw_min_vol, (int, float)) and not isinstance(raw_min_vol, bool):
-            vol_val = market.get("volume")
-            if not isinstance(vol_val, (int, float)) or isinstance(vol_val, bool) or float(vol_val) < float(raw_min_vol):
+            eff_vol = _effective_market_volume(
+                market.get("volume"),
+                volume_24h=market.get("volume_24h"),
+                market_metadata=market.get("market_metadata"),
+            )
+            if eff_vol is None or eff_vol < float(raw_min_vol):
                 return False
 
     req_tokens = [str(t).lower() for t in (query.get("title_all_tokens") or ()) if str(t).strip()]
@@ -1963,7 +2011,7 @@ def _hydrate_market_visual_item(
         )
         or ""
     )
-    card_copy = dict(market)
+    card_copy = {k: v for k, v in market.items() if k != "market_metadata"}
     card_copy["name"] = clean_raw_name
     card_copy["content_kind"] = effective_kind
     card_copy["member_page_numbers"] = mpn
@@ -2073,7 +2121,14 @@ def _hydrate_market_visual_item(
         "scale_ordered": scale_ordered,
         "content_kind": effective_kind,
         "closeness_to_50": abs(lead_prob - 0.5),
-        "_volume": float(market.get("volume") or 0.0),
+        "_volume": float(
+            _effective_market_volume(
+                market.get("volume"),
+                volume_24h=market.get("volume_24h"),
+                market_metadata=market.get("market_metadata"),
+            )
+            or 0.0
+        ),
         "outcomes": outcomes_out,
         "member_page_numbers": mpn,
         "card": card_copy,
@@ -2946,7 +3001,11 @@ async def _load_snapshot_from_db(
                     "source": fm.source,
                     "mutually_exclusive": bool(getattr(fm, "mutually_exclusive", True)),
                     "market_type": getattr(fm, "market_type", None),
-                    "volume": float(fm.volume or 0.0),
+                    "volume": _effective_market_volume(
+                        fm.volume,
+                        volume_24h=getattr(fm, "volume_24h", None),
+                        market_metadata=getattr(fm, "market_metadata", None),
+                    ),
                     "image_url": fm.image_url,
                     "llm_sport_category": fm.llm_sport_category,
                     "resolution_date": (
