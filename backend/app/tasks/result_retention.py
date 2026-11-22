@@ -161,9 +161,6 @@ RESULT_CONSUMER_TASKS: frozenset[str] = frozenset(
         "app.tasks.refresh_event_concept",
         "app.tasks.refresh_hub",
         "app.tasks.refresh_league",
-        # #13338: a search with no snapshot dispatches the rebuild. Nobody
-        # polls it, but the declared set includes every HTTP dispatch.
-        "app.tasks.refresh_onboarding_team_membership",
         # LAT-P138: dispatched by `routes/prop_families.py` after it serves the
         # 24h mirror, the same shape as the three above.
         "app.tasks.refresh_prop_families",

@@ -1873,11 +1873,10 @@ export async function submitOnboarding(
 /**
  * Search teams by name for autocomplete
  */
-export async function searchTeams(q: string, signal?: AbortSignal): Promise<TeamSearchResult[]> {
+export async function searchTeams(q: string): Promise<TeamSearchResult[]> {
   if (q.length < 2) return [];
   return apiFetch<TeamSearchResult[]>(
-    `/api/me/teams/search?q=${encodeURIComponent(q)}`,
-    { signal }
+    `/api/me/teams/search?q=${encodeURIComponent(q)}`
   );
 }
 

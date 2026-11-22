@@ -13,7 +13,7 @@ Pins the two halves of the prerequisite PR before any duplicate-team fold runs:
 2. **Anti-recreation guards on all three ``Team(...)`` creation sites:**
    - ``app.utils.espn_helpers.upsert_team``
    - ``app.tasks.sports._auto_create_missing_teams``
-   - ``app.routes.user.search_teams`` (saved names and aliases)
+   - ``app.routes.user.search_teams`` (events fallback)
    Pinned on all six real short spellings (``"Tottenham"``, ``"Newcastle"``,
    ``"Nottingham"``, ``"Ottawa"``, ``"Toronto"``, ``"Columbus"``) plus nearest
    wrong neighbours (reserve/women's sides under #13202 / 286: B, ambiguous
@@ -81,8 +81,6 @@ class _SyncBackedAsyncSession(AsyncSession):
         self._sync.add(instance)
 
     async def execute(self, statement, *args, **kwargs):
-        if str(statement) == "SET LOCAL statement_timeout = '2s'":
-            return None  # PostgreSQL enforcement is exercised in the route's integration tests.
         return self._sync.execute(statement)
 
     async def flush(self, objects=None) -> None:
@@ -417,20 +415,19 @@ class TestCreationGuardsSixRealShortSpellings:
         "short_name,sport_id,expected_id,full_name,espn_id",
         SIX_SHORT_SPELLINGS,
     )
-    async def test_site3_user_search_does_not_recreate_short_spelling(
-        self, short_name, sport_id, expected_id, full_name, espn_id, monkeypatch
+    async def test_site3_user_search_fallback_does_not_recreate_short_spelling(
+        self, short_name, sport_id, expected_id, full_name, espn_id
     ):
         sync, db = _make_session()
         _seed_six_canonical_clubs(sync)
         before_count = len(sync.execute(select(Team)).scalars().all())
 
-        # The game has the incoming spelling and the verified club link.
+        # Event carries the incoming short spelling (e.g. "Tottenham")
         sync.add(
             Event(
                 id=9000 + expected_id,
                 external_id=f"ext-{expected_id}",
                 sport_id=sport_id,
-                home_team_id=expected_id,
                 home_team_name=short_name,
                 away_team_name="Opponent FC",
                 commence_time=datetime.now(timezone.utc) + timedelta(days=1),
@@ -439,10 +436,6 @@ class TestCreationGuardsSixRealShortSpellings:
         )
         sync.commit()
 
-        async def membership(candidates):
-            return {(sport_id, expected_id)}
-
-        monkeypatch.setattr(user_route, "onboarding_team_members", membership)
         results = await user_route.search_teams(q=short_name, db=db)
         assert any(r.id == expected_id for r in results)
         # No duplicate row for the short spelling was minted
@@ -455,8 +448,8 @@ class TestCreationGuardsSixRealShortSpellings:
         assert len(sync.execute(select(Team)).scalars().all()) == before_count
 
     @pytest.mark.asyncio
-    async def test_site3_user_search_keeps_the_linked_clubs_retired_name(
-        self, monkeypatch,
+    async def test_site3_user_search_fallback_reaches_retired_redirect_when_teams_query_misses(
+        self,
     ):
         sync, db = _make_session()
         _seed_six_canonical_clubs(sync)
@@ -475,7 +468,6 @@ class TestCreationGuardsSixRealShortSpellings:
                 id=9910,
                 external_id="ext-spurs",
                 sport_id=1,
-                home_team_id=146,
                 home_team_name="Spurs",
                 away_team_name="Opponent FC",
                 commence_time=datetime.now(timezone.utc) + timedelta(days=1),
@@ -485,10 +477,6 @@ class TestCreationGuardsSixRealShortSpellings:
         sync.commit()
         before_count = len(sync.execute(select(Team)).scalars().all())
 
-        async def membership(candidates):
-            return {(1, 146)}
-
-        monkeypatch.setattr(user_route, "onboarding_team_members", membership)
         results = await user_route.search_teams(q="Spurs", db=db)
         assert any(r.id == 146 and r.name == "Tottenham Hotspur" for r in results)
         assert len(sync.execute(select(Team)).scalars().all()) == before_count

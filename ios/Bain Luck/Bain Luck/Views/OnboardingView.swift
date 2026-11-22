@@ -198,9 +198,6 @@ struct OnboardingView: View {
                         searching: vm.followSearching,
                         onChange: { vm.onFollowQueryChange() }
                     )
-                    if vm.followSearchUnavailable {
-                        teamSearchUnavailable
-                    }
 
                     // Selected chips
                     if !vm.followTeams.isEmpty {
@@ -236,9 +233,6 @@ struct OnboardingView: View {
                         searching: vm.schoolSearching,
                         onChange: { vm.onSchoolQueryChange() }
                     )
-                    if vm.schoolSearchUnavailable {
-                        teamSearchUnavailable
-                    }
 
                     if !vm.schoolTeams.isEmpty {
                         selectedChipsList(teams: vm.schoolTeams, onRemove: vm.removeSchoolTeam)
@@ -303,9 +297,6 @@ struct OnboardingView: View {
                         searching: vm.rivalSearching,
                         onChange: { vm.onRivalQueryChange() }
                     )
-                    if vm.rivalSearchUnavailable {
-                        teamSearchUnavailable
-                    }
 
                     if !vm.rivalTeams.isEmpty {
                         selectedChipsList(teams: vm.rivalTeams, onRemove: vm.removeRivalTeam, isRival: true)
@@ -323,12 +314,6 @@ struct OnboardingView: View {
     }
 
     // MARK: - Shared Components
-
-    private var teamSearchUnavailable: some View {
-        Text("Team search is unavailable. Try again shortly.")
-            .font(.footnote)
-            .foregroundStyle(.secondary)
-    }
 
     private func stepHeader(title: String, subtitle: String) -> some View {
         VStack(alignment: .leading, spacing: 4) {

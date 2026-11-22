@@ -7499,24 +7499,6 @@ def refresh_open_futures_outcomes(self, budget_seconds: int = None):
     )
 
 
-@celery_app.task(
-    soft_time_limit=135,
-    time_limit=150,
-    name="app.tasks.refresh_onboarding_team_membership",
-)
-def refresh_onboarding_team_membership():
-    """Refresh the set that keeps fixture scans off onboarding searches."""
-    from app.services.onboarding_team_membership import rebuild_onboarding_team_membership
-    from app.tasks.base import get_task_session
-    from app.tasks.redis_state import get_redis_client
-
-    async def refresh():
-        async with get_task_session() as db:
-            return await rebuild_onboarding_team_membership(db, get_redis_client())
-
-    return _tracked_run("refresh_onboarding_team_membership", refresh())
-
-
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=140, name="app.tasks.warm_search_head")
 def warm_search_head(self, head_size: int = None):
     """Keep the head of the `/search` distribution inside its response cache.
@@ -9200,12 +9182,6 @@ celery_app.conf.beat_schedule = {
         # database time a pass (one 1/12 slice, one delta, one anti-join).
         "schedule": crontab(minute="2-59/5"),
         "options": {"queue": "background"},
-    },
-    "refresh-onboarding-team-membership": {
-        "task": "app.tasks.refresh_onboarding_team_membership",
-        # One overnight scan at 11:21 UTC, outside settlement's :31-:44 window.
-        "schedule": crontab(hour=11, minute=21),
-        "options": {"queue": "background", "expires": 300},
     },
     "warm-search-head": {
         "task": "app.tasks.warm_search_head",
