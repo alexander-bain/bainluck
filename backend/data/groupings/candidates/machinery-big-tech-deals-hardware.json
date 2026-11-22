@@ -28,12 +28,12 @@
     "card_section_key": "big_tech_deals_hardware",
     "hide_row_art": true,
     "suppress_card_photo": true,
-    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/87/Collection_of_historical_CPUs.jpg/960px-Collection_of_historical_CPUs.jpg",
-    "card_image_alt": "Rows of exposed silicon microprocessor chips arranged side by side",
-    "card_image_credit": "Martijn Boer (Public domain, Wikimedia Commons)",
-    "card_image_author": "Martijn Boer",
-    "card_image_license": "Public domain",
-    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Collection_of_historical_CPUs.jpg",
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/dd/OxidizedSiliconWafer.jpg/960px-OxidizedSiliconWafer.jpg",
+    "card_image_alt": "Reflective oxidized silicon semiconductor wafer with unbranded integrated-circuit patterns",
+    "card_image_credit": "90lbNose (CC0 1.0 Public Domain, Wikimedia Commons)",
+    "card_image_author": "90lbNose",
+    "card_image_license": "CC0 1.0 Public Domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:OxidizedSiliconWafer.jpg",
     "sections": [
       {
         "key": "big_tech_deals_hardware",

@@ -1828,24 +1828,24 @@
       "aliases": [],
       "kind": "topic",
       "presentation": "photo",
-      "verified_subject": "Big Tech Deals & Hardware — arranged historical microprocessor chips",
-      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/87/Collection_of_historical_CPUs.jpg/960px-Collection_of_historical_CPUs.jpg",
-      "credit": "Martijn Boer (Public domain, Wikimedia Commons)",
-      "author": "Martijn Boer",
-      "license": "Public domain",
-      "source_page": "https://commons.wikimedia.org/wiki/File:Collection_of_historical_CPUs.jpg"
+      "verified_subject": "Big Tech Deals & Hardware — unbranded oxidized silicon semiconductor wafer",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/dd/OxidizedSiliconWafer.jpg/960px-OxidizedSiliconWafer.jpg",
+      "credit": "90lbNose (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "90lbNose",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:OxidizedSiliconWafer.jpg"
     },
     {
       "entity_key": "batch5-nhl-100-point-club",
       "aliases": [],
       "kind": "topic",
       "presentation": "photo",
-      "verified_subject": "NHL 100-Point Club — ice hockey arena rink between periods",
-      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c6/Yost_Ice_Arena%2C_Michigan_Ice_Hockey_Game_During_Intermission.jpg/500px-Yost_Ice_Arena%2C_Michigan_Ice_Hockey_Game_During_Intermission.jpg",
-      "credit": "Kyvuh (CC0 1.0 Public Domain, Wikimedia Commons)",
-      "author": "Kyvuh",
+      "verified_subject": "NHL 100-Point Club — unmarked empty outdoor ice hockey rink",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/16/Hockey_Rink_Castren_Sports_Centre_Oulu_20250309.jpg/960px-Hockey_Rink_Castren_Sports_Centre_Oulu_20250309.jpg",
+      "credit": "Estormiz (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Estormiz",
       "license": "CC0 1.0 Public Domain",
-      "source_page": "https://commons.wikimedia.org/wiki/File:Yost_Ice_Arena,_Michigan_Ice_Hockey_Game_During_Intermission.jpg"
+      "source_page": "https://commons.wikimedia.org/wiki/File:Hockey_Rink_Castren_Sports_Centre_Oulu_20250309.jpg"
     }
   ]
 }
