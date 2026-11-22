@@ -23,14 +23,16 @@ final class OnboardingViewModel: ObservableObject {
     @Published var followQuery = ""
     @Published private(set) var followResults: [TeamSearchResult] = []
     @Published private(set) var followTeams: [SelectedTeam] = []
-    @Published private(set) var followSearching = false
+    var followSearching: Bool { searchingFor == .follow }
+    var followSearchUnavailable: Bool { unavailableSearches.contains(.follow) }
 
     // MARK: - Step 3: Alma Maters
 
     @Published var schoolQuery = ""
     @Published private(set) var schoolResults: [TeamSearchResult] = []
     @Published private(set) var schoolTeams: [SelectedTeam] = []
-    @Published private(set) var schoolSearching = false
+    var schoolSearching: Bool { searchingFor == .school }
+    var schoolSearchUnavailable: Bool { unavailableSearches.contains(.school) }
 
     // MARK: - Step 4: Sport Affinities
 
@@ -41,7 +43,8 @@ final class OnboardingViewModel: ObservableObject {
     @Published var rivalQuery = ""
     @Published private(set) var rivalResults: [TeamSearchResult] = []
     @Published private(set) var rivalTeams: [SelectedTeam] = []
-    @Published private(set) var rivalSearching = false
+    var rivalSearching: Bool { searchingFor == .rival }
+    var rivalSearchUnavailable: Bool { unavailableSearches.contains(.rival) }
 
     // MARK: - Submission
 
@@ -51,6 +54,8 @@ final class OnboardingViewModel: ObservableObject {
     // MARK: - Debounce
 
     private var debounceTask: Task<Void, Never>?
+    @Published private var searchingFor: SearchTarget?
+    @Published private var unavailableSearches: Set<SearchTarget> = []
 
     // MARK: - All Selected IDs (for dedup)
 
@@ -67,6 +72,7 @@ final class OnboardingViewModel: ObservableObject {
 
     func onLocationQueryChange() {
         debounceTask?.cancel()
+        searchingFor = nil
         let trimmed = locationQuery.trimmingCharacters(in: .whitespaces)
         if trimmed.count < 2 {
             locationResults = []
@@ -112,17 +118,7 @@ final class OnboardingViewModel: ObservableObject {
     // MARK: - Follow Search (Step 2)
 
     func onFollowQueryChange() {
-        debounceTask?.cancel()
-        let trimmed = followQuery.trimmingCharacters(in: .whitespaces)
-        if trimmed.count < 2 {
-            followResults = []
-            return
-        }
-        debounceTask = Task {
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            guard !Task.isCancelled else { return }
-            await searchTeams(trimmed, target: .follow)
-        }
+        updateTeamSearch(followQuery, target: .follow)
     }
 
     func addFollowTeam(_ result: TeamSearchResult) {
@@ -142,17 +138,7 @@ final class OnboardingViewModel: ObservableObject {
     // MARK: - School Search (Step 3)
 
     func onSchoolQueryChange() {
-        debounceTask?.cancel()
-        let trimmed = schoolQuery.trimmingCharacters(in: .whitespaces)
-        if trimmed.count < 2 {
-            schoolResults = []
-            return
-        }
-        debounceTask = Task {
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            guard !Task.isCancelled else { return }
-            await searchTeams(trimmed, target: .school)
-        }
+        updateTeamSearch(schoolQuery, target: .school)
     }
 
     func addSchoolTeam(_ result: TeamSearchResult) {
@@ -172,17 +158,7 @@ final class OnboardingViewModel: ObservableObject {
     // MARK: - Rival Search (Step 5)
 
     func onRivalQueryChange() {
-        debounceTask?.cancel()
-        let trimmed = rivalQuery.trimmingCharacters(in: .whitespaces)
-        if trimmed.count < 2 {
-            rivalResults = []
-            return
-        }
-        debounceTask = Task {
-            try? await Task.sleep(nanoseconds: 300_000_000)
-            guard !Task.isCancelled else { return }
-            await searchTeams(trimmed, target: .rival)
-        }
+        updateTeamSearch(rivalQuery, target: .rival)
     }
 
     func addRivalTeam(_ result: TeamSearchResult) {
@@ -201,17 +177,32 @@ final class OnboardingViewModel: ObservableObject {
 
     // MARK: - Generic Team Search
 
-    private enum SearchTarget { case follow, school, rival }
+    private enum SearchTarget: Hashable { case follow, school, rival }
+
+    private func updateTeamSearch(_ query: String, target: SearchTarget) {
+        debounceTask?.cancel()
+        searchingFor = nil
+        unavailableSearches.remove(target)
+        setTeamResults([], target: target)
+        let trimmed = query.trimmingCharacters(in: .whitespaces)
+        guard trimmed.count >= 2 else { return }
+        searchingFor = target
+        debounceTask = Task {
+            try? await Task.sleep(nanoseconds: 300_000_000)
+            guard !Task.isCancelled else { return }
+            await searchTeams(trimmed, target: target)
+        }
+    }
+
+    private func setTeamResults(_ results: [TeamSearchResult], target: SearchTarget) {
+        switch target {
+        case .follow: followResults = results
+        case .school: schoolResults = results
+        case .rival: rivalResults = results
+        }
+    }
 
     private func searchTeams(_ query: String, target: SearchTarget) async {
-        let setSearching: (Bool) -> Void = { searching in
-            switch target {
-            case .follow: self.followSearching = searching
-            case .school: self.schoolSearching = searching
-            case .rival: self.rivalSearching = searching
-            }
-        }
-        setSearching(true)
         do {
             var results = try await APIClient.shared.searchTeams(query: query)
             guard !Task.isCancelled else { return }
@@ -229,16 +220,13 @@ final class OnboardingViewModel: ObservableObject {
                 }
             }
 
-            switch target {
-            case .follow: followResults = results
-            case .school: schoolResults = results
-            case .rival: rivalResults = results
-            }
-            setSearching(false)
+            setTeamResults(results, target: target)
         } catch {
-            setSearching(false)
+            guard !Task.isCancelled else { return }
+            unavailableSearches.insert(target)
             logger.error("Team search failed: \(error)")
         }
+        searchingFor = nil
     }
 
     // MARK: - Sport Affinity

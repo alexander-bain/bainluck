@@ -22,6 +22,54 @@ interface SelectedTeam {
   selected: boolean; // For toggle-able chips (location teams)
 }
 
+function useTeamSearch(filter: (results: TeamSearchResult[]) => TeamSearchResult[]) {
+  const [query, setQuery] = useState("");
+  const [results, setResults] = useState<TeamSearchResult[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [unavailable, setUnavailable] = useState(false);
+  const pending = useRef<AbortController>();
+  const debounce = useRef<ReturnType<typeof setTimeout>>();
+
+  useEffect(() => () => {
+    pending.current?.abort();
+    clearTimeout(debounce.current);
+  }, []);
+
+  function search(value: string) {
+    pending.current?.abort();
+    clearTimeout(debounce.current);
+    setQuery(value);
+    setUnavailable(false);
+    setResults([]);
+    setSearching(value.length >= 2);
+    if (value.length < 2) return;
+
+    const controller = new AbortController();
+    pending.current = controller;
+    debounce.current = setTimeout(async () => {
+      try {
+        const teams = await searchTeams(value, controller.signal);
+        if (!controller.signal.aborted) setResults(filter(teams));
+      } catch {
+        if (!controller.signal.aborted) setUnavailable(true);
+      } finally {
+        if (!controller.signal.aborted) setSearching(false);
+      }
+    }, 300);
+  }
+
+  return { query, results, searching, unavailable, search };
+}
+
+function TeamSearchStatus({ searching, unavailable }: { searching: boolean; unavailable: boolean }) {
+  if (!searching && !unavailable) return null;
+  return (
+    <p className="text-xs text-text-secondary mt-3" role="status">
+      {searching ? "Searching..." : "Team search is unavailable. Try again shortly."}
+    </p>
+  );
+}
+
 type SportLevel = 1.0 | 0.3 | 0.1 | 0;
 
 const SPORT_LEVELS: { label: string; value: SportLevel; description: string }[] = [
@@ -114,16 +162,25 @@ export default function OnboardingPage() {
   const [locationSearching, setLocationSearching] = useState(false);
 
   // Step 2: Follow (favorite teams, any location)
-  const [followQuery, setFollowQuery] = useState("");
-  const [followResults, setFollowResults] = useState<TeamSearchResult[]>([]);
   const [followTeams, setFollowTeams] = useState<SelectedTeam[]>([]);
-  const [followSearching, setFollowSearching] = useState(false);
+  const followSearch = useTeamSearch((results) => {
+    const selectedIds = new Set([
+      ...locationTeams.filter((team) => team.selected).map((team) => team.id),
+      ...followTeams.map((team) => team.id),
+    ]);
+    return results.filter((team) => !selectedIds.has(team.id));
+  });
 
   // Step 3: Alma maters
-  const [schoolQuery, setSchoolQuery] = useState("");
-  const [schoolResults, setSchoolResults] = useState<TeamSearchResult[]>([]);
   const [almaMaterTeams, setAlmaMaterTeams] = useState<SelectedTeam[]>([]);
-  const [schoolSearching, setSchoolSearching] = useState(false);
+  const schoolSearch = useTeamSearch((results) => {
+    const selectedIds = new Set(almaMaterTeams.map((team) => team.id));
+    return results.filter((team) =>
+      team.sport_key &&
+      (team.sport_key.includes("ncaa") || team.sport_key.includes("wncaab")) &&
+      !selectedIds.has(team.id)
+    );
+  });
 
   // Step 4: Sport affinities
   const [sportAffinities, setSportAffinities] = useState<Record<string, SportLevel>>(
@@ -131,10 +188,11 @@ export default function OnboardingPage() {
   );
 
   // Step 5: Rivals
-  const [rivalQuery, setRivalQuery] = useState("");
-  const [rivalResults, setRivalResults] = useState<TeamSearchResult[]>([]);
   const [rivalTeams, setRivalTeams] = useState<SelectedTeam[]>([]);
-  const [rivalSearching, setRivalSearching] = useState(false);
+  const rivalSearch = useTeamSearch((results) => {
+    const selectedIds = new Set(rivalTeams.map((team) => team.id));
+    return results.filter((team) => !selectedIds.has(team.id));
+  });
 
   // Submission state
   const [submitting, setSubmitting] = useState(false);
@@ -257,41 +315,6 @@ export default function OnboardingPage() {
   // Step 2: Follow search (favorite teams, any location)
   // =========================================================================
 
-  const followDebounce = useRef<ReturnType<typeof setTimeout>>();
-
-  const handleFollowSearch = useCallback(
-    (value: string) => {
-      setFollowQuery(value);
-
-      if (followDebounce.current) clearTimeout(followDebounce.current);
-
-      if (value.length < 2) {
-        setFollowResults([]);
-        return;
-      }
-
-      setFollowSearching(true);
-      followDebounce.current = setTimeout(async () => {
-        try {
-          const results = await searchTeams(value);
-          // Filter out teams already selected as local or follow
-          const localIds = new Set(
-            locationTeams.filter((t) => t.selected).map((t) => t.id)
-          );
-          const followIds = new Set(followTeams.map((t) => t.id));
-          setFollowResults(
-            results.filter((t) => !localIds.has(t.id) && !followIds.has(t.id))
-          );
-        } catch {
-          // silently fail
-        } finally {
-          setFollowSearching(false);
-        }
-      }, 300);
-    },
-    [locationTeams, followTeams]
-  );
-
   const addFollowTeam = (team: TeamSearchResult) => {
     if (followTeams.some((t) => t.id === team.id)) return;
 
@@ -305,8 +328,7 @@ export default function OnboardingPage() {
         selected: true,
       },
     ]);
-    setFollowQuery("");
-    setFollowResults([]);
+    followSearch.search("");
   };
 
   const removeFollowTeam = (teamId: number) => {
@@ -316,39 +338,6 @@ export default function OnboardingPage() {
   // =========================================================================
   // Step 3: School search
   // =========================================================================
-
-  const schoolDebounce = useRef<ReturnType<typeof setTimeout>>();
-
-  const handleSchoolSearch = useCallback((value: string) => {
-    setSchoolQuery(value);
-
-    if (schoolDebounce.current) clearTimeout(schoolDebounce.current);
-
-    if (value.length < 2) {
-      setSchoolResults([]);
-      return;
-    }
-
-    setSchoolSearching(true);
-    schoolDebounce.current = setTimeout(async () => {
-      try {
-        const results = await searchTeams(value);
-        // Filter to college teams only (sport_key contains "ncaa" or "wncaab")
-        const collegeResults = results.filter(
-          (t) =>
-            t.sport_key &&
-            (t.sport_key.includes("ncaa") || t.sport_key.includes("wncaab"))
-        );
-        // Don't show teams already selected
-        const selectedIds = new Set(almaMaterTeams.map((t) => t.id));
-        setSchoolResults(collegeResults.filter((t) => !selectedIds.has(t.id)));
-      } catch {
-        // silently fail
-      } finally {
-        setSchoolSearching(false);
-      }
-    }, 300);
-  }, [almaMaterTeams]);
 
   const addAlmaMater = (team: TeamSearchResult) => {
     // Check if this exact team is already added (by ID)
@@ -364,8 +353,7 @@ export default function OnboardingPage() {
         selected: true,
       },
     ]);
-    setSchoolQuery("");
-    setSchoolResults([]);
+    schoolSearch.search("");
   };
 
   const removeAlmaMater = (teamId: number) => {
@@ -375,32 +363,6 @@ export default function OnboardingPage() {
   // =========================================================================
   // Step 5: Rival search
   // =========================================================================
-
-  const rivalDebounce = useRef<ReturnType<typeof setTimeout>>();
-
-  const handleRivalSearch = useCallback((value: string) => {
-    setRivalQuery(value);
-
-    if (rivalDebounce.current) clearTimeout(rivalDebounce.current);
-
-    if (value.length < 2) {
-      setRivalResults([]);
-      return;
-    }
-
-    setRivalSearching(true);
-    rivalDebounce.current = setTimeout(async () => {
-      try {
-        const results = await searchTeams(value);
-        const selectedIds = new Set(rivalTeams.map((t) => t.id));
-        setRivalResults(results.filter((t) => !selectedIds.has(t.id)));
-      } catch {
-        // silently fail
-      } finally {
-        setRivalSearching(false);
-      }
-    }, 300);
-  }, [rivalTeams]);
 
   const addRival = (team: TeamSearchResult) => {
     if (rivalTeams.some((t) => t.id === team.id)) return;
@@ -415,8 +377,7 @@ export default function OnboardingPage() {
         selected: true,
       },
     ]);
-    setRivalQuery("");
-    setRivalResults([]);
+    rivalSearch.search("");
   };
 
   const removeRival = (teamId: number) => {
@@ -593,25 +554,27 @@ export default function OnboardingPage() {
 
         {step === 2 && (
           <StepFollow
-            query={followQuery}
-            onSearch={handleFollowSearch}
-            results={followResults}
+            query={followSearch.query}
+            onSearch={followSearch.search}
+            results={followSearch.results}
             selected={followTeams}
             onAdd={addFollowTeam}
             onRemove={removeFollowTeam}
-            searching={followSearching}
+            searching={followSearch.searching}
+            unavailable={followSearch.unavailable}
           />
         )}
 
         {step === 3 && (
           <StepAlmaMaters
-            query={schoolQuery}
-            onSearch={handleSchoolSearch}
-            results={schoolResults}
+            query={schoolSearch.query}
+            onSearch={schoolSearch.search}
+            results={schoolSearch.results}
             selected={almaMaterTeams}
             onAdd={addAlmaMater}
             onRemove={removeAlmaMater}
-            searching={schoolSearching}
+            searching={schoolSearch.searching}
+            unavailable={schoolSearch.unavailable}
           />
         )}
 
@@ -626,13 +589,14 @@ export default function OnboardingPage() {
 
         {step === 5 && (
           <StepRivals
-            query={rivalQuery}
-            onSearch={handleRivalSearch}
-            results={rivalResults}
+            query={rivalSearch.query}
+            onSearch={rivalSearch.search}
+            results={rivalSearch.results}
             selected={rivalTeams}
             onAdd={addRival}
             onRemove={removeRival}
-            searching={rivalSearching}
+            searching={rivalSearch.searching}
+            unavailable={rivalSearch.unavailable}
           />
         )}
 
@@ -792,6 +756,7 @@ function StepFollow({
   onAdd,
   onRemove,
   searching,
+  unavailable,
 }: {
   query: string;
   onSearch: (q: string) => void;
@@ -800,6 +765,7 @@ function StepFollow({
   onAdd: (team: TeamSearchResult) => void;
   onRemove: (teamId: number) => void;
   searching: boolean;
+  unavailable: boolean;
 }) {
   return (
     <div>
@@ -845,7 +811,7 @@ function StepFollow({
         )}
       </div>
 
-      {searching && <p className="text-xs text-text-secondary mt-3">Searching...</p>}
+      <TeamSearchStatus searching={searching} unavailable={unavailable} />
 
       {/* Selected teams */}
       {selected.length > 0 && (
@@ -896,6 +862,7 @@ function StepAlmaMaters({
   onAdd,
   onRemove,
   searching,
+  unavailable,
 }: {
   query: string;
   onSearch: (q: string) => void;
@@ -904,6 +871,7 @@ function StepAlmaMaters({
   onAdd: (team: TeamSearchResult) => void;
   onRemove: (teamId: number) => void;
   searching: boolean;
+  unavailable: boolean;
 }) {
   return (
     <div>
@@ -946,7 +914,7 @@ function StepAlmaMaters({
         )}
       </div>
 
-      {searching && <p className="text-xs text-text-secondary mt-3">Searching...</p>}
+      <TeamSearchStatus searching={searching} unavailable={unavailable} />
 
       {/* Selected schools */}
       {selected.length > 0 && (
@@ -1149,6 +1117,7 @@ function StepRivals({
   onAdd,
   onRemove,
   searching,
+  unavailable,
 }: {
   query: string;
   onSearch: (q: string) => void;
@@ -1157,6 +1126,7 @@ function StepRivals({
   onAdd: (team: TeamSearchResult) => void;
   onRemove: (teamId: number) => void;
   searching: boolean;
+  unavailable: boolean;
 }) {
   return (
     <div>
@@ -1199,7 +1169,7 @@ function StepRivals({
         )}
       </div>
 
-      {searching && <p className="text-xs text-text-secondary mt-3">Searching...</p>}
+      <TeamSearchStatus searching={searching} unavailable={unavailable} />
 
       {/* Selected rivals */}
       {selected.length > 0 && (
