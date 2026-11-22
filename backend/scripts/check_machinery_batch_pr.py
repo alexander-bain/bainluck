@@ -26,33 +26,284 @@ import sys
 import tempfile
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Sequence
 
 _BACKEND_DIR = Path(__file__).resolve().parents[1]
 _REPO_ROOT = _BACKEND_DIR.parent
 if str(_BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(_BACKEND_DIR))
 
+from app.utils.agent_origin import tagged  # noqa: E402
 from app.utils.container_machinery import (  # noqa: E402
     _load_snapshot_from_db,
     discover_machinery_candidate_paths,
     load_machinery_definition,
 )
+from app.utils.discover_fun_tags import load_fun_markets_registry  # noqa: E402
 from app.utils.machinery_batch_gate import (  # noqa: E402
     PublicAssemblyResult,
     _definition_min_items,
+    _load_curated_entries_by_sub_tag,
     audit_picture_policy_for_definition,
     audit_public_assembly_for_definition,
-    build_synthetic_snapshot_for_definition,
     check_machinery_wording,
     discover_changed_machinery_slugs,
 )
 
 
+def _sample_outcomes_for_query(
+    aq: Mapping[str, Any],
+    base_id: int,
+    now_iso: str,
+    *,
+    prob: float,
+    with_opening_delta: float = 0.0,
+) -> list[dict[str, Any]]:
+    shape = str(aq.get("shape") or "any").strip().lower()
+    open_p = max(0.02, min(0.98, round(prob - with_opening_delta, 4)))
+    if shape == "binary":
+        return [
+            {
+                "id": base_id * 10 + 1,
+                "name": "Yes",
+                "probability": prob,
+                "opening_probability": open_p,
+                "last_updated": now_iso,
+            },
+            {
+                "id": base_id * 10 + 2,
+                "name": "No",
+                "probability": round(1.0 - prob, 4),
+                "opening_probability": round(1.0 - open_p, 4),
+                "last_updated": now_iso,
+            },
+        ]
+    if shape == "two_way":
+        return [
+            {
+                "id": base_id * 10 + 1,
+                "name": "Democratic Party",
+                "probability": prob,
+                "opening_probability": open_p,
+                "last_updated": now_iso,
+            },
+            {
+                "id": base_id * 10 + 2,
+                "name": "Republican Party",
+                "probability": round(1.0 - prob, 4),
+                "opening_probability": round(1.0 - open_p, 4),
+                "last_updated": now_iso,
+            },
+        ]
+    return [
+        {
+            "id": base_id * 10 + 1,
+            "name": "Example Leader",
+            "probability": prob,
+            "opening_probability": open_p,
+            "last_updated": now_iso,
+        },
+        {
+            "id": base_id * 10 + 2,
+            "name": "Runner Up",
+            "probability": round(max(0.02, min(prob * 0.65, 1.0 - prob - 0.03)), 4),
+            "opening_probability": round(max(0.02, min(open_p * 0.65, 1.0 - open_p - 0.03)), 4),
+            "last_updated": now_iso,
+        },
+        {
+            "id": base_id * 10 + 3,
+            "name": "Third Option",
+            "probability": round(max(0.01, min(prob * 0.30, 0.05)), 4),
+            "opening_probability": round(max(0.01, min(open_p * 0.30, 0.05)), 4),
+            "last_updated": now_iso,
+        },
+    ]
+
+
+def build_synthetic_snapshot_for_definition(
+    definition: Mapping[str, Any],
+    *,
+    now: Optional[datetime] = None,
+) -> dict[str, Any]:
+    """Build an in-memory snapshot satisfying a definition's structural queries for CI."""
+    from app.services.paired_metric_register import load_paired_metric_register
+    from app.utils.draw_priced_winner import printable_away
+    from app.utils.graded_card import rendered_duel_percents
+
+    cur_now = now or datetime.now(timezone.utc)
+    now_iso = cur_now.isoformat()
+    res_future = (cur_now + timedelta(days=240)).isoformat()
+    hist_old_iso = (cur_now - timedelta(hours=120)).isoformat()
+    rule = definition.get("rule") if isinstance(definition.get("rule"), Mapping) else {}
+    curated_by_tag = _load_curated_entries_by_sub_tag()
+    fun_reg = load_fun_markets_registry()
+    paired_reg = load_paired_metric_register()
+
+    events: list[dict[str, Any]] = []
+    seen_eids: set[int] = set()
+    markets: list[dict[str, Any]] = []
+    paired_sets: dict[str, Any] = dict(paired_reg.get("sets") or {})
+    market_histories: dict[int, list[dict[str, Any]]] = {}
+    seen_mids: set[int] = set()
+    category = str(definition.get("category") or "other")
+
+    for sidx, sec in enumerate(rule.get("sections") or ()):
+        if not isinstance(sec, Mapping):
+            continue
+        aq = sec.get("atom_query") if isinstance(sec.get("atom_query"), Mapping) else {}
+        kind = str(aq.get("kind") or "markets")
+
+        if kind == "events":
+            sport_key = str(
+                aq.get("sport_key")
+                or ((aq.get("sport_keys") or ["basketball_nba"])[0])
+            )
+            sport_name = "NFL" if "nfl" in sport_key else ("NBA" if "nba" in sport_key else sport_key)
+            needed = max(int(aq.get("min_items") or 3), 4)
+            teams = [
+                ("Lakers", "Celtics"),
+                ("Knicks", "Heat"),
+                ("Nuggets", "Suns"),
+                ("Warriors", "Mavericks"),
+                ("Bucks", "76ers"),
+                ("Chiefs", "Bills"),
+            ]
+            band = aq.get("probability_band")
+            for eidx in range(needed):
+                away, home = teams[eidx % len(teams)]
+                hp = round(0.51 + eidx * 0.02, 4) if (isinstance(band, Sequence) and len(band) == 2) else round(0.52 + eidx * 0.05, 4)
+                ap = round(1.0 - hp, 4)
+                c_ap = printable_away(ap, hp, sport_key)
+                a_pct, h_pct = rendered_duel_percents(c_ap, hp)
+                eid = 910000 + sidx * 100 + eidx
+                if eid in seen_eids:
+                    continue
+                seen_eids.add(eid)
+                events.append(
+                    {
+                        "id": eid,
+                        "sport": sport_key,
+                        "sport_name": sport_name,
+                        "away_team": away,
+                        "home_team": home,
+                        "commence_time": (cur_now + timedelta(hours=3 + eidx * 4)).isoformat(),
+                        "status": "scheduled",
+                        "hero_probability": hp,
+                        "hero_probability_away": ap,
+                        "current_odds": {
+                            "away_probability": ap,
+                            "home_probability": hp,
+                            "away_rendered_percent": int(a_pct),
+                            "home_rendered_percent": int(h_pct),
+                        },
+                    }
+                )
+            continue
+
+        if kind == "paired_stage":
+            continue
+
+        sub_tag = str(aq.get("fun_sub_tag") or "").strip().lower()
+        row_specs: list[tuple[int, str]] = []
+        if sub_tag and sub_tag in curated_by_tag:
+            for e in curated_by_tag[sub_tag]:
+                row_specs.append((int(e["id"]), str(e.get("short_label") or f"Market {e['id']}")))
+        elif sub_tag:
+            for mid in fun_reg.ordered_market_ids:
+                meta = fun_reg.markets[mid]
+                if any(st.lower() == sub_tag for st in meta.sub_tags):
+                    row_specs.append((int(mid), meta.title))
+        elif isinstance(aq.get("market_ids"), Sequence):
+            for mid_raw in aq["market_ids"]:
+                mid = int(mid_raw)
+                row_specs.append((mid, f"Configured market {mid}"))
+        else:
+            all_tokens = [str(t) for t in (aq.get("title_all_tokens") or ())]
+            any_tokens = [str(t) for t in (aq.get("any_tokens") or ())]
+            count = max(int(aq.get("min_items") or 3), 3)
+            base_tokens = " ".join(all_tokens)
+            cities = ["Pittsburgh", "Milwaukee", "Minneapolis", "Chicago", "Boston", "Denver"]
+            couples = ["Alex & Jordan", "Sam and Taylor", "Riley & Casey", "Morgan and Jamie"]
+            if "engaged" in [t.lower() for t in all_tokens]:
+                for i in range(max(count, 4)):
+                    mid = 930000 + sidx * 100 + i
+                    row_specs.append((mid, f"{couples[i % len(couples)]} engaged"))
+            elif any_tokens:
+                for i in range(max(count, min(len(any_tokens), int(aq.get("max_items") or count)))):
+                    tok = any_tokens[i % len(any_tokens)].strip()
+                    missing_tokens = [t for t in all_tokens if t.lower() not in tok.lower()]
+                    title = " ".join([tok, *missing_tokens]).strip()
+                    mid = 930000 + sidx * 100 + i
+                    row_specs.append((mid, title))
+            else:
+                for i in range(count):
+                    mid = 930000 + sidx * 100 + i
+                    suffix = cities[i % len(cities)]
+                    title = f"{base_tokens or sec.get('title') or 'Item'} {suffix}".strip()
+                    row_specs.append((mid, title))
+
+        prob_band = aq.get("prob_band")
+        high_prob = 0.22 if isinstance(prob_band, Sequence) and len(prob_band) == 2 else 0.78
+        low_prob = 0.08 if isinstance(prob_band, Sequence) and len(prob_band) == 2 else 0.32
+        max_lead = aq.get("max_lead_probability")
+        if isinstance(max_lead, (int, float)) and not isinstance(max_lead, bool):
+            high_prob = min(high_prob, max(0.06, float(max_lead) - 0.02))
+            low_prob = min(low_prob, max(0.03, high_prob - 0.06))
+        req_vol = aq.get("min_lifetime_volume")
+        if req_vol is None:
+            req_vol = aq.get("min_volume")
+        span = max(1, len(row_specs) - 1)
+        is_history = kind == "market_history"
+        content_kind = str(aq.get("content_kind") or "futures")
+        for idx, (mid, title) in enumerate(row_specs):
+            if mid in seen_mids:
+                continue
+            seen_mids.add(mid)
+            prob = round(high_prob - (high_prob - low_prob) * (idx / span), 4)
+            outs = _sample_outcomes_for_query(
+                aq,
+                mid,
+                now_iso,
+                prob=prob,
+                with_opening_delta=0.14 if is_history else 0.0,
+            )
+            markets.append(
+                {
+                    "id": mid,
+                    "name": title,
+                    "title": title,
+                    "status": "open",
+                    "source": "kalshi",
+                    "content_kind": content_kind,
+                    "category": category,
+                    "llm_sport_category": category,
+                    "market_tier": 1,
+                    "volume": float(max(50000.0, (req_vol or 1000) * 5)),
+                    "resolution_date": res_future,
+                    "newest_outcome_updated_at": now_iso,
+                    "top_outcomes": outs,
+                    "outcomes": outs,
+                }
+            )
+            if is_history:
+                lead_oid = int(outs[0]["id"])
+                market_histories[lead_oid] = [
+                    {"outcome_id": lead_oid, "probability": max(0.05, prob - 0.14), "captured_at": hist_old_iso},
+                    {"outcome_id": lead_oid, "probability": prob, "captured_at": now_iso},
+                ]
+
+    return {
+        "events": events,
+        "markets": markets,
+        "paired_sets": paired_sets,
+        "market_histories": market_histories,
+    }
+
+
 def _fetch_json(url: str, *, timeout: float = 20.0) -> tuple[int, Optional[dict[str, Any]]]:
-    req = urllib.request.Request(url, headers={"Accept": "application/json"})
+    req = urllib.request.Request(url, headers=tagged(url, {"Accept": "application/json"}))
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return int(resp.status), json.loads(resp.read().decode("utf-8"))

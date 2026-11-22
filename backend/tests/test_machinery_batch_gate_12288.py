@@ -16,11 +16,11 @@ from app.utils.machinery_batch_gate import (
     MAX_HEADLINE_LINES_390PX,
     audit_picture_policy_for_definition,
     audit_public_assembly_for_definition,
-    build_synthetic_snapshot_for_definition,
     check_machinery_wording,
     estimate_headline_lines_390px,
 )
 from scripts import check_machinery_batch_pr
+from scripts.check_machinery_batch_pr import build_synthetic_snapshot_for_definition
 
 NOW = datetime(2026, 11, 22, 18, 0, tzinfo=timezone.utc)
 
