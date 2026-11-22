@@ -1,11 +1,17 @@
-"""Exercise onboarding team selection and save against isolated PostgreSQL."""
+"""Exercise onboarding team selection and save against isolated Postgres and Redis."""
 
 import os
 import uuid
 from datetime import datetime, timezone
+from time import perf_counter
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from sqlalchemy import select, text
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
+from redis.asyncio import Redis
+from redis.exceptions import ConnectionError
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.models.models import (
@@ -19,13 +25,20 @@ from app.models.models import (
     UserPreference,
     Venue,
 )
+from app.routes import user as user_route
 from app.routes.user import OnboardingRequest, TeamRef, search_teams, submit_onboarding
-from app.services.database import Base
+from app.services import onboarding_team_membership as membership
+from app.services.database import Base, get_db
+from app.tasks.task_checkpoint import advisory_lock_key
 
 DB_URL = os.environ.get("SEARCH_TEST_DATABASE_URL")
+REDIS_URL = os.environ.get("ONBOARDING_TEST_REDIS_URL")
 pytestmark = [
     pytest.mark.asyncio,
-    pytest.mark.skipif(not DB_URL, reason="set SEARCH_TEST_DATABASE_URL for PostgreSQL"),
+    pytest.mark.skipif(
+        not (DB_URL and REDIS_URL),
+        reason="set SEARCH_TEST_DATABASE_URL and ONBOARDING_TEST_REDIS_URL",
+    ),
 ]
 
 LA_LIGA = "soccer_spain_la_liga"
@@ -179,7 +192,47 @@ async def sessions():
         await engine.dispose()
 
 
-async def test_issue_and_additional_onboarding_queries_return_real_clubs(sessions):
+@pytest.fixture
+async def cache(monkeypatch):
+    key = f"test:onboarding:{uuid.uuid4().hex}"
+    monkeypatch.setattr(membership, "_KEY", key)
+    async with Redis.from_url(REDIS_URL) as client:
+        monkeypatch.setattr(membership, "get_shared_async_redis", AsyncMock(return_value=client))
+        try:
+            yield client
+        finally:
+            await client.delete(key, f"{key}:pending")
+
+
+async def rebuild(sessions, cache):
+    async with sessions.begin() as db:
+        return await membership.rebuild_onboarding_team_membership(db, cache)
+
+
+@pytest.fixture
+async def warmed_sessions(sessions, cache):
+    await rebuild(sessions, cache)
+    return sessions
+
+
+@pytest.fixture
+async def client(sessions):
+    application = FastAPI()
+    application.include_router(user_route.router, prefix="/api/me")
+
+    async def override_db():
+        async with sessions() as db:
+            yield db
+
+    application.dependency_overrides[get_db] = override_db
+    async with AsyncClient(
+        transport=ASGITransport(app=application), base_url="http://test"
+    ) as client:
+        yield client
+
+
+async def test_issue_and_additional_onboarding_queries_return_real_clubs(warmed_sessions):
+    sessions = warmed_sessions
     async with sessions() as db:
         await db.execute(text("SET TRANSACTION READ ONLY"))
         team_ids = set((await db.scalars(select(Team.id))).all())
@@ -192,8 +245,10 @@ async def test_issue_and_additional_onboarding_queries_return_real_clubs(session
             assert all(" - " not in result.name for result in results), query
 
 
-async def test_prefixes_keep_other_clubs_separate_and_group_confirmed_spurs_variants(sessions):
-    async with sessions() as db:
+async def test_prefixes_keep_other_clubs_separate_and_group_confirmed_spurs_variants(
+    warmed_sessions,
+):
+    async with warmed_sessions() as db:
         city_results = await search_teams("Manchester", db)
         assert {r.name for r in city_results} == {
             "Manchester City", "Manchester United", "Manchester 62",
@@ -214,7 +269,7 @@ async def test_prefixes_keep_other_clubs_separate_and_group_confirmed_spurs_vari
         assert [r.id for r in await search_teams("Magpies", db)] == [1024]
 
 
-async def test_only_the_top_sixty_name_matches_can_be_verified(sessions):
+async def test_only_the_top_sixty_name_matches_can_be_verified(sessions, cache):
     async with sessions() as db:
         league_ids = dict((await db.execute(
             select(Sport.key, Sport.id).where(Sport.key.in_((NBA, MLB)))
@@ -243,13 +298,21 @@ async def test_only_the_top_sixty_name_matches_can_be_verified(sessions):
                 commence_time=played_at,
             ),
         ])
-        await db.flush()
+        await db.commit()
+        await rebuild(sessions, cache)
 
-        results = await search_teams("Bounded", db)
+        # If the reader tries to look at the games table, the lock and the
+        # statement limit would leave it with a 503 instead of the 60th match.
+        schema = db.get_bind().get_execution_options()["schema_translate_map"][None]
+        async with sessions() as lock:
+            await lock.execute(text(f'LOCK TABLE "{schema}".events IN ACCESS EXCLUSIVE MODE'))
+            results = await search_teams("Bounded", db)
         assert [(row.id, row.name) for row in results] == [(3059, "Bounded Club 59")]
 
 
-async def test_two_eligible_teams_with_the_same_exact_name_and_league_show_one_row(sessions):
+async def test_two_eligible_teams_with_the_same_exact_name_and_league_show_one_row(
+    sessions, cache
+):
     async with sessions() as db:
         nba_id = await db.scalar(select(Sport.id).where(Sport.key == NBA))
         duplicate = Team(id=2060, name="New York Knicks", sport_id=nba_id)
@@ -260,12 +323,67 @@ async def test_two_eligible_teams_with_the_same_exact_name_and_league_show_one_r
             home_team_name="Other side", away_team_name=duplicate.name,
             commence_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
         ))
-        await db.flush()
+        await db.commit()
+        await rebuild(sessions, cache)
 
         results = await search_teams("New York Knicks", db)
         assert [(row.id, row.name, row.sport_key) for row in results] == [
             (1020, "New York Knicks", NBA),
         ]
+
+
+async def test_missing_snapshot_and_redis_errors_return_unavailable(sessions, cache, client):
+    params = {"q": "Real Madrid"}
+    response = await client.get("/api/me/teams/search", params=params)
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Team search is unavailable. Try again shortly."}
+
+    await rebuild(sessions, cache)
+    with patch.object(cache, "smismember", side_effect=ConnectionError):
+        response = await client.get("/api/me/teams/search", params=params)
+    assert response.status_code == 503
+
+    response = await client.get("/api/me/teams/search", params={"q": "Absent club"})
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+async def test_search_statement_timeout_returns_unavailable_before_redis(client, monkeypatch):
+    monkeypatch.setattr(
+        user_route, "_onboarding_name_candidates", lambda words: select(func.pg_sleep(10))
+    )
+    members = AsyncMock()
+    monkeypatch.setattr(user_route, "onboarding_team_members", members)
+
+    started = perf_counter()
+    response = await client.get("/api/me/teams/search", params={"q": "Real Madrid"})
+    assert perf_counter() - started < 5  # PostgreSQL cancels after two seconds.
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Team search is unavailable. Try again shortly."}
+    members.assert_not_called()
+
+
+async def test_rebuild_has_one_owner_and_failed_publish_keeps_previous_snapshot(sessions, cache):
+    first = await rebuild(sessions, cache)
+    assert first["terminal"] == "complete"
+    assert first["eligible_teams"] > 0
+    original_members = await cache.smembers(membership._KEY)
+    assert original_members
+
+    async with sessions() as lock:
+        await lock.execute(
+            text("SELECT pg_advisory_xact_lock(:key)"),
+            {"key": advisory_lock_key(membership._REBUILD_TASK)},
+        )
+        assert (await rebuild(sessions, cache))["reason"] == "rebuild_already_running"
+
+    with patch.object(cache, "rename", side_effect=ConnectionError):
+        with pytest.raises(ConnectionError):
+            await rebuild(sessions, cache)
+    assert await cache.smembers(membership._KEY) == original_members
+    assert 0 < await cache.ttl(f"{membership._KEY}:pending") <= membership._SNAPSHOT_TTL_S
+    assert (await rebuild(sessions, cache))["terminal"] == "complete"
+    assert not await cache.exists(f"{membership._KEY}:pending")
 
 
 async def test_save_resolves_old_id_skips_missing_ids_and_saves_the_rest(sessions):

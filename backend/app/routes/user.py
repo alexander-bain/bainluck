@@ -12,16 +12,19 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from pydantic import BaseModel
-from sqlalchemy import select, delete, and_, or_, case, cast, func, String
+from sqlalchemy import select, delete, and_, or_, case, cast, func, String, Select, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import load_only, selectinload
 
 from app.dependencies.auth import get_current_user, get_optional_user
 from app.models.models import (
-    User, UserPin, UserFavorite, UserPreference, Team, Sport, Event, RetiredTeamRedirect,
+    User, UserPin, UserFavorite, UserPreference, Team, Sport, RetiredTeamRedirect,
     FuturesMarket, FuturesOutcome, TeamIdentityMapping,
 )
 from app.services.database import get_db, get_db_rw
+from app.services.onboarding_team_membership import onboarding_team_members
+from app.utils.db_cancellation import is_query_canceled
 from app.utils.futures_source_mark import futures_outcome_source_mark
 from app.utils.series_card_labels import market_threshold_label, reader_outcome_name
 from app.utils.market_team_sport import (
@@ -689,20 +692,10 @@ _TEAM_SEARCH_EXCLUDED_SPORTS = (
 _MARKET_TEAM_SUFFIX = (
     r"(?i)\s+[-–—]\s+(?:exact score|more markets|player props|total corners)\s*$"
 )
+_TEAM_SEARCH_UNAVAILABLE = "Team search is unavailable. Try again shortly."
 
 
-@router.get("/teams/search", response_model=list[TeamSearchResult])
-async def search_teams(
-    q: str,
-    db: AsyncSession = Depends(get_db),
-) -> list[TeamSearchResult]:
-    """Rank saved clubs by name and verify their league via linked games."""
-    if len(q) > 200:
-        return []
-    words = re.findall(r"[^\W_]+", q)
-    if sum(map(len, words)) < 2:
-        return []
-
+def _onboarding_name_candidates(words: list[str]) -> Select[tuple[Team, str]]:
     # Search whole word prefixes in the saved name or an existing alias.
     # The tokens contain only letters and digits.
     search_fields = (Team.name, Team.abbreviation, Team.location,
@@ -735,15 +728,19 @@ async def search_teams(
         else_=4,
     )
     tier = case(_TEAM_SEARCH_TIER, value=Sport.key, else_=5)
-    # Fix the shortlist before looking at games. Each side can then join on
-    # both league and team ID, without testing every team against its league.
-    candidates = (
-        select(
-            Team.id.label("team_id"),
-            Team.sport_id,
-            Sport.key.label("sport_key"),
-            relevance.label("relevance"),
-            tier.label("tier"),
+    return (
+        select(Team, Sport.key)
+        .options(
+            load_only(
+                Team.id,
+                Team.sport_id,
+                Team.name,
+                Team.espn_id,
+                Team.location,
+                Team.logo_url,
+                Team.logo_url_small,
+                Team.abbreviation,
+            )
         )
         .join(Sport, Team.sport_id == Sport.id)
         .where(
@@ -753,36 +750,45 @@ async def search_teams(
         )
         .order_by(relevance, tier, Team.name, Team.id)
         .limit(60)
-        .cte("onboarding_team_candidates")
-        .prefix_with("MATERIALIZED", dialect="postgresql")
     )
-    home_games = select(candidates.c.team_id).join(
-        Event,
-        and_(
-            Event.sport_id == candidates.c.sport_id,
-            Event.home_team_id == candidates.c.team_id,
-        ),
+
+
+@router.get("/teams/search", response_model=list[TeamSearchResult])
+async def search_teams(
+    q: str,
+    db: AsyncSession = Depends(get_db),
+) -> list[TeamSearchResult]:
+    """Rank saved clubs and check their leagues against the worker snapshot."""
+    if len(q) > 200:
+        return []
+    words = re.findall(r"[^\W_]+", q)
+    if sum(map(len, words)) < 2:
+        return []
+
+    try:
+        await db.execute(text("SET LOCAL statement_timeout = '2s'"))
+        rows = (await db.execute(_onboarding_name_candidates(words))).all()
+    except DBAPIError as exc:
+        if not is_query_canceled(exc):
+            raise
+        logger.warning("Onboarding team search statement cancelled")
+        raise HTTPException(503, _TEAM_SEARCH_UNAVAILABLE) from exc
+
+    # PostgreSQL has already limited the rows to 60. Redis checks those pairs
+    # in one call. A lost or expired snapshot must not look like no matches.
+    eligible = await onboarding_team_members(
+        [(team.sport_id, team.id) for team, _ in rows]
     )
-    away_games = select(candidates.c.team_id).join(
-        Event,
-        and_(
-            Event.sport_id == candidates.c.sport_id,
-            Event.away_team_id == candidates.c.team_id,
-        ),
-    )
-    teams_with_games = home_games.union(away_games).subquery()
-    rows = (await db.execute(
-        select(Team, candidates.c.sport_key)
-        .join(candidates, Team.id == candidates.c.team_id)
-        .join(teams_with_games, Team.id == teams_with_games.c.team_id)
-        .order_by(candidates.c.relevance, candidates.c.tier, Team.name, Team.id)
-    )).all()
+    if eligible is None:
+        raise HTTPException(503, _TEAM_SEARCH_UNAVAILABLE)
 
     # ESPN uses a shared soccer club key across competitions. Require the
     # full name to agree too. All other rows keep their stored team identity.
     groups: dict[int | tuple[str, str], TeamSearchResult] = {}
     seen_names_and_leagues: set[tuple[str, str]] = set()
     for team, sport_key in rows:
+        if (team.sport_id, team.id) not in eligible:
+            continue
         name_and_league = (team.name, sport_key)
         if name_and_league in seen_names_and_leagues:
             continue

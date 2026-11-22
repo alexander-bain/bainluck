@@ -393,6 +393,7 @@ class TestBeatScheduleCompleteness:
         # #12: this allowlist is the reason a new beat entry cannot land
         # silently.
         "warm-search-head",
+        "refresh-onboarding-team-membership",
         # #9982 — keeps each published collection hub built ahead of its expiry.
         # Gotcha #12: this allowlist is the reason a new beat entry cannot land
         # silently.
