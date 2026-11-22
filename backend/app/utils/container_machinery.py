@@ -577,12 +577,16 @@ def _pick_preferred_subject_spelling(
 
 
 def _initials(label: str) -> str:
-    words = [w for w in re.split(r"\s+", label.strip()) if w]
-    if not words:
+    clean = str(label or "").strip()
+    if not clean:
         return "?"
-    if len(words) == 1:
-        return words[0][:2].upper()
-    return (words[0][0] + words[-1][0]).upper()
+    from app.utils.discover_image_policy import compute_initials
+
+    subj = clean
+    for sep in (": ", " · "):
+        if sep in subj:
+            subj = subj.rsplit(sep, 1)[-1].strip() or subj
+    return compute_initials(subj, ticker_ok=False)
 
 
 def _fallback_color(label: str) -> str:
@@ -1091,10 +1095,18 @@ class SubjectArtResolver:
             ):
                 hit = None
         url = explicit_url or (hit["url"] if hit else None)
+        kind = hit.get("kind") if hit else ("explicit" if url else "monogram")
+        if not url:
+            from app.utils.nation_flags import flag_url as _nation_flag_url
+
+            country_flag = _nation_flag_url(clean_subj or subject) or _nation_flag_url(subject)
+            if country_flag:
+                url = country_flag
+                kind = "flag"
         color = explicit_color or (hit.get("accent_color") if hit else None) or _fallback_color(clean_subj or subject)
         out: dict[str, Any] = {
             "url": url,
-            "kind": (hit.get("kind") if hit else ("explicit" if url else "monogram")),
+            "kind": kind,
             "detail": (hit.get("detail") if hit else "") or "",
             "accent_color": color,
             "initials": _initials(clean_subj or subject),
@@ -1467,15 +1479,15 @@ def _effective_market_volume(
     primary = _finite_volume_number(volume)
     if primary is not None:
         return primary
-    v24 = _finite_volume_number(volume_24h)
-    if v24 is not None and v24 > 0.0:
-        return v24
     if isinstance(market_metadata, Mapping):
         ve = market_metadata.get("volume_evidence")
         if isinstance(ve, Mapping) and str(ve.get("verdict") or "").strip().lower() == "traded":
             gv = _finite_volume_number(ve.get("gamma_volume"))
             if gv is not None:
                 return gv
+    v24 = _finite_volume_number(volume_24h)
+    if v24 is not None and v24 > 0.0:
+        return v24
     if v24 is not None:
         return v24
     return None
@@ -1904,34 +1916,13 @@ def _hydrate_market_visual_item(
         yes_pct = int(yes_row.get("rendered_percent") or _half_up_pct(p))
         leader_outcome_id = oid
         lead_prob = p
-        yes_art: dict[str, Any] = {
-            "url": None,
-            "kind": "none",
-            "detail": "",
-            "accent_color": "",
-            "initials": "",
-        }
-        if fun_sub_tag:
-            from app.utils.discover_fun_tags import fun_market_art_subject
-
-            art_subj = fun_market_art_subject(mid, sub_tag=fun_sub_tag)
-            if art_subj:
-                yes_art = resolver.resolve(
-                    art_subj,
-                    sport_key=sport_key,
-                    allow_team_lookup=(
-                        bool(allow_team_lookup)
-                        if allow_team_lookup is not None
-                        else None
-                    ),
-                )
         outcomes_out = [
             {
                 "outcome_id": oid,
                 "name": "Yes",
                 "probability": p,
                 "rendered_percent": yes_pct,
-                "art": yes_art,
+                "art": {"url": None, "kind": "monogram", "detail": ""},
             }
         ]
     else:
@@ -1956,6 +1947,16 @@ def _hydrate_market_visual_item(
                 ordered_valid = non_after
         kept = ordered_valid[:max_outcomes]
         outcomes_out = []
+        eff_sport_key = (
+            sport_key
+            if sport_key is not None
+            else _infer_sports_key_for_market(market)
+        )
+        eff_allow_team_lookup = (
+            bool(allow_team_lookup)
+            if allow_team_lookup is not None
+            else _is_sports_context(market)
+        )
         for idx, o in enumerate(kept):
             o_name = _clean_outcome_label(str(o.get("name") or "").strip())
             p = float(o["probability"])
@@ -1966,17 +1967,21 @@ def _hydrate_market_visual_item(
             art = resolver.resolve(
                 o_name,
                 explicit_url=(str(o["image_url"]) if o.get("image_url") else None),
-                sport_key=(
-                    sport_key
-                    if sport_key is not None
-                    else _infer_sports_key_for_market(market)
-                ),
-                allow_team_lookup=(
-                    bool(allow_team_lookup)
-                    if allow_team_lookup is not None
-                    else _is_sports_context(market)
-                ),
+                sport_key=eff_sport_key,
+                allow_team_lookup=eff_allow_team_lookup,
             )
+            if not art.get("url") and max_outcomes == 1 and fun_sub_tag:
+                from app.utils.discover_fun_tags import fun_market_art_subject
+
+                art_subj = fun_market_art_subject(mid, sub_tag=fun_sub_tag)
+                if art_subj:
+                    resolved_tag_art = resolver.resolve(
+                        art_subj,
+                        sport_key=eff_sport_key,
+                        allow_team_lookup=eff_allow_team_lookup,
+                    )
+                    if resolved_tag_art.get("url"):
+                        art = resolved_tag_art
             canon_subj = art.get("canonical_name")
             if canon_subj and _ascii_fold_key(canon_subj) == _ascii_fold_key(o_name):
                 o_name = str(canon_subj)
@@ -2057,6 +2062,55 @@ def _hydrate_market_visual_item(
         display_title, is_date_timing_row = _format_fun_lead_answer_label(
             display_title, lead_ans, fallback_base_title=plain_base_title
         )
+        if is_date_timing_row:
+            out0_art = outcomes_out[0].get("art")
+            if isinstance(out0_art, dict) and not out0_art.get("url"):
+                date_subj = str(plain_base_title or display_title or clean_raw_name or f"Market {mid}")
+                out0_art["initials"] = _initials(date_subj)
+                out0_art["accent_color"] = _fallback_color(date_subj)
+
+    if shape_is_yes and outcomes_out:
+        subj_for_fallback = str(display_title or clean_raw_name or f"Market {mid}")
+        yes_art: dict[str, Any] = {
+            "url": None,
+            "kind": "monogram",
+            "detail": "",
+            "accent_color": _fallback_color(subj_for_fallback),
+            "initials": _initials(subj_for_fallback),
+        }
+        allow_tl = bool(allow_team_lookup) if allow_team_lookup is not None else None
+        if fun_sub_tag:
+            from app.utils.discover_fun_tags import fun_market_art_subject
+
+            art_subj = fun_market_art_subject(mid, sub_tag=fun_sub_tag)
+            if art_subj:
+                resolved_tag_art = resolver.resolve(
+                    art_subj,
+                    sport_key=sport_key,
+                    allow_team_lookup=allow_tl,
+                )
+                if resolved_tag_art.get("url"):
+                    yes_art = resolved_tag_art
+        if not yes_art.get("url"):
+            probe_candidates: list[str] = []
+            for cand_raw in (
+                display_title,
+                display_title.split(" & ", 1)[0] if " & " in display_title else None,
+                display_title.split(" and ", 1)[0] if " and " in display_title else None,
+            ):
+                cand = str(cand_raw or "").strip()
+                if cand and cand not in probe_candidates:
+                    probe_candidates.append(cand)
+            for cand in probe_candidates:
+                probed = resolver.resolve(
+                    cand,
+                    sport_key=sport_key,
+                    allow_team_lookup=allow_tl,
+                )
+                if probed.get("url"):
+                    yes_art = probed
+                    break
+        outcomes_out[0]["art"] = yes_art
 
     headline_phrase: Optional[str] = None
     headline_with_phrase: Optional[str] = None
@@ -4688,9 +4742,9 @@ async def produce_container_machinery(
     if hide_row_art and card_visual_rows:
         card_visual_rows = _strip_visual_row_art(card_visual_rows)
 
-    # Keep Discover benchmark_strip cards consistent: either every row has a
-    # picture or no row leaves a reserved empty gap beside sibling rows, and
-    # log missing subjects on public sports cards that lack full row art.
+    # Keep Discover cards consistent without dropping sibling row pictures:
+    # rows without a verified picture carry monogram initials for the same circle,
+    # while sports cards with missing row art still emit a diagnostic warning.
     if (
         not hide_row_art
         and card_visual_rows
@@ -4711,12 +4765,28 @@ async def produce_container_machinery(
                 if isinstance(r, Mapping) and not has_art
             ]
             logger.warning(
-                "Public sports card %s dropped row pictures; missing art for subjects=%s",
+                "Public sports card %s has missing row pictures (initials fallback); missing art for subjects=%s",
                 slug,
                 missing_subjects,
             )
-        if vb_form == "benchmark_strip" and any(row_has_url) and not all(row_has_url):
-            card_visual_rows = _strip_visual_row_art(card_visual_rows)
+        if any(row_has_url):
+            normalized_rows: list[dict[str, Any]] = []
+            for row in card_visual_rows:
+                row_copy = dict(row) if isinstance(row, Mapping) else {}
+                art_val = row_copy.get("art")
+                art_dict = dict(art_val) if isinstance(art_val, Mapping) else {}
+                if not art_dict.get("url"):
+                    rname = str(row_copy.get("name") or "")
+                    art_dict = {
+                        "url": None,
+                        "kind": "monogram",
+                        "detail": str(art_dict.get("detail") or ""),
+                        "accent_color": str(art_dict.get("accent_color") or _fallback_color(rname)),
+                        "initials": str(art_dict.get("initials") or "").strip() or _initials(rname),
+                    }
+                    row_copy["art"] = art_dict
+                normalized_rows.append(row_copy)
+            card_visual_rows = normalized_rows
 
     has_card_art = any(_has_verified_art(r) for r in card_visual_rows if isinstance(r, Mapping))
     if vb_form == "paired_stage_bars" and lead_paired_set:

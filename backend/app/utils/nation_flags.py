@@ -105,6 +105,12 @@ _NATION_TO_ISO: dict[str, str] = {
     "Suriname": "sr",
     "Curaçao": "cw",
     "Curacao": "cw",
+    # --- Major non-UEFA/FIFA countries used in Discover groupings (#12288) ---
+    "China": "cn",
+    "India": "in",
+    "Russia": "ru",
+    "United Kingdom": "gb",
+    "UK": "gb",
 }
 
 

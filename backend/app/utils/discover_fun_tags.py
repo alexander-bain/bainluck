@@ -387,11 +387,26 @@ def _load_curated_plain_short_labels() -> dict[tuple[str, int], str]:
     return plain_by_tag_mid
 
 
+@lru_cache(maxsize=1)
+def _load_fun_market_art_subjects() -> dict[int, str]:
+    """Load optional per-market ``art_subject`` hints from ``fun_markets.json``."""
+    raw_doc = json.loads(FUN_MARKETS_DATA_PATH.read_text(encoding="utf-8"))
+    out: dict[int, str] = {}
+    for key, row in (raw_doc.get("markets") or {}).items():
+        if not isinstance(row, dict):
+            continue
+        subj = str(row.get("art_subject") or "").strip()
+        if subj:
+            out[int(row.get("market_id", key))] = subj
+    return out
+
+
 def clear_fun_markets_cache() -> None:
     """Clear the cached fun-markets registry (for tests)."""
     _load_default_registry.cache_clear()
     _load_curated_grouping_sets.cache_clear()
     _load_curated_art_subjects.cache_clear()
+    _load_fun_market_art_subjects.cache_clear()
     _load_curated_plain_short_labels.cache_clear()
 
 
@@ -478,13 +493,17 @@ def fun_market_headline_with_phrase(
 def fun_market_art_subject(
     market_id: int, *, sub_tag: Optional[str] = None
 ) -> Optional[str]:
-    """Return an optional subject name for binary row art resolution (Batch 5)."""
-    if sub_tag:
+    """Return an optional subject name for binary row art resolution (Batch 5 / Item 4)."""
+    tag_norm = sub_tag.strip().lower() if sub_tag else ""
+    if tag_norm:
         art_by_tag_mid = _load_curated_art_subjects()
-        curated = art_by_tag_mid.get((sub_tag.strip().lower(), int(market_id)))
+        curated = art_by_tag_mid.get((tag_norm, int(market_id)))
         if curated:
             return curated
-    return None
+    # Avoid repeating the card's single namesake portrait on every row of subject-centric sets.
+    if tag_norm in {"elon-musk", "batch3-elon-musk-side-quests"}:
+        return None
+    return _load_fun_market_art_subjects().get(int(market_id))
 
 
 def fun_entry_allows_extreme_odds(entry: Optional[FunMarketEntry]) -> bool:
