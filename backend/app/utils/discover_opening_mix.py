@@ -116,6 +116,8 @@ _ENTERTAINMENT_SLUGS: frozenset[str] = frozenset(
 _SPORTS_SLUGS: frozenset[str] = frozenset(
     {
         "machinery-big-championships-2027",
+        "machinery-march-madness-2027",
+        "machinery-nhl-100-point-club",
         "machinery-nba-night",
         "machinery-nfl-week",
         "roundup-cfp-picture",
@@ -131,6 +133,8 @@ _SPORTS_SLUGS: frozenset[str] = frozenset(
 _TECH_BUSINESS_SLUGS: frozenset[str] = frozenset(
     {
         "machinery-ai-and-big-tech-race",
+        "machinery-ai-model-leaderboard-2026",
+        "machinery-big-tech-deals-hardware",
         "machinery-space-race",
         "machinery-unsolved-big-problems",
     }

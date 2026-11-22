@@ -1,9 +1,9 @@
-"""Batch 5 preview sets (#12288, Fable Item 3 / Sat Nov 21):
+"""Batch 5 public sets (#12288, Fable Item 3 / Sat Nov 21; public under Decision 336: A Sun Nov 22):
 
-1. `machinery-march-madness-2027` — March Madness 2027 (10 rows, preview, NCAA crests via `teams`)
-2. `machinery-ai-model-leaderboard-2026` — The 2026 AI Model Leaderboard (7 rows, preview, tech)
-3. `machinery-big-tech-deals-hardware` — Big Tech Deals & Hardware (8 rows, preview, tech/business)
-4. `machinery-nhl-100-point-club` — The NHL 100-Point Club (7 rows, preview, ESPN NHL headshots)
+1. `machinery-march-madness-2027` — March Madness 2027 (10 rows, public, NCAA crests via `teams`)
+2. `machinery-ai-model-leaderboard-2026` — The 2026 AI Model Leaderboard (7 rows, public, tech)
+3. `machinery-big-tech-deals-hardware` — Big Tech Deals & Hardware (8 rows, public, tech/business)
+4. `machinery-nhl-100-point-club` — The NHL 100-Point Club (7 rows, public, ESPN NHL headshots)
 """
 
 from __future__ import annotations
@@ -122,7 +122,7 @@ def _sample_batch5_markets() -> list[dict]:
     return rows
 
 
-def test_batch5_definitions_stay_preview_non_politics_with_verified_art_and_zero_ncaa_static_entries() -> None:
+def test_batch5_definitions_are_public_non_politics_with_verified_art_and_zero_ncaa_static_entries() -> None:
     clear_fun_markets_cache()
     paths_by_slug = {p.stem: p for p in discover_machinery_candidate_paths()}
     register_doc = json.loads(_REGISTER_PATH.read_text(encoding="utf-8"))
@@ -167,7 +167,7 @@ def test_batch5_definitions_stay_preview_non_politics_with_verified_art_and_zero
         assert slug in paths_by_slug
         defn = load_machinery_definition(paths_by_slug[slug])
         assert "market_id" not in json.dumps(defn)
-        assert defn["stage"] == "preview"
+        assert defn["stage"] == "public"
         assert defn["category"] != "politics"
         rule = defn["rule"]
         assert rule.get("suppress_card_photo") is True
@@ -193,7 +193,7 @@ def test_batch5_definitions_stay_preview_non_politics_with_verified_art_and_zero
 
 
 @pytest.mark.asyncio
-async def test_batch5_four_preview_sets_build_with_crests_headshots_wording_and_parity() -> None:
+async def test_batch5_four_public_sets_build_with_crests_headshots_wording_and_parity() -> None:
     clear_fun_markets_cache()
     db = {
         "events": [],
@@ -227,7 +227,7 @@ async def test_batch5_four_preview_sets_build_with_crests_headshots_wording_and_
         defn = load_machinery_definition(paths_by_slug[slug])
         prod = build_container_machinery_producer(defn)
         res = await produce_container_machinery(db, defn, now=NOW)
-        assert res.machinery_card["stage"] == "preview"
+        assert res.machinery_card["stage"] == "public"
         assert res.machinery_card["image_url"] == defn["rule"]["card_image_url"]
         assert res.title == expected_title
         assert "? at " not in res.title
