@@ -1067,7 +1067,7 @@ XCODE_27_2_CURRENT_SHA256 = {
     "PickerReturnJourneyTests.swift": "8e23abbce48fc2c47f382fdde2985f414236026caa03987535b91b8524e361bc",
     "PickerSelectedStateJourneyTests.swift": "129ad9836cfe7eee86f8aa024fd09b00e0a8ad2f8c145c19be1d3e7e851073b5",
     "WatchDiagnosticsJourneyTests.swift": "9f6fd014300264b8a817e8b8c42caebc91e15457c1d305ca06018c67c62fdb68",
-    "WidgetTapJourneyTests.swift": "174078953262491b881a7b348c6f5eb3950ca6fdfe6bea1c10eaa22dd86e4b53",
+    "WidgetTapJourneyTests.swift": "7eb8243fa38e0d4caef85b6ffd30f5326a4060670c46539d9a8e43dfb7bc367f",
 }
 XCODE_27_2_PREVIOUS_SHA256 = {
     "LargeTextRecoveryJourneyTests.swift": "3b01a4864451d948c659a8236b85f8548138ca646a259739414a72ff3df7658a",
@@ -1429,6 +1429,194 @@ XCODE_27_2_LATER_TRANSFORMS = {
     }""",
             1,
         ),
+        (
+            """    func testColdActualWidgetTapRetainsOfflineReading() throws {
+        executionTimeAllowance = 540
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }""",
+            """    func testColdActualWidgetTapRetainsOfflineReading() throws {
+        executionTimeAllowance = 540
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { terminateAfterLeavingForeground(app) }""",
+            1,
+        ),
+        (
+            """        let baseline = try recordWidgetWarmBaseline(in: app)
+        XCUIDevice.shared.press(.home)
+        let host = XCUIApplication(bundleIdentifier: "com.apple.Carousel")
+        let widget = try mountLauncherOnFreshSiriModularFace(in: host)
+        app.terminate()
+        app.launchEnvironment["BAINLUCK_WATCH_UI_RESET"] = "0"
+        app.launchEnvironment["BAINLUCK_WATCH_UI_OFFLINE"] = "1"
+        app.launchEnvironment["BAINLUCK_WATCH_UI_SEED_URL"] = "1"
+        app.launch()
+        XCTAssertTrue(app.staticTexts["watch.url-fixture-ready"].waitForExistence(timeout: 15))
+        app.terminate()""",
+            """        let baseline = try recordWidgetWarmBaseline(in: app)
+        terminateAfterLeavingForeground(app)
+        let host = XCUIApplication(bundleIdentifier: "com.apple.Carousel")
+        let widget = try mountLauncherOnFreshSiriModularFace(in: host)
+        app.launchEnvironment["BAINLUCK_WATCH_UI_RESET"] = "0"
+        app.launchEnvironment["BAINLUCK_WATCH_UI_OFFLINE"] = "1"
+        app.launchEnvironment["BAINLUCK_WATCH_UI_SEED_URL"] = "1"
+        app.launch()
+        XCTAssertTrue(app.staticTexts["watch.url-fixture-ready"].waitForExistence(timeout: 15))
+        terminateAfterLeavingForeground(app)""",
+            1,
+        ),
+        (
+            """    func testColdActualWidgetTapOffersPickerWithoutSelection() throws {
+        executionTimeAllowance = 540
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }""",
+            """    func testColdActualWidgetTapOffersPickerWithoutSelection() throws {
+        executionTimeAllowance = 540
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { terminateAfterLeavingForeground(app) }""",
+            1,
+        ),
+        (
+            """        XCTAssertTrue(app.buttons["watch.pick.101"].waitForExistence(timeout: 20))
+        XCUIDevice.shared.press(.home)
+        let host = XCUIApplication(bundleIdentifier: "com.apple.Carousel")
+        let widget = try mountLauncherOnFreshSiriModularFace(in: host)
+        app.terminate()
+        app.launchEnvironment["BAINLUCK_WATCH_UI_RESET"] = "0"
+        app.launchEnvironment["BAINLUCK_WATCH_UI_SEED_URL"] = "1"
+        app.launch()
+        XCTAssertTrue(app.staticTexts["watch.url-fixture-ready"].waitForExistence(timeout: 15))
+        app.terminate()""",
+            """        XCTAssertTrue(app.buttons["watch.pick.101"].waitForExistence(timeout: 20))
+        terminateAfterLeavingForeground(app)
+        let host = XCUIApplication(bundleIdentifier: "com.apple.Carousel")
+        let widget = try mountLauncherOnFreshSiriModularFace(in: host)
+        app.launchEnvironment["BAINLUCK_WATCH_UI_RESET"] = "0"
+        app.launchEnvironment["BAINLUCK_WATCH_UI_SEED_URL"] = "1"
+        app.launch()
+        XCTAssertTrue(app.staticTexts["watch.url-fixture-ready"].waitForExistence(timeout: 15))
+        terminateAfterLeavingForeground(app)""",
+            1,
+        ),
+        (
+            """    func testFreshConfiguredFaceIsActiveBeforeActualLauncherTap() throws {
+        executionTimeAllowance = 540
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }""",
+            """    func testFreshConfiguredFaceIsActiveBeforeActualLauncherTap() throws {
+        executionTimeAllowance = 540
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { terminateAfterLeavingForeground(app) }""",
+            1,
+        ),
+        (
+            """            "BAINLUCK_WATCH_UI_FIXED_OBSERVATION": ISO8601DateFormatter().string(from: originalObservation)
+        ]
+        defer { app.terminate() }""",
+            """            "BAINLUCK_WATCH_UI_FIXED_OBSERVATION": ISO8601DateFormatter().string(from: originalObservation)
+        ]
+        defer { terminateAfterLeavingForeground(app) }""",
+            1,
+        ),
+        (
+            """            "BAINLUCK_WATCH_UI_CIRCULAR_IDENTITY": "1"
+        ]
+        defer { app.terminate() }
+        app.launch()
+        XCTAssertTrue(app.buttons["watch.pick.101"].waitForExistence(timeout: 20))
+        app.buttons["watch.pick.101"].tap()
+        let baseline = try recordWidgetWarmBaseline(in: app)""",
+            """            "BAINLUCK_WATCH_UI_CIRCULAR_IDENTITY": "1"
+        ]
+        defer { terminateAfterLeavingForeground(app) }
+        app.launch()
+        XCTAssertTrue(app.buttons["watch.pick.101"].waitForExistence(timeout: 20))
+        app.buttons["watch.pick.101"].tap()
+        let baseline = try recordWidgetWarmBaseline(in: app)""",
+            1,
+        ),
+        (
+            """    func testActualComplicationHost() throws {
+        executionTimeAllowance = 540
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchEnvironment = [
+            "BAINLUCK_WATCH_UI_TEST": "1",
+            "BAINLUCK_WATCH_UI_SUITE": UUID().uuidString,
+            "BAINLUCK_WATCH_UI_RESET": "1",
+            "BAINLUCK_WATCH_UI_LAUNCH_RECEIPT": "1",
+            "BAINLUCK_WATCH_UI_SHARED_PUBLICATION": "1"
+        ]
+        defer { app.terminate() }""",
+            """    func testActualComplicationHost() throws {
+        executionTimeAllowance = 540
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchEnvironment = [
+            "BAINLUCK_WATCH_UI_TEST": "1",
+            "BAINLUCK_WATCH_UI_SUITE": UUID().uuidString,
+            "BAINLUCK_WATCH_UI_RESET": "1",
+            "BAINLUCK_WATCH_UI_LAUNCH_RECEIPT": "1",
+            "BAINLUCK_WATCH_UI_SHARED_PUBLICATION": "1"
+        ]
+        defer { terminateAfterLeavingForeground(app) }""",
+            1,
+        ),
+        (
+            """    @MainActor
+    private func freshFaceCapture(_ host: XCUIApplication, name: String) {
+        let screenshot = XCTAttachment(screenshot: host.screenshot())
+        screenshot.name = name
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        let tree = XCTAttachment(string: host.debugDescription)
+        tree.name = name + " hierarchy"
+        tree.lifetime = .keepAlways
+        add(tree)
+    }
+}""",
+            """    @MainActor
+    private func freshFaceCapture(_ host: XCUIApplication, name: String) {
+        let screenshot = XCTAttachment(screenshot: host.screenshot())
+        screenshot.name = name
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        let tree = XCTAttachment(string: host.debugDescription)
+        tree.name = name + " hierarchy"
+        tree.lifetime = .keepAlways
+        add(tree)
+    }
+
+    @MainActor
+    private func terminateAfterLeavingForeground(_ app: XCUIApplication) {
+        if app.state == .notRunning { return }
+        func leftForeground(within seconds: TimeInterval) -> Bool {
+            let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                let state = app.state
+                return state == .runningBackground || state == .runningBackgroundSuspended || state == .notRunning
+            }, object: nil)
+            return XCTWaiter.wait(for: [backgrounded], timeout: seconds) == .completed
+        }
+        // Only press Home when the Watch app is foreground so we never toggle
+        // Carousel's App Launcher when terminating an already-backgrounded app.
+        if app.state == .runningForeground {
+            XCUIDevice.shared.press(.home)
+            if !leftForeground(within: 10) && app.state == .runningForeground {
+                XCUIDevice.shared.press(.home)
+                _ = leftForeground(within: 10)
+            }
+        }
+        if app.state != .notRunning { app.terminate() }
+        XCTAssertEqual(app.state, .notRunning, "Watch app cleanup must stop the app")
+    }
+}""",
+            1,
+        ),
     ],
 }
 for _name, _blocks in XCODE_27_2_LATER_TRANSFORMS.items():
@@ -1480,12 +1668,19 @@ def test_widgets_3sigs_fail_closed_and_retain_obligations():
             )
 
     widget = (SWIFT / "WidgetTapJourneyTests.swift").read_text()
+    widget_terminate_helper = widget.split("private func terminateAfterLeavingForeground", 1)[1].split(
+        "/// Carousel retains", 1
+    )[0]
+    assert "com.apple.Carousel" not in widget_terminate_helper
     for token in (
         'let allApps = host.otherElements["All Apps"].firstMatch',
         '"App Launcher overlay did not clear from Face Library"',
         '"Configured face did not leave its editor"',
         '"Face Library has no unambiguous visible Siri Modular preview"',
         "preview.tap()",
+        "private func terminateAfterLeavingForeground(_ app: XCUIApplication)",
+        "object: nil",
+        'XCTAssertEqual(app.state, .notRunning, "Watch app cleanup must stop the app")',
     ):
         assert token in widget
         with pytest.raises(AssertionError):

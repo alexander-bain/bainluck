@@ -7,7 +7,7 @@ final class WidgetTapJourneyTests: XCTestCase {
         executionTimeAllowance = 540
         continueAfterFailure = false
         let app = XCUIApplication()
-        defer { app.terminate() }
+        defer { terminateAfterLeavingForeground(app) }
         app.launchEnvironment = [
             "BAINLUCK_WATCH_UI_TEST": "1",
             "BAINLUCK_WATCH_UI_SUITE": UUID().uuidString,
@@ -19,16 +19,15 @@ final class WidgetTapJourneyTests: XCTestCase {
         XCTAssertTrue(app.buttons["watch.pick.101"].waitForExistence(timeout: 20))
         app.buttons["watch.pick.101"].tap()
         let baseline = try recordWidgetWarmBaseline(in: app)
-        XCUIDevice.shared.press(.home)
+        terminateAfterLeavingForeground(app)
         let host = XCUIApplication(bundleIdentifier: "com.apple.Carousel")
         let widget = try mountLauncherOnFreshSiriModularFace(in: host)
-        app.terminate()
         app.launchEnvironment["BAINLUCK_WATCH_UI_RESET"] = "0"
         app.launchEnvironment["BAINLUCK_WATCH_UI_OFFLINE"] = "1"
         app.launchEnvironment["BAINLUCK_WATCH_UI_SEED_URL"] = "1"
         app.launch()
         XCTAssertTrue(app.staticTexts["watch.url-fixture-ready"].waitForExistence(timeout: 15))
-        app.terminate()
+        terminateAfterLeavingForeground(app)
         XCTAssertEqual(app.state, .notRunning)
         XCTAssertTrue(host.wait(for: .runningForeground, timeout: 15))
         XCTAssertTrue(widget.waitForExistence(timeout: 15) && widget.isHittable)
@@ -61,7 +60,7 @@ final class WidgetTapJourneyTests: XCTestCase {
         executionTimeAllowance = 540
         continueAfterFailure = false
         let app = XCUIApplication()
-        defer { app.terminate() }
+        defer { terminateAfterLeavingForeground(app) }
         app.launchEnvironment = [
             "BAINLUCK_WATCH_UI_TEST": "1",
             "BAINLUCK_WATCH_UI_SUITE": UUID().uuidString,
@@ -71,15 +70,14 @@ final class WidgetTapJourneyTests: XCTestCase {
         ]
         app.launch()
         XCTAssertTrue(app.buttons["watch.pick.101"].waitForExistence(timeout: 20))
-        XCUIDevice.shared.press(.home)
+        terminateAfterLeavingForeground(app)
         let host = XCUIApplication(bundleIdentifier: "com.apple.Carousel")
         let widget = try mountLauncherOnFreshSiriModularFace(in: host)
-        app.terminate()
         app.launchEnvironment["BAINLUCK_WATCH_UI_RESET"] = "0"
         app.launchEnvironment["BAINLUCK_WATCH_UI_SEED_URL"] = "1"
         app.launch()
         XCTAssertTrue(app.staticTexts["watch.url-fixture-ready"].waitForExistence(timeout: 15))
-        app.terminate()
+        terminateAfterLeavingForeground(app)
         XCTAssertEqual(app.state, .notRunning)
         XCTAssertTrue(host.wait(for: .runningForeground, timeout: 15))
         XCTAssertTrue(widget.waitForExistence(timeout: 15) && widget.isHittable && host.frame.contains(widget.frame))
@@ -102,7 +100,7 @@ final class WidgetTapJourneyTests: XCTestCase {
         executionTimeAllowance = 540
         continueAfterFailure = false
         let app = XCUIApplication()
-        defer { app.terminate() }
+        defer { terminateAfterLeavingForeground(app) }
         app.launchEnvironment = [
             "BAINLUCK_WATCH_UI_TEST": "1",
             "BAINLUCK_WATCH_UI_SUITE": UUID().uuidString,
@@ -140,7 +138,7 @@ final class WidgetTapJourneyTests: XCTestCase {
             "BAINLUCK_WATCH_UI_SHARED_PUBLICATION": "1", "BAINLUCK_WATCH_UI_CIRCULAR_IDENTITY": "1",
             "BAINLUCK_WATCH_UI_FIXED_OBSERVATION": ISO8601DateFormatter().string(from: originalObservation)
         ]
-        defer { app.terminate() }
+        defer { terminateAfterLeavingForeground(app) }
         app.launch()
         XCTAssertTrue(app.buttons["watch.pick.101"].waitForExistence(timeout: 20))
         app.buttons["watch.pick.101"].tap()
@@ -173,7 +171,7 @@ final class WidgetTapJourneyTests: XCTestCase {
             "BAINLUCK_WATCH_UI_SHARED_PUBLICATION": "1",
             "BAINLUCK_WATCH_UI_CIRCULAR_IDENTITY": "1"
         ]
-        defer { app.terminate() }
+        defer { terminateAfterLeavingForeground(app) }
         app.launch()
         XCTAssertTrue(app.buttons["watch.pick.101"].waitForExistence(timeout: 20))
         app.buttons["watch.pick.101"].tap()
@@ -207,7 +205,7 @@ final class WidgetTapJourneyTests: XCTestCase {
             "BAINLUCK_WATCH_UI_LAUNCH_RECEIPT": "1",
             "BAINLUCK_WATCH_UI_SHARED_PUBLICATION": "1"
         ]
-        defer { app.terminate() }
+        defer { terminateAfterLeavingForeground(app) }
         app.launch()
         XCTAssertTrue(app.buttons["watch.pick.101"].waitForExistence(timeout: 20))
         app.buttons["watch.pick.101"].tap()
@@ -718,6 +716,29 @@ extension WidgetTapJourneyTests {
         tree.name = name + " hierarchy"
         tree.lifetime = .keepAlways
         add(tree)
+    }
+
+    @MainActor
+    private func terminateAfterLeavingForeground(_ app: XCUIApplication) {
+        if app.state == .notRunning { return }
+        func leftForeground(within seconds: TimeInterval) -> Bool {
+            let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                let state = app.state
+                return state == .runningBackground || state == .runningBackgroundSuspended || state == .notRunning
+            }, object: nil)
+            return XCTWaiter.wait(for: [backgrounded], timeout: seconds) == .completed
+        }
+        // Only press Home when the Watch app is foreground so we never toggle
+        // Carousel's App Launcher when terminating an already-backgrounded app.
+        if app.state == .runningForeground {
+            XCUIDevice.shared.press(.home)
+            if !leftForeground(within: 10) && app.state == .runningForeground {
+                XCUIDevice.shared.press(.home)
+                _ = leftForeground(within: 10)
+            }
+        }
+        if app.state != .notRunning { app.terminate() }
+        XCTAssertEqual(app.state, .notRunning, "Watch app cleanup must stop the app")
     }
 }
 
