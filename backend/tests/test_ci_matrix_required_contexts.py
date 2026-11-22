@@ -110,13 +110,13 @@ def test_no_required_matrix_job_is_skipped_at_job_level_by_change_scope():
 def _validate_backend_partition(jobs):
     job = jobs["backend-tests"]
     shards = job["strategy"]["matrix"]["shard"]
-    assert shards == list(range(1, 9)), "eight unique nonempty backend contexts"
-    assert set(range(1, 5)) <= set(shards), "original required contexts must remain"
+    assert shards == list(range(1, 17)), "sixteen unique nonempty backend contexts"
+    assert set(range(1, 9)) <= set(shards), "required contexts must remain"
     assert job["strategy"]["fail-fast"] is False
     assert "continue-on-error" not in job
     assert all("continue-on-error" not in step for step in job["steps"])
     verifier = jobs["shard-completeness"]["steps"][-1]["run"]
-    assert verifier == "python scripts/ci_shard.py --verify --of 8"
+    assert verifier == "python scripts/ci_shard.py --verify --of 16"
     command = next(
         s["run"] for s in job["steps"] if s.get("name", "").startswith("Run tests")
     )
@@ -237,7 +237,7 @@ def test_reuse_never_removes_matrix_contexts_and_missing_decision_runs_tests(reu
         assert bool(any(s.get("if") == REUSED for s in ran)) == (reuse == "true")
     assert jobs["frontend-build"]["if"] == f"{LIVE} && needs.change-scope.outputs.scope != 'native'"
     assert jobs["frontend-build"]["needs"] == ["change-scope", "fast-gate"]
-    assert len(jobs["database-integration"]["strategy"]["matrix"]["group"]) == 6  # + shared-tail-2 (Nov 18)
+    assert len(jobs["database-integration"]["strategy"]["matrix"]["group"]) == 7  # + shared-middle-2 (332: A)
 
 @pytest.mark.parametrize("scope", ["frontend", "native", "full", "", None])
 def test_a_live_candidate_defers_all_full_shard_steps_but_keeps_contexts(scope):

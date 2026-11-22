@@ -27,6 +27,8 @@ TAIL_PROVISIONER = "#10703 shared tail — provision pg_trgm on the fresh databa
 # below is read without it.
 RETRY_PLUGIN = "#55-A shared tail — provision the pinned retry-once plugin"
 MIDDLE_PROVISIONER = "#10717 shared middle — provision pg_trgm on the fresh database"
+SECOND_MIDDLE_PROVISIONER = MIDDLE_PROVISIONER.replace("shared middle ", "shared middle 2 ")
+SECOND_MIDDLE_BOUNDARY = "#6073 the re-date declines a row that moved under it (real Postgres)"
 MIDDLE_FIRST_GATE = "#8466 a Polymarket leg resolves on its own date, and a re-ingest repairs it (real Postgres)"
 TAIL_FIRST_GATE = "#2927 container assembly writes and re-writes (real Postgres)"
 OFFLOADED_FIRST = "#10024 'dodgers world series' reaches the World Series board, not No results (real Postgres)"
@@ -37,7 +39,8 @@ def _offloaded_suffix(worker):
     """The one reviewed reset boundary, never an arbitrary regrouping exception."""
     chain = [s for s in worker["steps"] if s.get("if") in (
         "matrix.group == 'shared'", "matrix.group == 'shared-middle'",
-        "matrix.group == 'shared-tail'", "matrix.group == 'shared-suffix'",
+        "matrix.group == 'shared-middle-2'", "matrix.group == 'shared-tail'",
+        "matrix.group == 'shared-suffix'",
     )]
     names = [s["name"] for s in chain]
     first, last = names.index(OFFLOADED_FIRST), names.index(OFFLOADED_LAST)
@@ -82,14 +85,14 @@ def _validate_fresh_tail(worker, fixture_source):
     assert [step["name"] for step in tail[:2]] == [TAIL_PROVISIONER, TAIL_FIRST_GATE]
     original_shared = [
         step["name"] for step in worker["steps"]
-        if step.get("if") in ("matrix.group == 'shared'", "matrix.group == 'shared-middle'", "matrix.group == 'shared-tail'")
-        and step.get("name") not in (TAIL_PROVISIONER, MIDDLE_PROVISIONER, RETRY_PLUGIN)
+        if step.get("if") in ("matrix.group == 'shared'", "matrix.group == 'shared-middle'", "matrix.group == 'shared-middle-2'", "matrix.group == 'shared-tail'")
+        and step.get("name") not in (TAIL_PROVISIONER, MIDDLE_PROVISIONER, SECOND_MIDDLE_PROVISIONER, RETRY_PLUGIN)
         and step.get("name") not in offloaded
     ]
     prefix = [
         step["name"] for step in worker["steps"]
-        if step.get("if") in ("matrix.group == 'shared'", "matrix.group == 'shared-middle'")
-        and step.get("name") != MIDDLE_PROVISIONER
+        if step.get("if") in ("matrix.group == 'shared'", "matrix.group == 'shared-middle'", "matrix.group == 'shared-middle-2'")
+        and step.get("name") not in (MIDDLE_PROVISIONER, SECOND_MIDDLE_PROVISIONER)
         and step.get("name") not in offloaded
     ]
     boundary = original_shared.index(TAIL_FIRST_GATE)
@@ -332,7 +335,7 @@ def test_common_setup_services_and_intentional_scope_skip():
     # #10708: skipped on a pure-ios/ PR too; native-backend-readers covers it.
     assert worker["if"] == "needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true'"
     assert worker["strategy"]["fail-fast"] is False
-    assert worker["strategy"]["matrix"]["group"] == ["shared", "shared-middle", "shared-tail", "isolated", "shared-suffix", "shared-tail-2"]
+    assert worker["strategy"]["matrix"]["group"] == ["shared", "shared-middle", "shared-middle-2", "shared-tail", "isolated", "shared-suffix", "shared-tail-2"]
     assert worker["services"]["postgres"]["image"] == "postgres:15"
     assert worker["services"]["postgres"]["env"]["POSTGRES_DB"] == "bl_searchtest"
     assert worker["services"]["redis"]["ports"] == ["56379:6379"]
@@ -473,10 +476,10 @@ def test_actual_aggregate_command_only_accepts_completed_success(scope_result, i
 def _validate_fresh_middle(worker, fixture_source):
     offloaded = _offloaded_suffix(worker)
     chain = [s for s in worker["steps"]
-             if s.get("if") in ("matrix.group == 'shared'", "matrix.group == 'shared-middle'")
-             and s.get("name") != MIDDLE_PROVISIONER and s.get("name") not in offloaded]
+             if s.get("if") in ("matrix.group == 'shared'", "matrix.group == 'shared-middle'", "matrix.group == 'shared-middle-2'")
+             and s.get("name") not in (MIDDLE_PROVISIONER, SECOND_MIDDLE_PROVISIONER) and s.get("name") not in offloaded]
     prefix = [s["name"] for s in worker["steps"] if s.get("if") == "matrix.group == 'shared'" and s.get("name") not in offloaded]
-    middle = [s for s in worker["steps"] if s.get("if") == "matrix.group == 'shared-middle'"]
+    middle = [s for s in worker["steps"] if s.get("if") in ("matrix.group == 'shared-middle'", "matrix.group == 'shared-middle-2'") and s.get("name") != SECOND_MIDDLE_PROVISIONER]
     boundary = next(i for i, s in enumerate(chain) if s["name"] == MIDDLE_FIRST_GATE)
     assert prefix == [s["name"] for s in chain[:boundary]]
     assert [s["name"] for s in middle[:2]] == [MIDDLE_PROVISIONER, MIDDLE_FIRST_GATE]
@@ -693,3 +696,63 @@ def test_the_second_tail_boundary_refuses_unsafe_assignment_or_fixture(mutation)
         by[SECOND_TAIL_BOUNDARY]["if"] = "matrix.group == 'shared-tail'"
     with pytest.raises((AssertionError, KeyError, StopIteration, ValueError)):
         _validate_second_tail(worker, source)
+
+
+def _second_middle_fixture_source():
+    return (ROOT / "backend/tests/integration/test_polymarket_redate_atomicity_6073_pg.py").read_text()
+
+
+def _validate_second_middle(worker, fixture_source):
+    steps = worker["steps"]
+    names = [s.get("name") for s in steps]
+    first = [s for s in steps if s.get("if") == "matrix.group == 'shared-middle'"]
+    second = [s for s in steps if s.get("if") == "matrix.group == 'shared-middle-2'"]
+    assert [s["name"] for s in second[:2]] == [SECOND_MIDDLE_PROVISIONER, SECOND_MIDDLE_BOUNDARY]
+    assert second[0]["run"] == next(s for s in first if s["name"] == MIDDLE_PROVISIONER)["run"]
+    _validate_tail_provisioner(second[0])
+    setup = {MIDDLE_PROVISIONER, SECOND_MIDDLE_PROVISIONER}
+    a = [names.index(s["name"]) for s in first if s["name"] not in setup]
+    b = [names.index(s["name"]) for s in second if s["name"] not in setup]
+    assert a and b and max(a) < min(b)
+    assert names[min(b)] == SECOND_MIDDLE_BOUNDARY
+    between = [s for s in steps[max(a) + 1:min(b)] if "shared-middle" in str(s.get("if"))]
+    assert [s["name"] for s in between] == [SECOND_MIDDLE_PROVISIONER]
+    assert "tests/integration/test_polymarket_redate_atomicity_6073_pg.py" in second[1]["run"]
+    tree = ast.parse(fixture_source)
+    fixture = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == "pg_engine")
+    register = next(n.lineno for n in ast.walk(fixture) if isinstance(n, ast.Import)
+                    and any(a.name == "app.models.models" for a in n.names))
+    resets = {ast.unparse(n.args[0]): n for n in ast.walk(fixture) if isinstance(n, ast.Call)
+              and ast.unparse(n.func).endswith("run_sync") and n.args}
+    drop, create = resets["Base.metadata.drop_all"], resets["Base.metadata.create_all"]
+    assert not drop.keywords and not create.keywords and len(drop.args) == len(create.args) == 1
+    yielded = next(n.lineno for n in ast.walk(fixture) if isinstance(n, ast.Yield))
+    assert register < drop.lineno < create.lineno < yielded
+    engine = next(n for n in ast.walk(fixture) if isinstance(n, ast.Call)
+                  and ast.unparse(n.func) == "create_async_engine")
+    assert ast.unparse(engine.args[0]) == "DB_URL"
+    assert 'os.environ.get("SEARCH_TEST_DATABASE_URL")' in fixture_source
+
+
+def test_the_second_middle_runner_starts_at_a_full_reset_and_keeps_the_chain_order():
+    jobs, _ = _inputs()
+    _validate_second_middle(jobs["database-integration"], _second_middle_fixture_source())
+
+
+@pytest.mark.parametrize("mutation", ["early_step_moved", "no_provisioner", "missing_reset", "boundary_moved"])
+def test_the_second_middle_boundary_refuses_unsafe_assignment_or_fixture(mutation):
+    jobs, _ = _inputs()
+    worker = jobs["database-integration"]
+    source = _second_middle_fixture_source()
+    steps = worker["steps"]
+    by = {s.get("name"): s for s in steps}
+    if mutation == "early_step_moved":
+        by["#5789 the #5621 repair cannot select a real game (real Postgres)"]["if"] = "matrix.group == 'shared-middle-2'"
+    elif mutation == "no_provisioner":
+        worker["steps"] = [s for s in steps if s.get("name") != SECOND_MIDDLE_PROVISIONER]
+    elif mutation == "missing_reset":
+        source = source.replace("await conn.run_sync(Base.metadata.drop_all)", "pass")
+    else:
+        by[SECOND_MIDDLE_BOUNDARY]["if"] = "matrix.group == 'shared-middle'"
+    with pytest.raises((AssertionError, KeyError, StopIteration, ValueError)):
+        _validate_second_middle(worker, source)

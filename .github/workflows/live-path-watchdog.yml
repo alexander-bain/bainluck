@@ -203,7 +203,7 @@ jobs:
       run: python scripts/ci_shard_hints_fetch.py adopt "$RUNNER_TEMP/shard-timings/ci_shard_durations.json"
     - name: The shards must cover the whole suite, exactly once each
       if: needs.change-scope.outputs.reuse != 'true'
-      run: python scripts/ci_shard.py --verify --of 8
+      run: python scripts/ci_shard.py --verify --of 16
   database-integration:
     strategy:
       fail-fast: false
