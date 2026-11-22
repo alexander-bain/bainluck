@@ -1,4 +1,29 @@
 import Foundation
+import SwiftUI
+
+/// #13417 — Two-column layout geometry for set pages (`ContainerHubView`),
+/// keeping compact widths (iPhone, Split View, Slide Over) and accessibility
+/// text sizes single-column so no card text cuts off.
+enum ContainerHubGridLayout13417 {
+    static let spacing: CGFloat = 16
+    static let minimumTwoColumnCardWidth: CGFloat = 340
+
+    nonisolated static func columnCount(
+        horizontalSizeClass: UserInterfaceSizeClass?,
+        dynamicTypeSize: DynamicTypeSize,
+        availableWidth: CGFloat? = nil
+    ) -> Int {
+        guard horizontalSizeClass == .regular else { return 1 }
+        if dynamicTypeSize.isAccessibilitySize { return 1 }
+        if let availableWidth, availableWidth > 0 {
+            let perColumnWidth = (availableWidth - spacing) / 2
+            if perColumnWidth < minimumTwoColumnCardWidth {
+                return 1
+            }
+        }
+        return 2
+    }
+}
 
 /// Sensible groups, in the server's order. No bracket, favorite inference,
 /// synthesized membership or assembly-result-to-reader-state translation.
