@@ -13,6 +13,7 @@ from app.utils.container_machinery import (
     SubjectArtResolver,
     _CANDIDATES_DIR,
     _is_sports_context,
+    _is_sports_definition,
     _load_snapshot_from_db,
     load_machinery_definition,
     produce_container_machinery,
@@ -707,3 +708,118 @@ def test_ambiguous_city_or_nickname_never_falls_back_to_other_sport_static_crest
         mlb_art = resolver.resolve(mlb_name, sport_key="baseball_mlb", allow_team_lookup=True)
         assert mlb_art["kind"] == "monogram", (mlb_name, mlb_art)
         assert mlb_art["url"] is None, (mlb_name, mlb_art)
+
+
+@pytest.mark.asyncio
+async def test_long_shots_with_extra_sports_category_does_not_emit_dropped_row_pictures_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Non-sports cards with sports extra_llm_categories (e.g. Long shots pulling a basketball prop)
+    must not fire 'Public sports card ... dropped row pictures'."""
+    defn = load_machinery_definition(_CANDIDATES_DIR / "machinery-long-shots.json")
+    assert not _is_sports_definition(defn)
+    markets = [
+        {
+            "id": mid,
+            "name": mname,
+            "status": "open",
+            "source": "kalshi",
+            "llm_sport_category": "odd",
+            "volume": 50_000.0,
+            "outcomes": [{"id": idx + 1, "name": subj, "probability": prob}],
+        }
+        for idx, (mid, mname, subj, prob) in enumerate(
+            [
+                (109435, "First contact confirmed?", "Unmapped Signal One", 0.08),
+                (113504, "Bigfoot DNA verified?", "Unmapped Cryptid Two", 0.05),
+                (109295, "Time travel proven?", "Unmapped Paradox Three", 0.03),
+            ]
+        )
+    ]
+    with caplog.at_level(logging.WARNING, logger="app.utils.container_machinery"):
+        res = await produce_container_machinery(
+            {"markets": markets, "teams": _sample_teams()},
+            defn,
+            now=NOW,
+        )
+    assert hasattr(res, "machinery_card")
+    assert len(res.machinery_card["rows"]) == 3
+    assert all(not (r.get("art") or {}).get("url") for r in res.machinery_card["rows"])
+    assert not any("dropped row pictures" in rec.message for rec in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_public_sports_card_with_hide_row_art_does_not_emit_dropped_row_pictures_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A public sports card that explicitly sets hide_row_art=True must not warn on missing row art."""
+    import copy
+
+    defn = copy.deepcopy(dict(load_machinery_definition(_CANDIDATES_DIR / "machinery-big-championships-2027.json")))
+    defn["rule"] = {**dict(defn["rule"]), "hide_row_art": True}
+    assert _is_sports_definition(defn)
+    markets = [
+        {
+            "id": mid,
+            "name": mname,
+            "status": "open",
+            "source": "polymarket",
+            "llm_sport_category": "basketball",
+            "volume": 50_000.0,
+            "outcomes": [{"id": idx + 1, "name": subj, "probability": prob}],
+        }
+        for idx, (mid, mname, subj, prob) in enumerate(
+            [
+                (57792807, "Heisman Trophy Winner 2026", "Unmapped Prospect One", 0.42),
+                (66031970, "NBA MVP 2026-27", "Unmapped Prospect Two", 0.35),
+                (70732924, "UEFA Champions League 2026-27", "Unmapped Club Three", 0.28),
+            ]
+        )
+    ]
+    with caplog.at_level(logging.WARNING, logger="app.utils.container_machinery"):
+        res = await produce_container_machinery(
+            {"markets": markets, "teams": _sample_teams()},
+            defn,
+            now=NOW,
+        )
+    assert hasattr(res, "machinery_card")
+    assert not any("dropped row pictures" in rec.message for rec in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_public_sports_card_still_warns_when_row_pictures_are_expected(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Genuine public sports cards where row pictures are expected still log dropped-row-pictures."""
+    defn = load_machinery_definition(_CANDIDATES_DIR / "machinery-big-championships-2027.json")
+    assert _is_sports_definition(defn)
+    markets = [
+        {
+            "id": mid,
+            "name": mname,
+            "status": "open",
+            "source": "polymarket",
+            "llm_sport_category": "basketball",
+            "volume": 50_000.0,
+            "outcomes": [{"id": idx + 1, "name": subj, "probability": prob}],
+        }
+        for idx, (mid, mname, subj, prob) in enumerate(
+            [
+                (57792807, "Heisman Trophy Winner 2026", "Unmapped Prospect One", 0.42),
+                (66031970, "NBA MVP 2026-27", "Unmapped Prospect Two", 0.35),
+                (70732924, "UEFA Champions League 2026-27", "Unmapped Club Three", 0.28),
+            ]
+        )
+    ]
+    with caplog.at_level(logging.WARNING, logger="app.utils.container_machinery"):
+        res = await produce_container_machinery(
+            {"markets": markets, "teams": _sample_teams()},
+            defn,
+            now=NOW,
+        )
+    assert hasattr(res, "machinery_card")
+    assert any(
+        "Public sports card machinery-big-championships-2027 dropped row pictures; missing art for subjects="
+        in rec.message
+        for rec in caplog.records
+    )
