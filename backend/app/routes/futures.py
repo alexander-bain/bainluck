@@ -4928,6 +4928,16 @@ async def get_futures_market(
         _apply_verified_title_to_detail(
             detail, await _resolve_verified_title(db, market), market
         )
+    served_outcomes = detail.get("outcomes") or ()
+    if (
+        detail.get("status") in {"open", "active"}
+        and detail.get("market_type") == "field"
+        and detail.get("source") in {"kalshi", "polymarket"}
+        and len(served_outcomes) > 1
+        and any(row.get("probability") is not None for row in served_outcomes)
+        and not any(row.get("rendered_percent") is not None for row in served_outcomes)
+    ):
+        detail["outcome_prices_are_independent"] = True
     return detail
 
 

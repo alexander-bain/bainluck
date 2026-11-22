@@ -223,6 +223,12 @@ nonisolated enum PairedMetricPresentation {
                 label: "Eliminated"
             )
         }
+        if let probability = entry.stage2Probability, let percent = entry.stage2RenderedPercent {
+            return FormattedPairedStageDisplay(
+                kind: .percent, percent: percent,
+                label: formatProbability(probability, renderedPercent: percent)
+            )
+        }
         guard let rawPct = renderedPercent(entry.stage2Probability) else {
             let fallback = (entry.missingStage2Reason?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
                 ?? "Not listed to win"

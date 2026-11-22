@@ -1599,12 +1599,22 @@ struct EvolutionChartView: View {
         return ChartScaleRule201.futuresCeilingPercent(peakPercent: peak)
     }
 
-    nonisolated static func shortEndLabel192A(name: String, percentValue: Double?) -> String {
+    nonisolated static func shortEndLabel192A(
+        name: String, percentValue: Double?, renderedPercent: Int? = nil
+    ) -> String {
         let shortName = TeamShortName.futuresChartLabel(name)
         if let pct = percentValue {
-            return "\(shortName) \(Int(pct.rounded()))%"
+            return "\(shortName) \(formatProbability(pct / 100, renderedPercent: renderedPercent))"
         }
         return shortName
+    }
+
+    nonisolated static func currentEndLabel192A(name: String, outcome: TimelineOutcomeMeta?) -> String {
+        shortEndLabel192A(
+            name: name,
+            percentValue: outcome?.currentProbability.map { $0 * 100 },
+            renderedPercent: outcome?.renderedPercent
+        )
     }
 
     private func lineWidth(for name: String, isCombined: Bool) -> CGFloat {
@@ -1929,7 +1939,8 @@ struct EvolutionChartView: View {
             ForEach(Array(names.enumerated()), id: \.element) { idx, name in
                 let styleIdx = displayedNames.firstIndex(of: name) ?? idx
                 let color = colorForOutcome(name: name, index: styleIdx)
-                let label = Self.shortEndLabel192A(name: name, percentValue: lastProbs[idx])
+                let current = servedOutcomes.first { $0.name == name }
+                let label = Self.currentEndLabel192A(name: name, outcome: current)
                 Text(label)
                     .font(.system(size: 10.5, weight: .bold).monospacedDigit())
                     .foregroundStyle(color)

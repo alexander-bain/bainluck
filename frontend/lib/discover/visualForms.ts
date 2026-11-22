@@ -35,6 +35,7 @@
  */
 
 import { isKidSafeText, kidSafeImageUrl } from "@/lib/play/kidSafe";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import { renderedPercent } from "@/lib/renderedPercent";
 
 export type FormVocabularyPart = "bars" | "tiles" | "strips" | "pictures" | "ticks";
@@ -98,6 +99,7 @@ export interface PairedSubjectEntry {
   stage_2_market_id: number;
   stage_2_outcome: string | null;
   stage_2_probability: number | null;
+  stage_2_rendered_percent?: number | null;
   stage_2_blend_rule?: string | null;
   stage_2_divergence?: Record<string, unknown> | null;
   stage_2_blend_authority?: ServerBlendAuthority;
@@ -446,6 +448,16 @@ export function formatStage2Display(
       percent: 0,
       symbol: "✗",
       label: "Eliminated",
+    };
+  }
+
+  if (entry.stage_2_probability != null && entry.stage_2_rendered_percent != null) {
+    return {
+      kind: "percent",
+      percent: entry.stage_2_rendered_percent,
+      label: formatProbabilityPercent(entry.stage_2_probability, {
+        rendered: entry.stage_2_rendered_percent,
+      }),
     };
   }
 
