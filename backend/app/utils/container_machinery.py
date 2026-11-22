@@ -691,9 +691,6 @@ def _is_sports_definition(definition: Optional[Mapping[str, Any]]) -> bool:
     if str(definition.get("category") or "").strip().lower() in _SPORTS_CATEGORIES:
         return True
     rule = definition.get("rule") if isinstance(definition.get("rule"), Mapping) else {}
-    for extra_cat in rule.get("extra_llm_categories") or ():
-        if str(extra_cat or "").strip().lower() in _SPORTS_CATEGORIES:
-            return True
     for sec in rule.get("sections") or ():
         if isinstance(sec, Mapping) and isinstance(sec.get("atom_query"), Mapping):
             aq = sec["atom_query"]
