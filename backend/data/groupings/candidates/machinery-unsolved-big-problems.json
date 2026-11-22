@@ -27,6 +27,9 @@
     ],
     "card_rows": 3,
     "card_section_key": "unsolved_big_problems",
+    "card_omit_ids": [
+      112792
+    ],
     "suppress_card_photo": true,
     "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/13/NASA_Unveils_Celestial_Fireworks_as_Official_Hubble_25th_Anniversary_Image.jpg/960px-NASA_Unveils_Celestial_Fireworks_as_Official_Hubble_25th_Anniversary_Image.jpg",
     "card_image_alt": "Star cluster Westerlund 2 glowing inside cosmic gas clouds photographed by the Hubble Space Telescope",
