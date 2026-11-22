@@ -5,12 +5,12 @@ import XCTest
 @testable import Bain_Luck
 
 #if os(iOS)
-private final class TraitOverrideContainer13417<Content: View>: UIViewController {
-    private let host: UIHostingController<Content>
+private final class TraitOverrideContainer13417: UIViewController {
+    private let child: UIViewController
     private let overrideTraits: UITraitCollection
 
-    init(rootView: Content, traits: UITraitCollection) {
-        self.host = UIHostingController(rootView: rootView)
+    init(child: UIViewController, traits: UITraitCollection) {
+        self.child = child
         self.overrideTraits = traits
         super.init(nibName: nil, bundle: nil)
     }
@@ -22,13 +22,13 @@ private final class TraitOverrideContainer13417<Content: View>: UIViewController
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        addChild(host)
-        host.view.frame = view.bounds
-        host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
-        host.view.backgroundColor = .clear
-        view.addSubview(host.view)
-        setOverrideTraitCollection(overrideTraits, forChild: host)
-        host.didMove(toParent: self)
+        addChild(child)
+        child.view.frame = view.bounds
+        child.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        child.view.backgroundColor = .clear
+        view.addSubview(child.view)
+        setOverrideTraitCollection(overrideTraits, forChild: child)
+        child.didMove(toParent: self)
     }
 }
 
@@ -349,7 +349,8 @@ final class ContainerHubTwoColumnIPad13417Tests: XCTestCase {
             UITraitCollection(horizontalSizeClass: sizeClass == .regular ? .regular : .compact),
             UITraitCollection(userInterfaceStyle: scheme == .dark ? .dark : .light)
         ])
-        let container = TraitOverrideContainer13417(rootView: root, traits: traits)
+        let host = hostForMeasurement(root, at: dynamicType)
+        let container = TraitOverrideContainer13417(child: host, traits: traits)
         container.view.frame = CGRect(x: 0, y: 0, width: width, height: height)
 
         let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
