@@ -415,20 +415,19 @@ class TestCreationGuardsSixRealShortSpellings:
         "short_name,sport_id,expected_id,full_name,espn_id",
         SIX_SHORT_SPELLINGS,
     )
-    async def test_site3_user_search_does_not_recreate_short_spelling(
+    async def test_site3_user_search_fallback_does_not_recreate_short_spelling(
         self, short_name, sport_id, expected_id, full_name, espn_id
     ):
         sync, db = _make_session()
         _seed_six_canonical_clubs(sync)
         before_count = len(sync.execute(select(Team)).scalars().all())
 
-        # The game has the incoming spelling and the verified club link.
+        # Event carries the incoming short spelling (e.g. "Tottenham")
         sync.add(
             Event(
                 id=9000 + expected_id,
                 external_id=f"ext-{expected_id}",
                 sport_id=sport_id,
-                home_team_id=expected_id,
                 home_team_name=short_name,
                 away_team_name="Opponent FC",
                 commence_time=datetime.now(timezone.utc) + timedelta(days=1),
@@ -449,7 +448,7 @@ class TestCreationGuardsSixRealShortSpellings:
         assert len(sync.execute(select(Team)).scalars().all()) == before_count
 
     @pytest.mark.asyncio
-    async def test_site3_user_search_keeps_the_linked_clubs_retired_name(
+    async def test_site3_user_search_fallback_reaches_retired_redirect_when_teams_query_misses(
         self,
     ):
         sync, db = _make_session()
@@ -469,7 +468,6 @@ class TestCreationGuardsSixRealShortSpellings:
                 id=9910,
                 external_id="ext-spurs",
                 sport_id=1,
-                home_team_id=146,
                 home_team_name="Spurs",
                 away_team_name="Opponent FC",
                 commence_time=datetime.now(timezone.utc) + timedelta(days=1),
