@@ -25,6 +25,7 @@ from model import (
     public_title,
 )
 from collect import (
+    collect,
     is_review_bot,
     safe_comment,
     floor_changed,
@@ -67,6 +68,34 @@ class GitHubRequestTests(unittest.TestCase):
                         api.request("example", method=method)
                 self.assertEqual(send.call_count, attempts)
                 self.assertEqual(api.api_calls, attempts)
+
+
+class FactoryCollectorTests(unittest.TestCase):
+    def test_collects_recent_now_posts_across_pacific_midnight(self):
+        now = instant("2026-11-22T08:05:00Z")
+        post_at = "2026-11-22T07:59:00Z"
+        api = MagicMock()
+        api.public_json.return_value = {"status": "ok", "commit": "server"}
+        api.pages.return_value = [{
+            "body": "Builder F: Waiting on #13346.",
+            "created_at": post_at,
+            "author_association": "OWNER",
+        }]
+        api.request.side_effect = lambda endpoint: {"workflow_runs": []} if "/actions/" in endpoint else []
+        receipts = [
+            {"line": "Website", "commit": "web", "at": iso(now)},
+            {"line": "Apps", "commit": "apps", "at": iso(now)},
+        ]
+        git_output = {"rev-parse": "server", "show": iso(now), "rev-list": "web\napps\nserver"}
+        with (
+            patch("collect.datetime") as clock,
+            patch("collect.history_signals", return_value=(receipts, {}, [], None)),
+            patch("collect.git", side_effect=lambda command, *args: git_output[command]),
+        ):
+            clock.now.return_value = now
+            snapshot = collect(api, open_summaries=[])
+        api.pages.assert_called_once_with("issues/12779/comments?since=2026-11-22T07:50:00Z")
+        self.assertEqual(snapshot["crew_posts"], {"F": {"at": post_at, "waiting_on": 13346}})
 
 
 class FactoryRules(unittest.TestCase):
