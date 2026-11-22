@@ -4533,6 +4533,7 @@ async def get_feed(
             )
 
     from app.utils.feed_collections import (
+        FINGERPRINT_UNAVAILABLE,
         add_feed_collections,
         feed_collections_cache_fingerprint,
         feed_collections_enabled,
@@ -4549,11 +4550,10 @@ async def get_feed(
     # cached ONLY under the publication state it was built from (#10003): the
     # fingerprint joins the cache shape, so every tier keyed from it —
     # response, stale, last-good, page base, the LAT-P089 shared key — misses
-    # within five seconds of a hub publication or membership change. A short
-    # process-local reuse avoids database work on every warm feed open. When the
-    # fingerprint cannot be read the page is not cached at all, which is what
-    # every collection-bearing page got before #10003 (1.4–2.3 s per Discover
-    # open). Flag-off requests pass None and keep byte-identical keys.
+    # within five seconds of a hub publication or membership change. Under
+    # #13350 (`325: B`), a slow or failing fingerprint read falls back to LKG
+    # and never switches the Discover cache off (`unverified` isolated key if no
+    # LKG exists yet). Flag-off requests pass None and keep byte-identical keys.
     _collections_fingerprint = None
     if _collections_enabled and not debug and not exclude_reviewed:
         _collections_fingerprint = await feed_collections_cache_fingerprint(
@@ -4562,9 +4562,9 @@ async def get_feed(
     # #9925: a theme card's `collection_ref` is publication-bound the same way.
     # The published themes join the same key part (unchanged while none is
     # published) and are what the build checks each target's revision against.
-    # None = could not tell: no links, and the page is not cached. The read is
-    # on its own session and bounded by the request's remaining budget, so it
-    # can neither stall the cache gate nor leave this request's session aborted.
+    # None = could not tell: no unverified links are emitted, and under #13350
+    # the feed cache stays active under an isolated `unverified` key until read
+    # recovery. The read runs on its own session and bounded by the remaining budget.
     from app.utils.theme_collection_ref import (
         attach_theme_collection_refs,
         compose_collections_fingerprint,
@@ -4593,15 +4593,17 @@ async def get_feed(
     _machinery_cache_mode: bool | str = (
         "preview" if _include_machinery_preview else _include_machinery_feed
     )
-    if (
-        not debug
-        and not exclude_reviewed
-        and (not _collections_enabled or _collections_fingerprint is not None)
-        and (not _theme_refs_enabled or _published_themes is not None)
-    ):
+    if not debug and not exclude_reviewed:
         _cache_status = "miss"
+        _effective_collections_fp = (
+            _collections_fingerprint
+            if _collections_fingerprint is not None
+            else (FINGERPRINT_UNAVAILABLE if _collections_enabled else None)
+        )
         _collections_key = compose_collections_fingerprint(
-            _collections_fingerprint, _published_themes
+            _effective_collections_fp,
+            _published_themes,
+            theme_unavailable=(_theme_refs_enabled and _published_themes is None),
         )
         # LAT-P089: the request SHAPE, held once. The private key and the
         # principal-independent key differ only in the principal, so deriving

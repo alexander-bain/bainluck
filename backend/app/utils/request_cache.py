@@ -370,3 +370,55 @@ def schedule_background(coro: Awaitable[Any]) -> None:
 
     _background_tasks.add(task)
     task.add_done_callback(_done)
+
+
+def redis_lkg_enabled() -> bool:
+    """Whether Discover fingerprint Redis LKG fallback is active."""
+    return (
+        os.getenv("FEED_FINGERPRINT_REDIS_LKG_ENABLED", "1").strip().lower()
+        not in {"0", "false", "no", "off"}
+    )
+
+
+async def read_redis_lkg_text(key: str) -> Optional[str]:
+    """Read a UTF-8 last-known-good string from Redis under the bounded deadline."""
+    if not redis_lkg_enabled():
+        return None
+    try:
+        client = await get_shared_async_redis()
+        if client is None:
+            return None
+        res = await bounded_redis_call(lambda: client.get(key))
+        raw = res.value if res.is_ok else None
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", errors="ignore")
+        if isinstance(raw, str) and raw:
+            return raw
+    except asyncio.CancelledError:
+        raise
+    except Exception:
+        logger.debug("Redis LKG read failed for %s", key, exc_info=True)
+    return None
+
+
+def write_redis_lkg_text(key: str, ttl_seconds: int, value: str) -> None:
+    """Persist a UTF-8 last-known-good string to Redis off the critical path."""
+    if not redis_lkg_enabled() or not key or not value:
+        return
+
+    async def _write() -> None:
+        try:
+            client = await get_shared_async_redis()
+            if client is None:
+                return
+            await bounded_redis_call(
+                lambda: client.setex(key, ttl_seconds, value)
+            )
+        except Exception:
+            logger.debug("Redis LKG write failed for %s", key, exc_info=True)
+
+    coro = _write()
+    try:
+        schedule_background(coro)
+    except Exception:
+        coro.close()
