@@ -15,6 +15,12 @@ from app.tasks import celery_app
 class TestBeatScheduleWiring:
     """Every beat schedule entry must reference a registered Celery task."""
 
+    def test_onboarding_membership_rebuild_runs_once_an_hour(self):
+        entry = celery_app.conf.beat_schedule["refresh-onboarding-team-membership"]
+        assert entry["schedule"].minute == {3}
+        assert entry["schedule"].hour == set(range(24))
+        assert entry["options"]["queue"] == "background"
+
     def test_all_beat_entries_reference_registered_tasks(self):
         registered = set(celery_app.tasks.keys())
         for schedule_name, entry in celery_app.conf.beat_schedule.items():

@@ -7508,11 +7508,11 @@ def refresh_onboarding_team_membership():
     """Refresh the set that keeps fixture scans off onboarding searches."""
     from app.services.onboarding_team_membership import rebuild_onboarding_team_membership
     from app.tasks.base import get_task_session
-    from app.tasks.redis_state import get_async_redis_client
+    from app.tasks.redis_state import get_redis_client
 
     async def refresh():
-        async with get_task_session() as db, get_async_redis_client() as cache:
-            return await rebuild_onboarding_team_membership(db, cache)
+        async with get_task_session() as db:
+            return await rebuild_onboarding_team_membership(db, get_redis_client())
 
     return _tracked_run("refresh_onboarding_team_membership", refresh())
 
@@ -9203,8 +9203,9 @@ celery_app.conf.beat_schedule = {
     },
     "refresh-onboarding-team-membership": {
         "task": "app.tasks.refresh_onboarding_team_membership",
-        "schedule": crontab(minute="3-59/5"),
-        "options": {"queue": "background", "expires": 90},
+        # An hourly rebuild at :03 stays outside settlement's :31-:44 window.
+        "schedule": crontab(minute=3),
+        "options": {"queue": "background", "expires": 300},
     },
     "warm-search-head": {
         "task": "app.tasks.warm_search_head",

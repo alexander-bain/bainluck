@@ -2201,7 +2201,9 @@ def free_background_slots(
 #: the `:31-:44` settlement sweep window (2 tiny ESPN standings GETs +
 #: existing-row `current_record` update, <0.5 s/fire, 12 fires/day). Census over
 #: assembled `beat_schedule` prints `explicit 113 implicit 38 total 151`.
-BACKGROUND_BEAT_COUNT = 151
+#: #13338 adds one explicit hourly onboarding membership refresh at :03.
+#: Schedule census with that entry prints explicit 114, implicit 38, total 152.
+BACKGROUND_BEAT_COUNT = 152
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT

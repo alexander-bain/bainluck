@@ -5,19 +5,24 @@ import logging
 from collections.abc import Sequence
 from time import perf_counter
 
-from redis.asyncio import Redis
+from redis import Redis
 from sqlalchemy import and_, func, select, text
 from sqlalchemy.dialects.postgresql import array
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import Event, Team
-from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
+from app.utils.request_cache import (
+    bounded_redis_call,
+    get_shared_async_redis,
+    schedule_background,
+)
 
 logger = logging.getLogger(__name__)
 
 _KEY = "bainluck:onboarding:team-league-members:1"
 _READY = "ready"
-_SNAPSHOT_TTL_S = 20 * 60
+_SNAPSHOT_TTL_S = 24 * 60 * 60
+_BOOTSTRAP_CLAIM_TTL_S = 60 * 60
 _REBUILD_TASK = "app.tasks.refresh_onboarding_team_membership"
 
 _game_sides = (
@@ -34,6 +39,19 @@ _CONTRIBUTING_TEAMS = select(_game_sides.c.sport_id, _game_sides.c.team_id).join
 )
 
 
+def _dispatch_bootstrap_rebuild() -> None:
+    from app.tasks import refresh_onboarding_team_membership
+
+    try:
+        refresh_onboarding_team_membership.apply_async(
+            queue="background", expires=300, retry=False
+        )
+    except Exception as exc:
+        logger.warning(
+            "Could not request onboarding membership rebuild (%s)", type(exc).__name__
+        )
+
+
 async def onboarding_team_members(
     candidates: Sequence[tuple[int, int]],
 ) -> set[tuple[int, int]] | None:
@@ -42,7 +60,16 @@ async def onboarding_team_members(
     keys = [_READY, *(f"{league_id}:{team_id}" for league_id, team_id in candidates)]
     result = await bounded_redis_call(lambda: cache.smismember(_KEY, keys))
     # The marker and all memberships come from the same Redis operation.
-    if not result.is_ok or len(result.value) != len(keys) or not result.value[0]:
+    if not result.is_ok or len(result.value) != len(keys):
+        return None
+    if not result.value[0]:
+        claim = await bounded_redis_call(
+            lambda: cache.set(
+                f"{_KEY}:bootstrap", 1, nx=True, ex=_BOOTSTRAP_CLAIM_TTL_S
+            )
+        )
+        if claim.is_ok and claim.value:
+            schedule_background(asyncio.to_thread(_dispatch_bootstrap_rebuild))
         return None
     return {pair for pair, is_member in zip(candidates, result.value[1:]) if is_member}
 
@@ -65,17 +92,16 @@ async def rebuild_onboarding_team_membership(db: AsyncSession, cache: Redis) -> 
     rows = (await db.execute(_CONTRIBUTING_TEAMS)).all()
     members = [f"{league_id}:{team_id}" for league_id, team_id in rows]
     pending_key = f"{_KEY}:pending"
-    async with asyncio.timeout(3):
-        # Keep the previous snapshot available if preparing the next one fails.
-        # The transaction-scoped DB lock covers both the build and the rename.
-        async with cache.pipeline() as pipe:
-            await (
-                pipe.delete(pending_key)
-                .sadd(pending_key, _READY, *members)
-                .expire(pending_key, _SNAPSHOT_TTL_S)
-                .execute()
-            )
-        await cache.rename(pending_key, _KEY)
+    # The worker reuses the bounded sync Redis pool across its per-task event
+    # loops. Hold the transaction lock until the new snapshot is published.
+    with cache.pipeline() as pipe:
+        (
+            pipe.delete(pending_key)
+            .sadd(pending_key, _READY, *members)
+            .expire(pending_key, _SNAPSHOT_TTL_S)
+            .execute()
+        )
+    cache.rename(pending_key, _KEY)
 
     elapsed_ms = round((perf_counter() - started) * 1000, 1)
     logger.info(
