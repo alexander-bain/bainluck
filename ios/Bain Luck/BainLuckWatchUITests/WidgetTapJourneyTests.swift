@@ -648,26 +648,45 @@ extension WidgetTapJourneyTests {
         let arrived = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             library.exists || face.exists
         }, object: host)
-        try freshFaceRequire(XCTWaiter.wait(for: [arrived], timeout: 15) == .completed,
+        // 45 s, not 15: a loaded Carousel accessibility snapshot can take 14.2 s
+        // on the first check (run 44980337067, widgets), expiring a 15 s ceiling
+        // even though Face Library View had already arrived.
+        try freshFaceRequire(XCTWaiter.wait(for: [arrived], timeout: 45) == .completed,
                              "Configured face did not leave its editor", host: host)
         if library.exists {
+            let allApps = host.otherElements["All Apps"].firstMatch
             let title = host.staticTexts["Switcher Face Title"].firstMatch
             let previews = host.scrollViews.matching(NSPredicate(
                 format: "label ==[c] %@", "siri modular, Customizable"))
             let preview = previews.firstMatch
-            try freshFaceRequire(title.waitForExistence(timeout: 15) && title.label == "Siri Modular"
-                                 && preview.waitForExistence(timeout: 15) && previews.count == 1 && preview.isHittable
-                                 && host.frame.contains(CGPoint(x: preview.frame.midX, y: preview.frame.midY)),
-                                 "Face Library has no unambiguous visible Siri Modular preview", host: host)
-            freshFaceCapture(host, name: "Configured Siri Modular preview before activation")
-            // Select the actual named face preview once; crown presses alone
-            // can leave Carousel in its library rather than on the active face.
-            preview.tap()
+            // Run 44995877947 att1 (widgets): Carousel opened the Home Screen App
+            // Launcher honeycomb ("All Apps") over Face Library View, leaving the
+            // Siri Modular preview !isHittable. Dismiss that host overlay once and
+            // fail closed if Face Library or the active Watch Face never clears.
+            if (allApps.exists || !(preview.waitForExistence(timeout: 15) && preview.isHittable)) && allApps.exists {
+                freshFaceCapture(host, name: "Face Library covered by App Launcher before Home dismiss")
+                XCUIDevice.shared.press(.home)
+                let cleared = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    !allApps.exists && (face.exists || (library.exists && previews.count == 1 && previews.firstMatch.isHittable))
+                }, object: host)
+                try freshFaceRequire(XCTWaiter.wait(for: [cleared], timeout: 45) == .completed,
+                                     "App Launcher overlay did not clear from Face Library", host: host)
+            }
+            if library.exists {
+                try freshFaceRequire(title.waitForExistence(timeout: 15) && title.label == "Siri Modular"
+                                     && preview.waitForExistence(timeout: 15) && previews.count == 1 && preview.isHittable
+                                     && host.frame.contains(CGPoint(x: preview.frame.midX, y: preview.frame.midY)),
+                                     "Face Library has no unambiguous visible Siri Modular preview", host: host)
+                freshFaceCapture(host, name: "Configured Siri Modular preview before activation")
+                // Select the actual named face preview once; crown presses alone
+                // can leave Carousel in its library rather than on the active face.
+                preview.tap()
+            }
         }
         let activated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
             face.exists && !library.exists
         }, object: host)
-        try freshFaceRequire(XCTWaiter.wait(for: [activated], timeout: 15) == .completed
+        try freshFaceRequire(XCTWaiter.wait(for: [activated], timeout: 45) == .completed
                              && face.isHittable && host.wait(for: .runningForeground, timeout: 15),
                              "Configured Siri Modular face did not become active", host: host)
         freshFaceCapture(host, name: "Configured Siri Modular active Watch Face")
