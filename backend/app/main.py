@@ -207,6 +207,7 @@ app.add_middleware(LatencyMiddleware)
 # two-principal contract tests share one decision. Re-exported here for any
 # caller/test that imports it from app.main.
 from app.utils.http_cache_policy import CACHE_RULES, apply_cache_policy  # noqa: E402,F401
+from app.utils.latency_stats import sanitize_user_agent  # noqa: E402
 
 
 @app.middleware("http")
@@ -219,9 +220,25 @@ async def request_timing(request: Request, call_next):
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Response-Time"] = f"{duration_ms:.0f}ms"
     if duration_ms > 1000 and "/admin" not in request.url.path:
-        logger.warning("SLOW %s %s [%s] %dms", request.method, request.url.path, request_id, duration_ms)
+        ua = sanitize_user_agent(request.headers.get("user-agent")) or "-"
+        logger.warning(
+            "SLOW %s %s [%s] %dms ua=%s",
+            request.method,
+            request.url.path,
+            request_id,
+            duration_ms,
+            ua,
+        )
     elif duration_ms > 500 and "/admin" not in request.url.path:
-        logger.info("MODERATE %s %s [%s] %dms", request.method, request.url.path, request_id, duration_ms)
+        ua = sanitize_user_agent(request.headers.get("user-agent")) or "-"
+        logger.info(
+            "MODERATE %s %s [%s] %dms ua=%s",
+            request.method,
+            request.url.path,
+            request_id,
+            duration_ms,
+            ua,
+        )
 
     # Authentication and identity ALWAYS win over latency caching. Protected /
     # personalized / identity-bearing responses become private+no-store; route
