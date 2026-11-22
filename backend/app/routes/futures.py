@@ -3164,10 +3164,10 @@ async def grouped_feed_slate(db: AsyncSession, filters: list, limit: int):
     and the Braves–Dodgers postseason game's own market never reached the 100.
     Supply was there; selection never looked at it.
 
-    THIS READ: up to ``limit`` open markets (every pool filter applies, so a
-    finished game's props stay out — #10064) linked to an unfinished tier-1/2
-    game inside the slate window, at most ``SLATE_MARKETS_PER_EVENT`` per game
-    and ``SLATE_EVENTS_PER_LEAGUE`` games per league.
+    THIS READ: up to ``limit`` open markets linked to a scheduled or live
+    tier-1/2 game inside the slate window, at most ``SLATE_MARKETS_PER_EVENT``
+    per game and ``SLATE_EVENTS_PER_LEAGUE`` games per league. The linked game
+    status is checked here. The caller supplies the other pool filters.
     Games rank postseason first (``llm_importance``), then tier 1 before tier 2,
     then kickoff — the order the strip should lead in.
 
@@ -3183,16 +3183,39 @@ async def grouped_feed_slate(db: AsyncSession, filters: list, limit: int):
         return [], {}
     tier1_keys = [k for k in tier_keys if get_league_tier(k) == 1]
     now = datetime.now(timezone.utc)
-    # Find the small slate first, then use the event-id index to read at most
-    # four eligible markets per game before ranking across leagues.
     postseason = case((Event.llm_importance.in_(_SLATE_POSTSEASON), 0), else_=1)
-    games = (
+    market_filters = (
+        *filters,
+        ~and_(
+            FuturesMarket.group_type == "kalshi_event",
+            FuturesMarket.market_type == "duel",
+        ),
+        or_(
+            FuturesMarket.group_type.is_(None),
+            FuturesMarket.group_type != "polymarket_event",
+        ),
+    )
+    # A game earns a league slot only when at least one market can fill it.
+    # The scalar LIMIT keeps this an event-ID lookup that stops at the first hit.
+    eligible_market = (
+        select(FuturesMarket.id)
+        .where(FuturesMarket.event_id == Event.id, *market_filters)
+        .correlate(Event)
+        .limit(1)
+        .scalar_subquery()
+    )
+    ranked_games = (
         select(
             Event.id.label("event_id"),
-            Sport.key.label("league_key"),
             postseason.label("postseason"),
             case((Sport.key.in_(tier1_keys), 1), else_=2).label("tier"),
             Event.commence_time,
+            func.row_number()
+            .over(
+                partition_by=Sport.key,
+                order_by=(postseason, Event.commence_time, Event.id),
+            )
+            .label("league_rank"),
         )
         .join(Sport, Sport.id == Event.sport_id)
         .where(
@@ -3200,7 +3223,18 @@ async def grouped_feed_slate(db: AsyncSession, filters: list, limit: int):
             Event.commence_time >= now - SLATE_WINDOW_BEFORE,
             Event.commence_time <= now + SLATE_WINDOW_AFTER,
             Sport.key.in_(tier_keys),
+            eligible_market.is_not(None),
         )
+        .subquery()
+    )
+    games = (
+        select(
+            ranked_games.c.event_id,
+            ranked_games.c.postseason,
+            ranked_games.c.tier,
+            ranked_games.c.commence_time,
+        )
+        .where(ranked_games.c.league_rank <= SLATE_EVENTS_PER_LEAGUE)
         .cte("grouped_slate_games")
         .prefix_with("MATERIALIZED")
     )
@@ -3211,70 +3245,24 @@ async def grouped_feed_slate(db: AsyncSession, filters: list, limit: int):
             duel_priority.label("duel_priority"),
             FuturesMarket.updated_at,
         )
-        .where(
-            FuturesMarket.event_id == games.c.event_id,
-            *filters,
-            ~and_(
-                FuturesMarket.group_type == "kalshi_event",
-                FuturesMarket.market_type == "duel",
-            ),
-            or_(
-                FuturesMarket.group_type.is_(None),
-                FuturesMarket.group_type != "polymarket_event",
-            ),
-        )
+        .where(FuturesMarket.event_id == games.c.event_id, *market_filters)
         .correlate(games)
+        # Totals and player props precede duels, which fill any remaining slots.
         .order_by(duel_priority, FuturesMarket.updated_at.desc(), FuturesMarket.id)
         .limit(SLATE_MARKETS_PER_EVENT)
         .lateral("grouped_slate_markets")
     )
-    ranked = (
-        select(
-            game_markets.c.market_id,
-            games.c.event_id,
+    stmt = (
+        select(game_markets.c.market_id, games.c.event_id)
+        .select_from(games.join(game_markets, true()))
+        .order_by(
             games.c.postseason,
             games.c.tier,
             games.c.commence_time,
-            # Inside a game, the questions the game card does NOT already ask
-            # come first: totals, player props, prop legs before `duel`s (the
-            # moneyline leg and spreads), so a duel only fills a slot a game
-            # has no other question for.
-            func.row_number()
-            .over(
-                partition_by=games.c.event_id,
-                order_by=(
-                    game_markets.c.duel_priority,
-                    game_markets.c.updated_at.desc(),
-                    game_markets.c.market_id,
-                ),
-            )
-            .label("rn"),
-            func.dense_rank()
-            .over(
-                partition_by=games.c.league_key,
-                order_by=(
-                    games.c.postseason,
-                    games.c.commence_time,
-                    games.c.event_id,
-                ),
-            )
-            .label("league_rank"),
-        )
-        .select_from(games.join(game_markets, true()))
-        .subquery()
-    )
-    stmt = (
-        select(ranked.c.market_id, ranked.c.event_id)
-        .where(
-            ranked.c.rn <= SLATE_MARKETS_PER_EVENT,
-            ranked.c.league_rank <= SLATE_EVENTS_PER_LEAGUE,
-        )
-        .order_by(
-            ranked.c.postseason,
-            ranked.c.tier,
-            ranked.c.commence_time,
-            ranked.c.event_id,
-            ranked.c.rn,
+            games.c.event_id,
+            game_markets.c.duel_priority,
+            game_markets.c.updated_at.desc(),
+            game_markets.c.market_id,
         )
         .limit(limit)
     )
@@ -3549,20 +3537,6 @@ async def grouped_feed(
             FuturesMarket.resolution_date.is_(None),
             FuturesMarket.resolution_date >= datetime.now(timezone.utc),
         ),
-        # #10064: a game prop whose match is over. Kalshi keeps these rows
-        # `open` (gotcha #33) with an expiration two weeks out and a mid-range
-        # last price, so neither clause above nor #9899's >99% rule can see
-        # them — Safiullin vs Cobolli "Total Games 61% / 47% / 36%" was served
-        # 4.5 h after the match ended. The fact lives on the linked event. A
-        # status used to WITHHOLD (settled_hero's note): `voided`/`merged`
-        # rows are not in the set, since their markets may await a relink.
-        or_(
-            FuturesMarket.event_id.is_(None),
-            ~exists().where(
-                Event.id == FuturesMarket.event_id,
-                Event.status.in_(FINISHED_STATUSES),
-            ),
-        ),
     ]
     if category:
         filters.append(FuturesMarket.category == category)
@@ -3587,6 +3561,19 @@ async def grouped_feed(
     if sports_only and not sport and not category:
         slate_market_ids, slate_market_event = await grouped_feed_slate(db, filters, limit)
     slate_ms = (perf_counter() - started) * 1000
+
+    # #10064: a finished game's props can still say open at the venue. The
+    # recency pool needs their current game status when it loads the rows,
+    # including slate rows whose game could have ended since the slate read.
+    filters.append(
+        or_(
+            FuturesMarket.event_id.is_(None),
+            ~exists().where(
+                Event.id == FuturesMarket.event_id,
+                Event.status.in_(FINISHED_STATUSES),
+            ),
+        )
+    )
 
     stmt = (
         select(FuturesMarket)
