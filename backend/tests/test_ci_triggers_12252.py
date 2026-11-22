@@ -115,4 +115,4 @@ def test_an_eval_candidate_pr_still_queues_nothing_on_its_next_commit():
 def test_master_pushes_keep_their_release_path_and_group():
     out = _run()
     assert "deploy" in out["push"]["selected"]
-    assert out["push"]["slot"] == ["ci-push-master-42", False]
+    assert out["push"]["slot"] == ["ci-push-refs/heads/master", False]
