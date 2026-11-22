@@ -114,11 +114,11 @@ class FactoryCollectorTests(unittest.TestCase):
         post_at = "2026-11-22T07:59:00Z"
         api = MagicMock()
         api.public_json.return_value = {"status": "ok", "commit": "server"}
-        api.pages.return_value = [{
-            "body": "Builder F: Waiting on #13346.",
-            "created_at": post_at,
-            "author_association": "OWNER",
-        }]
+        api.pages.return_value = [
+            {"body": "Builder F: Waiting on #13346.", "created_at": post_at, "author_association": "OWNER"},
+            {"body": "Builder F now: retaking the iPad screenshots from build 5852",
+             "created_at": "2026-11-22T06:40:00Z", "author_association": "MEMBER"},
+        ]
         api.request.side_effect = lambda endpoint: {"workflow_runs": []} if "/actions/" in endpoint else []
         receipts = [
             {"line": "Website", "commit": "web", "at": iso(now)},
@@ -132,8 +132,9 @@ class FactoryCollectorTests(unittest.TestCase):
         ):
             clock.now.return_value = now
             snapshot = collect(api, open_summaries=[])
-        api.pages.assert_called_once_with("issues/12779/comments?since=2026-11-22T07:50:00Z")
+        api.pages.assert_called_once_with("issues/12779/comments?since=2026-11-22T05:05:00Z")
         self.assertEqual(snapshot["crew_posts"], {"F": {"at": post_at, "waiting_on": 13346}})
+        self.assertEqual(snapshot["lane_updates"]["F"]["at"], "2026-11-22T06:40:00Z")
 
 
 class FactoryRules(unittest.TestCase):
@@ -672,7 +673,7 @@ class FactoryRules(unittest.TestCase):
         ), patch(
             "collect.build", return_value=current
         ), patch(
-            "collect.machine_queue", return_value={"display": queue, "master_jobs": None}
+            "collect.machine_queue", return_value=queue
         ), patch(
             "collect.ModelBudget", return_value=budget
         ), patch(

@@ -18,7 +18,7 @@ import urllib.request
 import urllib.parse
 
 from model import build, instant, iso, public_title, PACIFIC, TRUSTED
-from ci_queue import attach_machine_reason, machine_queue
+from ci_queue import machine_queue
 from crew import add_crew_week, add_day_replay
 from daily_picture import (
     DAILY_PICTURE_ENABLED, asset_label, asset_name, gallery, metered_picture,
@@ -28,7 +28,7 @@ from journeys import add_journeys
 from signs import add_signs, switched_off, wrong_numbers
 from notes import ModelBudget, make_notes
 from speech import make_speech
-from signals import commands_from, crew_posts_from, test_file
+from signals import LANE_UPDATE_WINDOW, commands_from, crew_posts_from, lane_updates_from, test_file
 
 REPO = "alexander-bain/bainluck"
 RELEASE = "factory-data"
@@ -668,7 +668,7 @@ def collect(api, previous=None, cache=None, open_summaries=None):
     last_read = (
         previous.get("generated_at") if previous.get("injury_clock") else injury_since
     )
-    comments_since = min(floor, instant(last_read), now - timedelta(minutes=15))
+    comments_since = min(floor, instant(last_read), now - LANE_UPDATE_WINDOW)
     comments = api.pages(f"issues/12779/comments?since={iso(comments_since)}")
     commands = commands_from(
         c for c in comments if instant(c.get("updated_at", c["created_at"])) >= floor
@@ -753,6 +753,7 @@ def collect(api, previous=None, cache=None, open_summaries=None):
     return {
         "captured_at": iso(captured),
         "crew_posts": crew_posts_from(comments, captured),
+        "lane_updates": lane_updates_from(comments, captured),
         "pulls": pulls,
         "deployments": receipts,
         "deploy_starts": starts,
@@ -763,9 +764,6 @@ def collect(api, previous=None, cache=None, open_summaries=None):
         },
         "master": master,
         "coverage": coverage,
-        "master_ci_active": any(
-            run["name"] == "CI" and run.get("status") != "completed" for run in runs
-        ),
         "commands": reconcile_commands(commands, pulls, previous),
         "hold_commands": previous.get("signals", {}).get("commands", []) + commands,
     }
@@ -970,15 +968,17 @@ def main():
         result = build(snapshot, previous)
         if posts := snapshot.get("crew_posts"):
             result["crew_posts"] = posts
+        if updates := snapshot.get("lane_updates"):
+            result["lane_updates"] = {
+                lane: {**update, "text": public_title(update["text"])}
+                for lane, update in updates.items()
+            }
         add_events(result, snapshot, previous, cache)
         add_journeys(result, previous)
         add_day_replay(result, previous)
         crew_week = add_crew_week(result, snapshot["pulls"], cache.get("crew_week"))
         add_signs(result, snapshot, previous)
-        queue = machine_queue(api, REPO, datetime.now(timezone.utc))
-        result["signals"]["checks_queue"] = queue["display"]
-        if snapshot.get("master_ci_active"):
-            attach_machine_reason(result, queue["master_jobs"])
+        result["signals"]["checks_queue"] = machine_queue(api, REPO, datetime.now(timezone.utc))
 
         result["notes"], note_stats = make_notes(
             result, snapshot["pulls"], previous.get("notes") or {}, budget, key

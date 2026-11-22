@@ -331,7 +331,7 @@ class DailyPictureTests(unittest.TestCase):
                 ), patch("collect.authorize_publication"), patch("collect.GitHub", return_value=api), patch(
                     "collect.read_published", return_value=(release, {}, {})
                 ), patch("collect.collect", return_value=run), patch(
-                    "collect.machine_queue", return_value={"display": {}, "master_jobs": None}
+                    "collect.machine_queue", return_value={}
                 ), patch(
                     "collect.metered_picture", return_value=((record, self.image), {"status": "drawn"})
                 ) as draw, patch("collect.publish_asset"), redirect_stdout(io.StringIO()) as out:

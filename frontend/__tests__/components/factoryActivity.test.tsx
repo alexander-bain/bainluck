@@ -83,8 +83,59 @@ it("prints both observed November 18 stoppages at 10 AM Pacific", () => {
   const messages = (data.stops as Stop[]).map((s) =>
     stopText(s, "2026-11-18T18:00:00Z"),
   );
-  expect(messages).toContain("Server loading dock has stalled.");
+  expect(messages).toContain("Server loading dock is waiting for a merge.");
   expect(messages).toContain("Server announced a merge at 8:47 AM PT.");
+});
+
+it("shows an off-floor lane's fresh report in its card and speech until it expires", () => {
+  const now = "2026-11-22T19:55:00Z";
+  const phrase = "retaking the iPad screenshots from build 5852";
+  const fallback = "There is no recent activity for this lane.";
+  const reading: FactoryData = {
+    ...data,
+    generated_at: now,
+    stops: [],
+    changes: [],
+    speech: { F: { text: fallback, mood: "asleep", source: "facts" } },
+    lane_updates: { F: { at: "2026-11-22T16:55:00Z", text: phrase } },
+  };
+  const rendered = (clock: string, changes = reading.changes) => renderToStaticMarkup(
+    <FactoryFloor data={{ ...reading, changes }} lastGoodAt={now} renderedAt={clock} />,
+  );
+  const html = rendered(now);
+  expect(html).toMatch(/data-floor-speech="F"[^]*?data-source="lane"[^]*?retaking the iPad screenshots from build 5852/);
+  expect(html).toMatch(/data-crew="F"[^]*?Posted at 8:55 AM PT[^]*?retaking the iPad screenshots from build 5852/);
+  expect(html).not.toContain(fallback);
+  const expired = rendered("2026-11-22T19:55:00.001Z");
+  expect(expired).toContain(fallback);
+  expect(expired).not.toContain(phrase);
+  expect(rendered(now, [{ ...data.changes[0], builder: "F", station: "Write", merged_at: null,
+    parked: false, side_track: false, held_for_108: false, bot_update: false }])).not.toContain(phrase);
+});
+
+it("describes the completed checks for #13424 as waiting for a merge despite legacy job totals", () => {
+  const now = "2026-11-22T19:37:00Z";
+  const stop = {
+    kind: "line-stalled", line: "Server", station: "Merge line", level: "amber",
+    number: 13424, count: 1, since: "2026-11-22T18:55:00Z", waiting_since: "2026-11-22T19:03:00Z",
+    machines: { running: 15, waiting: 17 },
+  } as const;
+  const reading: FactoryData = {
+    ...data,
+    generated_at: now,
+    stops: [stop],
+    changes: [],
+    signals: {
+      tests: "passing", testflight: "success",
+      checks_queue: { machines: 40, running: 3, waiting: 0, machines_busy: 15,
+        longest_wait_minutes: null, queued_without_jobs: 0 },
+    },
+  };
+  const html = renderToStaticMarkup(<FactoryFloor data={reading} lastGoodAt={now} renderedAt={now} />);
+  expect(html).toContain("Loading dock, Server: #13424 is waiting for a merge.");
+  expect(html).not.toContain("17 waiting");
+  expect(html).toContain("<dt>Runs waiting</dt><dd>0</dd>");
+  expect(html).toContain("Runs waiting counts runs with a job queued for a machine and none running.");
 });
 
 it("runs only recently crossed belts and stops them for an old read or a blocking station", () => {

@@ -1,4 +1,4 @@
-"""Observed movement and stoppages. No discussion text leaves this module."""
+"""Observed movement, stoppages and fixed-form lane updates."""
 
 import re
 from datetime import datetime, timedelta
@@ -64,8 +64,19 @@ SHELF_FLAGS = ("held_for_108", "parked", "bot_update", "side_track")
 CREW_LANES = {
     "Speed": "S", "Builder B": "B", "Builder C": "C", "Atlas": "D",
     "Builder E": "E", "Builder F": "F", "Apple": "F", "Wee-Bey": "W",
+    "Factory": "Factory",
 }
 CREW_LABELS = "|".join(map(re.escape, CREW_LANES))
+LANE_UPDATE_WINDOW = timedelta(hours=3)
+LANE_UPDATE = re.compile(rf"({CREW_LABELS}) now: (.{{1,80}})")
+UPDATE_EMAIL = re.compile(r"(?i)(?:mailto:)?[\w.+%-]+@[\w.-]+\.[a-z0-9-]+")
+UPDATE_ACCOUNT = re.compile(r"(?<!\w)@[\w-]+(?:\[bot\])?|\b[\w-]+\[bot\]")
+UPDATE_LINK = re.compile(
+    r"\[[^]\n]*\]\([^)]+\)|(?:[a-z][a-z0-9+.-]*://|www\.)[^\s<>)]*"
+    r"|(?<![\w@])(?:[a-z0-9-]+\.)+[a-z]{2,}\b(?:[/?#][^\s<>)]*)?",
+    re.I,
+)
+UPDATE_TEXT = re.compile(r"[\w #%_,.'’!?()+-]+")
 CREW_BYLINE = re.compile(
     rf"^\**({CREW_LABELS})\b\**(?: lane)?(?: \([^)]{{1,35}}\))?\**\s*[:—–]\s*"
 )
@@ -149,6 +160,51 @@ def crew_posts_from(comments, now):
         if len(numbers) == 1:
             post["waiting_on"] = numbers.pop()
         latest[lane] = post
+    return latest
+
+
+def lane_updates_from(comments, now):
+    """Publish only the current statement from a trusted lane's fixed-form line."""
+    latest = {}
+    for comment in comments:
+        stamp = comment.get("created_at")
+        body = comment.get("body")
+        if (
+            comment.get("author_association") not in TRUSTED
+            or not isinstance(stamp, str)
+            or not isinstance(body, str)
+        ):
+            continue
+        try:
+            at = moment(stamp)
+        except ValueError:
+            continue
+        if not at.tzinfo or not timedelta(0) <= now - at <= LANE_UPDATE_WINDOW:
+            continue
+        user = comment.get("user") or {}
+        fence = None
+        for line in body.splitlines():
+            opening = re.match(r" {0,3}([\x60]{3,}|~{3,})", line)
+            if opening:
+                marker = opening[1]
+                if fence is None:
+                    fence = marker
+                elif marker.startswith(fence) and not line[opening.end():].strip():
+                    fence = None
+                continue
+            match = LANE_UPDATE.fullmatch(line)
+            if fence or not match:
+                continue
+            lane = CREW_LANES[match[1]]
+            if lane in latest and moment(latest[lane]["at"]) > at:
+                continue
+            text = UPDATE_ACCOUNT.sub(" ", UPDATE_LINK.sub(" ", UPDATE_EMAIL.sub(" ", match[2])))
+            for identity in (user.get("login"), user.get("name")):
+                if isinstance(identity, str) and identity:
+                    text = re.sub(rf"(?<![\w-]){re.escape(identity)}(?![\w-])", " ", text, flags=re.I)
+            text = " ".join(text.split()).strip(" .,:;")
+            if UPDATE_TEXT.fullmatch(text) and any(letter.isalpha() for letter in text):
+                latest[lane] = {"at": stamp, "text": text}
     return latest
 
 

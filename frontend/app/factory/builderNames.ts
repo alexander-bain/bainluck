@@ -1,13 +1,15 @@
 import { useEffect, useState } from "react";
-import type { Builder } from "./types";
+import { builderLanes, type Builder, type NamedBuilder } from "./types";
 
-export type NamedBuilder = Exclude<Builder, "Other">;
-export type NameableBuilder = NamedBuilder | "Fable";
+export type { NamedBuilder } from "./types";
+export type CrewIdentity = NamedBuilder | "Fable";
+export type NameableBuilder = Exclude<CrewIdentity, "Factory">;
 export type FactoryNames = Record<Builder | "Fable", string>;
 type CustomNames = Partial<Record<NameableBuilder, string>>;
 
-export const builders: readonly NamedBuilder[] = ["S", "B", "C", "D", "E", "F", "W"];
-export const nameableBuilders: readonly NameableBuilder[] = [...builders, "Fable"];
+export const builders = builderLanes;
+export const crewIdentities = [...builders, "Fable"] as const;
+export const nameableBuilders: readonly NameableBuilder[] = crewIdentities.filter(key => key !== "Factory");
 
 export const defaultNames: FactoryNames = {
   S: "Speed",
@@ -17,6 +19,7 @@ export const defaultNames: FactoryNames = {
   E: "Builder E",
   F: "Builder F",
   W: "Wee-Bey",
+  Factory: "Factory",
   Fable: "Fable",
   Other: "Earlier work",
 };
