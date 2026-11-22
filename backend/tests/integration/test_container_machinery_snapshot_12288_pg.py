@@ -22,7 +22,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import event as sa_event, text
+from sqlalchemy import event as sa_event, text, update
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -764,6 +764,38 @@ async def test_load_snapshot_from_db_executes_every_query_for_every_candidate_de
     assert "from futures_markets" in joined_sql
     assert "from futures_odds_snapshots" in joined_sql
     assert "row_number() over (partition by futures_odds_snapshots.outcome_id" in joined_sql
+
+
+async def test_paired_discover_card_and_set_match_the_market_pages_allocation(pg_machinery):
+    from app.routes.futures import get_futures_market
+    from app.utils.roundup_containers import RoundupMembers
+
+    defn = next(
+        candidate for path in discover_machinery_candidate_paths()
+        if (candidate := load_machinery_definition(path))["slug"] == "machinery-oscars-best-picture"
+    )
+    async with pg_machinery["maker"]() as db:
+        await db.execute(
+            update(FuturesOutcome)
+            .where(FuturesOutcome.market_id == 6173044, FuturesOutcome.name == "The Odyssey")
+            .values(current_probability=0.41)
+        )
+        await db.commit()
+    async with pg_machinery["maker"]() as db:
+        detail = await get_futures_market(6173044, db=db, representation="verified_title")
+        build = await cm.produce_container_machinery(db, defn, now=pg_machinery["now_dt"])
+
+    assert isinstance(build, RoundupMembers)
+    page_row = next(row for row in detail["outcomes"] if row["name"] == "The Odyssey")
+    card_row = next(row for row in build.rows if row["label"] == "The Odyssey")
+    set_table = next(
+        section["visual_block"]["paired_metric_set"] for section in build.sections
+        if section["visual_block"]["form_id"] == "paired_stage_bars"
+    )
+    set_row = next(row for row in set_table["entries"] if row["subject"] == "The Odyssey")
+    assert page_row["rendered_percent"] == 42
+    assert card_row["probability"] == set_row["stage_2_probability"] == page_row["probability"]
+    assert card_row["rendered_percent"] == set_row["stage_2_rendered_percent"] == page_row["rendered_percent"]
 
 
 async def test_evaluate_machinery_candidates_preview_returns_all_ok_with_zero_error_logs(

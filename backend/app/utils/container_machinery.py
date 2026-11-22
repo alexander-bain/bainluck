@@ -2973,11 +2973,12 @@ async def _load_snapshot_from_db(
                     p_f = float(prob)
                     oid = int(row["id"])
                     rp = row.get("rendered_percent")
-                    if rp is None and idx < len(card_pcts) and card_pcts[idx] is not None:
-                        rp = int(card_pcts[idx])
-                    if rp is None:
-                        rp = _half_up_pct(p_f)
-                    pct_int = max(1, min(99, int(rp))) if 0.0 < p_f < 1.0 else int(rp)
+                    if rp is not None:
+                        pct_int = int(rp)
+                    else:
+                        card_pct = card_pcts[idx] if idx < len(card_pcts) else None
+                        rp = card_pct if card_pct is not None else _half_up_pct(p_f)
+                        pct_int = max(1, min(99, int(rp))) if 0.0 < p_f < 1.0 else int(rp)
                     by_oid[oid] = pct_int
                     r_name = str(row.get("name") or "")
                     for nk in (
@@ -3030,7 +3031,8 @@ async def _load_snapshot_from_db(
             pm["member_page_numbers"] = mpn_by_mid[mid]
             markets_out.append(pm)
 
-        # Sync paired_stage entries to their linked stage_1_market.id & stage_2_market.id member pages
+        # The paired loader already supplied the winner field's served values.
+        # Keep the separate nomination/qualification page matching here.
         for set_id, pset in paired_out.items():
             if not isinstance(pset, dict):
                 continue
@@ -3061,19 +3063,6 @@ async def _load_snapshot_from_db(
                             p_s1 if _half_up_pct(p_s1) == pct_s1 else round(pct_s1 / 100.0, 4)
                         )
                         entry["stage_1_rendered_percent"] = pct_s1
-                if s2_det:
-                    s2_oid = entry.get("stage_2_outcome_id")
-                    match_s2 = (
-                        s2_det["by_oid_prob_pct"].get(int(s2_oid))
-                        if isinstance(s2_oid, int) and s2_oid in s2_det["by_oid_prob_pct"]
-                        else s2_det["by_fold_prob_pct"].get(fk)
-                    )
-                    if match_s2 is not None:
-                        p_s2, pct_s2 = match_s2
-                        entry["stage_2_probability"] = (
-                            p_s2 if _half_up_pct(p_s2) == pct_s2 else round(pct_s2 / 100.0, 4)
-                        )
-                        entry["stage_2_rendered_percent"] = pct_s2
             # Re-sort entries by stage_2_probability desc, stage_1_probability desc, subject asc
             pset["entries"] = sorted(
                 [e for e in (pset.get("entries") or ()) if isinstance(e, dict)],
@@ -3580,9 +3569,9 @@ def _build_dynamic_title_from_set(
             if entries:
                 top = entries[0]
                 leader_name = str(top.get("subject") or "").strip()
-                win_pct = int(
-                    top.get("stage_2_rendered_percent")
-                    or _half_up_pct(float(top.get("stage_2_probability") or 0.0))
+                allocated = top.get("stage_2_rendered_percent")
+                win_pct = int(allocated) if allocated is not None else _half_up_pct(
+                    float(top.get("stage_2_probability") or 0.0)
                 )
                 strong_nom = sum(
                     1
@@ -3997,7 +3986,8 @@ async def produce_container_machinery(
                         p_val = e.get(prob_field)
                         if not isinstance(p_val, (int, float)) or not math.isfinite(float(p_val)):
                             continue
-                        pct_val = int(e.get(rp_field) or _half_up_pct(float(p_val)))
+                        allocated = e.get(rp_field)
+                        pct_val = int(allocated) if allocated is not None else _half_up_pct(float(p_val))
                         oid_val = e.get(oid_field)
                         if isinstance(oid_val, int):
                             by_oid[int(oid_val)] = pct_val
@@ -4426,7 +4416,8 @@ async def produce_container_machinery(
         w_mid = int((pset.get("stage_2_market") or {}).get("id") or 1)
         for idx, e in enumerate((pset.get("entries") or ())[:card_rows_limit]):
             win_p = float(e.get("stage_2_probability") or 0.0)
-            win_pct = int(e.get("stage_2_rendered_percent") or _half_up_pct(win_p))
+            allocated = e.get("stage_2_rendered_percent")
+            win_pct = int(allocated) if allocated is not None else _half_up_pct(win_p)
             nom_p = e.get("stage_1_probability")
             row_d: dict[str, Any] = {
                 "market_id": w_mid,
@@ -5193,7 +5184,8 @@ def _compute_member_number_parity(
                         {"location": f"card:paired_stage_1:{subj}", "market_id": s1_mid, "shown": shown_s1, "member_page": exp_s1}
                     )
             if isinstance(e.get("stage_2_probability"), (int, float)) and s2_mid in market_truth:
-                shown_s2 = int(e.get("stage_2_rendered_percent") or _half_up_pct(float(e["stage_2_probability"])))
+                allocated = e.get("stage_2_rendered_percent")
+                shown_s2 = int(allocated) if allocated is not None else _half_up_pct(float(e["stage_2_probability"]))
                 exp_s2 = _lookup_market_member_pct(
                     market_truth.get(s2_mid),
                     int(e["stage_2_outcome_id"]) if isinstance(e.get("stage_2_outcome_id"), int) else None,
@@ -5276,7 +5268,8 @@ def _compute_member_number_parity(
                             {"location": f"{sec_cls}:paired_stage_1:{subj}", "market_id": s1_mid, "shown": shown_s1, "member_page": exp_s1}
                         )
                 if isinstance(e.get("stage_2_probability"), (int, float)) and s2_mid in market_truth:
-                    shown_s2 = int(e.get("stage_2_rendered_percent") or _half_up_pct(float(e["stage_2_probability"])))
+                    allocated = e.get("stage_2_rendered_percent")
+                    shown_s2 = int(allocated) if allocated is not None else _half_up_pct(float(e["stage_2_probability"]))
                     exp_s2 = _lookup_market_member_pct(
                         market_truth.get(s2_mid),
                         int(e["stage_2_outcome_id"]) if isinstance(e.get("stage_2_outcome_id"), int) else None,
