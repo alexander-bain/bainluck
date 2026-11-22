@@ -596,19 +596,15 @@ private func machineryCardColumns13417<Item: Identifiable, Card: View>(
             card(item)
         }
     } else {
-        let columns = DiscoverMasonry.columns(cardCount: items.count, columnCount: columnCount)
-        HStack(alignment: .top, spacing: spacing) {
-            ForEach(Array(columns.enumerated()), id: \.offset) { _, indices in
-                let columnItems = indices.map { items[$0] }
-                LazyVStack(alignment: .leading, spacing: spacing) {
-                    ForEach(columnItems) { item in
-                        card(item)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .top)
+        MasonryColumnsLayout(columnCount: columnCount, spacing: spacing) {
+            ForEach(Array(items.enumerated()), id: \.element.id) { idx, item in
+                card(item)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .accessibilityElement(children: .contain)
+                    .accessibilitySortPriority(Double(items.count - idx))
             }
         }
+        .accessibilityElement(children: .contain)
     }
 }
 

@@ -30,7 +30,6 @@ struct ContainerHubView: View {
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @State private var gridWidth: CGFloat = 0
 
     private var hubSurface: Color { ContainerHubThemeTokens.surface(colorScheme) }
     private var hubCardBg: Color { ContainerHubThemeTokens.cardBg(colorScheme) }
@@ -78,13 +77,17 @@ struct ContainerHubView: View {
     }
 
     private func hub(_ presentation: ContainerHubPresentation) -> some View {
-        let hubColumnCount = ContainerHubGridLayout13417.columnCount(
-            horizontalSizeClass: horizontalSizeClass,
-            dynamicTypeSize: dynamicTypeSize,
-            availableWidth: gridWidth > 0 ? gridWidth : nil
-        )
-        return ScrollView {
-            LazyVStack(alignment: .leading, spacing: 16) {
+        GeometryReader { proxy in
+            let innerWidth = ContainerHubGridLayout13417.innerContentWidth(
+                containerWidth: proxy.size.width
+            )
+            let hubColumnCount = ContainerHubGridLayout13417.columnCount(
+                horizontalSizeClass: horizontalSizeClass,
+                dynamicTypeSize: dynamicTypeSize,
+                availableWidth: innerWidth
+            )
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 16) {
                 if let title = presentation.title {
                     Text(title)
                         .font(.title2.weight(.bold))
@@ -221,21 +224,14 @@ struct ContainerHubView: View {
                 }
             }
             .scrollTargetLayout()
-            .background(
-                GeometryReader { geo in
-                    Color.clear
-                        .onAppear { gridWidth = geo.size.width }
-                        .onChange(of: geo.size.width) { _, newValue in
-                            gridWidth = newValue
-                        }
-                }
-            )
-            .padding(18)
-            .frame(maxWidth: 900, alignment: .leading)
+            .padding(ContainerHubGridLayout13417.contentHorizontalPadding)
+            .frame(maxWidth: ContainerHubGridLayout13417.maxContentWidth, alignment: .leading)
             .frame(maxWidth: .infinity)
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .scrollPosition(id: Binding(get: { vm.context.scrollMemberId }, set: { vm.scrolled(to: $0) }), anchor: .top)
+            .refreshable { await vm.load() }
         }
-        .scrollPosition(id: Binding(get: { vm.context.scrollMemberId }, set: { vm.scrolled(to: $0) }), anchor: .top)
-        .refreshable { await vm.load() }
     }
 
     @ViewBuilder
@@ -250,20 +246,16 @@ struct ContainerHubView: View {
                 card(item)
             }
         } else {
-            let columns = DiscoverMasonry.columns(cardCount: items.count, columnCount: columnCount)
-            HStack(alignment: .top, spacing: spacing) {
-                ForEach(Array(columns.enumerated()), id: \.offset) { _, indices in
-                    let columnItems = indices.map { items[$0] }
-                    LazyVStack(alignment: .leading, spacing: spacing) {
-                        ForEach(columnItems) { item in
-                            card(item)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-                    .scrollTargetLayout()
-                    .frame(maxWidth: .infinity, alignment: .top)
+            MasonryColumnsLayout(columnCount: columnCount, spacing: spacing) {
+                ForEach(Array(items.enumerated()), id: \.element.id) { idx, item in
+                    card(item)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .accessibilityElement(children: .contain)
+                        .accessibilitySortPriority(Double(items.count - idx))
                 }
             }
+            .scrollTargetLayout()
+            .accessibilityElement(children: .contain)
         }
     }
 

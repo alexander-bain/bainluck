@@ -2558,23 +2558,35 @@ struct DiscoverView: View {
                             if block.isContinuation {
                                 continuationHeading(leads: range.lowerBound == 0)
                             }
-                            HStack(alignment: .top, spacing: DiscoverMasonry.spacing) {
-                                ForEach(Array(DiscoverMasonry.columns(
-                                    cardCount: range.count, columnCount: columnCount
-                                ).enumerated()), id: \.offset) { _, indices in
-                                    LazyVStack(spacing: DiscoverMasonry.spacing) {
-                                        ForEach(indices.map { $0 + range.lowerBound }, id: \.self) { idx in
-                                            discoverCard(
-                                                idx: idx,
-                                                gi: pageGrouped[idx],
-                                                pageGrouped: pageGrouped,
-                                                totalCount: grouped.count,
-                                                proxy: proxy
-                                            )
-                                        }
+                            if columnCount <= 1 {
+                                LazyVStack(spacing: DiscoverMasonry.spacing) {
+                                    ForEach(range, id: \.self) { idx in
+                                        discoverCard(
+                                            idx: idx,
+                                            gi: pageGrouped[idx],
+                                            pageGrouped: pageGrouped,
+                                            totalCount: grouped.count,
+                                            proxy: proxy
+                                        )
                                     }
-                                    .frame(maxWidth: .infinity)
                                 }
+                                .frame(maxWidth: .infinity)
+                            } else {
+                                MasonryColumnsLayout(columnCount: columnCount, spacing: DiscoverMasonry.spacing) {
+                                    ForEach(range, id: \.self) { idx in
+                                        discoverCard(
+                                            idx: idx,
+                                            gi: pageGrouped[idx],
+                                            pageGrouped: pageGrouped,
+                                            totalCount: grouped.count,
+                                            proxy: proxy
+                                        )
+                                        .frame(maxWidth: .infinity)
+                                        .accessibilityElement(children: .contain)
+                                        .accessibilitySortPriority(Double(range.upperBound - idx))
+                                    }
+                                }
+                                .accessibilityElement(children: .contain)
                             }
                         }
                     }

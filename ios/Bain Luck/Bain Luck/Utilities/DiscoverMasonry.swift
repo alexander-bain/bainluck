@@ -1,4 +1,5 @@
 import CoreGraphics
+import SwiftUI
 
 // MARK: - How the Discover feed divides itself into columns
 
@@ -193,5 +194,78 @@ enum DiscoverMasonry {
             buckets[index % n].append(index)
         }
         return buckets
+    }
+}
+
+/// Arranges cards round-robin across `columnCount` vertical masonry columns
+/// (`idx % cols`, matching `DiscoverMasonry.columns`) while preserving rank
+/// order in the view hierarchy so VoiceOver reads left-to-right, then down.
+struct MasonryColumnsLayout: Layout {
+    let columnCount: Int
+    let spacing: CGFloat
+
+    init(columnCount: Int, spacing: CGFloat = DiscoverMasonry.spacing) {
+        self.columnCount = max(1, columnCount)
+        self.spacing = spacing
+    }
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        let resolvedWidth: CGFloat = {
+            if let width = proposal.width, width.isFinite, width > 0 {
+                return width
+            }
+            let fallback = proposal.replacingUnspecifiedDimensions().width
+            return fallback.isFinite ? fallback : 0
+        }()
+        let cols = max(1, columnCount)
+        guard !subviews.isEmpty else {
+            return CGSize(width: resolvedWidth, height: 0)
+        }
+        let colWidth = max(0, (resolvedWidth - spacing * CGFloat(cols - 1)) / CGFloat(cols))
+        let childProposal = ProposedViewSize(width: colWidth, height: nil)
+        var columnHeights = Array(repeating: CGFloat(0), count: cols)
+        var columnCounts = Array(repeating: 0, count: cols)
+        for (idx, subview) in subviews.enumerated() {
+            let col = idx % cols
+            if columnCounts[col] > 0 {
+                columnHeights[col] += spacing
+            }
+            columnHeights[col] += subview.sizeThatFits(childProposal).height
+            columnCounts[col] += 1
+        }
+        return CGSize(width: resolvedWidth, height: columnHeights.max() ?? 0)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        guard !subviews.isEmpty else { return }
+        let cols = max(1, columnCount)
+        let colWidth = max(0, (bounds.width - spacing * CGFloat(cols - 1)) / CGFloat(cols))
+        let childProposal = ProposedViewSize(width: colWidth, height: nil)
+        var columnY = Array(repeating: bounds.minY, count: cols)
+        var columnCounts = Array(repeating: 0, count: cols)
+        for (idx, subview) in subviews.enumerated() {
+            let col = idx % cols
+            if columnCounts[col] > 0 {
+                columnY[col] += spacing
+            }
+            let x = bounds.minX + CGFloat(col) * (colWidth + spacing)
+            let size = subview.sizeThatFits(childProposal)
+            subview.place(
+                at: CGPoint(x: x, y: columnY[col]),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: colWidth, height: size.height)
+            )
+            columnY[col] += size.height
+            columnCounts[col] += 1
+        }
     }
 }
