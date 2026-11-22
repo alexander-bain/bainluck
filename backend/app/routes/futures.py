@@ -4898,9 +4898,9 @@ async def get_futures_market(
             detail, await _resolve_verified_title(db, market), market
         )
     if (
-        detail["status"] in {"open", "active"}
-        and detail["market_type"] == "field"
-        and detail["source"] in {"kalshi", "polymarket"}
+        detail.get("status") in {"open", "active"}
+        and detail.get("market_type") == "field"
+        and detail.get("source") in {"kalshi", "polymarket"}
         and len(detail["outcomes"]) > 1
         and any(row.get("probability") is not None for row in detail["outcomes"])
         and not any(row.get("rendered_percent") is not None for row in detail["outcomes"])
