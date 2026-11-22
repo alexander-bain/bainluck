@@ -100,7 +100,10 @@
     "#2316 related-futures name match: one lowercase per row (real Postgres)",
     "#6757 a no-result marker cannot protect an unsupported price (real Postgres)",
     "#7021 twin drain candidate SQL folds punctuation (real Postgres)",
-    "#5789 the #5621 repair cannot select a real game (real Postgres)",
+    "#5789 the #5621 repair cannot select a real game (real Postgres)"
+  ],
+  "shared-middle-2": [
+    "#10717 shared middle 2 \u2014 provision pg_trgm on the fresh database",
     "#6073 the re-date declines a row that moved under it (real Postgres)",
     "#6073 the stuck-status rescue declines a row that moved under it (real Postgres)",
     "#5918 the league rail loads the sport the fold reads (real Postgres)",

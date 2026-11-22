@@ -1,0 +1,52 @@
+{
+  "slug": "machinery-nhl-100-point-club",
+  "stage": "preview",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_event",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "SPORTS · NHL",
+  "name": "The NHL 100-Point Club",
+  "category": "hockey",
+  "tag": "SPORTS",
+  "section_title": "Skaters Chasing 100 Points",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "card_rows": 3,
+    "card_section_key": "nhl_100_point_club",
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c6/Yost_Ice_Arena%2C_Michigan_Ice_Hockey_Game_During_Intermission.jpg/500px-Yost_Ice_Arena%2C_Michigan_Ice_Hockey_Game_During_Intermission.jpg",
+    "card_image_alt": "Wide view of a packed ice hockey arena rink between periods",
+    "card_image_credit": "Kyvuh (CC0 1.0 Public Domain, Wikimedia Commons)",
+    "card_image_author": "Kyvuh",
+    "card_image_license": "CC0 1.0 Public Domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Yost_Ice_Arena,_Michigan_Ice_Hockey_Game_During_Intermission.jpg",
+    "sections": [
+      {
+        "key": "nhl_100_point_club",
+        "title": "Skaters Chasing 100 Points",
+        "item_noun": "skaters",
+        "note": "Leading NHL scorers tracking toward the 100-point milestone this season.",
+        "atom_query": {
+          "kind": "markets",
+          "sport_key": "icehockey_nhl",
+          "fun_sub_tag": "batch5-nhl-100-point-club",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 10,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}

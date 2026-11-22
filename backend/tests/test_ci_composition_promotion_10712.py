@@ -143,6 +143,10 @@ STEP_ENV_KEYS = {
         "SCOPE_RESULT",
         "INTEGRATION_RESULT",
     },
+    ("search-recall", "Every backend test shard passed"): {
+        "SCOPE_RESULT",
+        "BACKEND_RESULT",
+    },
 }
 
 # Live eligibility and attempt guards carry only these reviewed inputs.
@@ -383,7 +387,7 @@ def _validate_current_composed_promotion(
     assert verifier.get("if") == f"{SCOPE_RUNS} && {LIVE}"
     assert verifier["steps"][-1].get("if") == REUSE
     aggregate = jobs["search-recall"]
-    assert set(aggregate["needs"]) == {"change-scope", "database-integration"}
+    assert set(aggregate["needs"]) == {"change-scope", "database-integration", "backend-tests"}
     # 75-A: only the explicitly labelled never-merge study skips this runner.
     # Keep the ordinary scope/live predicates and every master promotion gate.
     assert aggregate["if"] == SEARCH_RECALL

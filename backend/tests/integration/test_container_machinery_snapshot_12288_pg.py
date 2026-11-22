@@ -83,7 +83,9 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
 
     nfl = Sport(key="americanfootball_nfl", name="NFL", group="American Football", active=True)
     nba = Sport(key="basketball_nba", name="NBA", group="Basketball", active=True)
-    session.add_all([nfl, nba])
+    ncaab = Sport(key="basketball_ncaab", name="NCAAB", group="Basketball", active=True)
+    nhl = Sport(key="icehockey_nhl", name="NHL", group="Ice Hockey", active=True)
+    session.add_all([nfl, nba, ncaab, nhl])
     await session.flush()
 
     bills = Team(
@@ -150,7 +152,31 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
         secondary_color="#FEC524",
         logo_url_small="https://a.espncdn.com/i/teamlogos/nba/500/den.png",
     )
-    session.add_all([bills, chiefs, lions, packers, celtics, cavs, thunder, nuggets])
+    houston = Team(
+        sport_id=ncaab.id,
+        name="Houston Cougars",
+        abbreviation="HOU",
+        primary_color="#C8102E",
+        secondary_color="#FFFFFF",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/ncaa/500/248.png",
+    )
+    duke = Team(
+        sport_id=ncaab.id,
+        name="Duke Blue Devils",
+        abbreviation="DUKE",
+        primary_color="#003087",
+        secondary_color="#FFFFFF",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/ncaa/500/150.png",
+    )
+    florida = Team(
+        sport_id=ncaab.id,
+        name="Florida Gators",
+        abbreviation="FLA",
+        primary_color="#0021A5",
+        secondary_color="#FA4616",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/ncaa/500/57.png",
+    )
+    session.add_all([bills, chiefs, lions, packers, celtics, cavs, thunder, nuggets, houston, duke, florida])
     await session.flush()
 
     def _wps(home_prob: float) -> dict:
@@ -664,6 +690,30 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
             external_id=ext,
             name=name,
             category=cat,
+            outcomes=outs,
+        )
+
+    # 12. #12288 Batch 5 preview groupings (March Madness 2027, AI Model Leaderboard, Big Tech Deals & Hardware, NHL 100-Point Club)
+    for mid, ext, name, cat, sid, outs in (
+        (52755955, "PMB5-APPOLL", "AP Poll #1 team on December 7", "basketball", ncaab.id, [("Houston", 0.54, 0.50), ("Duke", 0.25, 0.27)]),
+        (68954772, "PMB5-DUKEFF", "Will Duke reach the 2027 Final Four?", "basketball", ncaab.id, [("Yes", 0.37, 0.35)]),
+        (68954773, "PMB5-FLAFF", "Will Florida reach the 2027 Final Four?", "basketball", ncaab.id, [("Yes", 0.32, 0.30)]),
+        (109596, "KXB5-BESTAI", "Best AI model at year-end?", "tech", None, [("Gemini", 0.83, 0.80), ("Claude", 0.10, 0.12)]),
+        (62134324, "KXB5-OPUS", "Next Claude Opus released by?", "tech", None, [("Dec 31", 0.79, 0.75)]),
+        (109623, "KXB5-CODEAI", "Best coding AI model at year-end?", "tech", None, [("Anthropic", 0.49, 0.46), ("OpenAI", 0.31, 0.33)]),
+        (115374, "KXB5-TSLASP", "Tesla and SpaceX merger announced by?", "tech", None, [("Dec 31, 2027", 0.86, 0.82)]),
+        (109349, "KXB5-IPH18", "Apple releases the iPhone 18 before?", "tech", None, [("Apr 2027", 0.84, 0.80)]),
+        (113435, "KXB5-BUBBLE", "The AI bubble bursts by?", "tech", None, [("June 30, 2027", 0.65, 0.61)]),
+        (63105212, "PMB5-MCDAVID", "Connor McDavid 100 points this season?", "hockey", nhl.id, [("Yes", 0.94, 0.90)]),
+        (63218794, "PMB5-DRAI", "Leon Draisaitl 100 points this season?", "hockey", nhl.id, [("Yes", 0.89, 0.85)]),
+        (63105213, "PMB5-MACK", "Nathan MacKinnon 100 points this season?", "hockey", nhl.id, [("Yes", 0.79, 0.76)]),
+    ):
+        await _add_market(
+            market_id=mid,
+            external_id=ext,
+            name=name,
+            category=cat,
+            sport_id=sid,
             outcomes=outs,
         )
     await session.commit()

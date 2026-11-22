@@ -1,0 +1,229 @@
+{
+  "schema_version": 1,
+  "description": "Curated preview grouping sets for Batch 5 (#12288, Fable Item 3 / Sat Nov 21): March Madness 2027, 2026 AI Model Leaderboard, Big Tech Deals & Hardware, and NHL 100-Point Club.",
+  "sets": {
+    "batch5-march-madness-2027": {
+      "entries": [
+        {
+          "id": 52755955,
+          "short_label": "#1 team in the Dec 7 AP Poll",
+          "headline_phrase": "{answer} holding the Dec 7 AP #1 spot",
+          "headline_with_phrase": "{answer} holding the Dec 7 AP #1 spot"
+        },
+        {
+          "id": 68954772,
+          "short_label": "Duke reaches the 2027 Final Four",
+          "headline_phrase": "Duke reaching the 2027 Final Four",
+          "headline_with_phrase": "Duke reaching the 2027 Final Four",
+          "art_subject": "Duke Blue Devils"
+        },
+        {
+          "id": 68954773,
+          "short_label": "Florida reaches the 2027 Final Four",
+          "headline_phrase": "Florida reaching the 2027 Final Four",
+          "headline_with_phrase": "Florida reaching the 2027 Final Four",
+          "art_subject": "Florida Gators"
+        },
+        {
+          "id": 68954808,
+          "short_label": "UConn reaches the 2027 Final Four",
+          "headline_phrase": "UConn reaching the 2027 Final Four",
+          "headline_with_phrase": "UConn reaching the 2027 Final Four",
+          "art_subject": "UConn Huskies"
+        },
+        {
+          "id": 68954776,
+          "short_label": "Illinois reaches the 2027 Final Four",
+          "headline_phrase": "Illinois reaching the 2027 Final Four",
+          "headline_with_phrase": "Illinois reaching the 2027 Final Four",
+          "art_subject": "Illinois Fighting Illini"
+        },
+        {
+          "id": 68948342,
+          "short_label": "Kansas reaches the 2027 Final Four",
+          "headline_phrase": "Kansas reaching the 2027 Final Four",
+          "headline_with_phrase": "Kansas reaching the 2027 Final Four",
+          "art_subject": "Kansas Jayhawks"
+        },
+        {
+          "id": 68954759,
+          "short_label": "Arkansas reaches the 2027 Final Four",
+          "headline_phrase": "Arkansas reaching the 2027 Final Four",
+          "headline_with_phrase": "Arkansas reaching the 2027 Final Four",
+          "art_subject": "Arkansas Razorbacks"
+        },
+        {
+          "id": 68954775,
+          "short_label": "Houston reaches the 2027 Final Four",
+          "headline_phrase": "Houston reaching the 2027 Final Four",
+          "headline_with_phrase": "Houston reaching the 2027 Final Four",
+          "art_subject": "Houston Cougars"
+        },
+        {
+          "id": 68954760,
+          "short_label": "Arizona reaches the 2027 Final Four",
+          "headline_phrase": "Arizona reaching the 2027 Final Four",
+          "headline_with_phrase": "Arizona reaching the 2027 Final Four",
+          "art_subject": "Arizona Wildcats"
+        },
+        {
+          "id": 3,
+          "short_label": "2027 NCAA national champion",
+          "headline_phrase": "{answer} winning the 2027 NCAA championship",
+          "headline_with_phrase": "{answer} winning the 2027 NCAA championship"
+        }
+      ]
+    },
+    "batch5-ai-model-leaderboard-2026": {
+      "entries": [
+        {
+          "id": 109596,
+          "short_label": "Best AI at year-end",
+          "headline_phrase": "{answer} finishing 2026 as the top AI model",
+          "headline_with_phrase": "{answer} finishing 2026 as the top AI model"
+        },
+        {
+          "id": 62134324,
+          "short_label": "Next Claude Opus arrives",
+          "headline_phrase": "A new Claude Opus arriving {answer}",
+          "headline_with_phrase": "a new Claude Opus arriving {answer}"
+        },
+        {
+          "id": 109623,
+          "short_label": "Best coding AI at year-end",
+          "headline_phrase": "{answer} finishing 2026 with the top coding model",
+          "headline_with_phrase": "{answer} finishing 2026 with the top coding model"
+        },
+        {
+          "id": 109322,
+          "short_label": "First AI to hit 1550 on Text Arena",
+          "headline_phrase": "{answer} reaching 1550 on Text Arena first",
+          "headline_with_phrase": "{answer} first to reach 1550 on Text Arena"
+        },
+        {
+          "id": 22737639,
+          "short_label": "Next Gemini Pro Arena debut",
+          "headline_phrase": "Next Gemini Pro opening at {answer} on Text Arena",
+          "headline_with_phrase": "next Gemini Pro debuting at {answer}"
+        },
+        {
+          "id": 30692108,
+          "short_label": "Next Gemini Pro arrives",
+          "headline_phrase": "Next Gemini Pro arriving {answer}",
+          "headline_with_phrase": "next Gemini Pro arriving {answer}"
+        },
+        {
+          "id": 11269760,
+          "short_label": "Anthropic releases Mythos",
+          "headline_phrase": "Anthropic releasing Mythos {answer}",
+          "headline_with_phrase": "Anthropic releasing Mythos {answer}"
+        }
+      ]
+    },
+    "batch5-big-tech-deals-hardware": {
+      "entries": [
+        {
+          "id": 115374,
+          "short_label": "Tesla and SpaceX announce a merger",
+          "headline_phrase": "A Tesla and SpaceX merger announced {answer}",
+          "headline_with_phrase": "a Tesla and SpaceX merger announced {answer}"
+        },
+        {
+          "id": 109349,
+          "short_label": "Apple releases the iPhone 18",
+          "headline_phrase": "Apple releasing the iPhone 18 {answer}",
+          "headline_with_phrase": "Apple releasing the iPhone 18 {answer}"
+        },
+        {
+          "id": 113435,
+          "short_label": "The AI bubble bursts",
+          "headline_phrase": "The AI bubble bursting {answer}",
+          "headline_with_phrase": "the AI bubble bursting {answer}"
+        },
+        {
+          "id": 69851942,
+          "short_label": "Next CEO of NVIDIA",
+          "headline_phrase": "{answer} becoming the next NVIDIA CEO",
+          "headline_with_phrase": "{answer} becoming the next NVIDIA CEO"
+        },
+        {
+          "id": 112875,
+          "short_label": "OpenAI launches consumer hardware",
+          "headline_phrase": "OpenAI launching consumer hardware {answer}",
+          "headline_with_phrase": "OpenAI launching consumer hardware {answer}"
+        },
+        {
+          "id": 115369,
+          "short_label": "First OpenAI hardware form factor",
+          "headline_phrase": "An OpenAI product announcement led by {answer}",
+          "headline_with_phrase": "an OpenAI product announcement led by {answer}"
+        },
+        {
+          "id": 108555,
+          "short_label": "Starlink announces an IPO",
+          "headline_phrase": "Starlink announcing an IPO {answer}",
+          "headline_with_phrase": "Starlink announcing an IPO {answer}"
+        },
+        {
+          "id": 16756459,
+          "short_label": "GameStop acquires eBay in 2026",
+          "headline_phrase": "GameStop acquiring eBay in 2026",
+          "headline_with_phrase": "GameStop acquiring eBay in 2026"
+        }
+      ]
+    },
+    "batch5-nhl-100-point-club": {
+      "entries": [
+        {
+          "id": 63105212,
+          "short_label": "Connor McDavid hits 100 points",
+          "headline_phrase": "Connor McDavid reaching 100 points",
+          "headline_with_phrase": "Connor McDavid reaching 100 points",
+          "art_subject": "Connor McDavid"
+        },
+        {
+          "id": 63218794,
+          "short_label": "Leon Draisaitl hits 100 points",
+          "headline_phrase": "Leon Draisaitl reaching 100 points",
+          "headline_with_phrase": "Leon Draisaitl reaching 100 points",
+          "art_subject": "Leon Draisaitl"
+        },
+        {
+          "id": 63105213,
+          "short_label": "Nathan MacKinnon hits 100 points",
+          "headline_phrase": "Nathan MacKinnon reaching 100 points",
+          "headline_with_phrase": "Nathan MacKinnon reaching 100 points",
+          "art_subject": "Nathan MacKinnon"
+        },
+        {
+          "id": 63218771,
+          "short_label": "David Pastrnak hits 100 points",
+          "headline_phrase": "David Pastrnak reaching 100 points",
+          "headline_with_phrase": "David Pastrnak reaching 100 points",
+          "art_subject": "David Pastrnak"
+        },
+        {
+          "id": 63119688,
+          "short_label": "Macklin Celebrini hits 100 points",
+          "headline_phrase": "Macklin Celebrini reaching 100 points",
+          "headline_with_phrase": "Macklin Celebrini reaching 100 points",
+          "art_subject": "Macklin Celebrini"
+        },
+        {
+          "id": 63218780,
+          "short_label": "Jack Eichel hits 100 points",
+          "headline_phrase": "Jack Eichel reaching 100 points",
+          "headline_with_phrase": "Jack Eichel reaching 100 points",
+          "art_subject": "Jack Eichel"
+        },
+        {
+          "id": 63218767,
+          "short_label": "Cale Makar hits 100 points",
+          "headline_phrase": "Cale Makar reaching 100 points",
+          "headline_with_phrase": "Cale Makar reaching 100 points",
+          "art_subject": "Cale Makar"
+        }
+      ]
+    }
+  }
+}
