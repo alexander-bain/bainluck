@@ -76,7 +76,7 @@ final class WidgetAndLiveActivity13392Tests: XCTestCase {
         .frame(width: 155, height: 155)
         .background(Color.white)
 
-        let renderer = ImageRenderer(content: view)
+        let renderer = rendererForMeasurement(view, at: .large)
         renderer.scale = 2
         let image = try XCTUnwrap(renderer.uiImage)
         XCTAssertGreaterThan(image.size.width, 100)
