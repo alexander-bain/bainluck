@@ -1798,6 +1798,54 @@
       "author": "Redd Angelo",
       "license": "CC0 1.0 Public Domain",
       "source_page": "https://commons.wikimedia.org/wiki/File:Monochrome_calgary_tower_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch5-march-madness-2027",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "March Madness 2027 — basketball hoop and net photographed against the sky",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/7/75/Basketball_hitting_a_basketball_goal.jpg/960px-Basketball_hitting_a_basketball_goal.jpg",
+      "credit": "noahsilliman (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "noahsilliman",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Basketball_hitting_a_basketball_goal.jpg"
+    },
+    {
+      "entity_key": "batch5-ai-model-leaderboard-2026",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "The 2026 AI Model Leaderboard — server rack compute blades",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f7/Beautiful_technology_%28Unsplash%29.jpg/960px-Beautiful_technology_%28Unsplash%29.jpg",
+      "credit": "Thomas Kvistholt (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Thomas Kvistholt",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Beautiful_technology_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch5-big-tech-deals-hardware",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Big Tech Deals & Hardware — arranged historical microprocessor chips",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/87/Collection_of_historical_CPUs.jpg/960px-Collection_of_historical_CPUs.jpg",
+      "credit": "Martijn Boer (Public domain, Wikimedia Commons)",
+      "author": "Martijn Boer",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Collection_of_historical_CPUs.jpg"
+    },
+    {
+      "entity_key": "batch5-nhl-100-point-club",
+      "aliases": [],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "NHL 100-Point Club — ice hockey arena rink between periods",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c6/Yost_Ice_Arena%2C_Michigan_Ice_Hockey_Game_During_Intermission.jpg/500px-Yost_Ice_Arena%2C_Michigan_Ice_Hockey_Game_During_Intermission.jpg",
+      "credit": "Kyvuh (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Kyvuh",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Yost_Ice_Arena,_Michigan_Ice_Hockey_Game_During_Intermission.jpg"
     }
   ]
 }

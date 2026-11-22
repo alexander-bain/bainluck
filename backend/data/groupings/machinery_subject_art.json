@@ -1266,6 +1266,84 @@
       "detail": "INT",
       "accent_color": "#00239C",
       "url": "https://a.espncdn.com/i/teamlogos/soccer/500/110.png"
+    },
+    {
+      "key": "connor-mcdavid",
+      "aliases": [
+        "Connor McDavid",
+        "McDavid"
+      ],
+      "kind": "person",
+      "detail": "EDM",
+      "accent_color": "#FF4C00",
+      "url": "https://a.espncdn.com/i/headshots/nhl/players/full/3895074.png"
+    },
+    {
+      "key": "leon-draisaitl",
+      "aliases": [
+        "Leon Draisaitl",
+        "Draisaitl"
+      ],
+      "kind": "person",
+      "detail": "EDM",
+      "accent_color": "#FF4C00",
+      "url": "https://a.espncdn.com/i/headshots/nhl/players/full/3114727.png"
+    },
+    {
+      "key": "nathan-mackinnon",
+      "aliases": [
+        "Nathan MacKinnon",
+        "MacKinnon"
+      ],
+      "kind": "person",
+      "detail": "COL",
+      "accent_color": "#6F263D",
+      "url": "https://a.espncdn.com/i/headshots/nhl/players/full/3041969.png"
+    },
+    {
+      "key": "david-pastrnak",
+      "aliases": [
+        "David Pastrnak",
+        "David Pastr\u0148\u00e1k",
+        "Pastrnak"
+      ],
+      "kind": "person",
+      "detail": "BOS",
+      "accent_color": "#FFB81C",
+      "url": "https://a.espncdn.com/i/headshots/nhl/players/full/3114778.png"
+    },
+    {
+      "key": "macklin-celebrini",
+      "aliases": [
+        "Macklin Celebrini",
+        "Celebrini"
+      ],
+      "kind": "person",
+      "detail": "SJ",
+      "accent_color": "#006D75",
+      "url": "https://a.espncdn.com/i/headshots/nhl/players/full/5206628.png"
+    },
+    {
+      "key": "jack-eichel",
+      "aliases": [
+        "Jack Eichel",
+        "Eichel"
+      ],
+      "kind": "person",
+      "detail": "VGK",
+      "accent_color": "#B4975A",
+      "url": "https://a.espncdn.com/i/headshots/nhl/players/full/3648002.png"
+    },
+    {
+      "key": "cale-makar",
+      "aliases": [
+        "Cale Makar",
+        "Makar"
+      ],
+      "kind": "person",
+      "detail": "COL",
+      "accent_color": "#6F263D",
+      "url": "https://a.espncdn.com/i/headshots/nhl/players/full/4233563.png"
     }
   ],
   "nfl_teams": {

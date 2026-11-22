@@ -1,0 +1,56 @@
+{
+  "slug": "machinery-ai-model-leaderboard-2026",
+  "stage": "preview",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_event",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "TECH · AI MODELS",
+  "name": "The 2026 AI Model Leaderboard",
+  "category": "tech",
+  "tag": "TECH",
+  "section_title": "Year-End Model Rankings",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "extra_llm_categories": [
+      "economics",
+      "culture"
+    ],
+    "card_rows": 3,
+    "card_section_key": "ai_model_leaderboard_2026",
+    "hide_row_art": true,
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f7/Beautiful_technology_%28Unsplash%29.jpg/960px-Beautiful_technology_%28Unsplash%29.jpg",
+    "card_image_alt": "Monochrome compute server blades and fans inside a dark rack enclosure",
+    "card_image_credit": "Thomas Kvistholt (CC0 1.0 Public Domain, Wikimedia Commons)",
+    "card_image_author": "Thomas Kvistholt",
+    "card_image_license": "CC0 1.0 Public Domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Beautiful_technology_(Unsplash).jpg",
+    "sections": [
+      {
+        "key": "ai_model_leaderboard_2026",
+        "title": "Year-End Model Rankings",
+        "item_noun": "models",
+        "note": "Leading coding models, Text Arena milestones, and next flagship AI model release dates.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch5-ai-model-leaderboard-2026",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 10,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}

@@ -61,6 +61,7 @@ CURATED_GROUPING_SETS_PATH = (
 CURATED_GROUPING_SETS_PATHS: tuple[Path, ...] = (
     CURATED_GROUPING_SETS_PATH,
     Path(__file__).resolve().parents[2] / "data" / "groupings" / "batch4_curated_sets.json",
+    Path(__file__).resolve().parents[2] / "data" / "groupings" / "batch5_curated_sets.json",
 )
 
 
@@ -349,9 +350,29 @@ def _load_default_registry() -> FunMarketsRegistry:
     return _load_registry_from_path(FUN_MARKETS_DATA_PATH)
 
 
+@lru_cache(maxsize=1)
+def _load_curated_art_subjects() -> dict[tuple[str, int], str]:
+    """Load optional per-row ``art_subject`` overrides from curated grouping manifests."""
+    art_by_tag_mid: dict[tuple[str, int], str] = {}
+    for manifest_path in CURATED_GROUPING_SETS_PATHS:
+        if not manifest_path.is_file():
+            continue
+        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+        for tag, spec in (raw.get("sets") or {}).items():
+            tag_k = str(tag).strip().lower()
+            for entry in (spec or {}).get("entries") or ():
+                mid = int(entry["id"])
+                subj = str(entry.get("art_subject") or "").strip()
+                if subj:
+                    art_by_tag_mid[(tag_k, mid)] = subj
+    return art_by_tag_mid
+
+
 def clear_fun_markets_cache() -> None:
     """Clear the cached fun-markets registry (for tests)."""
     _load_default_registry.cache_clear()
+    _load_curated_grouping_sets.cache_clear()
+    _load_curated_art_subjects.cache_clear()
 
 
 def load_fun_markets_registry(
@@ -418,6 +439,18 @@ def fun_market_headline_with_phrase(
             return curated
     entry = get_fun_market_entry(market_id)
     return entry.headline_with_phrase if entry is not None else None
+
+
+def fun_market_art_subject(
+    market_id: int, *, sub_tag: Optional[str] = None
+) -> Optional[str]:
+    """Return an optional subject name for binary row art resolution (Batch 5)."""
+    if sub_tag:
+        art_by_tag_mid = _load_curated_art_subjects()
+        curated = art_by_tag_mid.get((sub_tag.strip().lower(), int(market_id)))
+        if curated:
+            return curated
+    return None
 
 
 def fun_entry_allows_extreme_odds(entry: Optional[FunMarketEntry]) -> bool:

@@ -1813,19 +1813,34 @@ def _hydrate_market_visual_item(
         yes_pct = int(yes_row.get("rendered_percent") or _half_up_pct(p))
         leader_outcome_id = oid
         lead_prob = p
+        yes_art: dict[str, Any] = {
+            "url": None,
+            "kind": "none",
+            "detail": "",
+            "accent_color": "",
+            "initials": "",
+        }
+        if fun_sub_tag:
+            from app.utils.discover_fun_tags import fun_market_art_subject
+
+            art_subj = fun_market_art_subject(mid, sub_tag=fun_sub_tag)
+            if art_subj:
+                yes_art = resolver.resolve(
+                    art_subj,
+                    sport_key=sport_key,
+                    allow_team_lookup=(
+                        bool(allow_team_lookup)
+                        if allow_team_lookup is not None
+                        else None
+                    ),
+                )
         outcomes_out = [
             {
                 "outcome_id": oid,
                 "name": "Yes",
                 "probability": p,
                 "rendered_percent": yes_pct,
-                "art": {
-                    "url": None,
-                    "kind": "none",
-                    "detail": "",
-                    "accent_color": "",
-                    "initials": "",
-                },
+                "art": yes_art,
             }
         ]
     else:
@@ -2387,7 +2402,9 @@ _CATEGORY_LLM_POOL: dict[str, tuple[str, ...]] = {
     ),
     "weather": ("weather", "climate", "science", "other"),
     "football": ("football", "nfl", "americanfootball_nfl", "other"),
-    "basketball": ("basketball", "nba", "basketball_nba", "other"),
+    "basketball": ("basketball", "nba", "basketball_nba", "basketball_ncaab", "other"),
+    "hockey": ("hockey", "nhl", "icehockey_nhl", "other"),
+    "tech": ("tech", "technology", "ai", "science", "other"),
 }
 
 
