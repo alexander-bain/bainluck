@@ -82,8 +82,13 @@ class WatchRectangularComplication4933Tests(unittest.TestCase):
         metadata_block = content.split("Text(reading.metadataLine(at: now))", 1)[1].split("}", 1)[0]
         self.assertIn(".minimumScaleFactor(0.85)", metadata_block)
         self.assertIn("WatchRectangularReading.timelineDates(for: current.snapshot, now: current.date)", widget)
-        self.assertIn("BainLuckEntry(date: $0, snapshot: current.snapshot)", widget)
-        self.assertIn("dates.count > 1 ? .atEnd : .never", widget)
+        self.assertIn("WatchMatchupReading217.timelineDates(for: current.snapshot, now: current.date)", widget)
+        self.assertIn(
+            "BainLuckEntry(date: $0, snapshot: current.snapshot, unavailableStatus: current.unavailableStatus)",
+            widget,
+        )
+        self.assertIn("dates.count > 1", widget)
+        self.assertIn(".after(current.date.addingTimeInterval(15 * 60))", widget)
         self.assertIn('.accessibilityIdentifier("watch.complication.fallback")', content)
         self.assertIn(".widgetURL(WatchLaunchRoute.url)", widget)
 

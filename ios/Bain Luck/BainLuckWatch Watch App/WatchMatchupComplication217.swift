@@ -107,7 +107,7 @@ struct WatchMatchupComplication217: View {
 
     @ViewBuilder private func crestDisc(_ side: WatchMatchupReading217.Side, size: CGFloat) -> some View {
         ZStack {
-            if let png = side.crestPNG, let image = UIImage(data: png) {
+            if let png = side.crestPNG, let image = WatchMatchupCrests217.complicationImage(from: png) {
                 Circle().fill(fullColor ? Color.white : Color.white.opacity(0.22))
                 Image(uiImage: image).resizable().interpolation(.high).scaledToFit()
                     .padding(size * 0.14)

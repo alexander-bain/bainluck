@@ -134,3 +134,38 @@ struct WatchSavedCornerComplicationContent: View {
             .accessibilityIdentifier("watch.complication.corner.fallback")
     }
 }
+
+/// #13339 — Distinct rectangular slot view when the reader has chosen a game or market
+/// that cannot currently appear on the Watch face, so "no game chosen" and "cannot show your game"
+/// never look the same.
+struct WatchUnavailableComplicationContent13339: View {
+    let status: WatchFaceStatusPayload13339
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 6) {
+            Image(systemName: "exclamationmark.circle")
+                .font(.system(size: 18, weight: .semibold))
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(status.title)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Text(status.reason.complicationHeadline)
+                    .font(.headline)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                Text(status.reason.complicationDetail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(status.reason.accessibilityDescription(title: status.title))
+        .accessibilityIdentifier("watch.complication.unavailable")
+    }
+}

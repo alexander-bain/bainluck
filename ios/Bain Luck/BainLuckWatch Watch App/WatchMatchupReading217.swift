@@ -1,4 +1,8 @@
 import Foundation
+import ImageIO
+#if canImport(UIKit)
+import UIKit
+#endif
 
 // Direction 217, wired: what the Watch's big rectangular slot draws in the
 // Matchup look, decided from the published selected-game snapshot. Foundation
@@ -43,6 +47,11 @@ nonisolated enum WatchMatchupCrests217 {
     static let appGroup = "group.com.bainluck.watch"
     static let maximumBytes = 256 * 1024
     static let keepFor: TimeInterval = 30 * 24 * 3600
+    /// #13339: bounded pixel ceiling for cached Watch crests and WidgetKit complication images.
+    /// WatchKit's archival cap for accessoryRectangular on 45 mm is ~91,158 px²; keeping cached
+    /// crests at <=96 px and complication thumbnails at <=64 px (@2x -> <=32 pt) stays well under it.
+    static let maxPixelSize = 96
+    static let complicationMaxPixelSize = 64
 
     static var directory: URL? {
         FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)?
@@ -60,19 +69,79 @@ nonisolated enum WatchMatchupCrests217 {
         return data
     }
 
-    /// Fetch each missing crest once. Returns true when a new crest was saved,
-    /// so the caller reloads the complication.
+    static func pixelDimensions(of bytes: Data) -> (width: Int, height: Int)? {
+        guard let source = CGImageSourceCreateWithData(bytes as CFData, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = props[kCGImagePropertyPixelWidth] as? Int,
+              let height = props[kCGImagePropertyPixelHeight] as? Int,
+              width > 0, height > 0 else { return nil }
+        return (width, height)
+    }
+
+    static func isWithinPixelLimit(_ bytes: Data, maxPixelSize: Int = maxPixelSize) -> Bool {
+        guard let dims = pixelDimensions(of: bytes) else { return true }
+        return max(dims.width, dims.height) <= maxPixelSize
+    }
+
+    static func downsampledPNG(_ bytes: Data, maxPixelSize: Int = maxPixelSize) -> Data? {
+        guard let source = CGImageSourceCreateWithData(bytes as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+            kCGImageSourceShouldCacheImmediately: true,
+        ]
+        guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        let out = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(out, "public.png" as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        let png = out as Data
+        return png.isEmpty ? nil : png
+    }
+
+    static func prepareForCache(_ bytes: Data, maxPixelSize: Int = maxPixelSize) -> Data {
+        if isWithinPixelLimit(bytes, maxPixelSize: maxPixelSize) { return bytes }
+        return downsampledPNG(bytes, maxPixelSize: maxPixelSize) ?? bytes
+    }
+
+    #if canImport(UIKit)
+    static func complicationImage(from bytes: Data, maxPixelSize: Int = complicationMaxPixelSize) -> UIImage? {
+        guard let source = CGImageSourceCreateWithData(bytes as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+            kCGImageSourceShouldCacheImmediately: true,
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else { return nil }
+        return UIImage(cgImage: cgImage, scale: 2.0, orientation: .up)
+    }
+    #endif
+
+    /// Fetch each missing crest once, and downsample any oversized cached PNGs in place.
+    /// Returns true when a new or shrunk crest was saved, so the caller reloads the complication.
     static func fetchMissing(_ wanted: [(teamID: Int, logo: String?)], directory: URL? = directory, now: Date = Date(),
                              fetch: @escaping @Sendable (URL) async -> Data? = download) async -> Bool {
         guard let directory else { return false }
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var saved = false
         for (teamID, logo) in wanted where teamID > 0 {
-            guard data(teamID: teamID, directory: directory) == nil,
-                  let logo, let url = URL(string: logo), url.scheme == "https",
+            if let existing = data(teamID: teamID, directory: directory) {
+                if !isWithinPixelLimit(existing),
+                   let shrunk = downsampledPNG(existing),
+                   !shrunk.isEmpty, shrunk.count <= maximumBytes,
+                   (try? shrunk.write(to: file(teamID: teamID, in: directory), options: .atomic)) != nil {
+                    saved = true
+                }
+                continue
+            }
+            guard let logo, let url = URL(string: logo), url.scheme == "https",
                   let bytes = await fetch(url), !bytes.isEmpty, bytes.count <= maximumBytes,
                   isImage(bytes) else { continue }
-            if (try? bytes.write(to: file(teamID: teamID, in: directory), options: .atomic)) != nil { saved = true }
+            let prepared = prepareForCache(bytes)
+            guard !prepared.isEmpty, prepared.count <= maximumBytes else { continue }
+            if (try? prepared.write(to: file(teamID: teamID, in: directory), options: .atomic)) != nil { saved = true }
         }
         prune(directory, now: now)
         return saved
@@ -311,5 +380,48 @@ extension WatchMatchupReading217 {
         case .futureForecast:
             return nil
         }
+    }
+
+    /// Minimal timeline dates for a Matchup look so WidgetKit only archives the
+    /// entries where the Matchup face actually changes text or hands back.
+    static func timelineDates(
+        for snapshot: WatchComplicationSnapshot?,
+        now: Date,
+        timeZone: TimeZone = .current
+    ) -> [Date]? {
+        guard now.timeIntervalSinceReferenceDate.isFinite,
+              make(snapshot: snapshot, now: now, timeZone: timeZone) != nil,
+              let snapshot,
+              let r = snapshot.validatedRectangularReading(now: now) else { return nil }
+        var dates = [now]
+        switch r.kind {
+        case .scheduledForecast:
+            if let start = r.commenceTime, start > now {
+                var cal = Calendar(identifier: .gregorian)
+                cal.timeZone = timeZone
+                if !cal.isDate(start, inSameDayAs: now),
+                   let tomorrow = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: now)),
+                   tomorrow > now, tomorrow < start {
+                    dates.append(tomorrow)
+                }
+                let startDay = cal.startOfDay(for: start)
+                if startDay > now, startDay < start {
+                    dates.append(startDay)
+                }
+                dates.append(start)
+            }
+        case .liveForecast:
+            let ageSwitch = r.observedAt.addingTimeInterval(WatchRectangularReading.liveAgeThresholdSeconds + 1)
+            if ageSwitch > now {
+                dates.append(ageSwitch)
+            }
+        case .finalResult:
+            if let step = finalStepAside(for: snapshot, now: now), step > now {
+                dates.append(step)
+            }
+        case .futureForecast:
+            return nil
+        }
+        return Array(Set(dates)).sorted()
     }
 }

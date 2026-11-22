@@ -644,4 +644,61 @@ private actor ComplicationRaceTransport: WatchSelectedGameTransport {
         }
     }
     print("PASS: rectangular complication probability/final wording, As of clock, Open to update, Final · SF 4 LA 2, omitted odds-less states, and zero Saved/stale strings")
+
+    // 6. #13339: bounded clock-skew admission for games, explicit unavailable status writes/tombstones, and distinct wording.
+    let futureHalfSec = try decodeGame(
+        "\"status\":\"scheduled\",\"commence_time\":\"2026-10-04T23:00:00Z\",\"hero_probability\":0.435,\"hero_probability_away\":0.565,\"hero_probability_observed_at\":\"2026-10-04T18:00:01Z\",\(home),\(away)"
+    )
+    precondition(WatchComplicationProjection.snapshot(game: futureHalfSec, savedAt: now) == nil,
+                 "Strict clock check without skew tolerance still rejects future timestamps")
+    let skewedState1s = WatchComplicationProjection.evaluateEventFaceState(
+        game: futureHalfSec,
+        eventID: 101,
+        isAdmitted: true,
+        savedAt: now,
+        clockSkewTolerance: 15,
+        containerAvailable: true
+    )
+    guard case .ready(let skewedSnap) = skewedState1s else {
+        preconditionFailure("1s server-ahead observation must be admitted with 15s skew tolerance")
+    }
+    precondition(skewedSnap.observedAt == now && skewedSnap.savedAt == now)
+
+    let futureMinute = try decodeGame(
+        "\"status\":\"scheduled\",\"commence_time\":\"2026-10-04T23:00:00Z\",\"hero_probability\":0.435,\"hero_probability_away\":0.565,\"hero_probability_observed_at\":\"2026-10-04T18:01:00Z\",\(home),\(away)"
+    )
+    let skewedState60s = WatchComplicationProjection.evaluateEventFaceState(
+        game: futureMinute,
+        eventID: 101,
+        isAdmitted: true,
+        savedAt: now,
+        clockSkewTolerance: 15,
+        containerAvailable: true
+    )
+    guard case .unavailable(let waitStatus, _) = skewedState60s else {
+        preconditionFailure("60s ahead clock skew exceeds 15s tolerance and must produce explicit unavailable status")
+    }
+    precondition(waitStatus.reason == .waitingForUpdate && waitStatus.reason.complicationHeadline != "Your game")
+
+    let oldFinalClock = ISO8601DateFormatter().date(from: "2026-10-04T14:00:00Z")!
+    let endedState = WatchComplicationProjection.evaluateEventFaceState(
+        game: finalGame,
+        eventID: 101,
+        isAdmitted: true,
+        savedAt: oldFinalClock.addingTimeInterval(8 * 3600),
+        clockSkewTolerance: 15,
+        containerAvailable: true
+    )
+    guard case .unavailable(let endedStatus, _) = endedState else {
+        preconditionFailure(">3h final must report finalEnded status")
+    }
+    precondition(endedStatus.reason == .finalEnded)
+    precondition(WatchComplicationPublisher.writeUnavailableStatus(endedStatus, to: directory))
+    precondition(!WatchComplicationPublisher.writeUnavailableStatus(endedStatus, to: directory),
+                 "Identical unavailable status payload must not rewrite bytes")
+    precondition(WatchFaceStatusPayload13339.read(from: directory) == endedStatus)
+    precondition(WatchComplicationPublisher.writeUnavailableStatus(nil, to: directory))
+    precondition(WatchFaceStatusPayload13339.read(from: directory) == nil,
+                 "Tombstone clears selected-face-status.json cleanly")
+    print("PASS: #13339 bounded clock-skew tolerance and explicit unavailable status publication/tombstone")
 }
