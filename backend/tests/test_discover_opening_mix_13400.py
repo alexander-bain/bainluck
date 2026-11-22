@@ -277,18 +277,36 @@ def test_representative_deck_hits_9_to_1_and_topic_mix_and_passes_seat_opening()
 
 
 def test_concept_cards_and_live_games_never_enter_first_ten() -> None:
+    second_live = _roundup(
+        "machinery-nfl-week",
+        "NFL Week",
+        kicker="NFL · THIS SLATE",
+        category="football",
+        member_ids=[2098],
+        score=50.0,
+        live_child=True,
+        status="live",
+    )
     deck = [
         _concept("concept:nba-finals", "NBA Finals Hub", live=False, score=99.0),
         _live_event(5001, "Live NBA Game", score=99.0),
         *_representative_deck(),
+        second_live,
     ]
     mixed = apply_discover_opening_mix(deck, now=NOW)
-    top10_ids = {(c.get("data") or {}).get("id") for c in mixed[:10]}
+    seating = seat_opening(mixed, now=NOW)
+    assert seating.status == COMPLIANT, seating.detail
+    top10_ids = {(c.get("data") or {}).get("id") for c in seating.items[:10]}
     assert "concept:nba-finals" not in top10_ids
     assert "concept:world-cup-2026" not in top10_ids
     assert 5001 not in top10_ids
     assert 4001 not in top10_ids
-    assert "roundup:machinery-nba-night" not in top10_ids
+    # Decision 342: B — the sports grouping holding the most live games wins one
+    # sports seat (machinery-nba-night holds 2 > machinery-nfl-week's 1); any second
+    # live grouping stays out of seats 1..10 and loses its live-sports marker.
+    assert "roundup:machinery-nba-night" in top10_ids
+    assert "roundup:machinery-nfl-week" not in top10_ids
+    assert second_live["data"].get("opening_mix_live_sports_seat") is None
 
 
 def test_single_falls_back_to_conflict_only_when_no_other_single_qualifies() -> None:

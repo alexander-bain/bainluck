@@ -421,6 +421,21 @@ def _group_members(
     return None, restricted_by
 
 
+def _is_live_sports_opening_mix_bundle(card: Any) -> bool:
+    """Return True for the single live sports bundle selected under Decision 342: B."""
+    if not (
+        isinstance(card, dict)
+        and card.get("type") == "bundle"
+        and isinstance(card.get("data"), dict)
+    ):
+        return False
+    data = card["data"]
+    if data.get("opening_mix_live_sports_seat") is True:
+        return True
+    roundup = data.get("roundup")
+    return isinstance(roundup, dict) and roundup.get("opening_mix_live_sports_seat") is True
+
+
 def _is_roundup_bundle(card: Any) -> bool:
     """Standing round-up bundles (#10357 / #11902) have a seat floor of
     ``OPENING_SEATS`` (index >= 10, seat >= 11) and never fill an opening seat,
@@ -505,6 +520,7 @@ def seat_opening(items: list, *, now: datetime) -> OpeningSeatingOutcome:
         for card, seating in zip(items, cards)
         if seating.kind == "event" and isinstance(card.get("data"), dict)
     }
+    exempt_live_sports_used = False
     for group_index, (card, seating) in enumerate(zip(items, cards)):
         if seating.kind in GROUP_KINDS:
             reason, restricted_by = _group_members(card, by_event_id, now=now)
@@ -516,10 +532,24 @@ def seat_opening(items: list, *, now: datetime) -> OpeningSeatingOutcome:
                     refused_positions=[group_index],
                     refusal_class=REFUSAL_MALFORMED_GROUP,
                 )
-            # A group inherits its represented members' restriction and is then
-            # seated by the same stable move as any restricted card.
-            seating.restricted_by = restricted_by
-            seating.restricted = bool(restricted_by)
+            # Decision 342: B — allow at most one opening-mix live sports
+            # bundle into seats 1..10 without weakening #5105 for single games,
+            # collections, unmarked bundles, or any second live bundle.
+            if (
+                seating.kind == "bundle"
+                and restricted_by
+                and _is_live_sports_opening_mix_bundle(card)
+                and not exempt_live_sports_used
+            ):
+                exempt_live_sports_used = True
+                seating.exempt_by.append("342b_live_sports_group")
+                seating.restricted_by = []
+                seating.restricted = False
+            else:
+                # A group inherits its represented members' restriction and is
+                # then seated by the same stable move as any restricted card.
+                seating.restricted_by = restricted_by
+                seating.restricted = bool(restricted_by)
 
     roundup_in_opening = any(
         _is_roundup_bundle(items[i]) for i in range(min(OPENING_SEATS, len(items)))

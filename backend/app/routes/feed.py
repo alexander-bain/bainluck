@@ -5509,9 +5509,6 @@ async def get_feed(
                 # the stored list, and `render_feed_page_from_base` strips it so
                 # it cannot leak into the response shape.
                 _pb_built_at = feed_page_base_built_at(_base_body)
-                _rc.remember_last_good(
-                    _cache_key, _base_page, built_at=_pb_built_at
-                )
                 # Liveness is re-derived from the PAGE, not the base: the ttl
                 # reported to this caller describes what this caller was handed.
                 _pb_live = payload_contains_live_event(_base_page)
@@ -5532,6 +5529,12 @@ async def get_feed(
                         _pb_age_s,
                         _pic.oldest_consumed_artifact_age_s(_shared_origins),
                     )
+                if _pb_live and _pb_age_s >= FEED_RESPONSE_STALE_TTL_LIVE_SECONDS:
+                    _base_page = None
+            if _base_page is not None:
+                _rc.remember_last_good(
+                    _cache_key, _base_page, built_at=_pb_built_at
+                )
                 _pb_fresh_ttl, _pb_stale_ttl = _live_ttls(
                     _base_page, oldest_artifact_age_s=_pb_age_s
                 )

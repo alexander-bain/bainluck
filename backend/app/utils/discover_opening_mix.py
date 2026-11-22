@@ -15,7 +15,11 @@ Composes seats 1..10 of the Discover deck for ``machinery=1`` readers:
   ``sports``, or ``tech_business`` (never a conflict/politics/world/money
   market unless nothing else qualifies) and does not duplicate a covered market.
 * Concept cards (``type == "concept"``) are never pinned or promoted.
-* No live game (nor any grouped card wrapping a live game) enters seats 1..10.
+* No single game card enters seats 1..10. While any game is live and an
+  eligible live sports grouping exists, the live sports grouping holding the
+  most live games (tie-breaking on higher deck rank) takes one of the two
+  sports seats in seats 1..10 (Decision 342: B). No second live grouping and no
+  ordinary live game may enter seats 1..10.
 * Grouped cards may sit adjacent inside seats 1..10; Decision 123-A
   non-adjacency for round-up cards still holds from seat 11 onward (index >= 10).
 """
@@ -31,6 +35,8 @@ from zoneinfo import ZoneInfo
 
 from app.utils.discover_opening_seating import (
     EVENT_LIVE_STATUSES,
+    LIVE,
+    _group_members,
     classify_card,
 )
 from app.utils.roundup_containers import (
@@ -50,6 +56,7 @@ OPENING_MIX_SIZE = 10
 OPENING_MIX_GROUPED_TARGET = 9
 OPENING_MIX_SINGLE_CAP = 1
 OPENING_MIX_DEFAULT_SINGLE_SEAT = 4  # 0-based index -> seat 5
+OPENING_MIX_LIVE_SPORTS_FLAG = "opening_mix_live_sports_seat"
 
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 PWM_SUBTOPIC_POLITICS_WORLD = "politics_or_world"
@@ -127,6 +134,7 @@ _SPORTS_SLUGS: frozenset[str] = frozenset(
         "roundup-cfp-picture",
         "roundup-nfl-division-front-runners",
         "roundup-closest-games-tonight",
+        "closest-games-tonight",
         "liga-profesional-relegation-2026",
         "nhl-playoffs-2026-27",
         "golf-this-week",
@@ -647,6 +655,41 @@ def _contains_live_event_signal(item: Mapping[str, Any], *, now: datetime) -> bo
     return False
 
 
+def _live_event_count_in_group(item: Mapping[str, Any], *, now: datetime) -> int:
+    """Count live child event cards inside a grouped feed card."""
+    if item.get("type") != "bundle":
+        return 0
+    data = item.get("data")
+    if not isinstance(data, Mapping):
+        return 0
+    count = 0
+    for child in data.get("items") or ():
+        if not isinstance(child, Mapping) or child.get("type") != "event":
+            continue
+        if classify_card(dict(child), now=now).lifecycle == LIVE:
+            count += 1
+    return count
+
+
+def _is_live_sports_group_candidate(
+    item: Mapping[str, Any],
+    by_event_id: Mapping[Any, Any],
+    *,
+    now: datetime,
+) -> bool:
+    """Return True if ``item`` is a valid sports bundle holding >=1 live game (342: B)."""
+    if not isinstance(item, Mapping) or item.get("type") != "bundle":
+        return False
+    if not _is_grouped_feed_card(item) or is_same_deadline_roundup(item):
+        return False
+    if classify_discover_opening_topic(item) != TOPIC_SPORTS:
+        return False
+    if _live_event_count_in_group(item, now=now) < 1:
+        return False
+    reason, _ = _group_members(dict(item), dict(by_event_id), now=now)
+    return reason is None
+
+
 def _grouped_priority_key(
     pair: tuple[int, dict[str, Any]],
 ) -> tuple[int, float, int]:
@@ -663,8 +706,12 @@ def _grouped_priority_key(
 def _clear_opening_mix_marker(card: Mapping[str, Any]) -> dict[str, Any]:
     data = card.get("data")
     roundup = data.get("roundup") if isinstance(data, Mapping) else None
-    has_flag = (isinstance(data, Mapping) and "opening_mix_seat" in data) or (
-        isinstance(roundup, Mapping) and "opening_mix_seat" in roundup
+    has_flag = (
+        isinstance(data, Mapping)
+        and ("opening_mix_seat" in data or OPENING_MIX_LIVE_SPORTS_FLAG in data)
+    ) or (
+        isinstance(roundup, Mapping)
+        and ("opening_mix_seat" in roundup or OPENING_MIX_LIVE_SPORTS_FLAG in roundup)
     )
     if not has_flag:
         return card if isinstance(card, dict) else dict(card)
@@ -672,9 +719,11 @@ def _clear_opening_mix_marker(card: Mapping[str, Any]) -> dict[str, Any]:
     out_data = out.get("data")
     if isinstance(out_data, dict):
         out_data.pop("opening_mix_seat", None)
+        out_data.pop(OPENING_MIX_LIVE_SPORTS_FLAG, None)
         out_roundup = out_data.get("roundup")
         if isinstance(out_roundup, dict):
             out_roundup.pop("opening_mix_seat", None)
+            out_roundup.pop(OPENING_MIX_LIVE_SPORTS_FLAG, None)
     return out
 
 
@@ -682,6 +731,7 @@ def _mark_opening_mix_card(
     card: Mapping[str, Any],
     *,
     anchor: Optional[Mapping[str, Any]],
+    live_sports_seat: bool = False,
 ) -> dict[str, Any]:
     out = copy.deepcopy(dict(card))
     if not out.get("score") and isinstance(anchor, Mapping):
@@ -694,6 +744,15 @@ def _mark_opening_mix_card(
         out["data"]["opening_mix_seat"] = True
         if isinstance(out["data"].get("roundup"), dict):
             out["data"]["roundup"]["opening_mix_seat"] = True
+    if out.get("type") == "bundle" and isinstance(out.get("data"), dict):
+        if live_sports_seat:
+            out["data"][OPENING_MIX_LIVE_SPORTS_FLAG] = True
+            if isinstance(out["data"].get("roundup"), dict):
+                out["data"]["roundup"][OPENING_MIX_LIVE_SPORTS_FLAG] = True
+        else:
+            out["data"].pop(OPENING_MIX_LIVE_SPORTS_FLAG, None)
+            if isinstance(out["data"].get("roundup"), dict):
+                out["data"]["roundup"].pop(OPENING_MIX_LIVE_SPORTS_FLAG, None)
     return out
 
 
@@ -736,6 +795,7 @@ def _order_opening_ten(
     *,
     seat_count: int,
     anchor: Optional[Mapping[str, Any]],
+    live_sports_idx: Optional[int] = None,
 ) -> list[dict[str, Any]]:
     """Arrange selected opening cards across seats 1..10.
 
@@ -805,8 +865,12 @@ def _order_opening_ten(
         opening_pairs.insert(target_pos, s_pair)
 
     return [
-        _mark_opening_mix_card(it, anchor=anchor)
-        for _, it in opening_pairs[:seat_count]
+        _mark_opening_mix_card(
+            it,
+            anchor=anchor,
+            live_sports_seat=(live_sports_idx is not None and orig_idx == live_sports_idx),
+        )
+        for orig_idx, it in opening_pairs[:seat_count]
     ]
 
 
@@ -817,11 +881,13 @@ def apply_discover_opening_mix(
     seat_count: int = OPENING_MIX_SIZE,
     page_window: int = 20,
 ) -> list[dict[str, Any]]:
-    """Compose Discover seats 1..10 under Decisions 329: A + 333: A.
+    """Compose Discover seats 1..10 under Decisions 329: A, 333: A, and 342: B.
 
     Returns ``items`` unchanged when the deck has ``<= seat_count`` cards or no
     opening-eligible grouped cards. Never pins ``concept`` cards and never puts a
-    live event (or live-wrapping grouped card) into seats 1..10.
+    single game card (or a second live grouping) into seats 1..10. When at least
+    one eligible sports grouping holds live games, the one with the most live
+    games (tie-breaking on higher deck rank) takes one of the two sports seats.
     """
     if not items or len(items) <= seat_count:
         return items
@@ -830,6 +896,30 @@ def apply_discover_opening_mix(
         now
         if isinstance(now, datetime) and now.tzinfo is not None
         else datetime.now(timezone.utc)
+    )
+
+    by_event_id = {
+        it["data"].get("id"): classify_card(it, now=effective_now)
+        for it in items
+        if isinstance(it, Mapping)
+        and it.get("type") == "event"
+        and isinstance(it.get("data"), Mapping)
+    }
+    live_sports_candidates: list[tuple[int, dict[str, Any]]] = [
+        (idx, it)
+        for idx, it in enumerate(items)
+        if _is_live_sports_group_candidate(it, by_event_id, now=effective_now)
+    ]
+    chosen_live_sports_group: Optional[tuple[int, dict[str, Any]]] = (
+        min(
+            live_sports_candidates,
+            key=lambda pair: (
+                -_live_event_count_in_group(pair[1], now=effective_now),
+                pair[0],
+            ),
+        )
+        if live_sports_candidates
+        else None
     )
 
     eligible_groups: list[tuple[int, dict[str, Any]]] = [
@@ -842,7 +932,7 @@ def apply_discover_opening_mix(
         and not _contains_live_event_signal(it, now=effective_now)
         and _is_roundup_opening_eligible(it, items, now=effective_now)
     ]
-    if not eligible_groups:
+    if not eligible_groups and chosen_live_sports_group is None:
         return items
 
     # Identify all single futures candidates eligible for opening seats
@@ -874,8 +964,10 @@ def apply_discover_opening_mix(
         if preferred_pwm_kind == PWM_SUBTOPIC_POLITICS_WORLD
         else PWM_SUBTOPIC_POLITICS_WORLD
     )
-    has_non_pwm_opening = bool(non_pwm_singles) or any(
-        classify_discover_opening_topic(it) != TOPIC_PWM for _, it in sorted_groups
+    has_non_pwm_opening = (
+        bool(non_pwm_singles)
+        or chosen_live_sports_group is not None
+        or any(classify_discover_opening_topic(it) != TOPIC_PWM for _, it in sorted_groups)
     )
     single_forces_pwm = bool(singles_sorted) and not non_pwm_singles
     chosen_pwm_seat10: Optional[tuple[int, dict[str, Any]]] = None
@@ -926,6 +1018,12 @@ def apply_discover_opening_mix(
             seen_sibling_groups.append(chosen_pwm_seat10[1])
 
     non_pwm_grouped_target = grouped_target - (1 if chosen_pwm_seat10 is not None else 0)
+
+    # Decision 342: B — While any game is live and an eligible live sports
+    # grouping exists, reserve one of the two sports seats for the live sports
+    # grouping holding the most live games (tie-breaking on higher rank).
+    if chosen_live_sports_group is not None and len(chosen_groups) < non_pwm_grouped_target:
+        _add_group(*chosen_live_sports_group)
 
     # Pass 1a: fill per-topic minimum group targets across non-PWM topics.
     for topic in NON_PWM_TOPICS:
@@ -1086,6 +1184,9 @@ def apply_discover_opening_mix(
         chosen_singles,
         seat_count=seat_count,
         anchor=anchor,
+        live_sports_idx=(
+            chosen_live_sports_group[0] if chosen_live_sports_group is not None else None
+        ),
     )
     if len(opening) < seat_count:
         insert_before_pwm = max(0, len(opening) - (1 if chosen_pwm_seat10 is not None else 0))
@@ -1107,7 +1208,7 @@ def apply_discover_opening_mix(
                 insert_before_pwm += 1
 
     remainder = [
-        _clear_opening_mix_marker(it) if _is_roundup_bundle_card(it) else it
+        _clear_opening_mix_marker(it) if isinstance(it, Mapping) and it.get("type") == "bundle" else it
         for idx, it in enumerate(items)
         if idx not in chosen_indices
     ]

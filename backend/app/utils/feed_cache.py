@@ -1189,8 +1189,22 @@ def payload_contains_live_event(payload: Any) -> bool:
         if not isinstance(item, dict):
             continue
         data = item.get("data")
-        if isinstance(data, dict) and data.get("status") == "live":
+        if not isinstance(data, dict):
+            continue
+        if data.get("status") == "live":
             return True
+        if item.get("type") == "bundle":
+            children = data.get("items")
+            if isinstance(children, list):
+                for child in children:
+                    if not isinstance(child, dict):
+                        continue
+                    cdata = child.get("data")
+                    if not isinstance(cdata, dict):
+                        continue
+                    cstatus = str(cdata.get("status") or "").strip().lower()
+                    if cstatus in ("live", "in_progress", "halftime"):
+                        return True
     return False
 
 

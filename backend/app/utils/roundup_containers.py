@@ -2106,7 +2106,7 @@ async def evaluate_roundup_producer(
                     exc_info=True,
                 )
         if local_stale_fallback is not None:
-            _record_machinery_live_origin(
+            _record_roundup_live_origin(
                 local_stale_fallback[0], producer.slug, local_stale_fallback[2]
             )
             return copy.deepcopy(local_stale_fallback[1]), copy.deepcopy(
