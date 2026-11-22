@@ -24,7 +24,6 @@
     ],
     "card_rows": 3,
     "card_section_key": "stage_and_cover",
-    "hide_row_art": true,
     "suppress_card_photo": true,
     "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/e8/Silver_and_black_studio_microphone_condenser.jpg/1280px-Silver_and_black_studio_microphone_condenser.jpg",
     "card_image_alt": "Silver studio condenser microphone with pop filter",

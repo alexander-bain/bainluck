@@ -118,7 +118,7 @@ def test_batch6_candidates_are_public_with_verified_art() -> None:
         assert defn["stage"] == "public"
         rule = defn["rule"]
         assert rule.get("suppress_card_photo") is True
-        assert rule.get("hide_row_art") is True
+        assert not rule.get("hide_row_art")
         assert str(rule.get("card_image_url") or "") in verified_urls
         assert str(rule.get("card_image_license") or "") in {"CC0 1.0 Public Domain", "Public domain"}
         assert "trading" not in json.dumps(defn).lower()

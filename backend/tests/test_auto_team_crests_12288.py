@@ -566,7 +566,7 @@ async def test_championship_missing_art_warning_names_outcome_subject_not_champi
 
 
 @pytest.mark.asyncio
-async def test_three_culture_cards_keep_card_image_and_hide_all_row_pictures_even_when_people_match(
+async def test_three_culture_cards_keep_card_image_and_verified_people_row_pictures_without_team_logos(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     culture_fixtures = [
@@ -602,7 +602,7 @@ async def test_three_culture_cards_keep_card_image_and_hide_all_row_pictures_eve
     with caplog.at_level(logging.WARNING, logger="app.utils.container_machinery"):
         for filename, rows_spec in culture_fixtures:
             defn = load_machinery_definition(_CANDIDATES_DIR / filename)
-            assert defn["rule"].get("hide_row_art") is True
+            assert not defn["rule"].get("hide_row_art")
             markets = [
                 {
                     "id": mid,
@@ -624,8 +624,8 @@ async def test_three_culture_cards_keep_card_image_and_hide_all_row_pictures_eve
             assert res.machinery_card["image_url"] == defn["rule"]["card_image_url"]
             card_rows = res.machinery_card["rows"]
             assert len(card_rows) == 3
-            assert all(not r.get("art", {}).get("url") for r in card_rows), (filename, card_rows)
-            assert all(r.get("art", {}).get("kind") == "monogram" for r in card_rows), (filename, card_rows)
+            assert all(r.get("art", {}).get("url") for r in card_rows), (filename, card_rows)
+            assert all(r.get("art", {}).get("kind") != "team_logo" for r in card_rows), (filename, card_rows)
 
     assert not any("dropped row pictures" in rec.message for rec in caplog.records)
 
@@ -745,7 +745,10 @@ async def test_long_shots_with_extra_sports_category_does_not_emit_dropped_row_p
     assert hasattr(res, "machinery_card")
     assert len(res.machinery_card["rows"]) == 3
     assert all(not (r.get("art") or {}).get("url") for r in res.machinery_card["rows"])
-    assert not any("dropped row pictures" in rec.message for rec in caplog.records)
+    assert not any(
+        "dropped row pictures" in rec.message or "missing row pictures" in rec.message
+        for rec in caplog.records
+    )
 
 
 @pytest.mark.asyncio
@@ -790,7 +793,7 @@ async def test_public_sports_card_with_hide_row_art_does_not_emit_dropped_row_pi
 async def test_public_sports_card_still_warns_when_row_pictures_are_expected(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    """Genuine public sports cards where row pictures are expected still log dropped-row-pictures."""
+    """Genuine public sports cards where row pictures are expected still log missing-row-pictures."""
     defn = load_machinery_definition(_CANDIDATES_DIR / "machinery-big-championships-2027.json")
     assert _is_sports_definition(defn)
     markets = [

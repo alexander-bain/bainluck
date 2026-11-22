@@ -344,6 +344,9 @@ def test_missing_lifetime_volume_fallback_and_failure_contract() -> None:
     # Missing lifetime & zero 24h volume still accepts recorded traded gamma_volume.
     assert _effective_market_volume(None, volume_24h=0, market_metadata=traded_meta) == 1741.84
 
+    # When both traded gamma_volume and volume_24h exist, recorded lifetime gamma_volume wins (#13437 note).
+    assert _effective_market_volume(None, volume_24h=960, market_metadata=traded_meta) == 1741.84
+
     # Explicit 0 lifetime volume stays 0 (does not fall back) and fails min_lifetime_volume.
     eff_zero = _effective_market_volume(0, volume_24h=960, market_metadata=traded_meta)
     assert eff_zero == 0.0

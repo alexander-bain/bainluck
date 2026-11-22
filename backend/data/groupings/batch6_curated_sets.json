@@ -65,19 +65,22 @@
           "short_label": "\"All I Want for Christmas Is You\" in the Hot 100's {rank_slot} on Dec 19",
           "plain_short_label": "\"All I Want for Christmas Is You\" Hot 100 rank on Dec 19",
           "headline_phrase": "\"All I Want for Christmas Is You\" landing in {the_rank_slot} of the Dec 19 Hot 100",
-          "headline_with_phrase": "Mariah Carey landing in {the_rank_slot} of the Dec 19 Hot 100"
+          "headline_with_phrase": "Mariah Carey landing in {the_rank_slot} of the Dec 19 Hot 100",
+          "art_subject": "Mariah Carey"
         },
         {
           "id": 108306,
           "short_label": "Beyoncé's next album genre",
           "headline_phrase": "Beyoncé's next album being {lower_answer}",
-          "headline_with_phrase": "Beyoncé's next album being {lower_answer}"
+          "headline_with_phrase": "Beyoncé's next album being {lower_answer}",
+          "art_subject": "Beyoncé"
         },
         {
           "id": 109309,
           "short_label": "Taylor Swift (Taylor's Version) announced",
           "headline_phrase": "Taylor Swift (Taylor's Version) announced this year",
-          "headline_with_phrase": "a Taylor Swift (Taylor's Version) announcement this year"
+          "headline_with_phrase": "a Taylor Swift (Taylor's Version) announcement this year",
+          "art_subject": "Taylor Swift"
         },
         {
           "id": 108254,
@@ -129,13 +132,15 @@
           "id": 68365230,
           "short_label": "Avengers: Doomsday opening box office",
           "headline_phrase": "Avengers: Doomsday opening to {answer}",
-          "headline_with_phrase": "Avengers: Doomsday opening to {answer}"
+          "headline_with_phrase": "Avengers: Doomsday opening to {answer}",
+          "art_subject": "Avengers: Doomsday"
         },
         {
           "id": 68365233,
           "short_label": "Dune: Part Three opening box office",
           "headline_phrase": "Dune: Part Three opening to {answer}",
-          "headline_with_phrase": "Dune: Part Three opening to {answer}"
+          "headline_with_phrase": "Dune: Part Three opening to {answer}",
+          "art_subject": "Dune: Part Three"
         }
       ]
     },

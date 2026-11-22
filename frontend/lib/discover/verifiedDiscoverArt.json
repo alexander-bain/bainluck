@@ -411,8 +411,7 @@
       "aliases": [
         "The Fate of Ophelia - Taylor Swift",
         "The Fate of Ophelia",
-        "The Life of a Showgirl",
-        "Taylor Swift"
+        "The Life of a Showgirl"
       ],
       "kind": "song",
       "presentation": "cover",
@@ -1091,7 +1090,8 @@
     {
       "entity_key": "erling-haaland",
       "aliases": [
-        "Erling Haaland"
+        "Erling Haaland",
+        "Erling Braut Haaland"
       ],
       "kind": "person",
       "presentation": "portrait",
@@ -1894,6 +1894,620 @@
       "author": "tommybuddy",
       "license": "CC0 1.0 Public Domain",
       "source_page": "https://commons.wikimedia.org/wiki/File:Curtain-939464.jpg"
+    },
+    {
+      "entity_key": "florence-pugh",
+      "aliases": [
+        "Florence Pugh"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Florence Pugh TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/qqDsryavx9rwSMhDAxW6OC7oNQg.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "kate-o-flynn",
+      "aliases": [
+        "Kate O’Flynn",
+        "Kate O'Flynn"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Kate O'Flynn TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/xgQteVK9coyTuXc40WJIyx3TxfU.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "david-harbour",
+      "aliases": [
+        "David Harbour"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "David Harbour TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/qMFtMWlYVtFVyBoBhX5IoA5sN5a.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "dtf-st-louis",
+      "aliases": [
+        "DTF St. Louis"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "verified_subject": "DTF St. Louis official poster",
+      "url": "https://image.tmdb.org/t/p/w342/xHfafw9UmomDc7jO25s9MpiL4Zs.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "the-pitt",
+      "aliases": [
+        "The Pitt"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "verified_subject": "The Pitt official poster",
+      "url": "https://image.tmdb.org/t/p/w342/kvFSpESyBZMjaeOJDx7RS3P1jey.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "euphoria",
+      "aliases": [
+        "Euphoria"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "verified_subject": "Euphoria official poster",
+      "url": "https://image.tmdb.org/t/p/w342/aJrG7OkoTMPWG5c8opz8a93AZPY.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "the-super-mario-galaxy-movie",
+      "aliases": [
+        "The Super Mario Galaxy Movie",
+        "Super Mario Movie 2",
+        "The Super Mario Bros. Movie 2"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "verified_subject": "The Super Mario Galaxy Movie official poster",
+      "url": "https://image.tmdb.org/t/p/w342/eJGWx219ZcEMVQJhAgMiqo8tYY.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "the-mandalorian-and-grogu",
+      "aliases": [
+        "The Mandalorian and Grogu"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "verified_subject": "The Mandalorian and Grogu official poster",
+      "url": "https://image.tmdb.org/t/p/w342/uwMKWjcNID0D9jjplsjkQS2OrB4.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "mariah-carey",
+      "aliases": [
+        "Mariah Carey",
+        "\"All I Want for Christmas Is You\""
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Mariah Carey TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/k5vdcaZHKuP4UgHReFWVdo0MXGI.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "elon-musk",
+      "aliases": [
+        "Elon Musk"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Elon Musk TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/i5a0XRXLfu0meGB3g5Sy4qP8pY.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "joe-keery",
+      "aliases": [
+        "Joe Keery",
+        "End of Beginning – Djo",
+        "Djo"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Joe Keery TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/ayIAVLMfZGEGIFwAo3pPnY7p59.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "benedict-cumberbatch",
+      "aliases": [
+        "Benedict Cumberbatch",
+        "Benedict Cumberbatch as Doctor Strange",
+        "Benedict Cumberbatch as Doctor Strange?"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Benedict Cumberbatch TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/wz3MRiMmoz6b5X3oSzMRC9nLxY1.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "the-simpsons",
+      "aliases": [
+        "The Simpsons"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "verified_subject": "The Simpsons official poster",
+      "url": "https://image.tmdb.org/t/p/w342/tf0CUEynk6GfmrlHIQKQ5mfFP5P.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "avengers-secret-wars",
+      "aliases": [
+        "Avengers: Secret Wars"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "verified_subject": "Avengers: Secret Wars official poster",
+      "url": "https://image.tmdb.org/t/p/w342/f0YBuh4hyiAheXhh4JnJWoKi9g5.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "caleb-mclaughlin",
+      "aliases": [
+        "Caleb McLaughlin"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Caleb McLaughlin TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/4jVS3EziBn7bf97ErxkW7jsdiLM.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "coco-jones",
+      "aliases": [
+        "Coco Jones"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Coco Jones TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/nlCyqeI93ESNFroLw8iP5TVeEPi.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "daisy-edgar-jones",
+      "aliases": [
+        "Daisy Edgar-Jones"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Daisy Edgar-Jones TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/4Fdc3VSoVhkkEZNx5Zpz3AU6DYz.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "the-daily-show",
+      "aliases": [
+        "The Daily Show"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "verified_subject": "The Daily Show official poster",
+      "url": "https://image.tmdb.org/t/p/w342/ixcfyK7it6FjRM36Te4OdblAq4X.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "brandon-sklenar",
+      "aliases": [
+        "Brandon Sklenar"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Brandon Sklenar TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/juLH1EhkY1Xx9Zai2H4icvfn4pD.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "kevin-parker",
+      "aliases": [
+        "Kevin Parker",
+        "Tame Impala"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Kevin Parker TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/pJzgpxdlgYbwezmbzHfsFyjoxj5.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "timoth-e-chalamet",
+      "aliases": [
+        "Timothée Chalamet",
+        "Timothee Chalamet"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Timothée Chalamet TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/dFxpwRpmzpVfP1zjluH68DeQhyj.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "miley-cyrus",
+      "aliases": [
+        "Miley Cyrus"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Miley Cyrus TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/7slnMlDLR1O65U3Hr8gcOmxDlZz.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "tulsi-gabbard",
+      "aliases": [
+        "Tulsi Gabbard"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Tulsi Gabbard TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/zVzci4hYUJqxnTGSZqyfbFu9RPq.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "future",
+      "aliases": [
+        "Future"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Future TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/d10OaKwgAK8C3AuPz7haBgVc8J2.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "olivia-colman",
+      "aliases": [
+        "Olivia Colman"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Olivia Colman TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/lawJUdbLb1YW0niaYjiVGR9IBG8.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "margaret-qualley",
+      "aliases": [
+        "Margaret Qualley"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Margaret Qualley TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/r5WeMrU4YLJqRRE3joeOrBVicAH.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "ben-whishaw",
+      "aliases": [
+        "Ben Whishaw"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Ben Whishaw TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/e74Cz65ifeNb9zHfUTvF5rTix0d.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "cillian-murphy",
+      "aliases": [
+        "Cillian Murphy"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Cillian Murphy TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/2lKs67r7FI4bPu0AXxMUJZxmUXn.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "naomie-harris",
+      "aliases": [
+        "Naomie Harris"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Naomie Harris TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/41TVAcYqKKF7PGf3x7QfaLvkLSW.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "boyd-holbrook",
+      "aliases": [
+        "Boyd Holbrook"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Boyd Holbrook TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/xmkpedcct3ey1d1HGDNsUMQPHcB.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "johnny-depp",
+      "aliases": [
+        "Johnny Depp",
+        "Johnny Depp in Pirates"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Johnny Depp TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/k2xt6EUxQDwYRKIyI4IBdZxfs8n.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "robert-downey-jr",
+      "aliases": [
+        "Robert Downey Jr.",
+        "Robert Downey Jr. back as Iron Man"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Robert Downey Jr. TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/5qHNjhtjMD4YWH3UP0rm4tKwxCL.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "frank-ocean",
+      "aliases": [
+        "Frank Ocean",
+        "Frank Ocean's next album in 2027"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Frank Ocean TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/761XkeFqrGPA0OKfuJN0LAuXHcg.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "stranger-things",
+      "aliases": [
+        "Stranger Things",
+        "New Stranger Things episode by Mar 31, 2027"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "verified_subject": "Stranger Things official poster",
+      "url": "https://image.tmdb.org/t/p/w342/uOOtwVbSr4QDjAGIifLDwpb2Pdl.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "bryan-johnson",
+      "aliases": [
+        "Bryan Johnson",
+        "Bryan Johnson dunking before 2027"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Bryan Johnson TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/7j2EZoDnLzIzDLowTz1pa2M5kA6.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "joe-rogan",
+      "aliases": [
+        "Joe Rogan",
+        "Joe Rogan joining 60 Minutes"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Joe Rogan TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/mWb6QIsGGHMdhN9yVGZXCHQIRzS.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "mrbeast",
+      "aliases": [
+        "MrBeast",
+        "Jimmy Donaldson",
+        "MrBeast hitting 1B subscribers before Jan 1, 2027"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Jimmy Donaldson TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/xB7yokhM69xmaUcNvw3CnE3rXGz.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "sydney-sweeney",
+      "aliases": [
+        "Sydney Sweeney",
+        "Sydney Sweeney & Scooter Braun"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Sydney Sweeney TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/qYiaSl0Eb7G3VaxOg8PxExCFwon.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "scooter-braun",
+      "aliases": [
+        "Scooter Braun"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Scooter Braun TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/kjpSj1Z7boL5yazKFLsDrRLuU0E.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "lewis-hamilton",
+      "aliases": [
+        "Lewis Hamilton",
+        "Kim Kardashian & Lewis Hamilton"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Lewis Hamilton TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/5DTGgay9x3kbacqeGArXlL4Q2Ho.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "kendall-jenner",
+      "aliases": [
+        "Kendall Jenner"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Kendall Jenner TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/3cC2efbEUEk3bOGU1D5DyP4HkQo.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "kylie-jenner",
+      "aliases": [
+        "Kylie Jenner",
+        "Timothée Chalamet & Kylie Jenner"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Kylie Jenner TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/qfT3sFRpjgRZzc2ZKsJFcXpJbhU.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "katy-perry",
+      "aliases": [
+        "Katy Perry",
+        "Katy Perry & Justin Trudeau"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Katy Perry TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/9U2JJMSlM8mDNSmEWNPvHFcUatl.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "justin-trudeau",
+      "aliases": [
+        "Justin Trudeau"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Justin Trudeau TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/gFyQlypOoi1A9cBHhg3n9rvXcEx.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "tiger-woods",
+      "aliases": [
+        "Tiger Woods",
+        "Tiger Woods & Vanessa Trump"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Tiger Woods TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/cUofgaNgM71mgoXpOUA69A5415w.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "tate-mcrae",
+      "aliases": [
+        "Tate McRae",
+        "Tate McRae & Jack Hughes"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Tate McRae TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/8rRZv8x6svFwu7DAcEWg8hfof1h.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "megan-thee-stallion",
+      "aliases": [
+        "Megan Thee Stallion",
+        "Klay Thompson & Megan Thee Stallion"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Megan Thee Stallion TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/cd10XBENFARLtWxHzHjjFixj6Lw.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "madison-beer",
+      "aliases": [
+        "Madison Beer",
+        "Jaxson Dart & Madison Beer"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Madison Beer TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/rS8HInNIFdxElVElAsoxfDt05Fj.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "tom-brady",
+      "aliases": [
+        "Tom Brady",
+        "Tom Brady & Alix Earle"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Tom Brady TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/2kL8pFhFBCP5EXbHXnS0Eg5wXLy.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "kevin-durant",
+      "aliases": [
+        "Kevin Durant",
+        "Kevin Durant & Kay Adams"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Kevin Durant TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/zDUqKQP4OE9gM0Y75oOF9OPXGFB.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "klay-thompson",
+      "aliases": [
+        "Klay Thompson"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Klay Thompson TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/uL6Oprp7CF3ovRQeD4N4RgHprKh.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "beyonce",
+      "aliases": [
+        "Beyoncé",
+        "Beyonce",
+        "Beyoncé Knowles",
+        "Beyonce Knowles"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Beyoncé TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/2HbjNtiCtmbArEnELuDFU7knaVK.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "taylor-swift-person",
+      "aliases": [
+        "Taylor Swift"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Taylor Swift TMDB portrait",
+      "url": "https://image.tmdb.org/t/p/w185/vr4QrJ23Cm8T7Y5sBN3UnnWrZ0q.jpg",
+      "credit": "TMDB"
     }
   ]
 }

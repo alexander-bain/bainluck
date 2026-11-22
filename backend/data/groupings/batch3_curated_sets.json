@@ -4,48 +4,173 @@
   "sets": {
     "batch3-2026-summed-up": {
       "entries": [
-        {"id": 27467306, "short_label": "TIME Person of the Year", "headline_phrase": "{answer} for TIME Person of the Year"},
-        {"id": 8431009, "short_label": "Merriam-Webster Word of the Year", "headline_phrase": "{answer} for Word of the Year"},
-        {"id": 109517, "short_label": "Top Spotify artist", "headline_phrase": "{answer} as Spotify's top artist"},
-        {"id": 70733200, "short_label": "Top Spotify song", "headline_phrase": "{answer} as Spotify's top song"},
-        {"id": 71373602, "short_label": "Top U.S. Spotify album", "headline_phrase": "{answer} as the top U.S. Spotify album"},
-        {"id": 109527, "short_label": "Spotify 2026 Wrapped", "headline_phrase": "Spotify 2026 Wrapped releasing {answer}"},
-        {"id": 109614, "short_label": "Game of the Year", "headline_phrase": "{answer} for Game of the Year"},
-        {"id": 109537, "short_label": "#2 most searched person on Google", "headline_phrase": "{answer} as #2 most searched on Google"},
-        {"id": 52755613, "short_label": "Top U.S. streamed song", "headline_phrase": "{answer} as the top U.S. streamed song"}
+        {
+          "id": 27467306,
+          "short_label": "TIME Person of the Year",
+          "headline_phrase": "{answer} for TIME Person of the Year"
+        },
+        {
+          "id": 8431009,
+          "short_label": "Merriam-Webster Word of the Year",
+          "headline_phrase": "{answer} for Word of the Year"
+        },
+        {
+          "id": 109517,
+          "short_label": "Top Spotify artist",
+          "headline_phrase": "{answer} as Spotify's top artist"
+        },
+        {
+          "id": 70733200,
+          "short_label": "Top Spotify song",
+          "headline_phrase": "{answer} as Spotify's top song",
+          "art_subject": "Joe Keery"
+        },
+        {
+          "id": 71373602,
+          "short_label": "Top U.S. Spotify album",
+          "headline_phrase": "{answer} as the top U.S. Spotify album",
+          "art_subject": "Morgan Wallen"
+        },
+        {
+          "id": 109527,
+          "short_label": "Spotify 2026 Wrapped",
+          "headline_phrase": "Spotify 2026 Wrapped releasing {answer}"
+        },
+        {
+          "id": 109614,
+          "short_label": "Game of the Year",
+          "headline_phrase": "{answer} for Game of the Year"
+        },
+        {
+          "id": 109537,
+          "short_label": "#2 most searched person on Google",
+          "headline_phrase": "{answer} as #2 most searched on Google"
+        },
+        {
+          "id": 52755613,
+          "short_label": "Top U.S. streamed song",
+          "headline_phrase": "{answer} as the top U.S. streamed song"
+        }
       ]
     },
     "batch3-cast-delayed-cancelled": {
       "entries": [
-        {"id": 109214, "short_label": "Avengers: Doomsday cast", "headline_phrase": "{answer} in Avengers: Doomsday"},
-        {"id": 56867561, "short_label": "Avengers: Secret Wars delayed", "headline_phrase": "Avengers: Secret Wars getting delayed"},
-        {"id": 108506, "short_label": "Miles Morales cast", "headline_phrase": "{answer} as Miles Morales"},
-        {"id": 70150106, "short_label": "The Brave and the Bold cast", "headline_phrase": "{answer} in The Brave and the Bold"},
-        {"id": 70150102, "short_label": "Disney's Princess Tiana cast", "headline_phrase": "{answer} as Princess Tiana"},
-        {"id": 70150103, "short_label": "Emily Henry's Happy Place cast", "headline_phrase": "{answer} in Happy Place"},
-        {"id": 109250, "short_label": "TV shows cancelled this year", "headline_phrase": "{answer} getting cancelled"},
-        {"id": 108275, "short_label": "The Simpsons ending announced", "headline_phrase": "The Simpsons announcing its end"},
-        {"id": 59172754, "short_label": "Dune vs Avengers score", "headline_phrase": "{answer} out-scoring Avengers on Rotten Tomatoes"}
+        {
+          "id": 109214,
+          "short_label": "Avengers: Doomsday cast",
+          "headline_phrase": "{answer} in Avengers: Doomsday",
+          "art_subject": "Benedict Cumberbatch"
+        },
+        {
+          "id": 56867561,
+          "short_label": "Avengers: Secret Wars delayed",
+          "headline_phrase": "Avengers: Secret Wars getting delayed",
+          "art_subject": "Avengers: Secret Wars"
+        },
+        {
+          "id": 108506,
+          "short_label": "Miles Morales cast",
+          "headline_phrase": "{answer} as Miles Morales"
+        },
+        {
+          "id": 70150106,
+          "short_label": "The Brave and the Bold cast",
+          "headline_phrase": "{answer} in The Brave and the Bold"
+        },
+        {
+          "id": 70150102,
+          "short_label": "Disney's Princess Tiana cast",
+          "headline_phrase": "{answer} as Princess Tiana"
+        },
+        {
+          "id": 70150103,
+          "short_label": "Emily Henry's Happy Place cast",
+          "headline_phrase": "{answer} in Happy Place"
+        },
+        {
+          "id": 109250,
+          "short_label": "TV shows cancelled this year",
+          "headline_phrase": "{answer} getting cancelled"
+        },
+        {
+          "id": 108275,
+          "short_label": "The Simpsons ending announced",
+          "headline_phrase": "The Simpsons announcing its end",
+          "art_subject": "The Simpsons"
+        },
+        {
+          "id": 59172754,
+          "short_label": "Dune vs Avengers score",
+          "headline_phrase": "{answer} out-scoring Avengers on Rotten Tomatoes"
+        }
       ]
     },
     "batch3-stage-and-cover": {
       "entries": [
-        {"id": 62368061, "short_label": "SNL Season 52 host", "headline_phrase": "{answer} hosting SNL"},
-        {"id": 109296, "short_label": "Call Her Daddy guest", "headline_phrase": "{answer} on Call Her Daddy"},
-        {"id": 109287, "short_label": "Joe Rogan Experience guest", "headline_phrase": "{answer} on Joe Rogan"},
-        {"id": 56775621, "short_label": "Vogue 2026 cover", "headline_phrase": "{answer} on the Vogue cover"},
-        {"id": 108505, "short_label": "Coachella 2027 headliner", "headline_phrase": "{answer} headlining Coachella 2027"},
-        {"id": 108504, "short_label": "Rolling Loud Miami headliner", "headline_phrase": "{answer} headlining Rolling Loud"}
+        {
+          "id": 62368061,
+          "short_label": "SNL Season 52 host",
+          "headline_phrase": "{answer} hosting SNL"
+        },
+        {
+          "id": 109296,
+          "short_label": "Call Her Daddy guest",
+          "headline_phrase": "{answer} on Call Her Daddy"
+        },
+        {
+          "id": 109287,
+          "short_label": "Joe Rogan Experience guest",
+          "headline_phrase": "{answer} on Joe Rogan"
+        },
+        {
+          "id": 56775621,
+          "short_label": "Vogue 2026 cover",
+          "headline_phrase": "{answer} on the Vogue cover"
+        },
+        {
+          "id": 108505,
+          "short_label": "Coachella 2027 headliner",
+          "headline_phrase": "{answer} headlining Coachella 2027"
+        },
+        {
+          "id": 108504,
+          "short_label": "Rolling Loud Miami headliner",
+          "headline_phrase": "{answer} headlining Rolling Loud"
+        }
       ]
     },
     "batch3-elon-musk-side-quests": {
       "entries": [
-        {"id": 109633, "short_label": "Cast in the next Superman film", "headline_with_phrase": "being cast in the next Superman film"},
-        {"id": 109412, "short_label": "Buying Ryanair", "headline_with_phrase": "buying Ryanair"},
-        {"id": 109316, "short_label": "Buying a major sports team before 2027", "headline_with_phrase": "buying a major sports team before 2027"},
-        {"id": 108218, "short_label": "Visiting Mars in his lifetime", "headline_with_phrase": "visiting Mars in his lifetime"},
-        {"id": 109490, "short_label": "Out as Tesla CEO before 2027", "headline_with_phrase": "leaving as Tesla CEO before 2027"},
-        {"id": 109489, "short_label": "Tesla Optimus released this year", "headline_with_phrase": "Tesla Optimus released this year"}
+        {
+          "id": 109633,
+          "short_label": "Cast in the next Superman film",
+          "headline_with_phrase": "being cast in the next Superman film"
+        },
+        {
+          "id": 109412,
+          "short_label": "Buying Ryanair",
+          "headline_with_phrase": "buying Ryanair"
+        },
+        {
+          "id": 109316,
+          "short_label": "Buying a major sports team before 2027",
+          "headline_with_phrase": "buying a major sports team before 2027"
+        },
+        {
+          "id": 108218,
+          "short_label": "Visiting Mars in his lifetime",
+          "headline_with_phrase": "visiting Mars in his lifetime"
+        },
+        {
+          "id": 109490,
+          "short_label": "Out as Tesla CEO before 2027",
+          "headline_with_phrase": "leaving as Tesla CEO before 2027"
+        },
+        {
+          "id": 109489,
+          "short_label": "Tesla Optimus released this year",
+          "headline_with_phrase": "Tesla Optimus released this year"
+        }
       ]
     }
   }
