@@ -23,6 +23,7 @@ Composes seats 1..10 of the Discover deck for ``machinery=1`` readers:
 from __future__ import annotations
 
 import copy
+import re
 from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, Mapping, Optional
@@ -132,7 +133,6 @@ _TECH_BUSINESS_SLUGS: frozenset[str] = frozenset(
         "machinery-ai-and-big-tech-race",
         "machinery-space-race",
         "machinery-unsolved-big-problems",
-        "by-november-30",
     }
 )
 
@@ -153,10 +153,14 @@ _PWM_MONEY_SLUGS: frozenset[str] = frozenset(
         "roundup-this-weeks-economic-data",
     }
 )
-# Cross-topic "by-december-31" stays excluded from seats 1..9 via _PWM_SLUGS
+# Same-deadline boards stay excluded from seats 1..9 via is_same_deadline_roundup()
 # without claiming politics_or_world or money for Seat 10.
-_PWM_SLUGS: frozenset[str] = (
-    _PWM_POLITICS_WORLD_SLUGS | _PWM_MONEY_SLUGS | frozenset({"by-december-31"})
+_PWM_SLUGS: frozenset[str] = _PWM_POLITICS_WORLD_SLUGS | _PWM_MONEY_SLUGS
+
+_SAME_DEADLINE_SLUG_RE = re.compile(
+    r"^(?:roundup-|machinery-)?by-"
+    r"(?:january|february|march|april|may|june|july|august|september|october|november|december)"
+    r"-\d{1,2}(?:-\d{4})?$"
 )
 _PWM_POLITICS_WORLD_STORY_KEYS: frozenset[str] = frozenset(
     {
@@ -396,6 +400,45 @@ def is_pure_odd_grouped_card(item: Mapping[str, Any]) -> bool:
     return kicker.startswith("odd ")
 
 
+def is_same_deadline_roundup(item: Mapping[str, Any]) -> bool:
+    """Return True for any ``same_deadline_board`` / 'SAME DEADLINE' round-up card."""
+    if not _is_grouped_feed_card(item):
+        return False
+    slug = _card_slug(item).lower()
+    if slug and _SAME_DEADLINE_SLUG_RE.match(slug):
+        return True
+    prod = ROUNDUP_PRODUCERS.get(slug) if slug else None
+    prod_rule = getattr(prod, "rule", None)
+    if (
+        isinstance(prod_rule, Mapping)
+        and prod_rule.get("producer") == "same_deadline_board"
+    ):
+        return True
+    data = item.get("data") if isinstance(item.get("data"), Mapping) else {}
+    data_rule = data.get("rule")
+    if (
+        isinstance(data_rule, Mapping)
+        and data_rule.get("producer") == "same_deadline_board"
+    ):
+        return True
+    roundup = data.get("roundup") if isinstance(data.get("roundup"), Mapping) else {}
+    if roundup.get("producer") == "same_deadline_board":
+        return True
+    relations = (
+        roundup.get("relations")
+        if isinstance(roundup.get("relations"), (list, tuple, set))
+        else ()
+    )
+    if "by_when" in relations:
+        return True
+    kicker = str(roundup.get("kicker") or "").strip().lower()
+    if not kicker and prod is not None:
+        kicker = str(getattr(prod, "kicker", "") or "").strip().lower()
+    return kicker == "same deadline" or kicker.startswith(
+        ("same deadline ", "same deadline·", "same deadline ·")
+    )
+
+
 def classify_discover_opening_topic(item: Mapping[str, Any]) -> str:
     """Classify a Discover feed card into one of the 5 opening-mix topic buckets."""
     data = item.get("data") if isinstance(item.get("data"), Mapping) else {}
@@ -413,6 +456,8 @@ def classify_discover_opening_topic(item: Mapping[str, Any]) -> str:
         kicker = str(getattr(prod, "kicker", "") or "").strip().lower()
 
     if _is_grouped_feed_card(item):
+        if is_same_deadline_roundup(item):
+            return TOPIC_PWM
         if (
             slug in _ODD_SLUGS
             or kicker.startswith(("odd ", "weather "))
@@ -508,6 +553,8 @@ def discover_opening_pwm_kind_for_date(now: Optional[datetime] = None) -> str:
 def classify_discover_pwm_subtopic(item: Mapping[str, Any]) -> Optional[str]:
     """Split a PWM grouped card into ``politics_or_world``, ``money``, or ``None``."""
     if classify_discover_opening_topic(item) != TOPIC_PWM:
+        return None
+    if is_same_deadline_roundup(item):
         return None
     data = item.get("data") if isinstance(item.get("data"), Mapping) else {}
     slug = _card_slug(item).lower()
@@ -783,6 +830,7 @@ def apply_discover_opening_mix(
         if isinstance(it, Mapping)
         and _is_grouped_feed_card(it)
         and it.get("type") != "concept"
+        and not is_same_deadline_roundup(it)
         and not _contains_live_event_signal(it, now=effective_now)
         and _is_roundup_opening_eligible(it, items, now=effective_now)
     ]
@@ -1033,17 +1081,22 @@ def apply_discover_opening_mix(
     )
     if len(opening) < seat_count:
         insert_before_pwm = max(0, len(opening) - (1 if chosen_pwm_seat10 is not None else 0))
-        for idx, it in enumerate(items):
+        for allow_same_deadline in (False, True):
             if len(opening) >= seat_count:
                 break
-            if idx in chosen_indices or it.get("type") == "concept":
-                continue
-            if _contains_live_event_signal(it, now=effective_now):
-                continue
-            chosen_indices.add(idx)
-            marked = _mark_opening_mix_card(it, anchor=anchor)
-            opening.insert(insert_before_pwm, marked)
-            insert_before_pwm += 1
+            for idx, it in enumerate(items):
+                if len(opening) >= seat_count:
+                    break
+                if idx in chosen_indices or it.get("type") == "concept":
+                    continue
+                if not allow_same_deadline and is_same_deadline_roundup(it):
+                    continue
+                if _contains_live_event_signal(it, now=effective_now):
+                    continue
+                chosen_indices.add(idx)
+                marked = _mark_opening_mix_card(it, anchor=anchor)
+                opening.insert(insert_before_pwm, marked)
+                insert_before_pwm += 1
 
     remainder = [
         _clear_opening_mix_marker(it) if _is_roundup_bundle_card(it) else it

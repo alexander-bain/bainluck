@@ -21,6 +21,7 @@ from app.utils.discover_opening_mix import (
     classify_discover_opening_topic,
     classify_discover_pwm_subtopic,
     discover_opening_pwm_kind_for_date,
+    is_same_deadline_roundup,
 )
 from app.utils.discover_opening_seating import (
     COMPLIANT,
@@ -254,6 +255,7 @@ def test_representative_deck_hits_9_to_1_and_topic_mix_and_passes_seat_opening()
     assert _is_grouped_feed_card(top10[9])
     assert classify_discover_opening_topic(top10[9]) == TOPIC_PWM
     assert classify_discover_pwm_subtopic(top10[9]) == discover_opening_pwm_kind_for_date(NOW)
+    assert "roundup:by-november-30" not in {(c.get("data") or {}).get("id") for c in top10}
 
     # Single selected is the 95-pt non-conflict NFL Super Bowl Winner, never Russia/Ukraine (98)
     singles = [c for c in top10 if c.get("type") == "futures"]
@@ -300,7 +302,7 @@ def test_single_falls_back_to_conflict_only_when_no_other_single_qualifies() -> 
         _roundup("machinery-next-james-bond", "Bond", kicker="ENTERTAINMENT · JAMES BOND", category="entertainment", member_ids=[11, 12], score=82.0),
         _roundup("roundup-cfp-picture", "CFP", kicker="SPORTS · CFB", category="football", member_ids=[13, 14], score=81.0),
         _theme("story:ai", "AI", [15, 16], score=80.0),
-        _roundup("by-november-30", "Deadlines", kicker="TECH · DEADLINES", category="tech", member_ids=[17, 18], score=79.0),
+        _roundup("machinery-space-race", "Space Race", kicker="TECH · SPACE", category="tech", member_ids=[17, 18], score=79.0),
         _single(999, "Will Russia and Ukraine reach ceasefire?", category="geopolitics", score=98.0),
         _single(998, "Extra conflict market", category="politics", score=70.0),
         _theme("story:middle_east_conflict", "Middle East", [19, 20], score=95.0),
@@ -442,7 +444,7 @@ def _two_day_pwm_deck(*, include_politics: bool = True, include_money: bool = Tr
             _roundup("machinery-white-christmas", "White Christmas", kicker="WEATHER · CHRISTMAS", category="weather", member_ids=[2011, 2012], score=80.0),
             _theme("story:ai", "AI", [2013, 2014], score=86.0),
             _roundup("machinery-next-james-bond", "Next James Bond", kicker="ENTERTAINMENT · JAMES BOND", category="entertainment", member_ids=[2015, 2016], score=82.0),
-            _roundup("by-november-30", "Deadlines by Nov 30", kicker="TECH · DEADLINES", category="tech", member_ids=[2017, 2018], score=65.0),
+            _roundup("machinery-space-race", "Space Race", kicker="TECH · SPACE", category="tech", member_ids=[2017, 2018], score=65.0),
             _single(3008, "OpenAI IPO Valuation", category="tech", score=74.0),
             _single(3012, "NBA Finals Winner", category="basketball", score=60.0),
             _roundup("by-december-31", "By December 31", kicker="SAME DEADLINE", category="cross-topic", member_ids=[2019, 2020], score=83.0),
@@ -522,7 +524,7 @@ def test_seat10_falls_back_to_ordinary_mix_when_neither_pwm_kind_exists() -> Non
 def test_seat10_flex_slot_follows_feed_ranking_between_entertainment_and_tech() -> None:
     # Build two decks with identical candidates, flipping relative order of ent#3 vs tech#2.
     ent_3 = _roundup("machinery-next-james-bond", "Bond", kicker="ENTERTAINMENT · JAMES BOND", category="entertainment", member_ids=[2015, 2016], score=82.0)
-    tech_2 = _roundup("by-november-30", "Deadlines by Nov 30", kicker="TECH · DEADLINES", category="tech", member_ids=[2017, 2018], score=65.0)
+    tech_2 = _roundup("machinery-space-race", "Space Race", kicker="TECH · SPACE", category="tech", member_ids=[2017, 2018], score=65.0)
     core = [
         _theme("story:middle_east_conflict", "Middle East", [1001, 1002], score=98.0),
         _roundup("machinery-elon-musk-side-quests", "Musk", kicker="ODD · SIDE QUESTS", category="entertainment", member_ids=[2001, 2002], score=87.0),
@@ -581,3 +583,85 @@ def test_333a_preserves_all_cards_and_is_idempotent_both_days() -> None:
         assert [
             (c.get("type"), (c.get("data") or {}).get("id")) for c in out2
         ] == [(c.get("type"), (c.get("data") or {}).get("id")) for c in out1]
+
+
+def test_every_same_deadline_roundup_stays_out_of_seats_1_to_9_whatever_date() -> None:
+    custom_rule_card = _roundup(
+        "same-day-custom-slug",
+        "Markets settling same day",
+        kicker="OTHER",
+        category="tech",
+        member_ids=[4101, 4102],
+        score=99.0,
+    )
+    custom_rule_card["data"]["rule"] = {"producer": "same_deadline_board"}
+
+    relation_card = _roundup(
+        "closing-together-slate",
+        "Fed rate cut and Iran ceasefire settled together",
+        kicker="ROUND-UP",
+        category="tech",
+        member_ids=[4103, 4104],
+        score=99.0,
+        relations=["same_window", "by_when"],
+    )
+
+    same_deadline_cards = [
+        _roundup("by-november-30", "By November 30", kicker="TECH · DEADLINES", category="tech", member_ids=[4001, 4002], score=99.0),
+        _roundup("by-december-31", "By December 31", kicker="SAME DEADLINE", category="cross-topic", member_ids=[4003, 4004], score=99.0),
+        _roundup("by-january-31", "By January 31", kicker="SAME DEADLINE", category="tech", member_ids=[4005, 4006], score=99.0),
+        _roundup("roundup-by-march-15", "By March 15", kicker="CROSS-TOPIC", category="business", member_ids=[4007, 4008], score=99.0),
+        _roundup("machinery-by-june-30-2027", "By June 30", kicker="AI · DEADLINES", category="ai", member_ids=[4009, 4010], score=99.0),
+        _roundup("custom-deadline-kicker", "Same day deadlines", kicker="SAME DEADLINE", category="tech", member_ids=[4011, 4012], score=99.0),
+        custom_rule_card,
+        relation_card,
+    ]
+    non_deadline_tech = _roundup("machinery-space-race", "Space Race", kicker="TECH · SPACE", category="tech", member_ids=[4201, 4202], score=81.0)
+    announce = _roundup("who-announces-before-2027", "2028 announcements", kicker="2028", category="politics", member_ids=[4203, 4204], score=80.0)
+
+    for c in same_deadline_cards:
+        assert is_same_deadline_roundup(c) is True
+        assert classify_discover_opening_topic(c) == TOPIC_PWM
+        assert classify_discover_pwm_subtopic(c) is None
+
+    assert is_same_deadline_roundup(non_deadline_tech) is False
+    assert classify_discover_opening_topic(non_deadline_tech) == TOPIC_TECH_BUSINESS
+    assert is_same_deadline_roundup(announce) is False
+
+    # Even when every same-deadline card sits at the top of the input deck, and even
+    # when NO ordinary PWM card is present in the deck, none enter seats 1..10.
+    deadline_ids = {c["data"]["id"] for c in same_deadline_cards}
+    extra_separators = [
+        _single(7000 + idx, f"Ordinary sports futures {idx}", category="sports", score=50.0 - idx)
+        for idx in range(10)
+    ]
+    deck = [
+        *same_deadline_cards,
+        *_two_day_pwm_deck(include_politics=False, include_money=False),
+        non_deadline_tech,
+        *extra_separators,
+    ]
+    for day in (
+        datetime(2026, 11, 22, 12, 0, tzinfo=PACIFIC_TZ),
+        datetime(2026, 11, 23, 12, 0, tzinfo=PACIFIC_TZ),
+    ):
+        out = apply_discover_opening_mix(deck, now=day)
+        top10_ids = {(c.get("data") or {}).get("id") for c in out[:10]}
+        assert top10_ids.isdisjoint(deadline_ids)
+        assert len(out) == len(deck)
+        assert sorted(str((c.get("data") or {}).get("id")) for c in out) == sorted(
+            str((c.get("data") or {}).get("id")) for c in deck
+        )
+        for i in range(11, len(out)):
+            assert not (_is_roundup_bundle_card(out[i - 1]) and _is_roundup_bundle_card(out[i]))
+
+    # Tiny-deck fallback (<10 non-same-deadline grouped candidates, singles fill before same-deadline)
+    tiny_deck = [
+        _roundup("by-november-30", "By November 30", kicker="SAME DEADLINE", category="tech", member_ids=[5001, 5002], score=99.0),
+        _roundup("by-february-14", "By February 14", kicker="SAME DEADLINE", category="cross-topic", member_ids=[5003, 5004], score=98.0),
+        _roundup("machinery-elon-musk-side-quests", "Musk", kicker="ODD · SIDE QUESTS", category="entertainment", member_ids=[5005, 5006], score=87.0),
+        *[_single(6000 + i, f"Sports futures {i}", category="sports", score=80 - i) for i in range(10)],
+    ]
+    tiny_out = apply_discover_opening_mix(tiny_deck, now=NOW)
+    assert {c["data"]["id"] for c in tiny_out[:9]}.isdisjoint({"roundup:by-november-30", "roundup:by-february-14"})
+    assert len(tiny_out) == len(tiny_deck)
