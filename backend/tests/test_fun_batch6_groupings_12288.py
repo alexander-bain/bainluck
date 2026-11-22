@@ -103,7 +103,7 @@ def _sample_batch6_markets(*, elon_prob: float = 0.35) -> list[dict]:
     ]
 
 
-def test_batch6_candidates_are_preview_with_verified_art() -> None:
+def test_batch6_candidates_are_public_with_verified_art() -> None:
     paths_by_slug = {p.stem: p for p in discover_machinery_candidate_paths()}
     backend_art_text = _REGISTER_PATH.read_text(encoding="utf-8")
     verified_urls = {
@@ -115,7 +115,7 @@ def test_batch6_candidates_are_preview_with_verified_art() -> None:
     for slug in BATCH6_SLUGS:
         assert slug in paths_by_slug, slug
         defn = load_machinery_definition(paths_by_slug[slug])
-        assert defn["stage"] == "preview"
+        assert defn["stage"] == "public"
         rule = defn["rule"]
         assert rule.get("suppress_card_photo") is True
         assert rule.get("hide_row_art") is True
@@ -219,3 +219,61 @@ async def test_pop_culture_oddities_rank_slot_formats_top_and_spots() -> None:
     assert row0_label == "\"All I Want for Christmas Is You\" in the Hot 100's spots 3 to 4 on Dec 19"
     assert "top 2" not in row0_label
     assert "landing in spots 3 to 4 of the Dec 19 Hot 100" in res.machinery_card["title"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("non_range_answer", ["Rank 11 or lower", "Not on chart"])
+async def test_pop_culture_oddities_rank_slot_falls_back_to_plain_row_and_headline(
+    non_range_answer: str,
+) -> None:
+    """Non-'Rank N to M' outcomes fall back cleanly to the plain row and plain headline."""
+    paths_by_slug = {p.stem: p for p in discover_machinery_candidate_paths()}
+    defn = load_machinery_definition(paths_by_slug["machinery-pop-culture-oddities"])
+    markets = _sample_batch6_markets(elon_prob=0.35)
+    for m in markets:
+        if m["id"] == 67804457:
+            m["outcomes"] = [
+                {
+                    "id": 678044573,
+                    "name": non_range_answer,
+                    "probability": 0.85,
+                    "last_updated": m["newest_outcome_updated_at"],
+                },
+                {
+                    "id": 678044571,
+                    "name": "Rank 1 to 2",
+                    "probability": 0.10,
+                    "last_updated": m["newest_outcome_updated_at"],
+                },
+            ]
+    res = await produce_container_machinery({"markets": markets, "teams": []}, defn, now=NOW)
+    assert hasattr(res, "machinery_card")
+    expected_row = f"\"All I Want for Christmas Is You\" Hot 100 rank on Dec 19: {non_range_answer}"
+    assert res.machinery_card["rows"][0]["name"] == expected_row
+    assert res.rows[0]["label"] == expected_row
+    title = res.machinery_card["title"]
+    assert title.startswith(f"{expected_row} leads Pop Culture Oddities at 85%")
+    assert "landing in" not in title
+    assert "Hot 100's" not in title
+    assert "{rank_slot}" not in title and "{the_rank_slot}" not in title
+
+    # Also when 67804457 sits in slot #2 rather than slot #1, the 'with ...' fallback uses the plain row.
+    markets_second = _sample_batch6_markets(elon_prob=0.35)
+    for m in markets_second:
+        if m["id"] == 108306:
+            m["outcomes"][0]["probability"] = 0.78
+        if m["id"] == 67804457:
+            m["outcomes"] = [
+                {
+                    "id": 678044573,
+                    "name": non_range_answer,
+                    "probability": 0.62,
+                    "last_updated": m["newest_outcome_updated_at"],
+                },
+            ]
+    res_second = await produce_container_machinery({"markets": markets_second, "teams": []}, defn, now=NOW)
+    assert hasattr(res_second, "machinery_card")
+    title_second = res_second.machinery_card["title"]
+    assert f"with {expected_row} at 62%" in title_second
+    assert "landing in" not in title_second
+    assert "Hot 100's" not in title_second
