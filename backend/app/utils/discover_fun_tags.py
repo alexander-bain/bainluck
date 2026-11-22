@@ -369,11 +369,30 @@ def _load_curated_art_subjects() -> dict[tuple[str, int], str]:
     return art_by_tag_mid
 
 
+@lru_cache(maxsize=1)
+def _load_curated_plain_short_labels() -> dict[tuple[str, int], str]:
+    """Load optional ``plain_short_label`` fallbacks from curated grouping manifests."""
+    plain_by_tag_mid: dict[tuple[str, int], str] = {}
+    for manifest_path in CURATED_GROUPING_SETS_PATHS:
+        if not manifest_path.is_file():
+            continue
+        raw = json.loads(manifest_path.read_text(encoding="utf-8"))
+        for tag, spec in (raw.get("sets") or {}).items():
+            tag_k = str(tag).strip().lower()
+            for entry in (spec or {}).get("entries") or ():
+                mid = int(entry["id"])
+                plain = str(entry.get("plain_short_label") or "").strip()
+                if plain:
+                    plain_by_tag_mid[(tag_k, mid)] = plain
+    return plain_by_tag_mid
+
+
 def clear_fun_markets_cache() -> None:
     """Clear the cached fun-markets registry (for tests)."""
     _load_default_registry.cache_clear()
     _load_curated_grouping_sets.cache_clear()
     _load_curated_art_subjects.cache_clear()
+    _load_curated_plain_short_labels.cache_clear()
 
 
 def load_fun_markets_registry(
@@ -408,6 +427,20 @@ def fun_market_short_label(
     if sub_tag:
         _, labels_by_tag_mid, _, _ = _load_curated_grouping_sets()
         curated = labels_by_tag_mid.get((sub_tag.strip().lower(), int(market_id)))
+        if curated:
+            return curated
+    entry = get_fun_market_entry(market_id)
+    if entry is None:
+        return None
+    return entry.short_label
+
+
+def fun_market_plain_short_label(
+    market_id: int, *, sub_tag: Optional[str] = None
+) -> Optional[str]:
+    """Return the non-template fallback short label when a slot template declines."""
+    if sub_tag:
+        curated = _load_curated_plain_short_labels().get((sub_tag.strip().lower(), int(market_id)))
         if curated:
             return curated
     entry = get_fun_market_entry(market_id)

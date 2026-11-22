@@ -128,6 +128,7 @@ _NON_NAME_TAIL_WORDS: frozenset[str] = frozenset(
         "of",
         "the",
         "in",
+        "on",
         "and",
         "to",
         "for",
@@ -1769,11 +1770,13 @@ _BARE_MONTH_YEAR_OR_YEAR_RE = re.compile(
 _RANK_RANGE_OUTCOME_RE = re.compile(r"^Rank\s+(\d+)\s+to\s+(\d+)$", re.IGNORECASE)
 
 
-def _format_rank_range_phrase(lead_ans: str) -> tuple[str, str]:
+def _format_rank_range_phrase(lead_ans: str) -> tuple[Optional[str], Optional[str]]:
     """Turn a bucketed chart-rank answer like ``Rank 1 to 2`` into readable copy.
 
     Returns ``(bare_phrase, with_article_phrase)`` — e.g. ``("top 2", "the top 2")``
     when the range begins at 1, or ``("spots 3 to 4", "spots 3 to 4")`` otherwise.
+    Non-range answers (such as ``Rank 11 or lower`` or ``Not on chart``) return
+    ``(None, None)`` so callers fall back to the plain row and plain headline form.
     """
     ans = lead_ans.strip().rstrip("?").strip()
     m = _RANK_RANGE_OUTCOME_RE.match(ans)
@@ -1783,8 +1786,7 @@ def _format_rank_range_phrase(lead_ans: str) -> tuple[str, str]:
         if start == 1:
             return f"top {end}", f"the top {end}"
         return f"spots {start} to {end}", f"spots {start} to {end}"
-    lower = ans.lower()
-    return lower, lower
+    return None, None
 
 
 def _abbreviate_month_names(text: str) -> str:
@@ -1794,12 +1796,19 @@ def _abbreviate_month_names(text: str) -> str:
     )
 
 
-def _format_fun_lead_answer_label(base_title: str, lead_ans: str) -> tuple[str, bool]:
+def _format_fun_lead_answer_label(
+    base_title: str,
+    lead_ans: str,
+    *,
+    fallback_base_title: Optional[str] = None,
+) -> tuple[str, bool]:
     """Format a non-Yes/No fun market's leading answer onto its short label.
 
     Returns ``(display_title, is_date_timing_row)``.
     - Templates containing ``{rank_slot}`` / ``{the_rank_slot}`` render e.g.
       ``top 2`` / ``the top 2`` (or ``spots 3 to 4``) inline without appending ``: ...``.
+      When ``lead_ans`` is not a ``Rank N to M`` range, they fall back to
+      ``fallback_base_title`` (plain ``<base>: <answer>`` formatting).
     - Bare month+day answers (e.g. ``December 31``, ``March 31, 2027``) read
       ``"<base> by Dec 31"`` / ``"<base> by Mar 31, 2027"`` (Fable Nov 20 look).
     - Bare month+year or year answers (e.g. ``March 2027``, ``2027``) read
@@ -1812,14 +1821,20 @@ def _format_fun_lead_answer_label(base_title: str, lead_ans: str) -> tuple[str, 
     ans = lead_ans.strip().rstrip("?").strip()
     if "{rank_slot}" in base_title or "{the_rank_slot}" in base_title:
         rank_slot, the_rank_slot = _format_rank_range_phrase(ans)
-        if not rank_slot:
-            return base_title, False
-        return (
-            base_title.replace("{rank_slot}", rank_slot)
-            .replace("{the_rank_slot}", the_rank_slot)
-            .strip(),
-            False,
-        )
+        if rank_slot and the_rank_slot:
+            return (
+                base_title.replace("{rank_slot}", rank_slot)
+                .replace("{the_rank_slot}", the_rank_slot)
+                .strip(),
+                False,
+            )
+        plain = (fallback_base_title or "").strip()
+        if plain and "{rank_slot}" not in plain and "{the_rank_slot}" not in plain:
+            base_title = plain
+        else:
+            base_title = (
+                base_title.replace("{rank_slot}", "").replace("{the_rank_slot}", "").strip()
+            )
     if not ans or ans.lower() in {"yes", "no"}:
         return base_title, False
     m_prep = _PREP_DATE_OUTCOME_RE.match(ans)
@@ -2017,12 +2032,20 @@ def _hydrate_market_visual_item(
     card_copy["member_page_numbers"] = mpn
 
     base_title: Optional[str] = None
+    plain_base_title: Optional[str] = None
     if use_fun_short_label:
-        from app.utils.discover_fun_tags import fun_market_short_label
+        from app.utils.discover_fun_tags import (
+            fun_market_plain_short_label,
+            fun_market_short_label,
+        )
 
         base_title = fun_market_short_label(mid, sub_tag=fun_sub_tag)
+        plain_base_title = fun_market_plain_short_label(mid, sub_tag=fun_sub_tag)
+    fallback_clean_title = clean_card_face_title(_clean_section_market_label(clean_raw_name))
     if not base_title:
-        base_title = clean_card_face_title(_clean_section_market_label(clean_raw_name))
+        base_title = fallback_clean_title
+    if not plain_base_title:
+        plain_base_title = fallback_clean_title
 
     display_title = base_title
     is_date_timing_row = False
@@ -2032,7 +2055,7 @@ def _hydrate_market_visual_item(
     if use_fun_short_label and max_outcomes == 1 and not shape_is_yes and outcomes_out:
         lead_ans = str(outcomes_out[0].get("name") or "").strip()
         display_title, is_date_timing_row = _format_fun_lead_answer_label(
-            display_title, lead_ans
+            display_title, lead_ans, fallback_base_title=plain_base_title
         )
 
     headline_phrase: Optional[str] = None
@@ -2085,14 +2108,17 @@ def _hydrate_market_visual_item(
             if any(tok in tpl for tok in ("{answer}", "{lower_answer}", "{the_answer}", "{cap_the_answer}", "{rank_slot}", "{the_rank_slot}")):
                 if not lead_ans_clean or lead_ans_clean.lower() in {"yes", "no"}:
                     return None
+                needs_rank_slot = "{rank_slot}" in tpl or "{the_rank_slot}" in tpl
                 rank_slot, the_rank_slot = _format_rank_range_phrase(lead_ans_clean)
+                if needs_rank_slot and (not rank_slot or not the_rank_slot):
+                    return None
                 return (
                     tpl.replace("{answer}", lead_ans_for_phrase)
                     .replace("{lower_answer}", lead_ans_for_phrase.lower())
                     .replace("{the_answer}", ans_with_the)
                     .replace("{cap_the_answer}", ans_cap_the)
-                    .replace("{rank_slot}", rank_slot)
-                    .replace("{the_rank_slot}", the_rank_slot)
+                    .replace("{rank_slot}", rank_slot or "")
+                    .replace("{the_rank_slot}", the_rank_slot or "")
                     .rstrip("?")
                     .strip()
                 )
