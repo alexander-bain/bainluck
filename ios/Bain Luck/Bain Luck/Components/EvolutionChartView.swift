@@ -392,6 +392,7 @@ struct EvolutionChartView: View {
     var onOpenAllField: (() -> Void)? = nil
     var preloadedTimeline: ProbabilityTimelineResponse? = nil
     var referenceNow: Date? = nil
+    var onTimelineOutcomesLoaded: (([TimelineOutcomeMeta]) -> Void)? = nil
 
     @State private var data: ProbabilityTimelineResponse?
     /// #10955 — the settled lines' results, set aside from `data`'s timeline.
@@ -455,7 +456,8 @@ struct EvolutionChartView: View {
         allFieldButtonLabel: String? = nil,
         onOpenAllField: (() -> Void)? = nil,
         preloadedTimeline: ProbabilityTimelineResponse? = nil,
-        referenceNow: Date? = nil
+        referenceNow: Date? = nil,
+        onTimelineOutcomesLoaded: (([TimelineOutcomeMeta]) -> Void)? = nil
     ) {
         self.marketId = marketId
         self.hours = hours
@@ -475,6 +477,7 @@ struct EvolutionChartView: View {
         self.onOpenAllField = onOpenAllField
         self.preloadedTimeline = preloadedTimeline
         self.referenceNow = referenceNow
+        self.onTimelineOutcomesLoaded = onTimelineOutcomesLoaded
         _data = State(initialValue: preloadedTimeline)
         _loading = State(initialValue: preloadedTimeline == nil)
         _requestedHours = State(initialValue: preloadedTimeline?.hours ?? 0)
@@ -843,6 +846,9 @@ struct EvolutionChartView: View {
             }
             error = nil
             loading = false
+            if let outcomes = data?.outcomes {
+                onTimelineOutcomesLoaded?(outcomes)
+            }
         } catch let apiError as APIError {
             guard !Task.isCancelled, generation == requestGeneration else { return }
             if apiError.isCancellation {

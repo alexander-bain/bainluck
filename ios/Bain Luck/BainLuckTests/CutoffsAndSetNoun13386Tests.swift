@@ -201,7 +201,8 @@ final class CutoffsAndSetNoun13386Tests: XCTestCase {
         name: String,
         category: String,
         sportCategory: String? = nil,
-        outcomes: [(id: Int, name: String, pct: Double, earlyPct: Double)]
+        outcomes: [(id: Int, name: String, pct: Double, earlyPct: Double)],
+        abbreviations: [Int: String] = [:]
     ) throws -> (market: FuturesMarketDetail, timeline: ProbabilityTimelineResponse) {
         let outcomeDicts: [[String: Any]] = outcomes.map { o in
             [
@@ -233,13 +234,17 @@ final class CutoffsAndSetNoun13386Tests: XCTestCase {
         let midMap = Dictionary(uniqueKeysWithValues: outcomes.map { ($0.name, ($0.earlyPct + $0.pct) / 2.0) })
         let nowMap = Dictionary(uniqueKeysWithValues: outcomes.map { ($0.name, $0.pct) })
         let tlOutcomes: [[String: Any]] = outcomes.enumerated().map { idx, o in
-            [
+            var entry: [String: Any] = [
                 "id": o.id,
                 "name": o.name,
                 "current_probability": o.pct,
                 "rank": idx + 1,
                 "opening_probability": o.earlyPct,
             ]
+            if let abbr = abbreviations[o.id] {
+                entry["abbreviation"] = abbr
+            }
+            return entry
         }
         let tlDict: [String: Any] = [
             "market_id": id,
@@ -610,6 +615,232 @@ final class CutoffsAndSetNoun13386Tests: XCTestCase {
             "All 3 Watch sizes must show unclipped 'As of 1:48 PM':\n\(watchJoined)"
         )
         try maybeSave(watchImg, "13386-watch-upcoming-41-45-46mm.png")
+    }
+
+    func testServedShortNamesOverrideFallbackInitialsAndPreserveAbsentFallbacks() throws {
+        let stanleyMeta = try makeDecoder().decode(
+            [TimelineOutcomeMeta].self,
+            from: Data(#"""
+            [
+              {"id": 198632542, "name": "Minnesota Wild", "abbreviation": "MIN"},
+              {"id": 198632538, "name": "Carolina Hurricanes", "abbreviation": "CAR"},
+              {"id": 198632537, "name": "Colorado Avalanche", "abbreviation": "COL"},
+              {"id": 198632540, "name": "Edmonton Oilers", "abbreviation": "EDM"},
+              {"id": 198632536, "name": "Florida Panthers", "abbreviation": "FLA"},
+              {"id": 198632549, "name": "New Jersey Devils", "abbreviation": "NJ"},
+              {"id": 198632539, "name": "Vegas Golden Knights", "abbreviation": "VGK"},
+              {"id": 198632541, "name": "Tampa Bay Lightning", "abbreviation": "TB"}
+            ]
+            """#.utf8)
+        )
+        for (id, name, expected) in [
+            (198632538, "Carolina Hurricanes", "CAR"),
+            (198632537, "Colorado Avalanche", "COL"),
+            (198632536, "Florida Panthers", "FLA"),
+            (198632539, "Vegas Golden Knights", "VGK"),
+            (198632542, "Minnesota Wild", "MIN"),
+            (198632540, "Edmonton Oilers", "EDM"),
+            (198632549, "New Jersey Devils", "NJ"),
+            (198632541, "Tampa Bay Lightning", "TB"),
+        ] {
+            XCTAssertEqual(
+                FuturesAtlasHeadlineCard192A.resolvedBadgeInitials(
+                    for: name,
+                    outcomeId: id,
+                    timelineOutcomes: stanleyMeta
+                ),
+                expected
+            )
+            XCTAssertEqual(
+                TeamLogoView.badge(teamName: name, opponentName: nil, servedAbbreviation: expected),
+                expected
+            )
+        }
+        XCTAssertNotEqual(
+            FuturesAtlasHeadlineCard192A.resolvedBadgeInitials(for: "Carolina Hurricanes", outcomeId: 198632538, timelineOutcomes: stanleyMeta),
+            "HUR"
+        )
+        XCTAssertNotEqual(
+            FuturesAtlasHeadlineCard192A.resolvedBadgeInitials(for: "Colorado Avalanche", outcomeId: 198632537, timelineOutcomes: stanleyMeta),
+            "AVA"
+        )
+        XCTAssertNotEqual(
+            FuturesAtlasHeadlineCard192A.resolvedBadgeInitials(for: "Florida Panthers", outcomeId: 198632536, timelineOutcomes: stanleyMeta),
+            "PAN"
+        )
+
+        let mlbMeta = try makeDecoder().decode(
+            [TimelineOutcomeMeta].self,
+            from: Data(#"""
+            [
+              {"id": 259554125, "name": "Los Angeles Dodgers", "abbreviation": "LAD"},
+              {"id": 259554124, "name": "Milwaukee Brewers", "abbreviation": "MIL"},
+              {"id": 259217597, "name": "New York Yankees", "abbreviation": "NYY"},
+              {"id": 256920354, "name": "San Diego Padres", "abbreviation": "SD"}
+            ]
+            """#.utf8)
+        )
+        for (id, name, expected) in [
+            (259554125, "Los Angeles Dodgers", "LAD"),
+            (259554124, "Milwaukee Brewers", "MIL"),
+            (259217597, "New York Yankees", "NYY"),
+            (256920354, "San Diego Padres", "SD"),
+        ] {
+            XCTAssertEqual(
+                FuturesAtlasHeadlineCard192A.resolvedBadgeInitials(
+                    for: name,
+                    outcomeId: id,
+                    timelineOutcomes: mlbMeta
+                ),
+                expected
+            )
+            XCTAssertEqual(
+                TeamLogoView.badge(teamName: name, opponentName: nil, servedAbbreviation: expected),
+                expected
+            )
+        }
+
+        // Absent or whitespace-only abbreviations fall back to futuresBadgeInitials; result words remain refused.
+        let fallbackMeta = try makeDecoder().decode(
+            [TimelineOutcomeMeta].self,
+            from: Data(#"""
+            [
+              {"id": 1, "name": "San Antonio"},
+              {"id": 2, "name": "Oklahoma City", "abbreviation": "   "},
+              {"id": 3, "name": "Minnesota Wild", "abbreviation": "WIN"}
+            ]
+            """#.utf8)
+        )
+        XCTAssertEqual(
+            FuturesAtlasHeadlineCard192A.resolvedBadgeInitials(for: "San Antonio", outcomeId: 1, timelineOutcomes: fallbackMeta),
+            "SA"
+        )
+        XCTAssertEqual(
+            FuturesAtlasHeadlineCard192A.resolvedBadgeInitials(for: "Oklahoma City", outcomeId: 2, timelineOutcomes: fallbackMeta),
+            "OKC"
+        )
+        XCTAssertEqual(
+            FuturesAtlasHeadlineCard192A.resolvedBadgeInitials(for: "Philadelphia", timelineOutcomes: nil),
+            "PHI"
+        )
+        XCTAssertEqual(
+            FuturesAtlasHeadlineCard192A.resolvedBadgeInitials(for: "Jeremiah Smith", timelineOutcomes: nil),
+            "SMI"
+        )
+        XCTAssertEqual(
+            FuturesAtlasHeadlineCard192A.resolvedBadgeInitials(for: "Minnesota Wild", outcomeId: 3, timelineOutcomes: fallbackMeta),
+            "MW"
+        )
+    }
+
+    func testRenderedServedBadgeAbbreviationsAt390LightAndDark() throws {
+        let outDir = ProcessInfo.processInfo.environment["BUILDER_C_RENDER_13386_DIR"]
+        if let outDir, !outDir.isEmpty {
+            try FileManager.default.createDirectory(
+                at: URL(fileURLWithPath: outDir, isDirectory: true),
+                withIntermediateDirectories: true
+            )
+        }
+        let stanley = try makeFuturesFixture(
+            id: 52755659,
+            name: "2026-27 Stanley Cup Final Winner",
+            category: "championship",
+            sportCategory: "hockey",
+            outcomes: [
+                (198632538, "Carolina Hurricanes", 0.14, 0.11),
+                (198632537, "Colorado Avalanche", 0.11, 0.10),
+                (198632539, "Vegas Golden Knights", 0.10, 0.12),
+                (198632536, "Florida Panthers", 0.09, 0.08),
+            ],
+            abbreviations: [
+                198632538: "CAR",
+                198632537: "COL",
+                198632539: "VGK",
+                198632536: "FLA",
+            ]
+        )
+        let ws = try makeFuturesFixture(
+            id: 68198529,
+            name: "MLB World Series Champion 2027",
+            category: "championship",
+            sportCategory: "baseball",
+            outcomes: [
+                (259554125, "Los Angeles Dodgers", 0.24, 0.22),
+                (259554124, "Milwaukee Brewers", 0.16, 0.14),
+                (256920354, "San Diego Padres", 0.12, 0.10),
+                (259217597, "New York Yankees", 0.11, 0.12),
+            ],
+            abbreviations: [
+                259554125: "LAD",
+                259554124: "MIL",
+                256920354: "SD",
+                259217597: "NYY",
+            ]
+        )
+        let nbaFallback = try makeFuturesFixture(
+            id: 52755651,
+            name: "2027 Pro Basketball Champion",
+            category: "championship",
+            sportCategory: "basketball",
+            outcomes: [
+                (198632415, "San Antonio", 0.22, 0.16),
+                (198632414, "Oklahoma City", 0.14, 0.15),
+                (198632416, "Philadelphia", 0.11, 0.08),
+                (198632418, "Boston", 0.10, 0.12),
+            ]
+        )
+
+        let stanleyPage = FuturesAtlasPresentation11666.build(market: stanley.market, now: fixedNow)
+        let wsPage = FuturesAtlasPresentation11666.build(market: ws.market, now: fixedNow)
+        let nbaPage = FuturesAtlasPresentation11666.build(market: nbaFallback.market, now: fixedNow)
+
+        for scheme in [ColorScheme.light, ColorScheme.dark] {
+            let bg = scheme == .dark ? Color.black : Color(uiColor: .systemGroupedBackground)
+            let view = VStack(alignment: .leading, spacing: 14) {
+                FuturesAtlasHeadlineCard192A(
+                    market: stanley.market,
+                    header: stanleyPage.header,
+                    headlineRows: FuturesAtlasPresentation11666.firstScreenHeadlineRows192A(for: stanleyPage.body),
+                    allFieldLabel: "All 32 teams ›",
+                    timelineOutcomes: stanley.timeline.outcomes,
+                    onOpenDetails: {},
+                    onOpenFullField: {}
+                )
+                FuturesAtlasHeadlineCard192A(
+                    market: ws.market,
+                    header: wsPage.header,
+                    headlineRows: FuturesAtlasPresentation11666.firstScreenHeadlineRows192A(for: wsPage.body),
+                    allFieldLabel: "All 30 teams ›",
+                    timelineOutcomes: ws.timeline.outcomes,
+                    onOpenDetails: {},
+                    onOpenFullField: {}
+                )
+                FuturesAtlasHeadlineCard192A(
+                    market: nbaFallback.market,
+                    header: nbaPage.header,
+                    headlineRows: FuturesAtlasPresentation11666.firstScreenHeadlineRows192A(for: nbaPage.body),
+                    allFieldLabel: "All 30 teams ›",
+                    timelineOutcomes: nbaFallback.timeline.outcomes,
+                    onOpenDetails: {},
+                    onOpenFullField: {}
+                )
+            }
+            .padding(16)
+            .background(bg)
+
+            let (img, lines) = try renderAndOCR(view, width: 390, scheme: scheme)
+            let tokenSet = Set(lines)
+            for expected in ["CAR", "COL", "VGK", "FLA", "LAD", "MIL", "SD", "NYY", "SA", "OKC", "PHI", "BOS"] {
+                XCTAssertTrue(tokenSet.contains(expected), "Missing badge \(expected) at 390 \(scheme):\n\(lines.joined(separator: "\n"))")
+            }
+            for forbidden in ["HUR", "AVA", "PAN", "BRE", "SDP"] {
+                XCTAssertFalse(tokenSet.contains(forbidden), "Stale fallback badge \(forbidden) leaked at 390 \(scheme):\n\(lines.joined(separator: "\n"))")
+            }
+            if let outDir, !outDir.isEmpty, let png = img.pngData() {
+                let tag = scheme == .dark ? "dark" : "light"
+                try png.write(to: URL(fileURLWithPath: outDir, isDirectory: true).appendingPathComponent("13386-served-badges-390-\(tag).png"))
+            }
+        }
     }
     #endif
 }
