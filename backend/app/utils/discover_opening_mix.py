@@ -1,13 +1,16 @@
-"""Discover opening-ten 9:1 + topic-mix seating rule (#13400, Decision 329: A).
+"""Discover opening-ten 9:1 + topic-mix + Seat 10 PWM rule (#13400, Decisions 329: A & 333: A).
 
 Composes seats 1..10 of the Discover deck for ``machinery=1`` readers:
 * Target ~9 grouped cards to 1 single futures market across seats 1..10.
-* Topic mix across the 10 seats (Alex + Fable 6:30 PM PT):
-  - ~3 ``odd`` (max 3; pure ``ODD`` cards ahead of weather/novelty fallbacks)
-  - 2..3 ``entertainment``
+* Seat 10 (Decision 333: A) holds one grouped politics/world or money card when
+  available (never Seat 1, never >1 in the first ten), alternating by Pacific
+  date, falling back to the other PWM kind, and otherwise to the 329: A mix.
+* Topic mix across the 10 seats:
+  - ~3 ``odd`` (pure ``ODD`` cards ahead of weather/novelty fallbacks)
   - 2 ``sports`` (including any non-conflict sports single if chosen)
-  - 1..2 ``tech_business``
-  - <= 1 across ``politics``, ``world``, and ``money`` combined (never Seat 1)
+  - <= 1 across ``politics``, ``world``, and ``money`` combined (Seat 10 only)
+  - Remaining 4 seats: 3 ``entertainment`` + 1 ``tech_business``, or
+    2 ``entertainment`` + 2 ``tech_business``, whichever the ranking prefers
 * The 1 single futures card is chosen from ``odd``, ``entertainment``,
   ``sports``, or ``tech_business`` (never a conflict/politics/world/money
   market unless nothing else qualifies) and does not duplicate a covered market.
@@ -23,6 +26,7 @@ import copy
 from collections import Counter
 from datetime import datetime, timezone
 from typing import Any, Mapping, Optional
+from zoneinfo import ZoneInfo
 
 from app.utils.discover_opening_seating import (
     EVENT_LIVE_STATUSES,
@@ -45,6 +49,10 @@ OPENING_MIX_SIZE = 10
 OPENING_MIX_GROUPED_TARGET = 9
 OPENING_MIX_SINGLE_CAP = 1
 OPENING_MIX_DEFAULT_SINGLE_SEAT = 4  # 0-based index -> seat 5
+
+PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
+PWM_SUBTOPIC_POLITICS_WORLD = "politics_or_world"
+PWM_SUBTOPIC_MONEY = "money"
 
 TOPIC_ODD = "odd"
 TOPIC_ENTERTAINMENT = "entertainment"
@@ -125,16 +133,116 @@ _TECH_BUSINESS_SLUGS: frozenset[str] = frozenset(
         "machinery-space-race",
         "machinery-unsolved-big-problems",
         "by-november-30",
+    }
+)
+
+# ---------------------------------------------------------------------------
+# Decision 333: A — Single-place split between "politics_or_world" and "money"
+# ---------------------------------------------------------------------------
+_PWM_POLITICS_WORLD_SLUGS: frozenset[str] = frozenset(
+    {
+        "machinery-2028-presidential",
+        "roundup-closest-races",
         "who-announces-before-2027",
     }
 )
-_PWM_SLUGS: frozenset[str] = frozenset(
+_PWM_MONEY_SLUGS: frozenset[str] = frozenset(
     {
-        "machinery-2028-presidential",
         "machinery-fed-and-macro",
         "for-scale-us-recession-2026",
-        "by-december-31",
+        "roundup-this-weeks-economic-data",
     }
+)
+# Cross-topic "by-december-31" stays excluded from seats 1..9 via _PWM_SLUGS
+# without claiming politics_or_world or money for Seat 10.
+_PWM_SLUGS: frozenset[str] = (
+    _PWM_POLITICS_WORLD_SLUGS | _PWM_MONEY_SLUGS | frozenset({"by-december-31"})
+)
+_PWM_POLITICS_WORLD_STORY_KEYS: frozenset[str] = frozenset(
+    {
+        "story:middle_east_conflict",
+        "story:russia_ukraine",
+        "story:us_2028_election",
+        "story:regional_us_elections",
+        "story:us_state_races",
+        "story:foreign_local_elections",
+        "story:us_federal_power",
+        "story:us_government_stakes",
+    }
+)
+_PWM_MONEY_STORY_KEYS: frozenset[str] = frozenset(
+    {
+        "story:macro_rates",
+        "story:oil",
+        "story:daily_equity_direction",
+    }
+)
+_PWM_POLITICS_WORLD_KICKER_PREFIXES: tuple[str, ...] = (
+    "politics",
+    "world",
+    "geopolitics",
+    "elections",
+    "conflict",
+)
+_PWM_MONEY_KICKER_PREFIXES: tuple[str, ...] = (
+    "economics",
+    "money",
+    "macro",
+    "economy",
+    "markets",
+    "fed",
+)
+_PWM_POLITICS_WORLD_CATEGORIES: frozenset[str] = frozenset(
+    {"politics", "geopolitics", "world"}
+)
+_PWM_MONEY_CATEGORIES: frozenset[str] = frozenset(
+    {"economics", "money", "macro", "economy"}
+)
+_PWM_MONEY_KEYWORDS: tuple[str, ...] = (
+    "recession",
+    "fed ",
+    "fomc",
+    "interest rate",
+    "rate cut",
+    "rate hike",
+    "inflation",
+    "tariff",
+    "treasury",
+    "gdp",
+    "cpi",
+    "unemployment",
+    "oil",
+)
+_PWM_POLITICS_WORLD_KEYWORDS: tuple[str, ...] = (
+    "ceasefire",
+    "invade",
+    "invasion",
+    "military strike",
+    "strike on",
+    "missile",
+    "nuclear weapon",
+    "nato",
+    "ukraine",
+    "russia",
+    "iran",
+    "israel",
+    "gaza",
+    "hamas",
+    "hezbollah",
+    "taiwan",
+    "war ",
+    "conflict",
+    "sanctions",
+    "prime minister",
+    "election",
+    "presidential",
+    "nominee",
+    "congress",
+    "senate",
+    "trump",
+    "biden",
+    "middle east",
+    "spain",
 )
 
 _CONFLICT_PWM_KEYWORDS: tuple[str, ...] = (
@@ -215,16 +323,30 @@ _TITLE_STOPWORDS: frozenset[str] = frozenset(
     }
 )
 
-_PWM_CATEGORIES: frozenset[str] = frozenset(
-    {"politics", "geopolitics", "economics", "world", "money", "macro"}
-)
+_PWM_CATEGORIES: frozenset[str] = _PWM_POLITICS_WORLD_CATEGORIES | _PWM_MONEY_CATEGORIES
 _ENTERTAINMENT_CATEGORIES: frozenset[str] = frozenset(
     {"entertainment", "culture", "movies", "music", "tv", "awards"}
 )
 _TECH_CATEGORIES: frozenset[str] = frozenset(
     {"tech", "business", "finance", "science", "space", "ai"}
 )
-_SPORTS_CATEGORIES: frozenset[str] = frozenset(_CLIENT_SPORT_CATEGORIES | {"sports"})
+_SPORTS_LEAGUE_TAGS: frozenset[str] = frozenset(
+    {"mlb", "nba", "nfl", "nhl", "ncaaf", "ncaab", "ufc", "wwe", "pga", "lpga", "f1", "atp", "wta"}
+)
+_SPORTS_CATEGORIES: frozenset[str] = frozenset(
+    _CLIENT_SPORT_CATEGORIES | _SPORTS_LEAGUE_TAGS | {"sports"}
+)
+_SPORTS_STORY_KEYS: frozenset[str] = frozenset(
+    {
+        "story:ufc_events",
+        "story:fifa_world_cup",
+        "story:basketball_finals_path",
+        "story:grand_slam_tennis",
+        "story:golf_truist_championship",
+        "story:niche_low_signal_sports",
+        "story:minor_soccer_leagues",
+    }
+)
 
 
 def _card_title(item: Mapping[str, Any]) -> str:
@@ -298,7 +420,9 @@ def classify_discover_opening_topic(item: Mapping[str, Any]) -> str:
             or tag in ("odd", "weather")
         ):
             return TOPIC_ODD
-        if slug in _PWM_SLUGS or kicker.startswith(("politics", "economics", "world")):
+        if slug in _PWM_SLUGS or kicker.startswith(
+            (*_PWM_POLITICS_WORLD_KICKER_PREFIXES, *_PWM_MONEY_KICKER_PREFIXES)
+        ):
             return TOPIC_PWM
         if (
             slug in _ENTERTAINMENT_SLUGS
@@ -312,11 +436,13 @@ def classify_discover_opening_topic(item: Mapping[str, Any]) -> str:
             return TOPIC_ENTERTAINMENT
         if (
             slug in _SPORTS_SLUGS
+            or story_key in _SPORTS_STORY_KEYS
+            or any(raw_id.startswith(f"theme:{k}") for k in _SPORTS_STORY_KEYS)
             or prod_cat in _SPORTS_CATEGORIES
             or tag in _SPORTS_CATEGORIES
             or any(
                 k in kicker
-                for k in ("sports", "nba", "nfl", "nhl", "mlb", "soccer", "golf")
+                for k in ("sports", "nba", "nfl", "nhl", "mlb", "soccer", "golf", "ufc")
             )
         ):
             return TOPIC_SPORTS
@@ -362,6 +488,83 @@ def classify_discover_opening_topic(item: Mapping[str, Any]) -> str:
 def is_conflict_or_pwm_card(item: Mapping[str, Any]) -> bool:
     """Return True when ``item`` belongs to conflict / politics / world / money."""
     return classify_discover_opening_topic(item) == TOPIC_PWM
+
+
+def discover_opening_pwm_kind_for_date(now: Optional[datetime] = None) -> str:
+    """Alternate Seat 10's preferred PWM kind every Pacific calendar day."""
+    effective = (
+        now
+        if isinstance(now, datetime) and now.tzinfo is not None
+        else datetime.now(timezone.utc)
+    )
+    pacific_date = effective.astimezone(PACIFIC_TZ).date()
+    return (
+        PWM_SUBTOPIC_POLITICS_WORLD
+        if pacific_date.toordinal() % 2 == 0
+        else PWM_SUBTOPIC_MONEY
+    )
+
+
+def classify_discover_pwm_subtopic(item: Mapping[str, Any]) -> Optional[str]:
+    """Split a PWM grouped card into ``politics_or_world``, ``money``, or ``None``."""
+    if classify_discover_opening_topic(item) != TOPIC_PWM:
+        return None
+    data = item.get("data") if isinstance(item.get("data"), Mapping) else {}
+    slug = _card_slug(item).lower()
+    if slug in _PWM_MONEY_SLUGS:
+        return PWM_SUBTOPIC_MONEY
+    if slug in _PWM_POLITICS_WORLD_SLUGS:
+        return PWM_SUBTOPIC_POLITICS_WORLD
+
+    raw_id = str(data.get("id") or "").strip().lower()
+    story_key = str(data.get("story_key") or item.get("story_key") or "").strip().lower()
+    if story_key in _PWM_MONEY_STORY_KEYS or any(
+        raw_id.startswith(f"theme:{k}") for k in _PWM_MONEY_STORY_KEYS
+    ):
+        return PWM_SUBTOPIC_MONEY
+    if story_key in _PWM_POLITICS_WORLD_STORY_KEYS or any(
+        raw_id.startswith(f"theme:{k}") for k in _PWM_POLITICS_WORLD_STORY_KEYS
+    ):
+        return PWM_SUBTOPIC_POLITICS_WORLD
+
+    roundup = data.get("roundup") if isinstance(data.get("roundup"), Mapping) else {}
+    kicker = str(roundup.get("kicker") or "").strip().lower()
+    tag = str(roundup.get("tag") or "").strip().lower()
+    prod = ROUNDUP_PRODUCERS.get(slug) if slug else None
+    prod_cat = str(getattr(prod, "category", "") or "").strip().lower()
+    if not kicker and prod is not None:
+        kicker = str(getattr(prod, "kicker", "") or "").strip().lower()
+
+    if (
+        kicker.startswith(_PWM_MONEY_KICKER_PREFIXES)
+        or prod_cat in _PWM_MONEY_CATEGORIES
+        or tag in _PWM_MONEY_CATEGORIES
+    ):
+        return PWM_SUBTOPIC_MONEY
+    if (
+        kicker.startswith(_PWM_POLITICS_WORLD_KICKER_PREFIXES)
+        or prod_cat in _PWM_POLITICS_WORLD_CATEGORIES
+        or tag in _PWM_POLITICS_WORLD_CATEGORIES
+    ):
+        return PWM_SUBTOPIC_POLITICS_WORLD
+
+    if any(
+        tok in story_key
+        for tok in ("macro", "rates", "oil", "recession", "inflation", "tariff", "equity")
+    ):
+        return PWM_SUBTOPIC_MONEY
+    if any(
+        tok in story_key
+        for tok in ("conflict", "election", "ukraine", "middle_east", "federal_power", "government")
+    ):
+        return PWM_SUBTOPIC_POLITICS_WORLD
+
+    title = _card_title(item).lower()
+    if any(k in title for k in _PWM_MONEY_KEYWORDS):
+        return PWM_SUBTOPIC_MONEY
+    if any(k in title for k in _PWM_POLITICS_WORLD_KEYWORDS):
+        return PWM_SUBTOPIC_POLITICS_WORLD
+    return None
 
 
 def _contains_live_event_signal(item: Mapping[str, Any], *, now: datetime) -> bool:
@@ -445,15 +648,29 @@ def _enforce_post_opening_non_adjacency(remainder: list[dict[str, Any]]) -> list
     idx = 1
     while idx < len(items):
         if _is_roundup_bundle_card(items[idx - 1]) and _is_roundup_bundle_card(items[idx]):
-            swap_at: Optional[int] = None
-            for probe in range(idx + 1, len(items)):
-                if not _is_roundup_bundle_card(items[probe]):
-                    swap_at = probe
+            swap_at = next(
+                (probe for probe in range(idx + 1, len(items)) if not _is_roundup_bundle_card(items[probe])),
+                None,
+            )
+            if swap_at is not None:
+                items.insert(idx, items.pop(swap_at))
+            else:
+                back_at = next(
+                    (
+                        probe
+                        for probe in range(idx - 2, -1, -1)
+                        if not _is_roundup_bundle_card(items[probe])
+                        and not (
+                            probe > 0
+                            and _is_roundup_bundle_card(items[probe - 1])
+                            and _is_roundup_bundle_card(items[probe + 1])
+                        )
+                    ),
+                    None,
+                )
+                if back_at is None:
                     break
-            if swap_at is None:
-                break
-            non_roundup = items.pop(swap_at)
-            items.insert(idx, non_roundup)
+                items.insert(idx - 1, items.pop(back_at))
         idx += 1
     return items
 
@@ -481,7 +698,7 @@ def _order_opening_ten(
     # Seat 1: pure ODD -> ODD -> entertainment -> tech_business -> sports -> fallback
     first_group: Optional[tuple[int, dict[str, Any]]] = None
     for pred in (
-        lambda it: is_pure_odd_grouped_card(it),
+        is_pure_odd_grouped_card,
         lambda it: classify_discover_opening_topic(it) == TOPIC_ODD,
         lambda it: classify_discover_opening_topic(it) == TOPIC_ENTERTAINMENT,
         lambda it: classify_discover_opening_topic(it) == TOPIC_TECH_BUSINESS,
@@ -507,18 +724,19 @@ def _order_opening_ten(
     ordered_singles = non_pwm_singles + pwm_singles
 
     # Interleave the single card(s) cleanly inside seats 1..10 without taking Seat 1
-    # when any non-PWM group is available.
+    # or displacing Seat 10's reserved PWM grouped card.
     opening_pairs: list[tuple[int, dict[str, Any]]] = list(ordered_groups)
+    max_single_pos = max(0, len(opening_pairs) - len(pwm_groups))
     for offset_idx, s_pair in enumerate(ordered_singles):
-        target_pos = min(OPENING_MIX_DEFAULT_SINGLE_SEAT + offset_idx * 2, len(opening_pairs))
-        if not ordered_groups:
-            target_pos = min(offset_idx, len(opening_pairs))
+        target_pos = min(OPENING_MIX_DEFAULT_SINGLE_SEAT + offset_idx * 2, max_single_pos)
+        if not interleaved:
+            target_pos = min(offset_idx, max_single_pos)
         else:
             target_pos = max(1, target_pos)
             # Nudge by +/- 1 if adjacent group shares the same topic
             s_topic = classify_discover_opening_topic(s_pair[1])
             for cand_pos in (target_pos, target_pos - 1, target_pos + 1):
-                if 1 <= cand_pos <= len(opening_pairs):
+                if 1 <= cand_pos <= max_single_pos:
                     left_t = classify_discover_opening_topic(opening_pairs[cand_pos - 1][1])
                     right_t = (
                         classify_discover_opening_topic(opening_pairs[cand_pos][1])
@@ -528,6 +746,7 @@ def _order_opening_ten(
                     if s_topic != left_t and s_topic != right_t:
                         target_pos = cand_pos
                         break
+            max_single_pos += 1
         opening_pairs.insert(target_pos, s_pair)
 
     return [
@@ -543,7 +762,7 @@ def apply_discover_opening_mix(
     seat_count: int = OPENING_MIX_SIZE,
     page_window: int = 20,
 ) -> list[dict[str, Any]]:
-    """Compose Discover seats 1..10 under Decision 329: A (9G:1S + topic mix).
+    """Compose Discover seats 1..10 under Decisions 329: A + 333: A.
 
     Returns ``items`` unchanged when the deck has ``<= seat_count`` cards or no
     opening-eligible grouped cards. Never pins ``concept`` cards and never puts a
@@ -589,6 +808,39 @@ def apply_discover_opening_mix(
     sorted_groups = sorted(eligible_groups, key=_grouped_priority_key)
     grouped_target = min(OPENING_MIX_GROUPED_TARGET, seat_count - (1 if singles_sorted else 0))
 
+    # Decision 333: A — Reserve Seat 10 for one politics/world or money grouped
+    # card (never Seat 1, never >1 in the first ten), alternating by Pacific date.
+    # If the deck has singles but ZERO non-conflict singles, the forced conflict
+    # single already consumes the single PWM allowance in the first ten.
+    preferred_pwm_kind = discover_opening_pwm_kind_for_date(effective_now)
+    fallback_pwm_kind = (
+        PWM_SUBTOPIC_MONEY
+        if preferred_pwm_kind == PWM_SUBTOPIC_POLITICS_WORLD
+        else PWM_SUBTOPIC_POLITICS_WORLD
+    )
+    has_non_pwm_opening = bool(non_pwm_singles) or any(
+        classify_discover_opening_topic(it) != TOPIC_PWM for _, it in sorted_groups
+    )
+    single_forces_pwm = bool(singles_sorted) and not non_pwm_singles
+    chosen_pwm_seat10: Optional[tuple[int, dict[str, Any]]] = None
+    if (
+        seat_count >= 2
+        and grouped_target >= 1
+        and has_non_pwm_opening
+        and not single_forces_pwm
+    ):
+        for target_kind in (preferred_pwm_kind, fallback_pwm_kind):
+            chosen_pwm_seat10 = next(
+                (
+                    pair
+                    for pair in sorted_groups
+                    if classify_discover_pwm_subtopic(pair[1]) == target_kind
+                ),
+                None,
+            )
+            if chosen_pwm_seat10 is not None:
+                break
+
     chosen_groups: list[tuple[int, dict[str, Any]]] = []
     chosen_indices: set[int] = set()
     seen_sibling_groups: list[Mapping[str, Any]] = []
@@ -611,11 +863,19 @@ def apply_discover_opening_mix(
         if _is_sibling_family_bundle(it):
             seen_sibling_groups.append(it)
 
+    if chosen_pwm_seat10 is not None:
+        chosen_indices.add(chosen_pwm_seat10[0])
+        topic_counts[TOPIC_PWM] += 1
+        if _is_sibling_family_bundle(chosen_pwm_seat10[1]):
+            seen_sibling_groups.append(chosen_pwm_seat10[1])
+
+    non_pwm_grouped_target = grouped_target - (1 if chosen_pwm_seat10 is not None else 0)
+
     # Pass 1a: fill per-topic minimum group targets across non-PWM topics.
     for topic in NON_PWM_TOPICS:
         target_min = TOPIC_MIN_GROUPS[topic]
         for idx, it in sorted_groups:
-            if len(chosen_groups) >= grouped_target:
+            if len(chosen_groups) >= non_pwm_grouped_target:
                 break
             if idx in chosen_indices or classify_discover_opening_topic(it) != topic:
                 continue
@@ -624,23 +884,16 @@ def apply_discover_opening_mix(
             if _can_take_group(it, TOPIC_MAX_TOTAL):
                 _add_group(idx, it)
 
-    # Pass 1b: fill up to `max(grouped_target - 1, 8)` non-PWM grouped slots, leaving
-    # headroom so the top non-conflict single can claim its topic slot.
-    non_pwm_group_cap = max(0, grouped_target - 1)
-    for topic in (TOPIC_ODD, TOPIC_ENTERTAINMENT, TOPIC_TECH_BUSINESS, TOPIC_SPORTS):
-        for idx, it in sorted_groups:
-            if len(chosen_groups) >= non_pwm_group_cap:
-                break
-            if idx in chosen_indices or classify_discover_opening_topic(it) != topic:
-                continue
-            if _can_take_group(it, TOPIC_MAX_TOTAL):
-                _add_group(idx, it)
-
-    # Pick the single futures card(s) needed to reach `seat_count` alongside up to
-    # `grouped_target` groups (1 under normal supply).
+    # Pick the single futures card(s) ahead of the remaining non-PWM flex slots
+    # while checking no overlap against all chosen groups (including Seat 10).
     covered_ids: set[int] = set()
     grouped_tokens: list[set[str]] = []
-    for _, git in chosen_groups:
+    all_taken_groups = (
+        [*chosen_groups, chosen_pwm_seat10]
+        if chosen_pwm_seat10 is not None
+        else chosen_groups
+    )
+    for _, git in all_taken_groups:
         grouped_tokens.append(_title_tokens(git))
         covered_ids.update(_roundup_covered_market_ids(git))
 
@@ -680,7 +933,48 @@ def apply_discover_opening_mix(
     }
     single_tokens: list[set[str]] = [_title_tokens(it) for _, it in chosen_singles]
 
-    # Pass 2: complete up to `grouped_target` grouped cards (non-PWM within caps -> <=1 PWM -> relaxed non-PWM).
+    def _group_conflicts_with_single(it: Mapping[str, Any]) -> bool:
+        if single_ids and (_roundup_covered_market_ids(it) & single_ids):
+            return True
+        if single_tokens and any(
+            len(_title_tokens(it) & stoks) >= 2 for stoks in single_tokens
+        ):
+            return True
+        return False
+
+    # Pass 1b: reach anchor targets for odd (3) and sports (2 including single).
+    for topic in (TOPIC_ODD, TOPIC_SPORTS):
+        for idx, it in sorted_groups:
+            if len(chosen_groups) >= non_pwm_grouped_target:
+                break
+            if idx in chosen_indices or classify_discover_opening_topic(it) != topic:
+                continue
+            if _group_conflicts_with_single(it):
+                continue
+            if _can_take_group(it, TOPIC_MAX_TOTAL):
+                _add_group(idx, it)
+
+    # Pass 2: fill the flex slot(s) (entertainment 3rd vs tech/business 2nd, or
+    # both under fallback #2) strictly by whichever the feed ranking places higher.
+    while len(chosen_groups) < non_pwm_grouped_target:
+        best_candidate: Optional[tuple[int, dict[str, Any]]] = None
+        for topic in NON_PWM_TOPICS:
+            if topic_counts[topic] >= TOPIC_MAX_TOTAL[topic]:
+                continue
+            for idx, it in sorted_groups:
+                if idx in chosen_indices or classify_discover_opening_topic(it) != topic:
+                    continue
+                if _group_conflicts_with_single(it):
+                    continue
+                if _can_take_group(it, TOPIC_MAX_TOTAL):
+                    if best_candidate is None or idx < best_candidate[0]:
+                        best_candidate = (idx, it)
+                    break
+        if best_candidate is None:
+            break
+        _add_group(*best_candidate)
+
+    # Sparse-deck fallback if non-PWM grouped supply fell below target.
     relaxed_non_pwm_caps = {
         TOPIC_ODD: 4,
         TOPIC_ENTERTAINMENT: 4,
@@ -688,29 +982,19 @@ def apply_discover_opening_mix(
         TOPIC_TECH_BUSINESS: 3,
         TOPIC_PWM: 1,
     }
-    for allowed_topics, limit_map in (
-        (NON_PWM_TOPICS, TOPIC_MAX_TOTAL),
-        ((TOPIC_PWM,), TOPIC_MAX_TOTAL),
-        (NON_PWM_TOPICS, relaxed_non_pwm_caps),
-        (ALL_OPENING_TOPICS, relaxed_non_pwm_caps),
-    ):
-        if len(chosen_groups) >= grouped_target:
-            break
+    if len(chosen_groups) < non_pwm_grouped_target:
         for idx, it in sorted_groups:
-            if len(chosen_groups) >= grouped_target:
+            if len(chosen_groups) >= non_pwm_grouped_target:
                 break
-            if idx in chosen_indices:
+            if idx in chosen_indices or classify_discover_opening_topic(it) == TOPIC_PWM:
                 continue
-            if classify_discover_opening_topic(it) not in allowed_topics:
+            if _group_conflicts_with_single(it):
                 continue
-            if single_ids and (_roundup_covered_market_ids(it) & single_ids):
-                continue
-            if single_tokens and any(
-                len(_title_tokens(it) & stoks) >= 2 for stoks in single_tokens
-            ):
-                continue
-            if _can_take_group(it, limit_map):
+            if _can_take_group(it, relaxed_non_pwm_caps):
                 _add_group(idx, it)
+
+    if chosen_pwm_seat10 is not None:
+        chosen_groups.append(chosen_pwm_seat10)
 
     # If grouped supply was below `grouped_target`, fill remaining opening seats with
     # non-PWM singles first while honoring PWM <= 1.
@@ -739,7 +1023,7 @@ def apply_discover_opening_mix(
                 needed_singles -= 1
 
     # Fallback: if we still couldn't fill `seat_count` (e.g. non-PWM + PWM cap reached on tiny deck),
-    # let caller's original deck fill naturally without promoting any live/concept card.
+    # let caller's original deck fill naturally without promoting any live/concept card or displacing Seat 10.
     anchor = items[0] if items else None
     opening = _order_opening_ten(
         chosen_groups,
@@ -748,6 +1032,7 @@ def apply_discover_opening_mix(
         anchor=anchor,
     )
     if len(opening) < seat_count:
+        insert_before_pwm = max(0, len(opening) - (1 if chosen_pwm_seat10 is not None else 0))
         for idx, it in enumerate(items):
             if len(opening) >= seat_count:
                 break
@@ -756,7 +1041,9 @@ def apply_discover_opening_mix(
             if _contains_live_event_signal(it, now=effective_now):
                 continue
             chosen_indices.add(idx)
-            opening.append(_mark_opening_mix_card(it, anchor=anchor))
+            marked = _mark_opening_mix_card(it, anchor=anchor)
+            opening.insert(insert_before_pwm, marked)
+            insert_before_pwm += 1
 
     remainder = [
         _clear_opening_mix_marker(it) if _is_roundup_bundle_card(it) else it
