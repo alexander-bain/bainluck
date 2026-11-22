@@ -401,22 +401,26 @@ struct WatchMatchupGamePageHeroView297A: View {
 
     private var isCompact41mm: Bool { caseWidth < 188 }
     private var isCompactFinal: Bool { model.stage == .after && !dynamicTypeSize.isAccessibilitySize }
+    private var isCompactScheduled: Bool { model.stage == .before && !dynamicTypeSize.isAccessibilitySize }
     private var crestSize: CGFloat {
         if isCompactFinal {
             return isCompact41mm ? 22 : 26
+        }
+        if isCompactScheduled {
+            return isCompact41mm ? 24 : 28
         }
         return isCompact41mm ? 28 : 32
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: isCompactFinal ? 6 : 8) {
+        VStack(alignment: .leading, spacing: isCompactFinal ? 6 : (isCompactScheduled ? 5 : 8)) {
             heroCard
             observationLines
         }
     }
 
     private var heroCard: some View {
-        VStack(spacing: isCompactFinal ? (isCompact41mm ? 3 : 4) : (isCompact41mm ? 7 : 9)) {
+        VStack(spacing: isCompactFinal ? (isCompact41mm ? 3 : 4) : (isCompactScheduled ? (isCompact41mm ? 4 : 6) : (isCompact41mm ? 7 : 9))) {
             topBadgeRow
 
             if dynamicTypeSize.isAccessibilitySize {
@@ -459,16 +463,16 @@ struct WatchMatchupGamePageHeroView297A: View {
 
             if let bottom = model.bottomSummaryText {
                 Text(bottom)
-                    .font(.system(size: dynamicTypeSize.isAccessibilitySize ? 13 : 10.5, weight: .semibold))
+                    .font(.system(size: dynamicTypeSize.isAccessibilitySize ? 13 : (isCompact41mm ? 9.5 : 10), weight: .semibold))
                     .foregroundStyle(.white.opacity(0.86))
                     .multilineTextAlignment(.center)
                     .fixedSize(horizontal: false, vertical: true)
-                    .padding(.top, 1)
+                    .padding(.top, isCompactScheduled ? 0 : 1)
                     .accessibilityIdentifier("watch.game.hero.bottom")
             }
         }
         .padding(.horizontal, isCompactFinal && isCompact41mm ? 7 : (isCompact41mm ? 8 : 10))
-        .padding(.vertical, isCompactFinal ? (isCompact41mm ? 5 : 7) : (isCompact41mm ? 9 : 11))
+        .padding(.vertical, isCompactFinal ? (isCompact41mm ? 5 : 7) : (isCompactScheduled ? (isCompact41mm ? 6 : 8) : (isCompact41mm ? 9 : 11)))
         .frame(maxWidth: .infinity)
         .background(diagonalSplitBackground)
         .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -541,7 +545,7 @@ struct WatchMatchupGamePageHeroView297A: View {
         }
         .foregroundStyle(Color.white)
         .padding(.horizontal, isCompactFinal ? 7 : 8)
-        .padding(.vertical, isCompactFinal ? 1.5 : 3)
+        .padding(.vertical, isCompactFinal ? 1.5 : (isCompactScheduled ? 2 : 3))
         .background(
             Capsule().fill(
                 model.isLive
@@ -555,7 +559,7 @@ struct WatchMatchupGamePageHeroView297A: View {
     // MARK: - Matchup Row (Crests + Center Score/AT on top, Identities below across full half-width)
 
     private var standardMatchupRow: some View {
-        VStack(spacing: isCompactFinal ? (isCompact41mm ? 2 : 3) : (isCompact41mm ? 4 : 5)) {
+        VStack(spacing: isCompactFinal ? (isCompact41mm ? 2 : 3) : (isCompactScheduled ? (isCompact41mm ? 2 : 3) : (isCompact41mm ? 4 : 5))) {
             HStack(alignment: .center, spacing: 4) {
                 crestDisc(model.away, size: crestSize)
                 Spacer(minLength: 4)
@@ -618,7 +622,7 @@ struct WatchMatchupGamePageHeroView297A: View {
             HStack(alignment: .firstTextBaseline, spacing: 6) {
                 if let awayPct = model.away.currentPercentText {
                     Text(awayPct)
-                        .font(.system(size: isCompact41mm ? 24 : 28, weight: .black, design: .rounded).monospacedDigit())
+                        .font(.system(size: isCompactScheduled ? (isCompact41mm ? 22 : 26) : (isCompact41mm ? 24 : 28), weight: .black, design: .rounded).monospacedDigit())
                         .foregroundStyle(Self.rgbColor(model.away.inkHex))
                         .minimumScaleFactor(0.75)
                         .lineLimit(1)
@@ -626,7 +630,7 @@ struct WatchMatchupGamePageHeroView297A: View {
                 Spacer(minLength: 4)
                 if let homePct = model.home.currentPercentText {
                     Text(homePct)
-                        .font(.system(size: isCompact41mm ? 24 : 28, weight: .black, design: .rounded).monospacedDigit())
+                        .font(.system(size: isCompactScheduled ? (isCompact41mm ? 22 : 26) : (isCompact41mm ? 24 : 28), weight: .black, design: .rounded).monospacedDigit())
                         .foregroundStyle(Self.rgbColor(model.home.inkHex))
                         .minimumScaleFactor(0.75)
                         .lineLimit(1)

@@ -20,6 +20,16 @@ struct WatchMatchupLookSheet217: View {
     private var tinted: Bool { env["BAINLUCK_WATCH_MATCHUP_MODE_217"] == "tinted" }
 
     private var slot: CGSize {
+        switch stage {
+        case "after-105-41":
+            return CGSize(width: 171.5, height: 73)
+        case "after-105-45":
+            return CGSize(width: 185, height: 79)
+        case "after-105-46":
+            return CGSize(width: 193, height: 82)
+        default:
+            break
+        }
         // The slot this screen's face would give the big rectangular complication:
         // 41 mm = 171.5×73 pt, 45 mm = 185×79 pt, 49 mm = 199×84.5 pt.
         let w = WKInterfaceDeviceScreen.width
@@ -175,6 +185,22 @@ struct WatchMatchupLookSheet217: View {
                     homePrimary: "#500000", homeSecondary: "#ffffff",
                     awayPrimary: "#c41230", awaySecondary: "#ffffff",
                     clock: "2H 8:14"))
+        case "after-105-41", "after-105-45", "after-105-46":
+            // #13386: 3-digit NBA final (TOR 105–102 DET, TOR pregame · Final) across 41/45/46 mm slots.
+            let tor = WatchCompactTeamIdentity(teamID: 28, abbreviation: "TOR")
+            let det = WatchCompactTeamIdentity(teamID: 8, abbreviation: "DET")
+            let reading = WatchRectangularReading(
+                version: 1, eventID: 21705, kind: .finalResult,
+                homeName: "Detroit Pistons", awayName: "Toronto Raptors", home: det, away: tor,
+                homePercent: nil, homeScore: 102, awayScore: 105, commenceTime: nil,
+                stateLabel: "Final", observedAt: observed, scoreObservedAt: observed)
+            snapshot = WatchComplicationSnapshot(
+                eventID: 21705, title: "Toronto Raptors won", detail: "Final · 105–102",
+                observedAt: observed, savedAt: now, rectangularReading: reading,
+                matchup: WatchMatchupFacts217(
+                    homePrimary: "#c8102e", homeSecondary: "#1d42ba",
+                    awayPrimary: "#ce1141", awaySecondary: "#000000",
+                    pregameHomePercent: 71, pregameAwayPercent: 29))
         default:
             return nil
         }
