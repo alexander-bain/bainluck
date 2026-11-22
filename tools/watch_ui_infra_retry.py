@@ -29,9 +29,16 @@ CONNECTION_LOST = (
     re.compile(r"encountered an error \(Lost connection to (the )?test manager service"),
 )
 # Any of these means a test itself failed; never retry over them.
-REAL_FAILURE = (
-    re.compile(r": error: -\[BainLuckWatchUITests\."),
-    re.compile(r"^WATCH_UI_\w+=FAIL", re.MULTILINE),
+TEST_CASE_ERROR = re.compile(r": error: -\[BainLuckWatchUITests\.")
+WATCH_FAIL_MARKER = re.compile(r"^WATCH_UI_\w+=FAIL", re.MULTILINE)
+APP_LAUNCH_REFUSED_ERROR = re.compile(
+    r"^<unknown>:0: error: -\[BainLuckWatchUITests\.(\w+) (test\w+)\] : "
+    r"(?:Application 'com\.bainluck\.Bain-Luck\.watchkitapp' does not have a process ID|"
+    r"Failed to get background assertion for target app with pid \d+:.*)$"
+)
+SESSION_STARTED_MARKERS = (
+    "Setting up automation session",
+    "Wait for com.bainluck.Bain-Luck.watchkitapp to idle",
 )
 OVERRUN = re.compile(
     r"^Test Case '-\[BainLuckWatchUITests\.(\w+) (test\w+)\]' exceeded execution time allowance", re.MULTILINE
@@ -40,6 +47,29 @@ STEP = re.compile(r"^\s+t =\s+[0-9.]+s\s+(\S.*?)\s*$")
 APP_LAUNCH = "Launch com.bainluck.Bain-Luck.watchkitapp"
 # System-side step XCTest may log before it sends the request; our app has not started.
 BEFORE_REQUEST = "Waiting for system app quiescence"
+CLOCKFACE_IDLE = "Wait for com.apple.clockface to idle"
+CLOCKFACE_ANIM_TIMEOUT = "App animations complete notification not received, will attempt to continue."
+CLOCKFACE_STALL_THRESHOLD = 4
+
+
+def error_is_pre_session_launch_refusal(log: str, line: str, *, pos: int | None = None) -> bool:
+    """True only when XCTest failed to establish a simulator launch before any app session started."""
+    match = APP_LAUNCH_REFUSED_ERROR.match(line.strip())
+    if not match:
+        return False
+    suite, case = match.groups()
+    name = f"Test Case '-[BainLuckWatchUITests.{suite} {case}]'"
+    cursor = log.find(line) if pos is None else pos
+    if cursor < 0:
+        return False
+    start = log.rfind(f"{name} started.", 0, cursor)
+    end = log.find(f"{name} failed (", cursor)
+    if start < 0 or end < 0:
+        return False
+    block = log[start:end]
+    if APP_LAUNCH not in block:
+        return False
+    return not any(marker in block for marker in SESSION_STARTED_MARKERS)
 
 
 def overran_in_launch_request(log: str, suite: str, case: str) -> bool:
@@ -56,16 +86,61 @@ def overran_in_launch_request(log: str, suite: str, case: str) -> bool:
     return bool(steps) and steps[-1] == APP_LAUNCH
 
 
+def overran_in_clockface_idle_hang(log: str, suite: str, case: str) -> bool:
+    """True when the overrun test lost at least 4 x 60 s waiting for com.apple.clockface idle."""
+    name = f"Test Case '-[BainLuckWatchUITests.{suite} {case}]'"
+    end = log.find(f"{name} exceeded execution time allowance")
+    start = log.rfind(f"{name} started.", 0, end)
+    if start < 0 or end < 0:
+        return False
+    lines = log[start:end].splitlines()
+    stalls = sum(
+        1
+        for i in range(len(lines) - 1)
+        if CLOCKFACE_IDLE in lines[i] and CLOCKFACE_ANIM_TIMEOUT in lines[i + 1]
+    )
+    return stalls >= CLOCKFACE_STALL_THRESHOLD
+
+
 def infra_abort(log: str) -> str | None:
     """The simulator signature that ended this run, or None if a retry is not allowed."""
-    if any(pattern.search(log) for pattern in REAL_FAILURE):
+    if WATCH_FAIL_MARKER.search(log):
         return None
+    launch_refused_cases: list[str] = []
+    for line_match in re.finditer(r"^.*$", log, re.MULTILINE):
+        line = line_match.group(0)
+        if not TEST_CASE_ERROR.search(line):
+            continue
+        if not error_is_pre_session_launch_refusal(log, line, pos=line_match.start()):
+            return None
+        m = APP_LAUNCH_REFUSED_ERROR.match(line.strip())
+        if m:
+            launch_refused_cases.append(f"{m.group(1)}/{m.group(2)}")
     overruns = OVERRUN.findall(log)
     if overruns:
         if all(overran_in_launch_request(log, suite, case) for suite, case in overruns):
             suite, case = overruns[0]
             return f"the simulator never accepted the Watch app's launch in {suite}/{case}"
+        if all(
+            overran_in_launch_request(log, suite, case)
+            or overran_in_clockface_idle_hang(log, suite, case)
+            for suite, case in overruns
+        ):
+            clockface_cases = [
+                f"{suite}/{case}"
+                for suite, case in overruns
+                if overran_in_clockface_idle_hang(log, suite, case)
+            ]
+            return (
+                "com.apple.clockface stopped reporting animation idle "
+                f"({len(clockface_cases)} overrun case(s): {', '.join(clockface_cases)})"
+            )
         return None
+    if launch_refused_cases:
+        return (
+            "the simulator refused Watch app launch before automation session start "
+            f"({len(launch_refused_cases)} case(s): {', '.join(launch_refused_cases)})"
+        )
     for pattern in CONNECTION_LOST:
         match = pattern.search(log)
         if match:
