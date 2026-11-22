@@ -28,6 +28,10 @@ from typing import Callable
 
 QUIET_SECONDS = 180
 POLL_SECONDS = 10
+SIMCTL_TERMINATE_TIMEOUT = 25
+LAUNCHCTL_LIST_TIMEOUT = 20
+MID_TEST_STALL_THRESHOLD = 3
+MAX_RECOVERY_ATTEMPTS_PER_WEDGE = 3
 OVERRUN = "exceeded execution time allowance"
 RESTART = "Restarting after unexpected exit, crash, or test timeout"
 CLOCKFACE_IDLE = "Wait for com.apple.clockface to idle"
@@ -36,6 +40,8 @@ SAFE_BOUNDARY = re.compile(
     r"^(?:Test Case '-\[BainLuckWatchUITests\.\w+ test\w+\]' (?:passed|failed) \(|"
     r"Restarting after unexpected exit, crash, or test timeout)"
 )
+TEST_STARTED = re.compile(r"^Test Case '-\[BainLuckWatchUITests\.\w+ test\w+\]' started\.$")
+WATCH_APP_ELEMENT_WAIT = re.compile(r'Waiting [0-9.]+s for "watch\.(?!complication\.)')
 
 
 def waiting_after_overrun(log: str) -> bool:
@@ -67,24 +73,120 @@ def stop(pid: int) -> None:
             return
 
 
+def _sigkill_clockface_via_launchctl(
+    watch_udid: str,
+    primary_error: str,
+    started: float,
+) -> dict[str, object]:
+    """Verify running ClockFace PID via launchctl + ps comm, then SIGKILL."""
+    try:
+        listing = subprocess.run(
+            ["xcrun", "simctl", "spawn", watch_udid, "launchctl", "list"],
+            capture_output=True,
+            text=True,
+            timeout=LAUNCHCTL_LIST_TIMEOUT,
+        )
+    except (OSError, subprocess.SubprocessError) as error:
+        return {
+            "method": "launchctl_sigkill",
+            "returncode": -1,
+            "simctl_error": primary_error,
+            "stderr": f"{type(error).__name__}: {error}",
+            "elapsed_seconds": round(time.monotonic() - started, 2),
+        }
+    if listing.returncode != 0:
+        return {
+            "method": "launchctl_sigkill",
+            "returncode": -1,
+            "simctl_error": primary_error,
+            "stderr": listing.stderr.strip() or f"launchctl list exited {listing.returncode}",
+            "elapsed_seconds": round(time.monotonic() - started, 2),
+        }
+
+    candidates: list[tuple[int, str]] = []
+    for raw_line in listing.stdout.splitlines():
+        parts = raw_line.split(None, 2)
+        if len(parts) != 3 or not parts[0].isdigit():
+            continue
+        pid = int(parts[0])
+        label = parts[2].strip()
+        if pid > 1 and (
+            label == "com.apple.clockface"
+            or label.startswith("UIKitApplication:com.apple.clockface[")
+        ):
+            candidates.append((pid, label))
+
+    killed_pids: list[int] = []
+    killed_labels: list[str] = []
+    errors: list[str] = []
+    for pid, label in candidates:
+        try:
+            ps_proc = subprocess.run(
+                ["ps", "-p", str(pid), "-o", "comm="],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.SubprocessError) as error:
+            errors.append(f"ps pid {pid}: {type(error).__name__}: {error}")
+            continue
+        comm_name = Path(ps_proc.stdout.strip()).name if ps_proc.stdout.strip() else ""
+        if ps_proc.returncode != 0 or comm_name != "ClockFace":
+            errors.append(
+                f"pid {pid} ({label}) skipped: comm={comm_name!r} rc={ps_proc.returncode}"
+            )
+            continue
+        try:
+            os.kill(pid, signal.SIGKILL)
+            killed_pids.append(pid)
+            killed_labels.append(label)
+        except ProcessLookupError:
+            killed_pids.append(pid)
+            killed_labels.append(label)
+        except OSError as error:
+            errors.append(f"kill pid {pid}: {type(error).__name__}: {error}")
+
+    if killed_pids:
+        return {
+            "method": "launchctl_sigkill",
+            "returncode": 0,
+            "pids": killed_pids,
+            "labels": killed_labels,
+            "simctl_error": primary_error,
+            "stderr": "; ".join(errors),
+            "elapsed_seconds": round(time.monotonic() - started, 2),
+        }
+    return {
+        "method": "launchctl_sigkill",
+        "returncode": -1,
+        "simctl_error": primary_error,
+        "stderr": "; ".join(errors) if errors else "no running com.apple.clockface PID found",
+        "elapsed_seconds": round(time.monotonic() - started, 2),
+    }
+
+
 def terminate_clockface(watch_udid: str) -> dict[str, object]:
     """Terminate only the wedged watchOS ClockFace daemon so launchd respawns it."""
+    started = time.monotonic()
+    primary_error = ""
     try:
         proc = subprocess.run(
             ["xcrun", "simctl", "terminate", watch_udid, "com.apple.clockface"],
             capture_output=True,
             text=True,
-            timeout=15,
+            timeout=SIMCTL_TERMINATE_TIMEOUT,
         )
-        return {
-            "returncode": proc.returncode,
-            "stderr": proc.stderr.strip(),
-        }
+        if proc.returncode == 0:
+            return {
+                "method": "simctl_terminate",
+                "returncode": 0,
+                "stderr": proc.stderr.strip(),
+                "elapsed_seconds": round(time.monotonic() - started, 2),
+            }
+        primary_error = proc.stderr.strip() or f"simctl terminate exited {proc.returncode}"
     except (OSError, subprocess.SubprocessError) as error:
-        return {
-            "returncode": -1,
-            "stderr": f"{type(error).__name__}: {error}",
-        }
+        primary_error = f"{type(error).__name__}: {error}"
+    return _sigkill_clockface_via_launchctl(watch_udid, primary_error, started)
 
 
 def watch(
@@ -102,10 +204,34 @@ def watch(
     scan_offset = 0
     prev_line = ""
     wedge_armed = False
+    stalls_in_case = 0
+    mid_test_recovered = False
+    attempts_for_wedge = 0
     recoveries: list[dict[str, object]] = []
 
+    def attempt_recovery(boundary: str, trigger: str) -> None:
+        nonlocal wedge_armed, stalls_in_case, attempts_for_wedge
+        assert watch_udid is not None
+        outcome = clockface_terminator(watch_udid)
+        attempts_for_wedge += 1
+        recoveries.append({"boundary": boundary, "trigger": trigger, **outcome})
+        if clockface_receipt is not None:
+            clockface_receipt.write_text(
+                json.dumps(
+                    {"count": len(recoveries), "recoveries": recoveries},
+                    indent=2,
+                )
+                + "\n"
+            )
+        if outcome.get("returncode") == 0:
+            wedge_armed = False
+            stalls_in_case = 0
+            attempts_for_wedge = 0
+        elif attempts_for_wedge >= MAX_RECOVERY_ATTEMPTS_PER_WEDGE:
+            wedge_armed = False
+
     def process_new_lines() -> None:
-        nonlocal scan_offset, prev_line, wedge_armed
+        nonlocal scan_offset, prev_line, wedge_armed, stalls_in_case, mid_test_recovered, attempts_for_wedge
         if not watch_udid or not log_path.exists():
             return
         try:
@@ -116,6 +242,9 @@ def watch(
             scan_offset = 0
             prev_line = ""
             wedge_armed = False
+            stalls_in_case = 0
+            mid_test_recovered = False
+            attempts_for_wedge = 0
         chunk = text[scan_offset:]
         last_nl = chunk.rfind("\n")
         if last_nl < 0:
@@ -123,20 +252,20 @@ def watch(
         complete = chunk[: last_nl + 1]
         scan_offset += len(complete)
         for line in complete.splitlines():
-            if ANIM_TIMEOUT in line and CLOCKFACE_IDLE in prev_line:
+            if TEST_STARTED.search(line):
+                stalls_in_case = 0
+                mid_test_recovered = False
+            elif ANIM_TIMEOUT in line and CLOCKFACE_IDLE in prev_line:
                 wedge_armed = True
+                attempts_for_wedge = 0
+                stalls_in_case += 1
+                if stalls_in_case >= MID_TEST_STALL_THRESHOLD and not mid_test_recovered:
+                    mid_test_recovered = True
+                    attempt_recovery(line.strip(), "mid_test_3_stalls")
+            elif wedge_armed and WATCH_APP_ELEMENT_WAIT.search(line):
+                attempt_recovery(line.strip(), "watch_app_foreground")
             elif wedge_armed and SAFE_BOUNDARY.search(line):
-                wedge_armed = False
-                outcome = clockface_terminator(watch_udid)
-                recoveries.append({"boundary": line.strip(), **outcome})
-                if clockface_receipt is not None:
-                    clockface_receipt.write_text(
-                        json.dumps(
-                            {"count": len(recoveries), "recoveries": recoveries},
-                            indent=2,
-                        )
-                        + "\n"
-                    )
+                attempt_recovery(line.strip(), "safe_boundary")
             prev_line = line
 
     while alive(pid):
