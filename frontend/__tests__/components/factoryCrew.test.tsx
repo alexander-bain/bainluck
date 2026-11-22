@@ -430,6 +430,42 @@ it("checks for a new floor every minute while the page is visible", async () => 
   }
 });
 
+it("reports a collector failure even when the floor file did not change", async () => {
+  watchMotion();
+  const savedFetch = global.fetch;
+  const firstRead = "2026-11-18T18:01:00Z";
+  const secondRead = "2026-11-18T18:02:00Z";
+  const response = (renderedAt: string, failed: boolean) => ({
+    ok: true,
+    json: async () => ({
+      data: snapshot,
+      lastGoodAt: now,
+      readAt: renderedAt,
+      renderedAt,
+      readFailed: false,
+      buildCommit: null,
+      snapshotDigest: "unchanged",
+      activity: { checkedAt: renderedAt, collector: { at: renderedAt, failed } },
+    }),
+  });
+  global.fetch = jest.fn().mockResolvedValueOnce(response(firstRead, false))
+    .mockResolvedValueOnce(response(secondRead, true));
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  try {
+    await act(async () => root.render(<FactoryFloor data={snapshot} lastGoodAt={now} renderedAt={now} />));
+    await act(async () => { jest.advanceTimersByTime(60_000); });
+    expect(container.querySelector('[data-reading-state="current"]')).toBeTruthy();
+    await act(async () => { jest.advanceTimersByTime(60_000); });
+    expect(container.querySelector('[data-reading-state="failed"][data-motion="paused"]')).toBeTruthy();
+    expect(container.querySelectorAll("[data-bay]")).toHaveLength(18);
+    expect(document.title).toBe("Not updating. | The Factory");
+  } finally {
+    await act(async () => root.unmount());
+    global.fetch = savedFetch;
+  }
+});
+
 it("plays one event at a time in order, pauses and preserves the remaining delay", async () => {
   const events: FloorEvent[] = ["commit", "bot"].map((kind, index) => ({
     id: String(index),
@@ -579,7 +615,10 @@ it("labels the TestFlight build with the Pacific time of the recorded post", asy
   const postedAt = "2026-11-17T23:05:00Z";
   const data = {
     ...snapshot,
-    signals: { ...snapshot.signals, testflight_post: { build: 5832, at: postedAt } },
+    signals: {
+      ...snapshot.signals,
+      testflight_post: { build: 5832, at: postedAt, commit: "a".repeat(40) },
+    },
   };
 
   try {
@@ -601,7 +640,7 @@ it("uses amber for a missing reading or a stopped refresh and green only for a v
     signals: { tests: "passing", testflight: "success" },
   };
   expect(floorVerdict(clear, false, now)).toMatchObject({ level: "green", text: "All clear." });
-  expect(floorVerdict(clear, true, now)).toMatchObject({ level: "amber", text: "Not updating." });
+  expect(floorVerdict(clear, true, now)).toMatchObject({ level: "amber", text: "Showing the last published floor." });
   expect(floorVerdict({ ...clear, stops: undefined }, false, now).level).toBe("amber");
   expect(floorVerdict({ ...clear, signals: { ...clear.signals, tests: "unknown" } }, false, now).level).toBe("amber");
   expect(floorVerdict(null, true, now).level).toBe("amber");

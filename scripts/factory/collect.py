@@ -31,6 +31,10 @@ from signals import commands_from, crew_posts_from, test_file
 
 REPO = "alexander-bain/bainluck"
 RELEASE = "factory-data"
+FABLE_ACCEPT_SHA = re.compile(
+    r"^\*\*Fable(?: look)?(?:\*\*)?[ :—–-]+(?:\*\*)?ACCEPT(?:ED)?\s+at\s+`?([a-f0-9]{7,40})\b",
+    re.I,
+)
 RELEASE_HOLD = re.compile(
     r"(?<!\bnot )(?<!\bno longer )(?<!\bwas )(?<!\bno need to )"
     r"\b(?:holds?(?:\s+(?:the\s+)?merge)?|held|do not merge)\s+(?:"
@@ -162,11 +166,13 @@ def safe_comment(comment):
     fable = body.startswith("**Fable")
     heading = body.partition("\n")[0]
     changes = fable and bool(re.search(r"\bCHANGES\b", heading))
+    at_sha = FABLE_ACCEPT_SHA.match(heading) if not changes else None
     return {
         "created_at": comment["created_at"],
         "updated_at": comment["updated_at"],
         "association": comment.get("author_association"),
         "fable_changes": changes,
+        **({"fable_accept_sha": at_sha[1].lower()} if at_sha else {}),
         "fable_accept": fable
         and not changes
         and bool(

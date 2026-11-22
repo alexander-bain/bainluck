@@ -47,11 +47,12 @@ import { builderOfDay, clipboard, median } from "./signs";
 import { useDayReplay } from "./useDayReplay";
 import { useFactoryDisplay } from "./useFactoryDisplay";
 import type { FactoryDisplayReading } from "./displayReading";
+import type { GitHubActivity } from "./githubActivity";
 import { validateSnapshot } from "./data";
 import { useReplayJournal } from "./replayJournal";
 import { remainingEvents, transfersSince } from "./liveTransfers";
 import { crossesSegment, eventText, WALK_PER_STATION_MS, useEventPlayer } from "./playback";
-import { factoryTabTitle, floorVerdict, type FloorVerdict } from "./verdict";
+import { factoryTabTitle, floorReadingState, floorVerdict, type FloorVerdict } from "./verdict";
 import {
   stations,
   stationNames,
@@ -59,7 +60,6 @@ import {
   workshopLight,
   time,
   duration,
-  readerBehind,
   stopText,
   stopWaitText,
   bayActivity,
@@ -218,13 +218,14 @@ export default function FactoryFloor(initial: {
   readAt?: string;
   readFailed?: boolean;
   buildCommit?: string | null;
+  activity?: GitHubActivity;
   renderedAt: string;
 }) {
   usePageTracking({ pageType: "home", pageTitle: "The Factory" });
   useScrollDepth({ pageType: "home" });
   useEngagementTime({ pageType: "home" });
   const [refresh, setRefresh] = useState<{ initialAt: string; reading: FactoryDisplayReading }>();
-  const { data: snapshot, lastGoodAt, readAt, readFailed = false } =
+  const { data: snapshot, lastGoodAt, readAt, readFailed = false, activity } =
     refresh?.initialAt === initial.renderedAt ? refresh.reading : initial;
   const receiveReading = useCallback((reading: FactoryDisplayReading) => {
     setRefresh({ initialAt: initial.renderedAt, reading });
@@ -256,9 +257,10 @@ export default function FactoryFloor(initial: {
   const { now, tabVisible, reducedMotion } = useFactoryDisplay(
     initial.renderedAt, initial.buildCommit ?? null, rememberFloor, receiveReading,
   );
-  const behind = data !== null && (readFailed || readerBehind(data, now));
+  const readingState = data && floorReadingState(data, readFailed, now, activity);
+  const behind = readingState !== null && readingState !== "current";
   const motion = !behind && tabVisible && reducedMotion === false;
-  const verdict = floorVerdict(data, readFailed, now);
+  const verdict = floorVerdict(data, readFailed, now, activity);
   const tabTitle = factoryTabTitle(verdict);
   const today = pacificDay(now);
   const light = workshopLight(now);
@@ -410,6 +412,13 @@ export default function FactoryFloor(initial: {
     (c) => c.station === "Live" && c.live_at && pacificDay(c.live_at) === today,
   );
   const lastRead = shownReadAt ?? data.generated_at;
+  const publishedAge = duration((Date.parse(now) - Date.parse(data.generated_at)) / 1000);
+  const readLabel = {
+    failed: "Not updating",
+    quiet: "Quiet floor",
+    "last-known": "Last published floor",
+    current: shownReadAt ? `Read at ${time(shownReadAt)} PT` : "Read from GitHub",
+  }[readingState ?? "current"];
   const canRankDeliveries = !behind && pacificDay(data.generated_at) === today && data.coverage.length === 0;
   const dayLeader = canRankDeliveries ? builderOfDay(shipped) : null;
   const dayLeaders = dayLeader ? new Intl.ListFormat("en-US").format(
@@ -621,6 +630,7 @@ export default function FactoryFloor(initial: {
       data-factory="true"
       data-workshop-light={light}
       data-reader={behind ? "behind" : "current"}
+      data-reading-state={readingState}
       data-motion={motion ? "running" : "paused"}
     >
       <header className={styles.heading}>
@@ -634,9 +644,7 @@ export default function FactoryFloor(initial: {
         <div className={styles.updated}>
           <span className={styles.statusDot} aria-hidden="true" />
           <div>
-            <strong>
-              {behind ? "Not updating" : shownReadAt ? `Read at ${time(shownReadAt)} PT` : "Read from GitHub"}
-            </strong>
+            <strong>{readLabel}</strong>
             <span>
               {behind && "Published "}
               {new Intl.DateTimeFormat("en-US", {
@@ -704,15 +712,18 @@ export default function FactoryFloor(initial: {
           </ol>
         </details>
       )}
-      {behind && (
+      {(readingState === "failed" || readFailed) && (
         <div className={styles.readerWarning} role="status">
           <Pause size={20} aria-hidden="true" />
           <p>
             Last read {time(lastRead)} PT,{" "}
             {duration((Date.parse(now) - Date.parse(lastRead)) / 1000)}{" "}
-            ago. Updates have stopped.
+            ago. {readingState === "failed" ? "Updates have stopped." : "The latest read failed."}
           </p>
         </div>
+      )}
+      {readingState === "quiet" && (
+        <p className={styles.sectionNote}>Last published {publishedAge} ago. No changes landed and no shared tests finished since then.</p>
       )}
 
       <section className={styles.floorCard} aria-labelledby="floor-heading">
@@ -823,7 +834,7 @@ export default function FactoryFloor(initial: {
                       <LineIcon size={20} strokeWidth={1.6} />
                       <strong>{line}</strong>
                       {line === "Apps" && testFlightPost && Number.isFinite(Date.parse(testFlightPost.at)) && (
-                        <span className={styles.buildPlate}>
+                        <span className={styles.buildPlate} title="Reported from TestFlight and matched to a successful build on GitHub">
                           TestFlight build {testFlightPost.build}
                           <time dateTime={testFlightPost.at}>
                             Posted {pacificPostingTime.format(new Date(testFlightPost.at))} PT
@@ -1302,9 +1313,9 @@ export default function FactoryFloor(initial: {
       </div>
       <footer className={styles.notes}>
         <p>
-          The floor is re-read after CI finishes and when master changes, with a
-          five-minute timer as a backstop. This page refreshes once a minute
-          while visible. All times are Pacific.
+          GitHub re-reads the floor after shared tests finish and when the main
+          branch changes. Its timer can run between changes. This page checks for
+          a new floor once a minute while visible. All times are Pacific.
         </p>
         {data.coverage.map((note) => (
           <p key={note}>{note}</p>
@@ -1324,6 +1335,7 @@ export default function FactoryFloor(initial: {
             Jam times begin and end with observed updates. A quiet page can cross
             a waiting-time threshold between updates.
           </p>
+          <p>The TestFlight number comes from a build report matched to a successful build on the main branch.</p>
         </details>
       </footer>
     </article>

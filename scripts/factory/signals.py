@@ -46,6 +46,19 @@ BUILD = re.compile(
     r"|\bTestFlight[*`]*\s+[*`]*[0-9]+\.[0-9]+\.[0-9]+\s+\(([1-9][0-9]{0,9})\)",
     re.I,
 )
+VERSIONED_BUILD = r"[\s*`]*[0-9]+\.[0-9]+\.[0-9]+\s+\(([1-9][0-9]{0,9})\)[*`]*"
+BUILD_COMMIT = r"\s+on\s+(?:commit\s+)?`?([a-f0-9]{7,40})\b"
+LATEST_BUILD = re.compile(
+    r"(?:^|\.\s+)\s*\**(?:the )?latest TestFlight build(?: in App Store Connect)? is (?:still )?"
+    + VERSIONED_BUILD + BUILD_COMMIT,
+    re.I,
+)
+VALID_BUILD = re.compile(
+    r"^TestFlight(?: build)?" + VERSIONED_BUILD
+    + r"\s+is\s+[*`]*VALID[*`]*\s+\(Xcode Cloud run [0-9`]+ [*`]*SUCCEEDED[*`]*"
+    + BUILD_COMMIT,
+    re.I,
+)
 CHANGE_NUMBER = re.compile(r"#[1-9][0-9]{0,9}\b")
 SHELF_FLAGS = ("held_for_108", "parked", "bot_update", "side_track")
 CREW_LANES = {
@@ -220,9 +233,10 @@ def commands_from(comments):
                         if build:
                             event["build"] = build
                     commands.append(event)
-            elif BUILD.match(status) and (build := testflight_number(status)):
+            elif report := LATEST_BUILD.search(status) or VALID_BUILD.match(status):
                 commands.append(
-                    {"kind": "build", "line": "Apps", "at": at, "build": build}
+                    {"kind": "build", "line": "Apps", "at": at,
+                     "build": int(report[1]), "commit": report[2].lower()}
                 )
 
             if re.match(r"^stuck\b", status, re.I) and not clearing:

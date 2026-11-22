@@ -1,0 +1,68 @@
+{
+  "observed_at": "2026-11-22T14:37:23.074498Z",
+  "pull": {
+    "number": 13396,
+    "title": "Name the crawler in slow request records",
+    "branch": "speed/13350-robots-and-slow-ua",
+    "head_sha": "14f47276eeb00d7f432f54325fd18221c9845fd3",
+    "state": "open",
+    "created_at": "2026-11-21T23:59:15Z",
+    "updated_at": "2026-11-22T00:25:20Z",
+    "draft": false,
+    "files_complete": true,
+    "files": ["backend/app/main.py"],
+    "checks_complete": true,
+    "checks": [
+      {"name": "CI", "state": "completed", "conclusion": "success", "finished_at": "2026-11-22T00:36:35Z"}
+    ],
+    "reviews_complete": true,
+    "reviews": [],
+    "commits_complete": true,
+    "commits": [
+      {"sha": "8e9c52b439a782e985c5cb2cbd34d75cf6117edd", "at": "2026-11-21T23:56:21Z"},
+      {"sha": "14f47276eeb00d7f432f54325fd18221c9845fd3", "at": "2026-11-22T00:16:53Z"}
+    ],
+    "comments_complete": true
+  },
+  "fable_accept": {
+    "id": 7071537772,
+    "body": "**Fable: ACCEPT at `14f47276eeb00d7f432f54325fd18221c9845fd3`** (4:25 PM PT, Sat Nov 21). **Do not merge while master is closed**; then after #13388 and #13395.",
+    "created_at": "2026-11-22T00:25:20Z",
+    "updated_at": "2026-11-22T00:25:20Z",
+    "author_association": "OWNER"
+  },
+  "testflight_reports": [
+    {
+      "id": 7073738830,
+      "body": "TestFlight **1.0.7 (5847)** is **VALID** (Xcode Cloud run `5847` `SUCCEEDED` on commit `4ea7c4ce3b484442b4c471d302549f5c33ddd034`, carrying **#13398** / **#13392** and **#13348**) — Builder F.",
+      "created_at": "2026-11-22T03:43:50Z",
+      "author_association": "OWNER"
+    },
+    {
+      "id": 7077578198,
+      "body": "- Xcode Cloud dropped the `06:55:16Z` push webhook for `9b1d7491b2`. Latest TestFlight build in App Store Connect is still `1.0.7 (5849)` on `f76a840256` (carries `#13412` and `#13351`, **not** `#13414`).\n- Awaiting a `master` `ciBuildRun >= 5850` carrying `9b1d7491b2`.",
+      "created_at": "2026-11-22T10:06:38Z",
+      "author_association": "OWNER"
+    }
+  ],
+  "testflight_statuses": [
+    {
+      "line": "Apps",
+      "state": "success",
+      "kind": "reported",
+      "commit": "4ea7c4ce3b484442b4c471d302549f5c33ddd034",
+      "committed_at": "2026-11-22T03:22:31Z",
+      "at": "2026-11-22T03:34:22Z",
+      "contains": []
+    },
+    {
+      "line": "Apps",
+      "state": "success",
+      "kind": "reported",
+      "commit": "f76a84025691c21db9929fcd6d588cef265c1a47",
+      "committed_at": "2026-11-22T06:46:35Z",
+      "at": "2026-11-22T06:58:31Z",
+      "contains": []
+    }
+  ]
+}

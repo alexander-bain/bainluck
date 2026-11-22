@@ -25,19 +25,26 @@ const data = {
   coverage: [],
 } as FactoryData;
 
-it("draws an old valid floor, dimmed and motionless, with its age", () => {
+it("keeps the old floor motionless without claiming updates stopped when no work finished", () => {
+  const renderedAt = "2026-11-18T17:50:00Z";
   const html = renderToStaticMarkup(
     <FactoryFloor
       data={data}
       lastGoodAt={data.generated_at}
-      renderedAt="2026-11-18T17:50:00Z"
+      renderedAt={renderedAt}
+      activity={{
+        checkedAt: renderedAt,
+        masterAt: data.generated_at,
+        ciAt: data.generated_at,
+        collector: { at: data.generated_at, failed: false },
+      }}
     />,
   );
   expect(html).toContain('data-reader="behind"');
   expect(html).toContain('data-motion="paused"');
-  expect(html).toContain(
-    "Last read 7:58 AM PT, 1 hr 51 min ago. Updates have stopped.",
-  );
+  expect(html).toContain('data-reading-state="quiet"');
+  expect(html).toContain("Last published 1 hr 51 min ago.");
+  expect(html).not.toContain("Updates have stopped.");
   expect(html).toContain('data-factory-row="Server"');
   expect(html).not.toContain("The floor can&#x27;t be read right now");
 });

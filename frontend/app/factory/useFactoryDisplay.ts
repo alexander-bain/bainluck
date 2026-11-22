@@ -85,6 +85,7 @@ export function useFactoryDisplay(
         () => {
           if (disposed || document.visibilityState !== "visible") return;
           onReading({
+            activity: lastReading.current?.activity,
             data: null,
             lastGoodAt: null,
             readFailed: true,
