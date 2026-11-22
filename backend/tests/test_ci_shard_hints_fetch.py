@@ -99,10 +99,10 @@ def test_a_transient_error_is_retried(tmp_path):
     assert rc == 0 and written["files"] == GOOD["files"] and fake.calls.count("https://dl/1") == 2
 
 
-def _jobs(steps_ran=True, n=8, conclusion="success"):
+def _jobs(steps_ran=True, n=16, conclusion="success"):
     return {"jobs": [
         {"id": 100 + i, "name": f"backend-tests ({i})", "conclusion": conclusion,
-         "steps": [{"name": f"Run tests (shard {i}/8)", "conclusion": "success" if steps_ran else "skipped"}]}
+         "steps": [{"name": f"Run tests (shard {i}/16)", "conclusion": "success" if steps_ran else "skipped"}]}
         for i in range(1, n + 1)
     ] + [{"id": 1, "name": "frontend-build", "conclusion": "success", "steps": []}]}
 
@@ -122,7 +122,7 @@ def test_job_logs_reads_each_shard_of_the_latest_attempt(tmp_path):
     out = tmp_path / "all.log"
     fake = JobsFake(_jobs())
     assert f.job_logs("o/r", "55", "tok", out, opener=fake, sleep=lambda s: None) == 0
-    assert out.read_text().count("s call") == 8
+    assert out.read_text().count("s call") == 16
     assert "/actions/runs/55/jobs?filter=latest" in fake.calls[0]  # per job: survives a re-run
     assert not any(c.endswith("/runs/55/logs") for c in fake.calls)  # never the run archive
 
@@ -131,7 +131,7 @@ def test_a_run_whose_shards_ran_no_tests_holds(tmp_path):
     assert f.job_logs("o/r", "55", "tok", tmp_path / "x", opener=JobsFake(_jobs(steps_ran=False)), sleep=lambda s: None) == f.HOLD
 
 
-@pytest.mark.parametrize("jobs", [_jobs(n=7), _jobs(conclusion="failure")])
+@pytest.mark.parametrize("jobs", [_jobs(n=15), _jobs(conclusion="failure")])
 def test_a_partial_or_failed_set_of_shards_refuses(tmp_path, jobs):
     assert f.job_logs("o/r", "55", "tok", tmp_path / "x", opener=JobsFake(jobs), sleep=lambda s: None) == 1
 

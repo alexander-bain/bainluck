@@ -165,7 +165,7 @@ jobs:
             echo "::error::the refresh did not reduce the unmeasured count ($BEFORE -> $AFTER); not uploading."
             exit 1
           fi
-          python3 scripts/ci_shard.py --verify --of 8
+          python3 scripts/ci_shard.py --verify --of 16
 
       - name: Upload the timings every CI run applies
         if: steps.logs.outputs.have

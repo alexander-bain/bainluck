@@ -77,6 +77,14 @@ jobs:
         - 6
         - 7
         - 8
+        - 9
+        - 10
+        - 11
+        - 12
+        - 13
+        - 14
+        - 15
+        - 16
     defaults:
       run:
         working-directory: backend
@@ -203,7 +211,7 @@ jobs:
       run: python scripts/ci_shard_hints_fetch.py adopt "$RUNNER_TEMP/shard-timings/ci_shard_durations.json"
     - name: The shards must cover the whole suite, exactly once each
       if: needs.change-scope.outputs.reuse != 'true'
-      run: python scripts/ci_shard.py --verify --of 8
+      run: python scripts/ci_shard.py --verify --of 16
   database-integration:
     strategy:
       fail-fast: false
@@ -211,6 +219,7 @@ jobs:
         group:
         - shared
         - shared-middle
+        - shared-middle-2
         - shared-tail
         - isolated
         - shared-suffix
@@ -987,113 +996,120 @@ jobs:
       run: "set -o pipefail\npython -m pytest \\\n  tests/integration/test_repair_5621_population_excludes_real_games_pg.py \\\n  -v -s -rs 2>&1\
         \ | tee /tmp/repair_5621_population.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/repair_5621_population.txt; then\n  echo \"::error::#5621\
         \ population gate SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\n"
+    - id: db_058_10717_shared_middle_provision_pg_trgm_on_2
+      name: "#10717 shared middle 2 \u2014 provision pg_trgm on the fresh database"
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
+      run: "python - <<'PYPG'\nimport asyncio\nimport os\nfrom sqlalchemy import text\nfrom sqlalchemy.ext.asyncio import create_async_engine\n\
+        \nasync def provision():\n    engine = create_async_engine(os.environ[\"SEARCH_TEST_DATABASE_URL\"])\n    try:\n        async with engine.begin()\
+        \ as conn:\n            await conn.execute(text(\"CREATE EXTENSION IF NOT EXISTS pg_trgm\"))\n    finally:\n        await engine.dispose()\n\
+        \nasyncio.run(provision())\nPYPG\n"
     - id: db_101_6073_the_re_date_declines_a_row_that_mov
       name: '#6073 the re-date declines a row that moved under it (real Postgres)'
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest \\\n  tests/integration/test_polymarket_redate_atomicity_6073_pg.py \\\n  -v -s -rs 2>&1 | tee /tmp/redate_atomicity_6073.txt\n\
         if grep -qiE \"[0-9]+ skipped\" /tmp/redate_atomicity_6073.txt; then\n  echo \"::error::#6073 re-date atomicity gate SKIPPED \u2014 the\
         \ gate did not run\"\n  exit 1\nfi\n"
     - id: db_102_6073_the_stuck_status_rescue_declines_a_
       name: '#6073 the stuck-status rescue declines a row that moved under it (real Postgres)'
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest \\\n  tests/integration/test_polymarket_stuck_status_atomicity_6073_pg.py \\\n  -v -s -rs 2>&1 |\
         \ tee /tmp/stuck_status_6073.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/stuck_status_6073.txt; then\n  echo \"::error::#6073 stuck-status\
         \ atomicity gate SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\n"
     - id: db_103_5918_the_league_rail_loads_the_sport_the
       name: '#5918 the league rail loads the sport the fold reads (real Postgres)'
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest \\\n  tests/integration/test_league_rail_sport_load_pg.py \\\n  -v -s -rs 2>&1 | tee /tmp/league_rail_sport_load.txt\n\
         if grep -qiE \"[0-9]+ skipped\" /tmp/league_rail_sport_load.txt; then\n  echo \"::error::#5918 league rail reach gate SKIPPED \u2014 the\
         \ gate did not run\"\n  exit 1\nfi\n"
     - id: db_104_pre_match_prior_equivalence_real_postgre
       name: Pre-match prior equivalence (real Postgres)
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_prematch_prior_lateral_equivalence_pg.py \\\n  -v -s -rs 2>&1 | tee /tmp/prematch_prior.txt\n\
         if grep -qiE \"[0-9]+ skipped\" /tmp/prematch_prior.txt; then\n  echo \"::error::pre-match prior equivalence SKIPPED \u2014 the gate did\
         \ not run\"\n  exit 1\nfi\n"
     - id: db_105_11296_a_final_s_pregame_projection_is_re
       name: '#11296 a final''s pregame projection is read from before the start (real Postgres)'
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_pregame_projection_pg_11296.py \\\n  tests/integration/test_pregame_projection_lists_pg_11296.py\
         \ \\\n  -v -rs 2>&1 | tee /tmp/pregame11296.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/pregame11296.txt; then\n  echo \"::error::#11296\
         \ pregame projection SKIPPED\"; exit 1\nfi\ngrep -qE \"[^0-9]10 passed[,[:space:]]\" /tmp/pregame11296.txt || {\n  echo \"::error::#11296\
         \ pregame projection did not run every case\"; exit 1; }\n"
     - id: db_106_kalshi_cliff_drain_bind_contract_real_po
       name: Kalshi cliff-drain bind contract (real Postgres)
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_kalshi_cliff_bind_contract.py \\\n  -v -s -rs 2>&1 | tee /tmp/cliffbind.txt\n\
         if grep -qiE \"[0-9]+ skipped\" /tmp/cliffbind.txt; then\n  echo \"::error::cliff-drain bind contract SKIPPED \u2014 the gate did not\
         \ run\"\n  exit 1\nfi\n"
     - id: db_107_create_wave_insert_bind_contract_real_po
       name: CREATE-wave INSERT bind contract (real Postgres)
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_create_wave_insert_bind_contract.py \\\n  -v -s -rs 2>&1 | tee /tmp/createbind.txt\n\
         if grep -qiE \"[0-9]+ skipped\" /tmp/createbind.txt; then\n  echo \"::error::CREATE-wave INSERT bind contract SKIPPED \u2014 the gate\
         \ did not run\"\n  exit 1\nfi\n"
     - id: db_108_calibration_mode_price_source_scope_real
       name: Calibration mode-price source scope (real Postgres)
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_calibration_mode_price_source_scope_pg.py \\\n  -v -s -rs 2>&1 | tee /tmp/modescope.txt\n\
         if grep -qiE \"[0-9]+ skipped\" /tmp/modescope.txt; then\n  echo \"::error::calibration mode-price source scope SKIPPED \u2014 the gate\
         \ did not run\"\n  exit 1\nfi\n"
     - id: db_109_calibration_threshold_ladder_collapse_re
       name: Calibration threshold-ladder collapse (real Postgres)
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_calibration_threshold_ladder_pg.py \\\n  -v -s -rs 2>&1 | tee /tmp/ladder.txt\n\
         if grep -qiE \"[0-9]+ skipped\" /tmp/ladder.txt; then\n  echo \"::error::calibration threshold-ladder contract SKIPPED \u2014 the gate\
         \ did not run\"\n  exit 1\nfi\n"
     - id: db_110_calibration_fair_fight_prop_threshold_ex
       name: Calibration fair-fight prop-threshold exclusion (real Postgres)
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_calibration_fair_fight_prop_threshold_1089_pg.py \\\n  -v -s -rs 2>&1 | tee\
         \ /tmp/fairfight1089.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/fairfight1089.txt; then\n  echo \"::error::calibration fair-fight prop-threshold\
         \ contract SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\n"
     - id: db_111_683_kalshi_archive_store_attended_import
       name: '#683 Kalshi archive store, attended import and chart readers (real Postgres)'
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_kalshi_archive_store_683_pg.py \\\n  -v -s -rs 2>&1 | tee /tmp/archive683.txt\n\
         if grep -qiE \"[0-9]+ skipped\" /tmp/archive683.txt; then\n  echo \"::error::#683 archive store gate SKIPPED \u2014 the gate did not run\"\
         \n  exit 1\nfi\ngrep -qE \"(^|[^0-9])79 passed([,[:space:]]|$)\" /tmp/archive683.txt || {\n  echo \"::error::#683 archive store gate did\
         \ not run all seventy-nine cases\"\n  exit 1\n}\n"
     - id: db_112_calibration_datagolf_symmetric_exclusion
       name: Calibration DataGolf symmetric exclusion (real Postgres)
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest \\\n  tests/integration/test_calibration_datagolf_symmetric_exclusion_pg.py \\\n  -v -s -rs 2>&1\
         \ | tee /tmp/dgsym.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/dgsym.txt; then\n  echo \"::error::DataGolf symmetric-exclusion contract\
         \ SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\n"
     - id: db_113_calibration_soccer_three_way_grade_real_
       name: Calibration soccer three-way grade (real Postgres)
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest \\\n  tests/integration/test_calibration_soccer_three_way_1011_pg.py \\\n  -v -s -rs 2>&1 | tee\
         \ /tmp/soccer3way.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/soccer3way.txt; then\n  echo \"::error::soccer three-way calibration contract\
         \ SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\n"
     - id: db_114_calibration_trade_evidence_polymarket_re
       name: Calibration trade-evidence Polymarket receipt (real Postgres)
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest \\\n  tests/integration/test_calibration_trade_evidence_receipt_1870_pg.py \\\n  -v -s -rs 2>&1\
         \ | tee /tmp/receipt1870.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/receipt1870.txt; then\n  echo \"::error::#1870 receipt trade-evidence\
         \ contract SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\n"
     - id: db_115_calibration_mode_price_source_scope_peer
       name: Calibration mode-price source scope, peer sites (real Postgres)
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest \\\n  tests/integration/test_calibration_mode_price_source_scope_peers_pg.py \\\n  -v -s -rs 2>&1\
         \ | tee /tmp/modescope_peers.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/modescope_peers.txt; then\n  echo \"::error::calibration mode-price\
         \ peer-site scope SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\n"
     - id: db_116_calibration_vm_variant_join_one_outcome_
       name: Calibration vm-variant join, one outcome one row (real Postgres)
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest \\\n  tests/integration/test_calibration_vm_variant_join_pg.py \\\n  -v -s -rs 2>&1 | tee /tmp/vmvariant.txt\n\
         if grep -qiE \"[0-9]+ skipped\" /tmp/vmvariant.txt; then\n  echo \"::error::calibration vm-variant join gate SKIPPED \u2014 the gate did\
         \ not run\"\n  exit 1\nfi\n"
     - id: db_117_tag_counts_statements_execute_real_postg
       name: tag-counts statements execute (real Postgres)
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_tag_counts_real_postgres.py \\\n  -v -s -rs 2>&1 | tee /tmp/tagcounts.txt\n\
         if grep -qiE \"[0-9]+ skipped\" /tmp/tagcounts.txt; then\n  echo \"::error::tag-counts real-Postgres gate SKIPPED \u2014 the gate did\
         \ not run\"\n  exit 1\nfi\n"
     - id: db_118_9238_guarded_image_apply_restore_real_po
       name: '#9238 guarded image apply/restore (real Postgres)'
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set +e\npython -m pytest tests/integration/test_image_repair_9238_apply_restore_pg.py \\\n  -v -s -rs > /tmp/image-repair-9238-pg.txt\
         \ 2>&1\nimage_gate_exit=$?\nset -e\ncat /tmp/image-repair-9238-pg.txt\nif [ \"$image_gate_exit\" -ne 0 ]; then\n  exit \"$image_gate_exit\"\
         \nfi\nif grep -qiE \"[0-9]+ skipped\" /tmp/image-repair-9238-pg.txt; then\n  echo \"::error::image repair real-Postgres gate SKIPPED\"\
@@ -1101,142 +1117,142 @@ jobs:
         \ gate did not execute all 24 cases\"\n  exit 1\n}\n"
     - id: db_119_2879_rekey_apply_rollback_round_trip_rea
       name: '#2879 rekey apply/rollback round trip (real Postgres)'
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_rekey_statpal_anchors_real_postgres.py \\\n  -v -s -rs 2>&1 | tee /tmp/rekey2879.txt\n\
         if grep -qiE \"[0-9]+ skipped\" /tmp/rekey2879.txt; then\n  echo \"::error::#2879 rekey round-trip gate SKIPPED \u2014 the gate did not\
         \ run\"\n  exit 1\nfi\n"
     - id: db_120_3094_live_space_clear_apply_rollback_rou
       name: '#3094 live-space clear apply/rollback round trip (real Postgres)'
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_null_statpal_live_space_3094_real_postgres.py \\\n  -v -s -rs 2>&1 | tee\
         \ /tmp/null3094.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/null3094.txt; then\n  echo \"::error::#3094 live-space clear round-trip gate\
         \ SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\n"
     - id: db_121_3366_soccer_stamp_backup_apply_restore_r
       name: '#3366 soccer stamp backup/apply/restore round trip (real Postgres)'
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_soccer_statpal_manifest_restore_pg.py \\\n  -v -s -rs 2>&1 | tee /tmp/soccer3366.txt\n\
         if grep -qiE \"[0-9]+ skipped\" /tmp/soccer3366.txt; then\n  echo \"::error::#3366 soccer stamp round-trip gate SKIPPED \u2014 the gate\
         \ did not run\"\n  exit 1\nfi\n"
     - id: db_122_2867_tennis_link_apply_rollback_round_tr
       name: '#2867 tennis link apply/rollback round trip (real Postgres)'
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_link_tennis_statpal_real_postgres.py \\\n  -v -s -rs 2>&1 | tee /tmp/tennislink2867.txt\n\
         if grep -qiE \"[0-9]+ skipped\" /tmp/tennislink2867.txt; then\n  echo \"::error::#2867 tennis link round-trip gate SKIPPED \u2014 the\
         \ gate did not run\"\n  exit 1\nfi\n"
     - id: db_123_2867_already_linked_lookup_real_postgres
       name: '#2867 already-linked lookup (real Postgres)'
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_link_tennis_already_linked_pg.py \\\n  -v -s -rs 2>&1 | tee /tmp/tennisalready2867.txt\n\
         if grep -qiE \"[0-9]+ skipped\" /tmp/tennisalready2867.txt; then\n  echo \"::error::#2867 already-linked lookup gate SKIPPED \u2014 the\
         \ gate did not run\"\n  exit 1\nfi\n"
     - id: db_124_tennis_commence_predicate_reset_scope_re
       name: Tennis commence predicate + reset scope (real Postgres)
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_tennis_commence_predicate_real_postgres.py \\\n  -v -s -rs 2>&1 | tee /tmp/tenniscommence.txt\n\
         if grep -qiE \"[0-9]+ skipped\" /tmp/tenniscommence.txt; then\n  echo \"::error::tennis commence predicate gate SKIPPED \u2014 the gate\
         \ did not run\"\n  exit 1\nfi\n"
     - id: db_125_identity_quarantine_sql_python_predicate
       name: Identity quarantine SQL == Python predicate (real Postgres)
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_market_identity_quarantine_sql_real_postgres.py \\\n  -v -s -rs 2>&1 | tee\
         \ /tmp/identityquarantine.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/identityquarantine.txt; then\n  echo \"::error::identity quarantine\
         \ differential SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\n"
     - id: db_126_identity_quarantine_reads_the_linked_eve
       name: Identity quarantine reads the LINKED EVENT's date (real Postgres)
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_identity_quarantine_linked_event_date_6275_pg.py \\\n  -v -s -rs 2>&1 | tee\
         \ /tmp/identityeventdate.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/identityeventdate.txt; then\n  echo \"::error::#6275 linked-event-date\
         \ gate SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\n"
     - id: db_127_identity_quarantine_is_evaluated_once_pe
       name: Identity quarantine is evaluated once per unit (real Postgres)
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_identity_quarantine_single_evaluation_6275_pg.py \\\n  -v -s -rs 2>&1 | tee\
         \ /tmp/identityoneeval.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/identityoneeval.txt; then\n  echo \"::error::#6275 single-evaluation\
         \ gate SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\n"
     - id: db_128_stand_in_event_starts_get_the_published_
       name: Stand-in event starts get the published hour (real Postgres)
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_stand_in_event_starts_real_postgres.py \\\n  -v -s -rs 2>&1 | tee /tmp/standinstarts.txt\n\
         if grep -qiE \"[0-9]+ skipped\" /tmp/standinstarts.txt; then\n  echo \"::error::stand-in event start gate SKIPPED \u2014 the gate did\
         \ not run\"\n  exit 1\nfi\n"
     - id: db_129_1852_gap_create_grade_round_trip_real_po
       name: '#1852 gap-create grade round trip (real Postgres)'
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_gap_create_grade_real_postgres.py \\\n  -v -s -rs 2>&1 | tee /tmp/gapgrade1852.txt\n\
         if grep -qiE \"[0-9]+ skipped\" /tmp/gapgrade1852.txt; then\n  echo \"::error::#1852 gap-create grade round trip SKIPPED \u2014 the gate\
         \ did not run\"\n  exit 1\nfi\n"
     - id: db_130_3433_kalshi_game_commence_wiring_real_po
       name: '#3433 Kalshi game commence wiring (real Postgres)'
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_kalshi_game_commence_wiring_real_postgres.py \\\n  -v -s -rs 2>&1 | tee /tmp/commencewiring3433.txt\n\
         if grep -qiE \"[0-9]+ skipped\" /tmp/commencewiring3433.txt; then\n  echo \"::error::#3433 Kalshi commence wiring gate SKIPPED \u2014\
         \ the gate did not run\"\n  exit 1\nfi\n"
     - id: db_131_3518_a_listed_kalshi_leg_is_never_left_w
       name: '#3518 A listed Kalshi leg is never left with zero outcomes (real Postgres)'
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_kalshi_unpriced_outcome_is_recorded_real_postgres.py \\\n  -v -s -rs 2>&1\
         \ | tee /tmp/unpricedoutcome3518.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/unpricedoutcome3518.txt; then\n  echo \"::error::#3518 unpriced-outcome\
         \ gate SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\n"
     - id: db_132_9460_one_kalshi_event_s_failed_write_doe
       name: '#9460 one Kalshi event''s failed write does not sink the rest of the beat (real Postgres)'
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_kalshi_poll_survives_one_failed_event_real_postgres_9460.py \\\n  -v -rs\
         \ 2>&1 | tee /tmp/kalshisavepoint9460.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/kalshisavepoint9460.txt; then\n  echo \"::error::#9460\
         \ Kalshi per-event savepoint gate SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\ngrep -qE \"[^0-9]3 passed\" /tmp/kalshisavepoint9460.txt\
         \ || {\n  echo \"::error::#9460 Kalshi per-event savepoint gate did not run all three cases\"\n  exit 1\n}\n"
     - id: db_133_10732_a_finished_kalshi_event_holds_no_r
       name: '#10732 a finished Kalshi event holds no row lock across the next event''s venue call (real Postgres)'
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_kalshi_poll_releases_event_locks_before_metadata_real_postgres_10732.py \\\
         \n  -v -rs 2>&1 | tee /tmp/kalshieventcommit10732.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/kalshieventcommit10732.txt; then\n  echo \"\
         ::error::#10732 Kalshi event commit boundary gate SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\ngrep -qE \"[^0-9]11 passed\" /tmp/kalshieventcommit10732.txt\
         \ || {\n  echo \"::error::#10732 Kalshi event commit boundary gate did not run all eleven cases\"\n  exit 1\n}\n"
     - id: db_134_9543_the_kalshi_beat_reaches_the_existin
       name: '#9543 the Kalshi beat reaches the existing rows it wrote longest ago first (real Postgres)'
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_kalshi_poll_reaches_the_stalest_rows_first_real_postgres_9543.py \\\n  -v\
         \ -rs 2>&1 | tee /tmp/kalshireach9543.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/kalshireach9543.txt; then\n  echo \"::error::#9543 Kalshi\
         \ poll reach gate SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\ngrep -qE \"[^0-9]5 passed\" /tmp/kalshireach9543.txt || {\n  echo\
         \ \"::error::#9543 Kalshi poll reach gate did not run all five cases\"\n  exit 1\n}\n"
     - id: db_135_3569_the_live_poll_speaks_the_venue_s_cu
       name: '#3569 The live poll speaks the venue''s current price dialect (real Postgres)'
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_live_poll_kalshi_prices_real_postgres.py \\\n  -v -s -rs 2>&1 | tee /tmp/livepricedialect3569.txt\n\
         if grep -qiE \"[0-9]+ skipped\" /tmp/livepricedialect3569.txt; then\n  echo \"::error::#3569 live-price dialect gate SKIPPED \u2014 the\
         \ gate did not run\"\n  exit 1\nfi\n"
     - id: db_136_9399_a_polymarket_leg_we_refuse_to_price
       name: '#9399 A Polymarket leg we refuse to price stops keeping a number its own book prices out (real Postgres)'
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_polymarket_refused_leg_withdrawn_9399_real_postgres.py tests/integration/test_live_binary_child_write_12633_real_postgres.py \\\n  -v -s -rs 2>&1\
         \ | tee /tmp/refusedlegwithdrawn9399.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/refusedlegwithdrawn9399.txt; then\n  echo \"::error::#9399\
         \ refused-leg withdrawal gate SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\n"
     - id: db_137_5343_a_polymarket_leg_the_venue_settled_
       name: '#5343 A Polymarket leg the venue settled No is stored as a resolved row (real Postgres)'
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_polymarket_resolved_zero_legs_5343_real_postgres.py \\\n  -v -s -rs 2>&1\
         \ | tee /tmp/resolvedzerolegs5343.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/resolvedzerolegs5343.txt; then\n  echo \"::error::#5343 resolved\
         \ zero-leg gate SKIPPED \u2014 the gate did not run\"\n  exit 1\nfi\n"
     - id: db_138_3518_3569_a_low_value_future_game_ends_u
       name: '#3518+#3569 A low-value future game ends up showing a price (real Postgres)'
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_linked_game_price_chain_real_postgres.py \\\n  -v -s -rs 2>&1 | tee /tmp/linkedgamechain3569.txt\n\
         if grep -qiE \"[0-9]+ skipped\" /tmp/linkedgamechain3569.txt; then\n  echo \"::error::#3518+#3569 price-chain gate SKIPPED \u2014 the\
         \ gate did not run\"\n  exit 1\nfi\n"
     - id: db_139_3613_the_dark_polymarket_selector_execut
       name: '#3613 The dark-Polymarket selector, executed (real Postgres)'
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_dark_polymarket_selector_real_postgres.py \\\n  -v -s -rs 2>&1 | tee /tmp/darkpoly3613.txt\n\
         if grep -qiE \"[0-9]+ skipped\" /tmp/darkpoly3613.txt; then\n  echo \"::error::#3613 dark-Polymarket selector gate SKIPPED \u2014 the\
         \ gate did not run\"\n  exit 1\nfi\n"
     - id: db_140_4896_a_game_about_to_be_played_leads_the
       name: '#4896 A game about to be played leads the refresh queue (real Postgres)'
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_polymarket_kickoff_ordering_pg.py \\\n  -v -s -rs 2>&1 | tee /tmp/kickofforder4896.txt\n\
         if grep -qiE \"[0-9]+ skipped\" /tmp/kickofforder4896.txt; then\n  echo \"::error::#4896 kickoff-ordering gate SKIPPED \u2014 the gate\
         \ did not run\"\n  exit 1\nfi\n"
     - id: db_141_2927_containers_migration_round_trip_rea
       name: '#2927 containers migration round trip (real Postgres)'
-      if: ${{ !cancelled() && (matrix.group == 'shared-middle' && needs.change-scope.outputs.reuse != 'true') }}
+      if: ${{ !cancelled() && (matrix.group == 'shared-middle-2' && needs.change-scope.outputs.reuse != 'true') }}
       run: "set -o pipefail\npython -m pytest tests/integration/test_containers_migration_real_postgres.py \\\n  -v -s -rs 2>&1 | tee /tmp/containers2927.txt\n\
         if grep -qiE \"[0-9]+ skipped\" /tmp/containers2927.txt; then\n  echo \"::error::#2927 containers migration round trip SKIPPED \u2014\
         \ the gate did not run\"\n  exit 1\nfi\ngrep -E \"^CONTAINERS MIGRATION ROUND TRIP\" /tmp/containers2927.txt || {\n  echo \"::error::no\
@@ -2492,6 +2508,7 @@ jobs:
     needs:
     - change-scope
     - database-integration
+    - backend-tests
     if: always() && needs.change-scope.result == 'success'
     runs-on: ubuntu-latest
     steps:
@@ -2501,6 +2518,16 @@ jobs:
         INTEGRATION_RESULT: ${{ needs.database-integration.result }}
       run: "if [ \"$SCOPE_RESULT\" != \"success\" ] || [ \"$INTEGRATION_RESULT\" != \"success\" ]; then\n  echo \"::error::database integration\
         \ incomplete: scope=$SCOPE_RESULT groups=$INTEGRATION_RESULT\"\n  exit 1\nfi\necho \"All database integration groups passed.\"\n"
+    - name: Every backend test shard passed
+      env:
+        SCOPE_RESULT: ${{ needs.change-scope.result }}
+        BACKEND_RESULT: ${{ needs.backend-tests.result }}
+      run: |
+        if [ "$SCOPE_RESULT" != "success" ] || [ "$BACKEND_RESULT" != "success" ]; then
+          echo "::error::backend-tests incomplete: scope=$SCOPE_RESULT shards=$BACKEND_RESULT"
+          exit 1
+        fi
+        echo "All backend test shards passed."
   frontend-build:
     needs:
     - change-scope
