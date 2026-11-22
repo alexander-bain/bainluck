@@ -17,6 +17,8 @@ import pytest
 from app.utils.container_machinery import (
     _SUBJECT_ART_PATH,
     _compute_member_number_parity,
+    _effective_market_volume,
+    _market_matches_query,
     build_container_machinery_producer,
     discover_machinery_candidate_paths,
     load_machinery_definition,
@@ -24,6 +26,7 @@ from app.utils.container_machinery import (
 )
 from app.utils.discover_fun_tags import (
     CURATED_GROUPING_SETS_PATHS,
+    check_fun_real_trading,
     clear_fun_markets_cache,
     fun_market_ids_for_sub_tag,
     load_fun_markets_registry,
@@ -323,3 +326,132 @@ async def test_batch5_every_row_reads_cleanly_in_slot_1_and_slot_2() -> None:
                 assert "? at " not in h and not h.endswith("?"), f"{slug}: question headline {h!r}"
                 assert ": " not in h, f"{slug}: colon dump {h!r}"
                 assert not BAD_MID_SENTENCE_CAP_RE.search(h), f"{slug}: mid-sentence cap in {h!r}"
+
+
+def test_missing_lifetime_volume_fallback_and_failure_contract() -> None:
+    """Missing lifetime volume falls back to volume_24h or traded gamma_volume; neither fails (#336-A)."""
+    # Missing lifetime volume + positive 24h volume -> passes.
+    eff_v24 = _effective_market_volume(None, volume_24h=960)
+    assert eff_v24 == 960.0
+    assert check_fun_real_trading(eff_v24, min_lifetime_volume=1) == (True, None)
+
+    # Missing lifetime & 24h volume + recorded traded Polymarket gamma_volume -> passes.
+    traded_meta = {"volume_evidence": {"verdict": "traded", "gamma_volume": 1741.84}}
+    eff_gamma = _effective_market_volume(None, volume_24h=None, market_metadata=traded_meta)
+    assert eff_gamma == 1741.84
+    assert check_fun_real_trading(eff_gamma, min_lifetime_volume=1) == (True, None)
+
+    # Missing lifetime & zero 24h volume still accepts recorded traded gamma_volume.
+    assert _effective_market_volume(None, volume_24h=0, market_metadata=traded_meta) == 1741.84
+
+    # Explicit 0 lifetime volume stays 0 (does not fall back) and fails min_lifetime_volume.
+    eff_zero = _effective_market_volume(0, volume_24h=960, market_metadata=traded_meta)
+    assert eff_zero == 0.0
+    assert check_fun_real_trading(eff_zero, min_lifetime_volume=1) == (False, "thin_trading:0<1")
+
+    # Missing all three (or confirmed_zero with neither) -> None / missing_volume.
+    eff_none = _effective_market_volume(None, volume_24h=None, market_metadata=None)
+    assert eff_none is None
+    assert check_fun_real_trading(eff_none, min_lifetime_volume=1) == (False, "missing_volume")
+    eff_conf_zero = _effective_market_volume(
+        None,
+        volume_24h=None,
+        market_metadata={"volume_evidence": {"verdict": "confirmed_zero", "gamma_volume": 0}},
+    )
+    assert eff_conf_zero is None
+    assert check_fun_real_trading(eff_conf_zero, min_lifetime_volume=1) == (False, "missing_volume")
+    assert _effective_market_volume(True, volume_24h=float("nan")) is None
+
+    # Non-fun query min_lifetime_volume respects the exact same contract.
+    non_fun_q = {"min_lifetime_volume": 1}
+    sample_outs = [{"id": 101, "name": "Kansas City Chiefs", "probability": 0.18}]
+    assert _market_matches_query(
+        {"id": 1, "name": "NFL Super Bowl Winner", "volume": None, "volume_24h": 960, "outcomes": sample_outs},
+        non_fun_q,
+    )
+    assert _market_matches_query(
+        {
+            "id": 4,
+            "name": "NFL Super Bowl Winner",
+            "volume": None,
+            "volume_24h": None,
+            "market_metadata": traded_meta,
+            "outcomes": sample_outs,
+        },
+        non_fun_q,
+    )
+    assert not _market_matches_query(
+        {"id": 2, "name": "NFL Super Bowl Winner", "volume": None, "volume_24h": None, "outcomes": sample_outs},
+        non_fun_q,
+    )
+    assert not _market_matches_query(
+        {"id": 3, "name": "NFL Super Bowl Winner", "volume": 0, "volume_24h": 960, "outcomes": sample_outs},
+        non_fun_q,
+    )
+
+
+@pytest.mark.asyncio
+async def test_march_madness_and_nhl_100_point_build_when_lifetime_volume_is_missing() -> None:
+    """Both sets build cleanly with volume=None rows when 24h or traded gamma volume exists; rows with neither fail."""
+    clear_fun_markets_cache()
+    paths_by_slug = {p.stem: p for p in discover_machinery_candidate_paths()}
+    markets = []
+    # Keep 52755955 at volume=384, give Polymarket Final Four & NHL sub-markets volume=None + gamma_volume/24h,
+    # except drop 68954775 & 63218767 to neither so we verify markets without either still fail.
+    dropped_mids = {68954775, 63218767}
+    for m in _sample_batch5_markets():
+        row = dict(m)
+        mid = int(row["id"])
+        if mid in dropped_mids:
+            row["volume"] = None
+            row["volume_24h"] = None
+            row["market_metadata"] = None
+        elif mid == 68954773:
+            row["volume"] = None
+            row["volume_24h"] = 125.0
+            row["market_metadata"] = None
+        elif mid != 52755955:
+            row["volume"] = None
+            row["volume_24h"] = None
+            row["market_metadata"] = {
+                "volume_evidence": {"verdict": "traded", "gamma_volume": 1741.84}
+            }
+        markets.append(row)
+
+    db = {
+        "events": [],
+        "markets": markets,
+        "teams": _sample_ncaa_teams(),
+        "paired_sets": {},
+        "market_histories": {},
+    }
+
+    for slug, dropped_id in (
+        ("machinery-march-madness-2027", 68954775),
+        ("machinery-nhl-100-point-club", 63218767),
+    ):
+        defn = load_machinery_definition(paths_by_slug[slug])
+        prod = build_container_machinery_producer(defn)
+        res = await produce_container_machinery(db, defn, now=NOW)
+        assert hasattr(res, "machinery_card"), (slug, res)
+        mids = {int(it["market_id"]) for it in res.sections[0]["visual_block"]["items"]}
+        assert dropped_id not in mids
+        assert len(mids) >= 3
+        assert all(isinstance(r.get("rendered_percent"), int) for r in res.machinery_card["rows"])
+        fi = sanitize_discover_feed_item(compose_roundup_feed_item(prod, res))
+        cp = compose_roundup_container(prod, res)
+        c_p, p_p = _compute_member_number_parity(fi, cp)
+        assert c_p["passes"] is True and p_p["passes"] is True
+
+    # If every market lacks lifetime, 24h, and traded gamma volume, assembly still refuses cleanly.
+    empty_db = {
+        "events": [],
+        "markets": [{**m, "volume": None, "volume_24h": None, "market_metadata": None} for m in _sample_batch5_markets()],
+        "teams": _sample_ncaa_teams(),
+        "paired_sets": {},
+        "market_histories": {},
+    }
+    for slug in ("machinery-march-madness-2027", "machinery-nhl-100-point-club"):
+        res_refused = await produce_container_machinery(empty_db, load_machinery_definition(paths_by_slug[slug]), now=NOW)
+        assert not hasattr(res_refused, "machinery_card"), slug
+
