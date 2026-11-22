@@ -151,6 +151,26 @@ export function answerIsNegative(name: string | null | undefined): boolean {
  *                inside the row's own title, do not repeat it underneath
  * @param opts    optional flags controlling title-based calendar date suppression
  */
+const UPPER_FILLER_SUFFIX = /^(.*?)(?:\s*\+|\s+or\s+(?:above|more|higher))\s*$/i;
+const LOWER_FILLER_SUFFIX = /^(.*?)\s+or\s+(?:below|less|lower|under)\s*$/i;
+const UPPER_TITLE_PREP = /\b(?:at\s+least|above|over)\b/i;
+const LOWER_TITLE_PREP = /\b(?:at\s+most|below|under)\b/i;
+
+function titleNamesAnswer(title: string, name: string): boolean {
+  if (captionNames(title, name)) return true;
+  const upperMatch = name.match(UPPER_FILLER_SUFFIX);
+  if (upperMatch && UPPER_TITLE_PREP.test(title)) {
+    const core = upperMatch[1].trim();
+    if (core && captionNames(title, core)) return true;
+  }
+  const lowerMatch = name.match(LOWER_FILLER_SUFFIX);
+  if (lowerMatch && LOWER_TITLE_PREP.test(title)) {
+    const core = lowerMatch[1].trim();
+    if (core && captionNames(title, core)) return true;
+  }
+  return false;
+}
+
 export function rowAnswerLabel(
   hero: HeroCandidate | null | undefined,
   caption: string | null | undefined,
@@ -165,7 +185,7 @@ export function rowAnswerLabel(
   if (answerIsNegative(name)) return name;
   if (
     title &&
-    captionNames(title, name) &&
+    titleNamesAnswer(title, name) &&
     (!CALENDAR_DATE_NAME.test(name) || opts?.titleStatesSingleAnswer === true)
   ) {
     return null;

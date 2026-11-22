@@ -599,7 +599,7 @@ def _bundle_member_single_row_label(data: Mapping[str, Any]) -> Optional[str]:
             priced.sort(key=lambda pt: float(pt.get("value") or 0.0))
             above50 = [pt for pt in priced if float(pt.get("probability") or 0.0) >= 0.5]
             if above50:
-                is_date = any(str(pt.get("source") or "") == "date_bucket" for pt in priced)
+                is_date = all(str(pt.get("source") or "") == "date_bucket" for pt in priced)
                 chosen_pt = above50[0] if is_date else above50[-1]
                 lbl = str(chosen_pt.get("label") or "").strip()
                 if lbl:

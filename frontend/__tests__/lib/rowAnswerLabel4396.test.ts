@@ -125,6 +125,38 @@ describe("#4396 — rowAnswerLabel names the answer only where the caption did n
       ).toBeNull();
       expect(
         rowAnswerLabel(
+          { name: "45%+", probability: 0.62 },
+          "",
+          "Trump approval rating at least 45% on November 20?",
+          { titleStatesSingleAnswer: true },
+        ),
+      ).toBeNull();
+      expect(
+        rowAnswerLabel(
+          { name: "$120,000 or above", probability: 0.55 },
+          "",
+          "Bitcoin above $120,000 on December 31?",
+          { titleStatesSingleAnswer: true },
+        ),
+      ).toBeNull();
+      expect(
+        rowAnswerLabel(
+          { name: "2.5% or below", probability: 0.52 },
+          "",
+          "Inflation below 2.5% in 2026?",
+          { titleStatesSingleAnswer: true },
+        ),
+      ).toBeNull();
+      expect(
+        rowAnswerLabel(
+          { name: "45%+", probability: 0.62 },
+          "",
+          "Trump approval rating below 45% on November 20?",
+          { titleStatesSingleAnswer: true },
+        ),
+      ).toBe("45%+");
+      expect(
+        rowAnswerLabel(
           { name: "December 31", probability: 0.765 },
           "",
           "US x Iran Effective Ceasefire begins by December 31? (2 week pause)",

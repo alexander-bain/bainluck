@@ -436,7 +436,39 @@ async def test_bundle_member_single_row_puts_level_and_deadline_in_title_while_s
     assert "…" not in json.dumps(theme_bundle)
     assert "___" not in json.dumps(theme_bundle)
 
-    # 3. Threshold heatmap picks the marked rung (date = earliest >= 50%, numeric = highest >= 50%).
+    # 3. Threshold heatmap picks the marked rung (date ONLY when ALL rungs are date_bucket = earliest >= 50%,
+    #    threshold/mixed = highest >= 50%, nothing >= 50% falls back to top outcome), and dedups comparators.
+    assert (
+        fill_market_display_name_blank(
+            "Bitcoin above ___ on December 31?", "$120,000 or above", single_row=True
+        )
+        == "Bitcoin above $120,000 on December 31?"
+    )
+    assert (
+        fill_market_display_name_blank(
+            "Revenue over ___ in 2026?", "$5B or more", single_row=True
+        )
+        == "Revenue over $5B in 2026?"
+    )
+    assert (
+        fill_market_display_name_blank(
+            "Inflation below ___ in 2026?", "2.5% or below", single_row=True
+        )
+        == "Inflation below 2.5% in 2026?"
+    )
+    assert (
+        fill_market_display_name_blank(
+            "CPI at most ___ this quarter?", "3% or less", single_row=True
+        )
+        == "CPI at most 3% this quarter?"
+    )
+    assert (
+        fill_market_display_name_blank(
+            "Unemployment under ___ in December?", "4% or lower", single_row=True
+        )
+        == "Unemployment under 4% in December?"
+    )
+
     heatmap_member = {
         "type": "futures",
         "_raw_market_name": "Trump approval rating at least ___ on November 20?",
@@ -455,8 +487,50 @@ async def test_bundle_member_single_row_puts_level_and_deadline_in_title_while_s
         },
     }
     pub_heatmap = _public_member_item(heatmap_member)
-    assert pub_heatmap["data"]["name"] == "Trump approval rating at least 45%+ on November 20?"
+    assert pub_heatmap["data"]["name"] == "Trump approval rating at least 45% on November 20?"
     assert pub_heatmap["data"].get("title_states_single_answer") is True
+
+    # Mixed ladder (not ALL date_bucket): must follow web `ladderKind` (`every`) / iPhone (`allSatisfy`)
+    # and pick the highest >= 50% rung (`45%+` -> `45%`), NOT earliest >= 50%.
+    mixed_ladder_member = {
+        "type": "futures",
+        "_raw_market_name": "Trump approval rating at least ___ on November 20?",
+        "data": {
+            "id": 999112,
+            "name": "How high will Trump approval rating go on November 20?",
+            "top_outcomes": [{"id": 1, "name": "December 31", "probability": 0.80}],
+            "discover_card": {
+                "suggested_format": "threshold_heatmap",
+                "threshold_points": [
+                    {"label": "40%+", "value": 40, "probability": 0.80, "source": "date_bucket"},
+                    {"label": "45%+", "value": 45, "probability": 0.62, "source": "outcome"},
+                    {"label": "50%+", "value": 50, "probability": 0.25, "source": "outcome"},
+                ],
+            },
+        },
+    }
+    pub_mixed = _public_member_item(mixed_ladder_member)
+    assert pub_mixed["data"]["name"] == "Trump approval rating at least 45% on November 20?"
+
+    # Nothing at 50% or better: falls back to top_outcomes[0].
+    below_even_member = {
+        "type": "futures",
+        "_raw_market_name": "Trump approval rating at least ___ on November 20?",
+        "data": {
+            "id": 999113,
+            "name": "How high will Trump approval rating go on November 20?",
+            "top_outcomes": [{"id": 1, "name": "40%+", "probability": 0.38}],
+            "discover_card": {
+                "suggested_format": "threshold_heatmap",
+                "threshold_points": [
+                    {"label": "40%+", "value": 40, "probability": 0.38, "source": "outcome"},
+                    {"label": "45%+", "value": 45, "probability": 0.22, "source": "outcome"},
+                ],
+            },
+        },
+    }
+    pub_below = _public_member_item(below_even_member)
+    assert pub_below["data"]["name"] == "Trump approval rating at least 40% on November 20?"
 
     # 4. Full detail page & container set hydration keep open form where every deadline/level is listed.
     async def _no_withheld(_db, _markets):

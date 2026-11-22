@@ -514,13 +514,47 @@ def _normalize_question_spacing(text: str) -> str:
     return re.sub(r"\s+\?", "?", collapsed)
 
 
+_UPPER_COMPARE_PREPS = ("at least", "above", "over")
+_LOWER_COMPARE_PREPS = ("at most", "below", "under")
+_UPPER_FILLER_SUFFIX_RE = re.compile(
+    r"(?:\s*\+|\s+or\s+(?:above|more|higher))\s*\Z", re.IGNORECASE
+)
+_LOWER_FILLER_SUFFIX_RE = re.compile(
+    r"\s+or\s+(?:below|less|lower|under)\s*\Z", re.IGNORECASE
+)
+_UPPER_FILLER_PREFIX_RE = re.compile(
+    r"^(?:more\s+than|at\s+least|above|over|>=|>)\s+", re.IGNORECASE
+)
+_LOWER_FILLER_PREFIX_RE = re.compile(
+    r"^(?:less\s+than|at\s+most|below|under|<=|<)\s+", re.IGNORECASE
+)
+
+
+def _ends_with_phrase(before_low: str, phrase: str) -> bool:
+    return before_low == phrase or before_low.endswith(" " + phrase)
+
+
 def _trim_duplicate_filler_prefix(before_text: str, filler: str) -> str:
     before_low = before_text.rstrip().lower()
     adj = filler.strip()
     for word in sorted(_LEADING_FILLER_WORDS, key=len, reverse=True):
-        if (before_low.endswith(" " + word) or before_low == word) and adj.lower().startswith(word + " "):
+        if _ends_with_phrase(before_low, word) and adj.lower().startswith(word + " "):
             adj = adj[len(word) + 1 :].strip()
             break
+    if any(_ends_with_phrase(before_low, p) for p in _UPPER_COMPARE_PREPS):
+        no_prefix = _UPPER_FILLER_PREFIX_RE.sub("", adj).strip()
+        if no_prefix:
+            adj = no_prefix
+        stripped = _UPPER_FILLER_SUFFIX_RE.sub("", adj).strip()
+        if stripped:
+            adj = stripped
+    elif any(_ends_with_phrase(before_low, p) for p in _LOWER_COMPARE_PREPS):
+        no_prefix = _LOWER_FILLER_PREFIX_RE.sub("", adj).strip()
+        if no_prefix:
+            adj = no_prefix
+        stripped = _LOWER_FILLER_SUFFIX_RE.sub("", adj).strip()
+        if stripped:
+            adj = stripped
     return adj
 
 
