@@ -169,7 +169,11 @@ async def rebuild_onboarding_team_membership(db: AsyncSession, cache: Redis) -> 
         elif games:
             members[team_id] = (league_id, team_id)
 
-    size = _HEADER.size + max(members, default=0) * _MEMBER.size
+    if not members:
+        logger.warning("Onboarding team membership rebuild found no eligible teams")
+        return {"terminal": "skipped", "reason": "no_eligible_teams"}
+
+    size = _HEADER.size + max(members) * _MEMBER.size
     if size > _MAX_SNAPSHOT_BYTES:
         logger.warning(
             "Onboarding team membership snapshot exceeds cap bytes=%d cap_bytes=%d",
@@ -182,8 +186,7 @@ async def rebuild_onboarding_team_membership(db: AsyncSession, cache: Redis) -> 
     _HEADER.pack_into(payload, 0, int(time()), len(members), size)
     for team_id, pair in members.items():
         _MEMBER.pack_into(payload, _member_offset(team_id), *pair)
-    # SET replaces the old snapshot and its TTL in one operation. A failed or
-    # oversized rebuild leaves any last successful snapshot in place.
+    # SET replaces the old snapshot and its TTL in one operation.
     cache.set(_KEY, bytes(payload), ex=_SNAPSHOT_TTL_S)
 
     elapsed_ms = round((perf_counter() - started) * 1000, 1)

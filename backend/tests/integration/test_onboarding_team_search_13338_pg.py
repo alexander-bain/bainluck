@@ -30,7 +30,7 @@ from httpx import ASGITransport, AsyncClient
 from redis import Redis as SyncRedis
 from redis.asyncio import Redis
 from redis.exceptions import ConnectionError
-from sqlalchemy import select, text
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 DB_URL = os.environ.get("SEARCH_TEST_DATABASE_URL")
@@ -551,6 +551,32 @@ async def test_rebuild_has_one_owner_and_failed_publish_keeps_previous_snapshot(
             await rebuild(sessions, writer)
     assert await cache.get(membership._KEY) == original_members
     assert (await rebuild(sessions, writer))["terminal"] == "complete"
+
+
+async def test_empty_rebuild_keeps_last_snapshot_or_ranked_search(
+    sessions,
+    cache,
+    writer,
+    client,
+    caplog,
+):
+    assert (await rebuild(sessions, writer))["terminal"] == "complete"
+    original = await cache.get(membership._KEY)
+    assert original
+    async with sessions.begin() as db:
+        await db.execute(delete(Event))
+
+    skipped = {"terminal": "skipped", "reason": "no_eligible_teams"}
+    assert await rebuild(sessions, writer) == skipped
+    assert await cache.get(membership._KEY) == original
+
+    await cache.delete(membership._KEY)
+    assert await rebuild(sessions, writer) == skipped
+    assert not await cache.exists(membership._KEY)
+    searched = await client.get("/api/me/teams/search", params={"q": "Real Madrid"})
+    assert searched.status_code == 200
+    assert searched.json()[0]["name"] == "Real Madrid"
+    assert "Onboarding team membership rebuild found no eligible teams" in caplog.text
 
 
 async def test_oversized_rebuild_leaves_last_snapshot_in_place(
