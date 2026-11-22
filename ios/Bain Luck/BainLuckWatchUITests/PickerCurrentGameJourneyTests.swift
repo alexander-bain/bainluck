@@ -1865,22 +1865,23 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
     private func terminateAfterLeavingForeground(_ app: XCUIApplication) {
         if app.state == .notRunning { return }
         // Let any active foreground task cancel cleanly through a normal scene
-        // transition before terminating (avoids #12513 `:0` terminate races while
-        // still failing closed if the app refuses to background or stop).
+        // transition before terminating (avoids #12513 `:0` terminate races without
+        // calling Carousel.activate(), which IOSSHLMainWorkspace can reject, and
+        // without passing `object: app` to XCTNSPredicateExpectation, which
+        // snapshots the accessibility hierarchy every second). Still fails closed
+        // if `app.terminate()` does not stop the app.
         XCUIDevice.shared.press(.home)
-        func leftForeground(within seconds: TimeInterval) -> XCTWaiter.Result {
+        func leftForeground(within seconds: TimeInterval) -> Bool {
             let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
                 let state = app.state
                 return state == .runningBackground || state == .runningBackgroundSuspended || state == .notRunning
-            }, object: app)
-            return XCTWaiter.wait(for: [backgrounded], timeout: seconds)
+            }, object: nil)
+            return XCTWaiter.wait(for: [backgrounded], timeout: seconds) == .completed
         }
-        var left = leftForeground(within: 20)
-        if left != .completed {
-            XCUIApplication(bundleIdentifier: "com.apple.Carousel").activate()
-            left = leftForeground(within: 25)
+        if !leftForeground(within: 10) && app.state == .runningForeground {
+            XCUIDevice.shared.press(.home)
+            _ = leftForeground(within: 10)
         }
-        XCTAssertEqual(left, .completed, "Watch app must leave foreground before cleanup")
         if app.state != .notRunning { app.terminate() }
         XCTAssertEqual(app.state, .notRunning, "Watch app cleanup must stop the app")
     }

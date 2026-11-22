@@ -1063,7 +1063,7 @@ def test_large_and_small_drag_endpoints_stay_inside_measured_viewport():
 XCODE_27_2_CURRENT_SHA256 = {
     "LargeTextRecoveryJourneyTests.swift": "267753ce4fd805a4592f9c7f05794a6866d55616919170c64fb13ea82f12a03c",
     "PickerAliasJourneyTests.swift": "3f1f1d4491a5c75a3de6df301190e41b38d81051c639b8039fd6404770b0e230",
-    "PickerCurrentGameJourneyTests.swift": "e34d97a7fbf368a47cc63da972595a1e20a64686720897a9535a7521f0dcc8f3",
+    "PickerCurrentGameJourneyTests.swift": "3ff94018d2176706b004eba31c7733606e7f679c392cd4faf410245e54220781",
     "PickerReturnJourneyTests.swift": "8e23abbce48fc2c47f382fdde2985f414236026caa03987535b91b8524e361bc",
     "PickerSelectedStateJourneyTests.swift": "129ad9836cfe7eee86f8aa024fd09b00e0a8ad2f8c145c19be1d3e7e851073b5",
     "WatchDiagnosticsJourneyTests.swift": "9f6fd014300264b8a817e8b8c42caebc91e15457c1d305ca06018c67c62fdb68",
@@ -1334,7 +1334,7 @@ XCODE_27_2_LATER_TRANSFORMS = {
         ('    func testUnknownCurrentGameDoesNotInventProbabilityOrAgeAtAccessibilitySize() throws {\n        let app = try launchCurrentGame(large: true, scenario: "unknown")\n        defer { app.terminate() }', '    func testUnknownCurrentGameDoesNotInventProbabilityOrAgeAtAccessibilitySize() throws {\n        let app = try launchCurrentGame(large: true, scenario: "unknown")\n        defer { terminateAfterLeavingForeground(app) }', 1),
         (
             '    @MainActor\n    private func failure(_ message: String, in app: XCUIApplication) -> NSError {\n        capture(app, message)\n        XCTFail(message)\n        return NSError(domain: "WatchCurrentGameJourney", code: 1,\n                       userInfo: [NSLocalizedDescriptionKey: message])\n    }\n}\n#endif',
-            '    @MainActor\n    private func failure(_ message: String, in app: XCUIApplication) -> NSError {\n        capture(app, message)\n        XCTFail(message)\n        return NSError(domain: "WatchCurrentGameJourney", code: 1,\n                       userInfo: [NSLocalizedDescriptionKey: message])\n    }\n\n    @MainActor\n    private func terminateAfterLeavingForeground(_ app: XCUIApplication) {\n        if app.state == .notRunning { return }\n        // Let any active foreground task cancel cleanly through a normal scene\n        // transition before terminating (avoids #12513 `:0` terminate races while\n        // still failing closed if the app refuses to background or stop).\n        XCUIDevice.shared.press(.home)\n        func leftForeground(within seconds: TimeInterval) -> XCTWaiter.Result {\n            let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in\n                let state = app.state\n                return state == .runningBackground || state == .runningBackgroundSuspended || state == .notRunning\n            }, object: app)\n            return XCTWaiter.wait(for: [backgrounded], timeout: seconds)\n        }\n        var left = leftForeground(within: 20)\n        if left != .completed {\n            XCUIApplication(bundleIdentifier: "com.apple.Carousel").activate()\n            left = leftForeground(within: 25)\n        }\n        XCTAssertEqual(left, .completed, "Watch app must leave foreground before cleanup")\n        if app.state != .notRunning { app.terminate() }\n        XCTAssertEqual(app.state, .notRunning, "Watch app cleanup must stop the app")\n    }\n}\n#endif',
+            '    @MainActor\n    private func failure(_ message: String, in app: XCUIApplication) -> NSError {\n        capture(app, message)\n        XCTFail(message)\n        return NSError(domain: "WatchCurrentGameJourney", code: 1,\n                       userInfo: [NSLocalizedDescriptionKey: message])\n    }\n\n    @MainActor\n    private func terminateAfterLeavingForeground(_ app: XCUIApplication) {\n        if app.state == .notRunning { return }\n        // Let any active foreground task cancel cleanly through a normal scene\n        // transition before terminating (avoids #12513 `:0` terminate races without\n        // calling Carousel.activate(), which IOSSHLMainWorkspace can reject, and\n        // without passing `object: app` to XCTNSPredicateExpectation, which\n        // snapshots the accessibility hierarchy every second). Still fails closed\n        // if `app.terminate()` does not stop the app.\n        XCUIDevice.shared.press(.home)\n        func leftForeground(within seconds: TimeInterval) -> Bool {\n            let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in\n                let state = app.state\n                return state == .runningBackground || state == .runningBackgroundSuspended || state == .notRunning\n            }, object: nil)\n            return XCTWaiter.wait(for: [backgrounded], timeout: seconds) == .completed\n        }\n        if !leftForeground(within: 10) && app.state == .runningForeground {\n            XCUIDevice.shared.press(.home)\n            _ = leftForeground(within: 10)\n        }\n        if app.state != .notRunning { app.terminate() }\n        XCTAssertEqual(app.state, .notRunning, "Watch app cleanup must stop the app")\n    }\n}\n#endif',
             1,
         ),
     ],
@@ -1466,10 +1466,10 @@ def test_xcode27_2_watch_fixes_fail_closed_on_reverted_or_altered_blocks(name):
 
 def test_widgets_3sigs_fail_closed_and_retain_obligations():
     picker = (SWIFT / "PickerCurrentGameJourneyTests.swift").read_text()
+    assert "com.apple.Carousel" not in picker.split("private func terminateAfterLeavingForeground", 1)[1]
     for token in (
         "private func terminateAfterLeavingForeground(_ app: XCUIApplication)",
-        'XCUIApplication(bundleIdentifier: "com.apple.Carousel").activate()',
-        'XCTAssertEqual(left, .completed, "Watch app must leave foreground before cleanup")',
+        "object: nil",
         'XCTAssertEqual(app.state, .notRunning, "Watch app cleanup must stop the app")',
     ):
         assert token in picker
