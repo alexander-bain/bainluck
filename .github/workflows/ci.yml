@@ -23,14 +23,19 @@ on:
   push:
     branches: [master, 'integrator/compose-**']
 
-# Decide 332: A (Alex, Nov 21): keep PR superseding (cancel-in-progress per PR) and
-# compose per-ref grouping intact, while giving each push to master its own run
-# group so a new merge's tests start immediately instead of sitting behind the
-# previous release's checks or post-deploy-smoke-dry-run. The `deploy` job still
-# serializes releases under `heroku-deploy` (cancel-in-progress: false) and enforces
-# the never-backwards guard. Guarded by backend/tests/test_ci_supersede_concurrency.py.
+# Decide 76 (Alex, Nov 6; restored per #13352 revert trigger after v6556 hit >60m):
+# a push shares ONE group per ref, so a newer master push displaces an older run
+# still waiting for a runner (a group holds one pending run). The newest master
+# head contains every earlier merge, and `ci-deploy-base.sh` widens its range back
+# to the last deployed commit, so nothing a superseded run would have tested goes
+# untested. An IN-PROGRESS push run is never cancelled (`cancel-in-progress` is
+# false for pushes). Re-run the NEWEST master run, never an older one: an old run
+# re-queued into the group displaces the newest pending run. 16 backend shards and
+# the `shared-middle-2` split remain enabled; `deploy` stays serialized under
+# `heroku-deploy` with the never-backwards guard. Guarded by
+# backend/tests/test_ci_supersede_concurrency.py.
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || (github.ref == 'refs/heads/master' && format('ci-push-master-{0}', github.run_id) || format('ci-push-{0}', github.ref)) }}
+  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-push-{0}', github.ref) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:

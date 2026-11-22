@@ -115,32 +115,31 @@ def test_two_different_prs_never_touch_each_other():
     assert _slot(_pr(6744, "d9359dc", 1))[0] != _slot(_pr(6745, "fb76de7", 2))[0]
 
 
-def test_master_pushes_run_concurrently_without_waiting_and_never_cancel_in_progress():
-    """Decide 332: A (Alex, Nov 21): each master push gets its own run group.
+def test_master_pushes_share_one_group_and_an_in_progress_run_is_never_cancelled():
+    """Decide 76 (Alex, Nov 6; restored per #13352 revert trigger): one group per pushed ref, cancel-in-progress OFF.
 
-    A new merge's CI starts immediately without waiting behind the previous
-    release's checks or post-deploy-smoke-dry-run. Cancel-in-progress stays OFF,
-    and `deploy` still serializes releases under `heroku-deploy` with the
-    never-backwards guard so production can never go backwards.
+    A group holds ONE pending run: a newer master push displaces an older run
+    still waiting for a runner, which is the point — the newest master head
+    contains every earlier merge, and `ci-deploy-base.sh` widens its range back to
+    the last deployed commit. An IN-PROGRESS master run is never cancelled.
+    (Under `ci-push-master-<run_id>` on Nov 22, concurrent master runs saturated
+    the ~20-runner pool and pushed release v6556 over 60 minutes.)
     """
     a, b = _slot(_push("95bd398", 10)), _slot(_push("1074051", 11))
-    assert a[0] == "ci-push-master-10" and b[0] == "ci-push-master-11", (a, b)
-    assert a[0] != b[0]
+    assert a[0] == b[0] == "ci-push-refs/heads/master", (a, b)
     assert a[1] is False and b[1] is False, "a master run became cancellable in progress"
 
 
-def test_a_rerun_of_an_older_master_run_never_displaces_newer_master_runs():
-    """With run_id-scoped master groups, re-running an older master run keeps
-    its own run_id group and cannot displace newer master checks; `deploy` still
-    refuses backward releases via the never-backwards ancestry guard."""
+def test_a_rerun_of_a_master_run_rejoins_the_master_group__known_and_operational():
+    """The hazard 76 accepts, pinned: re-running an OLDER master run re-queues it
+    into the master group, where it displaces the newest pending master run. The
+    rule is operational and stated in ci.yml: re-run the NEWEST master run."""
     first, rerun, other = (
         _slot(_push("95bd398", 10)),
         _slot(_push("95bd398", 10)),
         _slot(_push("1074051", 11)),
     )
-    assert first == rerun == ("ci-push-master-10", False)
-    assert other == ("ci-push-master-11", False)
-    assert rerun[0] != other[0]
+    assert first == rerun and rerun[0] == other[0] and rerun[1] is False
 
 
 def test_deploy_keeps_never_backwards_guard():
