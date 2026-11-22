@@ -125,6 +125,17 @@ export function namedAt(text: string | null | undefined, name: string | null | u
  * so "Norway" and "No. 1 seed" are not negative.
  */
 const NEGATIVE_ANSWER = /^\s*(?:(?:no|not)\s*[:\-–—]?(?:\s+.*)?|neither|none)\s*$/i;
+const CALENDAR_DATE_NAME =
+  /^\s*(?:(?:before|by|on|after|in|end\s+of)\s+)?(?:(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\b(?:\s+\d{1,2}(?:st|nd|rd|th)?)?(?:,?\s+\d{4})?|\d{1,2}\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:\s+\d{4})?|q[1-4]\s+\d{4}|(?:19|20)\d{2})\s*$/i;
+
+export interface RowAnswerLabelOptions {
+  /**
+   * True when the backend filled a single-row template title with this row's
+   * answer so calendar date deadlines do not repeat underneath (#13393), while
+   * standalone ladder/dated markets still keep their date leg (#9401 / #9642).
+   */
+  titleStatesSingleAnswer?: boolean;
+}
 
 export function answerIsNegative(name: string | null | undefined): boolean {
   return NEGATIVE_ANSWER.test(name ?? "");
@@ -138,11 +149,13 @@ export function answerIsNegative(name: string | null | undefined): boolean {
  * @param caption the sentence already rendered under the question
  * @param title   optional row title; when the level/deadline is already named
  *                inside the row's own title, do not repeat it underneath
+ * @param opts    optional flags controlling title-based calendar date suppression
  */
 export function rowAnswerLabel(
   hero: HeroCandidate | null | undefined,
   caption: string | null | undefined,
   title?: string | null,
+  opts?: RowAnswerLabelOptions,
 ): string | null {
   const name = (hero?.name ?? "").replace(/\s+/g, " ").trim();
   if (!name) return null;
@@ -150,7 +163,13 @@ export function rowAnswerLabel(
   // #9876 — a negative answer is never left to the caption. The caption is
   // grey and can be clamped away, and the reader scans the bold column.
   if (answerIsNegative(name)) return name;
-  if (title && captionNames(title, name)) return null;
+  if (
+    title &&
+    captionNames(title, name) &&
+    (!CALENDAR_DATE_NAME.test(name) || opts?.titleStatesSingleAnswer === true)
+  ) {
+    return null;
+  }
   if (captionNames(caption, name)) return null;
   return name;
 }

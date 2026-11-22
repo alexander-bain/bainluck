@@ -1927,6 +1927,8 @@ export interface FeedFuturesOutcome {
 export interface FeedFuturesData {
   id: number;
   name: string;
+  /** #13390 / #13393: single-row bundle title already names the resolved template answer. */
+  title_states_single_answer?: boolean;
   sport: string | null;
   sport_name: string | null;
   llm_sport_category: string | null;

@@ -115,7 +115,7 @@ describe("#4396 — rowAnswerLabel names the answer only where the caption did n
   });
 
   describe("compact row title already naming its single level or deadline (#13390 / #13393)", () => {
-    it("drops the small label when the row title already states the level or deadline", () => {
+    it("drops the small label for numeric levels or flagged template deadlines, while keeping unflagged ladder dates (#9401/#9642)", () => {
       expect(
         rowAnswerLabel(
           { name: "$800B", probability: 0.68 },
@@ -128,8 +128,16 @@ describe("#4396 — rowAnswerLabel names the answer only where the caption did n
           { name: "December 31", probability: 0.765 },
           "",
           "US x Iran Effective Ceasefire begins by December 31? (2 week pause)",
+          { titleStatesSingleAnswer: true },
         ),
       ).toBeNull();
+      expect(
+        rowAnswerLabel(
+          { name: "September 30", probability: 0.55 },
+          "",
+          "Israel x Lebanon ceasefire by September 30?",
+        ),
+      ).toBe("September 30");
     });
 
     it("still displays negative answers even when words overlap the title", () => {
@@ -138,6 +146,7 @@ describe("#4396 — rowAnswerLabel names the answer only where the caption did n
           { name: "No IPO before January 2027", probability: 0.85 },
           "",
           "OpenAI IPO closing market cap",
+          { titleStatesSingleAnswer: true },
         ),
       ).toBe("No IPO before January 2027");
     });

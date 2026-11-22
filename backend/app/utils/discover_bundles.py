@@ -642,8 +642,12 @@ def _public_member_item(item: dict[str, Any]) -> dict[str, Any]:
                     chosen_label,
                     single_row=True,
                 )
-                if filled and filled != data.get("name"):
-                    pub["data"] = {**data, "name": filled}
+                if filled:
+                    pub["data"] = {
+                        **data,
+                        "name": filled,
+                        "title_states_single_answer": True,
+                    }
     return pub
 
 

@@ -424,6 +424,14 @@ async def test_bundle_member_single_row_puts_level_and_deadline_in_title_while_s
     assert theme_bundle is not None
     theme_names = [it["data"]["name"] for it in theme_bundle["data"]["items"]]
     assert "US x Iran Effective Ceasefire begins by December 31? (2 week pause)" in theme_names
+    ceasefire_pub = next(
+        it["data"] for it in theme_bundle["data"]["items"] if it["data"]["id"] == 69603905
+    )
+    assert ceasefire_pub.get("title_states_single_answer") is True
+    other_pub = next(
+        it["data"] for it in theme_bundle["data"]["items"] if it["data"]["id"] == 113232
+    )
+    assert "title_states_single_answer" not in other_pub
     assert "..." not in json.dumps(theme_bundle)
     assert "…" not in json.dumps(theme_bundle)
     assert "___" not in json.dumps(theme_bundle)
@@ -448,6 +456,7 @@ async def test_bundle_member_single_row_puts_level_and_deadline_in_title_while_s
     }
     pub_heatmap = _public_member_item(heatmap_member)
     assert pub_heatmap["data"]["name"] == "Trump approval rating at least 45%+ on November 20?"
+    assert pub_heatmap["data"].get("title_states_single_answer") is True
 
     # 4. Full detail page & container set hydration keep open form where every deadline/level is listed.
     async def _no_withheld(_db, _markets):
@@ -462,6 +471,7 @@ async def test_bundle_member_single_row_puts_level_and_deadline_in_title_while_s
     cards, _, failed = await _hydrate_market_cards(_FakeSession([ceasefire_orm]), [69603905])
     assert failed == {}
     assert cards[69603905]["name"] == "US x Iran Effective Ceasefire begins? (2 week pause)"
-    assert _format_market_detail(ceasefire_orm, None, set())["name"] == (
-        "US x Iran Effective Ceasefire begins? (2 week pause)"
-    )
+    assert "title_states_single_answer" not in cards[69603905]
+    detail = _format_market_detail(ceasefire_orm, None, set())
+    assert detail["name"] == "US x Iran Effective Ceasefire begins? (2 week pause)"
+    assert "title_states_single_answer" not in detail
