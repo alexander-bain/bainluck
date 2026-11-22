@@ -22,10 +22,12 @@ Estimated capacity: ~1.9 calls/second, ~166K calls/day.
 import asyncio
 import logging
 import os
+from threading import Thread
 
 import sentry_sdk
 from celery import Celery
 from celery.schedules import crontab
+from celery.signals import worker_ready
 from sentry_sdk.integrations.celery import CeleryIntegration
 
 from app.tasks.base import run_async
@@ -7499,6 +7501,48 @@ def refresh_open_futures_outcomes(self, budget_seconds: int = None):
     )
 
 
+@celery_app.task(
+    name="app.tasks.refresh_onboarding_team_membership",
+    soft_time_limit=135,
+    time_limit=150,
+    ignore_result=True,
+)
+def refresh_onboarding_team_membership():
+    """Refresh the optional league filter for onboarding."""
+    from app.services.onboarding_team_membership import rebuild_onboarding_team_membership
+    from app.tasks.base import get_task_session
+    from app.tasks.redis_state import get_redis_client
+
+    async def refresh():
+        async with get_task_session() as db:
+            return await rebuild_onboarding_team_membership(db, get_redis_client())
+
+    return _tracked_run("refresh_onboarding_team_membership", refresh())
+
+
+def _request_onboarding_membership_rebuild() -> None:
+    try:
+        refresh_onboarding_team_membership.apply_async(queue="background", retry=False)
+    except Exception as exc:
+        logger.warning(
+            "Could not request onboarding membership rebuild (%s)", type(exc).__name__
+        )
+
+
+@worker_ready.connect
+def _onboarding_membership_on_worker_ready(sender=None, **_kwargs) -> None:
+    # worker_ready is sent by the Celery consumer, never import/release or web.
+    if sender is not None and sender.app is celery_app and any(
+        queue.name == "background" for queue in sender.task_consumer.queues
+    ):
+        # A broker stall must not delay the consumer from serving its queues.
+        Thread(
+            target=_request_onboarding_membership_rebuild,
+            name="onboarding-membership-publish",
+            daemon=True,
+        ).start()
+
+
 @celery_app.task(bind=True, soft_time_limit=120, time_limit=140, name="app.tasks.warm_search_head")
 def warm_search_head(self, head_size: int = None):
     """Keep the head of the `/search` distribution inside its response cache.
@@ -9181,6 +9225,12 @@ celery_app.conf.beat_schedule = {
         # so a late or skipped fire costs speed, never correctness. ~5 s of
         # database time a pass (one 1/12 slice, one delta, one anti-join).
         "schedule": crontab(minute="2-59/5"),
+        "options": {"queue": "background"},
+    },
+    "refresh-onboarding-team-membership": {
+        "task": "app.tasks.refresh_onboarding_team_membership",
+        # Overnight at 11:21 UTC, outside settlement's :31–:44 window.
+        "schedule": crontab(hour=11, minute=21),
         "options": {"queue": "background"},
     },
     "warm-search-head": {
