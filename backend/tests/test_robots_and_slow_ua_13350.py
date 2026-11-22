@@ -1,4 +1,4 @@
-"""Tests for /robots.txt and User-Agent attribution on slow-request logs/events (#13350)."""
+"""Tests for sanitized User-Agent attribution on slow-request logs/events (#13350)."""
 
 from __future__ import annotations
 
@@ -48,17 +48,6 @@ def test_build_slow_event_emits_ua_only_when_present():
     assert with_ua["ua"] == "GPTBot/1.0 (+https://example.com)"
 
 
-def test_robots_txt_disallows_crawlers_on_api_origin():
-    from app.main import app
-
-    client = TestClient(app)
-    resp = client.get("/robots.txt")
-    assert resp.status_code == 200
-    assert resp.headers["content-type"].startswith("text/plain")
-    assert resp.headers["cache-control"] == "public, max-age=86400"
-    assert resp.text == "User-agent: *\nDisallow: /\n"
-
-
 def _scripted_time(values):
     class _ScriptedTime:
         def __init__(self, seq):
@@ -80,9 +69,9 @@ def test_request_timing_logs_ua_on_slow_and_moderate_requests(monkeypatch, caplo
 
     client = TestClient(main_mod.app)
     with caplog.at_level(logging.INFO, logger=main_mod.logger.name):
-        r1 = client.get("/robots.txt", headers={"User-Agent": "TestCrawler/2.1\r\ninject"})
-        r2 = client.get("/robots.txt", headers={"User-Agent": ""})
-        r3 = client.get("/robots.txt", headers={"User-Agent": "FastClient/1.0"})
+        r1 = client.get("/", headers={"User-Agent": "TestCrawler/2.1\r\ninject"})
+        r2 = client.get("/", headers={"User-Agent": ""})
+        r3 = client.get("/", headers={"User-Agent": "FastClient/1.0"})
 
     assert r1.status_code == 200 and r2.status_code == 200 and r3.status_code == 200
     slow_logs = [rec.getMessage() for rec in caplog.records if "SLOW " in rec.getMessage()]
