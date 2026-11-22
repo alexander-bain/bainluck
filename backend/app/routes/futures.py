@@ -8727,7 +8727,7 @@ async def get_futures_history(
         "evolution line to 1.0. Callers pass the concept's authoritative structural crown.",
     ),
     db: AsyncSession = Depends(get_db),
-    history_range: Optional[str] = Query(None, alias="range", description=_FULL_RANGE_DOC),
+    history_range: Optional[str] = None,
 ):
     """
     Get historical odds movement for a futures market.
