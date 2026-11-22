@@ -47,7 +47,7 @@ RELEASE_HOLD = re.compile(
 
 
 def retry_read(read):
-    for attempt in range(1, 4):
+    for next_attempt in (2, 3):
         try:
             return read()
         except READ_FAILURES as error:
@@ -58,13 +58,12 @@ def retry_read(read):
                 reason = f"HTTP {error.code}"
             else:
                 reason = type(error).__name__
-            if attempt == 3:
-                raise
             print(
-                f"FACTORY_READ_RETRY {reason}. Attempt {attempt + 1} of 3 in 20 seconds.",
+                f"FACTORY_READ_RETRY {reason}. Attempt {next_attempt} of 3 in 20 seconds.",
                 file=sys.stderr,
             )
             time.sleep(20)
+    return read()
 
 
 class GitHub:
