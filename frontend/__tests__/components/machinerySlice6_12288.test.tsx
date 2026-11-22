@@ -236,7 +236,7 @@ describe("#12288 Slice 6 — Website parity, error states, and non-repeating fir
     expect(partialHtml).not.toContain("AFC North Champion");
   });
 
-  it("2d: aligns sibling outcome names with an initials circle when some rows lack art and renders flush left when none have art", () => {
+  it("2d: aligns sibling outcome names with an invisible spacer when some rows lack art, renders flush left when none have art, and never prints monogram letters", () => {
     const mixedArtBlock: MachineryVisualBlock = {
       form_id: "sibling_fields_grid",
       initial_visible_limit: 3,
@@ -318,10 +318,10 @@ describe("#12288 Slice 6 — Website parity, error states, and non-repeating fir
       <MachinerySectionRenderer visualBlock={mixedArtBlock} members={[]} />,
     );
     // Market 901 has 1 real headshot + 1 invisible width-matching spacer; Market 902 has 0 spacers (flush left)
-    const initialsMatches = html.match(/data-testid="machinery-avatar-initials"/g) ?? [];
-    expect(initialsMatches).toHaveLength(1);
-    expect(html).not.toContain('data-testid="machinery-avatar-spacer"');
-    expect(html).toContain(">AB<");
+    const spacerMatches = html.match(/data-testid="machinery-avatar-spacer"/g) ?? [];
+    expect(spacerMatches).toHaveLength(1);
+    // Zero monogram initials anywhere
+    expect(html).not.toContain(">AB<");
     expect(html).not.toContain(">OA<");
     expect(html).not.toContain('data-testid="award-paired-art-fallback"');
 
@@ -351,8 +351,8 @@ describe("#12288 Slice 6 — Website parity, error states, and non-repeating fir
       ],
     };
     const cardHtml = renderToStaticMarkup(<MachineryDiscoverCard card={mixedCard} />);
-    expect(cardHtml).toContain('data-testid="machinery-avatar-initials"');
-    expect(cardHtml).toContain(">UC<");
+    expect(cardHtml).toContain('data-testid="machinery-avatar-spacer"');
+    expect(cardHtml).not.toContain(">UC<");
   });
 
   it("2d: assigns distinct line colours when chart series share duplicate or empty colours", () => {

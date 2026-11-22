@@ -4742,9 +4742,9 @@ async def produce_container_machinery(
     if hide_row_art and card_visual_rows:
         card_visual_rows = _strip_visual_row_art(card_visual_rows)
 
-    # Keep Discover cards consistent without dropping sibling row pictures:
-    # rows without a verified picture carry monogram initials for the same circle,
-    # while sports cards with missing row art still emit a diagnostic warning.
+    # All-or-nothing row art parity with iOS (`GroupingMachineryViews12288`):
+    # a Discover card or set-page section gets row pictures only when every row
+    # it renders has a real verified picture (never letters beside photos).
     if (
         not hide_row_art
         and card_visual_rows
@@ -4765,28 +4765,12 @@ async def produce_container_machinery(
                 if isinstance(r, Mapping) and not has_art
             ]
             logger.warning(
-                "Public sports card %s has missing row pictures (initials fallback); missing art for subjects=%s",
+                "Public sports card %s dropped row pictures; missing art for subjects=%s",
                 slug,
                 missing_subjects,
             )
-        if any(row_has_url):
-            normalized_rows: list[dict[str, Any]] = []
-            for row in card_visual_rows:
-                row_copy = dict(row) if isinstance(row, Mapping) else {}
-                art_val = row_copy.get("art")
-                art_dict = dict(art_val) if isinstance(art_val, Mapping) else {}
-                if not art_dict.get("url"):
-                    rname = str(row_copy.get("name") or "")
-                    art_dict = {
-                        "url": None,
-                        "kind": "monogram",
-                        "detail": str(art_dict.get("detail") or ""),
-                        "accent_color": str(art_dict.get("accent_color") or _fallback_color(rname)),
-                        "initials": str(art_dict.get("initials") or "").strip() or _initials(rname),
-                    }
-                    row_copy["art"] = art_dict
-                normalized_rows.append(row_copy)
-            card_visual_rows = normalized_rows
+        if any(row_has_url) and not all(row_has_url):
+            card_visual_rows = _strip_visual_row_art(card_visual_rows)
 
     has_card_art = any(_has_verified_art(r) for r in card_visual_rows if isinstance(r, Mapping))
     if vb_form == "paired_stage_bars" and lead_paired_set:
@@ -4873,6 +4857,8 @@ async def produce_container_machinery(
             machinery_card["image_source_page"] = card_image_source_page
     if mini_chart is not None:
         machinery_card["mini_chart"] = mini_chart
+
+    _enforce_section_all_or_nothing_art(built_sections, hide_row_art=hide_row_art)
 
     card_paired_set: Optional[dict[str, Any]] = None
     if vb_form == "paired_stage_bars" and lead_paired_set is not None:
@@ -5073,6 +5059,70 @@ def _strip_visual_row_art(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, A
             row_copy["art"] = art_copy
         stripped.append(row_copy)
     return stripped
+
+
+def _enforce_section_all_or_nothing_art(
+    built_sections: Sequence[dict[str, Any]],
+    *,
+    hide_row_art: bool,
+) -> None:
+    """Enforce per-section all-or-nothing row art on set-page sections (#12288 Item 4).
+
+    Called AFTER ``card_visual_rows`` is built so a set-page section with some
+    unpictured rows strips its section row art cleanly without disturbing a
+    3/3 pictured Discover card from the same section.
+    """
+    for sec in built_sections:
+        sec_vb = sec.get("visual_block")
+        if not isinstance(sec_vb, dict):
+            continue
+        s_form = str(sec_vb.get("form_id") or "")
+        items = sec_vb.get("items")
+        if not isinstance(items, list) or not items:
+            continue
+
+        should_strip = False
+        if hide_row_art and s_form in {
+            "benchmark_strip",
+            "sibling_fields_grid",
+            "leader_bars",
+            "contender_spotlight",
+            "duel_bar",
+        }:
+            should_strip = True
+        elif s_form == "benchmark_strip":
+            has_urls = [
+                bool((it.get("outcomes") or ()) and _has_verified_art(it["outcomes"][0]))
+                for it in items
+                if isinstance(it, Mapping)
+            ]
+            should_strip = any(has_urls) and not all(has_urls)
+        elif s_form in {"sibling_fields_grid", "leader_bars", "contender_spotlight", "duel_bar"}:
+            has_urls = [
+                _has_verified_art(o)
+                for it in items
+                if isinstance(it, Mapping) and not it.get("scale_ordered")
+                for o in (it.get("outcomes") or ())
+                if isinstance(o, Mapping)
+            ]
+            should_strip = any(has_urls) and not all(has_urls)
+
+        if not should_strip:
+            continue
+
+        stripped_items: list[dict[str, Any]] = []
+        for it in items:
+            if not isinstance(it, Mapping):
+                continue
+            it_copy = dict(it)
+            if hide_row_art or not it_copy.get("scale_ordered"):
+                outs = it_copy.get("outcomes")
+                if isinstance(outs, Sequence) and not isinstance(outs, (str, bytes)):
+                    it_copy["outcomes"] = _strip_visual_row_art(
+                        [o for o in outs if isinstance(o, Mapping)]
+                    )
+            stripped_items.append(it_copy)
+        sec_vb["items"] = stripped_items
 
 
 def _has_verified_art(obj: Mapping[str, Any]) -> bool:

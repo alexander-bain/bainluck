@@ -108,52 +108,11 @@ export function resolveDistinctChartSeries(
   });
 }
 
-const AVATAR_INITIALS_STOP_WORDS = new Set([
-  "a",
-  "after",
-  "an",
-  "and",
-  "at",
-  "before",
-  "by",
-  "for",
-  "in",
-  "of",
-  "on",
-  "or",
-  "the",
-  "to",
-  "with",
-]);
-
-function deriveAvatarInitials(label: string, art?: MachinerySubjectArt | null): string {
-  const fromArt = (art?.initials ?? "").trim().toUpperCase();
-  if (fromArt && fromArt !== "?") {
-    return fromArt.slice(0, 3);
-  }
-  const raw = String(label ?? "").trim();
-  const tail = raw.includes(": ")
-    ? raw.slice(raw.lastIndexOf(": ") + 2)
-    : raw.includes(" · ")
-      ? raw.slice(raw.lastIndexOf(" · ") + 3)
-      : raw;
-  const cleanedTokens = tail
-    .split(/\s+/)
-    .map((tok) => tok.replace(/[^A-Za-z0-9À-ÖØ-öø-ÿ]/g, ""))
-    .filter(Boolean);
-  const meaningful = cleanedTokens.filter(
-    (tok) => !AVATAR_INITIALS_STOP_WORDS.has(tok.toLowerCase()) && !/^\d+$/.test(tok),
-  );
-  const words = meaningful.length > 0 ? meaningful : cleanedTokens;
-  if (words.length === 0) return "BL";
-  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
-  return `${words[0][0]}${words[words.length - 1][0]}`.toUpperCase();
-}
-
 function SubjectAvatar({
   art,
   label,
   sizeClass = "h-9 w-9",
+  widthClass,
   poster = false,
   reserveSlotWhenMissing = false,
 }: {
@@ -165,22 +124,19 @@ function SubjectAvatar({
   reserveSlotWhenMissing?: boolean;
 }) {
   const url = art?.url;
-  const shapeClass = poster ? "rounded-md" : "rounded-full";
   if (!url) {
     if (!reserveSlotWhenMissing) return null;
-    const initials = deriveAvatarInitials(label, art);
     return (
       <span
         aria-hidden="true"
-        data-testid="machinery-avatar-initials"
-        className={`inline-flex shrink-0 items-center justify-center border border-surface-border bg-surface-elevated text-[11px] font-bold tracking-tight text-text-secondary ${shapeClass} ${sizeClass}`}
-      >
-        {initials}
-      </span>
+        data-testid="machinery-avatar-spacer"
+        className={`inline-block shrink-0 ${widthClass ?? sizeClass}`}
+      />
     );
   }
   const kind = art?.kind ?? "person";
   const isLogo = kind === "team_logo";
+  const shapeClass = poster ? "rounded-md" : "rounded-full";
   return (
     <span
       className={`inline-flex shrink-0 items-center justify-center overflow-hidden border border-surface-border bg-surface-elevated ${shapeClass} ${sizeClass}`}

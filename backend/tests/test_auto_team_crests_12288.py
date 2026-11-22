@@ -293,14 +293,8 @@ async def test_public_sports_card_logs_missing_subject_when_row_pictures_dropped
         )
     assert hasattr(res, "machinery_card")
     rows = res.machinery_card["rows"]
-    by_mid = {int(r["market_id"]): r for r in rows}
-    # Pictured sports rows keep their verified crests while unpictured rows get initials fallback...
-    assert by_mid[57792807].get("art", {}).get("url")
-    assert by_mid[66031970].get("art", {}).get("url")
-    missing_art = by_mid[52755659].get("art") or {}
-    assert not missing_art.get("url")
-    assert missing_art.get("kind") == "monogram"
-    assert missing_art.get("initials") == "UC"
+    # All-or-nothing strips partial art across rows on the card...
+    assert all(not r.get("art", {}).get("url") for r in rows)
     # ...and logs the exact missing subject on public sports cards.
     warn_msgs = [rec.message for rec in caplog.records if rec.levelno == logging.WARNING]
     assert any(
@@ -561,13 +555,7 @@ async def test_championship_missing_art_warning_names_outcome_subject_not_champi
             now=NOW,
         )
     assert hasattr(res, "machinery_card")
-    by_mid = {int(r["market_id"]): r for r in res.machinery_card["rows"]}
-    assert by_mid[57792807].get("art", {}).get("url")
-    assert by_mid[66031970].get("art", {}).get("url")
-    missing_art = by_mid[70732924].get("art") or {}
-    assert not missing_art.get("url")
-    assert missing_art.get("kind") == "monogram"
-    assert missing_art.get("initials") == "UC"
+    assert all(not r.get("art", {}).get("url") for r in res.machinery_card["rows"])
     warn_msgs = [rec.message for rec in caplog.records if rec.levelno == logging.WARNING]
     assert any(
         "machinery-big-championships-2027" in m
@@ -755,12 +743,8 @@ async def test_long_shots_with_extra_sports_category_does_not_emit_dropped_row_p
             now=NOW,
         )
     assert hasattr(res, "machinery_card")
-    rows = res.machinery_card["rows"]
-    assert len(rows) == 3
-    by_mid = {int(r["market_id"]): r for r in rows}
-    assert (by_mid[109435].get("art") or {}).get("url") is None
-    assert (by_mid[113504].get("art") or {}).get("url") is None
-    assert "image.tmdb.org" in str((by_mid[109295].get("art") or {}).get("url") or "")
+    assert len(res.machinery_card["rows"]) == 3
+    assert all(not (r.get("art") or {}).get("url") for r in res.machinery_card["rows"])
     assert not any(
         "dropped row pictures" in rec.message or "missing row pictures" in rec.message
         for rec in caplog.records
@@ -838,7 +822,7 @@ async def test_public_sports_card_still_warns_when_row_pictures_are_expected(
         )
     assert hasattr(res, "machinery_card")
     assert any(
-        "Public sports card machinery-big-championships-2027 has missing row pictures (initials fallback); missing art for subjects="
+        "Public sports card machinery-big-championships-2027 dropped row pictures; missing art for subjects="
         in rec.message
         for rec in caplog.records
     )

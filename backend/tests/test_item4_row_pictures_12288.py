@@ -85,11 +85,11 @@ def test_tmdb_vetted_portraits_posters_and_country_flags_resolve() -> None:
 
 
 @pytest.mark.asyncio
-async def test_partial_row_art_keeps_pictures_and_fills_initials_without_all_or_nothing() -> None:
+async def test_complete_card_keeps_pictures_while_partial_section_drops_row_pictures_all_or_nothing() -> None:
     clear_fun_markets_cache()
     paths_by_slug = {p.stem: p for p in discover_machinery_candidate_paths()}
-    defn = load_machinery_definition(paths_by_slug["machinery-pop-culture-oddities"])
-    markets = [
+    pop_defn = load_machinery_definition(paths_by_slug["machinery-pop-culture-oddities"])
+    pop_markets = [
         {
             "id": 67804457,
             "name": '"All I Want for Christmas Is You" Dec 19 Hot 100 rank',
@@ -109,15 +109,6 @@ async def test_partial_row_art_keeps_pictures_and_fills_initials_without_all_or_
             "outcomes": [{"id": 2, "name": "Rock", "probability": 0.40}],
         },
         {
-            "id": 58903285,
-            "name": "Turner Prize 2026 Winner?",
-            "status": "open",
-            "source": "polymarket",
-            "llm_sport_category": "entertainment",
-            "volume": 50000.0,
-            "outcomes": [{"id": 3, "name": "Simeon Barclay", "probability": 0.35}],
-        },
-        {
             "id": 109309,
             "name": "Taylor Swift announces Taylor's Version?",
             "status": "open",
@@ -127,13 +118,22 @@ async def test_partial_row_art_keeps_pictures_and_fills_initials_without_all_or_
             "outcomes": [{"id": 4, "name": "Yes", "probability": 0.30}, {"id": 5, "name": "No", "probability": 0.70}],
         },
         {
+            "id": 58903285,
+            "name": "Turner Prize 2026 Winner?",
+            "status": "open",
+            "source": "polymarket",
+            "llm_sport_category": "entertainment",
+            "volume": 50000.0,
+            "outcomes": [{"id": 3, "name": "Simeon Barclay", "probability": 0.25}],
+        },
+        {
             "id": 67804475,
             "name": "NYC 2026 Michelin stars: Kabawa",
             "status": "open",
             "source": "polymarket",
             "llm_sport_category": "entertainment",
             "volume": 50000.0,
-            "outcomes": [{"id": 6, "name": "Kabawa", "probability": 0.25}],
+            "outcomes": [{"id": 6, "name": "Kabawa", "probability": 0.20}],
         },
         {
             "id": 108254,
@@ -145,24 +145,72 @@ async def test_partial_row_art_keeps_pictures_and_fills_initials_without_all_or_
             "outcomes": [{"id": 7, "name": "Elon Musk", "probability": 0.80}],
         },
     ]
-    res = await produce_container_machinery({"markets": markets, "teams": []}, defn, now=NOW)
-    assert hasattr(res, "machinery_card"), res
-    rows = res.machinery_card["rows"]
-    assert len(rows) == 3
-    by_mid = {int(r["market_id"]): r for r in rows}
-    # Mariah Carey & Beyoncé keep their portraits instead of all-or-nothing stripping.
-    assert "image.tmdb.org" in str(by_mid[67804457]["art"]["url"])
-    assert "image.tmdb.org" in str(by_mid[108306]["art"]["url"])
-    # Simeon Barclay has no vetted portrait and carries crisp monogram initials in the same slot.
-    missing = by_mid[58903285]["art"]
-    assert missing["url"] is None
-    assert missing["kind"] == "monogram"
-    assert missing["initials"] == "SB"
-    assert missing["accent_color"].startswith("#")
+    pop_res = await produce_container_machinery({"markets": pop_markets, "teams": []}, pop_defn, now=NOW)
+    assert hasattr(pop_res, "machinery_card"), pop_res
+    pop_rows = pop_res.machinery_card["rows"]
+    assert len(pop_rows) == 3
+    # Discover card has 3/3 pictured rows (Mariah Carey, Beyoncé, Taylor Swift) -> keeps all 3.
+    assert all((r.get("art") or {}).get("url") for r in pop_rows), pop_rows
+    # Set-page section has unpictured rows (Simeon Barclay, Kabawa) -> all-or-nothing strips section row art.
+    pop_sec_items = pop_res.sections[0]["visual_block"]["items"]
+    assert len(pop_sec_items) == 6
+    assert all(
+        not (o.get("art") or {}).get("url")
+        for it in pop_sec_items
+        for o in (it.get("outcomes") or ())
+    ), pop_sec_items
+
+    # Complete section (every row pictured on card AND set page) keeps all pictures on both.
+    stage_defn = load_machinery_definition(paths_by_slug["machinery-stage-and-cover"])
+    stage_markets = [
+        {
+            "id": 62368061,
+            "name": "Who will host Saturday Night Live?",
+            "status": "open",
+            "source": "polymarket",
+            "llm_sport_category": "entertainment",
+            "volume": 50000.0,
+            "outcomes": [{"id": 11, "name": "Florence Pugh", "probability": 0.35}],
+        },
+        {
+            "id": 109296,
+            "name": "Who will appear on Call Her Daddy?",
+            "status": "open",
+            "source": "kalshi",
+            "llm_sport_category": "entertainment",
+            "volume": 50000.0,
+            "outcomes": [{"id": 12, "name": "David Harbour", "probability": 0.30}],
+        },
+        {
+            "id": 109287,
+            "name": "Who will appear on Joe Rogan Experience?",
+            "status": "open",
+            "source": "kalshi",
+            "llm_sport_category": "entertainment",
+            "volume": 50000.0,
+            "outcomes": [{"id": 13, "name": "Olivia Colman", "probability": 0.25}],
+        },
+        {
+            "id": 56775621,
+            "name": "Vogue 2026 cover star?",
+            "status": "open",
+            "source": "polymarket",
+            "llm_sport_category": "entertainment",
+            "volume": 50000.0,
+            "outcomes": [{"id": 14, "name": "Cillian Murphy", "probability": 0.22}],
+        },
+    ]
+    stage_res = await produce_container_machinery({"markets": stage_markets, "teams": []}, stage_defn, now=NOW)
+    assert hasattr(stage_res, "machinery_card"), stage_res
+    assert all((r.get("art") or {}).get("url") for r in stage_res.machinery_card["rows"])
+    assert all(
+        (it.get("outcomes") or [{}])[0].get("art", {}).get("url")
+        for it in stage_res.sections[0]["visual_block"]["items"]
+    )
 
 
 @pytest.mark.asyncio
-async def test_space_race_and_engaged_resolve_country_flags_and_couple_portraits() -> None:
+async def test_partial_card_and_section_strip_all_row_pictures_no_monograms_beside_photos() -> None:
     clear_fun_markets_cache()
     paths_by_slug = {p.stem: p for p in discover_machinery_candidate_paths()}
 
@@ -198,12 +246,12 @@ async def test_space_race_and_engaged_resolve_country_flags_and_couple_portraits
     ]
     space_res = await produce_container_machinery({"markets": space_markets, "teams": []}, space_defn, now=NOW)
     assert hasattr(space_res, "machinery_card"), space_res
-    space_by_mid = {int(r["market_id"]): r for r in space_res.machinery_card["rows"]}
-    assert space_by_mid[108247]["art"]["kind"] == "flag"
-    assert space_by_mid[108247]["art"]["url"] == "https://flagcdn.com/w160/cn.png"
-    assert space_by_mid[108300]["art"]["url"] is None
-    assert space_by_mid[108300]["art"]["kind"] == "monogram"
-    assert space_by_mid[108300]["art"]["initials"]
+    assert all((r.get("art") or {}).get("url") is None for r in space_res.machinery_card["rows"])
+    assert all(
+        not (o.get("art") or {}).get("url")
+        for it in space_res.sections[0]["visual_block"]["items"]
+        for o in (it.get("outcomes") or ())
+    )
 
     engaged_defn = load_machinery_definition(paths_by_slug["machinery-who-gets-engaged"])
     engaged_markets = [
@@ -217,8 +265,8 @@ async def test_space_race_and_engaged_resolve_country_flags_and_couple_portraits
             "outcomes": [{"id": 21, "name": "Yes", "probability": 0.29}, {"id": 22, "name": "No", "probability": 0.71}],
         },
         {
-            "id": 2519100,
-            "name": "Will Puka Nacua & Sara Saffari get engaged?",
+            "id": 109386,
+            "name": "Will Megan Thee Stallion & Klay Thompson get engaged?",
             "status": "open",
             "source": "polymarket",
             "llm_sport_category": "culture",
@@ -237,12 +285,7 @@ async def test_space_race_and_engaged_resolve_country_flags_and_couple_portraits
     ]
     eng_res = await produce_container_machinery({"markets": engaged_markets, "teams": []}, engaged_defn, now=NOW)
     assert hasattr(eng_res, "machinery_card"), eng_res
-    eng_by_mid = {int(r["market_id"]): r for r in eng_res.machinery_card["rows"]}
-    assert "image.tmdb.org" in str(eng_by_mid[109618]["art"]["url"])
-    assert "image.tmdb.org" in str(eng_by_mid[109385]["art"]["url"])
-    assert eng_by_mid[2519100]["art"]["url"] is None
-    assert eng_by_mid[2519100]["art"]["kind"] == "monogram"
-    assert eng_by_mid[2519100]["art"]["initials"]
+    assert all("image.tmdb.org" in str((r.get("art") or {}).get("url") or "") for r in eng_res.machinery_card["rows"])
 
 
 @pytest.mark.asyncio

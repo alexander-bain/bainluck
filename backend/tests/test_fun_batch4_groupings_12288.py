@@ -199,7 +199,7 @@ async def test_championships_barcelona_row_3_keeps_all_three_row_pictures() -> N
 
 
 @pytest.mark.asyncio
-async def test_benchmark_strip_keeps_partial_row_art_and_fills_initials_fallback() -> None:
+async def test_benchmark_strip_drops_partial_row_art_instead_of_leaving_empty_slot() -> None:
     paths_by_slug = {p.stem: p for p in discover_machinery_candidate_paths()}
     defn = load_machinery_definition(paths_by_slug["machinery-big-championships-2027"])
     markets = _sample_batch4_markets()
@@ -210,11 +210,5 @@ async def test_benchmark_strip_keeps_partial_row_art_and_fills_initials_fallback
     res = await produce_container_machinery(db, defn, now=NOW)
     card_rows = res.machinery_card["rows"]
     assert len(card_rows) == 3
-    by_mid = {int(r["market_id"]): r for r in card_rows}
-    assert str((by_mid[57792807].get("art") or {}).get("url") or "").strip()
-    assert str((by_mid[66031970].get("art") or {}).get("url") or "").strip()
-    fallback_art = by_mid[70732924].get("art") or {}
-    assert fallback_art.get("url") is None
-    assert fallback_art.get("kind") == "monogram"
-    assert fallback_art.get("initials") == "UF"
-    assert str(fallback_art.get("accent_color") or "").startswith("#")
+    assert all((r.get("art") or {}).get("url") is None for r in card_rows)
+    assert all((r.get("art") or {}).get("kind") == "monogram" for r in card_rows)
