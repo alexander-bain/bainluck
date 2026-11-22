@@ -2507,10 +2507,7 @@
       "presentation": "portrait",
       "verified_subject": "Taylor Swift TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/vr4QrJ23Cm8T7Y5sBN3UnnWrZ0q.jpg",
-      "credit": "TMDB",
-      "author": "TMDB",
-      "license": "TMDB API",
-      "source_page": "https://www.themoviedb.org/person/212208"
+      "credit": "TMDB"
     }
   ]
 }
