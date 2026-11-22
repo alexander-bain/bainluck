@@ -2508,6 +2508,7 @@ jobs:
     needs:
     - change-scope
     - database-integration
+    - backend-tests
     if: always() && needs.change-scope.result == 'success'
     runs-on: ubuntu-latest
     steps:
@@ -2517,6 +2518,16 @@ jobs:
         INTEGRATION_RESULT: ${{ needs.database-integration.result }}
       run: "if [ \"$SCOPE_RESULT\" != \"success\" ] || [ \"$INTEGRATION_RESULT\" != \"success\" ]; then\n  echo \"::error::database integration\
         \ incomplete: scope=$SCOPE_RESULT groups=$INTEGRATION_RESULT\"\n  exit 1\nfi\necho \"All database integration groups passed.\"\n"
+    - name: Every backend test shard passed
+      env:
+        SCOPE_RESULT: ${{ needs.change-scope.result }}
+        BACKEND_RESULT: ${{ needs.backend-tests.result }}
+      run: |
+        if [ "$SCOPE_RESULT" != "success" ] || [ "$BACKEND_RESULT" != "success" ]; then
+          echo "::error::backend-tests incomplete: scope=$SCOPE_RESULT shards=$BACKEND_RESULT"
+          exit 1
+        fi
+        echo "All backend test shards passed."
   frontend-build:
     needs:
     - change-scope

@@ -443,7 +443,7 @@ def test_required_aggregate_runs_after_failure_and_deploy_still_depends_on_it():
     jobs, _ = _inputs()
     aggregate = jobs["search-recall"]
     assert "strategy" not in aggregate and "name" not in aggregate
-    assert aggregate["needs"] == ["change-scope", "database-integration"]
+    assert aggregate["needs"] == ["change-scope", "database-integration", "backend-tests"]
     assert aggregate["if"] == "${{ !cancelled() && !contains(github.event.pull_request.labels.*.name, 'eval-candidate') && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' }}"
     # Fable, Wed Nov 18: deploy depends on every integration group directly (a matrix
     # need is met only when all groups succeed) and no longer waits on search-recall's runner.

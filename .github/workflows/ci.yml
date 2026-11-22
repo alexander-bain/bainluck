@@ -5090,7 +5090,7 @@ jobs:
       - name: Run the quarantined tests (reports, never blocks)
         run: bash ../.github/scripts/flaky-canary.sh
   search-recall:
-    needs: [change-scope, database-integration]
+    needs: [change-scope, database-integration, backend-tests]
     if: ${{ !cancelled() && !contains(github.event.pull_request.labels.*.name, 'eval-candidate') && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' }}
     runs-on: ubuntu-latest
     steps:
@@ -5104,6 +5104,16 @@ jobs:
             exit 1
           fi
           echo "All database integration groups passed."
+      - name: Every backend test shard passed
+        env:
+          SCOPE_RESULT: ${{ needs.change-scope.result }}
+          BACKEND_RESULT: ${{ needs.backend-tests.result }}
+        run: |
+          if [ "$SCOPE_RESULT" != "success" ] || [ "$BACKEND_RESULT" != "success" ]; then
+            echo "::error::backend-tests incomplete: scope=$SCOPE_RESULT shards=$BACKEND_RESULT"
+            exit 1
+          fi
+          echo "All backend test shards passed."
 
   frontend-build:
     needs: [change-scope, fast-gate]

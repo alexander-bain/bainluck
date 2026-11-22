@@ -24,7 +24,9 @@ red required context.
 
 from __future__ import annotations
 
+import copy
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -245,3 +247,88 @@ def test_a_live_candidate_defers_all_full_shard_steps_but_keeps_contexts(scope):
     assert "fast-gate" in job["needs"]
     ran = [s for s in job["steps"] if _evaluate(s.get("if"), scope, live=True)]
     assert len(ran) == 2 and ran[0].get("name") == GUARD and ran[1].get("if") == MARKER
+
+
+def _validate_backend_shard_aggregate(jobs: dict) -> None:
+    """Assert required `search-recall` gates every backend shard even on shard 9..16 failure."""
+    aggregate = jobs["search-recall"]
+    assert "strategy" not in aggregate and "name" not in aggregate
+    assert "backend-tests" in aggregate.get("needs", ())
+    assert "!cancelled()" in str(aggregate.get("if", ""))
+    assert "continue-on-error" not in aggregate
+    assert "continue-on-error" not in jobs["backend-tests"]
+    step = next(
+        s for s in aggregate["steps"] if s.get("name") == "Every backend test shard passed"
+    )
+    assert "if" not in step and "continue-on-error" not in step
+    assert step["env"] == {
+        "SCOPE_RESULT": "${{ needs.change-scope.result }}",
+        "BACKEND_RESULT": "${{ needs.backend-tests.result }}",
+    }
+    assert "exit 1" in step["run"]
+
+
+def test_required_aggregate_gates_every_backend_shard_after_failure():
+    _validate_backend_shard_aggregate(_jobs())
+
+
+@pytest.mark.parametrize("scope_result", ["success", "failure", "cancelled", "skipped", ""])
+@pytest.mark.parametrize("backend_result", ["success", "failure", "cancelled", "skipped", ""])
+def test_actual_backend_aggregate_command_only_accepts_completed_success(scope_result, backend_result):
+    step = next(
+        s
+        for s in _jobs()["search-recall"]["steps"]
+        if s.get("name") == "Every backend test shard passed"
+    )
+    result = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", step["run"]],
+        env={**os.environ, "SCOPE_RESULT": scope_result, "BACKEND_RESULT": backend_result},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert (result.returncode == 0) == (scope_result == backend_result == "success")
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "lost_backend_need",
+        "removed_step",
+        "missing_cancelled",
+        "waived_failure",
+        "conditional_step",
+    ],
+)
+def test_backend_aggregate_guard_rejects_removed_or_bypassed_gate(mutation):
+    jobs = copy.deepcopy(_jobs())
+    aggregate = jobs["search-recall"]
+    if mutation == "lost_backend_need":
+        aggregate["needs"].remove("backend-tests")
+        with pytest.raises(AssertionError):
+            _validate_backend_shard_aggregate(jobs)
+    elif mutation == "removed_step":
+        aggregate["steps"] = [
+            s for s in aggregate["steps"] if s.get("name") != "Every backend test shard passed"
+        ]
+        with pytest.raises(StopIteration):
+            _validate_backend_shard_aggregate(jobs)
+    elif mutation == "missing_cancelled":
+        aggregate["if"] = (
+            "needs.change-scope.outputs.scope != 'frontend' && "
+            "needs.change-scope.outputs.scope != 'native' && "
+            "needs.change-scope.outputs.live != 'true'"
+        )
+        with pytest.raises(AssertionError):
+            _validate_backend_shard_aggregate(jobs)
+    elif mutation == "waived_failure":
+        aggregate["continue-on-error"] = True
+        with pytest.raises(AssertionError):
+            _validate_backend_shard_aggregate(jobs)
+    else:
+        step = next(
+            s for s in aggregate["steps"] if s.get("name") == "Every backend test shard passed"
+        )
+        step["if"] = "success()"
+        with pytest.raises(AssertionError):
+            _validate_backend_shard_aggregate(jobs)
