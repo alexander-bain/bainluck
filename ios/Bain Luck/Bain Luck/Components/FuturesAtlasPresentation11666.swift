@@ -1124,11 +1124,7 @@ struct FuturesAtlasHeadlineCard192A: View {
     }
 
     private func badgeInitials(for name: String) -> String {
-        let core = name
-            .components(separatedBy: " · ").first?
-            .components(separatedBy: " — ").first?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? name
-        return TeamShortName.abbreviation(core)
+        TeamShortName.futuresBadgeInitials(name)
     }
 
     var body: some View {
@@ -1137,7 +1133,9 @@ struct FuturesAtlasHeadlineCard192A: View {
                 Text(cleanEyebrow)
                     .font(.caption.weight(.medium))
                     .foregroundStyle(DS.textSecondary)
-                    .lineLimit(1)
+                    .lineLimit(nil)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Spacer(minLength: 4)
 

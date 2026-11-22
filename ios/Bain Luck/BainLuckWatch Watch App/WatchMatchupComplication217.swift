@@ -49,16 +49,19 @@ struct WatchMatchupComplication217: View {
 
     private var fullColor: Bool { mode == .fullColor }
 
+    private var hasThreeDigitScore: Bool {
+        (reading.away.score ?? 0) >= 100 || (reading.home.score ?? 0) >= 100
+    }
+
     var body: some View {
         GeometryReader { geo in
             let m = WatchMatchupMetrics217(slotHeight: geo.size.height)
-            HStack(alignment: .center, spacing: 4) {
-                Grid(alignment: .leading, horizontalSpacing: 4, verticalSpacing: m.rowGap) {
+            HStack(alignment: .center, spacing: 3) {
+                Grid(alignment: .leading, horizontalSpacing: reading.stage == .after ? 2.5 : 4, verticalSpacing: m.rowGap) {
                     sideRow(reading.away, m)
                     sideRow(reading.home, m)
                 }
                 .layoutPriority(1)
-                Spacer(minLength: 2)
                 VStack(alignment: .trailing, spacing: 0) {
                     Text(reading.bigText)
                         .font(.system(size: m.big, weight: .black, design: .rounded).monospacedDigit())
@@ -70,8 +73,10 @@ struct WatchMatchupComplication217: View {
                         .font(.system(size: m.small, weight: .semibold, design: .rounded))
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.8)
+                        .minimumScaleFactor(0.55)
+                        .allowsTightening(true)
                 }
+                .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .center)
         }
@@ -96,7 +101,8 @@ struct WatchMatchupComplication217: View {
                     .accessibilityHidden(true)
             }
             Text(side.score.map(String.init) ?? side.abbreviation)
-                .font(.system(size: m.name, weight: side.isWinner || reading.stage != .after ? .heavy : .semibold,
+                .font(.system(size: m.name * (hasThreeDigitScore ? 0.88 : 1.0),
+                              weight: side.isWinner || reading.stage != .after ? .heavy : .semibold,
                               design: .rounded).monospacedDigit())
                 .foregroundStyle(reading.stage == .after && !side.isWinner ? .secondary : .primary)
                 .lineLimit(1)

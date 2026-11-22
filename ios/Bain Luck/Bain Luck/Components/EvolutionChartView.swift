@@ -1600,21 +1600,7 @@ struct EvolutionChartView: View {
     }
 
     nonisolated static func shortEndLabel192A(name: String, percentValue: Double?) -> String {
-        let stripped = name
-            .components(separatedBy: " · ").first?
-            .components(separatedBy: " — ").first?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? name
-        let shortName: String
-        if stripped.count <= 9 {
-            shortName = stripped
-        } else {
-            let words = stripped.split(whereSeparator: \.isWhitespace).map(String.init)
-            if let last = words.last, words.count >= 2, last.count >= 3, !last.hasPrefix("(") {
-                shortName = last.count <= 9 ? last : String(last.prefix(8)) + "…"
-            } else {
-                shortName = String(stripped.prefix(8)) + "…"
-            }
-        }
+        let shortName = TeamShortName.futuresChartLabel(name)
         if let pct = percentValue {
             return "\(shortName) \(Int(pct.rounded()))%"
         }
@@ -1899,7 +1885,7 @@ struct EvolutionChartView: View {
 
             if isFirstScreenInline192A && !dynamicTypeSize.isAccessibilitySize {
                 rightEdgeLabelsColumn192A(entries: entries, ceiling: ceiling192A)
-                    .frame(width: 84, height: height)
+                    .frame(width: 104, height: height)
             }
         }
         .padding(.horizontal, isFirstScreenInline192A ? 14 : 16)
@@ -1945,10 +1931,13 @@ struct EvolutionChartView: View {
                 let color = colorForOutcome(name: name, index: styleIdx)
                 let label = Self.shortEndLabel192A(name: name, percentValue: lastProbs[idx])
                 Text(label)
-                    .font(.system(size: 10, weight: .bold).monospacedDigit())
+                    .font(.system(size: 10.5, weight: .bold).monospacedDigit())
                     .foregroundStyle(color)
                     .lineLimit(1)
-                    .position(x: 42, y: yPositions[idx])
+                    .minimumScaleFactor(0.68)
+                    .allowsTightening(true)
+                    .frame(width: 102, alignment: .leading)
+                    .position(x: 52, y: yPositions[idx])
             }
         }
     }
