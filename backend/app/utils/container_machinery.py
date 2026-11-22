@@ -1545,8 +1545,17 @@ def _hydrate_market_visual_item(
             "by_outcome_key": canon_by_key,
         }
     from app.services.paired_metric_register import clean_card_face_title
+    from app.utils.market_display_name import fill_market_display_name_blank
 
-    clean_raw_name = clean_card_face_title(str(market.get("name") or ""))
+    lead_out_name = str(outcomes_out[0].get("name") or "") if outcomes_out else None
+    clean_raw_name = (
+        fill_market_display_name_blank(
+            clean_card_face_title(str(market.get("name") or "")),
+            lead_outcome_name=lead_out_name,
+            outcome_count=len(outcomes_out),
+        )
+        or ""
+    )
     card_copy = dict(market)
     card_copy["name"] = clean_raw_name
     card_copy["content_kind"] = effective_kind

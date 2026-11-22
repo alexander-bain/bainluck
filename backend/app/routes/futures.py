@@ -115,7 +115,10 @@ from app.utils.futures_unsupported_price import (
 from app.utils.series_card_labels import market_threshold_label, reader_outcome_name
 from app.utils.hook_staleness import hook_names_unpriced_outcome, is_hook_stale
 from app.utils.leader_order import leader_first_outcomes
-from app.utils.market_display_name import clean_market_display_name
+from app.utils.market_display_name import (
+    clean_market_display_name,
+    fill_market_display_name_blank,
+)
 from app.utils.event_rails import live_scheduled_settled_order
 from app.utils.event_twin_fold import fold_twin_events
 from app.utils.lifecycle import served_event_status
@@ -11138,7 +11141,15 @@ def _format_market_detail(
         # the clients that interpret this key (frontend `marketEventKey`,
         # `conceptDisplayLabel`) already receive the cleaned string from the feed
         # card payload, so the two surfaces now agree rather than diverge.
-        "name": clean_market_display_name(market.name),
+        "name": (
+            fill_market_display_name_blank(
+                market.name,
+                leader_name,
+                outcome_count=len(outcomes),
+            )
+            if outcomes
+            else clean_market_display_name(market.name)
+        ),
         "description": market.description,
         "sport": market.sport.key if market.sport else None,
         # #6444: `/api/futures/61182733` served `sport_name: "tennis_other"` —
