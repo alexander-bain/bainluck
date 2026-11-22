@@ -145,6 +145,7 @@ struct GolfTournamentView: View {
                     // for the eye to land on.
                     Text(venue)
                         .font(.headline)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
 

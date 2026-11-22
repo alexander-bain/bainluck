@@ -83,37 +83,8 @@ struct NativeTournamentDiscoverCard: View {
                 )
 
                 VStack(alignment: .leading, spacing: 6) {
-                    if dynamicTypeSize.isAccessibilitySize {
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(spacing: 6) {
-                                Text(tourBadge)
-                                    .font(.caption2.bold())
-                                    .foregroundStyle(.white.opacity(0.7))
-                                    .padding(.horizontal, 6)
-                                    .padding(.vertical, 2)
-                                    .background(.white.opacity(0.15))
-                                    .clipShape(RoundedRectangle(cornerRadius: 4))
-
-                                if presentation.showsFinalChip {
-                                    Text("🏁 FINAL")
-                                        .font(.caption2.bold())
-                                        .foregroundStyle(.white)
-                                        .padding(.horizontal, 6)
-                                        .padding(.vertical, 2)
-                                        .background(.white.opacity(0.2))
-                                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                                }
-                            }
-                            if let venue = data.venue {
-                                Text(venue)
-                                    .font(.caption2)
-                                    .foregroundStyle(.white.opacity(0.6))
-                                    .lineLimit(nil)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                        }
-                    } else {
-                        HStack {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 6) {
                             Text(tourBadge)
                                 .font(.caption2.bold())
                                 .foregroundStyle(.white.opacity(0.7))
@@ -131,15 +102,13 @@ struct NativeTournamentDiscoverCard: View {
                                     .background(.white.opacity(0.2))
                                     .clipShape(RoundedRectangle(cornerRadius: 4))
                             }
-
-                            Spacer()
-
-                            if let venue = data.venue {
-                                Text(venue)
-                                    .font(.caption2)
-                                    .foregroundStyle(.white.opacity(0.6))
-                                    .lineLimit(1)
-                            }
+                        }
+                        if let venue = data.venue?.trimmingCharacters(in: .whitespacesAndNewlines), !venue.isEmpty {
+                            Text(venue)
+                                .font(.caption2)
+                                .foregroundStyle(.white.opacity(0.6))
+                                .lineLimit(nil)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                     }
 
