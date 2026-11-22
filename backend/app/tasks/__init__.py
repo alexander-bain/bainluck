@@ -7500,8 +7500,8 @@ def refresh_open_futures_outcomes(self, budget_seconds: int = None):
 
 
 @celery_app.task(
-    soft_time_limit=20,
-    time_limit=25,
+    soft_time_limit=135,
+    time_limit=150,
     name="app.tasks.refresh_onboarding_team_membership",
 )
 def refresh_onboarding_team_membership():
@@ -9203,8 +9203,8 @@ celery_app.conf.beat_schedule = {
     },
     "refresh-onboarding-team-membership": {
         "task": "app.tasks.refresh_onboarding_team_membership",
-        # An hourly rebuild at :03 stays outside settlement's :31-:44 window.
-        "schedule": crontab(minute=3),
+        # One overnight scan at 11:21 UTC, outside settlement's :31-:44 window.
+        "schedule": crontab(hour=11, minute=21),
         "options": {"queue": "background", "expires": 300},
     },
     "warm-search-head": {

@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 _KEY = "bainluck:onboarding:team-league-members:1"
 _READY = "ready"
-_SNAPSHOT_TTL_S = 24 * 60 * 60
+_SNAPSHOT_TTL_S = 7 * 24 * 60 * 60
 _BOOTSTRAP_CLAIM_TTL_S = 60 * 60
 _REBUILD_TASK = "app.tasks.refresh_onboarding_team_membership"
 
@@ -80,7 +80,7 @@ async def rebuild_onboarding_team_membership(db: AsyncSession, cache: Redis) -> 
 
     started = perf_counter()
     await db.execute(text("SET TRANSACTION READ ONLY"))
-    await db.execute(text("SET LOCAL statement_timeout = '10s'"))
+    await db.execute(text("SET LOCAL statement_timeout = '120s'"))
     await db.execute(text("SET LOCAL lock_timeout = '250ms'"))
     acquired = await db.scalar(
         text("SELECT pg_try_advisory_xact_lock(:key)"),

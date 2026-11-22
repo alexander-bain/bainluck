@@ -386,12 +386,14 @@ async def test_search_statement_timeout_returns_unavailable_before_redis(client,
 async def test_rebuild_has_one_owner_and_failed_publish_keeps_previous_snapshot(
     sessions, cache, writer
 ):
-    first = await rebuild(sessions, writer)
+    async with sessions() as db:
+        first = await membership.rebuild_onboarding_team_membership(db, writer)
+        assert await db.scalar(text("SHOW statement_timeout")) == "2min"
     assert first["terminal"] == "complete"
     assert first["eligible_teams"] > 0
     original_members = await cache.smembers(membership._KEY)
     assert original_members
-    assert 23 * 60 * 60 < await cache.ttl(membership._KEY) <= 24 * 60 * 60
+    assert (7 * 24 - 1) * 60 * 60 < await cache.ttl(membership._KEY) <= 7 * 24 * 60 * 60
 
     async with sessions() as lock:
         await lock.execute(
