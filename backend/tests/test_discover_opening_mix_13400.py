@@ -665,3 +665,47 @@ def test_every_same_deadline_roundup_stays_out_of_seats_1_to_9_whatever_date() -
     tiny_out = apply_discover_opening_mix(tiny_deck, now=NOW)
     assert {c["data"]["id"] for c in tiny_out[:9]}.isdisjoint({"roundup:by-november-30", "roundup:by-february-14"})
     assert len(tiny_out) == len(tiny_deck)
+
+
+def test_336a_batch5_sets_classify_and_seat_in_opening_mix() -> None:
+    """Decision 336: A — Batch 5 sets sit in explicit opening-mix topic lists, not fallbacks."""
+    mm = _roundup("machinery-march-madness-2027", "March Madness 2027", kicker="CARD", category="other", member_ids=[8101, 8102], score=88.0)
+    nhl = _roundup("machinery-nhl-100-point-club", "NHL 100-Point Club", kicker="CARD", category="other", member_ids=[8103, 8104], score=87.0)
+    ai = _roundup("machinery-ai-model-leaderboard-2026", "The 2026 AI Model Leaderboard", kicker="CARD", category="other", member_ids=[8105, 8106], score=86.0)
+    tech = _roundup("machinery-big-tech-deals-hardware", "Big Tech Deals & Hardware", kicker="CARD", category="other", member_ids=[8107, 8108], score=85.0)
+
+    # Neutral kicker/category confirms explicit membership in _SPORTS_SLUGS / _TECH_BUSINESS_SLUGS.
+    assert classify_discover_opening_topic(mm) == TOPIC_SPORTS
+    assert classify_discover_opening_topic(nhl) == TOPIC_SPORTS
+    assert classify_discover_opening_topic(ai) == TOPIC_TECH_BUSINESS
+    assert classify_discover_opening_topic(tech) == TOPIC_TECH_BUSINESS
+
+    # With Batch 5 sports + tech_business leading those buckets, the opening 10 seats pick
+    # both sports sets and both tech/business sets cleanly alongside odd, entertainment, PWM, and a single.
+    deck = [
+        _roundup("machinery-elon-musk-side-quests", "Musk", kicker="ODD", category="entertainment", member_ids=[8201, 8202], score=95.0),
+        _roundup("machinery-long-shots", "Long shots", kicker="ODD", category="entertainment", member_ids=[8203, 8204], score=94.0),
+        _roundup("machinery-2026-summed-up", "2026 Summed Up", kicker="ENTERTAINMENT", category="entertainment", member_ids=[8205, 8206], score=93.0),
+        _roundup("machinery-who-gets-engaged", "Engaged", kicker="ENTERTAINMENT", category="entertainment", member_ids=[8207, 8208], score=92.0),
+        _roundup("machinery-next-james-bond", "Bond", kicker="ENTERTAINMENT", category="entertainment", member_ids=[8209, 8210], score=60.0),
+        mm,
+        nhl,
+        ai,
+        tech,
+        _roundup("machinery-2028-presidential", "2028 Race", kicker="POLITICS", category="politics", member_ids=[8211, 8212], score=91.0),
+        _single(8301, "Standout Oscar market", category="entertainment", score=89.0),
+        _single(8302, "Secondary golf market", category="golf", score=50.0),
+    ]
+    out = apply_discover_opening_mix(deck, now=NOW)
+    top10_ids = {(c.get("data") or {}).get("id") for c in out[:10]}
+    for slug in (
+        "machinery-march-madness-2027",
+        "machinery-nhl-100-point-club",
+        "machinery-ai-model-leaderboard-2026",
+        "machinery-big-tech-deals-hardware",
+    ):
+        assert f"roundup:{slug}" in top10_ids, f"{slug} missing from opening 10: {top10_ids}"
+    counts = Counter(classify_discover_opening_topic(c) for c in out[:10])
+    assert counts[TOPIC_SPORTS] == 2
+    assert counts[TOPIC_TECH_BUSINESS] == 2
+    assert counts[TOPIC_PWM] <= 1
