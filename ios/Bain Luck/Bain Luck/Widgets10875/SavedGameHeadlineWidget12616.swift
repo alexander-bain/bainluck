@@ -624,6 +624,44 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
                         .foregroundStyle(inkSecondary)
                         .lineLimit(1)
                 }
+            } else if let trailing = model.smallTopTrailing {
+                let trailingColor: Color = {
+                    if fullColor, let hex = model.smallTopTrailingInkHex {
+                        return Color(hex: hex)
+                    }
+                    return inkSecondary
+                }()
+                let trailingWeight: Font.Weight = model.smallTopTrailingInkHex != nil ? .bold : .medium
+                ViewThatFits(in: .horizontal) {
+                    smallMetaWithTrailingRow(
+                        trailing: trailing,
+                        trailingColor: trailingColor,
+                        metaSize: HeadlineStyleTable199.quietTextBaseSize(.widget),
+                        trailingSize: 9.5,
+                        trailingWeight: trailingWeight,
+                        spacing: 3
+                    )
+                    smallMetaWithTrailingRow(
+                        trailing: trailing,
+                        trailingColor: trailingColor,
+                        metaSize: 9.0,
+                        trailingSize: 8.5,
+                        trailingWeight: trailingWeight,
+                        spacing: 2
+                    )
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(model.smallTopMeta)
+                            .font(HeadlineStyleTable199.quietText(.widget, monospacedDigits: true, scaledSize: HeadlineStyleTable199.quietTextBaseSize(.widget)))
+                            .foregroundStyle(inkSecondary)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                        Text(trailing)
+                            .font(HeadlineStyleTable199.quietText(.widget, monospacedDigits: true, scaledSize: 9.5).weight(trailingWeight))
+                            .foregroundStyle(trailingColor)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.75)
+                    }
+                }
             } else {
                 Text(model.smallTopMeta)
                     .font(HeadlineStyleTable199.quietText(.widget, monospacedDigits: true, scaledSize: HeadlineStyleTable199.quietTextBaseSize(.widget)))
@@ -631,21 +669,30 @@ struct SavedGameHeadlineWidgetView12616<BarContent: View>: View {
                     .lineLimit(1)
                     .minimumScaleFactor(0.75)
                 Spacer(minLength: 3)
-                if let trailing = model.smallTopTrailing {
-                    let trailingColor: Color = {
-                        if fullColor, let hex = model.smallTopTrailingInkHex {
-                            return Color(hex: hex)
-                        }
-                        return inkSecondary
-                    }()
-                    Text(trailing)
-                        .font(HeadlineStyleTable199.quietText(.widget, monospacedDigits: true, scaledSize: 9.5).weight(model.smallTopTrailingInkHex != nil ? .bold : .medium))
-                        .foregroundStyle(trailingColor)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                        .fixedSize(horizontal: true, vertical: false)
-                }
             }
+        }
+    }
+
+    private func smallMetaWithTrailingRow(
+        trailing: String,
+        trailingColor: Color,
+        metaSize: CGFloat,
+        trailingSize: CGFloat,
+        trailingWeight: Font.Weight,
+        spacing: CGFloat
+    ) -> some View {
+        HStack(spacing: spacing) {
+            Text(model.smallTopMeta)
+                .font(HeadlineStyleTable199.quietText(.widget, monospacedDigits: true, scaledSize: metaSize))
+                .foregroundStyle(inkSecondary)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+            Spacer(minLength: spacing)
+            Text(trailing)
+                .font(HeadlineStyleTable199.quietText(.widget, monospacedDigits: true, scaledSize: trailingSize).weight(trailingWeight))
+                .foregroundStyle(trailingColor)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
         }
     }
 
