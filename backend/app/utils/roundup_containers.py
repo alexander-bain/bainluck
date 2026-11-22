@@ -3940,6 +3940,7 @@ async def add_roundup_feed_items(
     include_machinery: bool = False,
     machinery_only: bool = False,
     include_preview: bool = False,
+    apply_opening_mix: bool = False,
 ) -> list[dict[str, Any]]:
     """Evaluate registered round-up producers and place their cards on Discover.
 
@@ -4422,6 +4423,10 @@ async def add_roundup_feed_items(
                     produced.append(prev_fi)
 
     if not produced:
+        if apply_opening_mix:
+            from app.utils.discover_opening_mix import apply_discover_opening_mix
+
+            return apply_discover_opening_mix(items, now=now, page_window=page_window)
         return items
     # Ruling 188 (#11937): a market nobody is trading is not featured, and a
     # round-up is rated by its stalest member, so those members leave the card.
@@ -4438,8 +4443,12 @@ async def add_roundup_feed_items(
         except Exception:  # noqa: BLE001 — one failed read must not empty the page (gotcha #42)
             logger.warning("Discover round-up not-trading check failed; keeping the cards", exc_info=True)
     if not produced:
+        if apply_opening_mix:
+            from app.utils.discover_opening_mix import apply_discover_opening_mix
+
+            return apply_discover_opening_mix(items, now=now, page_window=page_window)
         return items
-    return insert_roundup_feed_items(
+    result = insert_roundup_feed_items(
         items,
         produced,
         seat_floor=seat_floor,
@@ -4452,6 +4461,11 @@ async def add_roundup_feed_items(
         novelty_seat_cap=novelty_seat_cap,
         preserve_existing_roundups=machinery_only,
     )
+    if apply_opening_mix:
+        from app.utils.discover_opening_mix import apply_discover_opening_mix
+
+        result = apply_discover_opening_mix(result, now=now, page_window=page_window)
+    return result
 
 
 def render_machinery_prewarm_bundle(
@@ -4496,6 +4510,7 @@ def render_machinery_prewarm_bundle(
     if not base_items:
         return None
 
+    use_opening = bool(mach_base.get("opening_seating"))
     now_dt = datetime.fromtimestamp(now_ts, tz=timezone.utc)
     spliced_items = insert_roundup_feed_items(
         copy.deepcopy(base_items),
@@ -4504,6 +4519,14 @@ def render_machinery_prewarm_bundle(
         now=now_dt,
         preserve_existing_roundups=True,
     )
+    if use_opening:
+        from app.utils.discover_opening_mix import apply_discover_opening_mix
+
+        spliced_items = apply_discover_opening_mix(
+            spliced_items,
+            now=now_dt,
+            page_window=DISCOVER_COMPOSITION_WINDOW,
+        )
     for item in spliced_items:
         _publish_feed_item(item)
 
@@ -4513,7 +4536,6 @@ def render_machinery_prewarm_bundle(
         if oldest_live_built_at is not None
         else base_age_origin
     )
-    use_opening = bool(mach_base.get("opening_seating"))
     edition_policy = str(mach_base.get("edition_policy") or "default")
     limit = int(mach_base.get("limit") or 20)
     offset = int(mach_base.get("offset") or 0)

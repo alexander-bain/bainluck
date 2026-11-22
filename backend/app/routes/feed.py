@@ -5351,6 +5351,7 @@ async def get_feed(
                         include_machinery=True,
                         machinery_only=True,
                         include_preview=_include_machinery_preview,
+                        apply_opening_mix=bool(_opening_seating),
                     )
                     _base_body = {
                         **_base_body,
@@ -6689,6 +6690,7 @@ async def get_feed(
                     include_machinery=True,
                     machinery_only=True,
                     include_preview=_include_machinery_preview,
+                    apply_opening_mix=bool(_opening_seating),
                 )
             if _capture is not None and feed_items is not _before_roundups:
                 _capture.abandon("roundup_containers")
