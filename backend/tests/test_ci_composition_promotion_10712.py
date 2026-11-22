@@ -139,10 +139,6 @@ STEP_ENV_KEYS = {
         "database-integration",
         "#12612 calibration real-Postgres contracts",
     ): {"CALIBRATION_TEST_DATABASE_URL"},
-    (
-        "database-integration",
-        "#13338 onboarding club search and save (real Postgres)",
-    ): {"ONBOARDING_TEST_REDIS_URL"},
     ("search-recall", "Every database integration group passed"): {
         "SCOPE_RESULT",
         "INTEGRATION_RESULT",

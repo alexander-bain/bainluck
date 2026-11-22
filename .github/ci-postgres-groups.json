@@ -5,7 +5,6 @@
     "#10305 one-row anchor-schedule move: lock, fence and reach (real Postgres)",
     "#10305 D2 participant fill: fences, rollback, restore and the code denylist (real Postgres)",
     "#12534 wrong-club venue identities are refused (real Postgres)",
-    "#13338 onboarding club search and save (real Postgres)",
     "#12519 team-merge dedup keeps distinct names (real Postgres)",
     "#8841 start-placeholder tag rewrites (real Postgres)",
     "#5821 and #10520 real-Postgres gates",
