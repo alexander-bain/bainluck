@@ -125,7 +125,9 @@ export function stopText(stop: Stop, now: string) {
   if (stop.kind === "hold")
     return `${stop.line} on HOLD since ${time(stop.since)} PT.${waited ? ` ${waited}` : ""}`;
   if (stop.kind === "master")
-    return `Shared checks failed at ${time(stop.since)} PT.`;
+    return stop.station === "Ship" && stop.line === "Server" && stop.number
+      ? `The server release for #${stop.number} is on hold because a server test failed.`
+      : `Shared checks failed at ${time(stop.since)} PT.`;
   return waited ?? `${stop.line} inspection needs attention.`;
 }
 
