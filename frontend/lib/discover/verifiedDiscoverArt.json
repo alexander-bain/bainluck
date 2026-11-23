@@ -2969,6 +2969,126 @@
       "author": "NASA/MSFC/David Higginbotham",
       "license": "Public domain",
       "source_page": "https://commons.wikimedia.org/wiki/File:James_Webb_Primary_Mirror.jpg"
+    },
+    {
+      "entity_key": "batch8-earth-quakes-storms-2026",
+      "aliases": [
+        "Earth, Quakes & Storms",
+        "batch8-earth-quakes-storms-2026"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "1959 eruption of Kilauea Volcano lava fountain at Kilauea Iki Crater (USGS)",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/25/1959_eruption_of_Kilauea_Volcano.jpg/960px-1959_eruption_of_Kilauea_Volcano.jpg",
+      "credit": "Hawaii Volcano Observatory, USGS (Public domain, Wikimedia Commons)",
+      "author": "Hawaii Volcano Observatory, USGS",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:1959_eruption_of_Kilauea_Volcano.jpg"
+    },
+    {
+      "entity_key": "batch8-chess-milestones-curiosities",
+      "aliases": [
+        "Chess, Milestones & Curiosities",
+        "batch8-chess-milestones-curiosities"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Wooden Staunton No. 6 chess pieces arranged on a tournament board",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f0/Chess_game_Staunton_No._6.jpg/960px-Chess_game_Staunton_No._6.jpg",
+      "credit": "Wilfredor (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Wilfredor",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Chess_game_Staunton_No._6.jpg"
+    },
+    {
+      "entity_key": "batch8-climate-water-energy",
+      "aliases": [
+        "Water, Rain & Climate Shifts",
+        "batch8-climate-water-energy"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Snow-covered alpine ridge under crisp blue sky",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d8/Snow_mountain_background_photo_%28Unsplash%29.jpg/960px-Snow_mountain_background_photo_%28Unsplash%29.jpg",
+      "credit": "Patrick Hendry (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Patrick Hendry",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Snow_mountain_background_photo_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch8-music-and-grammys-2026",
+      "aliases": [
+        "Grammys & Chart Leaders",
+        "batch8-music-and-grammys-2026"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Live concert crowd silhouetted beneath warm stage lights",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bb/Concert_crowd_%28Unsplash%29.jpg/960px-Concert_crowd_%28Unsplash%29.jpg",
+      "credit": "Hannah Rodrigo (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Hannah Rodrigo",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Concert_crowd_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch8-tv-and-gaming-2026",
+      "aliases": [
+        "TV, Stage & Gaming Drops",
+        "batch8-tv-and-gaming-2026"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Vintage cinema projection booth with twin film projectors and control panel",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/da/Projector_met_bijbehorende_apparatuur_van_het_Chicago_Theater.jpg/960px-Projector_met_bijbehorende_apparatuur_van_het_Chicago_Theater.jpg",
+      "credit": "Unknown author (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Unknown author",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Projector_met_bijbehorende_apparatuur_van_het_Chicago_Theater.jpg"
+    },
+    {
+      "entity_key": "batch8-soccer-cups-and-relegation",
+      "aliases": [
+        "Soccer Cups & Relegation",
+        "batch8-soccer-cups-and-relegation"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Soccer players huddled on an illuminated grass pitch at dusk",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/98/Playing_football_in_evening_%28Unsplash%29.jpg/960px-Playing_football_in_evening_%28Unsplash%29.jpg",
+      "credit": "Abigail Keenan (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Abigail Keenan",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Playing_football_in_evening_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch8-nfl-conference-division-races",
+      "aliases": [
+        "NFL Division & Seed Races",
+        "batch8-nfl-conference-division-races"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Football kickoff on striped turf field as coverage unit sprints downfield",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/13/Sherman%2C_United_States_%28Unsplash%29.jpg/960px-Sherman%2C_United_States_%28Unsplash%29.jpg",
+      "credit": "Keith Johnston (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Keith Johnston",
+      "license": "CC0 1.0 Public Domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Sherman,_United_States_(Unsplash).jpg"
+    },
+    {
+      "entity_key": "batch8-ai-math-and-data-centers",
+      "aliases": [
+        "AI Math & Data Centers",
+        "batch8-ai-math-and-data-centers"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Engineer inspecting an integrated circuit layout mask on glowing red Rubylith (US Air Force photo)",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/cc/Circuit_image_on_Rubylith.jpg/960px-Circuit_image_on_Rubylith.jpg",
+      "credit": "TSgt. Bob Wickley, U.S. Air Force (Public domain, Wikimedia Commons)",
+      "author": "TSgt. Bob Wickley",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Circuit_image_on_Rubylith.jpg"
     }
   ]
 }

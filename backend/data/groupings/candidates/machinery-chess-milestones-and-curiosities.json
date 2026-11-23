@@ -1,0 +1,57 @@
+{
+  "slug": "machinery-chess-milestones-and-curiosities",
+  "stage": "preview",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_window",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "ODD · CURIOSITIES",
+  "name": "Chess, Milestones & Curiosities",
+  "category": "entertainment",
+  "tag": "ODD",
+  "section_title": "Wildcard Markets",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "extra_llm_categories": [
+      "chess",
+      "tech",
+      "culture"
+    ],
+    "card_rows": 3,
+    "card_section_key": "curiosities",
+    "hide_row_art": true,
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f0/Chess_game_Staunton_No._6.jpg/960px-Chess_game_Staunton_No._6.jpg",
+    "card_image_alt": "Wooden Staunton chess pieces arranged on a tournament board",
+    "card_image_credit": "Wilfredor (CC0 1.0 Public Domain, Wikimedia Commons)",
+    "card_image_author": "Wilfredor",
+    "card_image_license": "CC0 1.0 Public Domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Chess_game_Staunton_No._6.jpg",
+    "sections": [
+      {
+        "key": "curiosities",
+        "title": "Wildcard Markets",
+        "item_noun": "markets",
+        "note": "World Chess, wedding couture, Rock Hall expansion, psychedelic therapy, and Person of the Year.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch8-chess-milestones-curiosities",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 8,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,56 @@
+{
+  "slug": "machinery-tv-and-gaming-2026",
+  "stage": "preview",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_window",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "ENTERTAINMENT · TV & GAMING",
+  "name": "TV, Stage & Gaming Drops",
+  "category": "entertainment",
+  "tag": "ENTERTAINMENT",
+  "section_title": "Shows, Contests & Releases",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "extra_llm_categories": [
+      "esports",
+      "culture"
+    ],
+    "card_rows": 3,
+    "card_section_key": "tv_gaming",
+    "hide_row_art": true,
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/da/Projector_met_bijbehorende_apparatuur_van_het_Chicago_Theater.jpg/960px-Projector_met_bijbehorende_apparatuur_van_het_Chicago_Theater.jpg",
+    "card_image_alt": "Vintage cinema projection booth with twin film projectors and control panel",
+    "card_image_credit": "Unknown author (CC0 1.0 Public Domain, Wikimedia Commons)",
+    "card_image_author": "Unknown author",
+    "card_image_license": "CC0 1.0 Public Domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Projector_met_bijbehorende_apparatuur_van_het_Chicago_Theater.jpg",
+    "sections": [
+      {
+        "key": "tv_gaming",
+        "title": "Shows, Contests & Releases",
+        "item_noun": "markets",
+        "note": "Competition TV winners, Critics Choice comedy races, GTA VI timelines, and Major esports.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch8-tv-and-gaming-2026",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 10,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}

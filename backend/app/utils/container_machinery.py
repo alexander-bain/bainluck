@@ -2619,7 +2619,7 @@ _CATEGORY_LLM_POOL: dict[str, tuple[str, ...]] = {
     "football": ("football", "nfl", "americanfootball_nfl", "other"),
     "basketball": ("basketball", "nba", "basketball_nba", "basketball_ncaab", "other"),
     "hockey": ("hockey", "nhl", "icehockey_nhl", "other"),
-    "soccer": ("soccer", "other"),
+    "soccer": ("soccer", "sports", "other"),
     "tech": ("tech", "technology", "ai", "science", "other"),
 }
 
