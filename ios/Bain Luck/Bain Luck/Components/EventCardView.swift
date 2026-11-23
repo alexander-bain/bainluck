@@ -230,6 +230,7 @@ struct EventCardView: View {
             teamsAndOdds
             if !compactScheduleStyle {
                 footer
+                GameCardTeamFollowBar295A(event: event)
             }
         }
         .padding(.vertical, 6)
