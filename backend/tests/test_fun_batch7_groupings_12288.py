@@ -456,7 +456,10 @@ async def test_batch7_fable_fixes_big_ten_college_slate_and_history_first_to_las
     assert moved_card["form_id"] == "probability_history_chart"
     assert moved_card.get("mini_chart") is not None
     assert not moved_card.get("image_url")
-<<<<<<< HEAD
+    assert len(moved_card["rows"]) == 3
+    assert len({int(r["market_id"]) for r in moved_card["rows"]}) == 3
+    # No row portrait leaks next to monogram rows on Tech & Space Weekly Movers
+    assert not any((r.get("art") or {}).get("url") for r in moved_card["rows"])
 
 
 @pytest.mark.asyncio
@@ -472,11 +475,6 @@ async def test_european_league_titles_takes_zero_lesser_soccer_penalty_348b() ->
         compose_roundup_feed_item(build_container_machinery_producer(defn), res)
     )
     assert _roundup_lesser_soccer_penalty(feed_item) == 0
-=======
-    assert len(moved_card["rows"]) == 3
-    assert len({int(r["market_id"]) for r in moved_card["rows"]}) == 3
-    # No row portrait leaks next to monogram rows on Tech & Space Weekly Movers
-    assert not any((r.get("art") or {}).get("url") for r in moved_card["rows"])
 
 
 @pytest.mark.asyncio
@@ -501,4 +499,3 @@ async def test_tech_and_space_movers_drops_rows_when_only_one_moving_market_350a
     )["data"]["roundup"]["machinery_card"]
     assert card_one["form_id"] == "probability_history_chart"
     assert card_one["rows"] == []
->>>>>>> f0f632276a (discover: fix Batch 8, Tech & Space Movers, and AFC West Carolina crest and graduate 9 sets to public (350: A))
