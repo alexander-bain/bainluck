@@ -215,5 +215,51 @@ final class SetShareButton13103Tests: XCTestCase {
 
         let searchRowSource = try String(contentsOf: appRoot.appendingPathComponent("Views/SearchCollectionRow.swift"), encoding: .utf8)
         XCTAssertTrue(searchRowSource.contains("CollectionContextMenuItems("))
+
+        // #13111 follow-up 2: owner-only unpublished preview cards must NOT offer Copy Link or Share.
+        let previewStart = try XCTUnwrap(discoverSource.range(of: "let unservedPreviewItems ="))
+        let previewEnd = try XCTUnwrap(discoverSource.range(of: ".accessibilityIdentifier(\"discover.ownerMachineryPreview\")", range: previewStart.upperBound..<discoverSource.endIndex))
+        let previewBlock = String(discoverSource[previewStart.lowerBound..<previewEnd.upperBound])
+        XCTAssertFalse(previewBlock.contains("CollectionContextMenuItems("))
+        XCTAssertFalse(previewBlock.contains(".contextMenu"))
+        XCTAssertTrue(hubSource.contains("if isPubliclyShareable {"))
+    }
+
+    func testSetLandingBarCarriesSetNameAndHeaderCarriesReasonInsteadOfPlumbingCount() throws {
+        // Deep links enter with fallback `displayName == "Collection"`; bar stays empty until loaded, then shows the set's name.
+        XCTAssertEqual(
+            ContainerHubView.resolvedNavigationTitle(displayName: "Collection", slug: "oscars-2027", loadedTitle: nil),
+            ""
+        )
+        XCTAssertEqual(
+            ContainerHubView.resolvedNavigationTitle(displayName: "Collection", slug: "oscars-2027", loadedTitle: "Oscars 2027"),
+            "Oscars 2027"
+        )
+        XCTAssertEqual(
+            ContainerHubView.resolvedNavigationTitle(
+                displayName: "Collection",
+                slug: "machinery-nfl-week",
+                loadedTitle: "Broncos at Steelers headlines the Nov 19–27 slate"
+            ),
+            ""
+        )
+
+        let aiPage = try ContainerHubFixture.decode("representative_ai_page_1")
+        let aiPresentation = ContainerHubPresentation(response: aiPage)
+        XCTAssertEqual(
+            aiPresentation.headerReasonLine,
+            "Live market chances across AI models, milestones, and regulation."
+        )
+        XCTAssertEqual(aiPresentation.pagerCountLabel, "1 of 2 markets")
+        XCTAssertEqual(aiPresentation.countLabel, "1 of 2 markets loaded")
+
+        let appRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Bain Luck")
+        let hubSource = try String(contentsOf: appRoot.appendingPathComponent("Views/ContainerHubView.swift"), encoding: .utf8)
+        XCTAssertFalse(hubSource.contains("presentation.countLabel"), "Top header must show headerReasonLine, never plumbing 'loaded' counts")
+        XCTAssertTrue(hubSource.contains("presentation.headerReasonLine"))
+        XCTAssertTrue(hubSource.contains("presentation.pagerCountLabel"))
     }
 }
