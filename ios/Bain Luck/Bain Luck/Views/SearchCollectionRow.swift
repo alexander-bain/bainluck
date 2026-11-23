@@ -53,6 +53,22 @@ struct SearchCollectionRow: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
+        #if !os(macOS)
+        .contextMenu {
+            CollectionContextMenuItems(
+                slug: entry.collection.slug,
+                onShare: {
+                    ShareInstrumentation.recordShareOpened(
+                        itemType: "collection",
+                        itemId: entry.collection.slug,
+                        itemName: entry.collection.name,
+                        category: nil,
+                        surface: .discoverCard
+                    )
+                }
+            )
+        }
+        #endif
         .accessibilityIdentifier("search-collection-\(entry.id)")
     }
 }
