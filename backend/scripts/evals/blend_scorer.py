@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import itertools
 import json
 import math
 import random
@@ -21,10 +22,18 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from app.utils.aggregation import SOURCE_WEIGHTS, compute_aggregate_probability_tiered
+from app.utils.aggregation import (
+    SOURCE_WEIGHTS,
+    compute_aggregate_probability_tiered,
+    parse_source_entry,
+)
 from app.utils.calibration_scoring import _stats
 from app.utils.probability_publication import BLEND_METHOD
 from scripts.evals.blend_replay_export import SCHEMA, instant, probability, time_split
+
+FORECAST_SOURCES: tuple[str, ...] = tuple(
+    sorted(k for k in SOURCE_WEIGHTS if k != "final_result")
+)
 
 
 def committed_protocol(
@@ -342,12 +351,184 @@ def score_candidate(
     }
 
 
+def _reliability_buckets(rows: list[dict]) -> list[dict]:
+    """Raw un-smoothed 10-band calibration buckets with exact per-bin counts."""
+    bins: dict[int, dict] = {}
+    for row in rows:
+        p, y = row["probability"], row["outcome"]
+        idx = min(9, math.floor(p * 10))
+        cell = bins.setdefault(
+            idx, {"n": 0, "winners": 0, "sum_prob": 0.0, "sum_sq_err": 0.0}
+        )
+        cell["n"] += 1
+        cell["winners"] += y
+        cell["sum_prob"] += p
+        cell["sum_sq_err"] += (p - y) ** 2
+    result = []
+    for idx in sorted(bins):
+        cell = bins[idx]
+        n = cell["n"]
+        result.append(
+            {
+                "bucket_idx": idx,
+                "bucket": f"{idx * 10}-{(idx + 1) * 10}%",
+                "n": n,
+                "winners": cell["winners"],
+                "sum_prob": cell["sum_prob"],
+                "sum_sq_err": cell["sum_sq_err"],
+                "avg_prob": cell["sum_prob"] / n,
+                "actual": cell["winners"] / n,
+            }
+        )
+    return result
+
+
+def extract_source_probabilities(row: dict) -> dict[str, float]:
+    """Extract validated per-source home-win probabilities from ``row['sources']``."""
+    raw_sources = row.get("sources")
+    if not isinstance(raw_sources, dict):
+        return {}
+    out: dict[str, float] = {}
+    for source in FORECAST_SOURCES:
+        if source not in raw_sources:
+            continue
+        value, _ = parse_source_entry(raw_sources[source])
+        if value is not None:
+            out[source] = probability(value)
+    return out
+
+
+def score_blend_vs_sources(
+    rows: list[dict], *, replicates: int = 1000, seed: int = 12108
+) -> dict:
+    """Compare the blend against each contributing source on the exact same games."""
+    per_source_groups: dict[tuple[str, str, str, str, str], list[dict]] = defaultdict(list)
+    common_groups: dict[tuple[str, str, str, tuple[str, ...]], list[dict]] = defaultdict(
+        list
+    )
+
+    for row in rows:
+        p = row["blend_replay_probability"]
+        src_probs = extract_source_probabilities(row)
+        if not src_probs:
+            continue
+        horizon = row["horizon"]
+        split = row["split"]
+        kind = row["kind"]
+        league = row["league"]
+        event_id = int(row["event_id"])
+        cluster_id = row["cluster_id"]
+        outcome = row["outcome"]
+
+        for source, src_p in src_probs.items():
+            obs = {
+                "event_id": event_id,
+                "cluster_id": cluster_id,
+                "blend": p,
+                "source": src_p,
+                "outcome": outcome,
+            }
+            per_source_groups[(league, horizon, split, kind, source)].append(obs)
+            per_source_groups[("all", horizon, split, kind, source)].append(obs)
+
+        present = sorted(src_probs)
+        for size in range(2, len(present) + 1):
+            for combo in itertools.combinations(present, size):
+                common_groups[(horizon, split, kind, combo)].append(
+                    {
+                        "event_id": event_id,
+                        "cluster_id": cluster_id,
+                        "blend": p,
+                        "outcome": outcome,
+                        "sources": {s: src_probs[s] for s in combo},
+                    }
+                )
+
+    per_source_matched = []
+    for (league, horizon, split, kind, source), matched in sorted(
+        per_source_groups.items()
+    ):
+        blend_rows = [
+            {"cluster_id": r["cluster_id"], "probability": r["blend"], "outcome": r["outcome"]}
+            for r in matched
+        ]
+        src_rows = [
+            {"cluster_id": r["cluster_id"], "probability": r["source"], "outcome": r["outcome"]}
+            for r in matched
+        ]
+        paired_rows = [
+            {
+                "cluster_id": r["cluster_id"],
+                "baseline": r["source"],
+                "candidate": r["blend"],
+                "outcome": r["outcome"],
+            }
+            for r in matched
+        ]
+        per_source_matched.append(
+            {
+                "league": league,
+                "horizon": horizon,
+                "split": split,
+                "kind": kind,
+                "source": source,
+                "n_games": len(matched),
+                "distinct_events": len({r["event_id"] for r in matched}),
+                "blend": {**metrics(blend_rows), "buckets": _reliability_buckets(blend_rows)},
+                "source_metrics": {**metrics(src_rows), "buckets": _reliability_buckets(src_rows)},
+                "delta_blend_minus_source": paired_metrics(paired_rows),
+                "interval95": paired_interval(
+                    paired_rows, replicates=replicates, seed=seed
+                ),
+            }
+        )
+
+    common_source_sets = []
+    for (horizon, split, kind, combo), matched in sorted(common_groups.items()):
+        blend_rows = [
+            {"cluster_id": r["cluster_id"], "probability": r["blend"], "outcome": r["outcome"]}
+            for r in matched
+        ]
+        by_source = {}
+        for source in combo:
+            src_rows = [
+                {
+                    "cluster_id": r["cluster_id"],
+                    "probability": r["sources"][source],
+                    "outcome": r["outcome"],
+                }
+                for r in matched
+            ]
+            by_source[source] = {
+                **metrics(src_rows),
+                "buckets": _reliability_buckets(src_rows),
+            }
+        common_source_sets.append(
+            {
+                "horizon": horizon,
+                "split": split,
+                "kind": kind,
+                "sources": list(combo),
+                "n_games": len(matched),
+                "distinct_events": len({r["event_id"] for r in matched}),
+                "blend": {**metrics(blend_rows), "buckets": _reliability_buckets(blend_rows)},
+                "by_source": by_source,
+            }
+        )
+
+    return {
+        "per_source_matched": per_source_matched,
+        "common_source_sets": common_source_sets,
+    }
+
+
 def score_export(export: dict, *, replicates: int = 1000, seed: int = 12108) -> dict:
     if export["schema"] != SCHEMA:
         raise ValueError("unsupported replay schema")
     if replicates < 100:
         raise ValueError("at least 100 bootstrap replicates required")
     groups: dict[tuple, list] = defaultdict(list)
+    scored_rows: list[dict] = []
     overlapping: dict[tuple, dict] = defaultdict(dict)
     failures = Counter({"export_packet": len(export["failures"])})
     mismatches = compared = null_rows = 0
@@ -401,6 +582,7 @@ def score_export(export: dict, *, replicates: int = 1000, seed: int = 12108) -> 
             if p is None:
                 null_rows += 1
                 continue
+            scored_rows.append({**row, "blend_replay_probability": p})
             groups[(row["league"], row["horizon"], split, row["kind"])].append(
                 {
                     "cluster_id": cluster,
@@ -481,6 +663,9 @@ def score_export(export: dict, *, replicates: int = 1000, seed: int = 12108) -> 
             for (league, horizon, split), counts in sorted(coverage.items())
         ],
         "cohorts": cohorts,
+        "blend_vs_sources": score_blend_vs_sources(
+            scored_rows, replicates=replicates, seed=seed
+        ),
         "interval_basis": "series_doubleheader_cluster_percentile_bootstrap",
         "seed": seed,
         "log_loss_clip": 1e-15,

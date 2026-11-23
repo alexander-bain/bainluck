@@ -6,7 +6,7 @@
   "train_start": "2026-09-01T00:00:00+00:00",
   "soccer_train_start": "2026-09-16T00:00:00+00:00",
   "train_end_exclusive": "2026-10-16T00:00:00+00:00",
-  "recording_start": null,
+  "recording_start": "2026-11-06T05:52:44+00:00",
   "held_out_weeks": 4,
   "candidate_sha256": null,
   "primary_metric": "log_loss",

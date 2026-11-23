@@ -33,10 +33,10 @@ reconstruction uses that exact instant and recorded fallback inputs/status;
 otherwise historical fallback inputs stay unknown.
 
 An independent measurement owner freezes the export hash and commits the scoring
-protocol **before inspecting score outputs**. The checked-in protocol's
-`recording_start: null` intentionally refuses a real score until the actual
-switch receipt is posted and committed. It must not be replaced by an assumed
-switch time. Candidate weights, if used, are frozen by SHA-256 in that protocol;
+protocol **before inspecting score outputs**. The checked-in protocol now pins
+the verified `v6185` recording switch timestamp (`2026-11-06T05:52:44+00:00`),
+while `blend_scorer` continues to refuse any unpinned (`recording_start: null`)
+protocol. Candidate weights, if used, are frozen by SHA-256 in that protocol;
 there is no fitting or activation command here. An untracked or modified protocol
 refuses even if its replacement checksum is supplied.
 
@@ -106,6 +106,9 @@ by horizon, remain explicit. A statistical improvement is not a licence: every
 licence stays HELD, activation NONE, and the live speed gate UNKNOWN here.
 
 Each score receipts the frozen input/protocol/candidate hashes and current
-implementation hashes. Neither scorer nor export changes a production table,
-source weights, capture/grading policy, calibration population, or served page.
-Tests1–3 and any population/de-vig changes remain their own reviewed steps.
+implementation hashes. For Decision `356: A`, `score_export` also emits additive
+`blend_vs_sources` comparisons (`per_source_matched` and `common_source_sets`),
+grading the blend alongside each contributing source on the exact same games with
+raw un-smoothed 10-band bucket counts. Neither scorer nor export changes a production
+table, source weights, capture/grading policy, calibration population, or served page.
+Tests 1–3 and any population/de-vig changes remain their own reviewed steps.

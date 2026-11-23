@@ -111,11 +111,12 @@ async def test_betting_matches_the_actual_producer(monkeypatch, values):
     monkeypatch.setattr(
         "app.utils.nonvenue_live_push.write_nonvenue_probability", write
     )
+    future_start = datetime.now(timezone.utc) + timedelta(days=1)
     await odds_polling._ingest_event_odds(
         AsyncMock(),
-        SimpleNamespace(id=1),
+        SimpleNamespace(id=1, status="scheduled"),
         {"bookmakers": [{"key": str(i), "p": p} for i, p in enumerate(values)]},
-        instant(START),
+        future_start,
         {},
     )
     rebuilt = rebuild_betting([{"home_win_probability": p} for p in values])
@@ -521,3 +522,156 @@ def test_committed_protocol_cannot_weaken_nonmetric_guards(monkeypatch, tmp_path
     )
     with pytest.raises(ValueError, match="adopted gates"):
         committed_protocol(path, hashlib.sha256(raw).hexdigest(), repository=tmp_path)
+
+
+def test_checked_in_protocol_pins_v6185_and_main_refuses_null_recording_start(
+    monkeypatch, tmp_path
+):
+    import json
+    from pathlib import Path
+    from scripts.evals import blend_scorer
+
+    source = Path(__file__).parents[1] / "scripts/evals/blend_replay_protocol.json"
+    protocol_bytes = source.read_bytes()
+    protocol = committed_protocol(
+        source, hashlib.sha256(protocol_bytes).hexdigest()
+    )
+    assert protocol["recording_start"] == "2026-11-06T05:52:44+00:00"
+
+    null_protocol = {**json.loads(protocol_bytes), "recording_start": None}
+    null_path = tmp_path / "null_protocol.json"
+    null_raw = json.dumps(null_protocol).encode()
+    null_path.write_bytes(null_raw)
+    export_path = tmp_path / "export.json"
+    export_bytes = json.dumps(
+        build_export([packet()], instant("2026-11-06T05:52:44+00:00"))
+    ).encode()
+    export_path.write_bytes(export_bytes)
+
+    monkeypatch.setattr(blend_scorer, "committed_protocol", lambda *_a, **_k: null_protocol)
+    monkeypatch.setattr(
+        "sys.argv",
+        [
+            "scorer",
+            "--input",
+            str(export_path),
+            "--sha256",
+            hashlib.sha256(export_bytes).hexdigest(),
+            "--protocol",
+            str(null_path),
+            "--protocol-sha256",
+            hashlib.sha256(null_raw).hexdigest(),
+            "--output",
+            str(tmp_path / "out.json"),
+        ],
+    )
+    with pytest.raises(SystemExit):
+        blend_scorer.main()
+
+
+def test_score_blend_vs_sources_compares_same_games_with_raw_buckets():
+    def _event_with_sources(event_id, day_offset, cluster, outcome, sources):
+        pkt = packet(event_id=event_id, cluster=cluster)
+        pkt["event"]["start"] = (SWITCH + timedelta(days=day_offset)).isoformat()
+        pkt["event"]["outcome"] = outcome
+        pub_at = (SWITCH + timedelta(minutes=day_offset)).isoformat()
+        pub = build_publication(
+            event_id=event_id,
+            sources=sources,
+            rev=1,
+            status="scheduled",
+            espn_win_prob_home=None,
+            opening_home_probability=None,
+            observations=[
+                {
+                    "source": "betting",
+                    "value": sources["betting"]["value"],
+                    "returned_sources": sources,
+                    "removed": False,
+                    "rev": 1,
+                    "stamped_at": pub_at,
+                    "prior_txn_row_write": False,
+                }
+            ],
+            queued_frame=None,
+        )
+        pub["recorded_at"] = pub_at
+        pkt["publications"] = [pub]
+        return pkt
+
+    p1 = _event_with_sources(
+        101,
+        1,
+        "c-1",
+        1,
+        {
+            "betting": {"value": 0.70, "updated_at": STAMP},
+            "kalshi": {"value": 0.85, "updated_at": STAMP},
+            "polymarket": {"value": 0.90, "updated_at": STAMP},
+            "final_result": {"value": 1.0, "updated_at": STAMP},
+        },
+    )
+    p2 = _event_with_sources(
+        102,
+        2,
+        "c-2",
+        0,
+        {
+            "betting": {"value": 0.30, "updated_at": STAMP},
+            "kalshi": {"value": 0.25, "updated_at": STAMP},
+        },
+    )
+    p3 = _event_with_sources(
+        103,
+        3,
+        "c-3",
+        1,
+        {
+            "betting": {"value": 0.60, "updated_at": STAMP},
+            "polymarket": {"value": 0.80, "updated_at": STAMP},
+        },
+    )
+    exported = build_export([p1, p2, p3], SWITCH)
+    report = score_export(exported, replicates=100)
+    bvs = report["blend_vs_sources"]
+
+    all_matched = {
+        (entry["horizon"], entry["kind"], entry["source"]): entry
+        for entry in bvs["per_source_matched"]
+        if entry["league"] == "all" and entry["split"] == "held_out"
+    }
+    # final_result is outcome truth, never a forecasting source
+    assert all(src != "final_result" for _, _, src in all_matched)
+
+    bet_start = all_matched[("start", "served", "betting")]
+    assert bet_start["n_games"] == 3
+    assert bet_start["distinct_events"] == 3
+    assert bet_start["blend"]["n"] == 3
+    assert bet_start["source_metrics"]["n"] == 3
+    assert sum(b["n"] for b in bet_start["blend"]["buckets"]) == 3
+    assert sum(b["n"] for b in bet_start["source_metrics"]["buckets"]) == 3
+    for bucket in bet_start["blend"]["buckets"]:
+        assert bucket["actual"] == pytest.approx(bucket["winners"] / bucket["n"])
+        assert bucket["avg_prob"] == pytest.approx(bucket["sum_prob"] / bucket["n"])
+
+    # Kalshi is present on 2 of the 3 games -> blend & kalshi strictly intersect on those 2 games
+    kalshi_start = all_matched[("start", "served", "kalshi")]
+    assert kalshi_start["n_games"] == 2
+    assert kalshi_start["distinct_events"] == 2
+    assert kalshi_start["blend"]["n"] == 2
+    assert kalshi_start["source_metrics"]["n"] == 2
+    assert kalshi_start["delta_blend_minus_source"]["brier"] == pytest.approx(
+        kalshi_start["blend"]["brier"] - kalshi_start["source_metrics"]["brier"]
+    )
+
+    # Common multi-source sets match all named sources on identical games
+    common = {
+        (entry["horizon"], tuple(entry["sources"])): entry
+        for entry in bvs["common_source_sets"]
+        if entry["split"] == "held_out" and entry["kind"] == "served"
+    }
+    assert common[("start", ("betting", "kalshi"))]["n_games"] == 2
+    assert common[("start", ("betting", "kalshi", "polymarket"))]["n_games"] == 1
+    triple = common[("start", ("betting", "kalshi", "polymarket"))]
+    assert triple["blend"]["n"] == 1
+    assert all(triple["by_source"][s]["n"] == 1 for s in ("betting", "kalshi", "polymarket"))
