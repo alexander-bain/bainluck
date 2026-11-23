@@ -23,7 +23,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from sqlalchemy import delete, text
+from sqlalchemy import delete, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 
 from app.dependencies.auth import get_optional_user
@@ -80,15 +81,20 @@ async def _cleanup(pg_engine) -> None:
 
 
 async def _ensure_sport_id(session: AsyncSession) -> int:
+    from app.models.models import Sport
+
+    existing = (
+        await session.execute(select(Sport.id).where(Sport.key == SPORT_KEY))
+    ).scalar()
+    if existing is not None:
+        return int(existing)
     await session.execute(
-        text(
-            "INSERT INTO sports (id, key, name, active) "
-            "VALUES (:i, :k, :n, true) ON CONFLICT DO NOTHING"
-        ),
-        {"i": SPORT_RESERVED_ID, "k": SPORT_KEY, "n": "League Two"},
+        pg_insert(Sport)
+        .values(id=SPORT_RESERVED_ID, key=SPORT_KEY, name="League Two", active=True)
+        .on_conflict_do_nothing()
     )
     sport_id = (
-        await session.execute(text("SELECT id FROM sports WHERE key = :k"), {"k": SPORT_KEY})
+        await session.execute(select(Sport.id).where(Sport.key == SPORT_KEY))
     ).scalar()
     assert sport_id is not None
     return int(sport_id)
@@ -257,6 +263,19 @@ async def _seed_fixtures(pg_engine) -> None:
                 captured_at=fresh_ts,
             )
             for i in range(10)
+        )
+        live_snap_ts = now - dt.timedelta(minutes=2)
+        snaps.extend(
+            OddsSnapshot(
+                event_id=CANON_DONE,
+                bookmaker=f"live_book_{i}",
+                home_moneyline=150,
+                away_moneyline=233,
+                home_win_probability=0.40,
+                away_win_probability=0.30,
+                captured_at=live_snap_ts,
+            )
+            for i in range(3)
         )
         s.add_all(snaps)
         await s.commit()

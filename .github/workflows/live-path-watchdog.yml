@@ -408,7 +408,7 @@ jobs:
     - name: "#5821 and #10520 real-Postgres gates"
       id: db_12612_shared_5821_10520
       if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}
-      run: bash ../.github/scripts/run-12612-pg-gates.sh shared tests/test_polymarket_container_sibling_5821.py tests/test_repair_10520_keeper_current_anchor.py
+      run: bash ../.github/scripts/run-12612-pg-gates.sh shared tests/test_polymarket_container_sibling_5821.py tests/test_repair_10520_keeper_current_anchor.py tests/integration/test_stale_betting_e2e_13496_pg.py
     - id: db_010_typeahead_next_fixture_contracts_or_next
       name: Typeahead next-fixture contracts, or-NEXT and lead-team (real Postgres)
       if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}
