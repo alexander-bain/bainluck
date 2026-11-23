@@ -28,7 +28,7 @@ from journeys import add_journeys
 from signs import add_signs, switched_off, wrong_numbers
 from notes import ModelBudget, make_notes
 from speech import make_speech
-from signals import LANE_UPDATE_WINDOW, commands_from, crew_posts_from, lane_updates_from, test_file
+from signals import LANE_UPDATE_WINDOW, commands_from, crew_posts_from, is_test_file, lane_updates_from
 
 REPO = "alexander-bain/bainluck"
 RELEASE = "factory-data"
@@ -341,10 +341,10 @@ def annotate_test_commits(api, pulls, cache):
                     bool(files)
                     and len(files) < 3000
                     and all(
-                        test_file(f["filename"])
+                        is_test_file(f["filename"])
                         and (
                             not f.get("previous_filename")
-                            or test_file(f["previous_filename"])
+                            or is_test_file(f["previous_filename"])
                         )
                         for f in files
                     )
@@ -590,6 +590,65 @@ def history_signals(api, midnight, injury_since):
     return receipts, latest, starts, reports
 
 
+def master_checks(api, runs, completed, pulls):
+    ci = completed[0] if completed else None
+    latest = next((run for run in runs if run["name"] == "CI"), None)
+    if latest and (not ci or latest["id"] > ci["id"]):
+        if latest["status"] == "completed":
+            ci = latest
+        elif latest.get("run_attempt", 1) > 1:
+            # A rerun removes the failed run from the completed list.
+            attempt = latest["run_attempt"] - 1
+            endpoint = f"repos/{REPO}/actions/runs/{latest['id']}/attempts/{attempt}"
+            ci = None
+            try:
+                prior = api.request(endpoint, timeout=5)
+            except READ_FAILURES:
+                prior = None
+            if (
+                prior
+                and prior.get("id") == latest["id"]
+                and prior.get("run_attempt") == attempt
+                and prior.get("head_sha") == latest["head_sha"]
+                and prior.get("status") == "completed"
+            ):
+                ci = prior
+
+    conclusion = ci.get("conclusion") if ci else None
+    result = {
+        "tests": {"failure": "failing", "timed_out": "failing", "success": "passing"}.get(
+            conclusion, "unknown"
+        ),
+        "tests_at": ci.get("updated_at") if ci else None,
+    }
+    if conclusion != "failure" or not ci.get("head_sha") or not ci.get("run_attempt"):
+        return result
+
+    # A failed workflow can include jobs unrelated to the server release.
+    pull = next(
+        (p for p in pulls if p.get("merge_commit_sha") == ci["head_sha"]
+         and p.get("merged_at") and any(path.startswith("backend/") for path in p.get("files", ()))),
+        None,
+    )
+    if not pull:
+        return result
+    endpoint = f"repos/{REPO}/actions/runs/{ci['id']}/attempts/{ci['run_attempt']}/jobs?per_page=100"
+    try:
+        jobs = api.request(endpoint, timeout=5).get("jobs", [])
+    except READ_FAILURES:
+        return result
+    if (
+        any(job.get("name") == "deploy" and job.get("conclusion") == "skipped" for job in jobs)
+        and any(
+            job.get("conclusion") == "failure"
+            and re.fullmatch(r"backend-tests(?: \([0-9]+\))?", job.get("name", ""))
+            for job in jobs
+        )
+    ):
+        result["blocked_server_release"] = pull["number"]
+    return result
+
+
 def collect(api, previous=None, cache=None, open_summaries=None):
     previous, cache = previous or {}, cache or {}
     now = datetime.now(timezone.utc)
@@ -726,16 +785,8 @@ def collect(api, previous=None, cache=None, open_summaries=None):
     completed = api.request(
         f"repos/{REPO}/actions/workflows/ci.yml/runs?branch=master&event=push&status=completed&per_page=1"
     )["workflow_runs"]
-    ci = completed[0] if completed else None
-    tests = "unknown"
-    if ci:
-        if ci["conclusion"] in {"failure", "timed_out"}:
-            tests = "failing"
-        elif ci["conclusion"] == "success":
-            tests = "passing"
     master = {
-        "tests": tests,
-        "tests_at": ci.get("updated_at") if ci else None,
+        **master_checks(api, runs, completed, pulls),
         "testflight": latest.get("Apps", {}).get("state", "unknown"),
         "successful_runs": [
             {"started_at": run["run_started_at"], "finished_at": run["updated_at"]}

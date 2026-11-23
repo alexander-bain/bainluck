@@ -5,6 +5,7 @@ import {
   readerBehind,
   shownStops,
   stationNames,
+  stopText,
   time,
 } from "./activity";
 import { MACHINE_WAIT_MS, type GitHubActivity } from "./githubActivity";
@@ -97,11 +98,14 @@ export function floorVerdict(
   }
 
   const through = state === "quiet" ? data.generated_at : now;
-  const bays: BayAlert[] = shownStops(data).map((stop) => ({
+  const stops = shownStops(data);
+  const bays: BayAlert[] = stops.map((stop) => ({
     line: stop.line,
     station: stop.station,
     level: stop.kind === "hold" ? "red" : "amber",
-    text: `${place(stop.station, stop.line)}: ${stopReason(stop, through)}.`,
+    text: stop.kind === "master" && stop.station === "Ship"
+      ? stopText(stop, through)
+      : `${place(stop.station, stop.line)}: ${stopReason(stop, through)}.`,
   }));
 
   function add(line: Line | null, station: Station, reason: string) {
@@ -115,7 +119,8 @@ export function floorVerdict(
 
   if (data.signals.tests === "unknown" || !data.signals.tests)
     add("Server", "Test", "the shared test result is missing");
-  if (data.signals.tests === "failing" && !bays.some((bay) => bay.station === "Test"))
+  if (data.signals.tests === "failing" && !stops.some((stop) => stop.kind === "master") &&
+      !bays.some((bay) => bay.station === "Test"))
     add("Server", "Test", "the shared tests failed");
   if (["failure", "cancelled", "timed_out", "error"].includes(data.signals.testflight))
     add("Apps", "Ship", "the TestFlight build stopped");

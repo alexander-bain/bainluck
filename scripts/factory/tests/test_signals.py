@@ -10,10 +10,10 @@ from model import build, instant, unchanged_after
 from signals import (
     commands_from,
     crew_posts_from,
+    is_test_file,
     reader_behind,
     resolve_holds,
     stopped_rules,
-    test_file,
 )
 
 
@@ -425,10 +425,10 @@ class FactoryStops(unittest.TestCase):
         self.assertFalse(unchanged_after(pull, "missing"))
 
     def test_production_changes_cannot_be_hidden_by_a_test_rename(self):
-        self.assertTrue(test_file("frontend/__tests__/page.test.tsx"))
-        self.assertTrue(test_file("ios/BainLuckTests/Example.swift"))
-        self.assertFalse(test_file("frontend/app/test/page.tsx"))
-        self.assertFalse(test_file("backend/app/services/testing.py"))
+        self.assertTrue(is_test_file("frontend/__tests__/page.test.tsx"))
+        self.assertTrue(is_test_file("ios/BainLuckTests/Example.swift"))
+        self.assertFalse(is_test_file("frontend/app/test/page.tsx"))
+        self.assertFalse(is_test_file("backend/app/services/testing.py"))
 
     def test_station_transfers_are_recorded_only_after_two_observations(self):
         fixture = json.loads(

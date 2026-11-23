@@ -52,6 +52,25 @@ it("shows real bay states while keeping a quiet floor motionless", () => {
   expect(html).not.toContain("The floor can&#x27;t be read right now");
 });
 
+it("names the server release and failed test gate in the 3:36 PM replay", () => {
+  const now = "2026-11-22T23:36:58.642342Z";
+  const held: FactoryData = {
+    ...data,
+    generated_at: now,
+    changes: [],
+    stops: [{
+      kind: "master", line: "Server", station: "Ship", number: 13444,
+      since: "2026-11-22T23:35:42Z", count: 1, level: "amber",
+    }],
+    signals: { tests: "failing", testflight: "success" },
+  };
+  const text = "The server release for #13444 is on hold because a server test failed.";
+  const html = renderToStaticMarkup(<FactoryFloor data={held} lastGoodAt={now} renderedAt={now} />);
+  expect(html).toContain(text);
+  expect(html).not.toContain("Checks, Server: the shared tests failed");
+  expect(html).not.toContain("All clear.");
+});
+
 it("says the next reading is waiting for a machine and reserves Paused for a stopped or unconfirmed read", () => {
   const now = "2026-11-18T17:50:00Z";
   const props = { data, lastGoodAt: data.generated_at, renderedAt: now };
