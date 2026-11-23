@@ -43,8 +43,10 @@ __all__ = [
     "MORE_SETS_LIMIT",
     "MORE_SETS_MAX_LEAD_AGE_SECONDS",
     "OCCASION_ID_RULE_KEYS",
+    "ROUNDUP_BG_REFRESH_TIMEOUT_S",
     "ROUNDUP_CACHE_TTL_S",
     "ROUNDUP_NOVELTY_SEAT_CAP",
+    "ROUNDUP_PAGE_SWR_MAX_AGE_S",
     "ROUNDUP_PREWARM_STAGE_BUDGET_SECONDS",
     "ROUNDUP_PREVIEW_PRODUCER_TIMEOUT_SECONDS",
     "ROUNDUP_PREVIEW_STAGE_BUDGET_SECONDS",
@@ -183,6 +185,21 @@ ROUNDUP_NOVELTY_SEAT_CAP = 2
 _roundup_local_cache: dict[
     tuple[str, Any], tuple[float, Optional[dict[str, Any]], Optional[dict[str, Any]]]
 ] = {}
+_roundup_bg_refresh_tasks: dict[tuple[str, Any], asyncio.Task[Any]] = {}
+_roundup_inflight_builds: dict[
+    tuple[str, Any],
+    asyncio.Future[
+        tuple[
+            Optional[dict[str, Any]],
+            Optional[dict[str, Any]],
+            Optional[dict[str, Any]],
+        ]
+    ],
+] = {}
+
+
+class _RoundupBuildAbandoned(Exception):
+    """Internal signal when a singleflight roundup build is cancelled/abandoned."""
 
 
 @dataclass(frozen=True)
@@ -867,7 +884,7 @@ def compose_roundup_feed_item(
     collection_ref = {
         "slug": producer.slug,
         "href": effective_href,
-        "name": effective_title,
+        "name": producer.name or effective_title,
         "revision": roundup_revision(rev_ids),
         "collection_count": len(member_ids),
     }
@@ -1026,10 +1043,23 @@ def get_roundup_read_failure_stats_10m(
     }
 
 
+def _reset_roundup_swr_state_for_tests() -> None:
+    """Clear in-flight background refreshes and singleflight futures between tests (#13475)."""
+    for task in list(_roundup_bg_refresh_tasks.values()):
+        try:
+            if not task.done():
+                task.cancel()
+        except Exception:  # noqa: BLE001
+            pass
+    _roundup_bg_refresh_tasks.clear()
+    _roundup_inflight_builds.clear()
+
+
 def reset_roundup_cache_for_tests() -> None:
     _roundup_local_cache.clear()
     _roundup_nothing_to_show_local.clear()
     _roundup_read_failures.clear()
+    _reset_roundup_swr_state_for_tests()
 
 
 _TRANSIENT_REFUSAL_TOKENS = (
@@ -1069,6 +1099,10 @@ ROUNDUP_STANDING_LIVE_STALE_TTL_S = 300.0
 #: window (above the 120s host cadence) so cold Discover builds read Redis MGET
 #: with zero Postgres wait, while live standing round-ups keep the 60s ceiling.
 ROUNDUP_STANDING_PREWARM_FRESH_TTL_S = 300.0
+#: #13475: Set-page SWR bound for sets with no live game (30 minutes, matching 170-A).
+#: Copies aged < 1800s serve immediately and trigger one background rebuild.
+ROUNDUP_PAGE_SWR_MAX_AGE_S = 1800.0
+ROUNDUP_BG_REFRESH_TIMEOUT_S = 45.0
 #: Per-producer timeout for a genuinely cold public machinery grouping (no
 #: Redis copy, e.g. a live slate whose 5m TTL expired during an outage).
 ROUNDUP_MACHINERY_COLD_TIMEOUT_SECONDS = 1.5
@@ -1941,6 +1975,141 @@ async def _load_last_good_roundup_copy(
     return None
 
 
+def _open_roundup_bg_session() -> Any:
+    """Open a standalone AsyncSession for detached SWR background rebuilds (#13475)."""
+    from app.services.database import async_session_maker
+
+    return async_session_maker()
+
+
+def _roundup_entry_swr_eligible(
+    container_payload: Optional[Mapping[str, Any]],
+    *,
+    age_s: float,
+    now_ts: float,
+    swr_max_age_s: float,
+) -> bool:
+    """True when an expired set copy holds no live game and sits under ``swr_max_age_s`` (#13475)."""
+    if container_payload is None or swr_max_age_s <= 0:
+        return False
+    if _roundup_payload_needs_live_rail(container_payload, now_ts=now_ts):
+        return False
+    return 0.0 <= float(age_s) < float(swr_max_age_s)
+
+
+def _trigger_roundup_bg_refresh(
+    cache_key: tuple[str, Any],
+    producer: RoundupProducer,
+    db: Any,
+    *,
+    now: Optional[float | datetime],
+    licences_registry: Optional[dict[str, Any]],
+    licences_path: Optional[Path | str],
+) -> None:
+    """Start at most one detached background rebuild per cache key on SWR hits (#13475)."""
+    if cache_key in _roundup_inflight_builds:
+        return
+    existing = _roundup_bg_refresh_tasks.get(cache_key)
+    if existing is not None and not existing.done():
+        return
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    is_async_session = isinstance(db, AsyncSession)
+
+    async def _runner() -> None:
+        try:
+            if is_async_session:
+                async with _open_roundup_bg_session() as bg_db:
+                    await asyncio.wait_for(
+                        evaluate_roundup_producer(
+                            producer,
+                            bg_db,
+                            now=now,
+                            licences_registry=licences_registry,
+                            licences_path=licences_path,
+                            force_refresh=True,
+                        ),
+                        timeout=ROUNDUP_BG_REFRESH_TIMEOUT_S,
+                    )
+            else:
+                await asyncio.wait_for(
+                    evaluate_roundup_producer(
+                        producer,
+                        db,
+                        now=now,
+                        licences_registry=licences_registry,
+                        licences_path=licences_path,
+                        force_refresh=True,
+                    ),
+                    timeout=ROUNDUP_BG_REFRESH_TIMEOUT_S,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — failed rebuild keeps existing copy untouched
+            logger.warning(
+                "roundup_containers: background SWR rebuild failed for %s; keeping copy",
+                producer.slug,
+                exc_info=True,
+            )
+        finally:
+            if _roundup_bg_refresh_tasks.get(cache_key) is task:
+                _roundup_bg_refresh_tasks.pop(cache_key, None)
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    task = loop.create_task(_runner())
+    _roundup_bg_refresh_tasks[cache_key] = task
+
+
+async def _singleflight_roundup_build(
+    cache_key: tuple[str, Any],
+    builder: Callable[[], Any],
+    *,
+    outcome_meta: Optional[dict[str, Any]] = None,
+) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
+    """Coalesce simultaneous inline rebuilds onto one execution per cache key (#13475)."""
+    while True:
+        shared = _roundup_inflight_builds.get(cache_key)
+        if shared is None:
+            break
+        try:
+            fi, cp, meta_snapshot = await asyncio.shield(shared)
+            if outcome_meta is not None and isinstance(meta_snapshot, Mapping):
+                outcome_meta.update(meta_snapshot)
+            return copy.deepcopy(fi), copy.deepcopy(cp)
+        except _RoundupBuildAbandoned:
+            continue
+
+    loop = asyncio.get_running_loop()
+    shared = loop.create_future()
+    shared.add_done_callback(lambda f: f.cancelled() or f.exception())
+    _roundup_inflight_builds[cache_key] = shared
+    try:
+        fi, cp, meta_snapshot = await builder()
+    except Exception as exc:
+        if _roundup_inflight_builds.get(cache_key) is shared:
+            _roundup_inflight_builds.pop(cache_key, None)
+        if not shared.done():
+            shared.set_exception(exc)
+        raise
+    except BaseException:
+        if _roundup_inflight_builds.get(cache_key) is shared:
+            _roundup_inflight_builds.pop(cache_key, None)
+        if not shared.done():
+            shared.set_exception(_RoundupBuildAbandoned())
+        raise
+    if _roundup_inflight_builds.get(cache_key) is shared:
+        _roundup_inflight_builds.pop(cache_key, None)
+    if not shared.done():
+        shared.set_result((fi, cp, meta_snapshot))
+    if outcome_meta is not None and isinstance(meta_snapshot, Mapping):
+        outcome_meta.update(meta_snapshot)
+    return copy.deepcopy(fi), copy.deepcopy(cp)
+
+
 async def evaluate_roundup_producer(
     producer: RoundupProducer,
     db: Any,
@@ -1950,6 +2119,8 @@ async def evaluate_roundup_producer(
     licences_path: Optional[Path | str] = None,
     force_refresh: bool = False,
     allow_stale: bool = False,
+    stale_while_revalidate_seconds: Optional[float] = None,
+    trigger_bg_refresh: bool = True,
     prefetched_shared: Any = _PREFETCH_UNSET,
     shared_read_ok: bool = True,
     outcome_meta: Optional[dict[str, Any]] = None,
@@ -2013,8 +2184,16 @@ async def evaluate_roundup_producer(
         "live" if isinstance(db, AsyncSession) else id(db),
     )
 
+    swr_limit = (
+        float(stale_while_revalidate_seconds)
+        if stale_while_revalidate_seconds is not None and stale_while_revalidate_seconds > 0
+        else None
+    )
+
     if use_cache and not force_refresh:
         local_stale_fallback: Optional[tuple[float, dict[str, Any], dict[str, Any]]] = None
+        local_swr_fallback: Optional[tuple[float, dict[str, Any], dict[str, Any]]] = None
+        chosen_swr: Optional[tuple[float, dict[str, Any], dict[str, Any]]] = None
         cached = _roundup_local_cache.get(cache_key)
         if cached is not None:
             local_ttl = _roundup_cache_ttl_seconds(producer.slug, cached[2])
@@ -2033,6 +2212,19 @@ async def evaluate_roundup_producer(
                 )
                 if max(0.0, ts - cached[0]) < local_stale_ttl:
                     local_stale_fallback = (cached[0], cached[1], cached[2])
+            elif (
+                not allow_stale
+                and swr_limit is not None
+                and cached[1] is not None
+                and cached[2] is not None
+                and _roundup_entry_swr_eligible(
+                    cached[2],
+                    age_s=max(0.0, ts - cached[0]),
+                    now_ts=ts,
+                    swr_max_age_s=swr_limit,
+                )
+            ):
+                local_swr_fallback = (cached[0], cached[1], cached[2])
         if isinstance(db, AsyncSession):
             try:
                 raw_val: Any = None
@@ -2099,6 +2291,25 @@ async def evaluate_roundup_producer(
                                         built_at, producer.slug, cp
                                     )
                                     return copy.deepcopy(fi), copy.deepcopy(cp)
+                        elif swr_limit is not None:
+                            if fi is None or cp is None:
+                                if (
+                                    local_swr_fallback is not None
+                                    and built_at >= local_swr_fallback[0]
+                                ):
+                                    local_swr_fallback = None
+                                    _roundup_local_cache[cache_key] = (built_at, None, None)
+                            elif _roundup_entry_swr_eligible(
+                                cp,
+                                age_s=age_s,
+                                now_ts=ts,
+                                swr_max_age_s=swr_limit,
+                            ) and (
+                                local_swr_fallback is None
+                                or built_at >= local_swr_fallback[0]
+                            ):
+                                _roundup_local_cache[cache_key] = (built_at, fi, cp)
+                                chosen_swr = (built_at, fi, cp)
             except Exception:  # noqa: BLE001 — cache read fails open
                 logger.debug(
                     "roundup_containers: shared cache read failed for %s",
@@ -2112,150 +2323,87 @@ async def evaluate_roundup_producer(
             return copy.deepcopy(local_stale_fallback[1]), copy.deepcopy(
                 local_stale_fallback[2]
             )
-
-    if now_dt is not None and "now" in inspect.signature(producer.produce).parameters:
-        outcome = producer.produce(db, now=now_dt)
-    else:
-        outcome = producer.produce(db)
-    if inspect.isawaitable(outcome):
-        outcome = await outcome
-
-    if outcome is None or isinstance(outcome, RoundupRefusal):
-        reasons = list(outcome.reasons) if isinstance(outcome, RoundupRefusal) else []
-        cacheable = _is_cacheable_refusal(reasons)
-        reason_text = ",".join(str(r) for r in reasons if r) or (
-            "clean_empty_refusal" if cacheable else "transient_refusal"
-        )
-        if outcome_meta is not None:
-            outcome_meta["clean_empty"] = bool(cacheable)
-            outcome_meta["reason"] = reason_text
-        logger.warning(
-            "flow_sentinel matching_defect: roundup %s refused reasons=%s",
-            producer.slug,
-            reasons,
-        )
-        if use_cache and cacheable:
-            await _store_roundup_cache_entry(
-                cache_key,
-                producer.slug,
-                ts,
-                None,
-                None,
-                db,
-                keep_tombstone=True,
-                nothing_to_show=True,
-                nothing_to_show_reason=reason_text,
-            )
-        return None, None
-
-    if not isinstance(outcome, RoundupMembers):
-        outcome = RoundupMembers(outcome)
-
-    container_payload = compose_roundup_container(producer, outcome)
-    feed_item = compose_roundup_feed_item(producer, outcome)
-    if (
-        _is_machinery_producer_slug(producer.slug)
-        and container_payload is not None
-        and _roundup_payload_has_live_event(container_payload)
-        and isinstance(feed_item, dict)
-        and isinstance(feed_item.get("data"), dict)
-    ):
-        # Stamp `status="live"` so `feed_cache.payload_contains_live_event`
-        # automatically bounds any Discover page carrying a live machinery slate
-        # to the 60s live ceiling (`FEED_RESPONSE_STALE_TTL_LIVE_SECONDS`).
-        feed_item["data"]["status"] = "live"
-    if container_payload is None or (
-        feed_item is None and not getattr(outcome, "suppress_feed_item", False)
-    ):
-        if outcome_meta is not None:
-            outcome_meta["clean_empty"] = True
-            outcome_meta["reason"] = "empty_payload"
-        if use_cache:
-            await _store_roundup_cache_entry(
-                cache_key,
-                producer.slug,
-                ts,
-                None,
-                None,
-                db,
-                keep_tombstone=True,
-                nothing_to_show=True,
-                nothing_to_show_reason="empty_payload",
-            )
-        return None, None
-
-    if producer_kind:
-        from app.utils.grouping_licences import (
-            detect_served_card_violation,
-            load_grouping_licences,
-            record_runtime_kind_suspension,
-        )
-
-        active_licences = (
-            licences_registry
-            if licences_registry is not None
-            else load_grouping_licences(licences_path)
-        )
-        if producer_kind in (active_licences.get("kinds") or {}):
-            allow_settled = producer_kind == "series_hub"
-            violation = detect_served_card_violation(
-                container_payload, allow_settled_members=allow_settled
-            ) or (
-                detect_served_card_violation(
-                    feed_item, allow_settled_members=allow_settled
-                )
-                if feed_item is not None
-                else None
-            )
-            if violation is not None:
-                bad_slug, bad_reason = violation
-                record_runtime_kind_suspension(
-                    producer_kind,
-                    wrong_card_slug=bad_slug or producer.slug,
-                    reason=bad_reason,
-                    registry=licences_registry,
+        swr_entry = chosen_swr or local_swr_fallback
+        if swr_entry is not None:
+            _record_roundup_live_origin(swr_entry[0], producer.slug, swr_entry[2])
+            if trigger_bg_refresh:
+                _trigger_roundup_bg_refresh(
+                    cache_key,
+                    producer,
+                    db,
+                    now=now,
+                    licences_registry=licences_registry,
                     licences_path=licences_path,
                 )
-                if outcome_meta is not None:
-                    outcome_meta["clean_empty"] = False
-                    outcome_meta["reason"] = "licence_violation"
-                logger.warning(
-                    "flow_sentinel matching_defect: roundup %s suspended kind %s (%s)",
-                    producer.slug,
-                    producer_kind,
-                    bad_reason,
-                )
-                return None, None
+            return copy.deepcopy(swr_entry[1]), copy.deepcopy(swr_entry[2])
 
-    if (
-        _is_machinery_producer_slug(producer.slug)
-        and feed_item is not None
-        and isinstance(db, AsyncSession)
-    ):
-        # Ruling 188 (#11937, #12288): screen every machinery Discover feed card
-        # ONCE at build time before caching (covering BOTH Celery prewarm AND
-        # reader-path inline rebuilds), so no unscreened entry can ever land in
-        # Redis and hot `machinery_only` splices pay zero DB queries.
-        try:
-            from app.utils.not_trading import drop_not_trading_roundup_members
+    async def _produce_and_store() -> tuple[
+        Optional[dict[str, Any]],
+        Optional[dict[str, Any]],
+        Optional[dict[str, Any]],
+    ]:
+        local_meta: Optional[dict[str, Any]] = (
+            {"clean_empty": False, "reason": None}
+            if (outcome_meta is not None or (use_cache and not force_refresh))
+            else None
+        )
+        if now_dt is not None and "now" in inspect.signature(producer.produce).parameters:
+            outcome = producer.produce(db, now=now_dt)
+        else:
+            outcome = producer.produce(db)
+        if inspect.isawaitable(outcome):
+            outcome = await outcome
 
-            _screened = await drop_not_trading_roundup_members(
-                db,
-                [feed_item],
-                now_dt or datetime.now(timezone.utc),
-                _roundup_covered_market_ids,
+        if outcome is None or isinstance(outcome, RoundupRefusal):
+            reasons = list(outcome.reasons) if isinstance(outcome, RoundupRefusal) else []
+            cacheable = _is_cacheable_refusal(reasons)
+            reason_text = ",".join(str(r) for r in reasons if r) or (
+                "clean_empty_refusal" if cacheable else "transient_refusal"
             )
-            feed_item = _screened[0] if _screened else None
-        except Exception:  # noqa: BLE001 — keep card on transient screen error
+            if local_meta is not None:
+                local_meta["clean_empty"] = bool(cacheable)
+                local_meta["reason"] = reason_text
             logger.warning(
-                "roundup_containers: not-trading screen failed for %s; keeping card",
+                "flow_sentinel matching_defect: roundup %s refused reasons=%s",
                 producer.slug,
-                exc_info=True,
+                reasons,
             )
-        if feed_item is None:
-            if outcome_meta is not None:
-                outcome_meta["clean_empty"] = True
-                outcome_meta["reason"] = "not_trading_screen_empty"
+            if use_cache and cacheable:
+                await _store_roundup_cache_entry(
+                    cache_key,
+                    producer.slug,
+                    ts,
+                    None,
+                    None,
+                    db,
+                    keep_tombstone=True,
+                    nothing_to_show=True,
+                    nothing_to_show_reason=reason_text,
+                )
+            return None, None, local_meta
+
+        if not isinstance(outcome, RoundupMembers):
+            outcome = RoundupMembers(outcome)
+
+        container_payload = compose_roundup_container(producer, outcome)
+        feed_item = compose_roundup_feed_item(producer, outcome)
+        if (
+            _is_machinery_producer_slug(producer.slug)
+            and container_payload is not None
+            and _roundup_payload_has_live_event(container_payload)
+            and isinstance(feed_item, dict)
+            and isinstance(feed_item.get("data"), dict)
+        ):
+            # Stamp `status="live"` so `feed_cache.payload_contains_live_event`
+            # automatically bounds any Discover page carrying a live machinery slate
+            # to the 60s live ceiling (`FEED_RESPONSE_STALE_TTL_LIVE_SECONDS`).
+            feed_item["data"]["status"] = "live"
+        if container_payload is None or (
+            feed_item is None and not getattr(outcome, "suppress_feed_item", False)
+        ):
+            if local_meta is not None:
+                local_meta["clean_empty"] = True
+                local_meta["reason"] = "empty_payload"
             if use_cache:
                 await _store_roundup_cache_entry(
                     cache_key,
@@ -2265,15 +2413,111 @@ async def evaluate_roundup_producer(
                     None,
                     db,
                     keep_tombstone=True,
+                    nothing_to_show=True,
+                    nothing_to_show_reason="empty_payload",
                 )
-            return None, None
+            return None, None, local_meta
 
-    if use_cache:
-        await _store_roundup_cache_entry(
-            cache_key, producer.slug, ts, feed_item, container_payload, db
+        if producer_kind:
+            from app.utils.grouping_licences import (
+                detect_served_card_violation,
+                load_grouping_licences,
+                record_runtime_kind_suspension,
+            )
+
+            active_licences = (
+                licences_registry
+                if licences_registry is not None
+                else load_grouping_licences(licences_path)
+            )
+            if producer_kind in (active_licences.get("kinds") or {}):
+                allow_settled = producer_kind == "series_hub"
+                violation = detect_served_card_violation(
+                    container_payload, allow_settled_members=allow_settled
+                ) or (
+                    detect_served_card_violation(
+                        feed_item, allow_settled_members=allow_settled
+                    )
+                    if feed_item is not None
+                    else None
+                )
+                if violation is not None:
+                    bad_slug, bad_reason = violation
+                    record_runtime_kind_suspension(
+                        producer_kind,
+                        wrong_card_slug=bad_slug or producer.slug,
+                        reason=bad_reason,
+                        registry=licences_registry,
+                        licences_path=licences_path,
+                    )
+                    if local_meta is not None:
+                        local_meta["clean_empty"] = False
+                        local_meta["reason"] = "licence_violation"
+                    logger.warning(
+                        "flow_sentinel matching_defect: roundup %s suspended kind %s (%s)",
+                        producer.slug,
+                        producer_kind,
+                        bad_reason,
+                    )
+                    return None, None, local_meta
+
+        if (
+            _is_machinery_producer_slug(producer.slug)
+            and feed_item is not None
+            and isinstance(db, AsyncSession)
+        ):
+            # Ruling 188 (#11937, #12288): screen every machinery Discover feed card
+            # ONCE at build time before caching (covering BOTH Celery prewarm AND
+            # reader-path inline rebuilds), so no unscreened entry can ever land in
+            # Redis and hot `machinery_only` splices pay zero DB queries.
+            try:
+                from app.utils.not_trading import drop_not_trading_roundup_members
+
+                _screened = await drop_not_trading_roundup_members(
+                    db,
+                    [feed_item],
+                    now_dt or datetime.now(timezone.utc),
+                    _roundup_covered_market_ids,
+                )
+                feed_item = _screened[0] if _screened else None
+            except Exception:  # noqa: BLE001 — keep card on transient screen error
+                logger.warning(
+                    "roundup_containers: not-trading screen failed for %s; keeping card",
+                    producer.slug,
+                    exc_info=True,
+                )
+            if feed_item is None:
+                if local_meta is not None:
+                    local_meta["clean_empty"] = True
+                    local_meta["reason"] = "not_trading_screen_empty"
+                if use_cache:
+                    await _store_roundup_cache_entry(
+                        cache_key,
+                        producer.slug,
+                        ts,
+                        None,
+                        None,
+                        db,
+                        keep_tombstone=True,
+                    )
+                return None, None, local_meta
+
+        if use_cache:
+            await _store_roundup_cache_entry(
+                cache_key, producer.slug, ts, feed_item, container_payload, db
+            )
+
+        return feed_item, container_payload, local_meta
+
+    if use_cache and not force_refresh:
+        return await _singleflight_roundup_build(
+            cache_key, _produce_and_store, outcome_meta=outcome_meta
         )
 
-    return feed_item, container_payload
+    fi_out, cp_out, meta_out = await _produce_and_store()
+    if outcome_meta is not None and isinstance(meta_out, Mapping):
+        outcome_meta.update(meta_out)
+    return fi_out, cp_out
 
 
 def _strip_parent_from_payload(out: dict[str, Any]) -> None:
@@ -2652,7 +2896,13 @@ async def select_more_sets(
                 break
             try:
                 _fi, payload = await asyncio.wait_for(
-                    evaluate_roundup_producer(producer, db, now=now),
+                    evaluate_roundup_producer(
+                        producer,
+                        db,
+                        now=now,
+                        stale_while_revalidate_seconds=ROUNDUP_PAGE_SWR_MAX_AGE_S,
+                        trigger_bg_refresh=False,
+                    ),
                     timeout=min(remaining_s, ROUNDUP_PRODUCER_TIMEOUT_SECONDS),
                 )
             except Exception:  # noqa: BLE001 — fail open, never break container read
@@ -2693,7 +2943,12 @@ async def serve_roundup(
         raise HTTPException(
             status_code=404, detail={"state": READ_UNAVAILABLE, "slug": slug}
         )
-    _feed_item, payload = await evaluate_roundup_producer(producer, db, now=now)
+    _feed_item, payload = await evaluate_roundup_producer(
+        producer,
+        db,
+        now=now,
+        stale_while_revalidate_seconds=ROUNDUP_PAGE_SWR_MAX_AGE_S,
+    )
     if payload is None:
         raise HTTPException(
             status_code=404, detail={"state": READ_UNAVAILABLE, "slug": slug}
@@ -2711,7 +2966,12 @@ async def serve_roundup(
                 continue
             ch_prod = ROUNDUP_PRODUCERS.get(ch_slug)
             if ch_prod is not None:
-                _ch_fi, ch_payload = await evaluate_roundup_producer(ch_prod, db, now=now)
+                _ch_fi, ch_payload = await evaluate_roundup_producer(
+                    ch_prod,
+                    db,
+                    now=now,
+                    stale_while_revalidate_seconds=ROUNDUP_PAGE_SWR_MAX_AGE_S,
+                )
                 if ch_payload is None or ch_payload.get("state") != "published":
                     continue
                 ch_copy = dict(ch)
@@ -2736,7 +2996,12 @@ async def serve_roundup(
         p_slug = str(parent_obj.get("slug") or "").strip()
         p_prod = ROUNDUP_PRODUCERS.get(p_slug) if p_slug else None
         if p_prod is not None:
-            _p_fi, p_payload = await evaluate_roundup_producer(p_prod, db, now=now)
+            _p_fi, p_payload = await evaluate_roundup_producer(
+                p_prod,
+                db,
+                now=now,
+                stale_while_revalidate_seconds=ROUNDUP_PAGE_SWR_MAX_AGE_S,
+            )
             if p_payload is None or p_payload.get("state") != "published":
                 _strip_parent_from_payload(out)
         elif p_slug:
@@ -3461,6 +3726,101 @@ def _is_preview_producer(producer: RoundupProducer) -> bool:
     return str(getattr(producer, "stage", "public") or "public").strip().lower() == "preview"
 
 
+def _roundup_lesser_soccer_penalty(item: Mapping[str, Any]) -> int:
+    """Return ``MINOR_LEAGUE_PENALTY`` or ``OBSCURE_SOCCER_PENALTY`` for lesser soccer cards (#13093).
+
+    Multi-row soccer round-ups and sibling families carry no individual market
+    score before insertion, so they otherwise inherit their anchor neighbour's
+    high seat on Discover. Matches single-market futures parity in
+    ``app.utils.futures_highlights``: minor-league regex pays ``-15``, any
+    non-top-tier soccer competition pays ``-20``, and top-tier leagues
+    (Champions League, Premier League, La Liga, Bundesliga, Serie A, Ligue 1,
+    Europa League, MLS, World Cup, Liga MX, etc.) pay ``0``.
+    """
+    from app.utils.futures_highlights import (
+        MINOR_LEAGUE_PENALTY,
+        OBSCURE_SOCCER_PENALTY,
+        is_minor_league_market,
+        is_top_tier_soccer_market,
+    )
+
+    if not isinstance(item, Mapping):
+        return 0
+    slug = _roundup_item_slug(item)
+    prod = ROUNDUP_PRODUCERS.get(slug) if slug else None
+    data = item.get("data") if isinstance(item.get("data"), Mapping) else {}
+    roundup = data.get("roundup") if isinstance(data.get("roundup"), Mapping) else {}
+    tag = str(roundup.get("tag") or "").strip().lower()
+    kicker = str(roundup.get("kicker") or "").strip().lower()
+    children = [
+        ch.get("data")
+        for ch in (data.get("items") or ())
+        if isinstance(ch, Mapping) and isinstance(ch.get("data"), Mapping)
+    ]
+    child_cats = [str(ch.get("llm_sport_category") or "").strip().lower() for ch in children]
+    is_soccer = (
+        (prod is not None and str(prod.category or "").strip().lower() == "soccer")
+        or ("soccer" in tag or "soccer" in kicker)
+        or (len(child_cats) > 0 and all(cat == "soccer" for cat in child_cats))
+    )
+    if not is_soccer:
+        return 0
+
+    texts: list[str] = []
+    for raw in (
+        data.get("title"),
+        item.get("headline"),
+        prod.name if prod is not None else None,
+    ):
+        if raw and str(raw).strip():
+            texts.append(str(raw).strip())
+    for ch in children:
+        for key in ("name", "title"):
+            val = ch.get(key)
+            if val and str(val).strip():
+                texts.append(str(val).strip())
+    for row in roundup.get("rows") or ():
+        if isinstance(row, Mapping):
+            for key in ("market_name", "title", "subtitle"):
+                val = row.get(key)
+                if val and str(val).strip():
+                    texts.append(str(val).strip())
+
+    if any(is_minor_league_market(text) for text in texts):
+        return int(MINOR_LEAGUE_PENALTY)
+    if any(is_top_tier_soccer_market(text) for text in texts):
+        return 0
+    return int(OBSCURE_SOCCER_PENALTY)
+
+
+def _penalized_roundup_score(
+    item: Mapping[str, Any],
+    anchor: Optional[Mapping[str, Any]],
+    penalty: int,
+) -> float:
+    base = float(item.get("score") or 0.0)
+    if base <= 0.0 and isinstance(anchor, Mapping):
+        base = float(anchor.get("score") or 0.0)
+    return max(0.0, base + float(penalty))
+
+
+def _score_demoted_seat_index(
+    items: Sequence[Mapping[str, Any]],
+    min_idx: int,
+    penalized_score: float,
+) -> int:
+    """Seat index at/after ``min_idx`` placing a penalized card alongside equal-or-lower scores."""
+    last_higher = max(
+        (
+            i
+            for i in range(max(0, min_idx), len(items))
+            if float(items[i].get("score") or 0.0) > penalized_score
+        ),
+        default=None,
+    )
+    return max(min_idx, (last_higher + 1) if last_higher is not None else min_idx)
+
+
 def _is_preview_roundup_item(item: Mapping[str, Any]) -> bool:
     """Return True when a composed feed item belongs to a ``stage="preview"`` grouping."""
     slug = _roundup_item_slug(item)
@@ -3825,18 +4185,40 @@ def insert_roundup_feed_items(
             else preexisting_target_by_id.get(r_id)
         )
 
-    def _hydrate_card_at_seat(r_item: Mapping[str, Any], target_idx: int) -> dict[str, Any]:
+    def _hydrate_card_at_seat(
+        r_item: Mapping[str, Any],
+        target_idx: int,
+        *,
+        penalty: int = 0,
+        anchor_override: Optional[Mapping[str, Any]] = None,
+    ) -> dict[str, Any]:
         card = copy.deepcopy(dict(r_item))
         if result:
-            anchor = result[target_idx] if target_idx < len(result) else result[-1]
-            if not card.get("score"):
-                card["score"] = float(anchor.get("score", 0.0) or 0.0)
-            if "_rank_score" in anchor and "_rank_score" not in card:
-                card["_rank_score"] = anchor["_rank_score"]
+            anchor = (
+                anchor_override
+                if anchor_override is not None
+                else (result[target_idx] if target_idx < len(result) else result[-1])
+            )
+            if penalty < 0:
+                card["score"] = _penalized_roundup_score(card, anchor, penalty)
+                if "_rank_score" in anchor and "_rank_score" not in card:
+                    card["_rank_score"] = max(
+                        0.0, float(anchor["_rank_score"] or 0.0) + float(penalty)
+                    )
+            else:
+                if not card.get("score"):
+                    card["score"] = float(anchor.get("score", 0.0) or 0.0)
+                if "_rank_score" in anchor and "_rank_score" not in card:
+                    card["_rank_score"] = anchor["_rank_score"]
             if "_sort_time" in anchor and "_sort_time" not in card:
                 card["_sort_time"] = anchor["_sort_time"]
             for child in card.get("data", {}).get("items") or ():
-                if isinstance(child, dict) and not child.get("score"):
+                if isinstance(child, dict) and (penalty < 0 or not child.get("score")):
+                    child["score"] = card["score"]
+        elif penalty < 0:
+            card["score"] = _penalized_roundup_score(card, None, penalty)
+            for child in card.get("data", {}).get("items") or ():
+                if isinstance(child, dict):
                     child["score"] = card["score"]
         return card
 
@@ -3856,6 +4238,18 @@ def insert_roundup_feed_items(
         for r_item in accepted_roundups
         if r_item["data"].get("id") not in opening_takeover_seat_by_id
     ]
+    # Track each post-opening round-up's natural unpenalized turn before
+    # ordering unpenalized round-ups first so any penalized lesser-soccer card
+    # computes its penalized score from its true pre-penalty seat anchor rather
+    # than whichever tail item happens to follow all later round-ups.
+    post_opening_turns = [
+        (idx, r_item, _roundup_lesser_soccer_penalty(r_item))
+        for idx, r_item in enumerate(post_opening_roundups)
+    ]
+    post_opening_ordered = [
+        *[t for t in post_opening_turns if t[2] == 0],
+        *[t for t in post_opening_turns if t[2] < 0],
+    ]
     for r_item in opening_takeovers:
         r_id = r_item["data"].get("id")
         target_idx = min(max(0, opening_takeover_seat_by_id[r_id]), len(result))
@@ -3866,7 +4260,7 @@ def insert_roundup_feed_items(
 
     inserted_count = 0
     max_inserted_idx = -1
-    for r_item in post_opening_roundups:
+    for natural_turn, r_item, lesser_soccer_pen in post_opening_ordered:
         r_id = r_item["data"].get("id")
         is_sibling_card = _is_sibling_family_bundle(r_item)
         floor_idx = _opening_eligible_floor_index(result, seat_floor, now=now)
@@ -3887,15 +4281,31 @@ def insert_roundup_feed_items(
             target_seat = max(target_seat, page_window)
 
         desired_idx = min(max(floor_idx, target_seat), len(result))
-        non_adj_idx = _find_non_adjacent_roundup_seat(
-            result,
-            desired_idx,
-            floor_idx=max(
+        anchor_override: Optional[Mapping[str, Any]] = None
+        if lesser_soccer_pen < 0 and result:
+            anchor_seat = (
+                earliest_post_opening_seat
+                if earliest_post_opening_seat is not None
+                else floor_idx + (2 * natural_turn)
+            )
+            anchor_idx = min(max(floor_idx, anchor_seat), len(result) - 1)
+            anchor_override = result[anchor_idx]
+            pen_score = _penalized_roundup_score(r_item, anchor_override, lesser_soccer_pen)
+            desired_idx = _score_demoted_seat_index(result, floor_idx, pen_score)
+        effective_floor = (
+            max(floor_idx, desired_idx)
+            if lesser_soccer_pen < 0
+            else max(
                 floor_idx,
                 page_window
                 if (is_sibling_card and len(seated_sibling_roundups) >= MAX_SIBLING_FAMILY_IN_TOP_20)
                 else floor_idx,
-            ),
+            )
+        )
+        non_adj_idx = _find_non_adjacent_roundup_seat(
+            result,
+            desired_idx,
+            floor_idx=effective_floor,
             candidate_item=r_item,
             page_window=page_window,
         )
@@ -3909,14 +4319,20 @@ def insert_roundup_feed_items(
         ):
             continue
 
-        card = _hydrate_card_at_seat(r_item, target_idx)
+        card = _hydrate_card_at_seat(
+            r_item,
+            target_idx,
+            penalty=lesser_soccer_pen,
+            anchor_override=anchor_override,
+        )
 
         result.insert(target_idx, card)
-        if target_idx > max_inserted_idx:
+        if lesser_soccer_pen == 0 and target_idx > max_inserted_idx:
             max_inserted_idx = target_idx
         if is_sibling_card and target_idx < page_window:
             seated_sibling_roundups.append(card)
-        inserted_count += 1
+        if lesser_soccer_pen == 0:
+            inserted_count += 1
         changed = True
 
     if not changed:
@@ -4772,18 +5188,40 @@ def _splice_machinery_in_place(
     if not ordered_roundups:
         return raw_items
 
-    def _hydrate_at(r_item: Mapping[str, Any], target_idx: int) -> dict[str, Any]:
+    def _hydrate_at(
+        r_item: Mapping[str, Any],
+        target_idx: int,
+        *,
+        penalty: int = 0,
+        anchor_override: Optional[Mapping[str, Any]] = None,
+    ) -> dict[str, Any]:
         card = copy.deepcopy(dict(r_item))
         if result:
-            anchor = result[target_idx] if target_idx < len(result) else result[-1]
-            if not card.get("score"):
-                card["score"] = float(anchor.get("score", 0.0) or 0.0)
-            if "_rank_score" in anchor and "_rank_score" not in card:
-                card["_rank_score"] = anchor["_rank_score"]
+            anchor = (
+                anchor_override
+                if anchor_override is not None
+                else (result[target_idx] if target_idx < len(result) else result[-1])
+            )
+            if penalty < 0:
+                card["score"] = _penalized_roundup_score(card, anchor, penalty)
+                if "_rank_score" in anchor and "_rank_score" not in card:
+                    card["_rank_score"] = max(
+                        0.0, float(anchor["_rank_score"] or 0.0) + float(penalty)
+                    )
+            else:
+                if not card.get("score"):
+                    card["score"] = float(anchor.get("score", 0.0) or 0.0)
+                if "_rank_score" in anchor and "_rank_score" not in card:
+                    card["_rank_score"] = anchor["_rank_score"]
             if "_sort_time" in anchor and "_sort_time" not in card:
                 card["_sort_time"] = anchor["_sort_time"]
             for child in card.get("data", {}).get("items") or ():
-                if isinstance(child, dict) and not child.get("score"):
+                if isinstance(child, dict) and (penalty < 0 or not child.get("score")):
+                    child["score"] = card["score"]
+        elif penalty < 0:
+            card["score"] = _penalized_roundup_score(card, None, penalty)
+            for child in card.get("data", {}).get("items") or ():
+                if isinstance(child, dict):
                     child["score"] = card["score"]
         return card
 
@@ -4819,12 +5257,16 @@ def _splice_machinery_in_place(
         (
             i
             for i, it in enumerate(result)
-            if _is_roundup_bundle_card(it) and not _is_machinery_roundup_item(it)
+            if _is_roundup_bundle_card(it)
+            and not _is_machinery_roundup_item(it)
+            and _roundup_lesser_soccer_penalty(it) == 0
         ),
         default=-1,
     )
     own_seat_ceiling = max(initial_floor_idx, pre_pass2_standing_last + 2)
     for r_item in ordered_roundups:
+        if _roundup_lesser_soccer_penalty(r_item) < 0:
+            continue
         r_id = r_item["data"].get("id")
         covered_ids = _roundup_covered_market_ids(r_item)
         if not covered_ids:
@@ -4886,8 +5328,8 @@ def _splice_machinery_in_place(
             result.pop(idx)
 
     # Pass 3: Non-replacing machinery groupings seat strictly after the last standing
-    # round-up (never counting already-placed machinery groupings!) with non-adjacent
-    # spacing so zero standing round-ups shift.
+    # round-up (never counting already-placed machinery groupings or score-demoted
+    # lesser-soccer round-ups!) with non-adjacent spacing so zero standing round-ups shift.
     unplaced = [r for r in ordered_roundups if r["data"].get("id") not in placed_rids]
     if unplaced:
         floor_idx = _opening_eligible_floor_index(result, seat_floor, now=now)
@@ -4895,13 +5337,22 @@ def _splice_machinery_in_place(
             (
                 i
                 for i, it in enumerate(result)
-                if _is_roundup_bundle_card(it) and not _is_machinery_roundup_item(it)
+                if _is_roundup_bundle_card(it)
+                and not _is_machinery_roundup_item(it)
+                and _roundup_lesser_soccer_penalty(it) == 0
             ),
             default=-1,
         )
         next_desired = max(floor_idx, last_standing_idx + 2)
         for r_item in unplaced:
+            lesser_soccer_pen = _roundup_lesser_soccer_penalty(r_item)
             desired_idx = min(next_desired, len(result))
+            anchor_override = None
+            if lesser_soccer_pen < 0 and result:
+                anchor_idx = min(desired_idx, len(result) - 1)
+                anchor_override = result[anchor_idx]
+                pen_score = _penalized_roundup_score(r_item, anchor_override, lesser_soccer_pen)
+                desired_idx = _score_demoted_seat_index(result, desired_idx, pen_score)
             non_adj = _find_non_adjacent_roundup_seat(
                 result,
                 desired_idx,
@@ -4910,9 +5361,15 @@ def _splice_machinery_in_place(
                 page_window=page_window,
             )
             target_idx = non_adj if non_adj is not None else len(result)
-            card = _hydrate_at(r_item, target_idx)
+            card = _hydrate_at(
+                r_item,
+                target_idx,
+                penalty=lesser_soccer_pen,
+                anchor_override=anchor_override,
+            )
             result.insert(target_idx, card)
-            next_desired = target_idx + 2
+            if lesser_soccer_pen == 0:
+                next_desired = target_idx + 2
             changed = True
 
     if not changed:
