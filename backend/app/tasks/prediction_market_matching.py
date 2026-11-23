@@ -5529,6 +5529,21 @@ def _market_sport_prefix(market) -> Optional[str]:
     return market_sport
 
 
+def _market_is_wbb(market, sport_prefix: Optional[str] = None) -> bool:
+    """True when the market belongs to women's college basketball (#13142)."""
+    prefix = sport_prefix if sport_prefix is not None else _market_sport_prefix(market)
+    if prefix == "basketball_wncaab":
+        return True
+    meta = getattr(market, "market_metadata", None)
+    slug = meta.get(POLYMARKET_EVENT_SLUG_KEY) if isinstance(meta, dict) else None
+    if polymarket_league_code(slug) == "cwbb":
+        return True
+    name = (getattr(market, "name", None) or "").lower()
+    if "(w)" in name or "women's" in name or "wncaab" in name:
+        return True
+    return str(getattr(market, "llm_sport_category", "") or "").lower() == "basketball_wncaab"
+
+
 def _sport_family(sport_key: Optional[str]) -> Optional[str]:
     """`soccer_uefa_europa_conference_league` -> `soccer`. The part before `_`."""
     if not sport_key:
@@ -9079,22 +9094,44 @@ async def _find_matching_event(
             checked.
     """
     from app.models.models import Event, Sport
+    from app.utils.prediction_market_matching import (
+        _college_state_search_variants,
+        wbb_mascot_variants,
+    )
 
     # Build team name search patterns
     teams_to_search = [matchup.team_a]
     if matchup.team_b:
         teams_to_search.append(matchup.team_b)
 
+    is_wbb_market = _market_is_wbb(market)
+
     # Create ILIKE conditions for team names.
     # _expand_team_search_terms produces multiple patterns for abbreviated
     # names (e.g., "WSH Capitals" → ["WSH Capitals", "Capitals"]) so that
     # ILIKE '%Capitals%' matches "Washington Capitals" in the events table.
-    ilike_conditions = []
+    expanded_search_terms: list[str] = []
+    seen_terms: set[str] = set()
     for team in teams_to_search:
         for search_term in _expand_team_search_terms(team):
-            pattern = f"%{_escape_like(search_term)}%"
-            ilike_conditions.append(Event.home_team_name.ilike(pattern))
-            ilike_conditions.append(Event.away_team_name.ilike(pattern))
+            if search_term not in seen_terms:
+                seen_terms.add(search_term)
+                expanded_search_terms.append(search_term)
+            if is_wbb_market:
+                for mascot_variant in wbb_mascot_variants(search_term):
+                    if mascot_variant not in seen_terms:
+                        seen_terms.add(mascot_variant)
+                        expanded_search_terms.append(mascot_variant)
+                    for state_variant in _college_state_search_variants(mascot_variant):
+                        if state_variant not in seen_terms:
+                            seen_terms.add(state_variant)
+                            expanded_search_terms.append(state_variant)
+
+    ilike_conditions = []
+    for search_term in expanded_search_terms:
+        pattern = f"%{_escape_like(search_term)}%"
+        ilike_conditions.append(Event.home_team_name.ilike(pattern))
+        ilike_conditions.append(Event.away_team_name.ilike(pattern))
     # #6720: the ILIKE above is accent-SENSITIVE and Kalshi writes every club in
     # ASCII, so "%Leganes%" never reached our "Leganés" and the market minted a
     # second row for the game (production 2026-09-25: KXLALIGA2GAME-26SEP28LEGCAS
@@ -9105,8 +9142,7 @@ async def _find_matching_event(
     # accents, so what is ACCEPTED is unchanged.
     windowed_conditions = ilike_conditions + [
         condition
-        for team in teams_to_search
-        for search_term in _expand_team_search_terms(team)
+        for search_term in expanded_search_terms
         for condition in _folded_name_contains_conditions(search_term)
     ]
 
@@ -9745,6 +9781,7 @@ def _score_candidates(
     if not candidates:
         return None
 
+    from app.utils.prediction_market_matching import MatchupInfo, normalize_wbb_mascot
     from app.utils.proven_duplicates import canonical_id_from_tags
 
     traces: list[CandidateTrace] = []
@@ -9789,6 +9826,17 @@ def _score_candidates(
     # Ticker-derived prefix (Kalshi) is most reliable. Falls back to
     # llm_sport_category (Polymarket and Kalshi without parseable ticker).
     sport_prefix = _market_sport_prefix(market)
+    is_wbb_market = _market_is_wbb(market, sport_prefix)
+    wbb_matchup = (
+        MatchupInfo(
+            normalize_wbb_mascot(matchup.team_a),
+            normalize_wbb_mascot(matchup.team_b) if matchup.team_b else None,
+            normalize_wbb_mascot(matchup.yes_team),
+            matchup.format_type,
+        )
+        if is_wbb_market
+        else None
+    )
 
     best_match = None
     best_event = None
@@ -9815,6 +9863,15 @@ def _score_candidates(
         # "Bulls vs. Pistons" (Thunder ≠ Bulls), or "Pistons vs. Bulls"
         # matching "Georgia Southern Eagles vs South Florida Bulls"
         # (Pistons ≠ Georgia Southern Eagles).
+        use_wbb_mascot = (
+            is_wbb_market
+            and wbb_matchup is not None
+            and event.sport is not None
+            and event.sport.key == "basketball_wncaab"
+        )
+        eval_matchup = matchup
+        eval_home = event.home_team_name
+        eval_away = event.away_team_name
         if matchup.team_b:
             # #9584: and on OPPOSITE sides. Both halves of "Sun vs. Sun"
             # (Yingqun Sun v Junlu Sun) match the one `Sun` of Tomic v Sun.
@@ -9822,25 +9879,49 @@ def _score_candidates(
                 matchup.team_a, matchup.team_b,
                 event.home_team_name, event.away_team_name,
             ):
-                # Coverage is what separates a rejected candidate from a row
-                # the ILIKE happened to return on one shared token — and it is
-                # measured INDEPENDENTLY of the side test above, which is the
-                # verdict being explained. "CLE Browns vs JAC Jaguars" against
-                # Jacksonville Jaguars / Cleveland Browns fails both halves here
-                # and covers both sides; that is a name-gate bug of ours, not an
-                # upstream absence (CERT-783).
-                _trace(
-                    event, _receipts.REJECT_NAME_MISMATCH, measure_coverage=True,
-                )
-                continue
+                if use_wbb_mascot and _names_both_sides(
+                    wbb_matchup.team_a,
+                    wbb_matchup.team_b,
+                    normalize_wbb_mascot(event.home_team_name),
+                    normalize_wbb_mascot(event.away_team_name),
+                ):
+                    eval_matchup = wbb_matchup
+                    eval_home = normalize_wbb_mascot(event.home_team_name)
+                    eval_away = normalize_wbb_mascot(event.away_team_name)
+                else:
+                    # Coverage is what separates a rejected candidate from a row
+                    # the ILIKE happened to return on one shared token — and it is
+                    # measured INDEPENDENTLY of the side test above, which is the
+                    # verdict being explained. "CLE Browns vs JAC Jaguars" against
+                    # Jacksonville Jaguars / Cleveland Browns fails both halves here
+                    # and covers both sides; that is a name-gate bug of ours, not an
+                    # upstream absence (CERT-783).
+                    _trace(
+                        event, _receipts.REJECT_NAME_MISMATCH, measure_coverage=True,
+                    )
+                    continue
 
         # Check team name matching (determine yes/no home/away mapping)
         team_match = match_teams_to_event(
-            matchup,
-            event.home_team_name,
-            event.away_team_name,
+            eval_matchup,
+            eval_home,
+            eval_away,
             external_id=market.external_id or "",
         )
+        if not team_match and use_wbb_mascot and eval_matchup is matchup:
+            wbb_home = normalize_wbb_mascot(event.home_team_name)
+            wbb_away = normalize_wbb_mascot(event.away_team_name)
+            wbb_team_match = match_teams_to_event(
+                wbb_matchup,
+                wbb_home,
+                wbb_away,
+                external_id=market.external_id or "",
+            )
+            if wbb_team_match:
+                eval_matchup = wbb_matchup
+                eval_home = wbb_home
+                eval_away = wbb_away
+                team_match = wbb_team_match
         if not team_match:
             # A two-sided matchup that reaches here already cleared the gate
             # above, so its coverage is full: this IS the documented
@@ -9856,17 +9937,29 @@ def _score_candidates(
         # actually matches an event team
         if matchup.format_type == "will_win" and not matchup.team_b:
             if not (
-                _fuzzy_team_match(matchup.team_a, event.home_team_name)
-                or _fuzzy_team_match(matchup.team_a, event.away_team_name)
+                _fuzzy_team_match(eval_matchup.team_a, eval_home)
+                or _fuzzy_team_match(eval_matchup.team_a, eval_away)
             ):
-                # The market named one side and the gate says this row does not
-                # carry it. Measure independently before calling it a
-                # coincidence — the gate cannot match a name of three
-                # characters or fewer at all.
-                _trace(
-                    event, _receipts.REJECT_NAME_MISMATCH, measure_coverage=True,
-                )
-                continue
+                if use_wbb_mascot and (
+                    _fuzzy_team_match(
+                        wbb_matchup.team_a,
+                        normalize_wbb_mascot(event.home_team_name),
+                    )
+                    or _fuzzy_team_match(
+                        wbb_matchup.team_a,
+                        normalize_wbb_mascot(event.away_team_name),
+                    )
+                ):
+                    pass
+                else:
+                    # The market named one side and the gate says this row does not
+                    # carry it. Measure independently before calling it a
+                    # coincidence — the gate cannot match a name of three
+                    # characters or fewer at all.
+                    _trace(
+                        event, _receipts.REJECT_NAME_MISMATCH, measure_coverage=True,
+                    )
+                    continue
 
         # Score: prefer closer to now + live games
         score = 0
