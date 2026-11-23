@@ -1968,6 +1968,12 @@ def _hydrate_market_visual_item(
             if non_after:
                 ordered_valid = non_after
         kept = ordered_valid[:max_outcomes]
+        from app.utils.field_opening_coherence import field_openings_publishable
+
+        openings_ok = field_openings_publishable(
+            [o.get("opening_probability") for o in valid],
+            mutually_exclusive=bool(market.get("mutually_exclusive", True)),
+        )
         outcomes_out = []
         eff_sport_key = (
             sport_key
@@ -2017,7 +2023,9 @@ def _hydrate_market_visual_item(
                     "name": o_name,
                     "probability": p,
                     "rendered_percent": pct_val,
-                    "opening_probability": o.get("opening_probability"),
+                    "opening_probability": (
+                        o.get("opening_probability") if openings_ok else None
+                    ),
                     "art": art,
                 }
             )
