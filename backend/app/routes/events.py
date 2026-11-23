@@ -38719,7 +38719,9 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
     under-informed, never wrong in the other direction (both folds are strictly
     additive gap-fills).
     """
-    response = _format_event(event, gei_percentiles, team_lookup=team_lookup)
+    response = _format_event(
+        event, gei_percentiles, team_lookup=team_lookup, probability_sources=folded_sources
+    )
 
     # One resolution of the opening pair, read by BOTH sites below. Two
     # resolutions is how a card's printed "Opened X/Y" and the highlight score
@@ -38766,10 +38768,13 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
     # and the per-book table from the sportsbook aggregate (those ARE sportsbook
     # data). compute_aggregate_probability now uses the same weighted median the
     # chart's blend line uses.
+    _hero_view = (
+        FoldedBlendView(event, folded_sources) if folded_sources is not None else event
+    )
     from app.utils.aggregation import (
         compute_aggregate_probability_tiered as _agg_prob_tiered,
     )
-    _blend, _blend_tier = _agg_prob_tiered(event)
+    _blend, _blend_tier = _agg_prob_tiered(_hero_view)
     _list_three_way: Optional[tuple[float, float, float]] = None
 
     if odds_data and odds_data.get("aggregated"):
@@ -38932,9 +38937,6 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
     # only half of "one number": `get_event` folds a suppressed twin's readings
     # in and this arm did not, so a twin-paired match could still print two
     # different percentages from one shared function.
-    _hero_view = (
-        FoldedBlendView(event, folded_sources) if folded_sources is not None else event
-    )
     _hero_inputs: list[tuple[str, float]] = []
     _hero_method: list[str] = []
     _hero = resolve_hero(

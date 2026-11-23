@@ -95,6 +95,7 @@ import json
 import math
 import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any, Optional, Sequence
 
 from sqlalchemy import Boolean, Integer, String, and_, func, literal, or_, select
@@ -820,9 +821,102 @@ def group_latest_snapshots_by_event(
 # two-bar hero and date it from the wrong set. They are one ship.
 
 
+STALE_BETTING_OVERRIDE_AGE = timedelta(hours=72)
+
+
+def _aware_source_timestamp(entry: Any) -> Optional[datetime]:
+    """Parse an aware ``updated_at`` datetime from a source entry, or ``None``."""
+    if not isinstance(entry, dict):
+        return None
+    raw = entry.get("updated_at")
+    if isinstance(raw, datetime):
+        return raw if raw.tzinfo is not None else None
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo is not None else None
+    return None
+
+
+def _positive_book_count(raw: Any) -> Optional[int]:
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+        return None
+    return raw
+
+
+def sync_twin_betting_book_count(
+    merged: dict, twin_sources: Optional[dict]
+) -> None:
+    """Keep ``betting_book_count`` aligned with the twin supplying ``betting`` (#13496)."""
+    count = _positive_book_count(
+        twin_sources.get("betting_book_count")
+        if isinstance(twin_sources, dict)
+        else None
+    )
+    if count is not None:
+        merged["betting_book_count"] = count
+    else:
+        merged.pop("betting_book_count", None)
+
+
+def apply_scheduled_stale_betting_override(
+    merged: dict,
+    sorted_folded_rows: Sequence[tuple[int, dict | None]],
+    *,
+    event_status: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> Optional[int]:
+    """Replace a scheduled >72h ``betting`` reading with a fresher twin's (#13496)."""
+    if event_status != "scheduled":
+        return None
+    from app.utils.aggregation import parse_source_entry
+
+    cur_val, _ = parse_source_entry(merged.get("betting"))
+    cur_ts = _aware_source_timestamp(merged.get("betting"))
+    if cur_val is None or cur_ts is None:
+        return None
+    ref_now = now if now is not None else datetime.now(timezone.utc)
+    if ref_now - cur_ts <= STALE_BETTING_OVERRIDE_AGE:
+        return None
+
+    best_twin_id: Optional[int] = None
+    best_twin_sources: Optional[dict] = None
+    best_entry: Any = None
+    best_ts = cur_ts
+    for twin_id, twin_sources in sorted_folded_rows:
+        if not isinstance(twin_sources, dict):
+            continue
+        entry = twin_sources.get("betting")
+        cand_val, _ = parse_source_entry(entry)
+        cand_ts = _aware_source_timestamp(entry)
+        if cand_val is None or cand_ts is None:
+            continue
+        if cand_ts > best_ts:
+            best_ts = cand_ts
+            best_twin_id = twin_id
+            best_twin_sources = twin_sources
+            best_entry = entry
+
+    if best_entry is None or best_twin_id is None:
+        return None
+    merged["betting"] = best_entry
+    sync_twin_betting_book_count(merged, best_twin_sources)
+    return best_twin_id
+
+
 def merge_probability_sources(
     canonical_sources: dict | None,
     folded_rows: list[tuple[int, dict | None]],
+    *,
+    event_status: Optional[str] = None,
+    now: Optional[datetime] = None,
 ) -> dict:
     """The canonical's own readings, plus any source only its folded twins hold.
 
@@ -834,6 +928,13 @@ def merge_probability_sources(
     source the canonical does not hold at all, which keeps this strictly
     ADDITIVE — no page that renders a correct number today can have that number
     replaced by this fold, only joined by a venue that was already ours.
+
+    Exception (#13496): on a ``scheduled`` event whose canonical ``betting``
+    reading carries an aware ``updated_at`` older than 72 hours, the freshest
+    newer ``betting`` reading held by a folded twin supersedes it (alongside
+    that twin's ``betting_book_count``), and any twin supplying ``betting``
+    also supplies its ``betting_book_count`` so ``hero_sportsbook_count``
+    and the attribution mark match the books behind the number.
 
     Only keys in ``SOURCE_WEIGHTS`` are folded. This column is a shared JSONB
     bag: it also carries ``statpal_plays`` and ``statpal_injuries`` as ARRAYS
@@ -850,23 +951,32 @@ def merge_probability_sources(
     and its age stamp do not depend on the order the database returned rows in.
     """
     merged, _owners = merge_probability_sources_with_owners(
-        0, canonical_sources, folded_rows,
+        0,
+        canonical_sources,
+        folded_rows,
+        event_status=event_status,
+        now=now,
     )
     return merged
 
 
 def merge_probability_sources_with_owners(
-    canonical_id: int, canonical_sources: dict | None,
+    canonical_id: int,
+    canonical_sources: dict | None,
     folded_rows: list[tuple[int, dict | None]],
+    *,
+    event_status: Optional[str] = None,
+    now: Optional[datetime] = None,
 ) -> tuple[dict, dict[str, int]]:
-    """The same gap-fill, retaining which row supplies each weighted source."""
+    """The same gap-fill (and stale scheduled ``betting`` supersede), retaining owners."""
     from app.utils.aggregation import SOURCE_WEIGHTS, parse_source_entry
 
     merged = dict(canonical_sources or {})
     held = {k for k, v in merged.items() if parse_source_entry(v)[0] is not None}
     owners = {key: canonical_id for key in held if key in SOURCE_WEIGHTS}
+    sorted_rows = sorted(folded_rows, key=lambda row: row[0])
 
-    for twin_id, twin_sources in sorted(folded_rows, key=lambda row: row[0]):
+    for twin_id, twin_sources in sorted_rows:
         for key, entry in (twin_sources or {}).items():
             if key in held or key not in SOURCE_WEIGHTS:
                 continue
@@ -875,6 +985,17 @@ def merge_probability_sources_with_owners(
             merged[key] = entry
             held.add(key)
             owners[key] = twin_id
+            if key == "betting":
+                sync_twin_betting_book_count(merged, twin_sources)
+
+    override_owner = apply_scheduled_stale_betting_override(
+        merged,
+        sorted_rows,
+        event_status=event_status,
+        now=now,
+    )
+    if override_owner is not None:
+        owners["betting"] = override_owner
     return merged, owners
 
 
@@ -1055,8 +1176,10 @@ async def folded_probability_state(db, event, absorbed: Sequence = ()):
         db, event, absorbed, bags=True,
     )
     merged, owners = merge_probability_sources_with_owners(
-        event.id, canonical_sources,
+        event.id,
+        canonical_sources,
         [(twin_id, sources) for twin_id, sources, _ in oriented],
+        event_status=getattr(event, "status", None),
     )
     return merged, owners, revision
 
@@ -1291,6 +1414,7 @@ async def folded_probability_sources_batch(db, events) -> dict[int, dict]:
                 (twin_id, sources)
                 for twin_id, sources, _h, _a in folded.get(canonical_id, [])
             ],
+            event_status=getattr(event, "status", None),
         )
         for canonical_id, event in canonicals.items()
     }
@@ -1339,6 +1463,7 @@ async def folded_card_numbers_batch(db, events) -> dict[int, FoldedCardNumbers]:
                     (twin_id, sources)
                     for twin_id, sources, _h, _a in folded.get(canonical_id, [])
                 ],
+                event_status=getattr(event, "status", None),
             ),
             opening=merge_opening_line(
                 event.opening_home_probability,
