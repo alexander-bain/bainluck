@@ -1467,13 +1467,12 @@ def _effective_market_volume(
     volume_24h: Any = None,
     market_metadata: Any = None,
 ) -> Optional[float]:
-    """Resolve effective market volume when lifetime ``volume`` is missing (#336-A).
+    """Resolve effective market volume when lifetime ``volume`` is missing (#336-A, Item 4).
 
     Uses lifetime ``volume`` when present (preserving an explicit ``0`` so a
     measured zero-volume market still fails). When lifetime ``volume`` is missing,
-    falls back to positive ``volume_24h`` or a recorded ``traded`` Polymarket
-    ``volume_evidence.gamma_volume`` (since Polymarket sub-market upserts write
-    ``volume_24h`` and ``volume_evidence`` while leaving ``volume`` NULL). A market
+    tries the recorded lifetime figure (``market_metadata.volume_evidence.gamma_volume``
+    when ``verdict == "traded"``) BEFORE falling back to ``volume_24h``. A market
     with neither returns ``None`` so ``missing_volume`` still fails it.
     """
     primary = _finite_volume_number(volume)
@@ -1486,8 +1485,6 @@ def _effective_market_volume(
             if gv is not None:
                 return gv
     v24 = _finite_volume_number(volume_24h)
-    if v24 is not None and v24 > 0.0:
-        return v24
     if v24 is not None:
         return v24
     return None
