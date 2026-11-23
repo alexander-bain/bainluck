@@ -1712,6 +1712,7 @@ struct MyTeamFuturesCard: View {
 
     var body: some View {
         let isAX = dynamicTypeSize.isAccessibilitySize
+        let hasAnySourceMark = futures.hasDrawableSourceMark || matchedOutcomes.contains(where: { $0.sourceMark?.draws == true })
         return VStack(alignment: .leading, spacing: 8) {
             // Header
             HStack {
@@ -1723,7 +1724,8 @@ struct MyTeamFuturesCard: View {
                     .foregroundStyle(.secondary)
                 Spacer()
                 PinButton(type: "future", id: futures.id, compact: true)
-                if let source = SourceLabels.cardFaceLabel(
+                if !hasAnySourceMark,
+                   let source = SourceLabels.cardFaceLabel(
                     for: futures.source,
                     sources: futures.sources,
                     sourceCount: futures.sourceCount
@@ -1776,12 +1778,28 @@ struct MyTeamFuturesCard: View {
                             .fixedSize(horizontal: true, vertical: false)
                         }
                         if let prob = outcome.probability {
-                            Text(formatProbability(prob))
-                                .font(.subheadline)
-                                .fontWeight(.bold)
-                                .monospacedDigit()
-                                .lineLimit(1)
-                                .fixedSize(horizontal: true, vertical: false)
+                            let resolvedMark = outcome.sourceMark
+                                ?? futures.resolvedSourceMark(
+                                    for: futures.topOutcomes?.first(where: { $0.name == outcome.name })
+                                )
+                            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                                Text(formatProbability(prob))
+                                    .font(.subheadline)
+                                    .fontWeight(.bold)
+                                    .monospacedDigit()
+                                    .lineLimit(1)
+                                    .fixedSize(horizontal: true, vertical: false)
+                                if let mark = SourceMarkButton(
+                                    resolvedMark,
+                                    number: prob,
+                                    subject: outcome.name,
+                                    subtitle: futures.name,
+                                    numberSize: 15,
+                                    compactRow: true
+                                ) {
+                                    mark.buttonStyle(.borderless)
+                                }
+                            }
                         }
                     }
                 }
@@ -1795,6 +1813,7 @@ struct MyTeamFuturesCard: View {
             // Show the market leader for context (if different from matched)
             if let leader = futures.topOutcomes?.first,
                !matchedOutcomes.contains(where: { $0.name == leader.name }) {
+                let leaderMark = futures.resolvedSourceMark(for: leader)
                 if isAX {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("Leader: \(leader.name)")
@@ -1803,13 +1822,25 @@ struct MyTeamFuturesCard: View {
                             .lineLimit(nil)
                             .fixedSize(horizontal: false, vertical: true)
                         if let prob = leader.probability {
-                            Text(formatProbability(prob))
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .fixedSize(horizontal: true, vertical: false)
+                            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                                Text(formatProbability(prob))
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .monospacedDigit()
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .fixedSize(horizontal: true, vertical: false)
+                                if let mark = SourceMarkButton(
+                                    leaderMark,
+                                    number: prob,
+                                    subject: leader.name,
+                                    subtitle: futures.name,
+                                    numberSize: 12,
+                                    compactRow: true
+                                ) {
+                                    mark.buttonStyle(.borderless)
+                                }
+                            }
                         }
                     }
                 } else {
@@ -1822,11 +1853,23 @@ struct MyTeamFuturesCard: View {
                             .lineLimit(1)
                         Spacer()
                         if let prob = leader.probability {
-                            Text(formatProbability(prob))
-                                .font(.caption)
-                                .fontWeight(.semibold)
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
+                            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                                Text(formatProbability(prob))
+                                    .font(.caption)
+                                    .fontWeight(.semibold)
+                                    .monospacedDigit()
+                                    .foregroundStyle(.secondary)
+                                if let mark = SourceMarkButton(
+                                    leaderMark,
+                                    number: prob,
+                                    subject: leader.name,
+                                    subtitle: futures.name,
+                                    numberSize: 12,
+                                    compactRow: true
+                                ) {
+                                    mark.buttonStyle(.borderless)
+                                }
+                            }
                         }
                     }
                 }

@@ -1118,6 +1118,15 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
         }
         return nil
     }
+
+    /// True when any rendered number on this futures card already carries a drawable `ⓘ` source mark (`#11920`).
+    var hasDrawableSourceMark: Bool {
+        if sourceMark?.draws == true { return true }
+        if deadlineMember?.sourceMark?.draws == true || deadlineMember?.noSourceMark?.draws == true { return true }
+        if topOutcomes?.contains(where: { $0.sourceMark?.draws == true }) == true { return true }
+        if discoverCard?.distributionOutcomes?.contains(where: { $0.sourceMark?.draws == true }) == true { return true }
+        return false
+    }
 }
 
 /// #12884: cumulative deadline member attribution carried on `FeedFuturesData.deadline_member`.
@@ -1251,6 +1260,7 @@ nonisolated struct MatchedOutcome: Decodable, Identifiable, Sendable {
     let probability: Double?
     let rank: Int?
     let movement: Double?
+    var sourceMark: SourceMark? = nil
 
     var id: String { name }
 }

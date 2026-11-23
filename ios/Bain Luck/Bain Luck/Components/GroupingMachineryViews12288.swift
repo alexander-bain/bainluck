@@ -384,10 +384,83 @@ enum MachineryChartSeriesPalette12288 {
     }
 }
 
+/// Resolves server-owned `SourceMark` attribution for grouping machinery rows (`#11920` / `#12581`),
+/// preferring an explicit `sourceMark` on the visual atom and falling back to the section's
+/// hydrated `ContainerHubMember` payload (`FeedEventData` / `FeedFuturesData`). Never infers a source.
+enum MachinerySourceMarkResolver11920 {
+    static func outcomeMark(
+        for outcome: MachineryOutcomeVisual,
+        marketId: Int?,
+        members: [ContainerHubMember] = []
+    ) -> SourceMark? {
+        if let direct = outcome.sourceMark, direct.draws {
+            return direct
+        }
+        let targetMarketId = outcome.marketId ?? marketId
+        guard let targetMarketId else { return nil }
+        for member in members where member.memberId == targetMarketId {
+            if case .question(let feed, _) = member.card {
+                let matched = feed.topOutcomes?.first(where: {
+                    ($0.id > 0 && $0.id == outcome.outcomeId)
+                        || $0.name.caseInsensitiveCompare(outcome.name) == .orderedSame
+                })
+                if let resolved = feed.resolvedSourceMark(for: matched), resolved.draws {
+                    return resolved
+                }
+            }
+        }
+        return nil
+    }
+
+    static func seriesMark(
+        for series: MachineryHistorySeries,
+        marketId: Int,
+        members: [ContainerHubMember] = []
+    ) -> SourceMark? {
+        if let direct = series.sourceMark, direct.draws {
+            return direct
+        }
+        for member in members where member.memberId == marketId {
+            if case .question(let feed, _) = member.card {
+                let matched = feed.topOutcomes?.first(where: {
+                    ($0.id > 0 && $0.id == series.outcomeId)
+                        || $0.name.caseInsensitiveCompare(series.name) == .orderedSame
+                })
+                if let resolved = feed.resolvedSourceMark(for: matched), resolved.draws {
+                    return resolved
+                }
+            }
+        }
+        return nil
+    }
+
+    static func eventMarks(
+        for item: MachineryEventVisualItem,
+        members: [ContainerHubMember] = []
+    ) -> (away: SourceMark?, home: SourceMark?) {
+        let directHome = (item.sourceMark?.draws == true) ? item.sourceMark : nil
+        let directAway = (item.awaySourceMark?.draws == true) ? item.awaySourceMark : nil
+        if directHome != nil || directAway != nil {
+            return (away: directAway, home: directHome)
+        }
+        for member in members where member.memberId == item.eventId {
+            if case .event(let event) = member.card {
+                let home = (event.sourceMark?.draws == true) ? event.sourceMark : nil
+                let away = (event.awaySourceMark?.draws == true) ? event.awaySourceMark : nil
+                if home != nil || away != nil {
+                    return (away: away, home: home)
+                }
+            }
+        }
+        return (nil, nil)
+    }
+}
+
 /// Connected straight-line probability trend card (`probability_history_chart` + `mini_chart`).
 struct MachineryHistoryChartCardView: View {
     let chart: MachineryHistoryChartItem
     var compact: Bool = false
+    var members: [ContainerHubMember] = []
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -459,6 +532,11 @@ struct MachineryHistoryChartCardView: View {
             VStack(alignment: .leading, spacing: 4) {
                 ForEach(Array(shownSeries.enumerated()), id: \.element.id) { idx, s in
                     let seriesColor = Color(hex: seriesHexes[idx])
+                    let sMark = MachinerySourceMarkResolver11920.seriesMark(
+                        for: s,
+                        marketId: chart.marketId,
+                        members: members
+                    )
                     HStack(alignment: .firstTextBaseline, spacing: 6) {
                         Circle()
                             .fill(seriesColor)
@@ -468,10 +546,22 @@ struct MachineryHistoryChartCardView: View {
                             .foregroundStyle(secondaryInk)
                             .fixedSize(horizontal: false, vertical: true)
                         Spacer(minLength: 6)
-                        Text("\(s.currentPct)%")
-                            .font(.system(size: min(metaSize, 18), weight: .bold).monospacedDigit())
-                            .foregroundStyle(primaryInk)
-                            .fixedSize(horizontal: true, vertical: false)
+                        HStack(alignment: .firstTextBaseline, spacing: 2) {
+                            Text("\(s.currentPct)%")
+                                .font(.system(size: min(metaSize, 18), weight: .bold).monospacedDigit())
+                                .foregroundStyle(primaryInk)
+                                .fixedSize(horizontal: true, vertical: false)
+                            if let markBtn = SourceMarkButton(
+                                sMark,
+                                number: Double(s.currentPct) / 100.0,
+                                subject: s.name,
+                                subtitle: chart.title,
+                                numberSize: min(metaSize, 18),
+                                compactRow: true
+                            ) {
+                                markBtn
+                            }
+                        }
                     }
                 }
             }
@@ -631,9 +721,9 @@ struct MachinerySectionBlockView: View {
                 )
             }
         case .probabilityHistoryChart:
-            MachineryHistoryChartSectionView(items: visualBlock.historyItems, limit: limit, columnCount: columnCount)
+            MachineryHistoryChartSectionView(items: visualBlock.historyItems, members: members, limit: limit, columnCount: columnCount)
         case .coinFlipMatchups:
-            MachineryCoinFlipSectionView(items: visualBlock.eventItems, limit: limit, columnCount: columnCount)
+            MachineryCoinFlipSectionView(items: visualBlock.eventItems, members: members, limit: limit, columnCount: columnCount)
         case .matchupSlate:
             MachineryMatchupSlateSectionView(
                 members: members,
@@ -642,14 +732,15 @@ struct MachinerySectionBlockView: View {
                 columnCount: columnCount
             )
         case .duelBar:
-            MachineryDuelBarSectionView(items: visualBlock.marketItems)
+            MachineryDuelBarSectionView(items: visualBlock.marketItems, members: members)
         case .contenderSpotlight:
-            MachineryContenderSpotlightSectionView(items: visualBlock.marketItems, limit: limit)
+            MachineryContenderSpotlightSectionView(items: visualBlock.marketItems, members: members, limit: limit)
         case .siblingFieldsGrid:
-            MachinerySiblingFieldsSectionView(items: visualBlock.marketItems, limit: limit, columnCount: columnCount)
+            MachinerySiblingFieldsSectionView(items: visualBlock.marketItems, members: members, limit: limit, columnCount: columnCount)
         case .benchmarkStrip:
             MachineryBenchmarkStripSectionView(
                 items: visualBlock.marketItems,
+                members: members,
                 limit: limit,
                 itemNoun: visualBlock.effectiveItemNoun
             )
@@ -659,6 +750,7 @@ struct MachinerySectionBlockView: View {
 
 private struct MachineryHistoryChartSectionView: View {
     let items: [MachineryHistoryChartItem]
+    var members: [ContainerHubMember] = []
     let limit: Int
     var columnCount: Int = 1
     @State private var expanded = false
@@ -667,7 +759,7 @@ private struct MachineryHistoryChartSectionView: View {
         let shown = expanded ? items : Array(items.prefix(limit))
         VStack(alignment: .leading, spacing: 10) {
             machineryCardColumns13417(shown, columnCount: columnCount) { chart in
-                MachineryHistoryChartCardView(chart: chart, compact: false)
+                MachineryHistoryChartCardView(chart: chart, compact: false, members: members)
             }
             MachineryShowAllButton(
                 expanded: expanded,
@@ -682,6 +774,7 @@ private struct MachineryHistoryChartSectionView: View {
 
 private struct MachineryCoinFlipSectionView: View {
     let items: [MachineryEventVisualItem]
+    var members: [ContainerHubMember] = []
     let limit: Int
     var columnCount: Int = 1
     @State private var expanded = false
@@ -715,6 +808,7 @@ private struct MachineryCoinFlipSectionView: View {
                     homeHex: item.homeArt?.accentColor,
                     scheme: colorScheme
                 )
+                let marks = MachinerySourceMarkResolver11920.eventMarks(for: item, members: members)
                 let when = MachineryDateFormatting12288.shortKickoff(item.commenceTime)
                 NavigationLink(value: Route.eventDetail(id: item.eventId)) {
                     VStack(alignment: .leading, spacing: 10) {
@@ -742,9 +836,14 @@ private struct MachineryCoinFlipSectionView: View {
                                         .foregroundStyle(primaryInk)
                                         .fixedSize(horizontal: false, vertical: true)
                                     Spacer(minLength: 6)
-                                    Text("\(item.awayPct)%")
-                                        .font(.system(size: min(teamSize, 24), weight: .bold).monospacedDigit())
-                                        .foregroundStyle(primaryInk)
+                                    HStack(alignment: .firstTextBaseline, spacing: 2) {
+                                        Text("\(item.awayPct)%")
+                                            .font(.system(size: min(teamSize, 24), weight: .bold).monospacedDigit())
+                                            .foregroundStyle(primaryInk)
+                                        if let m = SourceMarkButton(marks.away, number: Double(item.awayPct) / 100.0, subject: item.awayTeam, numberSize: min(teamSize, 24), compactRow: true) {
+                                            m
+                                        }
+                                    }
                                 }
                                 HStack(spacing: 10) {
                                     MachinerySubjectArtView(art: item.homeArt, width: 32, height: 32)
@@ -753,9 +852,14 @@ private struct MachineryCoinFlipSectionView: View {
                                         .foregroundStyle(primaryInk)
                                         .fixedSize(horizontal: false, vertical: true)
                                     Spacer(minLength: 6)
-                                    Text("\(item.homePct)%")
-                                        .font(.system(size: min(teamSize, 24), weight: .bold).monospacedDigit())
-                                        .foregroundStyle(primaryInk)
+                                    HStack(alignment: .firstTextBaseline, spacing: 2) {
+                                        Text("\(item.homePct)%")
+                                            .font(.system(size: min(teamSize, 24), weight: .bold).monospacedDigit())
+                                            .foregroundStyle(primaryInk)
+                                        if let m = SourceMarkButton(marks.home, number: Double(item.homePct) / 100.0, subject: item.homeTeam, numberSize: min(teamSize, 24), compactRow: true) {
+                                            m
+                                        }
+                                    }
                                 }
                             }
                         } else {
@@ -767,9 +871,14 @@ private struct MachineryCoinFlipSectionView: View {
                                             .font(.system(size: min(teamSize, 22), weight: .semibold))
                                             .foregroundStyle(primaryInk)
                                             .fixedSize(horizontal: false, vertical: true)
-                                        Text("\(item.awayPct)%")
-                                            .font(.system(size: min(metaSize, 18), weight: .bold).monospacedDigit())
-                                            .foregroundStyle(secondaryInk)
+                                        HStack(alignment: .firstTextBaseline, spacing: 2) {
+                                            Text("\(item.awayPct)%")
+                                                .font(.system(size: min(metaSize, 18), weight: .bold).monospacedDigit())
+                                                .foregroundStyle(secondaryInk)
+                                            if let m = SourceMarkButton(marks.away, number: Double(item.awayPct) / 100.0, subject: item.awayTeam, numberSize: min(metaSize, 18), compactRow: true) {
+                                                m
+                                            }
+                                        }
                                     }
                                 }
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -785,9 +894,14 @@ private struct MachineryCoinFlipSectionView: View {
                                             .foregroundStyle(primaryInk)
                                             .multilineTextAlignment(.trailing)
                                             .fixedSize(horizontal: false, vertical: true)
-                                        Text("\(item.homePct)%")
-                                            .font(.system(size: min(metaSize, 18), weight: .bold).monospacedDigit())
-                                            .foregroundStyle(secondaryInk)
+                                        HStack(alignment: .firstTextBaseline, spacing: 2) {
+                                            Text("\(item.homePct)%")
+                                                .font(.system(size: min(metaSize, 18), weight: .bold).monospacedDigit())
+                                                .foregroundStyle(secondaryInk)
+                                            if let m = SourceMarkButton(marks.home, number: Double(item.homePct) / 100.0, subject: item.homeTeam, numberSize: min(metaSize, 18), compactRow: true) {
+                                                m
+                                            }
+                                        }
                                     }
                                     MachinerySubjectArtView(art: item.homeArt, width: 32, height: 32)
                                 }
@@ -886,13 +1000,14 @@ private struct MachineryMatchupSlateSectionView: View {
                 )
             }
         } else if !fallbackItems.isEmpty {
-            MachineryCoinFlipSectionView(items: fallbackItems, limit: limit, columnCount: columnCount)
+            MachineryCoinFlipSectionView(items: fallbackItems, members: members, limit: limit, columnCount: columnCount)
         }
     }
 }
 
 private struct MachineryDuelBarSectionView: View {
     let items: [MachineryMarketVisualItem]
+    var members: [ContainerHubMember] = []
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .subheadline) private var nameSize: CGFloat = 15
@@ -921,13 +1036,15 @@ private struct MachineryDuelBarSectionView: View {
             )
             let leftColor = Color(hex: colors.away)
             let rightColor = Color(hex: colors.home)
+            let leftMark = MachinerySourceMarkResolver11920.outcomeMark(for: left, marketId: lead.marketId, members: members)
+            let rightMark = MachinerySourceMarkResolver11920.outcomeMark(for: right, marketId: lead.marketId, members: members)
 
             NavigationLink(value: Route.futuresDetail(id: lead.marketId)) {
                 VStack(alignment: .leading, spacing: 12) {
                     if dynamicTypeSize >= .xxxLarge {
                         VStack(alignment: .leading, spacing: 10) {
-                            duelSideRow(outcome: left, dotColor: leftColor)
-                            duelSideRow(outcome: right, dotColor: rightColor)
+                            duelSideRow(outcome: left, dotColor: leftColor, mark: leftMark, marketTitle: lead.title)
+                            duelSideRow(outcome: right, dotColor: rightColor, mark: rightMark, marketTitle: lead.title)
                         }
                     } else {
                         HStack(alignment: .top, spacing: 12) {
@@ -943,9 +1060,14 @@ private struct MachineryDuelBarSectionView: View {
                                             .foregroundStyle(primaryInk)
                                             .fixedSize(horizontal: false, vertical: true)
                                     }
-                                    Text("\(left.renderedPercent)%")
-                                        .font(.system(size: min(pctSize, 28), weight: .heavy).monospacedDigit())
-                                        .foregroundStyle(primaryInk)
+                                    HStack(alignment: .firstTextBaseline, spacing: 3) {
+                                        Text("\(left.renderedPercent)%")
+                                            .font(.system(size: min(pctSize, 28), weight: .heavy).monospacedDigit())
+                                            .foregroundStyle(primaryInk)
+                                        if let m = SourceMarkButton(leftMark, number: left.probability, subject: left.name, subtitle: lead.title, numberSize: min(nameSize, 20), compactRow: true) {
+                                            m
+                                        }
+                                    }
                                 }
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -962,9 +1084,14 @@ private struct MachineryDuelBarSectionView: View {
                                             Circle().fill(rightColor).frame(width: 9, height: 9)
                                         }
                                     }
-                                    Text("\(right.renderedPercent)%")
-                                        .font(.system(size: min(pctSize, 28), weight: .heavy).monospacedDigit())
-                                        .foregroundStyle(primaryInk)
+                                    HStack(alignment: .firstTextBaseline, spacing: 3) {
+                                        Text("\(right.renderedPercent)%")
+                                            .font(.system(size: min(pctSize, 28), weight: .heavy).monospacedDigit())
+                                            .foregroundStyle(primaryInk)
+                                        if let m = SourceMarkButton(rightMark, number: right.probability, subject: right.name, subtitle: lead.title, numberSize: min(nameSize, 20), compactRow: true) {
+                                            m
+                                        }
+                                    }
                                 }
                                 MachinerySubjectArtView(art: right.art, width: 40, height: 40)
                             }
@@ -997,7 +1124,7 @@ private struct MachineryDuelBarSectionView: View {
     }
 
     @ViewBuilder
-    private func duelSideRow(outcome: MachineryOutcomeVisual, dotColor: Color) -> some View {
+    private func duelSideRow(outcome: MachineryOutcomeVisual, dotColor: Color, mark: SourceMark?, marketTitle: String) -> some View {
         HStack(spacing: 10) {
             if outcome.art?.verifiedURL != nil {
                 MachinerySubjectArtView(art: outcome.art, width: 40, height: 40)
@@ -1009,15 +1136,21 @@ private struct MachineryDuelBarSectionView: View {
                 .foregroundStyle(primaryInk)
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 6)
-            Text("\(outcome.renderedPercent)%")
-                .font(.system(size: min(pctSize, 28), weight: .heavy).monospacedDigit())
-                .foregroundStyle(primaryInk)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text("\(outcome.renderedPercent)%")
+                    .font(.system(size: min(pctSize, 28), weight: .heavy).monospacedDigit())
+                    .foregroundStyle(primaryInk)
+                if let m = SourceMarkButton(mark, number: outcome.probability, subject: outcome.name, subtitle: marketTitle, numberSize: min(nameSize, 20), compactRow: true) {
+                    m
+                }
+            }
         }
     }
 }
 
 private struct MachineryContenderSpotlightSectionView: View {
     let items: [MachineryMarketVisualItem]
+    var members: [ContainerHubMember] = []
     let limit: Int
     @State private var expanded = false
     @Environment(\.colorScheme) private var colorScheme
@@ -1072,9 +1205,21 @@ private struct MachineryContenderSpotlightSectionView: View {
                                     .foregroundStyle(isFav ? primaryInk : secondaryInk)
                                     .fixedSize(horizontal: false, vertical: true)
                                 Spacer(minLength: 6)
-                                Text("\(o.renderedPercent)%")
-                                    .font(.system(size: min(labelSize, 22), weight: isFav ? .heavy : .semibold).monospacedDigit())
-                                    .foregroundStyle(isFav ? primaryInk : secondaryInk)
+                                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                                    Text("\(o.renderedPercent)%")
+                                        .font(.system(size: min(labelSize, 22), weight: isFav ? .heavy : .semibold).monospacedDigit())
+                                        .foregroundStyle(isFav ? primaryInk : secondaryInk)
+                                    if let m = SourceMarkButton(
+                                        MachinerySourceMarkResolver11920.outcomeMark(for: o, marketId: lead.marketId, members: members),
+                                        number: o.probability,
+                                        subject: o.name,
+                                        subtitle: lead.title,
+                                        numberSize: min(labelSize, 20),
+                                        compactRow: true
+                                    ) {
+                                        m
+                                    }
+                                }
                             }
                             GeometryReader { geo in
                                 let frac = CGFloat(min(100, max(3, o.renderedPercent))) / 100.0
@@ -1127,6 +1272,8 @@ private struct MachineryContenderSpotlightSectionView: View {
                             stackedSpotlightTile(
                                 rank: idx + 1,
                                 outcome: o,
+                                marketId: lead.marketId,
+                                marketTitle: lead.title,
                                 reservesArtSlot: topHasArt,
                                 listUsesPoster: topUsesPoster
                             )
@@ -1138,7 +1285,12 @@ private struct MachineryContenderSpotlightSectionView: View {
                 HStack(alignment: .top, spacing: 8) {
                     ForEach(Array(topThree.enumerated()), id: \.element.id) { idx, o in
                         NavigationLink(value: Route.futuresDetail(id: lead.marketId)) {
-                            columnSpotlightTile(rank: idx + 1, outcome: o)
+                            columnSpotlightTile(
+                                rank: idx + 1,
+                                outcome: o,
+                                marketId: lead.marketId,
+                                marketTitle: lead.title
+                            )
                         }
                         .buttonStyle(.plain)
                         .frame(maxWidth: .infinity)
@@ -1172,9 +1324,21 @@ private struct MachineryContenderSpotlightSectionView: View {
                                     }
                                 }
                                 Spacer(minLength: 6)
-                                Text("\(o.renderedPercent)%")
-                                    .font(.system(size: min(labelSize, 22), weight: .bold).monospacedDigit())
-                                    .foregroundStyle(primaryInk)
+                                HStack(alignment: .firstTextBaseline, spacing: 3) {
+                                    Text("\(o.renderedPercent)%")
+                                        .font(.system(size: min(labelSize, 22), weight: .bold).monospacedDigit())
+                                        .foregroundStyle(primaryInk)
+                                    if let m = SourceMarkButton(
+                                        MachinerySourceMarkResolver11920.outcomeMark(for: o, marketId: lead.marketId, members: members),
+                                        number: o.probability,
+                                        subject: o.name,
+                                        subtitle: lead.title,
+                                        numberSize: min(labelSize, 20),
+                                        compactRow: true
+                                    ) {
+                                        m
+                                    }
+                                }
                             }
                             .padding(.horizontal, 12)
                             .padding(.vertical, 10)
@@ -1200,10 +1364,16 @@ private struct MachineryContenderSpotlightSectionView: View {
         }
     }
 
-    private func columnSpotlightTile(rank: Int, outcome: MachineryOutcomeVisual) -> some View {
+    private func columnSpotlightTile(
+        rank: Int,
+        outcome: MachineryOutcomeVisual,
+        marketId: Int,
+        marketTitle: String
+    ) -> some View {
         let barColor = MachineryColorContrast12288.singleAccent(outcome.art?.accentColor, scheme: colorScheme)
+        let resolvedMark = MachinerySourceMarkResolver11920.outcomeMark(for: outcome, marketId: marketId, members: members)
         return VStack(spacing: 6) {
-            HStack {
+            HStack(spacing: 2) {
                 Text("#\(rank)")
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(secondaryInk)
@@ -1211,6 +1381,9 @@ private struct MachineryContenderSpotlightSectionView: View {
                 Text("\(outcome.renderedPercent)%")
                     .font(.system(size: min(labelSize, 20), weight: .heavy).monospacedDigit())
                     .foregroundStyle(primaryInk)
+                if let m = SourceMarkButton(resolvedMark, number: outcome.probability, subject: outcome.name, subtitle: marketTitle, numberSize: 13, compactRow: true) {
+                    m
+                }
             }
 
             MachinerySubjectArtView(
@@ -1256,10 +1429,13 @@ private struct MachineryContenderSpotlightSectionView: View {
     private func stackedSpotlightTile(
         rank: Int,
         outcome: MachineryOutcomeVisual,
+        marketId: Int,
+        marketTitle: String,
         reservesArtSlot: Bool,
         listUsesPoster: Bool
     ) -> some View {
         let rowIsPoster = outcome.art?.isPoster ?? listUsesPoster
+        let resolvedMark = MachinerySourceMarkResolver11920.outcomeMark(for: outcome, marketId: marketId, members: members)
         return HStack(spacing: 12) {
             MachinerySubjectArtView(
                 art: outcome.art,
@@ -1281,9 +1457,14 @@ private struct MachineryContenderSpotlightSectionView: View {
                 }
             }
             Spacer(minLength: 6)
-            Text("\(outcome.renderedPercent)%")
-                .font(.system(size: min(labelSize, 24), weight: .heavy).monospacedDigit())
-                .foregroundStyle(primaryInk)
+            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                Text("\(outcome.renderedPercent)%")
+                    .font(.system(size: min(labelSize, 24), weight: .heavy).monospacedDigit())
+                    .foregroundStyle(primaryInk)
+                if let m = SourceMarkButton(resolvedMark, number: outcome.probability, subject: outcome.name, subtitle: marketTitle, numberSize: min(labelSize, 20), compactRow: true) {
+                    m
+                }
+            }
         }
         .padding(12)
         .background(cardBgColor)
@@ -1294,6 +1475,7 @@ private struct MachineryContenderSpotlightSectionView: View {
 
 private struct MachinerySiblingFieldsSectionView: View {
     let items: [MachineryMarketVisualItem]
+    var members: [ContainerHubMember] = []
     let limit: Int
     var columnCount: Int = 1
     @State private var expanded = false
@@ -1374,9 +1556,21 @@ private struct MachinerySiblingFieldsSectionView: View {
                                                 .foregroundStyle(isFav ? primaryInk : secondaryInk)
                                                 .fixedSize(horizontal: false, vertical: true)
                                             Spacer(minLength: 6)
-                                            Text("\(o.renderedPercent)%")
-                                                .font(.system(size: min(rowSize, 20), weight: isFav ? .bold : .semibold).monospacedDigit())
-                                                .foregroundStyle(isFav ? primaryInk : secondaryInk)
+                                            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                                                Text("\(o.renderedPercent)%")
+                                                    .font(.system(size: min(rowSize, 20), weight: isFav ? .bold : .semibold).monospacedDigit())
+                                                    .foregroundStyle(isFav ? primaryInk : secondaryInk)
+                                                if let m = SourceMarkButton(
+                                                    MachinerySourceMarkResolver11920.outcomeMark(for: o, marketId: market.marketId, members: members),
+                                                    number: o.probability,
+                                                    subject: o.name,
+                                                    subtitle: market.title,
+                                                    numberSize: min(rowSize, 18),
+                                                    compactRow: true
+                                                ) {
+                                                    m
+                                                }
+                                            }
                                         }
                                         GeometryReader { geo in
                                             let frac = CGFloat(min(100, max(4, o.renderedPercent))) / 100.0
@@ -1415,6 +1609,7 @@ private struct MachinerySiblingFieldsSectionView: View {
 
 private struct MachineryBenchmarkStripSectionView: View {
     let items: [MachineryMarketVisualItem]
+    var members: [ContainerHubMember] = []
     let limit: Int
     var itemNoun: String = "markets"
     @State private var expanded = false
@@ -1444,6 +1639,7 @@ private struct MachineryBenchmarkStripSectionView: View {
             VStack(alignment: .leading, spacing: 0) {
                 ForEach(Array(shown.enumerated()), id: \.element.id) { idx, market in
                     if let yes = market.outcomes.first {
+                        let yesMark = MachinerySourceMarkResolver11920.outcomeMark(for: yes, marketId: market.marketId, members: members)
                         NavigationLink(value: Route.futuresDetail(id: market.marketId)) {
                             HStack(alignment: .center, spacing: 10) {
                                 MachinerySubjectArtView(
@@ -1457,12 +1653,17 @@ private struct MachineryBenchmarkStripSectionView: View {
                                     .foregroundStyle(primaryInk)
                                     .fixedSize(horizontal: false, vertical: true)
                                     .frame(maxWidth: .infinity, alignment: .leading)
-                                Text("\(yes.renderedPercent)%")
-                                    .font(.system(size: min(rowSize, 21), weight: .bold).monospacedDigit())
-                                    .foregroundStyle(primaryInk)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 4)
-                                    .background(badgeBgColor, in: RoundedRectangle(cornerRadius: 6))
+                                HStack(alignment: .center, spacing: 3) {
+                                    Text("\(yes.renderedPercent)%")
+                                        .font(.system(size: min(rowSize, 21), weight: .bold).monospacedDigit())
+                                        .foregroundStyle(primaryInk)
+                                        .padding(.horizontal, 8)
+                                        .padding(.vertical, 4)
+                                        .background(badgeBgColor, in: RoundedRectangle(cornerRadius: 6))
+                                    if let m = SourceMarkButton(yesMark, number: yes.probability, subject: market.title, numberSize: min(rowSize, 18), compactRow: true) {
+                                        m
+                                    }
+                                }
                             }
                             .padding(.horizontal, 14)
                             .padding(.vertical, 11)
@@ -1731,9 +1932,14 @@ struct MachineryDiscoverCardView: View {
                                     .fixedSize(horizontal: false, vertical: true)
                                 MachinerySubjectArtView(art: r.homeArt, width: 26, height: 26)
                             }
-                            Text("\(r.awayPct)%–\(r.homePct)%")
-                                .font(.system(size: min(rowSize, 22), weight: .bold).monospacedDigit())
-                                .foregroundStyle(primaryInk)
+                            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                                Text("\(r.awayPct)%–\(r.homePct)%")
+                                    .font(.system(size: min(rowSize, 22), weight: .bold).monospacedDigit())
+                                    .foregroundStyle(primaryInk)
+                                if let m = SourceMarkButton(r.sourceMark ?? r.awaySourceMark, number: Double(r.homePct) / 100.0, subject: "\(r.awayShort) at \(r.homeShort)", numberSize: min(rowSize, 18), compactRow: true) {
+                                    m
+                                }
+                            }
                         }
                     } else {
                         HStack(alignment: .center, spacing: 8) {
@@ -1754,10 +1960,15 @@ struct MachineryDiscoverCardView: View {
                             }
                             .frame(maxWidth: .infinity, alignment: .leading)
 
-                            Text("\(r.awayPct)%–\(r.homePct)%")
-                                .font(.system(size: min(rowSize, 20), weight: .bold).monospacedDigit())
-                                .foregroundStyle(primaryInk)
-                                .fixedSize(horizontal: true, vertical: false)
+                            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                                Text("\(r.awayPct)%–\(r.homePct)%")
+                                    .font(.system(size: min(rowSize, 20), weight: .bold).monospacedDigit())
+                                    .foregroundStyle(primaryInk)
+                                    .fixedSize(horizontal: true, vertical: false)
+                                if let m = SourceMarkButton(r.sourceMark ?? r.awaySourceMark, number: Double(r.homePct) / 100.0, subject: "\(r.awayShort) at \(r.homeShort)", numberSize: min(rowSize, 18), compactRow: true) {
+                                    m
+                                }
+                            }
                         }
                     }
                 }
@@ -1802,9 +2013,14 @@ struct MachineryDiscoverCardView: View {
                                 .foregroundStyle(isFav ? primaryInk : secondaryInk)
                                 .fixedSize(horizontal: false, vertical: true)
                             Spacer(minLength: 6)
-                            Text("\(o.renderedPercent)%")
-                                .font(.system(size: min(rowSize, 22), weight: isFav ? .bold : .semibold).monospacedDigit())
-                                .foregroundStyle(isFav ? primaryInk : secondaryInk)
+                            HStack(alignment: .firstTextBaseline, spacing: 3) {
+                                Text("\(o.renderedPercent)%")
+                                    .font(.system(size: min(rowSize, 22), weight: isFav ? .bold : .semibold).monospacedDigit())
+                                    .foregroundStyle(isFav ? primaryInk : secondaryInk)
+                                if let m = SourceMarkButton(o.sourceMark, number: o.probability, subject: o.name, subtitle: card.title, numberSize: min(rowSize, 18), compactRow: true) {
+                                    m
+                                }
+                            }
                         }
                         GeometryReader { geo in
                             let frac = CGFloat(min(100, max(4, o.renderedPercent))) / 100.0
