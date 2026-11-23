@@ -167,6 +167,16 @@ class TestBlendVsSourcesTask:
 
     @pytest.mark.asyncio
     async def test_precompute_publishes_to_redis_and_respects_deadline(self, monkeypatch):
+        from app.tasks import precompute_blend_vs_sources as pvs
+
+        _FROZEN_NOW = datetime(2026, 11, 20, 0, 0, tzinfo=timezone.utc)
+
+        class _FrozenDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return _FROZEN_NOW if tz is None else _FROZEN_NOW.astimezone(tz)
+
+        monkeypatch.setattr(pvs, "datetime", _FrozenDateTime)
         fake_redis = _FakeRedis()
         monkeypatch.setattr("app.tasks.redis_state.get_redis_client", lambda: fake_redis)
 

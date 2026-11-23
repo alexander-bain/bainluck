@@ -16,6 +16,7 @@ jest.mock("swr", () => ({
 }));
 
 const BANNED_NOTICE_33 = /\b(books?|bookmakers?|per-bookmaker)\b/i;
+const BANNED_JARGON_BLEND = /\bblend(ed|s)?\b/i;
 
 function visibleText(html: string): string {
   return html
@@ -182,5 +183,6 @@ describe("#356a BlendVsSourcesCalibration", () => {
 
     // Zero Notice-33 banned words reach visible copy.
     expect(visibleText(html)).not.toMatch(BANNED_NOTICE_33);
+    expect(visibleText(html)).not.toMatch(BANNED_JARGON_BLEND);
   });
 });

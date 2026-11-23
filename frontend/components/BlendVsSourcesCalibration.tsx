@@ -175,15 +175,15 @@ export default function BlendVsSourcesCalibration() {
       data-matched-games={matchedGamesCount}
     >
       <div className="flex flex-wrap items-baseline justify-between gap-2 mb-1">
-        <h2 className="text-title-3 text-text-primary">Blend vs Contributing Sources</h2>
+        <h2 className="text-title-3 text-text-primary">Bain Luck vs Each Source</h2>
         <span className="text-xs text-text-muted tabular-nums" data-testid="blend-vs-sources-game-count">
           {matchedGamesCount.toLocaleString()} identical games &middot; no smoothing
         </span>
       </div>
 
       <p className="text-xs text-text-muted mb-3">
-        Bain Luck&rsquo;s recorded game blend plotted beside each contributing source on the exact
-        same games, using raw 10% buckets with counts and no smoothing.
+        Bain Luck plotted beside each source it is built from on the exact same games, using raw 10%
+        buckets with counts and no smoothing.
       </p>
 
       <CalibrationCardNote label="How this comparison works">
@@ -299,9 +299,9 @@ export default function BlendVsSourcesCalibration() {
               <tr className="text-left text-xs text-text-muted normal-case sm:uppercase tracking-normal sm:tracking-wide border-b border-surface-border">
                 <th className="pb-2 pr-2 sm:pr-4">Source</th>
                 <th className="pb-2 pr-2 sm:pr-4 text-right">Games</th>
-                <th className="pb-2 pr-2 sm:pr-4 text-right">Blend ECE</th>
+                <th className="pb-2 pr-2 sm:pr-4 text-right">Bain Luck ECE</th>
                 <th className="pb-2 pr-2 sm:pr-4 text-right">Source ECE</th>
-                <th className="pb-2 pr-2 sm:pr-4 text-right">Blend Brier</th>
+                <th className="pb-2 pr-2 sm:pr-4 text-right">Bain Luck Brier</th>
                 <th className="pb-2 text-right">Source Brier</th>
               </tr>
             </thead>
