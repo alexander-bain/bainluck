@@ -111,7 +111,15 @@ async def test_betting_matches_the_actual_producer(monkeypatch, values):
     monkeypatch.setattr(
         "app.utils.nonvenue_live_push.write_nonvenue_probability", write
     )
-    future_start = datetime.now(timezone.utc) + timedelta(days=1)
+    _FROZEN_NOW = datetime(2026, 11, 20, 12, 0, tzinfo=timezone.utc)
+
+    class _FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return _FROZEN_NOW if tz is None else _FROZEN_NOW.astimezone(tz)
+
+    monkeypatch.setattr(odds_polling, "datetime", _FrozenDateTime)
+    future_start = _FROZEN_NOW + timedelta(days=1)
     await odds_polling._ingest_event_odds(
         AsyncMock(),
         SimpleNamespace(id=1, status="scheduled"),
