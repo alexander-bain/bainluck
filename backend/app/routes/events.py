@@ -20658,7 +20658,6 @@ async def get_event(
 
     if _unified_ev.odds_data is not None:
         all_latest_snapshots = _unified_ev.odds_data["all_snapshots"]
-        filtered_snapshots = _unified_ev.odds_data["snapshots"]
         aggregated = _unified_ev.odds_data["aggregated"]
         latest_time = _unified_ev.odds_data.get("captured_at")
 
