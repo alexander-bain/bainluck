@@ -37,8 +37,32 @@ from app.utils.container_presentation import (
     market_destination,
 )
 from app.utils.draw_priced_winner import printable_away
+from app.utils.event_taxonomy import compute_event_tags
 from app.utils.graded_card import rendered_card_percents, rendered_duel_percents
 from app.utils.team_short_name import is_college_sport, school_label
+
+
+def _computed_event_tags(ev: Any, sport_key: str) -> list[str]:
+    """Return merged stored + deterministic ``event_tags`` for server-side ranking."""
+    stored = getattr(ev, "event_tags", None) or ()
+    tags: set[str] = {str(t) for t in stored if t} if isinstance(stored, (list, tuple, set)) else set()
+    commence = getattr(ev, "commence_time", None)
+    if commence is not None and sport_key:
+        raw_ei = getattr(ev, "raw_ei", None)
+        tags.update(
+            compute_event_tags(
+                sport_key=sport_key,
+                status=getattr(ev, "status", None) or "scheduled",
+                commence_time=commence,
+                llm_importance=getattr(ev, "llm_importance", None),
+                llm_gender=getattr(ev, "llm_gender", None),
+                llm_level=getattr(ev, "llm_level", None),
+                llm_league=getattr(ev, "llm_league", None),
+                raw_ei=float(raw_ei) if raw_ei else None,
+                broadcast_info=getattr(ev, "broadcast_info", None),
+            )
+        )
+    return sorted(tags)
 
 # Ruling 253: A (#12288): "toss-up" means neither side above 55% (45%–55%).
 TOSS_UP_MAX_SIDE_PROB = 0.55
@@ -2850,6 +2874,7 @@ async def _load_snapshot_from_db(
             if dp is not None:
                 ev_current_odds["draw_probability"] = dp
                 ev_current_odds["draw_rendered_percent"] = draw_pct
+            computed_tags = _computed_event_tags(ev, sport_key_val)
             ev_dict: dict[str, Any] = {
                 "id": ev.id,
                 "sport": sport_key_val,
@@ -2870,6 +2895,7 @@ async def _load_snapshot_from_db(
                     "away_pct": away_pct,
                     "home_pct": home_pct,
                 },
+                **({"_event_tags": computed_tags} if computed_tags else {}),
             }
             for td_key, team_obj in (("home_team_data", home_team_obj), ("away_team_data", away_team_obj)):
                 if team_obj is not None and not isinstance(team_obj, str):
@@ -4535,17 +4561,30 @@ async def produce_container_machinery(
             sec_members = []
             for it in ev_items:
                 eid = it["event_id"]
-                env = {
-                    "type": MEMBER_EVENT,
-                    "id": eid,
-                    "destination": event_destination(eid),
-                    "card": it["card"],
-                    "event_id": eid,
+                public_card = {
+                    k: v for k, v in it["card"].items() if not str(k).startswith("_")
                 }
-                sec_members.append(env)
+                dest = event_destination(eid)
+                sec_members.append(
+                    {
+                        "type": MEMBER_EVENT,
+                        "id": eid,
+                        "destination": dest,
+                        "card": public_card,
+                        "event_id": eid,
+                    }
+                )
                 if (MEMBER_EVENT, eid) not in seen_member_keys:
                     seen_member_keys.add((MEMBER_EVENT, eid))
-                    all_member_envelopes.append(env)
+                    all_member_envelopes.append(
+                        {
+                            "type": MEMBER_EVENT,
+                            "id": eid,
+                            "destination": dest,
+                            "card": it["card"],
+                            "event_id": eid,
+                        }
+                    )
             built_by_idx[sec_idx] = {
                 "class": sec_key,
                 "title": sec_title,
