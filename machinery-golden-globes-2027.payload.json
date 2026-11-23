@@ -1,0 +1,5036 @@
+{
+  "slug": "machinery-golden-globes-2027",
+  "generated_at": "2026-11-23T00:05:28.417316+00:00",
+  "feed_item": {
+    "type": "bundle",
+    "score": 0.0,
+    "reason": "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, with 4 contenders at 75%+ to be nominated",
+    "headline": "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, with 4 contenders at 75%+ to be nominated",
+    "context_summary": null,
+    "data": {
+      "id": "roundup:machinery-golden-globes-2027",
+      "title": "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, with 4 contenders at 75%+ to be nominated",
+      "kind": "roundup",
+      "story_key": "roundup:machinery-golden-globes-2027",
+      "shared_question": null,
+      "item_count": 11,
+      "member_ids": [
+        70160313,
+        61484904,
+        70160296,
+        70160294,
+        70160314,
+        70160308,
+        70160312,
+        70160311,
+        70160298,
+        70160295,
+        70239565
+      ],
+      "items": [
+        {
+          "type": "futures",
+          "score": 0.0,
+          "reason": "Julianne Moore",
+          "headline": "Julianne Moore",
+          "data": {
+            "id": 70160313,
+            "name": "Golden Globe Winner: Best Actress in a Motion Picture – Musical or Comedy",
+            "status": "open",
+            "source": "kalshi",
+            "content_kind": "futures",
+            "member_page_numbers": {
+              "by_outcome_id": {
+                "263824853": 78,
+                "263824855": 9,
+                "263824854": 3,
+                "263824857": 2,
+                "263824863": 2,
+                "263824858": 2,
+                "263824856": 2,
+                "263824859": 1,
+                "263824860": 0,
+                "263824861": 1,
+                "263824862": 1,
+                "263824864": 1,
+                "263824865": 1
+              },
+              "by_outcome_key": {
+                "julianne moore": 78,
+                "inde navarrette": 9,
+                "olivia wilde": 3,
+                "meryl streep": 2,
+                "rachel mcadams": 2,
+                "olivia colman": 2,
+                "zendaya": 2,
+                "rosalind eleazar": 1,
+                "natalie portman": 0,
+                "jodie comer": 1,
+                "anne hathaway": 1,
+                "marion bailey": 1,
+                "tie": 1
+              },
+              "by_fold_key": {
+                "julianne moore": 78,
+                "inde navarrette": 9,
+                "olivia wilde": 3,
+                "meryl streep": 2,
+                "rachel mcadams": 2,
+                "olivia colman": 2,
+                "zendaya": 2,
+                "rosalind eleazar": 1,
+                "natalie portman": 0,
+                "jodie comer": 1,
+                "anne hathaway": 1,
+                "marion bailey": 1,
+                "tie": 1
+              }
+            },
+            "top_outcomes": [
+              {
+                "name": "Julianne Moore",
+                "probability": 0.78
+              },
+              {
+                "name": "Inde Navarrette",
+                "probability": 0.09
+              },
+              {
+                "name": "Olivia Wilde",
+                "probability": 0.03
+              },
+              {
+                "name": "Olivia Colman",
+                "probability": 0.02
+              },
+              {
+                "name": "Meryl Streep",
+                "probability": 0.02
+              }
+            ],
+            "image_url": null
+          }
+        },
+        {
+          "type": "futures",
+          "score": 0.0,
+          "reason": "Inde Navarrette",
+          "headline": "Inde Navarrette",
+          "data": {
+            "id": 61484904,
+            "name": "Golden Globe Nominations: Best Actress in a Motion Picture – Musical or Comedy",
+            "status": "open",
+            "source": "kalshi",
+            "content_kind": "futures",
+            "member_page_numbers": {
+              "by_outcome_id": {
+                "231508988": 98,
+                "231508989": 96,
+                "246329448": 90,
+                "231508991": 80,
+                "231508995": 77,
+                "246329451": 50,
+                "231508992": 36,
+                "231508994": 7,
+                "231508996": 6,
+                "231508987": 6,
+                "231508993": 1,
+                "231508990": 1
+              },
+              "by_outcome_key": {
+                "julianne moore": 98,
+                "olivia wilde": 96,
+                "inde navarrette": 90,
+                "zendaya": 80,
+                "olivia colman": 77,
+                "marion bailey": 50,
+                "meryl streep": 36,
+                "jodie comer": 7,
+                "rachel mcadams": 6,
+                "anne hathaway": 6,
+                "natalie portman": 1,
+                "rosalind eleazar": 1
+              },
+              "by_fold_key": {
+                "julianne moore": 98,
+                "olivia wilde": 96,
+                "inde navarrette": 90,
+                "zendaya": 80,
+                "olivia colman": 77,
+                "marion bailey": 50,
+                "meryl streep": 36,
+                "jodie comer": 7,
+                "rachel mcadams": 6,
+                "anne hathaway": 6,
+                "natalie portman": 1,
+                "rosalind eleazar": 1
+              }
+            },
+            "top_outcomes": [
+              {
+                "name": "Julianne Moore",
+                "probability": 0.98
+              },
+              {
+                "name": "Inde Navarrette",
+                "probability": 0.895
+              },
+              {
+                "name": "Olivia Wilde",
+                "probability": 0.955
+              },
+              {
+                "name": "Olivia Colman",
+                "probability": 0.77
+              },
+              {
+                "name": "Meryl Streep",
+                "probability": 0.36
+              }
+            ],
+            "image_url": null
+          }
+        },
+        {
+          "type": "futures",
+          "score": 0.0,
+          "reason": "Olivia Wilde",
+          "headline": "Olivia Wilde",
+          "data": {
+            "id": 70160296,
+            "name": "Golden Globe Winner: Best Actress in a Limited Series",
+            "status": "open",
+            "source": "kalshi",
+            "mutually_exclusive": true,
+            "market_type": "field",
+            "volume": 28143.0,
+            "image_url": null,
+            "llm_sport_category": "entertainment",
+            "resolution_date": "2027-01-11T04:59:00+00:00",
+            "event_date": null,
+            "top_outcomes": [
+              {
+                "id": 263824647,
+                "name": "Florence Pugh",
+                "probability": 0.71641791,
+                "rendered_percent": 72,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T21:56:09.305972+00:00"
+              },
+              {
+                "id": 263824649,
+                "name": "Carey Mulligan",
+                "probability": 0.07462687,
+                "rendered_percent": 7,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T21:56:09.305972+00:00"
+              },
+              {
+                "id": 263824648,
+                "name": "Sally Field",
+                "probability": 0.06467662,
+                "rendered_percent": 6,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T21:56:09.305972+00:00"
+              },
+              {
+                "id": 263824655,
+                "name": "Linda Cardellini",
+                "probability": 0.039801,
+                "rendered_percent": 4,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T21:56:09.305972+00:00"
+              },
+              {
+                "id": 263824651,
+                "name": "Ella Beatty",
+                "probability": 0.03482587,
+                "rendered_percent": 4,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T21:56:09.305972+00:00"
+              },
+              {
+                "id": 263824650,
+                "name": "Sarah Pidgeon",
+                "probability": 0.02985075,
+                "rendered_percent": 3,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T21:56:09.305972+00:00"
+              },
+              {
+                "id": 263824656,
+                "name": "Odessa A’zion",
+                "probability": 0.0199005,
+                "rendered_percent": 2,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T21:56:09.305972+00:00"
+              },
+              {
+                "id": 263824652,
+                "name": "Tie",
+                "probability": 0.0199005,
+                "rendered_percent": 2,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T21:56:09.305972+00:00"
+              },
+              {
+                "id": 263824657,
+                "name": "Rebecca Hall",
+                "probability": 0.00995025,
+                "rendered_percent": 0,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T21:56:09.305972+00:00"
+              },
+              {
+                "id": 263824653,
+                "name": "Amy Adams",
+                "probability": 0.00995025,
+                "rendered_percent": 0,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T21:56:09.305972+00:00"
+              },
+              {
+                "id": 263824654,
+                "name": "Tessa Thompson",
+                "probability": 0.00995025,
+                "rendered_percent": 0,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T21:56:09.305972+00:00"
+              }
+            ],
+            "newest_outcome_updated_at": "2026-11-22T21:56:09.305972+00:00",
+            "member_page_numbers": {
+              "by_outcome_id": {
+                "263824647": 72,
+                "263824649": 7,
+                "263824648": 6,
+                "263824655": 4,
+                "263824651": 4,
+                "263824650": 3,
+                "263824656": 2,
+                "263824652": 2,
+                "263824657": 0,
+                "263824653": 0,
+                "263824654": 0
+              },
+              "by_outcome_key": {
+                "florence pugh": 72,
+                "carey mulligan": 7,
+                "sally field": 6,
+                "linda cardellini": 4,
+                "ella beatty": 4,
+                "sarah pidgeon": 3,
+                "odessa a zion": 2,
+                "tie": 2,
+                "rebecca hall": 0,
+                "amy adams": 0,
+                "tessa thompson": 0
+              }
+            },
+            "content_kind": "futures"
+          }
+        },
+        {
+          "type": "futures",
+          "score": 0.0,
+          "reason": "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, with 4 contenders at 75%+ to be nominated",
+          "headline": "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, with 4 contenders at 75%+ to be nominated",
+          "data": {
+            "id": 70160294,
+            "name": "Golden Globe Winner: Best Supporting Actress on TV",
+            "status": "open",
+            "source": "kalshi",
+            "mutually_exclusive": true,
+            "market_type": "field",
+            "volume": 53887.0,
+            "image_url": null,
+            "llm_sport_category": "entertainment",
+            "resolution_date": "2027-01-11T04:59:00+00:00",
+            "event_date": null,
+            "top_outcomes": [
+              {
+                "id": 263824625,
+                "name": "Kate O’Flynn",
+                "probability": 0.71,
+                "rendered_percent": 71,
+                "opening_probability": 0.68,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:01:51.044610+00:00"
+              },
+              {
+                "id": 263824626,
+                "name": "Linda Cardellini",
+                "probability": 0.12,
+                "rendered_percent": 12,
+                "opening_probability": 0.13,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:01:51.044610+00:00"
+              },
+              {
+                "id": 263824628,
+                "name": "Katherine LaNasa",
+                "probability": 0.025,
+                "rendered_percent": 3,
+                "opening_probability": 0.025,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:01:51.044610+00:00"
+              },
+              {
+                "id": 263824629,
+                "name": "Hannah Einbinder",
+                "probability": 0.02,
+                "rendered_percent": 2,
+                "opening_probability": 0.02,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:01:51.044610+00:00"
+              },
+              {
+                "id": 263824630,
+                "name": "Michelle Pfeiffer",
+                "probability": 0.02,
+                "rendered_percent": 2,
+                "opening_probability": 0.02,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:01:51.044610+00:00"
+              },
+              {
+                "id": 263824631,
+                "name": "Youn Yuh-jung",
+                "probability": 0.02,
+                "rendered_percent": 2,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:01:51.044610+00:00"
+              },
+              {
+                "id": 263824633,
+                "name": "Joy Sunday",
+                "probability": 0.01,
+                "rendered_percent": 1,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:01:51.044610+00:00"
+              },
+              {
+                "id": 263824634,
+                "name": "Constance Zimmer",
+                "probability": 0.009999999999999998,
+                "rendered_percent": 0,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:01:51.044610+00:00"
+              },
+              {
+                "id": 263824635,
+                "name": "Tie",
+                "probability": 0.01,
+                "rendered_percent": 1,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:01:51.044610+00:00"
+              },
+              {
+                "id": 263824632,
+                "name": "Jessica Williams",
+                "probability": 0.009999999999999998,
+                "rendered_percent": 0,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:01:51.044610+00:00"
+              },
+              {
+                "id": 263824627,
+                "name": "Allison Janney",
+                "probability": 0.01,
+                "rendered_percent": 1,
+                "opening_probability": 0.035,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:01:51.044610+00:00"
+              }
+            ],
+            "newest_outcome_updated_at": "2026-11-22T20:01:51.044610+00:00",
+            "member_page_numbers": {
+              "by_outcome_id": {
+                "263824625": 71,
+                "263824626": 12,
+                "263824628": 3,
+                "263824629": 2,
+                "263824630": 2,
+                "263824631": 2,
+                "263824633": 1,
+                "263824634": 0,
+                "263824635": 1,
+                "263824632": 0,
+                "263824627": 1
+              },
+              "by_outcome_key": {
+                "kate o flynn": 71,
+                "linda cardellini": 12,
+                "katherine lanasa": 3,
+                "hannah einbinder": 2,
+                "michelle pfeiffer": 2,
+                "youn yuh jung": 2,
+                "joy sunday": 1,
+                "constance zimmer": 0,
+                "tie": 1,
+                "jessica williams": 0,
+                "allison janney": 1
+              }
+            },
+            "content_kind": "futures"
+          }
+        },
+        {
+          "type": "futures",
+          "score": 0.0,
+          "reason": "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, with 4 contenders at 75%+ to be nominated",
+          "headline": "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, with 4 contenders at 75%+ to be nominated",
+          "data": {
+            "id": 70160314,
+            "name": "Golden Globe Winner: Best Actor in a Motion Picture – Musical or Comedy",
+            "status": "open",
+            "source": "kalshi",
+            "mutually_exclusive": true,
+            "market_type": "field",
+            "volume": 61713.0,
+            "image_url": null,
+            "llm_sport_category": "entertainment",
+            "resolution_date": "2027-01-11T04:59:00+00:00",
+            "event_date": null,
+            "top_outcomes": [
+              {
+                "id": 263824866,
+                "name": "John Malkovich",
+                "probability": 0.65777778,
+                "rendered_percent": 66,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:54:59.675834+00:00"
+              },
+              {
+                "id": 263824869,
+                "name": "Anthony Ippolito",
+                "probability": 0.14666667,
+                "rendered_percent": 15,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:54:59.675834+00:00"
+              },
+              {
+                "id": 263824867,
+                "name": "Tom Cruise",
+                "probability": 0.06222222,
+                "rendered_percent": 6,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:54:59.675834+00:00"
+              },
+              {
+                "id": 263824868,
+                "name": "Jordan Firstman",
+                "probability": 0.04444444,
+                "rendered_percent": 4,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:54:59.675834+00:00"
+              },
+              {
+                "id": 263824870,
+                "name": "Brad Pitt",
+                "probability": 0.03555556,
+                "rendered_percent": 3,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:54:59.675834+00:00"
+              },
+              {
+                "id": 263824871,
+                "name": "Seth Rogen",
+                "probability": 0.01777778,
+                "rendered_percent": 2,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:54:59.675834+00:00"
+              },
+              {
+                "id": 263824872,
+                "name": "Jaafar Jackson",
+                "probability": 0.01777778,
+                "rendered_percent": 2,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:54:59.675834+00:00"
+              },
+              {
+                "id": 263824873,
+                "name": "Tie",
+                "probability": 0.01777778,
+                "rendered_percent": 2,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:54:59.675834+00:00"
+              },
+              {
+                "id": 263824875,
+                "name": "Robert Pattinson",
+                "probability": 0.00888889,
+                "rendered_percent": 0,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:54:59.675834+00:00"
+              },
+              {
+                "id": 263824877,
+                "name": "Pedro Pascal",
+                "probability": 0.00888889,
+                "rendered_percent": 0,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:54:59.675834+00:00"
+              },
+              {
+                "id": 263824878,
+                "name": "Dominic Sessa",
+                "probability": 0.00888889,
+                "rendered_percent": 0,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:54:59.675834+00:00"
+              },
+              {
+                "id": 263824876,
+                "name": "Harry Melling",
+                "probability": 0.00888889,
+                "rendered_percent": 0,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:54:59.675834+00:00"
+              },
+              {
+                "id": 263824874,
+                "name": "Ryan Gosling",
+                "probability": 0.00888889,
+                "rendered_percent": 0,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:54:59.675834+00:00"
+              }
+            ],
+            "newest_outcome_updated_at": "2026-11-22T20:54:59.675834+00:00",
+            "member_page_numbers": {
+              "by_outcome_id": {
+                "263824866": 66,
+                "263824869": 15,
+                "263824867": 6,
+                "263824868": 4,
+                "263824870": 3,
+                "263824871": 2,
+                "263824872": 2,
+                "263824873": 2,
+                "263824875": 0,
+                "263824877": 0,
+                "263824878": 0,
+                "263824876": 0,
+                "263824874": 0
+              },
+              "by_outcome_key": {
+                "john malkovich": 66,
+                "anthony ippolito": 15,
+                "tom cruise": 6,
+                "jordan firstman": 4,
+                "brad pitt": 3,
+                "seth rogen": 2,
+                "jaafar jackson": 2,
+                "tie": 2,
+                "robert pattinson": 0,
+                "pedro pascal": 0,
+                "dominic sessa": 0,
+                "harry melling": 0,
+                "ryan gosling": 0
+              }
+            },
+            "content_kind": "futures"
+          }
+        },
+        {
+          "type": "futures",
+          "score": 0.0,
+          "reason": "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, with 4 contenders at 75%+ to be nominated",
+          "headline": "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, with 4 contenders at 75%+ to be nominated",
+          "data": {
+            "id": 70160308,
+            "name": "Golden Globe Winner: Best Motion Picture - Drama",
+            "status": "open",
+            "source": "kalshi",
+            "mutually_exclusive": true,
+            "market_type": "field",
+            "volume": 38905.0,
+            "image_url": null,
+            "llm_sport_category": "entertainment",
+            "resolution_date": "2027-01-11T04:59:00+00:00",
+            "event_date": null,
+            "top_outcomes": [
+              {
+                "id": 263824787,
+                "name": "The Odyssey",
+                "probability": 0.52314815,
+                "rendered_percent": 52,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:55:38.798794+00:00"
+              },
+              {
+                "id": 263824788,
+                "name": "La Bola Negra",
+                "probability": 0.31944444,
+                "rendered_percent": 32,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T22:15:54.025220+00:00"
+              },
+              {
+                "id": 263824792,
+                "name": "Elsinore",
+                "probability": 0.05092593,
+                "rendered_percent": 5,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T22:52:19.587294+00:00"
+              },
+              {
+                "id": 263824793,
+                "name": "I Play Rocky",
+                "probability": 0.0462963,
+                "rendered_percent": 5,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:55:38.798794+00:00"
+              },
+              {
+                "id": 263824789,
+                "name": "Wildwood",
+                "probability": 0.02314815,
+                "rendered_percent": 2,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:55:38.798794+00:00"
+              },
+              {
+                "id": 263824791,
+                "name": "All of a Sudden",
+                "probability": 0.01851852,
+                "rendered_percent": 2,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:55:38.798794+00:00"
+              },
+              {
+                "id": 263824790,
+                "name": "Dune: Part Three",
+                "probability": 0.01851852,
+                "rendered_percent": 2,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:55:38.798794+00:00"
+              },
+              {
+                "id": 263824794,
+                "name": "Fjord",
+                "probability": 0.00925926,
+                "rendered_percent": 0,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:55:38.798794+00:00"
+              },
+              {
+                "id": 263824795,
+                "name": "Michael",
+                "probability": 0.00925926,
+                "rendered_percent": 0,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:55:38.798794+00:00"
+              },
+              {
+                "id": 263824796,
+                "name": "Possible Love",
+                "probability": 0.00925926,
+                "rendered_percent": 0,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:55:38.798794+00:00"
+              },
+              {
+                "id": 263824797,
+                "name": "Woman Unknown",
+                "probability": 0.00925926,
+                "rendered_percent": 0,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:55:38.798794+00:00"
+              },
+              {
+                "id": 263824798,
+                "name": "Fatherland",
+                "probability": 0.00925926,
+                "rendered_percent": 0,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:55:38.798794+00:00"
+              },
+              {
+                "id": 263824799,
+                "name": "Obsession",
+                "probability": 0.00925926,
+                "rendered_percent": 0,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:55:38.798794+00:00"
+              },
+              {
+                "id": 263824800,
+                "name": "Tie",
+                "probability": 0.00925926,
+                "rendered_percent": 0,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:55:38.798794+00:00"
+              }
+            ],
+            "newest_outcome_updated_at": "2026-11-22T22:52:19.587294+00:00",
+            "member_page_numbers": {
+              "by_outcome_id": {
+                "263824787": 52,
+                "263824788": 32,
+                "263824792": 5,
+                "263824793": 5,
+                "263824789": 2,
+                "263824791": 2,
+                "263824790": 2,
+                "263824794": 0,
+                "263824795": 0,
+                "263824796": 0,
+                "263824797": 0,
+                "263824798": 0,
+                "263824799": 0,
+                "263824800": 0
+              },
+              "by_outcome_key": {
+                "the odyssey": 52,
+                "la bola negra": 32,
+                "elsinore": 5,
+                "i play rocky": 5,
+                "wildwood": 2,
+                "all of a sudden": 2,
+                "dune part three": 2,
+                "fjord": 0,
+                "michael": 0,
+                "possible love": 0,
+                "woman unknown": 0,
+                "fatherland": 0,
+                "obsession": 0,
+                "tie": 0
+              }
+            },
+            "content_kind": "futures"
+          }
+        },
+        {
+          "type": "futures",
+          "score": 0.0,
+          "reason": "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, with 4 contenders at 75%+ to be nominated",
+          "headline": "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, with 4 contenders at 75%+ to be nominated",
+          "data": {
+            "id": 70160312,
+            "name": "Golden Globe Winner: Best Motion Picture - Musical or Comedy",
+            "status": "open",
+            "source": "kalshi",
+            "mutually_exclusive": true,
+            "market_type": "field",
+            "volume": 71105.0,
+            "image_url": null,
+            "llm_sport_category": "entertainment",
+            "resolution_date": "2027-01-11T04:59:00+00:00",
+            "event_date": null,
+            "top_outcomes": [
+              {
+                "id": 263824838,
+                "name": "Wild Horse Nine",
+                "probability": 0.52244898,
+                "rendered_percent": 52,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T22:50:39.878568+00:00"
+              },
+              {
+                "id": 263824839,
+                "name": "The Debut",
+                "probability": 0.17142857,
+                "rendered_percent": 17,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:01:16.080643+00:00"
+              },
+              {
+                "id": 263824841,
+                "name": "The Invite",
+                "probability": 0.07346939,
+                "rendered_percent": 8,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:01:16.080643+00:00"
+              },
+              {
+                "id": 263824842,
+                "name": "Project Hail Mary",
+                "probability": 0.04897959,
+                "rendered_percent": 5,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:01:16.080643+00:00"
+              },
+              {
+                "id": 263824844,
+                "name": "Club Kid",
+                "probability": 0.03265306,
+                "rendered_percent": 3,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:01:16.080643+00:00"
+              },
+              {
+                "id": 263824840,
+                "name": "Tender Loving Care",
+                "probability": 0.03265306,
+                "rendered_percent": 3,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:01:16.080643+00:00"
+              },
+              {
+                "id": 263824843,
+                "name": "The Further Mis-Adventures of Cliff Booth",
+                "probability": 0.03265306,
+                "rendered_percent": 3,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:01:16.080643+00:00"
+              },
+              {
+                "id": 263824845,
+                "name": "Obsession",
+                "probability": 0.03265306,
+                "rendered_percent": 3,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:01:16.080643+00:00"
+              },
+              {
+                "id": 263824846,
+                "name": "The Drama",
+                "probability": 0.02040816,
+                "rendered_percent": 2,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:01:16.080643+00:00"
+              },
+              {
+                "id": 263824848,
+                "name": "Tie",
+                "probability": 0.01632653,
+                "rendered_percent": 2,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:01:16.080643+00:00"
+              },
+              {
+                "id": 263824847,
+                "name": "I Play Rocky",
+                "probability": 0.01632653,
+                "rendered_percent": 2,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:01:16.080643+00:00"
+              },
+              {
+                "id": 263824849,
+                "name": "Digger",
+                "probability": 0.00816327,
+                "rendered_percent": 0,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:01:16.080643+00:00"
+              },
+              {
+                "id": 263824850,
+                "name": "Primetime",
+                "probability": 0.00816327,
+                "rendered_percent": 0,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:01:16.080643+00:00"
+              },
+              {
+                "id": 263824851,
+                "name": "The Devil Wears Prada 2",
+                "probability": 0.00816327,
+                "rendered_percent": 0,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:01:16.080643+00:00"
+              },
+              {
+                "id": 263824852,
+                "name": "Michael",
+                "probability": 0.00816327,
+                "rendered_percent": 0,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T20:01:16.080643+00:00"
+              }
+            ],
+            "newest_outcome_updated_at": "2026-11-22T22:50:39.878568+00:00",
+            "member_page_numbers": {
+              "by_outcome_id": {
+                "263824838": 52,
+                "263824839": 17,
+                "263824841": 8,
+                "263824842": 5,
+                "263824844": 3,
+                "263824840": 3,
+                "263824843": 3,
+                "263824845": 3,
+                "263824846": 2,
+                "263824848": 2,
+                "263824847": 2,
+                "263824849": 0,
+                "263824850": 0,
+                "263824851": 0,
+                "263824852": 0
+              },
+              "by_outcome_key": {
+                "wild horse nine": 52,
+                "the debut": 17,
+                "the invite": 8,
+                "project hail mary": 5,
+                "club kid": 3,
+                "tender loving care": 3,
+                "the further mis adventures of cliff booth": 3,
+                "obsession": 3,
+                "the drama": 2,
+                "tie": 2,
+                "i play rocky": 2,
+                "digger": 0,
+                "primetime": 0,
+                "the devil wears prada 2": 0,
+                "michael": 0
+              }
+            },
+            "content_kind": "futures"
+          }
+        },
+        {
+          "type": "futures",
+          "score": 0.0,
+          "reason": "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, with 4 contenders at 75%+ to be nominated",
+          "headline": "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, with 4 contenders at 75%+ to be nominated",
+          "data": {
+            "id": 70160311,
+            "name": "Golden Globe Winner: Best Actor in a Motion Picture – Drama",
+            "status": "open",
+            "source": "kalshi",
+            "mutually_exclusive": true,
+            "market_type": "field",
+            "volume": 26309.0,
+            "image_url": null,
+            "llm_sport_category": "entertainment",
+            "resolution_date": "2027-01-11T04:59:00+00:00",
+            "event_date": null,
+            "top_outcomes": [
+              {
+                "id": 263824823,
+                "name": "Andrew Scott",
+                "probability": 0.48679245,
+                "rendered_percent": 49,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T22:55:20.927462+00:00"
+              },
+              {
+                "id": 263824824,
+                "name": "Matt Damon",
+                "probability": 0.17358491,
+                "rendered_percent": 17,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T22:55:20.927462+00:00"
+              },
+              {
+                "id": 263824825,
+                "name": "Guitarricadelafuente",
+                "probability": 0.03773585,
+                "rendered_percent": 4,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T22:55:20.927462+00:00"
+              },
+              {
+                "id": 263824828,
+                "name": "Jaafar Jackson",
+                "probability": 0.03773585,
+                "rendered_percent": 4,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T22:55:20.927462+00:00"
+              },
+              {
+                "id": 263824826,
+                "name": "Robert Pattinson",
+                "probability": 0.03773585,
+                "rendered_percent": 4,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T22:55:20.927462+00:00"
+              },
+              {
+                "id": 263824829,
+                "name": "Robert Aramayo",
+                "probability": 0.03018868,
+                "rendered_percent": 3,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T22:55:20.927462+00:00"
+              },
+              {
+                "id": 263824827,
+                "name": "Sebastian Stan",
+                "probability": 0.03018868,
+                "rendered_percent": 3,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T22:55:20.927462+00:00"
+              },
+              {
+                "id": 263824830,
+                "name": "Pedro Pascal",
+                "probability": 0.03018868,
+                "rendered_percent": 3,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T22:55:20.927462+00:00"
+              },
+              {
+                "id": 263824834,
+                "name": "John Turturro",
+                "probability": 0.02264151,
+                "rendered_percent": 2,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T22:55:20.927462+00:00"
+              },
+              {
+                "id": 263824831,
+                "name": "Timothée Chalamet",
+                "probability": 0.02264151,
+                "rendered_percent": 2,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T22:55:20.927462+00:00"
+              },
+              {
+                "id": 263824832,
+                "name": "Sul Kyung-gu",
+                "probability": 0.02264151,
+                "rendered_percent": 2,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T22:55:20.927462+00:00"
+              },
+              {
+                "id": 263824833,
+                "name": "Josh O’Connor",
+                "probability": 0.02264151,
+                "rendered_percent": 2,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T22:55:20.927462+00:00"
+              },
+              {
+                "id": 263824835,
+                "name": "Emmanuel Macchia",
+                "probability": 0.01509434,
+                "rendered_percent": 2,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T22:55:20.927462+00:00"
+              },
+              {
+                "id": 263824836,
+                "name": "Ryan Gosling",
+                "probability": 0.01509434,
+                "rendered_percent": 2,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T22:55:20.927462+00:00"
+              },
+              {
+                "id": 263824837,
+                "name": "Tie",
+                "probability": 0.01509434,
+                "rendered_percent": 1,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T22:55:20.927462+00:00"
+              }
+            ],
+            "newest_outcome_updated_at": "2026-11-22T22:55:20.927462+00:00",
+            "member_page_numbers": {
+              "by_outcome_id": {
+                "263824823": 49,
+                "263824824": 17,
+                "263824825": 4,
+                "263824828": 4,
+                "263824826": 4,
+                "263824829": 3,
+                "263824827": 3,
+                "263824830": 3,
+                "263824834": 2,
+                "263824831": 2,
+                "263824832": 2,
+                "263824833": 2,
+                "263824835": 2,
+                "263824836": 2,
+                "263824837": 1
+              },
+              "by_outcome_key": {
+                "andrew scott": 49,
+                "matt damon": 17,
+                "guitarricadelafuente": 4,
+                "jaafar jackson": 4,
+                "robert pattinson": 4,
+                "robert aramayo": 3,
+                "sebastian stan": 3,
+                "pedro pascal": 3,
+                "john turturro": 2,
+                "timoth e chalamet": 2,
+                "timothee chalamet": 2,
+                "sul kyung gu": 2,
+                "josh o connor": 2,
+                "emmanuel macchia": 2,
+                "ryan gosling": 2,
+                "tie": 1
+              }
+            },
+            "content_kind": "futures"
+          }
+        },
+        {
+          "type": "futures",
+          "score": 0.0,
+          "reason": "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, with 4 contenders at 75%+ to be nominated",
+          "headline": "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, with 4 contenders at 75%+ to be nominated",
+          "data": {
+            "id": 70160298,
+            "name": "Golden Globe Winner: Best Television Series - Limited Series",
+            "status": "open",
+            "source": "kalshi",
+            "mutually_exclusive": true,
+            "market_type": "field",
+            "volume": 18335.0,
+            "image_url": null,
+            "llm_sport_category": "entertainment",
+            "resolution_date": "2027-01-11T04:59:00+00:00",
+            "event_date": null,
+            "top_outcomes": [
+              {
+                "id": 263824669,
+                "name": "DTF St. Louis",
+                "probability": 0.44298246,
+                "rendered_percent": 44,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T23:55:26.258124+00:00"
+              },
+              {
+                "id": 263824670,
+                "name": "East of Eden",
+                "probability": 0.39912281,
+                "rendered_percent": 40,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T23:55:26.258124+00:00"
+              },
+              {
+                "id": 263824673,
+                "name": "Beef",
+                "probability": 0.02192982,
+                "rendered_percent": 2,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T23:55:26.258124+00:00"
+              },
+              {
+                "id": 263824677,
+                "name": "Agatha Christie’s Seven Dials",
+                "probability": 0.01754386,
+                "rendered_percent": 2,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T23:55:26.258124+00:00"
+              },
+              {
+                "id": 263824675,
+                "name": "Half Man",
+                "probability": 0.01754386,
+                "rendered_percent": 2,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T23:55:26.258124+00:00"
+              },
+              {
+                "id": 263824676,
+                "name": "Carrie",
+                "probability": 0.01754386,
+                "rendered_percent": 2,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T23:55:26.258124+00:00"
+              },
+              {
+                "id": 263824672,
+                "name": "Love Story: John F. Kennedy Jr. & Carolyn Bessette",
+                "probability": 0.01754386,
+                "rendered_percent": 2,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T23:55:26.258124+00:00"
+              },
+              {
+                "id": 263824671,
+                "name": "Cape Fear",
+                "probability": 0.01754386,
+                "rendered_percent": 2,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T23:55:26.258124+00:00"
+              },
+              {
+                "id": 263824678,
+                "name": "Monster: The Lizzie Borden Story",
+                "probability": 0.01754386,
+                "rendered_percent": 2,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T23:55:26.258124+00:00"
+              },
+              {
+                "id": 263824679,
+                "name": "Tie",
+                "probability": 0.01754386,
+                "rendered_percent": 1,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T23:55:26.258124+00:00"
+              },
+              {
+                "id": 263824674,
+                "name": "Lord of the Flies",
+                "probability": 0.01315789,
+                "rendered_percent": 1,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T23:55:26.258124+00:00"
+              }
+            ],
+            "newest_outcome_updated_at": "2026-11-22T23:55:26.258124+00:00",
+            "member_page_numbers": {
+              "by_outcome_id": {
+                "263824669": 44,
+                "263824670": 40,
+                "263824673": 2,
+                "263824677": 2,
+                "263824675": 2,
+                "263824676": 2,
+                "263824672": 2,
+                "263824671": 2,
+                "263824678": 2,
+                "263824679": 1,
+                "263824674": 1
+              },
+              "by_outcome_key": {
+                "dtf st louis": 44,
+                "east of eden": 40,
+                "beef": 2,
+                "agatha christie s seven dials": 2,
+                "half man": 2,
+                "carrie": 2,
+                "love story john f kennedy jr carolyn bessette": 2,
+                "cape fear": 2,
+                "monster the lizzie borden story": 2,
+                "tie": 1,
+                "lord of the flies": 1
+              }
+            },
+            "content_kind": "futures"
+          }
+        },
+        {
+          "type": "futures",
+          "score": 0.0,
+          "reason": "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, with 4 contenders at 75%+ to be nominated",
+          "headline": "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, with 4 contenders at 75%+ to be nominated",
+          "data": {
+            "id": 70160295,
+            "name": "Golden Globe Winner: Best Supporting Actor on TV",
+            "status": "open",
+            "source": "kalshi",
+            "mutually_exclusive": true,
+            "market_type": "field",
+            "volume": 18800.0,
+            "image_url": null,
+            "llm_sport_category": "entertainment",
+            "resolution_date": "2027-01-11T04:59:00+00:00",
+            "event_date": null,
+            "top_outcomes": [
+              {
+                "id": 263824636,
+                "name": "David Harbour",
+                "probability": 0.42487047,
+                "rendered_percent": 42,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T23:55:22.298543+00:00"
+              },
+              {
+                "id": 263824637,
+                "name": "Stephen Root",
+                "probability": 0.26943005,
+                "rendered_percent": 27,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T23:55:22.298543+00:00"
+              },
+              {
+                "id": 263824638,
+                "name": "Charles Melton",
+                "probability": 0.05699482,
+                "rendered_percent": 6,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T23:55:22.298543+00:00"
+              },
+              {
+                "id": 263824639,
+                "name": "Richard Gadd",
+                "probability": 0.04145078,
+                "rendered_percent": 4,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T23:55:22.298543+00:00"
+              },
+              {
+                "id": 263824643,
+                "name": "Patrick Ball",
+                "probability": 0.04145078,
+                "rendered_percent": 4,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T23:55:22.298543+00:00"
+              },
+              {
+                "id": 263824642,
+                "name": "Shawn Hatosy",
+                "probability": 0.03626943,
+                "rendered_percent": 4,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T23:55:22.298543+00:00"
+              },
+              {
+                "id": 263824641,
+                "name": "Nick Offerman",
+                "probability": 0.03108808,
+                "rendered_percent": 3,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T23:55:22.298543+00:00"
+              },
+              {
+                "id": 263824645,
+                "name": "Colman Domingo",
+                "probability": 0.02590674,
+                "rendered_percent": 3,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T23:55:22.298543+00:00"
+              },
+              {
+                "id": 263824640,
+                "name": "Jason Bateman",
+                "probability": 0.02590674,
+                "rendered_percent": 3,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T23:55:22.298543+00:00"
+              },
+              {
+                "id": 263824644,
+                "name": "Paul W. Downs",
+                "probability": 0.02590674,
+                "rendered_percent": 2,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T23:55:22.298543+00:00"
+              },
+              {
+                "id": 263824646,
+                "name": "Tie",
+                "probability": 0.02072539,
+                "rendered_percent": 2,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T23:55:22.298543+00:00"
+              }
+            ],
+            "newest_outcome_updated_at": "2026-11-22T23:55:22.298543+00:00",
+            "member_page_numbers": {
+              "by_outcome_id": {
+                "263824636": 42,
+                "263824637": 27,
+                "263824638": 6,
+                "263824639": 4,
+                "263824643": 4,
+                "263824642": 4,
+                "263824641": 3,
+                "263824645": 3,
+                "263824640": 3,
+                "263824644": 2,
+                "263824646": 2
+              },
+              "by_outcome_key": {
+                "david harbour": 42,
+                "stephen root": 27,
+                "charles melton": 6,
+                "richard gadd": 4,
+                "patrick ball": 4,
+                "shawn hatosy": 4,
+                "nick offerman": 3,
+                "colman domingo": 3,
+                "jason bateman": 3,
+                "paul w downs": 2,
+                "tie": 2
+              }
+            },
+            "content_kind": "futures"
+          }
+        },
+        {
+          "type": "futures",
+          "score": 0.0,
+          "reason": "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, with 4 contenders at 75%+ to be nominated",
+          "headline": "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, with 4 contenders at 75%+ to be nominated",
+          "data": {
+            "id": 70239565,
+            "name": "Golden Globes 2027: Best Television Series – Drama Winner",
+            "status": "open",
+            "source": "polymarket",
+            "mutually_exclusive": true,
+            "market_type": "field",
+            "volume": 20680.0,
+            "image_url": null,
+            "llm_sport_category": "entertainment",
+            "resolution_date": "2027-01-11T04:59:00+00:00",
+            "event_date": null,
+            "top_outcomes": [
+              {
+                "id": 264264601,
+                "name": "The Pitt",
+                "probability": 0.39748954,
+                "rendered_percent": 40,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T22:08:32.897945+00:00"
+              },
+              {
+                "id": 264264602,
+                "name": "The Diplomat",
+                "probability": 0.25523013,
+                "rendered_percent": 26,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T17:59:43.401982+00:00"
+              },
+              {
+                "id": 264264604,
+                "name": "Slow Horses",
+                "probability": 0.20502092,
+                "rendered_percent": 21,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T18:57:10.387354+00:00"
+              },
+              {
+                "id": 264264607,
+                "name": "A Knight of the Seven Kingdoms",
+                "probability": 0.08158996,
+                "rendered_percent": 8,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T22:16:36.977236+00:00"
+              },
+              {
+                "id": 264264606,
+                "name": "Paradise",
+                "probability": 0.04728033,
+                "rendered_percent": 5,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T22:31:45.725852+00:00"
+              },
+              {
+                "id": 264264609,
+                "name": "Euphoria",
+                "probability": 0.00460251,
+                "rendered_percent": 0,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T15:51:45.133271+00:00"
+              },
+              {
+                "id": 264264603,
+                "name": "House of the Dragon",
+                "probability": 0.0041841,
+                "rendered_percent": 0,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T15:51:45.133271+00:00"
+              },
+              {
+                "id": 264264605,
+                "name": "The Gilded Age",
+                "probability": 0.0041841,
+                "rendered_percent": 0,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T15:51:45.133271+00:00"
+              },
+              {
+                "id": 264264608,
+                "name": "Your Friends & Neighbors",
+                "probability": 0.00041841,
+                "rendered_percent": 0,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T15:51:45.133271+00:00"
+              }
+            ],
+            "newest_outcome_updated_at": "2026-11-22T22:31:45.725852+00:00",
+            "member_page_numbers": {
+              "by_outcome_id": {
+                "264264601": 40,
+                "264264602": 26,
+                "264264604": 21,
+                "264264607": 8,
+                "264264606": 5,
+                "264264609": 0,
+                "264264603": 0,
+                "264264605": 0,
+                "264264608": 0
+              },
+              "by_outcome_key": {
+                "the pitt": 40,
+                "the diplomat": 26,
+                "slow horses": 21,
+                "a knight of the seven kingdoms": 8,
+                "paradise": 5,
+                "euphoria": 0,
+                "house of the dragon": 0,
+                "the gilded age": 0,
+                "your friends neighbors": 0
+              }
+            },
+            "content_kind": "futures"
+          }
+        }
+      ],
+      "collection_ref": {
+        "slug": "machinery-golden-globes-2027",
+        "href": "/collections/machinery-golden-globes-2027",
+        "name": "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, with 4 contenders at 75%+ to be nominated",
+        "revision": 4128677737,
+        "collection_count": 11
+      },
+      "roundup": {
+        "kicker": "ENTERTAINMENT · AWARDS",
+        "tag": "ENTERTAINMENT",
+        "footer": "",
+        "rows": [
+          {
+            "market_id": 70160313,
+            "outcome_id": 263824853,
+            "label": "Julianne Moore",
+            "probability": 0.78,
+            "rendered_percent": 78,
+            "secondary_probability": 0.98,
+            "secondary_rendered_percent": 98
+          },
+          {
+            "market_id": 70160313,
+            "outcome_id": 263824855,
+            "label": "Inde Navarrette",
+            "probability": 0.09,
+            "rendered_percent": 9,
+            "secondary_probability": 0.895,
+            "secondary_rendered_percent": 90
+          },
+          {
+            "market_id": 70160313,
+            "outcome_id": 263824854,
+            "label": "Olivia Wilde",
+            "probability": 0.03,
+            "rendered_percent": 3,
+            "secondary_probability": 0.955,
+            "secondary_rendered_percent": 96
+          }
+        ],
+        "relations": [
+          "same_event",
+          "sibling"
+        ],
+        "level": "member",
+        "destination_href": "/collections/machinery-golden-globes-2027",
+        "paired_metric_set": {
+          "set_id": "golden-globes-2027-best-actress-comedy-musical",
+          "category": "entertainment",
+          "kicker": "GOLDEN GLOBES 2027 · BEST ACTRESS (COMEDY OR MUSICAL)",
+          "title": "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, with 4 contenders at 75%+ to be nominated",
+          "subtitle": "84th Golden Globes · Nominated % beside Winner %",
+          "selection_rule": "top_5_overlapping_contenders",
+          "stage_1_label": "Nominated",
+          "stage_2_label": "Wins",
+          "stage_1_settled_yes_label": "Nominated",
+          "stage_1_settled_no_label": "Not nominated",
+          "stage_1_market": {
+            "id": 61484904,
+            "source": "kalshi",
+            "name": "Golden Globe Nominations: Best Actress in a Motion Picture – Musical or Comedy",
+            "category_name": "Best Actress (Comedy or Musical)"
+          },
+          "stage_2_market": {
+            "id": 70160313,
+            "source": "kalshi",
+            "name": "Golden Globe Winner: Best Actress in a Motion Picture – Musical or Comedy",
+            "category_name": "Best Actress (Comedy or Musical)"
+          },
+          "stage_1_settled": false,
+          "never_blend": true,
+          "as_of": "2026-11-21T03:44:46.002624Z",
+          "entries": [
+            {
+              "subject_key": "person:julianne-moore",
+              "subject": "Julianne Moore",
+              "detail": "84th Golden Globes Contender",
+              "credit_source": "tmdb:person:1231",
+              "stage_1_market_id": 61484904,
+              "stage_1_outcome": "Julianne Moore",
+              "stage_1_settled_state": null,
+              "stage_2_market_id": 70160313,
+              "stage_2_outcome": "Julianne Moore",
+              "art": {
+                "kind": "tmdb_headshot",
+                "tmdb_id": 1231,
+                "profile_path": "/3YF19rWusxWfEI59ZM33dFhasRq.jpg",
+                "url": "https://image.tmdb.org/t/p/w185/3YF19rWusxWfEI59ZM33dFhasRq.jpg",
+                "adult": false,
+                "kid_safe_vetted": true
+              },
+              "stage_1_blend_authority": "single_venue",
+              "stage_2_blend_authority": "single_venue",
+              "stage_1_blend_rule": "weighted_median",
+              "stage_1_divergence": null,
+              "stage_2_blend_rule": "weighted_median",
+              "stage_2_divergence": null,
+              "stage_1_kalshi_probability": 0.98,
+              "stage_2_kalshi_probability": 0.78,
+              "stage_2_outcome_id": 263824853,
+              "stage_1_probability": 0.98,
+              "stage_1_source_mark": {
+                "state": "single",
+                "sources": [
+                  {
+                    "key": "kalshi",
+                    "name": "Kalshi",
+                    "probability": 0.98,
+                    "observed_at": null,
+                    "reason": "observation_unknown"
+                  }
+                ]
+              },
+              "stage_2_probability": 0.78,
+              "stage_2_source_mark": {
+                "state": "single",
+                "sources": [
+                  {
+                    "key": "kalshi",
+                    "name": "Kalshi",
+                    "probability": 0.78,
+                    "observed_at": null,
+                    "reason": "observation_unknown"
+                  }
+                ]
+              },
+              "stage_2_rendered_percent": null,
+              "stage_1_rendered_percent": 98
+            },
+            {
+              "subject_key": "person:inde-navarrette",
+              "subject": "Inde Navarrette",
+              "detail": "84th Golden Globes Contender",
+              "credit_source": "tmdb:person:3227700",
+              "stage_1_market_id": 61484904,
+              "stage_1_outcome": "Inde Navarrette",
+              "stage_1_settled_state": null,
+              "stage_2_market_id": 70160313,
+              "stage_2_outcome": "Inde Navarrette",
+              "art": {
+                "kind": "tmdb_headshot",
+                "tmdb_id": 3227700,
+                "profile_path": "/qlNBUGON8FebgzcqVhhRSVFYSa5.jpg",
+                "url": "https://image.tmdb.org/t/p/w185/qlNBUGON8FebgzcqVhhRSVFYSa5.jpg",
+                "adult": false,
+                "kid_safe_vetted": true
+              },
+              "stage_1_blend_authority": "single_venue",
+              "stage_2_blend_authority": "single_venue",
+              "stage_1_blend_rule": "weighted_median",
+              "stage_1_divergence": null,
+              "stage_2_blend_rule": "weighted_median",
+              "stage_2_divergence": null,
+              "stage_1_kalshi_probability": 0.895,
+              "stage_2_kalshi_probability": 0.09,
+              "stage_2_outcome_id": 263824855,
+              "stage_1_probability": 0.895,
+              "stage_1_source_mark": {
+                "state": "single",
+                "sources": [
+                  {
+                    "key": "kalshi",
+                    "name": "Kalshi",
+                    "probability": 0.895,
+                    "observed_at": null,
+                    "reason": "observation_unknown"
+                  }
+                ]
+              },
+              "stage_2_probability": 0.09,
+              "stage_2_source_mark": {
+                "state": "single",
+                "sources": [
+                  {
+                    "key": "kalshi",
+                    "name": "Kalshi",
+                    "probability": 0.09,
+                    "observed_at": null,
+                    "reason": "observation_unknown"
+                  }
+                ]
+              },
+              "stage_2_rendered_percent": null,
+              "stage_1_rendered_percent": 90
+            },
+            {
+              "subject_key": "person:olivia-wilde",
+              "subject": "Olivia Wilde",
+              "detail": "84th Golden Globes Contender",
+              "credit_source": "tmdb:person:59315",
+              "stage_1_market_id": 61484904,
+              "stage_1_outcome": "Olivia Wilde",
+              "stage_1_settled_state": null,
+              "stage_2_market_id": 70160313,
+              "stage_2_outcome": "Olivia Wilde",
+              "art": {
+                "kind": "tmdb_headshot",
+                "tmdb_id": 59315,
+                "profile_path": "/jYopRE6nhYGqpb64fVUKrbJVMy1.jpg",
+                "url": "https://image.tmdb.org/t/p/w185/jYopRE6nhYGqpb64fVUKrbJVMy1.jpg",
+                "adult": false,
+                "kid_safe_vetted": true
+              },
+              "stage_1_blend_authority": "single_venue",
+              "stage_2_blend_authority": "single_venue",
+              "stage_1_blend_rule": "weighted_median",
+              "stage_1_divergence": null,
+              "stage_2_blend_rule": "weighted_median",
+              "stage_2_divergence": null,
+              "stage_1_kalshi_probability": 0.955,
+              "stage_2_kalshi_probability": 0.03,
+              "stage_2_outcome_id": 263824854,
+              "stage_1_probability": 0.955,
+              "stage_1_source_mark": {
+                "state": "single",
+                "sources": [
+                  {
+                    "key": "kalshi",
+                    "name": "Kalshi",
+                    "probability": 0.955,
+                    "observed_at": null,
+                    "reason": "observation_unknown"
+                  }
+                ]
+              },
+              "stage_2_probability": 0.03,
+              "stage_2_source_mark": {
+                "state": "single",
+                "sources": [
+                  {
+                    "key": "kalshi",
+                    "name": "Kalshi",
+                    "probability": 0.03,
+                    "observed_at": null,
+                    "reason": "observation_unknown"
+                  }
+                ]
+              },
+              "stage_2_rendered_percent": null,
+              "stage_1_rendered_percent": 96
+            }
+          ],
+          "blend_authority": "server:futures_source_merge.blend_with_verdict",
+          "stage_2_settled": false,
+          "stage_2_winner_subject": null,
+          "member_page_numbers_by_market": {
+            "61484904": {
+              "by_outcome_id": {
+                "231508988": 98,
+                "231508989": 96,
+                "246329448": 90,
+                "231508991": 80,
+                "231508995": 77,
+                "246329451": 50,
+                "231508992": 36,
+                "231508994": 7,
+                "231508996": 6,
+                "231508987": 6,
+                "231508993": 1,
+                "231508990": 1
+              },
+              "by_outcome_key": {
+                "julianne moore": 98,
+                "olivia wilde": 96,
+                "inde navarrette": 90,
+                "zendaya": 80,
+                "olivia colman": 77,
+                "marion bailey": 50,
+                "meryl streep": 36,
+                "jodie comer": 7,
+                "rachel mcadams": 6,
+                "anne hathaway": 6,
+                "natalie portman": 1,
+                "rosalind eleazar": 1
+              },
+              "by_fold_key": {
+                "julianne moore": 98,
+                "olivia wilde": 96,
+                "inde navarrette": 90,
+                "zendaya": 80,
+                "olivia colman": 77,
+                "marion bailey": 50,
+                "meryl streep": 36,
+                "jodie comer": 7,
+                "rachel mcadams": 6,
+                "anne hathaway": 6,
+                "natalie portman": 1,
+                "rosalind eleazar": 1
+              }
+            },
+            "70160313": {
+              "by_outcome_id": {
+                "263824853": 78,
+                "263824855": 9,
+                "263824854": 3,
+                "263824857": 2,
+                "263824863": 2,
+                "263824858": 2,
+                "263824856": 2,
+                "263824859": 1,
+                "263824860": 0,
+                "263824861": 1,
+                "263824862": 1,
+                "263824864": 1,
+                "263824865": 1
+              },
+              "by_outcome_key": {
+                "julianne moore": 78,
+                "inde navarrette": 9,
+                "olivia wilde": 3,
+                "meryl streep": 2,
+                "rachel mcadams": 2,
+                "olivia colman": 2,
+                "zendaya": 2,
+                "rosalind eleazar": 1,
+                "natalie portman": 0,
+                "jodie comer": 1,
+                "anne hathaway": 1,
+                "marion bailey": 1,
+                "tie": 1
+              },
+              "by_fold_key": {
+                "julianne moore": 78,
+                "inde navarrette": 9,
+                "olivia wilde": 3,
+                "meryl streep": 2,
+                "rachel mcadams": 2,
+                "olivia colman": 2,
+                "zendaya": 2,
+                "rosalind eleazar": 1,
+                "natalie portman": 0,
+                "jodie comer": 1,
+                "anne hathaway": 1,
+                "marion bailey": 1,
+                "tie": 1
+              }
+            }
+          },
+          "suppress_card_header_in_section": false
+        },
+        "machinery_card": {
+          "slug": "machinery-golden-globes-2027",
+          "form_id": "paired_stage_bars",
+          "stage": "public",
+          "look": "bars",
+          "kicker": "ENTERTAINMENT · AWARDS",
+          "title": "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, with 4 contenders at 75%+ to be nominated",
+          "subtitle": "84th Golden Globes · Nominated % paired beside Wins %.",
+          "footer": "",
+          "scale_ordered": false,
+          "section_count": 2,
+          "item_count": 5,
+          "item_noun": "contenders",
+          "destination_href": "/collections/machinery-golden-globes-2027",
+          "rows": [],
+          "suppress_card_photo": true
+        }
+      }
+    }
+  },
+  "container": {
+    "state": "published",
+    "slug": "machinery-golden-globes-2027",
+    "revision": 4128677737,
+    "relations": [
+      "same_event",
+      "sibling"
+    ],
+    "level": "member",
+    "reason": null,
+    "edition": null,
+    "container": {
+      "id": 3348010113,
+      "slug": "machinery-golden-globes-2027",
+      "name": "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, with 4 contenders at 75%+ to be nominated",
+      "kind": "roundup",
+      "category": "entertainment",
+      "status": "open",
+      "window_start": null,
+      "window_end": null,
+      "parent_container_id": null,
+      "destination_href": "/collections/machinery-golden-globes-2027"
+    },
+    "subtitle": "",
+    "caption": null,
+    "sections": [
+      {
+        "class": "best_actress_paired",
+        "title": "Best Actress (Comedy or Musical): Nominated & Wins",
+        "layout": "paired_stage_bars",
+        "count": 2,
+        "members": [
+          {
+            "type": "market",
+            "id": 70160313,
+            "destination": {
+              "kind": "market",
+              "id": 70160313,
+              "web": "/futures/70160313",
+              "api": "/api/futures/70160313"
+            },
+            "card": {
+              "id": 70160313,
+              "name": "Golden Globe Winner: Best Actress in a Motion Picture – Musical or Comedy",
+              "status": "open",
+              "source": "kalshi",
+              "content_kind": "futures",
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "263824853": 78,
+                  "263824855": 9,
+                  "263824854": 3,
+                  "263824857": 2,
+                  "263824863": 2,
+                  "263824858": 2,
+                  "263824856": 2,
+                  "263824859": 1,
+                  "263824860": 0,
+                  "263824861": 1,
+                  "263824862": 1,
+                  "263824864": 1,
+                  "263824865": 1
+                },
+                "by_outcome_key": {
+                  "julianne moore": 78,
+                  "inde navarrette": 9,
+                  "olivia wilde": 3,
+                  "meryl streep": 2,
+                  "rachel mcadams": 2,
+                  "olivia colman": 2,
+                  "zendaya": 2,
+                  "rosalind eleazar": 1,
+                  "natalie portman": 0,
+                  "jodie comer": 1,
+                  "anne hathaway": 1,
+                  "marion bailey": 1,
+                  "tie": 1
+                },
+                "by_fold_key": {
+                  "julianne moore": 78,
+                  "inde navarrette": 9,
+                  "olivia wilde": 3,
+                  "meryl streep": 2,
+                  "rachel mcadams": 2,
+                  "olivia colman": 2,
+                  "zendaya": 2,
+                  "rosalind eleazar": 1,
+                  "natalie portman": 0,
+                  "jodie comer": 1,
+                  "anne hathaway": 1,
+                  "marion bailey": 1,
+                  "tie": 1
+                }
+              },
+              "top_outcomes": [
+                {
+                  "name": "Julianne Moore",
+                  "probability": 0.78
+                },
+                {
+                  "name": "Inde Navarrette",
+                  "probability": 0.09
+                },
+                {
+                  "name": "Olivia Wilde",
+                  "probability": 0.03
+                },
+                {
+                  "name": "Olivia Colman",
+                  "probability": 0.02
+                },
+                {
+                  "name": "Meryl Streep",
+                  "probability": 0.02
+                }
+              ],
+              "image_url": null
+            },
+            "event_id": null
+          },
+          {
+            "type": "market",
+            "id": 61484904,
+            "destination": {
+              "kind": "market",
+              "id": 61484904,
+              "web": "/futures/61484904",
+              "api": "/api/futures/61484904"
+            },
+            "card": {
+              "id": 61484904,
+              "name": "Golden Globe Nominations: Best Actress in a Motion Picture – Musical or Comedy",
+              "status": "open",
+              "source": "kalshi",
+              "content_kind": "futures",
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "231508988": 98,
+                  "231508989": 96,
+                  "246329448": 90,
+                  "231508991": 80,
+                  "231508995": 77,
+                  "246329451": 50,
+                  "231508992": 36,
+                  "231508994": 7,
+                  "231508996": 6,
+                  "231508987": 6,
+                  "231508993": 1,
+                  "231508990": 1
+                },
+                "by_outcome_key": {
+                  "julianne moore": 98,
+                  "olivia wilde": 96,
+                  "inde navarrette": 90,
+                  "zendaya": 80,
+                  "olivia colman": 77,
+                  "marion bailey": 50,
+                  "meryl streep": 36,
+                  "jodie comer": 7,
+                  "rachel mcadams": 6,
+                  "anne hathaway": 6,
+                  "natalie portman": 1,
+                  "rosalind eleazar": 1
+                },
+                "by_fold_key": {
+                  "julianne moore": 98,
+                  "olivia wilde": 96,
+                  "inde navarrette": 90,
+                  "zendaya": 80,
+                  "olivia colman": 77,
+                  "marion bailey": 50,
+                  "meryl streep": 36,
+                  "jodie comer": 7,
+                  "rachel mcadams": 6,
+                  "anne hathaway": 6,
+                  "natalie portman": 1,
+                  "rosalind eleazar": 1
+                }
+              },
+              "top_outcomes": [
+                {
+                  "name": "Julianne Moore",
+                  "probability": 0.98
+                },
+                {
+                  "name": "Inde Navarrette",
+                  "probability": 0.895
+                },
+                {
+                  "name": "Olivia Wilde",
+                  "probability": 0.955
+                },
+                {
+                  "name": "Olivia Colman",
+                  "probability": 0.77
+                },
+                {
+                  "name": "Meryl Streep",
+                  "probability": 0.36
+                }
+              ],
+              "image_url": null
+            },
+            "event_id": null
+          }
+        ],
+        "note": "84th Golden Globes · Nominated % paired beside Wins %.",
+        "visual_block": {
+          "form_id": "paired_stage_bars",
+          "initial_visible_limit": 3,
+          "paired_metric_set": {
+            "set_id": "golden-globes-2027-best-actress-comedy-musical",
+            "category": "entertainment",
+            "kicker": "GOLDEN GLOBES 2027 · BEST ACTRESS (COMEDY OR MUSICAL)",
+            "title": "Julianne Moore leads Best Actress (Comedy Or Musical), with 4 contenders at 75%+ to be nominated",
+            "subtitle": "84th Golden Globes · Nominated % beside Winner %",
+            "selection_rule": "top_5_overlapping_contenders",
+            "stage_1_label": "Nominated",
+            "stage_2_label": "Wins",
+            "stage_1_settled_yes_label": "Nominated",
+            "stage_1_settled_no_label": "Not nominated",
+            "stage_1_market": {
+              "id": 61484904,
+              "source": "kalshi",
+              "name": "Golden Globe Nominations: Best Actress in a Motion Picture – Musical or Comedy",
+              "category_name": "Best Actress (Comedy or Musical)"
+            },
+            "stage_2_market": {
+              "id": 70160313,
+              "source": "kalshi",
+              "name": "Golden Globe Winner: Best Actress in a Motion Picture – Musical or Comedy",
+              "category_name": "Best Actress (Comedy or Musical)"
+            },
+            "stage_1_settled": false,
+            "never_blend": true,
+            "as_of": "2026-11-21T03:44:46.002624Z",
+            "entries": [
+              {
+                "subject_key": "person:julianne-moore",
+                "subject": "Julianne Moore",
+                "detail": "84th Golden Globes Contender",
+                "credit_source": "tmdb:person:1231",
+                "stage_1_market_id": 61484904,
+                "stage_1_outcome": "Julianne Moore",
+                "stage_1_settled_state": null,
+                "stage_2_market_id": 70160313,
+                "stage_2_outcome": "Julianne Moore",
+                "art": {
+                  "kind": "tmdb_headshot",
+                  "tmdb_id": 1231,
+                  "profile_path": "/3YF19rWusxWfEI59ZM33dFhasRq.jpg",
+                  "url": "https://image.tmdb.org/t/p/w185/3YF19rWusxWfEI59ZM33dFhasRq.jpg",
+                  "adult": false,
+                  "kid_safe_vetted": true
+                },
+                "stage_1_blend_authority": "single_venue",
+                "stage_2_blend_authority": "single_venue",
+                "stage_1_blend_rule": "weighted_median",
+                "stage_1_divergence": null,
+                "stage_2_blend_rule": "weighted_median",
+                "stage_2_divergence": null,
+                "stage_1_kalshi_probability": 0.98,
+                "stage_2_kalshi_probability": 0.78,
+                "stage_2_outcome_id": 263824853,
+                "stage_1_probability": 0.98,
+                "stage_1_source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "kalshi",
+                      "name": "Kalshi",
+                      "probability": 0.98,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ]
+                },
+                "stage_2_probability": 0.78,
+                "stage_2_source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "kalshi",
+                      "name": "Kalshi",
+                      "probability": 0.78,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ]
+                },
+                "stage_2_rendered_percent": null,
+                "stage_1_rendered_percent": 98
+              },
+              {
+                "subject_key": "person:inde-navarrette",
+                "subject": "Inde Navarrette",
+                "detail": "84th Golden Globes Contender",
+                "credit_source": "tmdb:person:3227700",
+                "stage_1_market_id": 61484904,
+                "stage_1_outcome": "Inde Navarrette",
+                "stage_1_settled_state": null,
+                "stage_2_market_id": 70160313,
+                "stage_2_outcome": "Inde Navarrette",
+                "art": {
+                  "kind": "tmdb_headshot",
+                  "tmdb_id": 3227700,
+                  "profile_path": "/qlNBUGON8FebgzcqVhhRSVFYSa5.jpg",
+                  "url": "https://image.tmdb.org/t/p/w185/qlNBUGON8FebgzcqVhhRSVFYSa5.jpg",
+                  "adult": false,
+                  "kid_safe_vetted": true
+                },
+                "stage_1_blend_authority": "single_venue",
+                "stage_2_blend_authority": "single_venue",
+                "stage_1_blend_rule": "weighted_median",
+                "stage_1_divergence": null,
+                "stage_2_blend_rule": "weighted_median",
+                "stage_2_divergence": null,
+                "stage_1_kalshi_probability": 0.895,
+                "stage_2_kalshi_probability": 0.09,
+                "stage_2_outcome_id": 263824855,
+                "stage_1_probability": 0.895,
+                "stage_1_source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "kalshi",
+                      "name": "Kalshi",
+                      "probability": 0.895,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ]
+                },
+                "stage_2_probability": 0.09,
+                "stage_2_source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "kalshi",
+                      "name": "Kalshi",
+                      "probability": 0.09,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ]
+                },
+                "stage_2_rendered_percent": null,
+                "stage_1_rendered_percent": 90
+              },
+              {
+                "subject_key": "person:olivia-wilde",
+                "subject": "Olivia Wilde",
+                "detail": "84th Golden Globes Contender",
+                "credit_source": "tmdb:person:59315",
+                "stage_1_market_id": 61484904,
+                "stage_1_outcome": "Olivia Wilde",
+                "stage_1_settled_state": null,
+                "stage_2_market_id": 70160313,
+                "stage_2_outcome": "Olivia Wilde",
+                "art": {
+                  "kind": "tmdb_headshot",
+                  "tmdb_id": 59315,
+                  "profile_path": "/jYopRE6nhYGqpb64fVUKrbJVMy1.jpg",
+                  "url": "https://image.tmdb.org/t/p/w185/jYopRE6nhYGqpb64fVUKrbJVMy1.jpg",
+                  "adult": false,
+                  "kid_safe_vetted": true
+                },
+                "stage_1_blend_authority": "single_venue",
+                "stage_2_blend_authority": "single_venue",
+                "stage_1_blend_rule": "weighted_median",
+                "stage_1_divergence": null,
+                "stage_2_blend_rule": "weighted_median",
+                "stage_2_divergence": null,
+                "stage_1_kalshi_probability": 0.955,
+                "stage_2_kalshi_probability": 0.03,
+                "stage_2_outcome_id": 263824854,
+                "stage_1_probability": 0.955,
+                "stage_1_source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "kalshi",
+                      "name": "Kalshi",
+                      "probability": 0.955,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ]
+                },
+                "stage_2_probability": 0.03,
+                "stage_2_source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "kalshi",
+                      "name": "Kalshi",
+                      "probability": 0.03,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ]
+                },
+                "stage_2_rendered_percent": null,
+                "stage_1_rendered_percent": 96
+              },
+              {
+                "subject_key": "person:olivia-colman",
+                "subject": "Olivia Colman",
+                "detail": "84th Golden Globes Contender",
+                "credit_source": "tmdb:person:39187",
+                "stage_1_market_id": 61484904,
+                "stage_1_outcome": "Olivia Colman",
+                "stage_1_settled_state": null,
+                "stage_2_market_id": 70160313,
+                "stage_2_outcome": "Olivia Colman",
+                "art": {
+                  "kind": "tmdb_headshot",
+                  "tmdb_id": 39187,
+                  "profile_path": "/lawJUdbLb1YW0niaYjiVGR9IBG8.jpg",
+                  "url": "https://image.tmdb.org/t/p/w185/lawJUdbLb1YW0niaYjiVGR9IBG8.jpg",
+                  "adult": false,
+                  "kid_safe_vetted": true
+                },
+                "stage_1_blend_authority": "single_venue",
+                "stage_2_blend_authority": "single_venue",
+                "stage_1_blend_rule": "weighted_median",
+                "stage_1_divergence": null,
+                "stage_2_blend_rule": "weighted_median",
+                "stage_2_divergence": null,
+                "stage_1_kalshi_probability": 0.77,
+                "stage_2_kalshi_probability": 0.02,
+                "stage_2_outcome_id": 263824858,
+                "stage_1_probability": 0.77,
+                "stage_1_source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "kalshi",
+                      "name": "Kalshi",
+                      "probability": 0.77,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ]
+                },
+                "stage_2_probability": 0.02,
+                "stage_2_source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "kalshi",
+                      "name": "Kalshi",
+                      "probability": 0.02,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ]
+                },
+                "stage_2_rendered_percent": null,
+                "stage_1_rendered_percent": 77
+              },
+              {
+                "subject_key": "person:meryl-streep",
+                "subject": "Meryl Streep",
+                "detail": "84th Golden Globes Contender",
+                "credit_source": "tmdb:person:5064",
+                "stage_1_market_id": 61484904,
+                "stage_1_outcome": "Meryl Streep",
+                "stage_1_settled_state": null,
+                "stage_2_market_id": 70160313,
+                "stage_2_outcome": "Meryl Streep",
+                "art": {
+                  "kind": "tmdb_headshot",
+                  "tmdb_id": 5064,
+                  "profile_path": "/g5cVxQBAQ3AXt3LhdBXtbbN47Uc.jpg",
+                  "url": "https://image.tmdb.org/t/p/w185/g5cVxQBAQ3AXt3LhdBXtbbN47Uc.jpg",
+                  "adult": false,
+                  "kid_safe_vetted": true
+                },
+                "stage_1_blend_authority": "single_venue",
+                "stage_2_blend_authority": "single_venue",
+                "stage_1_blend_rule": "weighted_median",
+                "stage_1_divergence": null,
+                "stage_2_blend_rule": "weighted_median",
+                "stage_2_divergence": null,
+                "stage_1_kalshi_probability": 0.36,
+                "stage_2_kalshi_probability": 0.02,
+                "stage_2_outcome_id": 263824857,
+                "stage_1_probability": 0.36,
+                "stage_1_source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "kalshi",
+                      "name": "Kalshi",
+                      "probability": 0.36,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ]
+                },
+                "stage_2_probability": 0.02,
+                "stage_2_source_mark": {
+                  "state": "single",
+                  "sources": [
+                    {
+                      "key": "kalshi",
+                      "name": "Kalshi",
+                      "probability": 0.02,
+                      "observed_at": null,
+                      "reason": "observation_unknown"
+                    }
+                  ]
+                },
+                "stage_2_rendered_percent": null,
+                "stage_1_rendered_percent": 36
+              }
+            ],
+            "blend_authority": "server:futures_source_merge.blend_with_verdict",
+            "stage_2_settled": false,
+            "stage_2_winner_subject": null,
+            "member_page_numbers_by_market": {
+              "61484904": {
+                "by_outcome_id": {
+                  "231508988": 98,
+                  "231508989": 96,
+                  "246329448": 90,
+                  "231508991": 80,
+                  "231508995": 77,
+                  "246329451": 50,
+                  "231508992": 36,
+                  "231508994": 7,
+                  "231508996": 6,
+                  "231508987": 6,
+                  "231508993": 1,
+                  "231508990": 1
+                },
+                "by_outcome_key": {
+                  "julianne moore": 98,
+                  "olivia wilde": 96,
+                  "inde navarrette": 90,
+                  "zendaya": 80,
+                  "olivia colman": 77,
+                  "marion bailey": 50,
+                  "meryl streep": 36,
+                  "jodie comer": 7,
+                  "rachel mcadams": 6,
+                  "anne hathaway": 6,
+                  "natalie portman": 1,
+                  "rosalind eleazar": 1
+                },
+                "by_fold_key": {
+                  "julianne moore": 98,
+                  "olivia wilde": 96,
+                  "inde navarrette": 90,
+                  "zendaya": 80,
+                  "olivia colman": 77,
+                  "marion bailey": 50,
+                  "meryl streep": 36,
+                  "jodie comer": 7,
+                  "rachel mcadams": 6,
+                  "anne hathaway": 6,
+                  "natalie portman": 1,
+                  "rosalind eleazar": 1
+                }
+              },
+              "70160313": {
+                "by_outcome_id": {
+                  "263824853": 78,
+                  "263824855": 9,
+                  "263824854": 3,
+                  "263824857": 2,
+                  "263824863": 2,
+                  "263824858": 2,
+                  "263824856": 2,
+                  "263824859": 1,
+                  "263824860": 0,
+                  "263824861": 1,
+                  "263824862": 1,
+                  "263824864": 1,
+                  "263824865": 1
+                },
+                "by_outcome_key": {
+                  "julianne moore": 78,
+                  "inde navarrette": 9,
+                  "olivia wilde": 3,
+                  "meryl streep": 2,
+                  "rachel mcadams": 2,
+                  "olivia colman": 2,
+                  "zendaya": 2,
+                  "rosalind eleazar": 1,
+                  "natalie portman": 0,
+                  "jodie comer": 1,
+                  "anne hathaway": 1,
+                  "marion bailey": 1,
+                  "tie": 1
+                },
+                "by_fold_key": {
+                  "julianne moore": 78,
+                  "inde navarrette": 9,
+                  "olivia wilde": 3,
+                  "meryl streep": 2,
+                  "rachel mcadams": 2,
+                  "olivia colman": 2,
+                  "zendaya": 2,
+                  "rosalind eleazar": 1,
+                  "natalie portman": 0,
+                  "jodie comer": 1,
+                  "anne hathaway": 1,
+                  "marion bailey": 1,
+                  "tie": 1
+                }
+              }
+            },
+            "suppress_card_header_in_section": true
+          },
+          "items": []
+        }
+      },
+      {
+        "class": "golden_globes",
+        "title": "Other Golden Globes Races",
+        "layout": "benchmark_strip",
+        "count": 9,
+        "members": [
+          {
+            "type": "market",
+            "id": 70160296,
+            "destination": {
+              "kind": "market",
+              "id": 70160296,
+              "web": "/futures/70160296",
+              "api": "/api/futures/70160296"
+            },
+            "card": {
+              "id": 70160296,
+              "name": "Golden Globe Winner: Best Actress in a Limited Series",
+              "status": "open",
+              "source": "kalshi",
+              "mutually_exclusive": true,
+              "market_type": "field",
+              "volume": 28143.0,
+              "image_url": null,
+              "llm_sport_category": "entertainment",
+              "resolution_date": "2027-01-11T04:59:00+00:00",
+              "event_date": null,
+              "top_outcomes": [
+                {
+                  "id": 263824647,
+                  "name": "Florence Pugh",
+                  "probability": 0.71641791,
+                  "rendered_percent": 72,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T21:56:09.305972+00:00"
+                },
+                {
+                  "id": 263824649,
+                  "name": "Carey Mulligan",
+                  "probability": 0.07462687,
+                  "rendered_percent": 7,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T21:56:09.305972+00:00"
+                },
+                {
+                  "id": 263824648,
+                  "name": "Sally Field",
+                  "probability": 0.06467662,
+                  "rendered_percent": 6,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T21:56:09.305972+00:00"
+                },
+                {
+                  "id": 263824655,
+                  "name": "Linda Cardellini",
+                  "probability": 0.039801,
+                  "rendered_percent": 4,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T21:56:09.305972+00:00"
+                },
+                {
+                  "id": 263824651,
+                  "name": "Ella Beatty",
+                  "probability": 0.03482587,
+                  "rendered_percent": 4,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T21:56:09.305972+00:00"
+                },
+                {
+                  "id": 263824650,
+                  "name": "Sarah Pidgeon",
+                  "probability": 0.02985075,
+                  "rendered_percent": 3,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T21:56:09.305972+00:00"
+                },
+                {
+                  "id": 263824656,
+                  "name": "Odessa A’zion",
+                  "probability": 0.0199005,
+                  "rendered_percent": 2,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T21:56:09.305972+00:00"
+                },
+                {
+                  "id": 263824652,
+                  "name": "Tie",
+                  "probability": 0.0199005,
+                  "rendered_percent": 2,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T21:56:09.305972+00:00"
+                },
+                {
+                  "id": 263824657,
+                  "name": "Rebecca Hall",
+                  "probability": 0.00995025,
+                  "rendered_percent": 0,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T21:56:09.305972+00:00"
+                },
+                {
+                  "id": 263824653,
+                  "name": "Amy Adams",
+                  "probability": 0.00995025,
+                  "rendered_percent": 0,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T21:56:09.305972+00:00"
+                },
+                {
+                  "id": 263824654,
+                  "name": "Tessa Thompson",
+                  "probability": 0.00995025,
+                  "rendered_percent": 0,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T21:56:09.305972+00:00"
+                }
+              ],
+              "newest_outcome_updated_at": "2026-11-22T21:56:09.305972+00:00",
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "263824647": 72,
+                  "263824649": 7,
+                  "263824648": 6,
+                  "263824655": 4,
+                  "263824651": 4,
+                  "263824650": 3,
+                  "263824656": 2,
+                  "263824652": 2,
+                  "263824657": 0,
+                  "263824653": 0,
+                  "263824654": 0
+                },
+                "by_outcome_key": {
+                  "florence pugh": 72,
+                  "carey mulligan": 7,
+                  "sally field": 6,
+                  "linda cardellini": 4,
+                  "ella beatty": 4,
+                  "sarah pidgeon": 3,
+                  "odessa a zion": 2,
+                  "tie": 2,
+                  "rebecca hall": 0,
+                  "amy adams": 0,
+                  "tessa thompson": 0
+                }
+              },
+              "content_kind": "futures"
+            },
+            "event_id": null
+          },
+          {
+            "type": "market",
+            "id": 70160294,
+            "destination": {
+              "kind": "market",
+              "id": 70160294,
+              "web": "/futures/70160294",
+              "api": "/api/futures/70160294"
+            },
+            "card": {
+              "id": 70160294,
+              "name": "Golden Globe Winner: Best Supporting Actress on TV",
+              "status": "open",
+              "source": "kalshi",
+              "mutually_exclusive": true,
+              "market_type": "field",
+              "volume": 53887.0,
+              "image_url": null,
+              "llm_sport_category": "entertainment",
+              "resolution_date": "2027-01-11T04:59:00+00:00",
+              "event_date": null,
+              "top_outcomes": [
+                {
+                  "id": 263824625,
+                  "name": "Kate O’Flynn",
+                  "probability": 0.71,
+                  "rendered_percent": 71,
+                  "opening_probability": 0.68,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:01:51.044610+00:00"
+                },
+                {
+                  "id": 263824626,
+                  "name": "Linda Cardellini",
+                  "probability": 0.12,
+                  "rendered_percent": 12,
+                  "opening_probability": 0.13,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:01:51.044610+00:00"
+                },
+                {
+                  "id": 263824628,
+                  "name": "Katherine LaNasa",
+                  "probability": 0.025,
+                  "rendered_percent": 3,
+                  "opening_probability": 0.025,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:01:51.044610+00:00"
+                },
+                {
+                  "id": 263824629,
+                  "name": "Hannah Einbinder",
+                  "probability": 0.02,
+                  "rendered_percent": 2,
+                  "opening_probability": 0.02,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:01:51.044610+00:00"
+                },
+                {
+                  "id": 263824630,
+                  "name": "Michelle Pfeiffer",
+                  "probability": 0.02,
+                  "rendered_percent": 2,
+                  "opening_probability": 0.02,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:01:51.044610+00:00"
+                },
+                {
+                  "id": 263824631,
+                  "name": "Youn Yuh-jung",
+                  "probability": 0.02,
+                  "rendered_percent": 2,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:01:51.044610+00:00"
+                },
+                {
+                  "id": 263824633,
+                  "name": "Joy Sunday",
+                  "probability": 0.01,
+                  "rendered_percent": 1,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:01:51.044610+00:00"
+                },
+                {
+                  "id": 263824634,
+                  "name": "Constance Zimmer",
+                  "probability": 0.009999999999999998,
+                  "rendered_percent": 0,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:01:51.044610+00:00"
+                },
+                {
+                  "id": 263824635,
+                  "name": "Tie",
+                  "probability": 0.01,
+                  "rendered_percent": 1,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:01:51.044610+00:00"
+                },
+                {
+                  "id": 263824632,
+                  "name": "Jessica Williams",
+                  "probability": 0.009999999999999998,
+                  "rendered_percent": 0,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:01:51.044610+00:00"
+                },
+                {
+                  "id": 263824627,
+                  "name": "Allison Janney",
+                  "probability": 0.01,
+                  "rendered_percent": 1,
+                  "opening_probability": 0.035,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:01:51.044610+00:00"
+                }
+              ],
+              "newest_outcome_updated_at": "2026-11-22T20:01:51.044610+00:00",
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "263824625": 71,
+                  "263824626": 12,
+                  "263824628": 3,
+                  "263824629": 2,
+                  "263824630": 2,
+                  "263824631": 2,
+                  "263824633": 1,
+                  "263824634": 0,
+                  "263824635": 1,
+                  "263824632": 0,
+                  "263824627": 1
+                },
+                "by_outcome_key": {
+                  "kate o flynn": 71,
+                  "linda cardellini": 12,
+                  "katherine lanasa": 3,
+                  "hannah einbinder": 2,
+                  "michelle pfeiffer": 2,
+                  "youn yuh jung": 2,
+                  "joy sunday": 1,
+                  "constance zimmer": 0,
+                  "tie": 1,
+                  "jessica williams": 0,
+                  "allison janney": 1
+                }
+              },
+              "content_kind": "futures"
+            },
+            "event_id": null
+          },
+          {
+            "type": "market",
+            "id": 70160314,
+            "destination": {
+              "kind": "market",
+              "id": 70160314,
+              "web": "/futures/70160314",
+              "api": "/api/futures/70160314"
+            },
+            "card": {
+              "id": 70160314,
+              "name": "Golden Globe Winner: Best Actor in a Motion Picture – Musical or Comedy",
+              "status": "open",
+              "source": "kalshi",
+              "mutually_exclusive": true,
+              "market_type": "field",
+              "volume": 61713.0,
+              "image_url": null,
+              "llm_sport_category": "entertainment",
+              "resolution_date": "2027-01-11T04:59:00+00:00",
+              "event_date": null,
+              "top_outcomes": [
+                {
+                  "id": 263824866,
+                  "name": "John Malkovich",
+                  "probability": 0.65777778,
+                  "rendered_percent": 66,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:54:59.675834+00:00"
+                },
+                {
+                  "id": 263824869,
+                  "name": "Anthony Ippolito",
+                  "probability": 0.14666667,
+                  "rendered_percent": 15,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:54:59.675834+00:00"
+                },
+                {
+                  "id": 263824867,
+                  "name": "Tom Cruise",
+                  "probability": 0.06222222,
+                  "rendered_percent": 6,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:54:59.675834+00:00"
+                },
+                {
+                  "id": 263824868,
+                  "name": "Jordan Firstman",
+                  "probability": 0.04444444,
+                  "rendered_percent": 4,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:54:59.675834+00:00"
+                },
+                {
+                  "id": 263824870,
+                  "name": "Brad Pitt",
+                  "probability": 0.03555556,
+                  "rendered_percent": 3,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:54:59.675834+00:00"
+                },
+                {
+                  "id": 263824871,
+                  "name": "Seth Rogen",
+                  "probability": 0.01777778,
+                  "rendered_percent": 2,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:54:59.675834+00:00"
+                },
+                {
+                  "id": 263824872,
+                  "name": "Jaafar Jackson",
+                  "probability": 0.01777778,
+                  "rendered_percent": 2,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:54:59.675834+00:00"
+                },
+                {
+                  "id": 263824873,
+                  "name": "Tie",
+                  "probability": 0.01777778,
+                  "rendered_percent": 2,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:54:59.675834+00:00"
+                },
+                {
+                  "id": 263824875,
+                  "name": "Robert Pattinson",
+                  "probability": 0.00888889,
+                  "rendered_percent": 0,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:54:59.675834+00:00"
+                },
+                {
+                  "id": 263824877,
+                  "name": "Pedro Pascal",
+                  "probability": 0.00888889,
+                  "rendered_percent": 0,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:54:59.675834+00:00"
+                },
+                {
+                  "id": 263824878,
+                  "name": "Dominic Sessa",
+                  "probability": 0.00888889,
+                  "rendered_percent": 0,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:54:59.675834+00:00"
+                },
+                {
+                  "id": 263824876,
+                  "name": "Harry Melling",
+                  "probability": 0.00888889,
+                  "rendered_percent": 0,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:54:59.675834+00:00"
+                },
+                {
+                  "id": 263824874,
+                  "name": "Ryan Gosling",
+                  "probability": 0.00888889,
+                  "rendered_percent": 0,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:54:59.675834+00:00"
+                }
+              ],
+              "newest_outcome_updated_at": "2026-11-22T20:54:59.675834+00:00",
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "263824866": 66,
+                  "263824869": 15,
+                  "263824867": 6,
+                  "263824868": 4,
+                  "263824870": 3,
+                  "263824871": 2,
+                  "263824872": 2,
+                  "263824873": 2,
+                  "263824875": 0,
+                  "263824877": 0,
+                  "263824878": 0,
+                  "263824876": 0,
+                  "263824874": 0
+                },
+                "by_outcome_key": {
+                  "john malkovich": 66,
+                  "anthony ippolito": 15,
+                  "tom cruise": 6,
+                  "jordan firstman": 4,
+                  "brad pitt": 3,
+                  "seth rogen": 2,
+                  "jaafar jackson": 2,
+                  "tie": 2,
+                  "robert pattinson": 0,
+                  "pedro pascal": 0,
+                  "dominic sessa": 0,
+                  "harry melling": 0,
+                  "ryan gosling": 0
+                }
+              },
+              "content_kind": "futures"
+            },
+            "event_id": null
+          },
+          {
+            "type": "market",
+            "id": 70160308,
+            "destination": {
+              "kind": "market",
+              "id": 70160308,
+              "web": "/futures/70160308",
+              "api": "/api/futures/70160308"
+            },
+            "card": {
+              "id": 70160308,
+              "name": "Golden Globe Winner: Best Motion Picture - Drama",
+              "status": "open",
+              "source": "kalshi",
+              "mutually_exclusive": true,
+              "market_type": "field",
+              "volume": 38905.0,
+              "image_url": null,
+              "llm_sport_category": "entertainment",
+              "resolution_date": "2027-01-11T04:59:00+00:00",
+              "event_date": null,
+              "top_outcomes": [
+                {
+                  "id": 263824787,
+                  "name": "The Odyssey",
+                  "probability": 0.52314815,
+                  "rendered_percent": 52,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:55:38.798794+00:00"
+                },
+                {
+                  "id": 263824788,
+                  "name": "La Bola Negra",
+                  "probability": 0.31944444,
+                  "rendered_percent": 32,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T22:15:54.025220+00:00"
+                },
+                {
+                  "id": 263824792,
+                  "name": "Elsinore",
+                  "probability": 0.05092593,
+                  "rendered_percent": 5,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T22:52:19.587294+00:00"
+                },
+                {
+                  "id": 263824793,
+                  "name": "I Play Rocky",
+                  "probability": 0.0462963,
+                  "rendered_percent": 5,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:55:38.798794+00:00"
+                },
+                {
+                  "id": 263824789,
+                  "name": "Wildwood",
+                  "probability": 0.02314815,
+                  "rendered_percent": 2,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:55:38.798794+00:00"
+                },
+                {
+                  "id": 263824791,
+                  "name": "All of a Sudden",
+                  "probability": 0.01851852,
+                  "rendered_percent": 2,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:55:38.798794+00:00"
+                },
+                {
+                  "id": 263824790,
+                  "name": "Dune: Part Three",
+                  "probability": 0.01851852,
+                  "rendered_percent": 2,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:55:38.798794+00:00"
+                },
+                {
+                  "id": 263824794,
+                  "name": "Fjord",
+                  "probability": 0.00925926,
+                  "rendered_percent": 0,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:55:38.798794+00:00"
+                },
+                {
+                  "id": 263824795,
+                  "name": "Michael",
+                  "probability": 0.00925926,
+                  "rendered_percent": 0,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:55:38.798794+00:00"
+                },
+                {
+                  "id": 263824796,
+                  "name": "Possible Love",
+                  "probability": 0.00925926,
+                  "rendered_percent": 0,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:55:38.798794+00:00"
+                },
+                {
+                  "id": 263824797,
+                  "name": "Woman Unknown",
+                  "probability": 0.00925926,
+                  "rendered_percent": 0,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:55:38.798794+00:00"
+                },
+                {
+                  "id": 263824798,
+                  "name": "Fatherland",
+                  "probability": 0.00925926,
+                  "rendered_percent": 0,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:55:38.798794+00:00"
+                },
+                {
+                  "id": 263824799,
+                  "name": "Obsession",
+                  "probability": 0.00925926,
+                  "rendered_percent": 0,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:55:38.798794+00:00"
+                },
+                {
+                  "id": 263824800,
+                  "name": "Tie",
+                  "probability": 0.00925926,
+                  "rendered_percent": 0,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:55:38.798794+00:00"
+                }
+              ],
+              "newest_outcome_updated_at": "2026-11-22T22:52:19.587294+00:00",
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "263824787": 52,
+                  "263824788": 32,
+                  "263824792": 5,
+                  "263824793": 5,
+                  "263824789": 2,
+                  "263824791": 2,
+                  "263824790": 2,
+                  "263824794": 0,
+                  "263824795": 0,
+                  "263824796": 0,
+                  "263824797": 0,
+                  "263824798": 0,
+                  "263824799": 0,
+                  "263824800": 0
+                },
+                "by_outcome_key": {
+                  "the odyssey": 52,
+                  "la bola negra": 32,
+                  "elsinore": 5,
+                  "i play rocky": 5,
+                  "wildwood": 2,
+                  "all of a sudden": 2,
+                  "dune part three": 2,
+                  "fjord": 0,
+                  "michael": 0,
+                  "possible love": 0,
+                  "woman unknown": 0,
+                  "fatherland": 0,
+                  "obsession": 0,
+                  "tie": 0
+                }
+              },
+              "content_kind": "futures"
+            },
+            "event_id": null
+          },
+          {
+            "type": "market",
+            "id": 70160312,
+            "destination": {
+              "kind": "market",
+              "id": 70160312,
+              "web": "/futures/70160312",
+              "api": "/api/futures/70160312"
+            },
+            "card": {
+              "id": 70160312,
+              "name": "Golden Globe Winner: Best Motion Picture - Musical or Comedy",
+              "status": "open",
+              "source": "kalshi",
+              "mutually_exclusive": true,
+              "market_type": "field",
+              "volume": 71105.0,
+              "image_url": null,
+              "llm_sport_category": "entertainment",
+              "resolution_date": "2027-01-11T04:59:00+00:00",
+              "event_date": null,
+              "top_outcomes": [
+                {
+                  "id": 263824838,
+                  "name": "Wild Horse Nine",
+                  "probability": 0.52244898,
+                  "rendered_percent": 52,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T22:50:39.878568+00:00"
+                },
+                {
+                  "id": 263824839,
+                  "name": "The Debut",
+                  "probability": 0.17142857,
+                  "rendered_percent": 17,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:01:16.080643+00:00"
+                },
+                {
+                  "id": 263824841,
+                  "name": "The Invite",
+                  "probability": 0.07346939,
+                  "rendered_percent": 8,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:01:16.080643+00:00"
+                },
+                {
+                  "id": 263824842,
+                  "name": "Project Hail Mary",
+                  "probability": 0.04897959,
+                  "rendered_percent": 5,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:01:16.080643+00:00"
+                },
+                {
+                  "id": 263824844,
+                  "name": "Club Kid",
+                  "probability": 0.03265306,
+                  "rendered_percent": 3,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:01:16.080643+00:00"
+                },
+                {
+                  "id": 263824840,
+                  "name": "Tender Loving Care",
+                  "probability": 0.03265306,
+                  "rendered_percent": 3,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:01:16.080643+00:00"
+                },
+                {
+                  "id": 263824843,
+                  "name": "The Further Mis-Adventures of Cliff Booth",
+                  "probability": 0.03265306,
+                  "rendered_percent": 3,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:01:16.080643+00:00"
+                },
+                {
+                  "id": 263824845,
+                  "name": "Obsession",
+                  "probability": 0.03265306,
+                  "rendered_percent": 3,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:01:16.080643+00:00"
+                },
+                {
+                  "id": 263824846,
+                  "name": "The Drama",
+                  "probability": 0.02040816,
+                  "rendered_percent": 2,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:01:16.080643+00:00"
+                },
+                {
+                  "id": 263824848,
+                  "name": "Tie",
+                  "probability": 0.01632653,
+                  "rendered_percent": 2,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:01:16.080643+00:00"
+                },
+                {
+                  "id": 263824847,
+                  "name": "I Play Rocky",
+                  "probability": 0.01632653,
+                  "rendered_percent": 2,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:01:16.080643+00:00"
+                },
+                {
+                  "id": 263824849,
+                  "name": "Digger",
+                  "probability": 0.00816327,
+                  "rendered_percent": 0,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:01:16.080643+00:00"
+                },
+                {
+                  "id": 263824850,
+                  "name": "Primetime",
+                  "probability": 0.00816327,
+                  "rendered_percent": 0,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:01:16.080643+00:00"
+                },
+                {
+                  "id": 263824851,
+                  "name": "The Devil Wears Prada 2",
+                  "probability": 0.00816327,
+                  "rendered_percent": 0,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:01:16.080643+00:00"
+                },
+                {
+                  "id": 263824852,
+                  "name": "Michael",
+                  "probability": 0.00816327,
+                  "rendered_percent": 0,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T20:01:16.080643+00:00"
+                }
+              ],
+              "newest_outcome_updated_at": "2026-11-22T22:50:39.878568+00:00",
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "263824838": 52,
+                  "263824839": 17,
+                  "263824841": 8,
+                  "263824842": 5,
+                  "263824844": 3,
+                  "263824840": 3,
+                  "263824843": 3,
+                  "263824845": 3,
+                  "263824846": 2,
+                  "263824848": 2,
+                  "263824847": 2,
+                  "263824849": 0,
+                  "263824850": 0,
+                  "263824851": 0,
+                  "263824852": 0
+                },
+                "by_outcome_key": {
+                  "wild horse nine": 52,
+                  "the debut": 17,
+                  "the invite": 8,
+                  "project hail mary": 5,
+                  "club kid": 3,
+                  "tender loving care": 3,
+                  "the further mis adventures of cliff booth": 3,
+                  "obsession": 3,
+                  "the drama": 2,
+                  "tie": 2,
+                  "i play rocky": 2,
+                  "digger": 0,
+                  "primetime": 0,
+                  "the devil wears prada 2": 0,
+                  "michael": 0
+                }
+              },
+              "content_kind": "futures"
+            },
+            "event_id": null
+          },
+          {
+            "type": "market",
+            "id": 70160311,
+            "destination": {
+              "kind": "market",
+              "id": 70160311,
+              "web": "/futures/70160311",
+              "api": "/api/futures/70160311"
+            },
+            "card": {
+              "id": 70160311,
+              "name": "Golden Globe Winner: Best Actor in a Motion Picture – Drama",
+              "status": "open",
+              "source": "kalshi",
+              "mutually_exclusive": true,
+              "market_type": "field",
+              "volume": 26309.0,
+              "image_url": null,
+              "llm_sport_category": "entertainment",
+              "resolution_date": "2027-01-11T04:59:00+00:00",
+              "event_date": null,
+              "top_outcomes": [
+                {
+                  "id": 263824823,
+                  "name": "Andrew Scott",
+                  "probability": 0.48679245,
+                  "rendered_percent": 49,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T22:55:20.927462+00:00"
+                },
+                {
+                  "id": 263824824,
+                  "name": "Matt Damon",
+                  "probability": 0.17358491,
+                  "rendered_percent": 17,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T22:55:20.927462+00:00"
+                },
+                {
+                  "id": 263824825,
+                  "name": "Guitarricadelafuente",
+                  "probability": 0.03773585,
+                  "rendered_percent": 4,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T22:55:20.927462+00:00"
+                },
+                {
+                  "id": 263824828,
+                  "name": "Jaafar Jackson",
+                  "probability": 0.03773585,
+                  "rendered_percent": 4,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T22:55:20.927462+00:00"
+                },
+                {
+                  "id": 263824826,
+                  "name": "Robert Pattinson",
+                  "probability": 0.03773585,
+                  "rendered_percent": 4,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T22:55:20.927462+00:00"
+                },
+                {
+                  "id": 263824829,
+                  "name": "Robert Aramayo",
+                  "probability": 0.03018868,
+                  "rendered_percent": 3,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T22:55:20.927462+00:00"
+                },
+                {
+                  "id": 263824827,
+                  "name": "Sebastian Stan",
+                  "probability": 0.03018868,
+                  "rendered_percent": 3,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T22:55:20.927462+00:00"
+                },
+                {
+                  "id": 263824830,
+                  "name": "Pedro Pascal",
+                  "probability": 0.03018868,
+                  "rendered_percent": 3,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T22:55:20.927462+00:00"
+                },
+                {
+                  "id": 263824834,
+                  "name": "John Turturro",
+                  "probability": 0.02264151,
+                  "rendered_percent": 2,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T22:55:20.927462+00:00"
+                },
+                {
+                  "id": 263824831,
+                  "name": "Timothée Chalamet",
+                  "probability": 0.02264151,
+                  "rendered_percent": 2,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T22:55:20.927462+00:00"
+                },
+                {
+                  "id": 263824832,
+                  "name": "Sul Kyung-gu",
+                  "probability": 0.02264151,
+                  "rendered_percent": 2,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T22:55:20.927462+00:00"
+                },
+                {
+                  "id": 263824833,
+                  "name": "Josh O’Connor",
+                  "probability": 0.02264151,
+                  "rendered_percent": 2,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T22:55:20.927462+00:00"
+                },
+                {
+                  "id": 263824835,
+                  "name": "Emmanuel Macchia",
+                  "probability": 0.01509434,
+                  "rendered_percent": 2,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T22:55:20.927462+00:00"
+                },
+                {
+                  "id": 263824836,
+                  "name": "Ryan Gosling",
+                  "probability": 0.01509434,
+                  "rendered_percent": 2,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T22:55:20.927462+00:00"
+                },
+                {
+                  "id": 263824837,
+                  "name": "Tie",
+                  "probability": 0.01509434,
+                  "rendered_percent": 1,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T22:55:20.927462+00:00"
+                }
+              ],
+              "newest_outcome_updated_at": "2026-11-22T22:55:20.927462+00:00",
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "263824823": 49,
+                  "263824824": 17,
+                  "263824825": 4,
+                  "263824828": 4,
+                  "263824826": 4,
+                  "263824829": 3,
+                  "263824827": 3,
+                  "263824830": 3,
+                  "263824834": 2,
+                  "263824831": 2,
+                  "263824832": 2,
+                  "263824833": 2,
+                  "263824835": 2,
+                  "263824836": 2,
+                  "263824837": 1
+                },
+                "by_outcome_key": {
+                  "andrew scott": 49,
+                  "matt damon": 17,
+                  "guitarricadelafuente": 4,
+                  "jaafar jackson": 4,
+                  "robert pattinson": 4,
+                  "robert aramayo": 3,
+                  "sebastian stan": 3,
+                  "pedro pascal": 3,
+                  "john turturro": 2,
+                  "timoth e chalamet": 2,
+                  "timothee chalamet": 2,
+                  "sul kyung gu": 2,
+                  "josh o connor": 2,
+                  "emmanuel macchia": 2,
+                  "ryan gosling": 2,
+                  "tie": 1
+                }
+              },
+              "content_kind": "futures"
+            },
+            "event_id": null
+          },
+          {
+            "type": "market",
+            "id": 70160298,
+            "destination": {
+              "kind": "market",
+              "id": 70160298,
+              "web": "/futures/70160298",
+              "api": "/api/futures/70160298"
+            },
+            "card": {
+              "id": 70160298,
+              "name": "Golden Globe Winner: Best Television Series - Limited Series",
+              "status": "open",
+              "source": "kalshi",
+              "mutually_exclusive": true,
+              "market_type": "field",
+              "volume": 18335.0,
+              "image_url": null,
+              "llm_sport_category": "entertainment",
+              "resolution_date": "2027-01-11T04:59:00+00:00",
+              "event_date": null,
+              "top_outcomes": [
+                {
+                  "id": 263824669,
+                  "name": "DTF St. Louis",
+                  "probability": 0.44298246,
+                  "rendered_percent": 44,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T23:55:26.258124+00:00"
+                },
+                {
+                  "id": 263824670,
+                  "name": "East of Eden",
+                  "probability": 0.39912281,
+                  "rendered_percent": 40,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T23:55:26.258124+00:00"
+                },
+                {
+                  "id": 263824673,
+                  "name": "Beef",
+                  "probability": 0.02192982,
+                  "rendered_percent": 2,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T23:55:26.258124+00:00"
+                },
+                {
+                  "id": 263824677,
+                  "name": "Agatha Christie’s Seven Dials",
+                  "probability": 0.01754386,
+                  "rendered_percent": 2,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T23:55:26.258124+00:00"
+                },
+                {
+                  "id": 263824675,
+                  "name": "Half Man",
+                  "probability": 0.01754386,
+                  "rendered_percent": 2,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T23:55:26.258124+00:00"
+                },
+                {
+                  "id": 263824676,
+                  "name": "Carrie",
+                  "probability": 0.01754386,
+                  "rendered_percent": 2,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T23:55:26.258124+00:00"
+                },
+                {
+                  "id": 263824672,
+                  "name": "Love Story: John F. Kennedy Jr. & Carolyn Bessette",
+                  "probability": 0.01754386,
+                  "rendered_percent": 2,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T23:55:26.258124+00:00"
+                },
+                {
+                  "id": 263824671,
+                  "name": "Cape Fear",
+                  "probability": 0.01754386,
+                  "rendered_percent": 2,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T23:55:26.258124+00:00"
+                },
+                {
+                  "id": 263824678,
+                  "name": "Monster: The Lizzie Borden Story",
+                  "probability": 0.01754386,
+                  "rendered_percent": 2,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T23:55:26.258124+00:00"
+                },
+                {
+                  "id": 263824679,
+                  "name": "Tie",
+                  "probability": 0.01754386,
+                  "rendered_percent": 1,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T23:55:26.258124+00:00"
+                },
+                {
+                  "id": 263824674,
+                  "name": "Lord of the Flies",
+                  "probability": 0.01315789,
+                  "rendered_percent": 1,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T23:55:26.258124+00:00"
+                }
+              ],
+              "newest_outcome_updated_at": "2026-11-22T23:55:26.258124+00:00",
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "263824669": 44,
+                  "263824670": 40,
+                  "263824673": 2,
+                  "263824677": 2,
+                  "263824675": 2,
+                  "263824676": 2,
+                  "263824672": 2,
+                  "263824671": 2,
+                  "263824678": 2,
+                  "263824679": 1,
+                  "263824674": 1
+                },
+                "by_outcome_key": {
+                  "dtf st louis": 44,
+                  "east of eden": 40,
+                  "beef": 2,
+                  "agatha christie s seven dials": 2,
+                  "half man": 2,
+                  "carrie": 2,
+                  "love story john f kennedy jr carolyn bessette": 2,
+                  "cape fear": 2,
+                  "monster the lizzie borden story": 2,
+                  "tie": 1,
+                  "lord of the flies": 1
+                }
+              },
+              "content_kind": "futures"
+            },
+            "event_id": null
+          },
+          {
+            "type": "market",
+            "id": 70160295,
+            "destination": {
+              "kind": "market",
+              "id": 70160295,
+              "web": "/futures/70160295",
+              "api": "/api/futures/70160295"
+            },
+            "card": {
+              "id": 70160295,
+              "name": "Golden Globe Winner: Best Supporting Actor on TV",
+              "status": "open",
+              "source": "kalshi",
+              "mutually_exclusive": true,
+              "market_type": "field",
+              "volume": 18800.0,
+              "image_url": null,
+              "llm_sport_category": "entertainment",
+              "resolution_date": "2027-01-11T04:59:00+00:00",
+              "event_date": null,
+              "top_outcomes": [
+                {
+                  "id": 263824636,
+                  "name": "David Harbour",
+                  "probability": 0.42487047,
+                  "rendered_percent": 42,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T23:55:22.298543+00:00"
+                },
+                {
+                  "id": 263824637,
+                  "name": "Stephen Root",
+                  "probability": 0.26943005,
+                  "rendered_percent": 27,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T23:55:22.298543+00:00"
+                },
+                {
+                  "id": 263824638,
+                  "name": "Charles Melton",
+                  "probability": 0.05699482,
+                  "rendered_percent": 6,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T23:55:22.298543+00:00"
+                },
+                {
+                  "id": 263824639,
+                  "name": "Richard Gadd",
+                  "probability": 0.04145078,
+                  "rendered_percent": 4,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T23:55:22.298543+00:00"
+                },
+                {
+                  "id": 263824643,
+                  "name": "Patrick Ball",
+                  "probability": 0.04145078,
+                  "rendered_percent": 4,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T23:55:22.298543+00:00"
+                },
+                {
+                  "id": 263824642,
+                  "name": "Shawn Hatosy",
+                  "probability": 0.03626943,
+                  "rendered_percent": 4,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T23:55:22.298543+00:00"
+                },
+                {
+                  "id": 263824641,
+                  "name": "Nick Offerman",
+                  "probability": 0.03108808,
+                  "rendered_percent": 3,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T23:55:22.298543+00:00"
+                },
+                {
+                  "id": 263824645,
+                  "name": "Colman Domingo",
+                  "probability": 0.02590674,
+                  "rendered_percent": 3,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T23:55:22.298543+00:00"
+                },
+                {
+                  "id": 263824640,
+                  "name": "Jason Bateman",
+                  "probability": 0.02590674,
+                  "rendered_percent": 3,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T23:55:22.298543+00:00"
+                },
+                {
+                  "id": 263824644,
+                  "name": "Paul W. Downs",
+                  "probability": 0.02590674,
+                  "rendered_percent": 2,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T23:55:22.298543+00:00"
+                },
+                {
+                  "id": 263824646,
+                  "name": "Tie",
+                  "probability": 0.02072539,
+                  "rendered_percent": 2,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T23:55:22.298543+00:00"
+                }
+              ],
+              "newest_outcome_updated_at": "2026-11-22T23:55:22.298543+00:00",
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "263824636": 42,
+                  "263824637": 27,
+                  "263824638": 6,
+                  "263824639": 4,
+                  "263824643": 4,
+                  "263824642": 4,
+                  "263824641": 3,
+                  "263824645": 3,
+                  "263824640": 3,
+                  "263824644": 2,
+                  "263824646": 2
+                },
+                "by_outcome_key": {
+                  "david harbour": 42,
+                  "stephen root": 27,
+                  "charles melton": 6,
+                  "richard gadd": 4,
+                  "patrick ball": 4,
+                  "shawn hatosy": 4,
+                  "nick offerman": 3,
+                  "colman domingo": 3,
+                  "jason bateman": 3,
+                  "paul w downs": 2,
+                  "tie": 2
+                }
+              },
+              "content_kind": "futures"
+            },
+            "event_id": null
+          },
+          {
+            "type": "market",
+            "id": 70239565,
+            "destination": {
+              "kind": "market",
+              "id": 70239565,
+              "web": "/futures/70239565",
+              "api": "/api/futures/70239565"
+            },
+            "card": {
+              "id": 70239565,
+              "name": "Golden Globes 2027: Best Television Series – Drama Winner",
+              "status": "open",
+              "source": "polymarket",
+              "mutually_exclusive": true,
+              "market_type": "field",
+              "volume": 20680.0,
+              "image_url": null,
+              "llm_sport_category": "entertainment",
+              "resolution_date": "2027-01-11T04:59:00+00:00",
+              "event_date": null,
+              "top_outcomes": [
+                {
+                  "id": 264264601,
+                  "name": "The Pitt",
+                  "probability": 0.39748954,
+                  "rendered_percent": 40,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T22:08:32.897945+00:00"
+                },
+                {
+                  "id": 264264602,
+                  "name": "The Diplomat",
+                  "probability": 0.25523013,
+                  "rendered_percent": 26,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T17:59:43.401982+00:00"
+                },
+                {
+                  "id": 264264604,
+                  "name": "Slow Horses",
+                  "probability": 0.20502092,
+                  "rendered_percent": 21,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T18:57:10.387354+00:00"
+                },
+                {
+                  "id": 264264607,
+                  "name": "A Knight of the Seven Kingdoms",
+                  "probability": 0.08158996,
+                  "rendered_percent": 8,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T22:16:36.977236+00:00"
+                },
+                {
+                  "id": 264264606,
+                  "name": "Paradise",
+                  "probability": 0.04728033,
+                  "rendered_percent": 5,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T22:31:45.725852+00:00"
+                },
+                {
+                  "id": 264264609,
+                  "name": "Euphoria",
+                  "probability": 0.00460251,
+                  "rendered_percent": 0,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T15:51:45.133271+00:00"
+                },
+                {
+                  "id": 264264603,
+                  "name": "House of the Dragon",
+                  "probability": 0.0041841,
+                  "rendered_percent": 0,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T15:51:45.133271+00:00"
+                },
+                {
+                  "id": 264264605,
+                  "name": "The Gilded Age",
+                  "probability": 0.0041841,
+                  "rendered_percent": 0,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T15:51:45.133271+00:00"
+                },
+                {
+                  "id": 264264608,
+                  "name": "Your Friends & Neighbors",
+                  "probability": 0.00041841,
+                  "rendered_percent": 0,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T15:51:45.133271+00:00"
+                }
+              ],
+              "newest_outcome_updated_at": "2026-11-22T22:31:45.725852+00:00",
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "264264601": 40,
+                  "264264602": 26,
+                  "264264604": 21,
+                  "264264607": 8,
+                  "264264606": 5,
+                  "264264609": 0,
+                  "264264603": 0,
+                  "264264605": 0,
+                  "264264608": 0
+                },
+                "by_outcome_key": {
+                  "the pitt": 40,
+                  "the diplomat": 26,
+                  "slow horses": 21,
+                  "a knight of the seven kingdoms": 8,
+                  "paradise": 5,
+                  "euphoria": 0,
+                  "house of the dragon": 0,
+                  "the gilded age": 0,
+                  "your friends neighbors": 0
+                }
+              },
+              "content_kind": "futures"
+            },
+            "event_id": null
+          }
+        ],
+        "note": "Leading film, drama, comedy, and television contenders for the 2027 Golden Globes.",
+        "visual_block": {
+          "form_id": "benchmark_strip",
+          "initial_visible_limit": 3,
+          "items": [
+            {
+              "market_id": 70160296,
+              "title": "Best Actress (Limited Series): Florence Pugh",
+              "headline_phrase": "Florence Pugh winning Best Actress (Limited Series)",
+              "headline_with_phrase": "Florence Pugh winning Best Actress (Limited Series)",
+              "raw_title": "Golden Globe Winner: Best Actress in a Limited Series",
+              "is_date_timing_row": false,
+              "href": "/futures/70160296",
+              "source": "kalshi",
+              "lead_prob": 0.71641791,
+              "leader_outcome_id": 263824647,
+              "scale_ordered": false,
+              "content_kind": "futures",
+              "closeness_to_50": 0.21641791,
+              "outcomes": [
+                {
+                  "outcome_id": 263824647,
+                  "name": "Florence Pugh",
+                  "probability": 0.71641791,
+                  "rendered_percent": 72,
+                  "opening_probability": null,
+                  "art": {
+                    "url": "https://image.tmdb.org/t/p/w185/qqDsryavx9rwSMhDAxW6OC7oNQg.jpg",
+                    "kind": "person",
+                    "detail": "Florence Pugh TMDB portrait",
+                    "accent_color": "#059669",
+                    "initials": "FP"
+                  }
+                }
+              ],
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "263824647": 72,
+                  "263824649": 7,
+                  "263824648": 6,
+                  "263824655": 4,
+                  "263824651": 4,
+                  "263824650": 3,
+                  "263824656": 2,
+                  "263824652": 2,
+                  "263824657": 0,
+                  "263824653": 0,
+                  "263824654": 0
+                },
+                "by_outcome_key": {
+                  "florence pugh": 72,
+                  "carey mulligan": 7,
+                  "sally field": 6,
+                  "linda cardellini": 4,
+                  "ella beatty": 4,
+                  "sarah pidgeon": 3,
+                  "odessa a zion": 2,
+                  "tie": 2,
+                  "rebecca hall": 0,
+                  "amy adams": 0,
+                  "tessa thompson": 0
+                }
+              }
+            },
+            {
+              "market_id": 70160294,
+              "title": "Best Supporting Actress (TV): Kate O’Flynn",
+              "headline_phrase": "Kate O’Flynn winning Best Supporting Actress on TV",
+              "headline_with_phrase": "Kate O’Flynn winning Best Supporting Actress on TV",
+              "raw_title": "Golden Globe Winner: Best Supporting Actress on TV",
+              "is_date_timing_row": false,
+              "href": "/futures/70160294",
+              "source": "kalshi",
+              "lead_prob": 0.71,
+              "leader_outcome_id": 263824625,
+              "scale_ordered": false,
+              "content_kind": "futures",
+              "closeness_to_50": 0.20999999999999996,
+              "outcomes": [
+                {
+                  "outcome_id": 263824625,
+                  "name": "Kate O’Flynn",
+                  "probability": 0.71,
+                  "rendered_percent": 71,
+                  "opening_probability": 0.68,
+                  "art": {
+                    "url": "https://image.tmdb.org/t/p/w185/xgQteVK9coyTuXc40WJIyx3TxfU.jpg",
+                    "kind": "person",
+                    "detail": "Kate O'Flynn TMDB portrait",
+                    "accent_color": "#2563EB",
+                    "initials": "KO",
+                    "canonical_name": "Kate O’Flynn"
+                  }
+                }
+              ],
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "263824625": 71,
+                  "263824626": 12,
+                  "263824628": 3,
+                  "263824629": 2,
+                  "263824630": 2,
+                  "263824631": 2,
+                  "263824633": 1,
+                  "263824634": 0,
+                  "263824635": 1,
+                  "263824632": 0,
+                  "263824627": 1
+                },
+                "by_outcome_key": {
+                  "kate o flynn": 71,
+                  "linda cardellini": 12,
+                  "katherine lanasa": 3,
+                  "hannah einbinder": 2,
+                  "michelle pfeiffer": 2,
+                  "youn yuh jung": 2,
+                  "joy sunday": 1,
+                  "constance zimmer": 0,
+                  "tie": 1,
+                  "jessica williams": 0,
+                  "allison janney": 1
+                }
+              }
+            },
+            {
+              "market_id": 70160314,
+              "title": "Best Actor (Comedy or Musical): John Malkovich",
+              "headline_phrase": "John Malkovich winning Best Actor (Comedy or Musical)",
+              "headline_with_phrase": "John Malkovich winning Best Actor (Comedy or Musical)",
+              "raw_title": "Golden Globe Winner: Best Actor in a Motion Picture – Musical or Comedy",
+              "is_date_timing_row": false,
+              "href": "/futures/70160314",
+              "source": "kalshi",
+              "lead_prob": 0.65777778,
+              "leader_outcome_id": 263824866,
+              "scale_ordered": false,
+              "content_kind": "futures",
+              "closeness_to_50": 0.15777777999999998,
+              "outcomes": [
+                {
+                  "outcome_id": 263824866,
+                  "name": "John Malkovich",
+                  "probability": 0.65777778,
+                  "rendered_percent": 66,
+                  "opening_probability": null,
+                  "art": {
+                    "url": "https://image.tmdb.org/t/p/w185/7GoOdGNc4ra1L0F5nJTkmIB37iu.jpg",
+                    "kind": "tmdb_headshot",
+                    "detail": "The Black Ball",
+                    "accent_color": "#0F172A",
+                    "initials": "JM"
+                  }
+                }
+              ],
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "263824866": 66,
+                  "263824869": 15,
+                  "263824867": 6,
+                  "263824868": 4,
+                  "263824870": 3,
+                  "263824871": 2,
+                  "263824872": 2,
+                  "263824873": 2,
+                  "263824875": 0,
+                  "263824877": 0,
+                  "263824878": 0,
+                  "263824876": 0,
+                  "263824874": 0
+                },
+                "by_outcome_key": {
+                  "john malkovich": 66,
+                  "anthony ippolito": 15,
+                  "tom cruise": 6,
+                  "jordan firstman": 4,
+                  "brad pitt": 3,
+                  "seth rogen": 2,
+                  "jaafar jackson": 2,
+                  "tie": 2,
+                  "robert pattinson": 0,
+                  "pedro pascal": 0,
+                  "dominic sessa": 0,
+                  "harry melling": 0,
+                  "ryan gosling": 0
+                }
+              }
+            },
+            {
+              "market_id": 70160308,
+              "title": "Best Picture (Drama): The Odyssey",
+              "headline_phrase": "The Odyssey winning Best Drama at the Golden Globes",
+              "headline_with_phrase": "The Odyssey winning Best Drama",
+              "raw_title": "Golden Globe Winner: Best Motion Picture - Drama",
+              "is_date_timing_row": false,
+              "href": "/futures/70160308",
+              "source": "kalshi",
+              "lead_prob": 0.52314815,
+              "leader_outcome_id": 263824787,
+              "scale_ordered": false,
+              "content_kind": "futures",
+              "closeness_to_50": 0.023148150000000034,
+              "outcomes": [
+                {
+                  "outcome_id": 263824787,
+                  "name": "The Odyssey",
+                  "probability": 0.52314815,
+                  "rendered_percent": 52,
+                  "opening_probability": null,
+                  "art": {
+                    "url": "https://image.tmdb.org/t/p/w342/krVa7rKCQb4OBfsr2LTJv4rTz5q.jpg",
+                    "kind": "tmdb_poster",
+                    "detail": "Christopher Nolan · Universal Pictures",
+                    "accent_color": "#0F172A",
+                    "initials": "OD"
+                  }
+                }
+              ],
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "263824787": 52,
+                  "263824788": 32,
+                  "263824792": 5,
+                  "263824793": 5,
+                  "263824789": 2,
+                  "263824791": 2,
+                  "263824790": 2,
+                  "263824794": 0,
+                  "263824795": 0,
+                  "263824796": 0,
+                  "263824797": 0,
+                  "263824798": 0,
+                  "263824799": 0,
+                  "263824800": 0
+                },
+                "by_outcome_key": {
+                  "the odyssey": 52,
+                  "la bola negra": 32,
+                  "elsinore": 5,
+                  "i play rocky": 5,
+                  "wildwood": 2,
+                  "all of a sudden": 2,
+                  "dune part three": 2,
+                  "fjord": 0,
+                  "michael": 0,
+                  "possible love": 0,
+                  "woman unknown": 0,
+                  "fatherland": 0,
+                  "obsession": 0,
+                  "tie": 0
+                }
+              }
+            },
+            {
+              "market_id": 70160312,
+              "title": "Best Picture (Comedy or Musical): Wild Horse Nine",
+              "headline_phrase": "Wild Horse Nine winning Best Picture (Comedy or Musical)",
+              "headline_with_phrase": "Wild Horse Nine winning Best Picture (Comedy or Musical)",
+              "raw_title": "Golden Globe Winner: Best Motion Picture - Musical or Comedy",
+              "is_date_timing_row": false,
+              "href": "/futures/70160312",
+              "source": "kalshi",
+              "lead_prob": 0.52244898,
+              "leader_outcome_id": 263824838,
+              "scale_ordered": false,
+              "content_kind": "futures",
+              "closeness_to_50": 0.022448979999999952,
+              "outcomes": [
+                {
+                  "outcome_id": 263824838,
+                  "name": "Wild Horse Nine",
+                  "probability": 0.52244898,
+                  "rendered_percent": 52,
+                  "opening_probability": null,
+                  "art": {
+                    "url": "https://image.tmdb.org/t/p/w342/dNJFRtVg3xLQ7dbNIQ55cmmIniD.jpg",
+                    "kind": "tmdb_poster",
+                    "detail": "Martin McDonagh · Searchlight Pictures",
+                    "accent_color": "#0F172A",
+                    "initials": "WN"
+                  }
+                }
+              ],
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "263824838": 52,
+                  "263824839": 17,
+                  "263824841": 8,
+                  "263824842": 5,
+                  "263824844": 3,
+                  "263824840": 3,
+                  "263824843": 3,
+                  "263824845": 3,
+                  "263824846": 2,
+                  "263824848": 2,
+                  "263824847": 2,
+                  "263824849": 0,
+                  "263824850": 0,
+                  "263824851": 0,
+                  "263824852": 0
+                },
+                "by_outcome_key": {
+                  "wild horse nine": 52,
+                  "the debut": 17,
+                  "the invite": 8,
+                  "project hail mary": 5,
+                  "club kid": 3,
+                  "tender loving care": 3,
+                  "the further mis adventures of cliff booth": 3,
+                  "obsession": 3,
+                  "the drama": 2,
+                  "tie": 2,
+                  "i play rocky": 2,
+                  "digger": 0,
+                  "primetime": 0,
+                  "the devil wears prada 2": 0,
+                  "michael": 0
+                }
+              }
+            },
+            {
+              "market_id": 70160311,
+              "title": "Best Actor (Drama): Andrew Scott",
+              "headline_phrase": "Andrew Scott winning Best Actor (Drama)",
+              "headline_with_phrase": "Andrew Scott winning Best Actor (Drama)",
+              "raw_title": "Golden Globe Winner: Best Actor in a Motion Picture – Drama",
+              "is_date_timing_row": false,
+              "href": "/futures/70160311",
+              "source": "kalshi",
+              "lead_prob": 0.48679245,
+              "leader_outcome_id": 263824823,
+              "scale_ordered": false,
+              "content_kind": "futures",
+              "closeness_to_50": 0.013207550000000012,
+              "outcomes": [
+                {
+                  "outcome_id": 263824823,
+                  "name": "Andrew Scott",
+                  "probability": 0.48679245,
+                  "rendered_percent": 49,
+                  "opening_probability": null,
+                  "art": {
+                    "url": "https://image.tmdb.org/t/p/w185/4F8XpjyQCvtuu21WFm5d8RF5Rl.jpg",
+                    "kind": "tmdb_headshot",
+                    "detail": "Elsinore",
+                    "accent_color": "#0F172A",
+                    "initials": "AS"
+                  }
+                }
+              ],
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "263824823": 49,
+                  "263824824": 17,
+                  "263824825": 4,
+                  "263824828": 4,
+                  "263824826": 4,
+                  "263824829": 3,
+                  "263824827": 3,
+                  "263824830": 3,
+                  "263824834": 2,
+                  "263824831": 2,
+                  "263824832": 2,
+                  "263824833": 2,
+                  "263824835": 2,
+                  "263824836": 2,
+                  "263824837": 1
+                },
+                "by_outcome_key": {
+                  "andrew scott": 49,
+                  "matt damon": 17,
+                  "guitarricadelafuente": 4,
+                  "jaafar jackson": 4,
+                  "robert pattinson": 4,
+                  "robert aramayo": 3,
+                  "sebastian stan": 3,
+                  "pedro pascal": 3,
+                  "john turturro": 2,
+                  "timoth e chalamet": 2,
+                  "timothee chalamet": 2,
+                  "sul kyung gu": 2,
+                  "josh o connor": 2,
+                  "emmanuel macchia": 2,
+                  "ryan gosling": 2,
+                  "tie": 1
+                }
+              }
+            },
+            {
+              "market_id": 70160298,
+              "title": "Best Limited Series: DTF St. Louis",
+              "headline_phrase": "DTF St. Louis winning Best Limited Series",
+              "headline_with_phrase": "DTF St. Louis winning Best Limited Series",
+              "raw_title": "Golden Globe Winner: Best Television Series - Limited Series",
+              "is_date_timing_row": false,
+              "href": "/futures/70160298",
+              "source": "kalshi",
+              "lead_prob": 0.44298246,
+              "leader_outcome_id": 263824669,
+              "scale_ordered": false,
+              "content_kind": "futures",
+              "closeness_to_50": 0.05701753999999998,
+              "outcomes": [
+                {
+                  "outcome_id": 263824669,
+                  "name": "DTF St. Louis",
+                  "probability": 0.44298246,
+                  "rendered_percent": 44,
+                  "opening_probability": null,
+                  "art": {
+                    "url": "https://image.tmdb.org/t/p/w342/xHfafw9UmomDc7jO25s9MpiL4Zs.jpg",
+                    "kind": "film",
+                    "detail": "DTF St. Louis official poster",
+                    "accent_color": "#0891B2",
+                    "initials": "DL"
+                  }
+                }
+              ],
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "263824669": 44,
+                  "263824670": 40,
+                  "263824673": 2,
+                  "263824677": 2,
+                  "263824675": 2,
+                  "263824676": 2,
+                  "263824672": 2,
+                  "263824671": 2,
+                  "263824678": 2,
+                  "263824679": 1,
+                  "263824674": 1
+                },
+                "by_outcome_key": {
+                  "dtf st louis": 44,
+                  "east of eden": 40,
+                  "beef": 2,
+                  "agatha christie s seven dials": 2,
+                  "half man": 2,
+                  "carrie": 2,
+                  "love story john f kennedy jr carolyn bessette": 2,
+                  "cape fear": 2,
+                  "monster the lizzie borden story": 2,
+                  "tie": 1,
+                  "lord of the flies": 1
+                }
+              }
+            },
+            {
+              "market_id": 70160295,
+              "title": "Best Supporting Actor (TV): David Harbour",
+              "headline_phrase": "David Harbour winning Best Supporting Actor on TV",
+              "headline_with_phrase": "David Harbour winning Best Supporting Actor on TV",
+              "raw_title": "Golden Globe Winner: Best Supporting Actor on TV",
+              "is_date_timing_row": false,
+              "href": "/futures/70160295",
+              "source": "kalshi",
+              "lead_prob": 0.42487047,
+              "leader_outcome_id": 263824636,
+              "scale_ordered": false,
+              "content_kind": "futures",
+              "closeness_to_50": 0.07512953,
+              "outcomes": [
+                {
+                  "outcome_id": 263824636,
+                  "name": "David Harbour",
+                  "probability": 0.42487047,
+                  "rendered_percent": 42,
+                  "opening_probability": null,
+                  "art": {
+                    "url": "https://image.tmdb.org/t/p/w185/qMFtMWlYVtFVyBoBhX5IoA5sN5a.jpg",
+                    "kind": "person",
+                    "detail": "David Harbour TMDB portrait",
+                    "accent_color": "#0891B2",
+                    "initials": "DH"
+                  }
+                }
+              ],
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "263824636": 42,
+                  "263824637": 27,
+                  "263824638": 6,
+                  "263824639": 4,
+                  "263824643": 4,
+                  "263824642": 4,
+                  "263824641": 3,
+                  "263824645": 3,
+                  "263824640": 3,
+                  "263824644": 2,
+                  "263824646": 2
+                },
+                "by_outcome_key": {
+                  "david harbour": 42,
+                  "stephen root": 27,
+                  "charles melton": 6,
+                  "richard gadd": 4,
+                  "patrick ball": 4,
+                  "shawn hatosy": 4,
+                  "nick offerman": 3,
+                  "colman domingo": 3,
+                  "jason bateman": 3,
+                  "paul w downs": 2,
+                  "tie": 2
+                }
+              }
+            },
+            {
+              "market_id": 70239565,
+              "title": "Best Drama Series: The Pitt",
+              "headline_phrase": "The Pitt winning Best TV Drama",
+              "headline_with_phrase": "The Pitt winning Best TV Drama",
+              "raw_title": "Golden Globes 2027: Best Television Series – Drama Winner",
+              "is_date_timing_row": false,
+              "href": "/futures/70239565",
+              "source": "polymarket",
+              "lead_prob": 0.39748954,
+              "leader_outcome_id": 264264601,
+              "scale_ordered": false,
+              "content_kind": "futures",
+              "closeness_to_50": 0.10251046000000003,
+              "outcomes": [
+                {
+                  "outcome_id": 264264601,
+                  "name": "The Pitt",
+                  "probability": 0.39748954,
+                  "rendered_percent": 40,
+                  "opening_probability": null,
+                  "art": {
+                    "url": "https://image.tmdb.org/t/p/w342/kvFSpESyBZMjaeOJDx7RS3P1jey.jpg",
+                    "kind": "film",
+                    "detail": "The Pitt official poster",
+                    "accent_color": "#DC2626",
+                    "initials": "PI"
+                  }
+                }
+              ],
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "264264601": 40,
+                  "264264602": 26,
+                  "264264604": 21,
+                  "264264607": 8,
+                  "264264606": 5,
+                  "264264609": 0,
+                  "264264603": 0,
+                  "264264605": 0,
+                  "264264608": 0
+                },
+                "by_outcome_key": {
+                  "the pitt": 40,
+                  "the diplomat": 26,
+                  "slow horses": 21,
+                  "a knight of the seven kingdoms": 8,
+                  "paradise": 5,
+                  "euphoria": 0,
+                  "house of the dragon": 0,
+                  "the gilded age": 0,
+                  "your friends neighbors": 0
+                }
+              }
+            }
+          ],
+          "item_noun": "awards"
+        }
+      }
+    ],
+    "member_count": 11,
+    "withheld": [],
+    "withheld_count": 0,
+    "children": [],
+    "assembled": true,
+    "destination_href": "/collections/machinery-golden-globes-2027",
+    "paired_metric_set": {
+      "set_id": "golden-globes-2027-best-actress-comedy-musical",
+      "category": "entertainment",
+      "kicker": "GOLDEN GLOBES 2027 · BEST ACTRESS (COMEDY OR MUSICAL)",
+      "title": "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, with 4 contenders at 75%+ to be nominated",
+      "subtitle": "84th Golden Globes · Nominated % beside Winner %",
+      "selection_rule": "top_5_overlapping_contenders",
+      "stage_1_label": "Nominated",
+      "stage_2_label": "Wins",
+      "stage_1_settled_yes_label": "Nominated",
+      "stage_1_settled_no_label": "Not nominated",
+      "stage_1_market": {
+        "id": 61484904,
+        "source": "kalshi",
+        "name": "Golden Globe Nominations: Best Actress in a Motion Picture – Musical or Comedy",
+        "category_name": "Best Actress (Comedy or Musical)"
+      },
+      "stage_2_market": {
+        "id": 70160313,
+        "source": "kalshi",
+        "name": "Golden Globe Winner: Best Actress in a Motion Picture – Musical or Comedy",
+        "category_name": "Best Actress (Comedy or Musical)"
+      },
+      "stage_1_settled": false,
+      "never_blend": true,
+      "as_of": "2026-11-21T03:44:46.002624Z",
+      "entries": [
+        {
+          "subject_key": "person:julianne-moore",
+          "subject": "Julianne Moore",
+          "detail": "84th Golden Globes Contender",
+          "credit_source": "tmdb:person:1231",
+          "stage_1_market_id": 61484904,
+          "stage_1_outcome": "Julianne Moore",
+          "stage_1_settled_state": null,
+          "stage_2_market_id": 70160313,
+          "stage_2_outcome": "Julianne Moore",
+          "art": {
+            "kind": "tmdb_headshot",
+            "tmdb_id": 1231,
+            "profile_path": "/3YF19rWusxWfEI59ZM33dFhasRq.jpg",
+            "url": "https://image.tmdb.org/t/p/w185/3YF19rWusxWfEI59ZM33dFhasRq.jpg",
+            "adult": false,
+            "kid_safe_vetted": true
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null,
+          "stage_1_kalshi_probability": 0.98,
+          "stage_2_kalshi_probability": 0.78,
+          "stage_2_outcome_id": 263824853,
+          "stage_1_probability": 0.98,
+          "stage_1_source_mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "kalshi",
+                "name": "Kalshi",
+                "probability": 0.98,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          },
+          "stage_2_probability": 0.78,
+          "stage_2_source_mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "kalshi",
+                "name": "Kalshi",
+                "probability": 0.78,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          },
+          "stage_2_rendered_percent": null,
+          "stage_1_rendered_percent": 98
+        },
+        {
+          "subject_key": "person:inde-navarrette",
+          "subject": "Inde Navarrette",
+          "detail": "84th Golden Globes Contender",
+          "credit_source": "tmdb:person:3227700",
+          "stage_1_market_id": 61484904,
+          "stage_1_outcome": "Inde Navarrette",
+          "stage_1_settled_state": null,
+          "stage_2_market_id": 70160313,
+          "stage_2_outcome": "Inde Navarrette",
+          "art": {
+            "kind": "tmdb_headshot",
+            "tmdb_id": 3227700,
+            "profile_path": "/qlNBUGON8FebgzcqVhhRSVFYSa5.jpg",
+            "url": "https://image.tmdb.org/t/p/w185/qlNBUGON8FebgzcqVhhRSVFYSa5.jpg",
+            "adult": false,
+            "kid_safe_vetted": true
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null,
+          "stage_1_kalshi_probability": 0.895,
+          "stage_2_kalshi_probability": 0.09,
+          "stage_2_outcome_id": 263824855,
+          "stage_1_probability": 0.895,
+          "stage_1_source_mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "kalshi",
+                "name": "Kalshi",
+                "probability": 0.895,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          },
+          "stage_2_probability": 0.09,
+          "stage_2_source_mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "kalshi",
+                "name": "Kalshi",
+                "probability": 0.09,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          },
+          "stage_2_rendered_percent": null,
+          "stage_1_rendered_percent": 90
+        },
+        {
+          "subject_key": "person:olivia-wilde",
+          "subject": "Olivia Wilde",
+          "detail": "84th Golden Globes Contender",
+          "credit_source": "tmdb:person:59315",
+          "stage_1_market_id": 61484904,
+          "stage_1_outcome": "Olivia Wilde",
+          "stage_1_settled_state": null,
+          "stage_2_market_id": 70160313,
+          "stage_2_outcome": "Olivia Wilde",
+          "art": {
+            "kind": "tmdb_headshot",
+            "tmdb_id": 59315,
+            "profile_path": "/jYopRE6nhYGqpb64fVUKrbJVMy1.jpg",
+            "url": "https://image.tmdb.org/t/p/w185/jYopRE6nhYGqpb64fVUKrbJVMy1.jpg",
+            "adult": false,
+            "kid_safe_vetted": true
+          },
+          "stage_1_blend_authority": "single_venue",
+          "stage_2_blend_authority": "single_venue",
+          "stage_1_blend_rule": "weighted_median",
+          "stage_1_divergence": null,
+          "stage_2_blend_rule": "weighted_median",
+          "stage_2_divergence": null,
+          "stage_1_kalshi_probability": 0.955,
+          "stage_2_kalshi_probability": 0.03,
+          "stage_2_outcome_id": 263824854,
+          "stage_1_probability": 0.955,
+          "stage_1_source_mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "kalshi",
+                "name": "Kalshi",
+                "probability": 0.955,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          },
+          "stage_2_probability": 0.03,
+          "stage_2_source_mark": {
+            "state": "single",
+            "sources": [
+              {
+                "key": "kalshi",
+                "name": "Kalshi",
+                "probability": 0.03,
+                "observed_at": null,
+                "reason": "observation_unknown"
+              }
+            ]
+          },
+          "stage_2_rendered_percent": null,
+          "stage_1_rendered_percent": 96
+        }
+      ],
+      "blend_authority": "server:futures_source_merge.blend_with_verdict",
+      "stage_2_settled": false,
+      "stage_2_winner_subject": null,
+      "member_page_numbers_by_market": {
+        "61484904": {
+          "by_outcome_id": {
+            "231508988": 98,
+            "231508989": 96,
+            "246329448": 90,
+            "231508991": 80,
+            "231508995": 77,
+            "246329451": 50,
+            "231508992": 36,
+            "231508994": 7,
+            "231508996": 6,
+            "231508987": 6,
+            "231508993": 1,
+            "231508990": 1
+          },
+          "by_outcome_key": {
+            "julianne moore": 98,
+            "olivia wilde": 96,
+            "inde navarrette": 90,
+            "zendaya": 80,
+            "olivia colman": 77,
+            "marion bailey": 50,
+            "meryl streep": 36,
+            "jodie comer": 7,
+            "rachel mcadams": 6,
+            "anne hathaway": 6,
+            "natalie portman": 1,
+            "rosalind eleazar": 1
+          },
+          "by_fold_key": {
+            "julianne moore": 98,
+            "olivia wilde": 96,
+            "inde navarrette": 90,
+            "zendaya": 80,
+            "olivia colman": 77,
+            "marion bailey": 50,
+            "meryl streep": 36,
+            "jodie comer": 7,
+            "rachel mcadams": 6,
+            "anne hathaway": 6,
+            "natalie portman": 1,
+            "rosalind eleazar": 1
+          }
+        },
+        "70160313": {
+          "by_outcome_id": {
+            "263824853": 78,
+            "263824855": 9,
+            "263824854": 3,
+            "263824857": 2,
+            "263824863": 2,
+            "263824858": 2,
+            "263824856": 2,
+            "263824859": 1,
+            "263824860": 0,
+            "263824861": 1,
+            "263824862": 1,
+            "263824864": 1,
+            "263824865": 1
+          },
+          "by_outcome_key": {
+            "julianne moore": 78,
+            "inde navarrette": 9,
+            "olivia wilde": 3,
+            "meryl streep": 2,
+            "rachel mcadams": 2,
+            "olivia colman": 2,
+            "zendaya": 2,
+            "rosalind eleazar": 1,
+            "natalie portman": 0,
+            "jodie comer": 1,
+            "anne hathaway": 1,
+            "marion bailey": 1,
+            "tie": 1
+          },
+          "by_fold_key": {
+            "julianne moore": 78,
+            "inde navarrette": 9,
+            "olivia wilde": 3,
+            "meryl streep": 2,
+            "rachel mcadams": 2,
+            "olivia colman": 2,
+            "zendaya": 2,
+            "rosalind eleazar": 1,
+            "natalie portman": 0,
+            "jodie comer": 1,
+            "anne hathaway": 1,
+            "marion bailey": 1,
+            "tie": 1
+          }
+        }
+      },
+      "suppress_card_header_in_section": false
+    }
+  }
+}

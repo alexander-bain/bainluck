@@ -1,0 +1,1519 @@
+{
+  "slug": "machinery-march-madness-2027",
+  "generated_at": "2026-11-23T00:05:28.417316+00:00",
+  "feed_item": {
+    "type": "bundle",
+    "score": 0.0,
+    "reason": "Houston leads the Dec 7 AP poll #1 team at 54%",
+    "headline": "Houston leads the Dec 7 AP poll #1 team at 54%",
+    "context_summary": null,
+    "data": {
+      "id": "roundup:machinery-march-madness-2027",
+      "title": "Houston leads the Dec 7 AP poll #1 team at 54%",
+      "kind": "roundup",
+      "story_key": "roundup:machinery-march-madness-2027",
+      "shared_question": null,
+      "item_count": 7,
+      "member_ids": [
+        52755955,
+        68954772,
+        68954808,
+        68954776,
+        68948342,
+        68954759,
+        68954760
+      ],
+      "items": [
+        {
+          "type": "futures",
+          "score": 0.0,
+          "reason": "Houston",
+          "headline": "Houston",
+          "data": {
+            "id": 52755955,
+            "name": "College Basketball (M): #1 Ranked Team on Dec 7 AP Poll",
+            "status": "open",
+            "source": "kalshi",
+            "mutually_exclusive": true,
+            "market_type": "field",
+            "volume": 384.0,
+            "image_url": null,
+            "llm_sport_category": "basketball",
+            "resolution_date": "2026-12-31T15:00:00+00:00",
+            "event_date": null,
+            "top_outcomes": [
+              {
+                "id": 215429574,
+                "name": "Houston",
+                "probability": 0.54225352,
+                "rendered_percent": 54,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-21T04:40:37.457090+00:00"
+              },
+              {
+                "id": 215429570,
+                "name": "Duke",
+                "probability": 0.09859155,
+                "rendered_percent": 10,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-22T04:57:06.495244+00:00"
+              },
+              {
+                "id": 215429577,
+                "name": "Michigan St.",
+                "probability": 0.07042254,
+                "rendered_percent": 7,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-19T20:47:57.730511+00:00"
+              },
+              {
+                "id": 215429575,
+                "name": "UConn",
+                "probability": 0.06338028,
+                "rendered_percent": 6,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-18T23:41:23.467106+00:00"
+              },
+              {
+                "id": 215429571,
+                "name": "Michigan",
+                "probability": 0.05633803,
+                "rendered_percent": 6,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-20T04:40:28.411468+00:00"
+              },
+              {
+                "id": 215429572,
+                "name": "Illinois",
+                "probability": 0.04225352,
+                "rendered_percent": 4,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-20T04:40:28.411468+00:00"
+              },
+              {
+                "id": 215429573,
+                "name": "Arizona",
+                "probability": 0.03521127,
+                "rendered_percent": 4,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-20T04:40:28.411468+00:00"
+              },
+              {
+                "id": 215429578,
+                "name": "Kansas",
+                "probability": 0.03521127,
+                "rendered_percent": 3,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-20T04:40:29.285171+00:00"
+              },
+              {
+                "id": 215429579,
+                "name": "Louisville",
+                "probability": 0.02816901,
+                "rendered_percent": 3,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-20T04:40:28.411468+00:00"
+              },
+              {
+                "id": 215429576,
+                "name": "Iowa St.",
+                "probability": 0.02816901,
+                "rendered_percent": 3,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-20T04:40:29.285171+00:00"
+              },
+              {
+                "id": 215429569,
+                "name": "Arkansas",
+                "probability": 0.00704225,
+                "rendered_percent": 0,
+                "opening_probability": null,
+                "image_url": null,
+                "last_updated": "2026-11-20T04:40:28.411468+00:00"
+              }
+            ],
+            "newest_outcome_updated_at": "2026-11-22T04:57:06.495244+00:00",
+            "member_page_numbers": {
+              "by_outcome_id": {
+                "215429574": 54,
+                "215429570": 10,
+                "215429577": 7,
+                "215429575": 6,
+                "215429571": 6,
+                "215429572": 4,
+                "215429573": 4,
+                "215429578": 3,
+                "215429579": 3,
+                "215429576": 3,
+                "215429569": 0
+              },
+              "by_outcome_key": {
+                "houston": 54,
+                "duke": 10,
+                "michigan st": 7,
+                "uconn": 6,
+                "michigan": 6,
+                "illinois": 4,
+                "arizona": 4,
+                "kansas": 3,
+                "louisville": 3,
+                "iowa st": 3,
+                "arkansas": 0
+              }
+            },
+            "content_kind": "futures"
+          }
+        },
+        {
+          "type": "futures",
+          "score": 0.0,
+          "reason": "Duke",
+          "headline": "Duke",
+          "data": {
+            "id": 68954772,
+            "name": "Will Duke reach the 2027 NCAA Men's Basketball Final Four?",
+            "status": "open",
+            "source": "polymarket",
+            "mutually_exclusive": true,
+            "market_type": "container_member",
+            "volume": 1741.8382049999998,
+            "image_url": null,
+            "llm_sport_category": "basketball",
+            "resolution_date": "2027-03-29T03:59:00+00:00",
+            "event_date": null,
+            "top_outcomes": [
+              {
+                "id": 258599644,
+                "name": "No",
+                "probability": 0.615,
+                "rendered_percent": 62,
+                "opening_probability": 0.62,
+                "image_url": null,
+                "last_updated": "2026-11-22T21:52:19.608332+00:00"
+              },
+              {
+                "id": 258599643,
+                "name": "Yes",
+                "probability": 0.385,
+                "rendered_percent": 38,
+                "opening_probability": 0.38,
+                "image_url": null,
+                "last_updated": "2026-11-22T21:52:19.608332+00:00"
+              }
+            ],
+            "newest_outcome_updated_at": "2026-11-22T21:52:19.608332+00:00",
+            "member_page_numbers": {
+              "by_outcome_id": {
+                "258599644": 62,
+                "258599643": 38
+              },
+              "by_outcome_key": {
+                "no": 62,
+                "yes": 38
+              }
+            },
+            "content_kind": "futures"
+          }
+        },
+        {
+          "type": "futures",
+          "score": 0.0,
+          "reason": "Michigan St.",
+          "headline": "Michigan St.",
+          "data": {
+            "id": 68954808,
+            "name": "Will UConn reach the 2027 NCAA Men's Basketball Final Four?",
+            "status": "open",
+            "source": "polymarket",
+            "mutually_exclusive": true,
+            "market_type": "container_member",
+            "volume": 627.969231,
+            "image_url": null,
+            "llm_sport_category": "basketball",
+            "resolution_date": "2027-03-29T03:59:00+00:00",
+            "event_date": null,
+            "top_outcomes": [
+              {
+                "id": 258599716,
+                "name": "No",
+                "probability": 0.765,
+                "rendered_percent": 77,
+                "opening_probability": 0.77,
+                "image_url": null,
+                "last_updated": "2026-11-15T19:58:14.262596+00:00"
+              },
+              {
+                "id": 258599715,
+                "name": "Yes",
+                "probability": 0.235,
+                "rendered_percent": 23,
+                "opening_probability": 0.23,
+                "image_url": null,
+                "last_updated": "2026-11-15T19:58:14.262596+00:00"
+              }
+            ],
+            "newest_outcome_updated_at": "2026-11-15T19:58:14.262596+00:00",
+            "member_page_numbers": {
+              "by_outcome_id": {
+                "258599716": 77,
+                "258599715": 23
+              },
+              "by_outcome_key": {
+                "no": 77,
+                "yes": 23
+              }
+            },
+            "content_kind": "futures"
+          }
+        },
+        {
+          "type": "futures",
+          "score": 0.0,
+          "reason": "Houston leads the Dec 7 AP poll #1 team at 54%",
+          "headline": "Houston leads the Dec 7 AP poll #1 team at 54%",
+          "data": {
+            "id": 68954776,
+            "name": "Will Illinois reach the 2027 NCAA Men's Basketball Final Four?",
+            "status": "open",
+            "source": "polymarket",
+            "mutually_exclusive": true,
+            "market_type": "container_member",
+            "volume": 130.943488,
+            "image_url": null,
+            "llm_sport_category": "basketball",
+            "resolution_date": "2027-03-29T03:59:00+00:00",
+            "event_date": null,
+            "top_outcomes": [
+              {
+                "id": 258599652,
+                "name": "No",
+                "probability": 0.785,
+                "rendered_percent": 79,
+                "opening_probability": 0.78,
+                "image_url": null,
+                "last_updated": "2026-11-22T21:49:14.479934+00:00"
+              },
+              {
+                "id": 258599651,
+                "name": "Yes",
+                "probability": 0.215,
+                "rendered_percent": 21,
+                "opening_probability": 0.22,
+                "image_url": null,
+                "last_updated": "2026-11-22T21:49:14.479934+00:00"
+              }
+            ],
+            "newest_outcome_updated_at": "2026-11-22T21:49:14.479934+00:00",
+            "member_page_numbers": {
+              "by_outcome_id": {
+                "258599652": 79,
+                "258599651": 21
+              },
+              "by_outcome_key": {
+                "no": 79,
+                "yes": 21
+              }
+            },
+            "content_kind": "futures"
+          }
+        },
+        {
+          "type": "futures",
+          "score": 0.0,
+          "reason": "Houston leads the Dec 7 AP poll #1 team at 54%",
+          "headline": "Houston leads the Dec 7 AP poll #1 team at 54%",
+          "data": {
+            "id": 68948342,
+            "name": "Will Kansas reach the 2027 NCAA Men's Basketball Final Four?",
+            "status": "open",
+            "source": "polymarket",
+            "mutually_exclusive": true,
+            "market_type": "container_member",
+            "volume": 202.619048,
+            "image_url": null,
+            "llm_sport_category": "basketball",
+            "resolution_date": "2027-03-29T03:59:00+00:00",
+            "event_date": null,
+            "top_outcomes": [
+              {
+                "id": 258569041,
+                "name": "No",
+                "probability": 0.8,
+                "rendered_percent": 80,
+                "opening_probability": 0.97,
+                "image_url": null,
+                "last_updated": "2026-11-13T16:30:39.168845+00:00"
+              },
+              {
+                "id": 258569040,
+                "name": "Yes",
+                "probability": 0.2,
+                "rendered_percent": 20,
+                "opening_probability": 0.03,
+                "image_url": null,
+                "last_updated": "2026-11-13T16:30:39.168845+00:00"
+              }
+            ],
+            "newest_outcome_updated_at": "2026-11-13T16:30:39.168845+00:00",
+            "member_page_numbers": {
+              "by_outcome_id": {
+                "258569041": 80,
+                "258569040": 20
+              },
+              "by_outcome_key": {
+                "no": 80,
+                "yes": 20
+              }
+            },
+            "content_kind": "futures"
+          }
+        },
+        {
+          "type": "futures",
+          "score": 0.0,
+          "reason": "Houston leads the Dec 7 AP poll #1 team at 54%",
+          "headline": "Houston leads the Dec 7 AP poll #1 team at 54%",
+          "data": {
+            "id": 68954759,
+            "name": "Will Arkansas reach the 2027 NCAA Men's Basketball Final Four?",
+            "status": "open",
+            "source": "polymarket",
+            "mutually_exclusive": true,
+            "market_type": "container_member",
+            "volume": 52.0,
+            "image_url": null,
+            "llm_sport_category": "basketball",
+            "resolution_date": "2027-03-29T03:59:00+00:00",
+            "event_date": null,
+            "top_outcomes": [
+              {
+                "id": 258599618,
+                "name": "No",
+                "probability": 0.83,
+                "rendered_percent": 83,
+                "opening_probability": 0.9,
+                "image_url": null,
+                "last_updated": "2026-11-14T08:59:51.378554+00:00"
+              },
+              {
+                "id": 258599617,
+                "name": "Yes",
+                "probability": 0.17,
+                "rendered_percent": 17,
+                "opening_probability": 0.1,
+                "image_url": null,
+                "last_updated": "2026-11-14T08:59:51.378554+00:00"
+              }
+            ],
+            "newest_outcome_updated_at": "2026-11-14T08:59:51.378554+00:00",
+            "member_page_numbers": {
+              "by_outcome_id": {
+                "258599618": 83,
+                "258599617": 17
+              },
+              "by_outcome_key": {
+                "no": 83,
+                "yes": 17
+              }
+            },
+            "content_kind": "futures"
+          }
+        },
+        {
+          "type": "futures",
+          "score": 0.0,
+          "reason": "Houston leads the Dec 7 AP poll #1 team at 54%",
+          "headline": "Houston leads the Dec 7 AP poll #1 team at 54%",
+          "data": {
+            "id": 68954760,
+            "name": "Will Arizona reach the 2027 NCAA Men's Basketball Final Four?",
+            "status": "open",
+            "source": "polymarket",
+            "mutually_exclusive": true,
+            "market_type": "container_member",
+            "volume": 40.0,
+            "image_url": null,
+            "llm_sport_category": "basketball",
+            "resolution_date": "2027-03-29T03:59:00+00:00",
+            "event_date": null,
+            "top_outcomes": [
+              {
+                "id": 258599620,
+                "name": "No",
+                "probability": 0.895,
+                "rendered_percent": 90,
+                "opening_probability": 0.86,
+                "image_url": null,
+                "last_updated": "2026-11-17T17:52:49.854103+00:00"
+              },
+              {
+                "id": 258599619,
+                "name": "Yes",
+                "probability": 0.105,
+                "rendered_percent": 10,
+                "opening_probability": 0.14,
+                "image_url": null,
+                "last_updated": "2026-11-17T17:52:49.854103+00:00"
+              }
+            ],
+            "newest_outcome_updated_at": "2026-11-17T17:52:49.854103+00:00",
+            "member_page_numbers": {
+              "by_outcome_id": {
+                "258599620": 90,
+                "258599619": 10
+              },
+              "by_outcome_key": {
+                "no": 90,
+                "yes": 10
+              }
+            },
+            "content_kind": "futures"
+          }
+        }
+      ],
+      "collection_ref": {
+        "slug": "machinery-march-madness-2027",
+        "href": "/collections/machinery-march-madness-2027",
+        "name": "Houston leads the Dec 7 AP poll #1 team at 54%",
+        "revision": 2738072854,
+        "collection_count": 7
+      },
+      "roundup": {
+        "kicker": "SPORTS · COLLEGE BASKETBALL",
+        "tag": "SPORTS",
+        "footer": "",
+        "rows": [
+          {
+            "market_id": 52755955,
+            "outcome_id": 215429574,
+            "label": "Houston",
+            "probability": 0.54225352,
+            "rendered_percent": 54
+          },
+          {
+            "market_id": 52755955,
+            "outcome_id": 215429570,
+            "label": "Duke",
+            "probability": 0.09859155,
+            "rendered_percent": 10
+          },
+          {
+            "market_id": 52755955,
+            "outcome_id": 215429577,
+            "label": "Michigan St.",
+            "probability": 0.07042254,
+            "rendered_percent": 7
+          }
+        ],
+        "relations": [
+          "same_event",
+          "sibling"
+        ],
+        "level": "member",
+        "destination_href": "/collections/machinery-march-madness-2027",
+        "machinery_card": {
+          "slug": "machinery-march-madness-2027",
+          "form_id": "contender_spotlight",
+          "stage": "public",
+          "look": "bars",
+          "kicker": "SPORTS · COLLEGE BASKETBALL",
+          "title": "Houston leads the Dec 7 AP poll #1 team at 54%",
+          "subtitle": "Full AP Poll #1 race alongside teams contending for the 2027 Final Four.",
+          "footer": "",
+          "scale_ordered": false,
+          "section_count": 2,
+          "item_count": 1,
+          "item_noun": "teams",
+          "destination_href": "/collections/machinery-march-madness-2027",
+          "rows": [
+            {
+              "market_id": 52755955,
+              "href": "/futures/52755955",
+              "outcome_id": 215429574,
+              "name": "Houston",
+              "probability": 0.54225352,
+              "rendered_percent": 54,
+              "opening_probability": null,
+              "art": {
+                "url": "https://a.espncdn.com/i/teamlogos/ncaa/500/248.png",
+                "kind": "team_logo",
+                "detail": "HOU",
+                "accent_color": "#c8102e",
+                "initials": "HO"
+              }
+            },
+            {
+              "market_id": 52755955,
+              "href": "/futures/52755955",
+              "outcome_id": 215429570,
+              "name": "Duke",
+              "probability": 0.09859155,
+              "rendered_percent": 10,
+              "opening_probability": null,
+              "art": {
+                "url": "https://a.espncdn.com/i/teamlogos/ncaa/500/150.png",
+                "kind": "team_logo",
+                "detail": "DUKE",
+                "accent_color": "#00539b",
+                "initials": "DU"
+              }
+            },
+            {
+              "market_id": 52755955,
+              "href": "/futures/52755955",
+              "outcome_id": 215429577,
+              "name": "Michigan St.",
+              "probability": 0.07042254,
+              "rendered_percent": 7,
+              "opening_probability": null,
+              "art": {
+                "url": "https://a.espncdn.com/i/teamlogos/ncaa/500/127.png",
+                "kind": "team_logo",
+                "detail": "MSU",
+                "accent_color": "#173f35",
+                "initials": "MS"
+              }
+            }
+          ],
+          "suppress_card_photo": true
+        }
+      }
+    }
+  },
+  "container": {
+    "state": "published",
+    "slug": "machinery-march-madness-2027",
+    "revision": 2738072854,
+    "relations": [
+      "same_event",
+      "sibling"
+    ],
+    "level": "member",
+    "reason": null,
+    "edition": null,
+    "container": {
+      "id": 2894555744,
+      "slug": "machinery-march-madness-2027",
+      "name": "Houston leads the Dec 7 AP poll #1 team at 54%",
+      "kind": "roundup",
+      "category": "basketball",
+      "status": "open",
+      "window_start": null,
+      "window_end": null,
+      "parent_container_id": null,
+      "destination_href": "/collections/machinery-march-madness-2027"
+    },
+    "subtitle": "",
+    "caption": null,
+    "sections": [
+      {
+        "class": "ap_poll_field",
+        "title": "Dec 7 AP Poll #1 Contenders",
+        "layout": "contender_spotlight",
+        "count": 1,
+        "members": [
+          {
+            "type": "market",
+            "id": 52755955,
+            "destination": {
+              "kind": "market",
+              "id": 52755955,
+              "web": "/futures/52755955",
+              "api": "/api/futures/52755955"
+            },
+            "card": {
+              "id": 52755955,
+              "name": "College Basketball (M): #1 Ranked Team on Dec 7 AP Poll",
+              "status": "open",
+              "source": "kalshi",
+              "mutually_exclusive": true,
+              "market_type": "field",
+              "volume": 384.0,
+              "image_url": null,
+              "llm_sport_category": "basketball",
+              "resolution_date": "2026-12-31T15:00:00+00:00",
+              "event_date": null,
+              "top_outcomes": [
+                {
+                  "id": 215429574,
+                  "name": "Houston",
+                  "probability": 0.54225352,
+                  "rendered_percent": 54,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-21T04:40:37.457090+00:00"
+                },
+                {
+                  "id": 215429570,
+                  "name": "Duke",
+                  "probability": 0.09859155,
+                  "rendered_percent": 10,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T04:57:06.495244+00:00"
+                },
+                {
+                  "id": 215429577,
+                  "name": "Michigan St.",
+                  "probability": 0.07042254,
+                  "rendered_percent": 7,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-19T20:47:57.730511+00:00"
+                },
+                {
+                  "id": 215429575,
+                  "name": "UConn",
+                  "probability": 0.06338028,
+                  "rendered_percent": 6,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-18T23:41:23.467106+00:00"
+                },
+                {
+                  "id": 215429571,
+                  "name": "Michigan",
+                  "probability": 0.05633803,
+                  "rendered_percent": 6,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-20T04:40:28.411468+00:00"
+                },
+                {
+                  "id": 215429572,
+                  "name": "Illinois",
+                  "probability": 0.04225352,
+                  "rendered_percent": 4,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-20T04:40:28.411468+00:00"
+                },
+                {
+                  "id": 215429573,
+                  "name": "Arizona",
+                  "probability": 0.03521127,
+                  "rendered_percent": 4,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-20T04:40:28.411468+00:00"
+                },
+                {
+                  "id": 215429578,
+                  "name": "Kansas",
+                  "probability": 0.03521127,
+                  "rendered_percent": 3,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-20T04:40:29.285171+00:00"
+                },
+                {
+                  "id": 215429579,
+                  "name": "Louisville",
+                  "probability": 0.02816901,
+                  "rendered_percent": 3,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-20T04:40:28.411468+00:00"
+                },
+                {
+                  "id": 215429576,
+                  "name": "Iowa St.",
+                  "probability": 0.02816901,
+                  "rendered_percent": 3,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-20T04:40:29.285171+00:00"
+                },
+                {
+                  "id": 215429569,
+                  "name": "Arkansas",
+                  "probability": 0.00704225,
+                  "rendered_percent": 0,
+                  "opening_probability": null,
+                  "image_url": null,
+                  "last_updated": "2026-11-20T04:40:28.411468+00:00"
+                }
+              ],
+              "newest_outcome_updated_at": "2026-11-22T04:57:06.495244+00:00",
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "215429574": 54,
+                  "215429570": 10,
+                  "215429577": 7,
+                  "215429575": 6,
+                  "215429571": 6,
+                  "215429572": 4,
+                  "215429573": 4,
+                  "215429578": 3,
+                  "215429579": 3,
+                  "215429576": 3,
+                  "215429569": 0
+                },
+                "by_outcome_key": {
+                  "houston": 54,
+                  "duke": 10,
+                  "michigan st": 7,
+                  "uconn": 6,
+                  "michigan": 6,
+                  "illinois": 4,
+                  "arizona": 4,
+                  "kansas": 3,
+                  "louisville": 3,
+                  "iowa st": 3,
+                  "arkansas": 0
+                }
+              },
+              "content_kind": "futures"
+            },
+            "event_id": null
+          }
+        ],
+        "note": "Full AP Poll #1 race alongside teams contending for the 2027 Final Four.",
+        "visual_block": {
+          "form_id": "contender_spotlight",
+          "initial_visible_limit": 3,
+          "items": [
+            {
+              "market_id": 52755955,
+              "title": "Dec 7 AP Poll #1 team",
+              "headline_phrase": "Houston holding the Dec 7 AP #1 spot",
+              "headline_with_phrase": "Houston holding the Dec 7 AP #1 spot",
+              "raw_title": "College Basketball (M): #1 Ranked Team on Dec 7 AP Poll",
+              "is_date_timing_row": false,
+              "href": "/futures/52755955",
+              "source": "kalshi",
+              "lead_prob": 0.54225352,
+              "leader_outcome_id": 215429574,
+              "scale_ordered": false,
+              "content_kind": "futures",
+              "closeness_to_50": 0.042253520000000044,
+              "outcomes": [
+                {
+                  "outcome_id": 215429574,
+                  "name": "Houston",
+                  "probability": 0.54225352,
+                  "rendered_percent": 54,
+                  "opening_probability": null,
+                  "art": {
+                    "url": "https://a.espncdn.com/i/teamlogos/ncaa/500/248.png",
+                    "kind": "team_logo",
+                    "detail": "HOU",
+                    "accent_color": "#c8102e",
+                    "initials": "HO"
+                  }
+                },
+                {
+                  "outcome_id": 215429570,
+                  "name": "Duke",
+                  "probability": 0.09859155,
+                  "rendered_percent": 10,
+                  "opening_probability": null,
+                  "art": {
+                    "url": "https://a.espncdn.com/i/teamlogos/ncaa/500/150.png",
+                    "kind": "team_logo",
+                    "detail": "DUKE",
+                    "accent_color": "#00539b",
+                    "initials": "DU"
+                  }
+                },
+                {
+                  "outcome_id": 215429577,
+                  "name": "Michigan St.",
+                  "probability": 0.07042254,
+                  "rendered_percent": 7,
+                  "opening_probability": null,
+                  "art": {
+                    "url": "https://a.espncdn.com/i/teamlogos/ncaa/500/127.png",
+                    "kind": "team_logo",
+                    "detail": "MSU",
+                    "accent_color": "#173f35",
+                    "initials": "MS"
+                  }
+                },
+                {
+                  "outcome_id": 215429575,
+                  "name": "UConn",
+                  "probability": 0.06338028,
+                  "rendered_percent": 6,
+                  "opening_probability": null,
+                  "art": {
+                    "url": "https://a.espncdn.com/i/teamlogos/ncaa/500/41.png",
+                    "kind": "team_logo",
+                    "detail": "CONN",
+                    "accent_color": "#0c2340",
+                    "initials": "UC"
+                  }
+                },
+                {
+                  "outcome_id": 215429571,
+                  "name": "Michigan",
+                  "probability": 0.05633803,
+                  "rendered_percent": 6,
+                  "opening_probability": null,
+                  "art": {
+                    "url": "https://a.espncdn.com/i/teamlogos/ncaa/500/130.png",
+                    "kind": "team_logo",
+                    "detail": "MICH",
+                    "accent_color": "#00274c",
+                    "initials": "MI"
+                  }
+                },
+                {
+                  "outcome_id": 215429572,
+                  "name": "Illinois",
+                  "probability": 0.04225352,
+                  "rendered_percent": 4,
+                  "opening_probability": null,
+                  "art": {
+                    "url": "https://a.espncdn.com/i/teamlogos/ncaa/500/356.png",
+                    "kind": "team_logo",
+                    "detail": "ILL",
+                    "accent_color": "#ff5f05",
+                    "initials": "IL"
+                  }
+                }
+              ],
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "215429574": 54,
+                  "215429570": 10,
+                  "215429577": 7,
+                  "215429575": 6,
+                  "215429571": 6,
+                  "215429572": 4,
+                  "215429573": 4,
+                  "215429578": 3,
+                  "215429579": 3,
+                  "215429576": 3,
+                  "215429569": 0
+                },
+                "by_outcome_key": {
+                  "houston": 54,
+                  "duke": 10,
+                  "michigan st": 7,
+                  "uconn": 6,
+                  "michigan": 6,
+                  "illinois": 4,
+                  "arizona": 4,
+                  "kansas": 3,
+                  "louisville": 3,
+                  "iowa st": 3,
+                  "arkansas": 0
+                }
+              }
+            }
+          ],
+          "item_noun": "teams"
+        }
+      },
+      {
+        "class": "march_madness_2027",
+        "title": "Final Four Contenders",
+        "layout": "benchmark_strip",
+        "count": 6,
+        "members": [
+          {
+            "type": "market",
+            "id": 68954772,
+            "destination": {
+              "kind": "market",
+              "id": 68954772,
+              "web": "/futures/68954772",
+              "api": "/api/futures/68954772"
+            },
+            "card": {
+              "id": 68954772,
+              "name": "Will Duke reach the 2027 NCAA Men's Basketball Final Four?",
+              "status": "open",
+              "source": "polymarket",
+              "mutually_exclusive": true,
+              "market_type": "container_member",
+              "volume": 1741.8382049999998,
+              "image_url": null,
+              "llm_sport_category": "basketball",
+              "resolution_date": "2027-03-29T03:59:00+00:00",
+              "event_date": null,
+              "top_outcomes": [
+                {
+                  "id": 258599644,
+                  "name": "No",
+                  "probability": 0.615,
+                  "rendered_percent": 62,
+                  "opening_probability": 0.62,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T21:52:19.608332+00:00"
+                },
+                {
+                  "id": 258599643,
+                  "name": "Yes",
+                  "probability": 0.385,
+                  "rendered_percent": 38,
+                  "opening_probability": 0.38,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T21:52:19.608332+00:00"
+                }
+              ],
+              "newest_outcome_updated_at": "2026-11-22T21:52:19.608332+00:00",
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "258599644": 62,
+                  "258599643": 38
+                },
+                "by_outcome_key": {
+                  "no": 62,
+                  "yes": 38
+                }
+              },
+              "content_kind": "futures"
+            },
+            "event_id": null
+          },
+          {
+            "type": "market",
+            "id": 68954808,
+            "destination": {
+              "kind": "market",
+              "id": 68954808,
+              "web": "/futures/68954808",
+              "api": "/api/futures/68954808"
+            },
+            "card": {
+              "id": 68954808,
+              "name": "Will UConn reach the 2027 NCAA Men's Basketball Final Four?",
+              "status": "open",
+              "source": "polymarket",
+              "mutually_exclusive": true,
+              "market_type": "container_member",
+              "volume": 627.969231,
+              "image_url": null,
+              "llm_sport_category": "basketball",
+              "resolution_date": "2027-03-29T03:59:00+00:00",
+              "event_date": null,
+              "top_outcomes": [
+                {
+                  "id": 258599716,
+                  "name": "No",
+                  "probability": 0.765,
+                  "rendered_percent": 77,
+                  "opening_probability": 0.77,
+                  "image_url": null,
+                  "last_updated": "2026-11-15T19:58:14.262596+00:00"
+                },
+                {
+                  "id": 258599715,
+                  "name": "Yes",
+                  "probability": 0.235,
+                  "rendered_percent": 23,
+                  "opening_probability": 0.23,
+                  "image_url": null,
+                  "last_updated": "2026-11-15T19:58:14.262596+00:00"
+                }
+              ],
+              "newest_outcome_updated_at": "2026-11-15T19:58:14.262596+00:00",
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "258599716": 77,
+                  "258599715": 23
+                },
+                "by_outcome_key": {
+                  "no": 77,
+                  "yes": 23
+                }
+              },
+              "content_kind": "futures"
+            },
+            "event_id": null
+          },
+          {
+            "type": "market",
+            "id": 68954776,
+            "destination": {
+              "kind": "market",
+              "id": 68954776,
+              "web": "/futures/68954776",
+              "api": "/api/futures/68954776"
+            },
+            "card": {
+              "id": 68954776,
+              "name": "Will Illinois reach the 2027 NCAA Men's Basketball Final Four?",
+              "status": "open",
+              "source": "polymarket",
+              "mutually_exclusive": true,
+              "market_type": "container_member",
+              "volume": 130.943488,
+              "image_url": null,
+              "llm_sport_category": "basketball",
+              "resolution_date": "2027-03-29T03:59:00+00:00",
+              "event_date": null,
+              "top_outcomes": [
+                {
+                  "id": 258599652,
+                  "name": "No",
+                  "probability": 0.785,
+                  "rendered_percent": 79,
+                  "opening_probability": 0.78,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T21:49:14.479934+00:00"
+                },
+                {
+                  "id": 258599651,
+                  "name": "Yes",
+                  "probability": 0.215,
+                  "rendered_percent": 21,
+                  "opening_probability": 0.22,
+                  "image_url": null,
+                  "last_updated": "2026-11-22T21:49:14.479934+00:00"
+                }
+              ],
+              "newest_outcome_updated_at": "2026-11-22T21:49:14.479934+00:00",
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "258599652": 79,
+                  "258599651": 21
+                },
+                "by_outcome_key": {
+                  "no": 79,
+                  "yes": 21
+                }
+              },
+              "content_kind": "futures"
+            },
+            "event_id": null
+          },
+          {
+            "type": "market",
+            "id": 68948342,
+            "destination": {
+              "kind": "market",
+              "id": 68948342,
+              "web": "/futures/68948342",
+              "api": "/api/futures/68948342"
+            },
+            "card": {
+              "id": 68948342,
+              "name": "Will Kansas reach the 2027 NCAA Men's Basketball Final Four?",
+              "status": "open",
+              "source": "polymarket",
+              "mutually_exclusive": true,
+              "market_type": "container_member",
+              "volume": 202.619048,
+              "image_url": null,
+              "llm_sport_category": "basketball",
+              "resolution_date": "2027-03-29T03:59:00+00:00",
+              "event_date": null,
+              "top_outcomes": [
+                {
+                  "id": 258569041,
+                  "name": "No",
+                  "probability": 0.8,
+                  "rendered_percent": 80,
+                  "opening_probability": 0.97,
+                  "image_url": null,
+                  "last_updated": "2026-11-13T16:30:39.168845+00:00"
+                },
+                {
+                  "id": 258569040,
+                  "name": "Yes",
+                  "probability": 0.2,
+                  "rendered_percent": 20,
+                  "opening_probability": 0.03,
+                  "image_url": null,
+                  "last_updated": "2026-11-13T16:30:39.168845+00:00"
+                }
+              ],
+              "newest_outcome_updated_at": "2026-11-13T16:30:39.168845+00:00",
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "258569041": 80,
+                  "258569040": 20
+                },
+                "by_outcome_key": {
+                  "no": 80,
+                  "yes": 20
+                }
+              },
+              "content_kind": "futures"
+            },
+            "event_id": null
+          },
+          {
+            "type": "market",
+            "id": 68954759,
+            "destination": {
+              "kind": "market",
+              "id": 68954759,
+              "web": "/futures/68954759",
+              "api": "/api/futures/68954759"
+            },
+            "card": {
+              "id": 68954759,
+              "name": "Will Arkansas reach the 2027 NCAA Men's Basketball Final Four?",
+              "status": "open",
+              "source": "polymarket",
+              "mutually_exclusive": true,
+              "market_type": "container_member",
+              "volume": 52.0,
+              "image_url": null,
+              "llm_sport_category": "basketball",
+              "resolution_date": "2027-03-29T03:59:00+00:00",
+              "event_date": null,
+              "top_outcomes": [
+                {
+                  "id": 258599618,
+                  "name": "No",
+                  "probability": 0.83,
+                  "rendered_percent": 83,
+                  "opening_probability": 0.9,
+                  "image_url": null,
+                  "last_updated": "2026-11-14T08:59:51.378554+00:00"
+                },
+                {
+                  "id": 258599617,
+                  "name": "Yes",
+                  "probability": 0.17,
+                  "rendered_percent": 17,
+                  "opening_probability": 0.1,
+                  "image_url": null,
+                  "last_updated": "2026-11-14T08:59:51.378554+00:00"
+                }
+              ],
+              "newest_outcome_updated_at": "2026-11-14T08:59:51.378554+00:00",
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "258599618": 83,
+                  "258599617": 17
+                },
+                "by_outcome_key": {
+                  "no": 83,
+                  "yes": 17
+                }
+              },
+              "content_kind": "futures"
+            },
+            "event_id": null
+          },
+          {
+            "type": "market",
+            "id": 68954760,
+            "destination": {
+              "kind": "market",
+              "id": 68954760,
+              "web": "/futures/68954760",
+              "api": "/api/futures/68954760"
+            },
+            "card": {
+              "id": 68954760,
+              "name": "Will Arizona reach the 2027 NCAA Men's Basketball Final Four?",
+              "status": "open",
+              "source": "polymarket",
+              "mutually_exclusive": true,
+              "market_type": "container_member",
+              "volume": 40.0,
+              "image_url": null,
+              "llm_sport_category": "basketball",
+              "resolution_date": "2027-03-29T03:59:00+00:00",
+              "event_date": null,
+              "top_outcomes": [
+                {
+                  "id": 258599620,
+                  "name": "No",
+                  "probability": 0.895,
+                  "rendered_percent": 90,
+                  "opening_probability": 0.86,
+                  "image_url": null,
+                  "last_updated": "2026-11-17T17:52:49.854103+00:00"
+                },
+                {
+                  "id": 258599619,
+                  "name": "Yes",
+                  "probability": 0.105,
+                  "rendered_percent": 10,
+                  "opening_probability": 0.14,
+                  "image_url": null,
+                  "last_updated": "2026-11-17T17:52:49.854103+00:00"
+                }
+              ],
+              "newest_outcome_updated_at": "2026-11-17T17:52:49.854103+00:00",
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "258599620": 90,
+                  "258599619": 10
+                },
+                "by_outcome_key": {
+                  "no": 90,
+                  "yes": 10
+                }
+              },
+              "content_kind": "futures"
+            },
+            "event_id": null
+          }
+        ],
+        "note": "Programs competing for the 2027 Final Four.",
+        "visual_block": {
+          "form_id": "benchmark_strip",
+          "initial_visible_limit": 3,
+          "items": [
+            {
+              "market_id": 68954772,
+              "title": "Duke reaches the 2027 Final Four",
+              "headline_phrase": "Duke reaching the 2027 Final Four",
+              "headline_with_phrase": "Duke reaching the 2027 Final Four",
+              "raw_title": "Will Duke reach the 2027 NCAA Men's Basketball Final Four?",
+              "is_date_timing_row": false,
+              "href": "/futures/68954772",
+              "source": "polymarket",
+              "lead_prob": 0.385,
+              "leader_outcome_id": 258599643,
+              "scale_ordered": false,
+              "content_kind": "futures",
+              "closeness_to_50": 0.11499999999999999,
+              "outcomes": [
+                {
+                  "outcome_id": 258599643,
+                  "name": "Yes",
+                  "probability": 0.385,
+                  "rendered_percent": 38,
+                  "art": {
+                    "url": "https://a.espncdn.com/i/teamlogos/ncaa/500/150.png",
+                    "kind": "team_logo",
+                    "detail": "DUKE",
+                    "accent_color": "#00539b",
+                    "initials": "DD"
+                  }
+                }
+              ],
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "258599644": 62,
+                  "258599643": 38
+                },
+                "by_outcome_key": {
+                  "no": 62,
+                  "yes": 38
+                }
+              }
+            },
+            {
+              "market_id": 68954808,
+              "title": "UConn reaches the 2027 Final Four",
+              "headline_phrase": "UConn reaching the 2027 Final Four",
+              "headline_with_phrase": "UConn reaching the 2027 Final Four",
+              "raw_title": "Will UConn reach the 2027 NCAA Men's Basketball Final Four?",
+              "is_date_timing_row": false,
+              "href": "/futures/68954808",
+              "source": "polymarket",
+              "lead_prob": 0.235,
+              "leader_outcome_id": 258599715,
+              "scale_ordered": false,
+              "content_kind": "futures",
+              "closeness_to_50": 0.265,
+              "outcomes": [
+                {
+                  "outcome_id": 258599715,
+                  "name": "Yes",
+                  "probability": 0.235,
+                  "rendered_percent": 23,
+                  "art": {
+                    "url": "https://a.espncdn.com/i/teamlogos/ncaa/500/41.png",
+                    "kind": "team_logo",
+                    "detail": "CONN",
+                    "accent_color": "#0c2340",
+                    "initials": "UH"
+                  }
+                }
+              ],
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "258599716": 77,
+                  "258599715": 23
+                },
+                "by_outcome_key": {
+                  "no": 77,
+                  "yes": 23
+                }
+              }
+            },
+            {
+              "market_id": 68954776,
+              "title": "Illinois reaches the 2027 Final Four",
+              "headline_phrase": "Illinois reaching the 2027 Final Four",
+              "headline_with_phrase": "Illinois reaching the 2027 Final Four",
+              "raw_title": "Will Illinois reach the 2027 NCAA Men's Basketball Final Four?",
+              "is_date_timing_row": false,
+              "href": "/futures/68954776",
+              "source": "polymarket",
+              "lead_prob": 0.215,
+              "leader_outcome_id": 258599651,
+              "scale_ordered": false,
+              "content_kind": "futures",
+              "closeness_to_50": 0.28500000000000003,
+              "outcomes": [
+                {
+                  "outcome_id": 258599651,
+                  "name": "Yes",
+                  "probability": 0.215,
+                  "rendered_percent": 21,
+                  "art": {
+                    "url": "https://a.espncdn.com/i/teamlogos/ncaa/500/356.png",
+                    "kind": "team_logo",
+                    "detail": "ILL",
+                    "accent_color": "#ff5f05",
+                    "initials": "II"
+                  }
+                }
+              ],
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "258599652": 79,
+                  "258599651": 21
+                },
+                "by_outcome_key": {
+                  "no": 79,
+                  "yes": 21
+                }
+              }
+            },
+            {
+              "market_id": 68948342,
+              "title": "Kansas reaches the 2027 Final Four",
+              "headline_phrase": "Kansas reaching the 2027 Final Four",
+              "headline_with_phrase": "Kansas reaching the 2027 Final Four",
+              "raw_title": "Will Kansas reach the 2027 NCAA Men's Basketball Final Four?",
+              "is_date_timing_row": false,
+              "href": "/futures/68948342",
+              "source": "polymarket",
+              "lead_prob": 0.2,
+              "leader_outcome_id": 258569040,
+              "scale_ordered": false,
+              "content_kind": "futures",
+              "closeness_to_50": 0.3,
+              "outcomes": [
+                {
+                  "outcome_id": 258569040,
+                  "name": "Yes",
+                  "probability": 0.2,
+                  "rendered_percent": 20,
+                  "art": {
+                    "url": "https://a.espncdn.com/i/teamlogos/ncaa/500/2305.png",
+                    "kind": "team_logo",
+                    "detail": "KU",
+                    "accent_color": "#0051ba",
+                    "initials": "KJ"
+                  }
+                }
+              ],
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "258569041": 80,
+                  "258569040": 20
+                },
+                "by_outcome_key": {
+                  "no": 80,
+                  "yes": 20
+                }
+              }
+            },
+            {
+              "market_id": 68954759,
+              "title": "Arkansas reaches the 2027 Final Four",
+              "headline_phrase": "Arkansas reaching the 2027 Final Four",
+              "headline_with_phrase": "Arkansas reaching the 2027 Final Four",
+              "raw_title": "Will Arkansas reach the 2027 NCAA Men's Basketball Final Four?",
+              "is_date_timing_row": false,
+              "href": "/futures/68954759",
+              "source": "polymarket",
+              "lead_prob": 0.17,
+              "leader_outcome_id": 258599617,
+              "scale_ordered": false,
+              "content_kind": "futures",
+              "closeness_to_50": 0.32999999999999996,
+              "outcomes": [
+                {
+                  "outcome_id": 258599617,
+                  "name": "Yes",
+                  "probability": 0.17,
+                  "rendered_percent": 17,
+                  "art": {
+                    "url": "https://a.espncdn.com/i/teamlogos/ncaa/500/8.png",
+                    "kind": "team_logo",
+                    "detail": "ARK",
+                    "accent_color": "#a32136",
+                    "initials": "AR"
+                  }
+                }
+              ],
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "258599618": 83,
+                  "258599617": 17
+                },
+                "by_outcome_key": {
+                  "no": 83,
+                  "yes": 17
+                }
+              }
+            },
+            {
+              "market_id": 68954760,
+              "title": "Arizona reaches the 2027 Final Four",
+              "headline_phrase": "Arizona reaching the 2027 Final Four",
+              "headline_with_phrase": "Arizona reaching the 2027 Final Four",
+              "raw_title": "Will Arizona reach the 2027 NCAA Men's Basketball Final Four?",
+              "is_date_timing_row": false,
+              "href": "/futures/68954760",
+              "source": "polymarket",
+              "lead_prob": 0.105,
+              "leader_outcome_id": 258599619,
+              "scale_ordered": false,
+              "content_kind": "futures",
+              "closeness_to_50": 0.395,
+              "outcomes": [
+                {
+                  "outcome_id": 258599619,
+                  "name": "Yes",
+                  "probability": 0.105,
+                  "rendered_percent": 10,
+                  "art": {
+                    "url": "https://a.espncdn.com/i/teamlogos/ncaa/500/12.png",
+                    "kind": "team_logo",
+                    "detail": "ARIZ",
+                    "accent_color": "#cc0033",
+                    "initials": "AW"
+                  }
+                }
+              ],
+              "member_page_numbers": {
+                "by_outcome_id": {
+                  "258599620": 90,
+                  "258599619": 10
+                },
+                "by_outcome_key": {
+                  "no": 90,
+                  "yes": 10
+                }
+              }
+            }
+          ],
+          "item_noun": "teams"
+        }
+      }
+    ],
+    "member_count": 7,
+    "withheld": [],
+    "withheld_count": 0,
+    "children": [],
+    "assembled": true,
+    "destination_href": "/collections/machinery-march-madness-2027"
+  }
+}
