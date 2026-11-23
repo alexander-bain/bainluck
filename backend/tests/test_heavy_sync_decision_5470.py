@@ -3653,3 +3653,45 @@ def test_the_workflow_reads_both_facts_and_hands_them_to_every_judgement():
     assert judgements == 3  # wait-plan, decide, and the re-decision on moved refs
     assert code.count('--floor-exempt "${FLOOR_EXEMPT:-}"') == judgements
     assert code.count('--heavy-releases-24h "${HEAVY_RELEASES_24H:-}"') == judgements
+
+
+def test_heroku_release_commit_ignores_failed_or_pending_release_and_picks_current(monkeypatch):
+    calls: list[tuple[str, dict | None]] = []
+
+    def fake_get(path, token, headers=None):
+        calls.append((path, headers))
+        if path == "apps/bainluck-heavy/releases":
+            if headers and "max=1" in headers.get("Range", "") and "max=10" not in headers.get("Range", ""):
+                return [
+                    {
+                        "version": 6585,
+                        "status": "failed",
+                        "current": False,
+                        "slug": {"id": "failed-slug"},
+                    }
+                ]
+            return [
+                {"version": 6585, "status": "failed", "current": False, "slug": {"id": "failed-slug"}},
+                {"version": 6584, "status": "succeeded", "current": True, "slug": {"id": "live-slug"}},
+            ]
+        if path == "apps/bainluck-heavy/slugs/live-slug":
+            return {"commit": "b" * 40}
+        raise AssertionError(f"unexpected lookup: {path}")
+
+    monkeypatch.setattr(sync, "_heroku_get", fake_get)
+    assert sync.heroku_release_commit("bainluck-heavy", "tok") == "b" * 40
+    assert calls[0][1] == {"Range": "version ..; order=desc, max=1"}
+
+    # When no release in recent history is current+succeeded, fail closed to None
+    def fake_all_failed(path, token, headers=None):
+        return [{"version": 6585, "status": "failed", "current": False, "slug": {"id": "failed-slug"}}]
+
+    monkeypatch.setattr(sync, "_heroku_get", fake_all_failed)
+    assert sync.heroku_release_commit("bainluck-heavy", "tok") is None
+
+
+def test_heavy_sync_workflow_verifies_heroku_push_and_release():
+    code = _workflow_code()
+    assert ".github/scripts/check_heroku_push.py" in code
+    assert "--require-release-done --verify-api" in code
+    assert "--app bainluck-heavy" in code
