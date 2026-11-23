@@ -5610,8 +5610,13 @@ async def get_golf_tournament_probability_timeline(
         "live",
     )
 
+    tourn_key = (
+        tournament.get("key")
+        or _clean_slug(tournament.get("name") or "")
+        or "tournament"
+    )
     return build_golf_blended_timeline(
-        tournament.get("key") or slug,
+        tourn_key,
         winner_markets,
         tournament,
         readings,
