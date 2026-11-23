@@ -153,15 +153,29 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
            let url = URL(string: urlString) {
             return .url(url)
         }
-        if let eventIdString = userInfo["event_id"] as? String,
-           let eventId = Int(eventIdString) {
+        if let eventId = Self.positiveInt(from: userInfo["event_id"]) {
             return .event(id: eventId)
         }
-        if let marketIdString = userInfo["market_id"] as? String,
-           let marketId = Int(marketIdString) {
+        if let marketId = Self.positiveInt(from: userInfo["market_id"]) {
             return .market(id: marketId)
         }
         return .none
+    }
+
+    /// Accepts either JSON integer (`Int` / `NSNumber`, rejecting `Bool`) or numeric `String`
+    /// so APNs payloads from `GameAlertPush` (#13088, integer `event_id`) and legacy string
+    /// payloads both route directly to the event or market page (#13082 / #13083).
+    nonisolated private static func positiveInt(from raw: Any?) -> Int? {
+        if let number = raw as? NSNumber {
+            // `CFGetTypeID(number) == CFBooleanGetTypeID()` rejects JSON booleans that bridge to NSNumber.
+            if CFGetTypeID(number) == CFBooleanGetTypeID() { return nil }
+            let intValue = number.intValue
+            return intValue > 0 && number.doubleValue == Double(intValue) ? intValue : nil
+        }
+        if let text = raw as? String, let intValue = Int(text), intValue > 0 {
+            return intValue
+        }
+        return nil
     }
 
     /// Registering the category is what makes the "Label today" button exist.
@@ -299,8 +313,44 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         !defaults.bool(forKey: suppressPromptKey)
     }
 
-    /// Request notification permission after a short delay so the prompt
-    /// doesn't fire immediately on first launch — better UX.
+    /// #13083 / Ruling 212: A — replaces the retired cold-launch permission ask:
+    /// checks current system authorization without ever presenting a dialog, and
+    /// registers for remote notifications only if the reader already granted access.
+    @MainActor
+    func registerIfAlreadyAuthorized() async {
+        let status = await notificationAuthorizationStatus()
+        #if os(iOS)
+        let granted = status == .authorized || status == .provisional || status == .ephemeral
+        #else
+        let granted = status == .authorized || status == .provisional
+        #endif
+        isPermissionGranted = granted
+        if granted {
+            registerForRemoteNotifications()
+        }
+    }
+
+    /// Reads the current system notification authorization status without prompting.
+    @MainActor
+    func notificationAuthorizationStatus() async -> UNAuthorizationStatus {
+        await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+    }
+
+    /// #13083 / Ruling 261: A — requests standard notification authorization (respects Focus,
+    /// never Time Sensitive) when the reader opts in via Settings or the contextual pin ask.
+    @MainActor
+    func requestStandardPermissionForGameAlerts() async -> UNAuthorizationStatus {
+        guard Self.shouldRequestPermission() else {
+            logger.info("Notification permission prompt suppressed by launch argument")
+            return await notificationAuthorizationStatus()
+        }
+        await requestPermission()
+        return await notificationAuthorizationStatus()
+    }
+
+    /// Retired cold-launch prompt (#13083 / Ruling 212: A). Kept only for compatibility;
+    /// `Bain_LuckApp` calls `registerIfAlreadyAuthorized()` instead.
+    @available(*, deprecated, message: "Cold-launch notification prompt retired by #13083 (Ruling 212: A); ask in context instead.")
     func requestPermissionAfterDelay(seconds: TimeInterval = 5) {
         guard Self.shouldRequestPermission() else {
             logger.info("Notification permission prompt suppressed by launch argument")

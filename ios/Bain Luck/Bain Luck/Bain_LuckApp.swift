@@ -296,7 +296,9 @@ struct Bain_LuckApp: App {
                 #else
                 NotificationManager.shared.navCoordinator = navCoordinator
                 #endif
-                NotificationManager.shared.requestPermissionAfterDelay()
+                // #13083 / Ruling 212: A — retire cold-launch permission ask; only register
+                // for APNs silently if the reader already granted notification access.
+                await NotificationManager.shared.registerIfAlreadyAuthorized()
                 if let userId = authManager.user?.id {
                     NotificationManager.shared.setUser(id: userId)
                     AnalyticsService.setCrashReportingUserId(String(userId))
