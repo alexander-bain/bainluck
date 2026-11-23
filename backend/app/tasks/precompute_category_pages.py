@@ -1724,13 +1724,8 @@ async def _prewarm_feed_shape(
 
     # #12361: this is a second writer on the feed route's numeric cache keys.
     body = dumps_feed_cache(payload)
-    _redis_setex_batch(
-        rc,
-        [
-            (cache_key, ttl, body),
-            (f"{cache_key}:stale", stale_ttl, body),
-        ],
-    )
+    rc.setex(cache_key, ttl, body)
+    rc.setex(f"{cache_key}:stale", stale_ttl, body)
     # #12288: also publish the anonymous page base via sync Redis (Celery
     # ForkPoolWorker closes asyncio loops between tasks) and, when the
     # machinery switch is on for Discover shapes, splice the cached machinery
