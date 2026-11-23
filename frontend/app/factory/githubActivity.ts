@@ -8,6 +8,7 @@ export type GitHubActivity = {
   checkedAt: string;
   masterAt?: string;
   ciAt?: string | null;
+  oldestRunningCI?: string | null;
   collector?: { at: string; failed: boolean };
   collectorQueuedAt?: string;
 };
@@ -22,6 +23,7 @@ type WorkflowRun = {
   updated_at: string;
   id?: number;
   created_at?: string;
+  run_started_at?: string;
 };
 
 type WorkflowJob = {
@@ -56,11 +58,18 @@ export async function readGitHubActivity(fetcher: typeof fetch = fetch): Promise
 
   const runsQuery = `branch=master&per_page=${RUNS_PER_PAGE}`;
   const factoryRunsPath = `actions/workflows/factory.yml/runs?${runsQuery}`;
-  const [master, ci, factory] = await Promise.all([
+  const [master, ci, factory, activeCI] = await Promise.all([
     read("commits/master"),
     read(`actions/workflows/ci.yml/runs?${runsQuery}&status=completed&event=push`),
     read(factoryRunsPath),
+    read("actions/workflows/ci.yml/runs?branch=master&event=push&status=in_progress&per_page=100"),
   ]);
+  const activeRuns: WorkflowRun[] | undefined = Array.isArray(activeCI?.workflow_runs)
+    ? activeCI.workflow_runs : undefined;
+  const oldestRunningCI = activeRuns?.every(run =>
+    run?.status === "in_progress" && timestamp(run.run_started_at))
+    ? activeRuns.map(run => run.run_started_at!).sort((a, b) => Date.parse(a) - Date.parse(b))[0] ?? null
+    : undefined;
   const ciRuns = ci?.workflow_runs;
   const ciAt = Array.isArray(ciRuns)
     ? latestCompletion(ciRuns, run => typeof run.conclusion === "string")?.updated_at ??
@@ -93,6 +102,7 @@ export async function readGitHubActivity(fetcher: typeof fetch = fetch): Promise
     checkedAt: new Date().toISOString(),
     masterAt: timestamp(master?.commit?.committer?.date),
     ciAt,
+    ...(oldestRunningCI !== undefined && { oldestRunningCI }),
     ...(collector && { collector: { at: collector.updated_at, failed: collector.conclusion !== "success" } }),
     ...(collectorQueuedAt && { collectorQueuedAt }),
   };

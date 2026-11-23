@@ -53,7 +53,7 @@ import { validateSnapshot } from "./data";
 import { useReplayJournal } from "./replayJournal";
 import { remainingEvents, transfersSince } from "./liveTransfers";
 import { crossesSegment, eventText, WALK_PER_STATION_MS, useEventPlayer } from "./playback";
-import { factoryTabTitle, floorReadingState, floorVerdict, type FloorVerdict } from "./verdict";
+import { factoryTabTitle, floorReadingState, floorVerdict, releaseStallText, type FloorVerdict } from "./verdict";
 import {
   stations,
   stationNames,
@@ -161,12 +161,14 @@ function notice(stop: Stop, now: string, names: FactoryNames) {
 
 function StackLight({
   verdict,
+  releaseWarning,
   hold,
   names,
   now,
   children,
 }: {
   verdict: FloorVerdict;
+  releaseWarning?: string;
   hold?: Stop;
   names: FactoryNames;
   now: string;
@@ -176,7 +178,7 @@ function StackLight({
   return (
     <div
       className={styles.verdict}
-      data-verdict={verdict.level}
+      data-verdict={releaseWarning ? "amber" : verdict.level}
       data-level={hold && "red"}
       role="status"
     >
@@ -186,7 +188,7 @@ function StackLight({
         <i data-light="green" />
       </div>
       <div>
-        <strong>{verdict.text}</strong>
+        <strong data-release-stall={releaseWarning ? true : undefined}>{releaseWarning ?? verdict.text}</strong>
         {waited && <small className={styles.stopOrigin}>{waited}</small>}
         {hold && <HoldOrigin stop={hold} names={names} />}
       </div>
@@ -260,6 +262,7 @@ export default function FactoryFloor(initial: {
   const pauseBays = readingState === "failed" || readingState === "last-known";
   const motion = !behind && tabVisible && reducedMotion === false;
   const verdict = floorVerdict(data, readFailed, now, activity);
+  const releaseStall = data ? releaseStallText(data, now, activity) : undefined;
   const tabTitle = factoryTabTitle(verdict);
   const today = pacificDay(now);
   const light = workshopLight(now);
@@ -506,6 +509,7 @@ export default function FactoryFloor(initial: {
     .map((alert) => alert.text))];
   const floorAlertCount = waits.length + otherAlerts.length;
   const serverHold = holds.find((stop) => stop.line === "Server");
+  const headlineRelease = holds.length === 0 ? releaseStall : undefined;
   const testFlightPost = data.signals.testflight_post;
   const notes =
     data.notes?.snapshot_at === data.generated_at ? data.notes : null;
@@ -685,10 +689,10 @@ export default function FactoryFloor(initial: {
       </header>
 
       <div className={styles.statusBand}>
-        <StackLight verdict={verdict} hold={holds[0]} names={names} now={now}>
+        <StackLight verdict={verdict} releaseWarning={headlineRelease} hold={holds[0]} names={names} now={now}>
           {!mascotMove && (
             <FactoryMascot
-              level={verdict.level}
+              level={headlineRelease ? "amber" : verdict.level}
               pose={clockedIn.size ? "standing" : "asleep"}
               moving={sceneVisible && clockedIn.size > 0 && verdict.level !== "red"}
             />
@@ -750,6 +754,12 @@ export default function FactoryFloor(initial: {
       {readingState === "quiet" && (
         <p className={styles.sectionNote}>Last published {publishedAge} ago. No changes landed and no shared tests finished since then.</p>
       )}
+      {releaseStall && !headlineRelease && (
+        <div className={styles.readerWarning} role="status" data-release-stall>
+          <Truck size={20} aria-hidden="true" />
+          <p>{releaseStall}</p>
+        </div>
+      )}
       <section className={styles.floorCard} aria-labelledby="floor-heading">
         <div className={styles.sectionHeading}>
           <h2 id="floor-heading">The floor</h2>
@@ -801,15 +811,7 @@ export default function FactoryFloor(initial: {
             </div>
           </details>
         )}
-        <div className={styles.scrollHint}>
-          <ArrowRight size={14} /> Scroll across to follow the line
-        </div>
-        <div
-          className={styles.floorScroll}
-          tabIndex={0}
-          role="region"
-          aria-label="Factory floor, scroll horizontally to see all six stations"
-        >
+        <div className={styles.floorScroll} tabIndex={0} role="region" aria-label="Factory floor">
           <div className={styles.floorGrid}>
             <div className={styles.stationHeadings}>
               <span />
@@ -918,6 +920,19 @@ export default function FactoryFloor(initial: {
                           data-waiting={changes.length}
                           data-worker-state={workerState}
                         >
+                          <div className={styles.compactStation}>
+                            <Icon size={16} aria-hidden="true" />
+                            <div>
+                              <strong>{stationNames[station]}</strong>
+                              <span>{engineering[station]}</span>
+                              {lineIndex === 0 && station === "Review" && (
+                                <span>{nameEditor.custom.Fable?.trim() ? names.Fable : "Foreman"}</span>
+                              )}
+                              {lineIndex === 0 && notes?.stations[stationNames[station]] && (
+                                <p>{notes.stations[stationNames[station]]}</p>
+                              )}
+                            </div>
+                          </div>
                           {station === "Merge line" && line === "Server" && (
                             <div
                               className={styles.dockSign}
