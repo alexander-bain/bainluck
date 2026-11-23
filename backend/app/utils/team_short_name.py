@@ -112,7 +112,7 @@ def is_non_distinctive_trailing_word(token: str | None) -> bool:
 COLLEGE_MASCOTS: tuple[str, ...] = tuple(sorted({
     "Blue Devils", "Crimson Tide", "Tar Heels", "Fighting Irish", "Golden Eagles",
     "Red Raiders", "Nittany Lions", "Horned Frogs", "Yellow Jackets", "Sun Devils",
-    "Demon Deacons", "Scarlet Knights", "Bulldogs", "Rebels", "Wildcats", "Tigers",
+    "Demon Deacons", "Scarlet Knights", "Golden Panthers", "Bulldogs", "Rebels", "Wildcats", "Tigers",
     "Eagles", "Bears", "Cougars", "Huskies", "Spartans", "Wolverines", "Buckeyes",
     "Hoosiers", "Boilermakers", "Illini", "Hawkeyes", "Badgers", "Gators",
     "Volunteers", "Commodores", "Razorbacks", "Aggies", "Longhorns", "Sooners",
