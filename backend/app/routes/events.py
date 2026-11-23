@@ -20980,12 +20980,12 @@ async def get_event(
         # declaration is shared with both client halves that already withhold
         # this figure (ux/1301 web, native #5271) and the reasoning lives with
         # it, in `app/utils/draw_priced_winner.py`.
-        # #13131: on a three-way (draw-priced) sport, when the sportsbooks give
-        # both home and away summing strictly below 1, serve all three legs
-        # (home, draw, away) adding to 100%. When a scheduled three-way game has
-        # only one leg (no 3-way books), serve nothing for chance (Step 3);
-        # live/suspended one-leg rows preserve the existing #6238/#12279/#12581
-        # away-withheld contract.
+        # #13131 / #13479: on a three-way (draw-priced) sport, when the
+        # sportsbooks give both home and away summing strictly below 1, serve all
+        # three legs (home, draw, away) adding to 100%. When any non-settled
+        # three-way game has only one leg (no 3-way books — scheduled, live, or
+        # suspended), serve nothing for chance so list and page agree; settled
+        # games stay as they are.
         _hero_draw_prob: Optional[float] = None
         _draw_pct: Optional[int] = None
         if sport_prices_a_draw(event_sport_key):
@@ -21008,7 +21008,7 @@ async def get_event(
                 _home_pct, _draw_pct, _away_pct = rendered_three_way_percents(
                     hero_home_prob, _hero_draw_prob, hero_away_prob
                 )
-            elif response.get("status") == "scheduled":
+            elif not is_finished_status(response.get("status")):
                 hero_home_prob = None
                 hero_away_prob = None
                 _away_pct, _home_pct = None, None
@@ -21106,9 +21106,10 @@ async def get_event(
 
     # Fallback: if no odds snapshots, use aggregate from alternative sources
     if "current_odds" not in response and agg_prob is not None:
-        if sport_prices_a_draw(event_sport_key) and response.get("status") == "scheduled":
-            # #13131 step 3: scheduled draw-priced game with no 3-way books
-            # has only one leg — serve nothing for chance, not an orphan number.
+        if sport_prices_a_draw(event_sport_key) and not is_finished_status(response.get("status")):
+            # #13131 / #13479: any non-settled draw-priced game with no 3-way
+            # books has only one leg — serve nothing for chance, not an orphan
+            # home chance.
             response["current_odds"] = {
                 "home_probability": None,
                 "away_probability": None,
@@ -21286,16 +21287,13 @@ async def get_event(
                     response["hero_probability"] = _h3[0]
                     _hero_away = _h3[1]
                     response["hero_probability_draw"] = _h3[2]
-                elif response.get("status") == "scheduled":
-                    # #13131 step 3: scheduled one-leg three-way game -> no orphan chance.
+                else:
+                    # #13131 / #13479: non-settled one-leg three-way game -> no orphan chance
+                    # (matches `_format_event_with_aggregated_odds` on list/search).
                     response["hero_probability"] = None
                     _hero_away = None
                     response["hero_probability_draw"] = None
                     _effective_hero = None
-                else:
-                    _hero_away = printable_away(
-                        _hero_away, _hero.home_probability, event_sport_key
-                    )
             else:
                 _hero_away = printable_away(
                     _hero_away, _hero.home_probability, event_sport_key
