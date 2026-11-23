@@ -14,6 +14,7 @@ import contextlib
 import contextvars
 import json
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -200,10 +201,15 @@ async def _precompute_golf():
     (#1475/#1459). Keeping this on the worker means the web dyno never runs the
     heavy rebuild after a restart — Redis already holds a servable base.
     """
+    import asyncio
     from datetime import datetime, timezone
     from app.tasks.base import get_task_session
     from app.tasks.redis_state import get_redis_client
-    from app.routes.golf import GOLF_CATEGORY_CACHE_KEY, get_golf
+    from app.routes.golf import (
+        GOLF_CATEGORY_CACHE_KEY,
+        get_golf,
+        warm_golf_tournament_pages,
+    )
     from app.utils.golf_base import build_envelope, publish_envelope_sync
     from app.utils.golf_card_snapshot import SNAPSHOT_TTL_S, stamp_card_payload
 
@@ -239,6 +245,26 @@ async def _precompute_golf():
         "Cached golf category page + published feed base (%d tournaments)",
         len(envelope["tournaments"]),
     )
+
+    # Warm top tournament detail pages only after category/feed-base caches are
+    # safely published, on an isolated session + timeout (#13436).
+    if os.getenv("GOLF_TOURNAMENT_CACHE_WARM_ENABLED", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    ):
+        async def _warm_details() -> None:
+            async with get_task_session() as warm_db:
+                await warm_golf_tournament_pages(
+                    warm_db, golf_data=response, only_live=False, redis_client=rc
+                )
+
+        try:
+            await asyncio.wait_for(_warm_details(), timeout=20.0)
+        except Exception:
+            logger.debug("Hourly golf tournament detail warm failed", exc_info=True)
+
     return "ok"
 
 

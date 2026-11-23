@@ -17,13 +17,14 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from app.services.datagolf_api import DataGolfPlayer
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import or_, select, text, func as sqlfunc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
 from app.services import get_db
+from app.utils import golf_tournament_cache
 from app.utils.golf_evolution_market import (
     NON_CONTENDER_WINNER_RE,
     SETTLED_RESOLVE_MIN,
@@ -4640,10 +4641,135 @@ async def _build_completed_tournament(
     }
 
 
+async def _bg_build_golf_tournament(slug: str) -> dict:
+    from app.services.database import async_session_maker
+
+    async with async_session_maker() as bg_db:
+        return await get_golf_tournament(slug=slug, db=bg_db)
+
+
+async def get_golf_tournament_cached_payload(
+    slug: str,
+    db: AsyncSession,
+    *,
+    fresh: bool = False,
+) -> tuple[dict, str]:
+    """Serve ``/tournaments/{slug}`` via SWR + last-good cache + singleflight (#13436).
+
+    Never reads the hourly ``bainluck:category:golf`` key (``get_golf_cached``):
+    CERT-686's freshness contract is preserved via a dedicated 90s-live /
+    300s-idle envelope kept warm by the in-play DataGolf poll and settlement
+    hooks, with singleflight coalescing cold misses onto one build.
+    """
+    return await golf_tournament_cache.get_or_build(
+        slug,
+        builder=lambda: get_golf_tournament(slug=slug, db=db),
+        bg_builder=lambda: _bg_build_golf_tournament(slug),
+        fresh=fresh,
+    )
+
+
+async def warm_golf_tournament_pages(
+    db: AsyncSession,
+    golf_data: dict | None = None,
+    *,
+    only_live: bool = False,
+    extra_slugs: tuple[str, ...] = (),
+    max_slugs: int = 5,
+    redis_client: object | None = None,
+) -> list[str]:
+    """Pre-build active/featured golf tournament detail payloads (#13436).
+
+    Reuses ONE ``get_golf(db)`` call across all warmed slugs and publishes each
+    into Redis + L0 so no live-round reader waits on a cold build.
+    """
+    if golf_data is None:
+        golf_data = await get_golf(db=db)
+
+    tournaments = golf_data.get("tournaments", []) or []
+    candidate_slugs: list[str] = []
+    seen: set[str] = set()
+
+    def _add_slug(raw_slug: str | None) -> None:
+        s = (raw_slug or "").strip()
+        if not s or s in seen:
+            return
+        seen.add(s)
+        candidate_slugs.append(s)
+
+    for s in extra_slugs:
+        _add_slug(s)
+
+    for t in tournaments:
+        if not isinstance(t, dict) or not t.get("name"):
+            continue
+        is_live = str(t.get("schedule_status") or "").strip().lower() == "in-progress"
+        if only_live and not is_live:
+            continue
+        t_slug = t.get("slug") or _clean_slug(t["name"])
+        if is_live:
+            _add_slug(t_slug)
+
+    current_ev = golf_data.get("current_event")
+    if isinstance(current_ev, dict) and current_ev.get("slug"):
+        if not only_live or current_ev.get("schedule_status") == "in-progress" or not candidate_slugs:
+            _add_slug(current_ev.get("slug"))
+
+    if not only_live:
+        for t in tournaments:
+            if not isinstance(t, dict) or not t.get("name"):
+                continue
+            if t.get("is_tour_event") or t.get("is_major"):
+                _add_slug(t.get("slug") or _clean_slug(t["name"]))
+
+        completed_schedule = [
+            e
+            for e in (golf_data.get("pga_schedule") or [])
+            if isinstance(e, dict)
+            and e.get("name")
+            and str(e.get("status") or "").strip().lower() == "completed"
+        ]
+        completed_schedule.sort(
+            key=lambda e: str(e.get("end_date") or e.get("start_date") or ""),
+            reverse=True,
+        )
+        for e in completed_schedule:
+            _add_slug(_clean_slug(e["name"]))
+
+    warmed: list[str] = []
+    for s in candidate_slugs[:max_slugs]:
+        try:
+            payload = await get_golf_tournament(slug=s, db=db, golf_data=golf_data)
+            if redis_client is not None:
+                golf_tournament_cache.publish_tournament_payload_sync(
+                    s, payload, redis_client=redis_client
+                )
+            else:
+                await golf_tournament_cache.publish_tournament_payload_async(s, payload)
+            warmed.append(s)
+        except Exception:
+            logger.debug("Golf tournament warm failed for slug=%s", s, exc_info=True)
+    return warmed
+
+
 @router.get("/tournaments/{slug}")
+async def get_golf_tournament_cached(
+    slug: str,
+    response: Response,
+    fresh: bool = Query(False),
+    db: AsyncSession = Depends(get_db),
+):
+    payload, cache_state = await get_golf_tournament_cached_payload(
+        slug=slug, db=db, fresh=fresh
+    )
+    response.headers["X-Feed-Cache"] = cache_state
+    return payload
+
+
 async def get_golf_tournament(
     slug: str,
     db: AsyncSession = Depends(get_db),
+    golf_data: dict | None = None,
 ):
     """Get detailed tournament data for a specific golf tournament."""
     # LAT-P186/#1107: the comment that used to sit here said "Reuse get_golf() for
@@ -4680,7 +4806,8 @@ async def get_golf_tournament(
     #
     # What this queue DOES remove is the DUPLICATE: the listing is built ONCE per
     # request and handed to `_build_completed_tournament` instead of rebuilt there.
-    golf_data = await get_golf(db=db)
+    if golf_data is None:
+        golf_data = await get_golf(db=db)
 
     tournaments = golf_data.get("tournaments", [])
 
@@ -4899,32 +5026,62 @@ async def get_golf_tournament(
                 eligible_ids, winner_last
             )
             if evolution_market_id is None and eligible_ids:
-                # Nothing is graded — a live or upcoming tournament. Only now is the
-                # expensive count worth its cost, and only here does it change an
-                # answer. A market with zero snapshots does not come back from the
-                # join and defaults to 0, exactly as the per-market `scalar() or 0`
-                # did.
-                snap_counts = {
-                    mid: n
-                    for mid, n in (
-                        await db.execute(
+                # Nothing is graded — a live or upcoming tournament.
+                # Avoid a full-market COUNT(FuturesOddsSnapshot.id) heap scan (20-58s on
+                # live final-round golf tournaments, #13436): single-candidate markets
+                # need zero snapshot count, recent picks are memoized 300s, and fallback
+                # counts top-10 contenders via index-only COUNT(*) (~0.29s on RSM).
+                if len(eligible_ids) == 1:
+                    evolution_market_id = eligible_ids[0]
+                else:
+                    found_pick, cached_pick = golf_tournament_cache.get_cached_richness_pick(
+                        eligible_ids
+                    )
+                    if found_pick:
+                        evolution_market_id = cached_pick
+                    else:
+                        ranked_outcomes = (
                             select(
-                                FuturesOutcome.market_id,
-                                sqlfunc.count(FuturesOddsSnapshot.id),
-                            )
-                            .select_from(FuturesOutcome)
-                            .join(
-                                FuturesOddsSnapshot,
-                                FuturesOddsSnapshot.outcome_id == FuturesOutcome.id,
+                                FuturesOutcome.id.label("outcome_id"),
+                                FuturesOutcome.market_id.label("market_id"),
+                                sqlfunc.row_number()
+                                .over(
+                                    partition_by=FuturesOutcome.market_id,
+                                    order_by=(
+                                        FuturesOutcome.current_probability.desc().nulls_last(),
+                                        FuturesOutcome.id.asc(),
+                                    ),
+                                )
+                                .label("rn"),
                             )
                             .where(FuturesOutcome.market_id.in_(eligible_ids))
-                            .group_by(FuturesOutcome.market_id)
+                            .subquery()
                         )
-                    ).all()
-                }
-                evolution_market_id = select_by_snapshot_richness(
-                    eligible_ids, snap_counts
-                )
+                        snap_counts = {
+                            mid: n
+                            for mid, n in (
+                                await db.execute(
+                                    select(
+                                        ranked_outcomes.c.market_id,
+                                        sqlfunc.count(),
+                                    )
+                                    .select_from(ranked_outcomes)
+                                    .join(
+                                        FuturesOddsSnapshot,
+                                        FuturesOddsSnapshot.outcome_id
+                                        == ranked_outcomes.c.outcome_id,
+                                    )
+                                    .where(ranked_outcomes.c.rn <= 10)
+                                    .group_by(ranked_outcomes.c.market_id)
+                                )
+                            ).all()
+                        }
+                        evolution_market_id = select_by_snapshot_richness(
+                            eligible_ids, snap_counts
+                        )
+                        golf_tournament_cache.set_cached_richness_pick(
+                            eligible_ids, evolution_market_id
+                        )
             break
     if not evolution_market_id and market_ids and not team_match_play:
         evolution_market_id = market_ids[0]
@@ -4940,7 +5097,8 @@ async def get_golf_tournament(
     # Enrich golfers with Top 5/10/20/Make Cut probabilities from
     # non-winner markets so the grid shows placement odds pre-tournament.
     # ------------------------------------------------------------------
-    golfers = tournament.get("_all_golfers", tournament.get("golfers", []))
+    # Copy golfer dicts so placement enrichment never mutates a caller-shared `golf_data`
+    golfers = [dict(g) for g in tournament.get("_all_golfers", tournament.get("golfers", []))]
 
     placement_market_ids: dict[str, list[int]] = {}  # type_key -> [market_ids]
     for g in sorted_groups:
