@@ -70,11 +70,29 @@ def test_tmdb_vetted_portraits_posters_and_country_flags_resolve() -> None:
     haaland = resolver.resolve("Erling Braut Haaland", allow_team_lookup=False)
     assert haaland["url"] and "wikimedia.org" in haaland["url"], haaland
 
-    # Obsession (2026 horror film) stays omitted from vetted art and gets crisp initials.
+    # Obsession (2026 film, TMDB movie 1339713) uses its clean vetted TMDB poster (#7461-safe).
     obsession = resolver.resolve("Obsession", allow_team_lookup=False)
-    assert obsession["url"] is None
-    assert obsession["kind"] == "monogram"
-    assert obsession["initials"] == "OB"
+    assert obsession["url"] == "https://image.tmdb.org/t/p/w342/bRwnj8WEKBCvmfeUNOukJPwB43K.jpg"
+    assert obsession["kind"] == "film"
+    assert "TMDB movie 1339713" in str(obsession.get("detail") or "")
+
+    # Raye resolves to her TMDB portrait (3108777), not album cover art; her song still gets Cover Art Archive.
+    raye = resolver.resolve("Raye", allow_team_lookup=False)
+    assert raye["url"] == "https://image.tmdb.org/t/p/w185/zA5WXnyg8iH8DPpuXvsmJpPT2n1.jpg"
+    assert raye["kind"] == "person"
+    assert "RAYE, British singer-songwriter" in str(raye.get("detail") or "")
+    raye_song = resolver.resolve("WHERE IS MY HUSBAND! - RAYE", allow_team_lookup=False)
+    assert raye_song["kind"] == "song"
+    assert "coverartarchive.org" in str(raye_song["url"])
+
+    # Puka Nacua resolves to vetted ESPN headshot (4426515) for Engaged 16/16 set-page coverage.
+    puka = resolver.resolve("Puka Nacua", allow_team_lookup=False)
+    assert puka["url"] == "https://a.espncdn.com/i/headshots/nfl/players/full/4426515.png"
+    assert puka["kind"] == "person"
+
+    # Extreme Earth resolves to NASA PD Top_of_Atmosphere.jpg.
+    earth = resolver.resolve("Extreme Earth 2026", allow_team_lookup=False)
+    assert earth["url"] and "Top_of_Atmosphere.jpg" in earth["url"]
 
     # Country flags resolve cleanly for major international markets.
     assert flag_url("China") == "https://flagcdn.com/w160/cn.png"
@@ -450,3 +468,22 @@ async def test_item3_bond_28_contenders_and_engaged_second_partner_fallback() ->
         for it in res.sections[0]["visual_block"]["items"]
     ]
     assert len(sec_urls) == 3 and all(sec_urls), sec_urls
+
+
+def test_every_tmdb_person_entry_records_positive_tmdb_person_id() -> None:
+    import json
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[2]
+    b_text = (root / "backend/data/discover/verified_discover_art.json").read_text(encoding="utf-8")
+    doc = json.loads(b_text)
+    tmdb_people = [
+        e for e in doc["entries"]
+        if e.get("kind") == "person" and "image.tmdb.org" in str(e.get("url") or "")
+    ]
+    assert len(tmdb_people) >= 86
+    for e in tmdb_people:
+        pid = e.get("tmdb_person_id")
+        assert isinstance(pid, int) and not isinstance(pid, bool) and pid > 0, (
+            f"Missing/invalid tmdb_person_id on {e['entity_key']}: {pid!r}"
+        )
