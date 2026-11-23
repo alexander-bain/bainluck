@@ -18,7 +18,7 @@ from dataclasses import dataclass, fields as dataclass_fields, replace as datacl
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
-from typing import Annotated, Optional, Sequence
+from typing import Annotated, Any, Optional, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import select, and_, or_, union, func, case, cast, any_, literal, Date, Integer, String, literal_column, text, true, false, Interval
@@ -29631,6 +29631,19 @@ _RELATED_FUTURES_LIVE_TTL = 60
 _RELATED_FUTURES_MAX_SIZE = 30
 
 
+def _strip_related_futures_american_odds(payload: Any) -> Any:
+    """Ensure no cached or freshly built /related-futures row carries `american_odds` (#13511)."""
+    if not isinstance(payload, dict):
+        return payload
+    for key in ("home_team_futures", "away_team_futures"):
+        rows = payload.get(key)
+        if isinstance(rows, list):
+            for row in rows:
+                if isinstance(row, dict):
+                    row.pop("american_odds", None)
+    return payload
+
+
 @router.get("/{event_id}/related-futures")
 async def get_related_futures(
     event_id: int,
@@ -29675,17 +29688,18 @@ async def get_related_futures(
         response, source_status, market_ids, _cacheable = (
             await _build_related_futures(event_id, db, debug=True)
         )
-        return response
+        return _strip_related_futures_american_odds(response)
 
     # L1 — in-memory. Live 60 s, completed `rfc.FRESH_TTL_FINAL` (#6883), and a
     # miss whenever the entry was built by another release.
     cached = _read_related_futures_memo(event_id)
     if cached is not None:
-        return cached
+        return _strip_related_futures_american_odds(cached)
 
     # L2 — the shared slot, and its mirror.
     body, state = rfc.read(event_id)
     if state == "live" and body is not None:
+        _strip_related_futures_american_odds(body)
         _write_related_futures_memo(event_id, rfc.source_status_of(body), body)
         return body
     if state == "stale_ok" and body is not None:
@@ -29696,13 +29710,14 @@ async def get_related_futures(
         if _serve_stale_and_refresh(
             f"related_futures:{event_id}", lambda: _rebuild_related_futures(event_id)
         ):
-            return body
+            return _strip_related_futures_american_odds(body)
         # No running loop to refresh behind us — fall through and build, rather
         # than serve stale with nothing coming to replace it.
 
     response, source_status, market_ids, cacheable = await _build_related_futures(
         event_id, db
     )
+    _strip_related_futures_american_odds(response)
     if not cacheable:
         # An `empty` exit. NOT published, and that is carried across from the
         # pre-LAT-P136 behaviour rather than newly decided: the old dict was
@@ -29711,9 +29726,10 @@ async def get_related_futures(
         # futures have not been ingested yet answer "no futures" for a TTL after
         # they appear — a content change smuggled inside a latency change.
         return response
-    return await _publish_related_futures(
+    published = await _publish_related_futures(
         event_id, source_status, response, market_ids, db
     )
+    return _strip_related_futures_american_odds(published)
 
 
 def _read_related_futures_memo(event_id: int):
@@ -31427,7 +31443,6 @@ async def _build_related_futures(
             "external_id": outcome.external_id,
             "probability": probability,
             "source_mark": related_futures_quote_mark(market, outcome, probability),
-            "american_odds": outcome.current_american_odds,
             # #10248 D5 — `reader_change_24h`. The relevance score above keeps
             # the stored column: it chooses, it does not print.
             "probability_change_24h": (
@@ -32197,6 +32212,98 @@ async def get_team_progression(
     except Exception:
         pass
     return _response
+
+
+async def build_event_nuggets(
+    event_id: int,
+    db: AsyncSession,
+    *,
+    limit: int = 12,
+    now: Optional[datetime] = None,
+) -> dict:
+    """Build ranked below-the-charts nuggets from existing event sub-surfaces (#13511)."""
+    from app.utils.game_nuggets import NUGGET_DEFAULT_LIMIT, rank_game_nuggets
+
+    row = (
+        await db.execute(
+            select(Event)
+            .options(selectinload(Event.sport))
+            .where(Event.id == event_id)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    served = await resolve_served_event(db, row, requested_id=event_id)
+    event = served.event
+    resolved_id = int(served.event_id)
+
+    home_logo: Optional[str] = None
+    away_logo: Optional[str] = None
+    team_ids = [tid for tid in (event.home_team_id, event.away_team_id) if isinstance(tid, int)]
+    if team_ids:
+        teams = (await db.execute(select(Team).where(Team.id.in_(team_ids)))).scalars().all()
+        by_tid = {int(t.id): t for t in teams if getattr(t, "id", None) is not None}
+        ht = by_tid.get(event.home_team_id) if event.home_team_id else None
+        at = by_tid.get(event.away_team_id) if event.away_team_id else None
+        if ht is not None:
+            home_logo = getattr(ht, "logo_small", None) or getattr(ht, "logo_url", None) or getattr(ht, "logo_large", None)
+        if at is not None:
+            away_logo = getattr(at, "logo_small", None) or getattr(at, "logo_url", None) or getattr(at, "logo_large", None)
+
+    safe_event_id = getattr(event, "id", None)
+    try:
+        game_markets = await get_game_markets(resolved_id, db=db, fresh=False, response=None)
+    except HTTPException:
+        game_markets = {}
+    except Exception:
+        logger.warning("nuggets: game_markets read failed for event %s", safe_event_id, exc_info=True)
+        game_markets = {}
+
+    try:
+        related_futures = await get_related_futures(resolved_id, debug=False, db=db)
+    except HTTPException:
+        related_futures = {}
+    except Exception:
+        logger.warning("nuggets: related_futures read failed for event %s", safe_event_id, exc_info=True)
+        related_futures = {}
+
+    try:
+        team_progression = await get_team_progression(resolved_id, db=db)
+    except HTTPException:
+        team_progression = {}
+    except Exception:
+        logger.warning("nuggets: team_progression read failed for event %s", safe_event_id, exc_info=True)
+        team_progression = {}
+
+    event_info = {
+        "event_id": resolved_id,
+        "home_team": event.home_team_name,
+        "away_team": event.away_team_name,
+        "home_logo": home_logo,
+        "away_logo": away_logo,
+        "sport": event.sport.key if event.sport else None,
+        "status": event.status,
+        "commence_time": event.commence_time.isoformat() if event.commence_time else None,
+    }
+    return rank_game_nuggets(
+        event_info=event_info,
+        game_markets=game_markets if isinstance(game_markets, dict) else {},
+        related_futures=related_futures if isinstance(related_futures, dict) else {},
+        team_progression=team_progression if isinstance(team_progression, dict) else {},
+        limit=max(1, min(int(limit), NUGGET_DEFAULT_LIMIT)),
+        now=now,
+    )
+
+
+@router.get("/{event_id}/nuggets")
+async def get_event_nuggets(
+    event_id: int,
+    limit: int = Query(12, ge=1, le=12),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ranked below-the-charts nuggets and kind counts for an event (#13511)."""
+    return await build_event_nuggets(event_id, db, limit=limit)
 
 
 #: Five minutes, unchanged from the inline literal this replaced.

@@ -1487,7 +1487,7 @@ export interface RelatedFuture {
   outcome_id: number;
   outcome_name: string;
   probability: number | null;
-  american_odds: number | null;
+  american_odds?: number | null;
   probability_change_24h: number | null;
   opening_probability: number | null;
   rank: number | null;
