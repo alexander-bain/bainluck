@@ -227,16 +227,42 @@ _RES = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
 
 async def _mk_market(session, mid, source, *, mex, mtype, category, res_date=_RES, volume=100):
+    import json
     from sqlalchemy import text
+
+    params = {
+        "id": mid,
+        "src": source,
+        "ext": f"cal262-m-{mid}",
+        "nm": f"Market {mid}?",
+        "mex": mex,
+        "mt": mtype,
+        "cat": category,
+        "vol": volume,
+        "rd": res_date,
+    }
+    if mtype == "field":
+        meta_expr = "CAST(:meta AS jsonb)"
+        params["meta"] = json.dumps(
+            {
+                "shape": {
+                    "exhaustive": True,
+                    "expected_winners": 1,
+                    "outcome_relation": "competitors",
+                }
+            }
+        )
+    else:
+        meta_expr = "NULL"
 
     await session.execute(
         text(
-            "INSERT INTO futures_markets (id, source, status, mutually_exclusive, "
-            "market_type, llm_sport_category, volume, resolution_date) VALUES "
-            "(:id, :src, 'resolved', :mex, :mt, :cat, :vol, :rd)"
+            "INSERT INTO futures_markets (id, source, external_id, name, category, status, "
+            "mutually_exclusive, market_type, llm_sport_category, volume, resolution_date, "
+            f"market_metadata) VALUES (:id, :src, :ext, :nm, :cat, 'resolved', :mex, :mt, "
+            f":cat, :vol, :rd, {meta_expr})"
         ),
-        {"id": mid, "src": source, "mex": mex, "mt": mtype, "cat": category,
-         "vol": volume, "rd": res_date},
+        params,
     )
 
 
@@ -247,13 +273,14 @@ async def _mk_outcome(session, mid, i, *, op, cp, win, src="api_settlement", vol
     oid = mid * 1000 + i
     await session.execute(
         text(
-            "INSERT INTO futures_outcomes (id, market_id, name, opening_probability, "
+            "INSERT INTO futures_outcomes (id, market_id, external_id, name, opening_probability, "
             "calibration_probability, is_winner, resolution_source, volume, "
             "current_yes_bid, current_yes_ask) VALUES "
-            "(:id, :mid, :nm, :op, :cp, :win, :src, :vol, :yb, :ya)"
+            "(:id, :mid, :ext, :nm, :op, :cp, :win, :src, :vol, :yb, :ya)"
         ),
-        {"id": oid, "mid": mid, "nm": name or f"cand-{i}", "op": op, "cp": cp,
-         "win": win, "src": src, "vol": volume, "yb": yes_bid, "ya": yes_ask},
+        {"id": oid, "mid": mid, "ext": f"cal262-o-{oid}", "nm": name or f"cand-{i}",
+         "op": op, "cp": cp, "win": win, "src": src, "vol": volume,
+         "yb": yes_bid, "ya": yes_ask},
     )
     return oid
 
@@ -266,8 +293,8 @@ async def _snap(session, oid, *, days_before_res, probability, yes_bid=None,
     await session.execute(
         text(
             "INSERT INTO futures_odds_snapshots (outcome_id, bookmaker, probability, "
-            "yes_bid, last_price, captured_at) VALUES "
-            "(:oid, 'test', :p, :yb, :lp, :ts)"
+            "reading_count, yes_bid, last_price, captured_at) VALUES "
+            "(:oid, 'test', :p, 1, :yb, :lp, :ts)"
         ),
         {"oid": oid, "p": probability, "yb": yes_bid, "lp": last_price,
          "ts": _RES - timedelta(days=days_before_res)},
@@ -355,8 +382,6 @@ async def test_horizon_population_contract_all_scenarios():
 
             # --- T-7 assertions ---
             rows7 = await _run_horizon(s, 7)
-            present = {(r.source, r.category, r.bucket_idx): r for r in rows7
-                       if r.bucket_idx is not None}
 
             # Complete field 91001 published: its three normalized members sum to ~1.
             # (We can't filter by market in the aggregate, so assert via distinct
@@ -366,8 +391,18 @@ async def test_horizon_population_contract_all_scenarios():
                 f"only the complete field should publish, got final_n={_final_outcomes(rows7)}"
             )
             assert int(rows7[0].distinct_questions) == 1
-            # Every excluded scenario is reflected in the per-reason diag counts.
-            assert int(rows7[0].excl_field_incomplete) >= 3   # scenario (2)
+            # Incomplete field 91002 has 2 outcomes priced at T-7 -> both flagged
+            # is_field_incomplete and 0 rows of 91002 reach deduped (#13463).
+            assert int(rows7[0].excl_field_incomplete) == 2  # scenario (2)
+            sql7, params7 = _build_time_horizon_sql(7)
+            cte_prefix7 = sql7[: sql7.index("h_diag AS (")]
+            leaked_91002 = (
+                await s.execute(
+                    text(cte_prefix7 + "final_91002 AS (SELECT outcome_id FROM deduped WHERE market_id = 91002) SELECT outcome_id FROM final_91002"),
+                    params7,
+                )
+            ).all()
+            assert leaked_91002 == []
             assert int(rows7[0].excl_malformed_binary) >= 2   # scenario (3)
             assert int(rows7[0].excl_poly_placeholder) >= 1   # scenario (4)
             assert int(rows7[0].excl_illiquid) >= 1           # scenario (5)
