@@ -513,13 +513,15 @@ def history_signals(api, midnight, injury_since):
     latest = {}
     cursor = None
     reports = None
+    # Each commit can carry 100 nested checks. Keep pages small enough for
+    # GitHub to finish the query and follow the cursor to the same receipts.
     while True:
         query = """query($cursor:String,$reports:String!,$firstPage:Boolean!) {
           reports: search(query:$reports,type:ISSUE,first:100) @include(if:$firstPage) {
             issueCount pageInfo { hasNextPage } nodes { ... on Issue { number title createdAt } }
           }
           repository(owner:"alexander-bain",name:"bainluck") {
-          defaultBranchRef { target { ... on Commit { history(first:100,after:$cursor) {
+          defaultBranchRef { target { ... on Commit { history(first:24,after:$cursor) {
             pageInfo {hasNextPage endCursor} nodes { oid committedDate
               statusCheckRollup { contexts(first:100) { nodes {
                 ... on StatusContext { context state createdAt description }

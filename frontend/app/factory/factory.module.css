@@ -823,22 +823,10 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 .notes p {
   margin: 2px 0;
 }
-.scrollHint {
-  display: none;
-}
+.compactStation { display: none; }
 @keyframes belt {
   to {
     transform: translateX(25px);
-  }
-}
-@media (max-width: 990px) {
-  .scrollHint {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 0 var(--floor-inset) 5px;
-    font-size: 10px;
-    color: var(--secondary);
   }
 }
 @media (max-width: 640px) {
@@ -2045,7 +2033,7 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 .shelfGroup { grid-column: 1 / -1; }
 .shelfGroup .shelf { border: 1px solid var(--edge); border-radius: 8px; }
 
-/* The unattended overview fills a display. Phones keep the scrolling floor. */
+/* The unattended overview fills a display. */
 @media (min-width: 1000px) and (min-height: 680px) {
   :global(main):has(.factory) > :global(div) {
     width: 100%;
@@ -2785,4 +2773,36 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   .factory[data-workshop-light="night"] .floorFooter::before {
     filter: brightness(0.24) sepia(0.35);
   }
+}
+
+
+@media (max-width: 999px) {
+  .floorScroll { overflow: visible; }
+  .floorGrid { min-width: 0; }
+  .stationHeadings { display: none; }
+  .lineRow { grid-template-columns: minmax(0, 1fr); margin-block-end: 16px; }
+  .lineRail { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .lineRail::before, .lineRail::after { display: none; }
+  .lineName { flex-direction: row; flex-wrap: wrap; min-height: 0; text-align: start; }
+  .crewRest { width: auto; margin-block-start: 0; }
+  .machines { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .compactStation {
+    display: flex;
+    align-items: flex-start;
+    gap: 5px;
+    margin-block-end: 5px;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+  }
+  .compactStation > svg { flex: none; }
+  .compactStation > div { min-width: 0; }
+  .compactStation strong { display: block; font-size: 13px; }
+  .compactStation span, .compactStation p { display: block; margin: 0; font-size: 10px; }
+  .compactStation p { margin-block-start: 3px; }
+  .machineTop > .stationObject { display: none; }
+  .belts { inset-inline: 0; }
+}
+
+@media (max-width: 540px) {
+  .machines { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
