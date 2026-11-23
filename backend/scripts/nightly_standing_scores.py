@@ -27,6 +27,12 @@ from urllib.parse import urlparse
 
 import httpx
 
+_BACKEND_ROOT = Path(__file__).resolve().parents[1]
+if str(_BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(_BACKEND_ROOT))
+
+from app.utils.agent_origin import ORIGIN_HEADER, tagged  # noqa: E402
+
 DEFAULT_BASE_URL = "https://api.bainluck.com"
 MIN_LIVE_PACE_SECONDS = 3.5
 DEFAULT_USER_AGENT = "bainluck-nightly-standing-scores/1.0"
@@ -364,7 +370,8 @@ class PacedClient:
         self._last_request_at = self._monotonic()
         self.request_count += 1
         try:
-            resp = self.client.get(path, params=params)
+            full_url = f"{str(self.client.base_url).rstrip('/')}/{path.lstrip('/')}"
+            resp = self.client.get(path, params=params, headers=tagged(full_url))
         except Exception as exc:
             return None, None, f"{type(exc).__name__}: {exc}"
         if resp.status_code != 200:
@@ -402,7 +409,7 @@ def run_standing_scores(
     headers = {
         "User-Agent": DEFAULT_USER_AGENT,
         "X-BL-Agent": bl_agent,
-        "X-Bainluck-Origin": bl_agent,
+        ORIGIN_HEADER: bl_agent,
     }
 
     http_errors: list[dict[str, Any]] = []
