@@ -1898,6 +1898,7 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 
 .speechBubble strong { margin-inline-end: 4px; white-space: nowrap; }
 .crewSpeech { font-size: 11px; line-height: 1.4; margin: 3px 0 0; }
+.crewSpeech > a { color: inherit; text-decoration: underline; text-underline-offset: .16em; }
 
 @media (max-width: 720px) {
   .sectionHeading { flex-wrap: wrap; }

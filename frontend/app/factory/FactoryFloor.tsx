@@ -266,23 +266,31 @@ export default function FactoryFloor(initial: {
   const journal = useReplayJournal(data, today);
   const replay = useDayReplay(motion);
   const speech = data?.speech;
-  const laneUpdates = useMemo(() => {
+  const { laneUpdates, laneCheckIns, laneLines } = useMemo(() => {
     const updates: NonNullable<FactoryData["lane_updates"]> = {};
-    if (!data?.lane_updates) return updates;
-    const lanesOnFloor = new Set(data.changes.filter(onActiveFloor).map(change => change.builder));
+    const checkIns: NonNullable<FactoryData["crew_posts"]> = {};
+    const lines: Partial<Record<NamedBuilder, { text: string; source: "lane" | "check-in" }>> = {};
+    const lanesOnFloor = new Set(data?.changes.filter(onActiveFloor).map(change => change.builder));
     for (const lane of builders) {
-      const post = data.lane_updates[lane];
-      if (post && !lanesOnFloor.has(lane) && recentLaneUpdate(post.at, now)) updates[lane] = post;
+      const post = data?.crew_posts?.[lane];
+      const checkIn = post && recentLaneUpdate(post.at, now) ? post : undefined;
+      const update = data?.lane_updates?.[lane];
+      if (checkIn) checkIns[lane] = checkIn;
+      if (update && recentLaneUpdate(update.at, now) &&
+          (!checkIn || Date.parse(update.at) >= Date.parse(checkIn.at))) {
+        updates[lane] = update;
+        if (!lanesOnFloor.has(lane)) lines[lane] = { text: update.text, source: "lane" };
+      } else if (checkIn && !lanesOnFloor.has(lane)) {
+        lines[lane] = { text: `Posted on NOW at ${time(checkIn.at)} PT.`, source: "check-in" };
+      }
     }
-    return updates;
+    return { laneUpdates: updates, laneCheckIns: checkIns, laneLines: lines };
   }, [data, now]);
-  const speakers = useMemo(() => builders.filter(key => laneUpdates[key] || speech?.[key]), [laneUpdates, speech]);
+  const speakers = useMemo(() => builders.filter(key => laneLines[key] || speech?.[key]), [laneLines, speech]);
   const currentSpeaker = speakers.find(key => key === speaker) ??
-    speakers.find(key => laneUpdates[key]) ?? speakers[0];
-  const currentUpdate = currentSpeaker && laneUpdates[currentSpeaker];
-  const currentSpeech = currentSpeaker && (currentUpdate
-    ? { text: currentUpdate.text, source: "lane" }
-    : speech?.[currentSpeaker]);
+    speakers.find(key => laneLines[key]?.source === "lane") ??
+    speakers.find(key => laneLines[key]) ?? speakers[0];
+  const currentSpeech = currentSpeaker && (laneLines[currentSpeaker] ?? speech?.[currentSpeaker]);
   const firstTransferRead = useRef(data?.generated_at);
   firstTransferRead.current ??= data?.generated_at;
   const firstRead = firstTransferRead.current;
@@ -560,7 +568,7 @@ export default function FactoryFloor(initial: {
   }
 
   function openCrewCard(id: CrewIdentity) {
-    if (id !== "Fable" && (laneUpdates[id] || speech?.[id])) setSpeaker(id);
+    if (id !== "Fable" && (laneLines[id] || speech?.[id])) setSpeaker(id);
     selectCrew(id);
   }
 
@@ -595,7 +603,7 @@ export default function FactoryFloor(initial: {
         pose={status.pose}
         clockedIn={id === "Fable" ? foremanPose.pose === "working" : clockedIn.has(id)}
         number={status.change?.number}
-        post={id === "Fable" ? undefined : data?.crew_posts?.[id]}
+        post={id === "Fable" ? undefined : laneCheckIns[id]}
         update={id === "Fable" ? undefined : laneUpdates[id]}
         voice={id === "Fable" ? undefined : data?.speech?.[id]}
         habits={data?.crew_week?.builders[id]}

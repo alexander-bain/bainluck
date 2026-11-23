@@ -264,7 +264,7 @@ it("shows a signed lane as active without a crate and displays only its recorded
     const spare = container.querySelector('[data-crew="W"]');
     const quiet = container.querySelector('[data-crew="C"]');
     expect(apple?.getAttribute("data-pose")).toBe("working");
-    expect(apple?.textContent).toContain("Active at 9:57 AM PT");
+    expect(apple?.textContent).toContain("Posted on NOW at 9:57 AM PT");
     expect(apple?.textContent).not.toContain("There is no recent activity");
     expect(spare?.textContent).toContain("Waiting on #12998");
     expect(quiet?.getAttribute("data-pose")).toBe("asleep");
