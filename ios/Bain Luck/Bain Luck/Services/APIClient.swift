@@ -1152,6 +1152,11 @@ actor APIClient {
         return try await fetch("/api/events/search/trending", cacheTTL: 300)
     }
 
+    /// Fetches live search suggestions (live/upcoming games and major championship subjects).
+    func fetchSearchSuggestions() async throws -> SearchSuggestionsResponse212A {
+        return try await fetch("/api/events/search-suggestions", cacheTTL: 120)
+    }
+
     // MARK: - Team Page
 
     /// Fetches the team page summary, events, and market context by team slug.

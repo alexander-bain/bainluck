@@ -15,6 +15,7 @@ import SwiftUI
 struct SharedLinkArrivalView212A: View {
     let event: EventDetail
     var preloadedHistory: EventHistoryResponse? = nil
+    var arrivedHeadline: String? = nil
     let moreCards: [FirstRunCard212A]
     let onOpenFullGame: () -> Void
     let onOpenDiscover: () -> Void
@@ -25,6 +26,10 @@ struct SharedLinkArrivalView212A: View {
     @State private var chartRange: OddsTimeRange = .sinceStart
     @State private var showUpdateStream = false
     @State private var showProbabilityDetails = false
+
+    private var resolvedArrivalHeadline: String? {
+        FirstRunLinkHandoffBridge212A.resolvedHeadline(explicit: arrivedHeadline)
+    }
 
     private var colors: (away: Color, home: Color) {
         TeamTextContrast.cardColors(
@@ -51,6 +56,30 @@ struct SharedLinkArrivalView212A: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    if let headline = resolvedArrivalHeadline {
+                        HStack(spacing: 8) {
+                            Image(systemName: "link.circle.fill")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(DS.blueReadable)
+                                .accessibilityHidden(true)
+                            Text(FirstRunLinkHandoffBridge212A.bannerText(headline: headline))
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(DS.textPrimary)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 4)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 9)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(DS.cardBg, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(DS.blueReadable.opacity(0.4), lineWidth: 1)
+                        )
+                        .accessibilityIdentifier("sharedArrival212A.handoffBanner")
+                    }
+
                     VStack(spacing: 0) {
                         EventSportHeadlineCard12472(
                             model: headlineModel,

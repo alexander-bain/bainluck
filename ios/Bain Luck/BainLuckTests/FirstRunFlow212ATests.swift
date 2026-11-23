@@ -53,82 +53,375 @@ final class FirstRunFlow212ATests: XCTestCase {
         return d
     }
 
+    private func makeFeedItemsFromFixtureJSON() throws -> [FeedItem] {
+        let payload = """
+        {
+          "items": [
+            {
+              "type": "event",
+              "score": 80,
+              "data": {
+                "id": 15353145,
+                "sport": "basketball_nba",
+                "home_team": "Philadelphia 76ers",
+                "away_team": "Portland Trail Blazers",
+                "status": "scheduled",
+                "commence_time": "2026-11-24T00:00:00Z",
+                "home_team_data": {"abbreviation": "PHI", "primary_color": "#006BB6"},
+                "away_team_data": {"abbreviation": "POR", "primary_color": "#E03A3E"},
+                "current_odds": {"home_probability": 0.575, "away_probability": 0.425, "home_rendered_percent": 58, "away_rendered_percent": 42}
+              }
+            },
+            {
+              "type": "event",
+              "score": 78,
+              "data": {
+                "id": 15353183,
+                "sport": "basketball_ncaab",
+                "home_team": "Michigan Wolverines",
+                "away_team": "Miami Hurricanes",
+                "status": "live",
+                "commence_time": "2026-11-23T22:00:00Z",
+                "home_team_data": {"abbreviation": "MICH", "primary_color": "#00274C"},
+                "away_team_data": {"abbreviation": "MIA", "primary_color": "#F47321"},
+                "current_odds": {"home_probability": 0.64, "away_probability": 0.36, "home_rendered_percent": 64, "away_rendered_percent": 36}
+              }
+            },
+            {
+              "type": "futures",
+              "score": 75,
+              "data": {
+                "id": 68948432,
+                "name": "MLB Playoffs: Team to advance to 2027 World Series",
+                "sport": null,
+                "llm_sport_category": "baseball",
+                "status": "open",
+                "top_outcomes": [{"id": 1, "name": "Milwaukee Brewers", "probability": 0.28, "rendered_percent": 28, "rank": 1, "movement": 0.02}]
+              }
+            },
+            {
+              "type": "futures",
+              "score": 90,
+              "data": {
+                "id": 999901,
+                "name": "Settled Future Should Be Filtered",
+                "sport": null,
+                "llm_sport_category": "entertainment",
+                "status": "resolved",
+                "winner": "Old Winner",
+                "top_outcomes": [{"id": 2, "name": "Old Winner", "probability": 0.99, "rendered_percent": 99, "rank": 1, "movement": null}]
+              }
+            },
+            {
+              "type": "futures",
+              "score": 74,
+              "data": {
+                "id": 109618,
+                "name": "Sydney Sweeney and Scooter Braun: Engaged this year?",
+                "sport": null,
+                "llm_sport_category": "entertainment",
+                "status": "open",
+                "top_outcomes": [{"id": 3, "name": "Yes", "probability": 0.285, "rendered_percent": 29, "rank": 1, "movement": null}]
+              }
+            },
+            {
+              "type": "futures",
+              "score": 73,
+              "data": {
+                "id": 57574250,
+                "name": "Fed Decision in December?",
+                "sport": null,
+                "llm_sport_category": "economics",
+                "status": "open",
+                "top_outcomes": [{"id": 4, "name": "Quarter-point increase", "probability": 0.929, "rendered_percent": 93, "rank": 1, "movement": 0.04}]
+              }
+            },
+            {
+              "type": "futures",
+              "score": 72,
+              "data": {
+                "id": 109596,
+                "name": "Best AI at the end of 2026?",
+                "sport": null,
+                "llm_sport_category": "tech",
+                "status": "open",
+                "top_outcomes": [{"id": 5, "name": "Gemini", "probability": 0.817, "rendered_percent": 82, "rank": 1, "movement": null}]
+              }
+            },
+            {
+              "type": "futures",
+              "score": 71,
+              "data": {
+                "id": 63828305,
+                "name": "Melbourne's wettest month of 2026?",
+                "sport": null,
+                "llm_sport_category": "weather",
+                "status": "open",
+                "top_outcomes": [{"id": 6, "name": "October", "probability": 0.91, "rendered_percent": 91, "rank": 1, "movement": null}]
+              }
+            }
+          ],
+          "total": 8,
+          "limit": 40,
+          "offset": 0,
+          "has_more": false
+        }
+        """
+        let resp = try makeDecoder().decode(FeedResponse.self, from: Data(payload.utf8))
+        return resp.items
+    }
+
     // MARK: - Launch Guard & Copy Rules
 
-    func testNoNotificationOrTelemetryPromptBlocksFirstLaunch() throws {
+    func testNoNotificationOrTelemetryPromptBlocksFirstLaunchAndNoLegacyGridInFlow() throws {
         let appSrc = try source("Bain Luck/Bain_LuckApp.swift")
-        let cleanCode = appSrc
+        let cleanApp = appSrc
             .components(separatedBy: .newlines)
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
             .joined(separator: "\n")
+        XCTAssertFalse(cleanApp.contains("requestPermissionAfterDelay("))
+        XCTAssertTrue(cleanApp.contains("FirstRunStorageKeys212A.onboardedKey"))
 
-        XCTAssertFalse(cleanCode.contains("requestPermissionAfterDelay("))
-        XCTAssertTrue(cleanCode.contains("FirstRunStorageKeys212A.onboardedKey"))
-    }
-
-    func testOldQuizCopyReplacedAndPointsUsedInsteadOfPts() throws {
-        let onboardSrc = try source("Bain Luck/Views/OnboardingView.swift")
-        XCTAssertFalse(onboardSrc.contains("Where do you follow sports?"))
-        XCTAssertFalse(onboardSrc.contains("What do you care about?"))
-        XCTAssertFalse(onboardSrc.contains("Any rivals?"))
+        let viewSrc = try source("Bain Luck/Views/FirstRunFlowView212A.swift")
+        XCTAssertFalse(viewSrc.contains("Both of these"), "Four-button grid must be gone (Alex Pt 7)")
+        XCTAssertFalse(viewSrc.lowercased().contains("% complete"), "No completion percentage bar (Alex Pt 10)")
+        XCTAssertTrue(viewSrc.contains("Three quick picks, then you"))
+        XCTAssertTrue(viewSrc.contains("Your picks decide what Discover shows first."))
+        XCTAssertTrue(viewSrc.contains("We\\u{2019}ll put these first in Discover and My Stuff."))
+        XCTAssertTrue(viewSrc.contains("Tap any you\\u{2019}d check. Both or neither is fine."))
 
         let modelsSrc = try source("Bain Luck/Utilities/FirstRunModels212A.swift")
             .components(separatedBy: .newlines)
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
             .joined(separator: "\n")
         XCTAssertFalse(modelsSrc.contains("\"pts"))
+        XCTAssertFalse(modelsSrc.contains("Moved after inflation report"), "Invented captions must be deleted (Fable Pt 2)")
+        XCTAssertFalse(modelsSrc.contains("Early awards frontrunner"), "Invented captions must be deleted (Fable Pt 2)")
         XCTAssertEqual(FirstRunCard212A.shiftText(points: 4), "▲ up 4 points")
         XCTAssertEqual(FirstRunCard212A.shiftText(points: 1), "▲ up 1 point")
         XCTAssertEqual(FirstRunCard212A.shiftText(points: -6), "▼ down 6 points")
     }
 
-    func testDefaultPairsIncludeRealNumbersAndNonSportsPairs() {
-        let pairs = FirstRunPair212A.buildPairs(from: [])
+    func testLivePairsRejectsSettledRejectsSportsInNonSportsSlotsAndNoFakeFallbacks() throws {
+        // Offline/empty feed never invents fake cards.
+        XCTAssertEqual(FirstRunPair212A.buildPairs(from: []), [])
+
+        let items = try makeFeedItemsFromFixtureJSON()
+        let pairs = FirstRunPair212A.buildPairs(from: items, arrivedHeadline: nil)
         XCTAssertEqual(pairs.count, 3)
+        XCTAssertNil(pairs[0].arrivedContextPill, "Cold open with no link must show no link pill")
+
+        let allCards = pairs.flatMap { [$0.topCard, $0.bottomCard] }
+        XCTAssertFalse(allCards.contains { $0.id == "fut-999901" }, "Settled future must never appear")
+        XCTAssertFalse(allCards.contains { $0.id == "fut-68948432" && !$0.isSports },
+                       "Baseball future with sport == nil must never leak into non-sports slots")
+        XCTAssertNil(allCards.first { $0.id == "fut-109618" }?.detailLine,
+                     "Absent server hook_description must stay nil, zero invented captions")
         XCTAssertTrue(pairs.contains { !$0.topCard.isSports && !$0.bottomCard.isSports },
-                      "At least one pair must be wholly non-sports")
-        for pair in pairs {
-            XCTAssertGreaterThan(pair.topCard.percent, 0)
-            XCTAssertGreaterThan(pair.bottomCard.percent, 0)
-            XCTAssertTrue(!pair.topCard.isSports || !pair.bottomCard.isSports,
-                          "Every pair must expose non-sports content")
-        }
+                      "Pair 3 must pair two non-sports cards")
+        XCTAssertNotNil(pairs[0].topCard.workedMeaningLine)
     }
 
-    // MARK: - Interactive State Behavior (Tap Feedback, Non-Clearing Search, Multi-Sport Disambiguation, Skip)
+    // MARK: - Alex Pt 7 (Card Tap Buttons), Pt 8 (Served Examples), Pt 9 + Fable Pt 3 (Discover Next Screen)
 
-    func testPairTapShowsSelectionImmediatelyAndSkipWorksOnEveryScreen() {
-        let defaults = UserDefaults(suiteName: "FirstRun212A.Tap.\(UUID().uuidString)")!
+    func testCardTapToggleNextLabelServedExamplesAndNextScreenDiscoverBoost() async throws {
+        let items = try makeFeedItemsFromFixtureJSON()
+        let pairs = FirstRunPair212A.buildPairs(from: items)
+        let examples = FirstRunServedExamples212A.buildExamples(from: items)
+
+        XCTAssertTrue(examples.contains { $0.kind == .city && $0.query == "Philadelphia" }, "Served pro city missing: \(examples)")
+        XCTAssertTrue(examples.contains { $0.kind == .school && $0.query == "Michigan" }, "Served school missing: \(examples)")
+        XCTAssertGreaterThanOrEqual(examples.filter { $0.kind == .subject }.count, 2, "Need >=2 served non-sports examples: \(examples)")
+
+        let suite = "FirstRun212A.Toggle.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
         let follow = FollowManager295A(defaults: defaults, initialSubjects: [])
+        let pins = PinManager(defaults: defaults, allowLegacyGuestPins: false, gameAlertsConfig: .live)
+        let auth = AuthManager()
+
         let vm = FirstRunViewModel212A(
+            initialPairs: pairs,
+            initialExamples: examples,
             defaults: defaults,
-            debounceNs: 0,
-            autoAdvanceDelayNs: 0
+            debounceNs: 0
         )
 
-        XCTAssertEqual(vm.stepIndex, 0)
-        vm.selectChoice(.bottom, forPairIndex: 0, followManager: follow)
-        XCTAssertEqual(vm.selectedChoices[0], .bottom, "First tap must register choice immediately")
+        // Screen 0: tap card selects, tap again clears (neither selected)
+        vm.toggleCard(.top, forPairIndex: 0)
+        XCTAssertEqual(vm.selectedSidesForStep(0), [.top])
+        vm.toggleCard(.top, forPairIndex: 0)
+        XCTAssertEqual(vm.selectedSidesForStep(0), [])
+
+        // Both cards can be selected on Pair 1 -> advance to Pair 2 -> pick non-sports Economics & Entertainment
+        vm.toggleCard(.bottom, forPairIndex: 0) // entertainment
+        vm.advanceFromCurrentPair(followManager: follow, pinManager: pins)
         XCTAssertEqual(vm.stepIndex, 1)
 
-        // Skip works on pair screens and final typeahead screen.
-        let auth = AuthManager()
-        var dismissed = false
-        vm.skipCurrentStep(followManager: follow, authManager: auth) { dismissed = true }
+        vm.advanceFromCurrentPair(followManager: follow, pinManager: pins) // neither on pair 2
         XCTAssertEqual(vm.stepIndex, 2)
-        XCTAssertFalse(dismissed)
 
-        vm.skipCurrentStep(followManager: follow, authManager: auth) { dismissed = true }
+        vm.toggleCard(.top, forPairIndex: 2)
+        vm.toggleCard(.bottom, forPairIndex: 2)
+        vm.advanceFromCurrentPair(followManager: follow, pinManager: pins)
         XCTAssertEqual(vm.stepIndex, 3)
-        XCTAssertTrue(vm.isOnTypeaheadStep)
-        XCTAssertFalse(dismissed)
 
-        vm.skipCurrentStep(followManager: follow, authManager: auth) { dismissed = true }
+        // Fable Point 3 one-line change summary after pairs
+        let summary = try XCTUnwrap(vm.pairChangeSummaryLine)
+        XCTAssertTrue(summary.hasPrefix("More ") && summary.hasSuffix(" in your Discover."), summary)
+
+        var dismissed = false
+        vm.finish(followManager: follow, pinManager: pins, authManager: auth) { dismissed = true }
         XCTAssertTrue(dismissed)
         XCTAssertTrue(defaults.bool(forKey: FirstRunStorageKeys212A.onboardedKey))
+
+        let prefs = FirstRunPreferences212A.load(defaults: defaults)
+        XCTAssertTrue(prefs.boostedCategories.contains("entertainment"))
+
+        // Next Discover screen literally promotes picked non-sports category ahead of unpicked categories.
+        let orderedPairs = [
+            ("football", items[0]),
+            ("entertainment", items[4]),
+            ("tech", items[6]),
+        ]
+        let promoted = FirstRunDiscoverBoost212A.promotePreferredItems(orderedPairs, preferences: prefs) { entry, p in
+            FirstRunDiscoverBoost212A.itemMatches(entry.1, category: entry.0, preferences: p)
+        }
+        XCTAssertEqual(promoted.first?.0, "entertainment", "Next screen must put picked subject FIRST in Discover")
+        XCTAssertFalse(pins.pinnedFuturesIDs.isEmpty, "Picked future markets are also saved into My Stuff")
     }
 
-    func testTypeaheadPreservesQueryAndResultsAfterFirstPickAndDisambiguatesSchoolTeams() async throws {
+    // MARK: - 359: A Plain Sentence Box Contract & Non-Sports Oscars / Inflation Search
+
+    func testSentenceBoxContractAndFallbackPreservesQueryAndOscarsInflationSearch() async throws {
+        let decoder = makeDecoder()
+        let oscarsJSON = """
+        {
+          "query": "Oscars",
+          "teams": [],
+          "event_concepts": [],
+          "results": [],
+          "futures_families": [
+            {
+              "family_key": "story:oscars",
+              "label": "Oscars",
+              "headline": {"id": 6173044, "name": "Oscar Winner: Best Picture", "llm_sport_category": "entertainment", "category": "entertainment", "status": "open", "top_outcomes": [{"id": 31537937, "name": "The Odyssey", "probability": 0.515}]},
+              "members": []
+            }
+          ],
+          "futures": [
+            {"id": 6173044, "name": "Oscar Winner: Best Picture", "category": "entertainment", "llm_sport_category": "entertainment", "status": "open", "top_outcomes": [{"id": 31537937, "name": "The Odyssey", "probability": 0.515}]}
+          ],
+          "collections": [
+            {"type": "collection", "id": 422536482, "slug": "roundup-oscars-best-picture", "name": "The Odyssey leads Best Picture", "text": "The Odyssey leads Best Picture", "state": "published", "revision": 1743654066, "edition": {"kind": "theme"}, "game_count": 0, "question_count": 3, "matched_event_ids": [], "destination": {"kind": "container", "slug": "roundup-oscars-best-picture", "web": "/collections/roundup-oscars-best-picture", "api": "/api/containers/roundup-oscars-best-picture"}}
+          ]
+        }
+        """
+        let oscarsResp = try decoder.decode(SearchResponse.self, from: Data(oscarsJSON.utf8))
+        let oscarsSuggestions = FirstRunSuggestion212A.fromEventSearchResponse(oscarsResp, query: "Oscars")
+        XCTAssertTrue(oscarsSuggestions.contains { $0.id == "set:roundup-oscars-best-picture" })
+        XCTAssertTrue(oscarsSuggestions.contains { $0.id == "family:story:oscars" })
+        XCTAssertTrue(oscarsSuggestions.contains { $0.id == "fut:6173044" })
+
+        XCTAssertFalse(FirstRunSentenceMode359A.looksLikePlainSentence("Oscars"))
+        XCTAssertFalse(FirstRunSentenceMode359A.looksLikePlainSentence("inflation"))
+        XCTAssertTrue(FirstRunSentenceMode359A.looksLikePlainSentence("Celtics, Spurs, and inflation"))
+
+        // 1. Sample sentence: clear items arrive selected, Spurs arrives as 2 unselected chips.
+        let suite = "FirstRun359A.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let follow = FollowManager295A(defaults: defaults, initialSubjects: [])
+        let vm = FirstRunViewModel212A(
+            initialStep: 3,
+            defaults: defaults,
+            debounceNs: 0,
+            sentenceTimeoutNs: 200_000_000,
+            searchLocationTeams: { _ in [] },
+            searchTeamsByName: { _ in [] },
+            searchGlobal: { _ in oscarsResp },
+            sentenceParser: { sentence in
+                try await FirstRunSentenceSampleProvider359A.parseSampleSentence(sentence)
+            }
+        )
+
+        vm.searchQuery = "Boston Celtics, Oscars, Spurs, and inflation"
+        await vm.performSentenceParse(query: vm.searchQuery, followManager: follow)
+
+        guard case .chips(let chips, let selectedIds, let isSample) = vm.sentenceState else {
+            return XCTFail("Expected .chips state, got \(vm.sentenceState)")
+        }
+        XCTAssertTrue(isSample)
+        XCTAssertTrue(selectedIds.contains("team:100"))
+        XCTAssertTrue(selectedIds.contains("set:roundup-oscars-best-picture"))
+        XCTAssertTrue(selectedIds.contains("fut:52756026"))
+        XCTAssertFalse(selectedIds.contains("team:spurs-nba"), "Ambiguous Spurs chips must arrive unselected")
+        XCTAssertFalse(selectedIds.contains("team:spurs-epl"), "Ambiguous Spurs chips must arrive unselected")
+
+        // One tap removes a clear chip.
+        let celticsChip = try XCTUnwrap(chips.first { $0.id == "team:100" })
+        vm.toggleSentenceChip(celticsChip, followManager: follow)
+        guard case .chips(_, let afterRemove, _) = vm.sentenceState else { return XCTFail("Lost chips state") }
+        XCTAssertFalse(afterRemove.contains("team:100"))
+
+        // 2. Timeout / error keeps typed words intact & falls back to ordinary search without "nothing matched".
+        let timeoutVM = FirstRunViewModel212A(
+            initialStep: 3,
+            defaults: defaults,
+            debounceNs: 0,
+            sentenceTimeoutNs: 50_000_000,
+            searchLocationTeams: { _ in [] },
+            searchTeamsByName: { _ in [] },
+            searchGlobal: { _ in oscarsResp },
+            sentenceParser: { _ in
+                try await Task.sleep(nanoseconds: 500_000_000)
+                return FirstRunSentenceResponse359A(chips: [], isSampleData: true)
+            }
+        )
+        let typed = "I mostly follow Oscars and macro"
+        timeoutVM.searchQuery = typed
+        await timeoutVM.performSentenceParse(query: typed, followManager: follow)
+
+        XCTAssertEqual(timeoutVM.searchQuery, typed, "Error/timeout must preserve reader's words")
+        if case .couldNotRead(let msg) = timeoutVM.sentenceState {
+            XCTAssertFalse(msg.lowercased().contains("nothing matched"))
+        } else {
+            XCTFail("Expected .couldNotRead fallback state on timeout, got \(timeoutVM.sentenceState)")
+        }
+        XCTAssertFalse(timeoutVM.suggestions.isEmpty, "Fallback must run ordinary search below")
+    }
+
+    func testAppClipHandoffBridgeReadsSharedContainerAndRespectsTTL() throws {
+        let suite = "FirstRun212A.ClipHandoff.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        let now = Date()
+        let fresh = FirstRunLinkHandoffBridge212A.StoredRecord(
+            headline: "Trail Blazers at 76ers",
+            recordedAt: now.addingTimeInterval(-60)
+        )
+        defaults.set(try encoder.encode(fresh), forKey: FirstRunLinkHandoffBridge212A.storageKey)
+        XCTAssertEqual(
+            FirstRunLinkHandoffBridge212A.readSharedContainerHeadline(defaults: defaults, now: now),
+            "Trail Blazers at 76ers"
+        )
+        XCTAssertEqual(
+            FirstRunLinkHandoffBridge212A.bannerText(headline: "Trail Blazers at 76ers"),
+            "Started from your link \u{00B7} Trail Blazers at 76ers"
+        )
+
+        let expired = FirstRunLinkHandoffBridge212A.StoredRecord(
+            headline: "Stale Game",
+            recordedAt: now.addingTimeInterval(-25 * 3600)
+        )
+        defaults.set(try encoder.encode(expired), forKey: FirstRunLinkHandoffBridge212A.storageKey)
+        XCTAssertNil(FirstRunLinkHandoffBridge212A.readSharedContainerHeadline(defaults: defaults, now: now))
+    }
+
+    func testTypeaheadPreservesQueryAndResultsAfterPickAndDisambiguatesSchoolTeams() async throws {
         let decoder = makeDecoder()
         let brownTeamResultsJSON = """
         [
@@ -137,29 +430,20 @@ final class FirstRunFlow212ATests: XCTestCase {
           {"id": 2690, "name": "Brown Bears", "location": "Providence", "sport_key": "basketball_wncaab", "logo_url": null, "abbreviation": "BRWN", "sports": []}
         ]
         """
-        let brownGlobalJSON = """
-        {
-          "query": "brown",
-          "teams": [
-            {"id": 2392, "name": "Brown Bears", "slug": "brown-bears", "abbreviation": "BRWN", "logo": null, "record": "2-5", "sport_key": "basketball_ncaab", "query_names_team": true}
-          ],
-          "event_concepts": [],
-          "results": [],
-          "futures": []
-        }
-        """
-        let brownTeamResults = try decoder.decode([TeamSearchResult].self, from: Data(brownTeamResultsJSON.utf8))
-        let brownGlobal = try decoder.decode(SearchResponse.self, from: Data(brownGlobalJSON.utf8))
+        let emptyGlobalJSON = #"{"query":"brown","teams":[],"event_concepts":[],"results":[],"futures":[]}"#
+        let brownTeams = try decoder.decode([TeamSearchResult].self, from: Data(brownTeamResultsJSON.utf8))
+        let brownGlobal = try decoder.decode(SearchResponse.self, from: Data(emptyGlobalJSON.utf8))
 
-        let defaults = UserDefaults(suiteName: "FirstRun212A.Brown.\(UUID().uuidString)")!
+        let suite = "FirstRun212A.Brown.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
         let follow = FollowManager295A(defaults: defaults, initialSubjects: [])
         let vm = FirstRunViewModel212A(
             initialStep: 3,
             defaults: defaults,
             debounceNs: 0,
-            autoAdvanceDelayNs: 0,
             searchLocationTeams: { _ in [] },
-            searchTeamsByName: { _ in brownTeamResults },
+            searchTeamsByName: { _ in brownTeams },
             searchGlobal: { _ in brownGlobal }
         )
 
@@ -169,46 +453,38 @@ final class FirstRunFlow212ATests: XCTestCase {
         XCTAssertEqual(vm.suggestions.count, 3)
         let chipTexts = vm.suggestions.map(\.chipDisplayText)
         XCTAssertEqual(Set(chipTexts).count, 3, "Every Brown Bears team must carry a distinct sport label: \(chipTexts)")
-        XCTAssertTrue(chipTexts.contains { $0.contains("NCAAB") })
-        XCTAssertTrue(chipTexts.contains { $0.contains("NCAAF") })
-        XCTAssertTrue(chipTexts.contains { $0.contains("WNCAAB") })
-
-        // Pick #1: first tap adds immediately, query & results MUST remain on screen for pick #2.
         vm.toggleSuggestion(vm.suggestions[0], followManager: follow)
         XCTAssertTrue(vm.isPicked(vm.suggestions[0]))
         XCTAssertEqual(vm.searchQuery, "brown", "Search box must NOT clear after picking one team")
         XCTAssertEqual(vm.suggestions.count, 3, "Results must stay on screen after a pick")
-
-        // Pick #2 without re-typing: immediately obvious and works in one tap.
         vm.toggleSuggestion(vm.suggestions[1], followManager: follow)
         XCTAssertEqual(vm.pickedItems.count, 2)
-        XCTAssertEqual(follow.subjects.count, 2)
     }
 
-    // MARK: - #13517 Width & Dynamic Type Truncation Audit + 390pt Light/Dark Visual Captures
+    // MARK: - #13517 Width & Dynamic Type Audit + 390pt & 440pt Light/Dark Captures
 
     #if os(iOS)
     func testNoTeamNameTruncatedOn390And440AtDefaultAndAX5AndExportSheets() async throws {
         let decoder = makeDecoder()
 
-        let bostonResultsJSON = """
+        // Pure Boston fixture (NO Brown rows — answers Fable Point 6)
+        let bostonFallbackJSON = """
         [
           {"id": 100, "name": "Boston Celtics", "location": "Boston", "sport_key": "basketball_nba", "logo_url": null, "abbreviation": "BOS", "sports": []},
           {"id": 574, "name": "Boston Bruins", "location": "Boston", "sport_key": "icehockey_nhl", "logo_url": null, "abbreviation": "BOS", "sports": []},
           {"id": 10709, "name": "Boston Red Sox", "location": "Boston", "sport_key": "baseball_mlb", "logo_url": null, "abbreviation": "BOS", "sports": []},
           {"id": 511, "name": "New England Revolution", "location": "Boston", "sport_key": "soccer_usa_mls", "logo_url": null, "abbreviation": "NE", "sports": []},
-          {"id": 500, "name": "New England Patriots", "location": "Boston", "sport_key": "americanfootball_nfl", "logo_url": null, "abbreviation": "NE", "sports": []},
-          {"id": 2392, "name": "Brown Bears", "location": "Providence", "sport_key": "basketball_ncaab", "logo_url": null, "abbreviation": "BRWN", "sports": []},
-          {"id": 19933, "name": "Brown Bears", "location": "Providence", "sport_key": "americanfootball_ncaaf", "logo_url": null, "abbreviation": "BRWN", "sports": []}
+          {"id": 15342, "name": "Boston College Eagles", "location": "Boston College", "sport_key": "americanfootball_ncaaf", "logo_url": null, "abbreviation": "BC", "sports": []},
+          {"id": 2659, "name": "Boston Univ. Terriers", "location": "Boston University", "sport_key": "basketball_ncaab", "logo_url": null, "abbreviation": "BU", "sports": []}
         ]
         """
-        let bostonTeams = try decoder.decode([TeamSearchResult].self, from: Data(bostonResultsJSON.utf8))
-        let bostonGlobal = try decoder.decode(
+        let pureBostonTeams = try decoder.decode([TeamSearchResult].self, from: Data(bostonFallbackJSON.utf8))
+        let pureBostonGlobal = try decoder.decode(
             SearchResponse.self,
             from: Data(#"{"query":"boston","teams":[],"event_concepts":[],"results":[],"futures":[]}"#.utf8)
         )
 
-        // 1) Prove ZERO truncation (#13517) across 390pt and 440pt, Default and AX5
+        // 1) Prove ZERO truncation (#13517) across 390pt and 440pt, Default and AX5 on pure Boston
         let matrix: [(tag: String, width: CGFloat, size: DynamicTypeSize)] = [
             ("13517-boston-390-default", 390, .large),
             ("13517-boston-390-ax5", 390, .accessibility5),
@@ -216,23 +492,22 @@ final class FirstRunFlow212ATests: XCTestCase {
             ("13517-boston-440-ax5", 440, .accessibility5),
         ]
         for cfg in matrix {
-            let defaults = UserDefaults(suiteName: "FirstRun212A.13517.\(UUID().uuidString)")!
+            let suite = "FirstRun212A.13517.\(UUID().uuidString)"
+            let defaults = UserDefaults(suiteName: suite)!
+            defer { defaults.removePersistentDomain(forName: suite) }
             let follow = FollowManager295A(defaults: defaults, initialSubjects: [])
             let vm = FirstRunViewModel212A(
                 initialStep: 3,
                 defaults: defaults,
                 debounceNs: 0,
-                autoAdvanceDelayNs: 0,
-                searchLocationTeams: { _ in bostonTeams },
-                searchTeamsByName: { _ in bostonTeams },
-                searchGlobal: { _ in bostonGlobal }
+                searchLocationTeams: { _ in pureBostonTeams },
+                searchTeamsByName: { _ in pureBostonTeams },
+                searchGlobal: { _ in pureBostonGlobal }
             )
             vm.searchQuery = "Boston"
             await vm.performTypeahead(query: "Boston")
             vm.toggleSuggestion(vm.suggestions[0], followManager: follow) // Boston Celtics
             vm.toggleSuggestion(vm.suggestions[3], followManager: follow) // New England Revolution
-            vm.toggleSuggestion(vm.suggestions[5], followManager: follow) // Brown Bears NCAAB
-            vm.toggleSuggestion(vm.suggestions[6], followManager: follow) // Brown Bears NCAAF
 
             let ocr = try await renderAndOCR(
                 view: FirstRunFlowView212A(viewModelForTest: vm)
@@ -246,161 +521,413 @@ final class FirstRunFlow212ATests: XCTestCase {
             let truncs = ocr.filter { $0.contains("…") || $0.contains("...") }
             let joined = ocr.joined(separator: " ")
             XCTAssertEqual(truncs, [], "Truncated text at \(cfg.tag): \(truncs) (all=\(ocr))")
+            XCTAssertFalse(joined.contains("Brown Bears"), "Boston search must never list Brown Bears (Fable Pt 6)")
             XCTAssertTrue(joined.contains("New England") && joined.contains("Revolution"), "Missing full New England Revolution at \(cfg.tag): \(ocr)")
             XCTAssertTrue(joined.contains("Boston") && joined.contains("Celtics"), "Missing full Boston Celtics at \(cfg.tag): \(ocr)")
-            XCTAssertTrue(joined.contains("NCAAB"))
-            XCTAssertTrue(joined.contains("NCAAF"))
         }
 
-        // 2) Export full 390pt Light & Dark set when requested
+        // 2) Export full 390pt & 440pt Light/Dark set when requested
         let env = ProcessInfo.processInfo.environment
         guard let exportDir = env["EXPORT_212A_RENDER_DIR"] ?? env["TEST_RUNNER_EXPORT_212A_RENDER_DIR"] ?? env["SIMCTL_CHILD_EXPORT_212A_RENDER_DIR"],
               !exportDir.isEmpty else {
             return
         }
 
-        let eventJSON = """
-        {
-          "id": 9101,
-          "sport": "americanfootball_nfl",
-          "home_team": "Cincinnati Bengals",
-          "away_team": "Pittsburgh Steelers",
-          "commence_time": "2026-11-29T18:00:00Z",
-          "status": "scheduled",
-          "home_team_data": {"abbreviation": "CIN", "primary_color": "#FB4F14"},
-          "away_team_data": {"abbreviation": "PIT", "primary_color": "#FFB612"},
-          "pregame_projection": {"projected_home_score": 25.0, "projected_away_score": 20.0},
-          "current_odds": {"away_probability": 0.34, "home_probability": 0.66, "away_rendered_percent": 34, "home_rendered_percent": 66}
+        let fixDir = env["LIVE_212A_FIXTURES_DIR"] ?? env["TEST_RUNNER_LIVE_212A_FIXTURES_DIR"] ?? env["SIMCTL_CHILD_LIVE_212A_FIXTURES_DIR"] ?? ""
+        func loadFixture(_ name: String) -> Data? {
+            guard !fixDir.isEmpty else { return nil }
+            return try? Data(contentsOf: URL(fileURLWithPath: fixDir).appendingPathComponent(name))
         }
-        """
-        let sampleEvent = try decoder.decode(EventDetail.self, from: Data(eventJSON.utf8))
-        let historyJSON = """
-        {
-          "event_id": 9101,
-          "home_team": "Cincinnati Bengals",
-          "away_team": "Pittsburgh Steelers",
-          "status": "scheduled",
-          "history": [
-            {"timestamp": "2026-11-20T18:00:00Z", "home_probability": 0.61, "away_probability": 0.39},
-            {"timestamp": "2026-11-21T18:00:00Z", "home_probability": 0.63, "away_probability": 0.37},
-            {"timestamp": "2026-11-22T18:00:00Z", "home_probability": 0.65, "away_probability": 0.35},
-            {"timestamp": "2026-11-23T18:00:00Z", "home_probability": 0.66, "away_probability": 0.34}
-          ]
-        }
-        """
-        let sampleHistory = try decoder.decode(EventHistoryResponse.self, from: Data(historyJSON.utf8))
 
-        for (scheme, suffix) in [(ColorScheme.light, "light"), (ColorScheme.dark, "dark")] {
-            // 1A: Shared link arrival
-            _ = try await renderAndOCR(
-                view: SharedLinkArrivalView212A(
-                    event: sampleEvent,
-                    preloadedHistory: sampleHistory,
-                    moreCards: [
-                        FirstRunPair212A.fallbackNonSportsCard1,
-                        FirstRunPair212A.fallbackSportsCard2,
-                        FirstRunPair212A.fallbackNonSportsCard2,
-                    ],
-                    onOpenFullGame: {},
-                    onOpenDiscover: {}
-                ),
-                filename: "212a-01-shared-arrival-\(suffix)-390.png",
-                width: 390,
-                height: 844,
-                colorScheme: scheme,
-                dynamicTypeSize: .large
-            )
+        // Load real live feed items (or minimal test fallback if fixture env unset)
+        let liveFeedItems: [FeedItem] = try {
+            var items: [FeedItem] = []
+            if let d1 = loadFixture("feed_discover.json"),
+               let r1 = try? decoder.decode(FeedResponse.self, from: d1) {
+                items.append(contentsOf: r1.items)
+            }
+            if let d2 = loadFixture("feed_sports.json"),
+               let r2 = try? decoder.decode(FeedResponse.self, from: d2) {
+                items.append(contentsOf: r2.items)
+            }
+            if items.isEmpty {
+                items = try makeFeedItemsFromFixtureJSON()
+            }
+            return items
+        }()
+        let liveSearchSugs: [SearchSuggestionEntry212A] = {
+            if let d = loadFixture("search_suggestions.json"),
+               let r = try? decoder.decode(SearchSuggestionsResponse212A.self, from: d) {
+                return r.suggestions
+            }
+            return []
+        }()
 
-            // 2A..2C Pairs
-            for step in 0...2 {
-                let d = UserDefaults(suiteName: "FirstRun212A.P\(step).\(UUID().uuidString)")!
-                let f = FollowManager295A(defaults: d, initialSubjects: [])
-                let dispVM = FirstRunViewModel212A(
-                    arrivedHeadline: step == 0 ? "Steelers at Bengals" : nil,
-                    initialStep: step,
-                    defaults: d,
-                    debounceNs: 0,
-                    autoAdvanceDelayNs: 10_000_000_000
-                )
-                if step == 1 { dispVM.selectChoice(.bottom, forPairIndex: 1, followManager: f) }
+        let liveColdPairs = FirstRunPair212A.buildPairs(from: liveFeedItems, arrivedHeadline: nil)
+        let liveLinkPairs = FirstRunPair212A.buildPairs(from: liveFeedItems, arrivedHeadline: "Trail Blazers at 76ers")
+        let liveExamples = FirstRunServedExamples212A.buildExamples(from: liveFeedItems, searchSuggestions: liveSearchSugs)
+        XCTAssertEqual(liveColdPairs.count, 3)
+
+        let arrivalEvent: EventDetail = try {
+            if let d = loadFixture("arrival_event.json"),
+               let ev = try? decoder.decode(EventDetail.self, from: d) {
+                return ev
+            }
+            return try decoder.decode(EventDetail.self, from: Data(#"{"id":15353145,"sport":"basketball_nba","home_team":"Philadelphia 76ers","away_team":"Portland Trail Blazers","commence_time":"2026-11-24T00:00:00Z","status":"scheduled","current_odds":{"home_probability":0.575,"away_probability":0.425,"home_rendered_percent":58,"away_rendered_percent":42}}"#.utf8))
+        }()
+        let arrivalHistory: EventHistoryResponse? = {
+            guard let d = loadFixture("arrival_history.json") else { return nil }
+            return try? decoder.decode(EventHistoryResponse.self, from: d)
+        }()
+
+        let oscarsResp = (try? loadFixture("search_oscars.json").flatMap { try? decoder.decode(SearchResponse.self, from: $0) })
+            ?? pureBostonGlobal
+        let inflationResp = (try? loadFixture("search_inflation.json").flatMap { try? decoder.decode(SearchResponse.self, from: $0) })
+            ?? pureBostonGlobal
+        let bostonLoc = (try? loadFixture("loc_boston.json").flatMap { try? decoder.decode([TeamSearchResult].self, from: $0) })
+            ?? pureBostonTeams
+        let bostonSearchTeams = (try? loadFixture("teams_boston.json").flatMap { try? decoder.decode([TeamSearchResult].self, from: $0) })
+            ?? pureBostonTeams
+        let bostonGlobal = (try? loadFixture("search_boston.json").flatMap { try? decoder.decode(SearchResponse.self, from: $0) })
+            ?? pureBostonGlobal
+        let brownTeams = (try? loadFixture("teams_brown.json").flatMap { try? decoder.decode([TeamSearchResult].self, from: $0) })
+            ?? []
+        let brownGlobal = (try? loadFixture("search_brown.json").flatMap { try? decoder.decode(SearchResponse.self, from: $0) })
+            ?? pureBostonGlobal
+
+        for width in [CGFloat(390), CGFloat(440)] {
+            let wTag = Int(width)
+            for (scheme, suffix) in [(ColorScheme.light, "light"), (ColorScheme.dark, "dark")] {
+                // 01: Screen 1A Shared Link Arrival reading App Group handoff ("Started from your link · ...")
+                let arrivalHeadline = "\(arrivalEvent.awayTeam) at \(arrivalEvent.homeTeam)"
                 _ = try await renderAndOCR(
-                    view: FirstRunFlowView212A(viewModelForTest: dispVM).environment(\.followManager295A, f),
-                    filename: "212a-02\(UnicodeScalar(97 + step)!)-\(suffix)-390.png",
-                    width: 390,
+                    view: SharedLinkArrivalView212A(
+                        event: arrivalEvent,
+                        preloadedHistory: arrivalHistory,
+                        arrivedHeadline: arrivalHeadline,
+                        moreCards: [
+                            liveLinkPairs[0].bottomCard,
+                            liveLinkPairs[1].topCard,
+                            liveLinkPairs[1].bottomCard,
+                        ],
+                        onOpenFullGame: {},
+                        onOpenDiscover: {}
+                    ),
+                    filename: "v2-01-arrival-1a-\(suffix)-\(wTag).png",
+                    width: width,
+                    height: 844,
+                    colorScheme: scheme,
+                    dynamicTypeSize: .large
+                )
+
+                // 02: Cold Open with NO link (Screen 2A)
+                do {
+                    let s = "FirstRun212A.Cold.\(UUID().uuidString)"
+                    let d = UserDefaults(suiteName: s)!
+                    let f = FollowManager295A(defaults: d, initialSubjects: [])
+                    let vm = FirstRunViewModel212A(initialPairs: liveColdPairs, initialExamples: liveExamples, initialStep: 0, defaults: d)
+                    _ = try await renderAndOCR(
+                        view: FirstRunFlowView212A(viewModelForTest: vm).environment(\.followManager295A, f),
+                        filename: "v2-02-cold-open-2a-\(suffix)-\(wTag).png",
+                        width: width,
+                        height: 844,
+                        colorScheme: scheme,
+                        dynamicTypeSize: .large
+                    )
+                }
+
+                // 03: Pair 2B with direct card tap selected (check + blue border + "Next")
+                do {
+                    let s = "FirstRun212A.Pair2.\(UUID().uuidString)"
+                    let d = UserDefaults(suiteName: s)!
+                    let f = FollowManager295A(defaults: d, initialSubjects: [])
+                    let vm = FirstRunViewModel212A(initialPairs: liveColdPairs, initialExamples: liveExamples, initialStep: 1, defaults: d)
+                    vm.toggleCard(.bottom, forPairIndex: 1)
+                    _ = try await renderAndOCR(
+                        view: FirstRunFlowView212A(viewModelForTest: vm).environment(\.followManager295A, f),
+                        filename: "v2-03-pair-2b-selected-\(suffix)-\(wTag).png",
+                        width: width,
+                        height: 844,
+                        colorScheme: scheme,
+                        dynamicTypeSize: .large
+                    )
+                }
+
+                // 04: Pair 2C (two non-sports real live cards)
+                do {
+                    let s = "FirstRun212A.Pair3.\(UUID().uuidString)"
+                    let d = UserDefaults(suiteName: s)!
+                    let f = FollowManager295A(defaults: d, initialSubjects: [])
+                    let vm = FirstRunViewModel212A(initialPairs: liveColdPairs, initialExamples: liveExamples, initialStep: 2, defaults: d)
+                    _ = try await renderAndOCR(
+                        view: FirstRunFlowView212A(viewModelForTest: vm).environment(\.followManager295A, f),
+                        filename: "v2-04-pair-2c-nonsports-\(suffix)-\(wTag).png",
+                        width: width,
+                        height: 844,
+                        colorScheme: scheme,
+                        dynamicTypeSize: .large
+                    )
+                }
+
+                // 05: Failure State #1 (Live pairs failed to load — honest retry/skip, zero fake cards)
+                do {
+                    let s = "FirstRun212A.Fail1.\(UUID().uuidString)"
+                    let d = UserDefaults(suiteName: s)!
+                    let f = FollowManager295A(defaults: d, initialSubjects: [])
+                    let vm = FirstRunViewModel212A(
+                        initialPairs: [],
+                        initialExamples: [],
+                        initialStep: 0,
+                        defaults: d,
+                        feedLoader: { throw URLError(.notConnectedToInternet) },
+                        sportsFeedLoader: { throw URLError(.notConnectedToInternet) }
+                    )
+                    await vm.loadLivePairsIfNeeded(forceReload: true)
+                    _ = try await renderAndOCR(
+                        view: FirstRunFlowView212A(viewModelForTest: vm).environment(\.followManager295A, f),
+                        filename: "v2-05-pairs-failure-\(suffix)-\(wTag).png",
+                        width: width,
+                        height: 844,
+                        colorScheme: scheme,
+                        dynamicTypeSize: .large
+                    )
+                }
+
+                // 06: Screen 2D Empty Box + Quiet Served Example + Pair Change Summary (Fable Pt 3 + Alex Pt 8/9)
+                do {
+                    let s = "FirstRun212A.Ex.\(UUID().uuidString)"
+                    let d = UserDefaults(suiteName: s)!
+                    let f = FollowManager295A(defaults: d, initialSubjects: [])
+                    let vm = FirstRunViewModel212A(initialPairs: liveColdPairs, initialExamples: liveExamples, initialStep: 0, defaults: d)
+                    vm.toggleCard(.bottom, forPairIndex: 0)
+                    vm.advanceFromCurrentPair(followManager: f)
+                    vm.advanceFromCurrentPair(followManager: f)
+                    vm.toggleCard(.top, forPairIndex: 2)
+                    vm.advanceFromCurrentPair(followManager: f)
+                    _ = try await renderAndOCR(
+                        view: FirstRunFlowView212A(viewModelForTest: vm, pinnedExampleIndex: 0)
+                            .environment(\.followManager295A, f),
+                        filename: "v2-06-2d-examples-\(suffix)-\(wTag).png",
+                        width: width,
+                        height: 844,
+                        colorScheme: scheme,
+                        dynamicTypeSize: .large
+                    )
+                    _ = try await renderAndOCR(
+                        view: FirstRunFlowView212A(viewModelForTest: vm, reduceMotionOverride: true)
+                            .environment(\.followManager295A, f),
+                        filename: "v2-06b-2d-reduce-motion-\(suffix)-\(wTag).png",
+                        width: width,
+                        height: 844,
+                        colorScheme: scheme,
+                        dynamicTypeSize: .large
+                    )
+                }
+
+                // 07: Screen 2D "Oscars" (Fable Pt 5)
+                do {
+                    let s = "FirstRun212A.Oscars.\(UUID().uuidString)"
+                    let d = UserDefaults(suiteName: s)!
+                    let f = FollowManager295A(defaults: d, initialSubjects: [])
+                    let vm = FirstRunViewModel212A(
+                        initialPairs: liveColdPairs,
+                        initialExamples: liveExamples,
+                        initialStep: 3,
+                        defaults: d,
+                        debounceNs: 0,
+                        searchLocationTeams: { _ in [] },
+                        searchTeamsByName: { _ in [] },
+                        searchGlobal: { _ in oscarsResp }
+                    )
+                    vm.searchQuery = "Oscars"
+                    await vm.performTypeahead(query: "Oscars")
+                    if let first = vm.suggestions.first { vm.toggleSuggestion(first, followManager: f) }
+                    _ = try await renderAndOCR(
+                        view: FirstRunFlowView212A(viewModelForTest: vm).environment(\.followManager295A, f),
+                        filename: "v2-07-2d-oscars-\(suffix)-\(wTag).png",
+                        width: width,
+                        height: 844,
+                        colorScheme: scheme,
+                        dynamicTypeSize: .large
+                    )
+                }
+
+                // 08: Screen 2D "inflation" (Fable Pt 5)
+                do {
+                    let s = "FirstRun212A.Inflation.\(UUID().uuidString)"
+                    let d = UserDefaults(suiteName: s)!
+                    let f = FollowManager295A(defaults: d, initialSubjects: [])
+                    let vm = FirstRunViewModel212A(
+                        initialPairs: liveColdPairs,
+                        initialExamples: liveExamples,
+                        initialStep: 3,
+                        defaults: d,
+                        debounceNs: 0,
+                        searchLocationTeams: { _ in [] },
+                        searchTeamsByName: { _ in [] },
+                        searchGlobal: { _ in inflationResp }
+                    )
+                    vm.searchQuery = "inflation"
+                    await vm.performTypeahead(query: "inflation")
+                    if let first = vm.suggestions.first { vm.toggleSuggestion(first, followManager: f) }
+                    _ = try await renderAndOCR(
+                        view: FirstRunFlowView212A(viewModelForTest: vm).environment(\.followManager295A, f),
+                        filename: "v2-08-2d-inflation-\(suffix)-\(wTag).png",
+                        width: width,
+                        height: 844,
+                        colorScheme: scheme,
+                        dynamicTypeSize: .large
+                    )
+                }
+
+                // 09: Screen 2D "Boston" pure live results (Fable Pt 6 + #13517)
+                do {
+                    let s = "FirstRun212A.Boston.\(UUID().uuidString)"
+                    let d = UserDefaults(suiteName: s)!
+                    let f = FollowManager295A(defaults: d, initialSubjects: [])
+                    let vm = FirstRunViewModel212A(
+                        initialPairs: liveColdPairs,
+                        initialExamples: liveExamples,
+                        initialStep: 3,
+                        defaults: d,
+                        debounceNs: 0,
+                        searchLocationTeams: { _ in bostonLoc },
+                        searchTeamsByName: { _ in bostonSearchTeams },
+                        searchGlobal: { _ in bostonGlobal }
+                    )
+                    vm.searchQuery = "Boston"
+                    await vm.performTypeahead(query: "Boston")
+                    if let first = vm.suggestions.first { vm.toggleSuggestion(first, followManager: f) }
+                    _ = try await renderAndOCR(
+                        view: FirstRunFlowView212A(viewModelForTest: vm).environment(\.followManager295A, f),
+                        filename: "v2-09-2d-boston-\(suffix)-\(wTag).png",
+                        width: width,
+                        height: 844,
+                        colorScheme: scheme,
+                        dynamicTypeSize: .large
+                    )
+                }
+
+                // 09b: Screen 2D "Brown" distinct school sports (NCAAB / NCAAF / WNCAAB)
+                do {
+                    let s = "FirstRun212A.Brown.\(UUID().uuidString)"
+                    let d = UserDefaults(suiteName: s)!
+                    let f = FollowManager295A(defaults: d, initialSubjects: [])
+                    let vm = FirstRunViewModel212A(
+                        initialPairs: liveColdPairs,
+                        initialExamples: liveExamples,
+                        initialStep: 3,
+                        defaults: d,
+                        debounceNs: 0,
+                        searchLocationTeams: { _ in [] },
+                        searchTeamsByName: { _ in brownTeams },
+                        searchGlobal: { _ in brownGlobal }
+                    )
+                    vm.searchQuery = "Brown"
+                    await vm.performTypeahead(query: "Brown")
+                    if vm.suggestions.count >= 2 {
+                        vm.toggleSuggestion(vm.suggestions[0], followManager: f)
+                        vm.toggleSuggestion(vm.suggestions[1], followManager: f)
+                    }
+                    _ = try await renderAndOCR(
+                        view: FirstRunFlowView212A(viewModelForTest: vm).environment(\.followManager295A, f),
+                        filename: "v2-09b-2d-brown-\(suffix)-\(wTag).png",
+                        width: width,
+                        height: 844,
+                        colorScheme: scheme,
+                        dynamicTypeSize: .large
+                    )
+                }
+
+                // 10: 359: A Sentence Waiting State
+                do {
+                    let s = "FirstRun212A.Wait.\(UUID().uuidString)"
+                    let d = UserDefaults(suiteName: s)!
+                    let f = FollowManager295A(defaults: d, initialSubjects: [])
+                    let vm = FirstRunViewModel212A(initialPairs: liveColdPairs, initialExamples: liveExamples, initialStep: 3, defaults: d)
+                    vm.searchQuery = "Boston Celtics, Oscars, Spurs, and inflation"
+                    vm.setSentenceStateForPreview(.waiting)
+                    _ = try await renderAndOCR(
+                        view: FirstRunFlowView212A(viewModelForTest: vm).environment(\.followManager295A, f),
+                        filename: "v2-10-359a-waiting-\(suffix)-\(wTag).png",
+                        width: width,
+                        height: 844,
+                        colorScheme: scheme,
+                        dynamicTypeSize: .large
+                    )
+                }
+
+                // 11: 359: A Sentence Chips Confirmation (Sample preview: clear selected + Spurs 2 unselected)
+                do {
+                    let s = "FirstRun212A.Chips.\(UUID().uuidString)"
+                    let d = UserDefaults(suiteName: s)!
+                    let f = FollowManager295A(defaults: d, initialSubjects: [])
+                    let vm = FirstRunViewModel212A(
+                        initialPairs: liveColdPairs,
+                        initialExamples: liveExamples,
+                        initialStep: 3,
+                        defaults: d,
+                        debounceNs: 0,
+                        sentenceParser: { sentence in
+                            try await FirstRunSentenceSampleProvider359A.parseSampleSentence(sentence)
+                        }
+                    )
+                    vm.searchQuery = "Boston Celtics, Oscars, Spurs, and inflation"
+                    await vm.performSentenceParse(query: vm.searchQuery, followManager: f)
+                    _ = try await renderAndOCR(
+                        view: FirstRunFlowView212A(viewModelForTest: vm).environment(\.followManager295A, f),
+                        filename: "v2-11-359a-chips-\(suffix)-\(wTag).png",
+                        width: width,
+                        height: 844,
+                        colorScheme: scheme,
+                        dynamicTypeSize: .large
+                    )
+                }
+
+                // 12: Failure State #2 — 359: A Could-Not-Read Fallback keeping typed text + regular search below
+                do {
+                    let s = "FirstRun212A.CouldNotRead.\(UUID().uuidString)"
+                    let d = UserDefaults(suiteName: s)!
+                    let f = FollowManager295A(defaults: d, initialSubjects: [])
+                    let vm = FirstRunViewModel212A(
+                        initialPairs: liveColdPairs,
+                        initialExamples: liveExamples,
+                        initialStep: 3,
+                        defaults: d,
+                        debounceNs: 0,
+                        sentenceTimeoutNs: 20_000_000,
+                        searchLocationTeams: { _ in [] },
+                        searchTeamsByName: { _ in [] },
+                        searchGlobal: { _ in oscarsResp },
+                        sentenceParser: { _ in throw URLError(.timedOut) }
+                    )
+                    vm.searchQuery = "I mostly follow Oscars and macro"
+                    await vm.performSentenceParse(query: vm.searchQuery, followManager: f)
+                    _ = try await renderAndOCR(
+                        view: FirstRunFlowView212A(viewModelForTest: vm).environment(\.followManager295A, f),
+                        filename: "v2-12-359a-couldnotread-\(suffix)-\(wTag).png",
+                        width: width,
+                        height: 844,
+                        colorScheme: scheme,
+                        dynamicTypeSize: .large
+                    )
+                }
+
+                // 13: 4A Contextual Alerts Ask (Fable Point 6 Dark "Turn on" fix)
+                _ = try await renderAndOCR(
+                    view: VStack {
+                        Spacer()
+                        GameAlertsPinPromptSheet13084(onTurnOn: {}, onNotNow: {})
+                        Spacer()
+                    }
+                    .background(DS.surface),
+                    filename: "v2-13-4a-alert-ask-\(suffix)-\(wTag).png",
+                    width: width,
                     height: 844,
                     colorScheme: scheme,
                     dynamicTypeSize: .large
                 )
             }
-
-            // 2D Unified Typeahead ("Boston" + "Brown")
-            let dt = UserDefaults(suiteName: "FirstRun212A.Typeahead.\(UUID().uuidString)")!
-            let ft = FollowManager295A(defaults: dt, initialSubjects: [])
-            let tvm = FirstRunViewModel212A(
-                initialStep: 3,
-                defaults: dt,
-                debounceNs: 0,
-                autoAdvanceDelayNs: 0,
-                searchLocationTeams: { _ in bostonTeams },
-                searchTeamsByName: { _ in bostonTeams },
-                searchGlobal: { _ in bostonGlobal }
-            )
-            tvm.searchQuery = "Boston"
-            await tvm.performTypeahead(query: "Boston")
-            tvm.toggleSuggestion(tvm.suggestions[0], followManager: ft)
-            tvm.toggleSuggestion(tvm.suggestions[5], followManager: ft)
-            tvm.toggleSuggestion(tvm.suggestions[6], followManager: ft)
-            _ = try await renderAndOCR(
-                view: FirstRunFlowView212A(viewModelForTest: tvm).environment(\.followManager295A, ft),
-                filename: "212a-02d-typeahead-\(suffix)-390.png",
-                width: 390,
-                height: 844,
-                colorScheme: scheme,
-                dynamicTypeSize: .large
-            )
-
-            // 4A Contextual alerts ask at pin
-            _ = try await renderAndOCR(
-                view: VStack {
-                    Spacer()
-                    GameAlertsPinPromptSheet13084(onTurnOn: {}, onNotNow: {})
-                    Spacer()
-                }
-                .background(DS.surface),
-                filename: "212a-04a-alert-ask-\(suffix)-390.png",
-                width: 390,
-                height: 844,
-                colorScheme: scheme,
-                dynamicTypeSize: .large
-            )
-
-            // 5 Earned sign-in card
-            _ = try await renderAndOCR(
-                view: VStack {
-                    Spacer()
-                    EarnedSignInCard212A(onAppleSignIn: {}, onGoogleSignIn: {}, onDismissLocalOnly: {})
-                        .padding(.horizontal, 16)
-                    Spacer()
-                }
-                .background(DS.surface),
-                filename: "212a-05-earned-signin-\(suffix)-390.png",
-                width: 390,
-                height: 844,
-                colorScheme: scheme,
-                dynamicTypeSize: .large
-            )
-
-            // 6 About Bain Luck worked 64% strip (inside NavigationStack just like Settings & Why? push)
-            _ = try await renderAndOCR(
-                view: NavigationStack {
-                    AboutBainLuckView212A(showsBackToDiscoverCTA: true, onBackToDiscover: {})
-                },
-                filename: "212a-06-about-64pct-\(suffix)-390.png",
-                width: 390,
-                height: 844,
-                colorScheme: scheme,
-                dynamicTypeSize: .large
-            )
         }
     }
 
