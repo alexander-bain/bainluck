@@ -2486,12 +2486,16 @@ jobs:
       name: '#12288 grouping preview loads every candidate definition on real Postgres'
       if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
       run: "python -m pytest tests/integration/test_container_machinery_snapshot_12288_pg.py -v -rs > /tmp/machinerysnapshot12288.txt 2>&1 || {\n  cat /tmp/machinerysnapshot12288.txt\n  exit 1\n}\ncat /tmp/machinerysnapshot12288.txt\nif grep -qiE \"[0-9]+ skipped\" /tmp/machinerysnapshot12288.txt; then\n  echo \"::error::#12288 machinery snapshot gate skipped\"\n  exit 1\nfi\ngrep -qE \"[^0-9]4 passed([,[:space:]]|$)\" /tmp/machinerysnapshot12288.txt || {\n  echo \"::error::#12288 machinery snapshot gate did not run all four cases\"\n  exit 1\n}\n"
+    - name: "#12612 feed static tag filter (real Postgres)"
+      id: db_12612_feed_static_tag_filter
+      if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
+      run: bash ../.github/scripts/run-12612-pg-gates.sh tagfilter tests/integration/test_feed_static_tag_filter_pg.py
     - name: "#12612 calibration real-Postgres contracts"
       id: db_12612_calibration_contracts
       if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
       env:
         CALIBRATION_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/bl_cal12612
-      run: bash ../.github/scripts/run-12612-pg-gates.sh cal tests/test_calibration_examples_canonical_262.py
+      run: bash ../.github/scripts/run-12612-pg-gates.sh cal tests/test_calibration_examples_canonical_262.py tests/test_calibration_canonical_pg.py tests/test_calibration_horizon_honest_263.py
 
     - name: "#12252 shared tail \u2014 upload this attempt's 55-A retries for the flake sentinel"
       id: db_flaky_retries_upload
