@@ -329,6 +329,13 @@ def _feed_fingerprint_redis_lkg_off_unless_a_test_sets_it(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _golf_tournament_cache_redis_and_warm_off_unless_set(monkeypatch):
+    """#13436: isolate golf tournament Redis cache and background warming in tests."""
+    monkeypatch.setenv("GOLF_TOURNAMENT_CACHE_REDIS_ENABLED", "0")
+    monkeypatch.setenv("GOLF_TOURNAMENT_CACHE_WARM_ENABLED", "0")
+
+
+@pytest.fixture(autouse=True)
 def _sentinel_red_comment_cadence_off_unless_a_test_sets_it(monkeypatch):
     """#12276: the sentinel rail's "Still RED" cadence keeps its last comment in
     Redis. Off in tests unless a test turns it on with a fake client — a
@@ -423,6 +430,7 @@ def _reset_loaded_request_caches(retained=None):
         ("app.utils.principal_independent_cache", ("clear_shared_builds",)),
         ("app.utils.event_history_cache", ("_reset_for_tests",)),
         ("app.utils.futures_page_cache", ("_reset_for_tests",)),
+        ("app.utils.golf_tournament_cache", ("_reset_for_tests",)),
         ("app.utils.prematch_reading", ("_reset_prematch_cache_for_tests",)),
         ("app.utils.pregame_projection", ("clear_pregame_projection_cache",)),
         ("app.routes.calibration", ()),

@@ -16,6 +16,7 @@ Data flow:
 
 import asyncio
 import logging
+import os
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -1388,6 +1389,27 @@ async def _poll_datagolf_live() -> dict:
     return stats
 
 
+async def _warm_tournament_pages_after_live_poll(stats: dict, redis_client) -> list[str]:
+    """Refresh Redis/L0 per-tournament detail cache on live or settling ticks (#13436)."""
+    if os.getenv("GOLF_TOURNAMENT_CACHE_WARM_ENABLED", "1").strip().lower() in ("0", "false", "no", "off"):
+        return []
+    if not (stats.get("live_events", 0) > 0 or stats.get("markets_resolved", 0) > 0):
+        return []
+    import asyncio
+    from app.routes.golf import warm_golf_tournament_pages
+    from app.tasks.base import get_task_session
+
+    async def _run() -> list[str]:
+        async with get_task_session() as warm_db:
+            return await warm_golf_tournament_pages(
+                warm_db,
+                only_live=(stats.get("markets_resolved", 0) == 0),
+                redis_client=redis_client,
+            )
+
+    return await asyncio.wait_for(_run(), timeout=15.0)
+
+
 async def _poll_datagolf_inplay() -> dict:
     """#144: dedicated in-play golf poll, driven by its own ~90s beat.
 
@@ -1404,6 +1426,12 @@ async def _poll_datagolf_inplay() -> dict:
     if not _golf_inplay_window_active(r):
         return {"skipped": "no_active_tournament_window"}
     result = await _poll_datagolf_live()
+    try:
+        warmed = await _warm_tournament_pages_after_live_poll(result, r)
+        if warmed:
+            result["warmed_tournament_slugs"] = warmed
+    except Exception as warm_exc:
+        logger.debug("Golf tournament detail warm skipped/failed: %s", warm_exc)
     # Suppress the redundant 5-min poll_all_odds piggyback while this dedicated
     # beat is driving cadence (the piggyback sets this key with nx=True, so it
     # skips while the key exists). Keeps us from double-polling get_in_play.
