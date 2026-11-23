@@ -530,7 +530,6 @@ async def _seed_fixtures(pg_engine) -> None:
                     away_moneyline=170,
                     home_win_probability=0.65,
                     away_win_probability=0.15,
-                    draw_probability=0.20,
                     captured_at=fresh_ts,
                 )
             )
