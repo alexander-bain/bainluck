@@ -782,7 +782,7 @@ async def test_load_snapshot_from_db_executes_every_query_for_every_candidate_de
     """Ask 1 + Ask 2: run `_load_snapshot_from_db` against real PostgreSQL for every
     definition in `backend/data/groupings/candidates/` and verify that every SQL
     statement family (events via `Sport.key`, paired-stage register markets, open
-    markets, verified-title member markets, and `futures_odds_snapshots` window
+    markets, verified-title member markets, and `futures_odds_snapshots` lateral
     history) executes and returns properly serialized primitives.
     """
     maker = pg_machinery["maker"]
@@ -839,7 +839,8 @@ async def test_load_snapshot_from_db_executes_every_query_for_every_candidate_de
     assert "sports.key in" in joined_sql
     assert "from futures_markets" in joined_sql
     assert "from futures_odds_snapshots" in joined_sql
-    assert "row_number() over (partition by futures_odds_snapshots.outcome_id" in joined_sql
+    assert "join lateral (" in joined_sql
+    assert "row_number() over (partition by futures_odds_snapshots.outcome_id" not in joined_sql
 
 
 async def test_paired_discover_card_and_set_match_the_market_pages_allocation(pg_machinery):
@@ -966,3 +967,171 @@ async def test_error_item_logs_slug_and_exception_class_and_keeps_session_usable
     assert len(error_logs) == 1
     assert "slug=machinery-nfl-week" in error_logs[0]
     assert "ProgrammingError" in error_logs[0]
+
+
+async def test_machinery_history_lateral_matches_legacy_window_query_exact_points_13475(
+    pg_machinery,
+):
+    """#13475 item 4: per-outcome LATERAL newest-96 query returns the EXACT same
+    (outcome_id, captured_at, probability) points on real PostgreSQL as the
+    legacy ROW_NUMBER() window query, including >96, <96, 0, and pre-cutoff rows.
+    """
+    from sqlalchemy import func, select
+
+    maker = pg_machinery["maker"]
+    now_dt = pg_machinery["now_dt"]
+    cutoff = now_dt - timedelta(hours=168)
+
+    async with maker() as session:
+        fm = FuturesMarket(
+            id=9913475,
+            source="kalshi",
+            external_id="KXFED-LAT-13475",
+            name="Test Lateral History Parity",
+            category="economics",
+            status="open",
+        )
+        session.add(fm)
+        await session.flush()
+
+        o_over = FuturesOutcome(
+            id=991001,
+            market_id=fm.id,
+            external_id="KXFED-LAT-13475-O0",
+            name="Over 96",
+            current_probability=0.5,
+        )
+        o_under = FuturesOutcome(
+            id=991002,
+            market_id=fm.id,
+            external_id="KXFED-LAT-13475-O1",
+            name="Under 96",
+            current_probability=0.3,
+        )
+        o_empty = FuturesOutcome(
+            id=991003,
+            market_id=fm.id,
+            external_id="KXFED-LAT-13475-O2",
+            name="Zero Points",
+            current_probability=0.1,
+        )
+        o_stale = FuturesOutcome(
+            id=991004,
+            market_id=fm.id,
+            external_id="KXFED-LAT-13475-O3",
+            name="Only PreCutoff",
+            current_probability=0.1,
+        )
+        session.add_all([o_over, o_under, o_empty, o_stale])
+        await session.flush()
+
+        snaps: list[FuturesOddsSnapshot] = []
+        # 140 in-window rows (10-min spacing inside last 1400m) + 10 pre-cutoff rows
+        for idx in range(140):
+            p_val = round(0.20 + idx * 0.002, 6)
+            snaps.append(
+                FuturesOddsSnapshot(
+                    outcome_id=o_over.id,
+                    bookmaker="kalshi",
+                    probability=p_val,
+                    yes_bid=max(0.01, round(p_val - 0.01, 4)),
+                    yes_ask=min(0.99, round(p_val + 0.01, 4)),
+                    captured_at=now_dt - timedelta(minutes=idx * 10),
+                    reading_count=1,
+                )
+            )
+        for idx in range(10):
+            snaps.append(
+                FuturesOddsSnapshot(
+                    outcome_id=o_over.id,
+                    bookmaker="kalshi",
+                    probability=0.05,
+                    yes_bid=0.04,
+                    yes_ask=0.06,
+                    captured_at=cutoff - timedelta(hours=idx + 1),
+                    reading_count=1,
+                )
+            )
+        # 12 in-window rows (< 96)
+        for idx in range(12):
+            p_val = round(0.30 + idx * 0.01, 6)
+            snaps.append(
+                FuturesOddsSnapshot(
+                    outcome_id=o_under.id,
+                    bookmaker="kalshi",
+                    probability=p_val,
+                    yes_bid=max(0.01, round(p_val - 0.01, 4)),
+                    yes_ask=min(0.99, round(p_val + 0.01, 4)),
+                    captured_at=now_dt - timedelta(hours=idx + 1),
+                    reading_count=1,
+                )
+            )
+        # 5 rows strictly before cutoff
+        for idx in range(5):
+            snaps.append(
+                FuturesOddsSnapshot(
+                    outcome_id=o_stale.id,
+                    bookmaker="kalshi",
+                    probability=0.11,
+                    yes_bid=0.10,
+                    yes_ask=0.12,
+                    captured_at=cutoff - timedelta(minutes=idx + 5),
+                    reading_count=1,
+                )
+            )
+        session.add_all(snaps)
+        await session.commit()
+
+    wanted_oids = [o_over.id, o_under.id, o_empty.id, o_stale.id]
+    lateral_stmt = cm._build_machinery_history_lateral_stmt(wanted_oids, cutoff)
+
+    ranked_subq = (
+        select(
+            FuturesOddsSnapshot.outcome_id.label("outcome_id"),
+            FuturesOddsSnapshot.captured_at.label("captured_at"),
+            FuturesOddsSnapshot.probability.label("probability"),
+            func.row_number()
+            .over(
+                partition_by=FuturesOddsSnapshot.outcome_id,
+                order_by=FuturesOddsSnapshot.captured_at.desc(),
+            )
+            .label("rn"),
+        )
+        .where(
+            FuturesOddsSnapshot.outcome_id.in_(wanted_oids),
+            FuturesOddsSnapshot.captured_at >= cutoff,
+        )
+        .subquery()
+    )
+    legacy_stmt = (
+        select(
+            ranked_subq.c.outcome_id,
+            ranked_subq.c.captured_at,
+            ranked_subq.c.probability,
+        )
+        .where(ranked_subq.c.rn <= 96)
+        .order_by(
+            ranked_subq.c.outcome_id.asc(),
+            ranked_subq.c.captured_at.asc(),
+        )
+    )
+
+    async with maker() as session:
+        lateral_rows = [
+            (int(r[0]), r[1], float(r[2]))
+            for r in (await session.execute(lateral_stmt)).all()
+        ]
+        legacy_rows = [
+            (int(r[0]), r[1], float(r[2]))
+            for r in (await session.execute(legacy_stmt)).all()
+        ]
+
+    assert lateral_rows == legacy_rows
+    over_rows = [r for r in lateral_rows if r[0] == o_over.id]
+    under_rows = [r for r in lateral_rows if r[0] == o_under.id]
+    assert len(over_rows) == 96
+    assert len(under_rows) == 12
+    assert [r for r in lateral_rows if r[0] in (o_empty.id, o_stale.id)] == []
+    assert all(r[1] >= cutoff for r in lateral_rows)
+    assert over_rows == sorted(over_rows, key=lambda r: r[1])
+    assert under_rows == sorted(under_rows, key=lambda r: r[1])
