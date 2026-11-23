@@ -296,11 +296,24 @@ async def _compute_biggest_movers(
     return biggest_movers[:10]
 
 
+def _event_scores(event) -> tuple[Optional[int], Optional[int]]:
+    """Read home/away scores from an ORM ``Event`` (``home_score``/``away_score``) or stub."""
+    home = getattr(event, "home_score", None)
+    if home is None:
+        home = getattr(event, "score_home", None)
+    away = getattr(event, "away_score", None)
+    if away is None:
+        away = getattr(event, "score_away", None)
+    return home, away
+
+
 def _build_bracket_game(event, tournament_type: str, unified_read: Any = None) -> dict:
     """Build a single bracket game dict from an Event row."""
     _status = served_event_status(
         event.status, event.commence_time, datetime.now(timezone.utc)
     )
+    score_home, score_away = _event_scores(event)
+    legacy_odds = getattr(event, "current_odds", None)
     game = {
         "event_id": event.id,
         "round": event.tournament_round,
@@ -309,8 +322,8 @@ def _build_bracket_game(event, tournament_type: str, unified_read: Any = None) -
         "away_team": event.away_team_name,
         "seed_home": event.tournament_seed_home,
         "seed_away": event.tournament_seed_away,
-        "score_home": event.score_home,
-        "score_away": event.score_away,
+        "score_home": score_home,
+        "score_away": score_away,
         # Q438: the lifecycle invariant, not the raw column — a bracket slot must
         # not read LIVE before tip-off. See `app/utils/lifecycle`.
         "status": _status,
@@ -334,17 +347,17 @@ def _build_bracket_game(event, tournament_type: str, unified_read: Any = None) -
             game["source_mark"] = _chance.source_mark
             game["away_source_mark"] = _chance.away_source_mark
             game["bookmaker_count"] = _chance.bookmaker_count
-        elif event.current_odds:
-            home_prob = event.current_odds.get("home")
-            away_prob = event.current_odds.get("away")
+        elif isinstance(legacy_odds, dict):
+            home_prob = legacy_odds.get("home")
+            away_prob = legacy_odds.get("away")
             game["prob_home"] = round(home_prob, 3) if home_prob else None
             game["prob_away"] = round(away_prob, 3) if away_prob else None
         else:
             game["prob_home"] = None
             game["prob_away"] = None
-    elif event.current_odds:
-        home_prob = event.current_odds.get("home")
-        away_prob = event.current_odds.get("away")
+    elif isinstance(legacy_odds, dict):
+        home_prob = legacy_odds.get("home")
+        away_prob = legacy_odds.get("away")
         game["prob_home"] = round(home_prob, 3) if home_prob else None
         game["prob_away"] = round(away_prob, 3) if away_prob else None
     else:
@@ -375,14 +388,15 @@ def _detect_upset(event, game: dict, tournament_type: str) -> dict | None:
     """Return an upset dict if this completed event is a seed upset, else None."""
     if event.status not in ("completed", "closed"):
         return None
-    if event.score_home is None or event.score_away is None:
+    score_home, score_away = _event_scores(event)
+    if score_home is None or score_away is None:
         return None
     seed_h = event.tournament_seed_home
     seed_a = event.tournament_seed_away
     if not seed_h or not seed_a or seed_h == seed_a:
         return None
 
-    home_won = event.score_home > event.score_away
+    home_won = score_home > score_away
     if not ((home_won and seed_h > seed_a) or (not home_won and seed_a > seed_h)):
         return None
 
@@ -399,8 +413,8 @@ def _detect_upset(event, game: dict, tournament_type: str) -> dict | None:
         "seed_winner": seed_winner,
         "seed_loser": seed_loser,
         "score": (
-            f"{event.score_home}-{event.score_away}" if home_won
-            else f"{event.score_away}-{event.score_home}"
+            f"{score_home}-{score_away}" if home_won
+            else f"{score_away}-{score_home}"
         ),
         "winner_pre_game_prob": game.get("prob_home") if home_won else game.get("prob_away"),
         "historical_upset_rate": hist["upset_pct"] if hist else None,
@@ -427,9 +441,10 @@ def _find_cinderellas(
             tk_away = _team_match_key(event.away_team_name) if event.away_team_name else ""
             if team_key in (tk_home, tk_away) and event.status in ("completed", "closed"):
                 games_played += 1
-                if event.score_home is not None and event.score_away is not None:
-                    if (team_key == tk_home and event.score_home > event.score_away) or \
-                       (team_key == tk_away and event.score_away > event.score_home):
+                score_home, score_away = _event_scores(event)
+                if score_home is not None and score_away is not None:
+                    if (team_key == tk_home and score_home > score_away) or \
+                       (team_key == tk_away and score_away > score_home):
                         games_won += 1
 
         cinderellas.append({
@@ -513,8 +528,9 @@ async def _process_bracket(
     # Mark eliminated teams
     eliminated_teams: set[str] = set()
     for event in tournament_events:
-        if event.status in ("completed", "closed") and event.score_home is not None and event.score_away is not None:
-            if event.score_home > event.score_away:
+        score_home, score_away = _event_scores(event)
+        if event.status in ("completed", "closed") and score_home is not None and score_away is not None:
+            if score_home > score_away:
                 eliminated_teams.add(_team_match_key(event.away_team_name))
             else:
                 eliminated_teams.add(_team_match_key(event.home_team_name))

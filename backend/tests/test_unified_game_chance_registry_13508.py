@@ -448,3 +448,49 @@ async def test_unified_read_syncs_twin_betting_book_count_and_excludes_flipped_s
     assert nba_read.folded_sources["polymarket"]["value"] == pytest.approx(0.65)
     assert nba_read.bookmaker_count == 0
     assert 88002 not in nba_read.absorbed_ids
+
+
+def test_march_madness_bracket_reads_real_orm_event_scores():
+    """Real ORM Event rows expose home_score/away_score, not score_home/current_odds."""
+    from app.models.models import Event
+    from app.routes.march_madness import (
+        _build_bracket_game,
+        _detect_upset,
+        _find_cinderellas,
+    )
+
+    now = datetime.now(timezone.utc)
+    ev = Event(
+        id=9135081,
+        sport_id=1,
+        home_team_name="Duke",
+        away_team_name="Siena",
+        commence_time=now - timedelta(hours=4),
+        status="completed",
+        home_score=64,
+        away_score=72,
+        external_id="mm-orm-test",
+        is_tournament_game=True,
+        tournament_type="mens",
+        tournament_region="East",
+        tournament_round="Round of 64",
+        tournament_seed_home=1,
+        tournament_seed_away=16,
+    )
+    game = _build_bracket_game(ev, "mens", unified_read=None)
+    assert game["score_home"] == 64
+    assert game["score_away"] == 72
+    assert game["prob_home"] is None
+
+    upset = _detect_upset(ev, game, "mens")
+    assert upset is not None
+    assert upset["winner"] == "Siena"
+    assert upset["score"] == "72-64"
+
+    cinderellas = _find_cinderellas(
+        [{"team_name": "Siena", "seed": 16, "region": "East", "probability": 0.04, "is_eliminated": False}],
+        [ev],
+    )
+    assert len(cinderellas) == 1
+    assert cinderellas[0]["games_won"] == 1
+    assert cinderellas[0]["games_played"] == 1
