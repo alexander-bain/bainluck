@@ -646,6 +646,98 @@ class TestGameAlertsDispatch:
         assert summary2.skipped_dedup == 5
 
     @pytest.mark.asyncio
+    async def test_start_loop_skips_appclip_even_when_present_in_start_candidates(
+        self, monkeypatch
+    ):
+        import app.services.game_alerts_dispatch as mod
+
+        dev_plain = uuid4()
+        dev_clip = uuid4()
+        target_plain = AlertTarget(
+            device_id=dev_plain,
+            platform="ios",
+            apns_env="production",
+            topic=alert_topic("ios"),
+            token=HEX_TOKEN_A,
+        )
+        target_clip = AlertTarget(
+            device_id=dev_clip,
+            platform="appclip",
+            apns_env="production",
+            topic=alert_topic("appclip"),
+            token=HEX_TOKEN_CLIP,
+        )
+
+        async def _fake_kickoff_plan(db, event_id, *, now, min_app_version, after):
+            return KickoffPlan(
+                start=[],
+                alert=[target_plain, target_clip],
+                next_after=None,
+            )
+
+        async def _fake_alert_targets(db, kind, target_id, *, now, after):
+            return [target_plain, target_clip]
+
+        monkeypatch.setattr(mod, "kickoff_plan", _fake_kickoff_plan)
+        monkeypatch.setattr(mod, "alert_targets", _fake_alert_targets)
+        monkeypatch.setattr(
+            mod, "_active_la_device_ids", lambda db, event_id, ids, *, now: _const(set())
+        )
+
+        start_detail = _event_detail(
+            event_id=510,
+            sport="basketball_nba",
+            status="live",
+            period="1st Quarter",
+            home_prob=0.55,
+            away_prob=0.45,
+            home_score=4,
+            away_score=2,
+            commence_time=NOW - timedelta(minutes=5),
+        )
+        final_detail = _event_detail(
+            event_id=511,
+            sport="americanfootball_nfl",
+            status="completed",
+            away_team="Bills",
+            home_team="Chiefs",
+            home_score=27,
+            away_score=24,
+            period="Final",
+            home_prob=None,
+            away_prob=None,
+            result="home",
+        )
+        details = {510: start_detail, 511: final_detail}
+
+        pool = _RecordingPool()
+        dedup = _MemoryDedup()
+        summary = await dispatch_game_alerts(
+            _dummy_sessions(),
+            pool,
+            lambda: _const(VALID_JWT),
+            dedup,
+            now=NOW,
+            detail_reader=lambda db, eid: _const(details[eid]),
+            live_finder=lambda db, ts: _const([510]),
+            final_finder=lambda db, ts: _const([511]),
+        )
+
+        # Start skips appclip cleanly (ios only); Final still delivers to both (#13079).
+        assert summary.start_accepted == 1
+        assert summary.final_accepted == 2
+        prod_pairs = [
+            (tok, p.trigger_kind, p.event_id, topic)
+            for tok, p, topic, _ in pool.by_env["production"].sent
+        ]
+        assert (HEX_TOKEN_A, "start", 510, alert_topic("ios")) in prod_pairs
+        assert all(
+            not (tok == HEX_TOKEN_CLIP and kind == "start")
+            for tok, kind, _, _ in prod_pairs
+        )
+        assert (HEX_TOKEN_CLIP, "final", 511, alert_topic("appclip")) in prod_pairs
+
+    @pytest.mark.asyncio
     async def test_410_forgets_token_and_retry_releases_dedup(self, monkeypatch):
         import app.services.game_alerts_dispatch as mod
 

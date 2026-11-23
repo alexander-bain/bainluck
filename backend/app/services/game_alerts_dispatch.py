@@ -925,9 +925,11 @@ async def dispatch_game_alerts(
             )
 
         # Starts (258: A): only phones that cannot start a Live Activity and
-        # are not already showing one.
+        # are not already showing one; skip ephemeral App Clip (#13088: final-only).
         eligible_starts: list[AlertTarget] = []
         for target in start_candidates:
+            if target.platform == "appclip":
+                continue
             if target.device_id in active_la_ids:
                 counters["skipped_active_la"] += 1
                 continue
