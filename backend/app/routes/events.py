@@ -35250,17 +35250,21 @@ async def get_event_odds_history(
         # `implied_spreads`/`implied_totals` are deliberately left alone — they are
         # the chart's own rungs, and this is the narrow claim: no PROJECTION of a
         # game that has already been played.
-        # Ruling 265: A, for now (#13007): during a live game with the blend
-        # switch enabled, replace the history[-1] sportsbook entry with raw
-        # per-bookmaker snapshots filtered by Ruling 233: A (so a stale
-        # pre-cutoff snapshot extended synthetically to `now` never counts as
-        # current).
+        # Ruling 233: A (#12938) + Ruling 265: A (#13007): during a live game
+        # with the stored 233: A clock (or when the blend switch is enabled),
+        # replace the history[-1] sportsbook entry with raw per-bookmaker
+        # snapshots filtered by Ruling 233: A (so a stale pre-cutoff snapshot
+        # extended synthetically to `now` never counts as current in either
+        # `select_projected_final` or `blend_projected_final`).
         _blend_now = datetime.now(timezone.utc)
         _live_clock = _pm_event_state_clock(event)
         _is_live_event = event.status == "live"
-        if _is_live_event and projected_final_blend_enabled():
+        if _is_live_event and (_live_clock is not None or projected_final_blend_enabled()):
             from app.utils.live_line_clock import current_lines as _pm_current_lines
 
+            if _live_clock is not None:
+                implied_spreads.pop("sportsbook", None)
+                implied_totals.pop("sportsbook", None)
             blend_spread_inputs.pop("sportsbook", None)
             blend_total_inputs.pop("sportsbook", None)
             latest_by_bk: dict[str, Any] = {}
@@ -35298,18 +35302,28 @@ async def get_event_odds_history(
                 )
                 if _live_sb_home is not None and _live_sb_away is not None:
                     _live_spread = round(float(_live_sb_away) - float(_live_sb_home), 1)
-                    blend_spread_inputs["sportsbook"] = {
+                    _sb_sp_entry = {
                         "spread": _live_spread,
                         "home_margin": home_margin_from_spread(_live_spread),
                         "confidence": 1.0,
                         "contracts": [],
+                    }
+                    if _live_clock is not None:
+                        implied_spreads["sportsbook"] = _sb_sp_entry
+                    blend_spread_inputs["sportsbook"] = {
+                        **_sb_sp_entry,
                         "updated_at": _live_oldest_cap.isoformat(),
                     }
                 if _live_sb_ou is not None:
-                    blend_total_inputs["sportsbook"] = {
+                    _sb_to_entry = {
                         "total": float(_live_sb_ou),
                         "confidence": 1.0,
                         "contracts": [],
+                    }
+                    if _live_clock is not None:
+                        implied_totals["sportsbook"] = _sb_to_entry
+                    blend_total_inputs["sportsbook"] = {
+                        **_sb_to_entry,
                         "updated_at": _live_oldest_cap.isoformat(),
                     }
 
