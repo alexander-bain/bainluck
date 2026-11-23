@@ -6,6 +6,7 @@ Groups by tournament, merges cross-source golfer odds, and computes biggest move
 Enriches with PGA tour schedule from DataGolf for accurate current-event detection.
 """
 
+import asyncio
 import logging
 import re
 import sys
@@ -25,6 +26,13 @@ from sqlalchemy.orm import selectinload
 from app.models import FuturesMarket, FuturesOutcome, FuturesOddsSnapshot
 from app.services import get_db
 from app.utils import golf_tournament_cache
+from app.utils.golf_blended_timeline import (
+    SnapshotReading,
+    build_golf_blended_timeline,
+    detach_winner_market,
+    get_or_build_cached_timeline,
+    history_fetch_floor,
+)
 from app.utils.golf_evolution_market import (
     NON_CONTENDER_WINNER_RE,
     SETTLED_RESOLVE_MIN,
@@ -5491,6 +5499,178 @@ async def get_golf_tournament(
         "h2h_matchups": tournament.get("h2h_matchups", []),
         "round_top_groups": round_top_groups,
     }
+
+
+def _parse_golf_dt(raw) -> datetime | None:
+    if isinstance(raw, datetime):
+        return raw if raw.tzinfo else raw.replace(tzinfo=timezone.utc)
+    if isinstance(raw, str) and raw.strip():
+        try:
+            parsed = datetime.fromisoformat(raw.strip())
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+        except ValueError:
+            return None
+    return None
+
+
+@router.get("/tournaments/{slug}/probability-timeline")
+async def get_golf_tournament_probability_timeline(
+    slug: str,
+    response: Response,
+    top: int = Query(10, ge=1, le=50),
+    hours: int = Query(168, ge=1, le=8760),
+    history_range: str | None = Query(None, alias="range"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Blended, field-normalized probability timeline for a golf tournament (#13426).
+
+    Cached per ``(slug, top, hours, range)`` across L0 LRU and Redis, bounded on
+    ``range=full`` to a 90-day SQL floor and ``<= 240`` buckets, with pure-Python
+    historical bucket evaluation offloaded onto ``asyncio.to_thread``.
+    """
+
+    async def _build_uncached() -> tuple[dict, bool]:
+        golf_data = await get_golf(db=db)
+        tournaments = golf_data.get("tournaments", [])
+
+        tournament = None
+        for t in tournaments:
+            t_slug = t.get("slug") or _clean_slug(t["name"])
+            if t_slug == slug:
+                tournament = t
+                break
+
+        if not tournament:
+            tournament = await _build_completed_tournament(slug, db, golf_data=golf_data)
+            if not tournament:
+                raise HTTPException(status_code=404, detail=f"Tournament '{slug}' not found")
+
+        market_ids = list(tournament.get("market_ids") or [])
+        market_names = list(tournament.get("market_names") or [])
+        id_to_name = (
+            dict(zip(market_ids, market_names))
+            if len(market_ids) == len(market_names)
+            else {}
+        )
+
+        raw_winner_ids = [
+            mid
+            for mid in market_ids
+            if not _NON_WINNER_MARKET_RE.search(id_to_name.get(mid, ""))
+        ]
+        winner_candidate_ids = contender_candidates(raw_winner_ids, id_to_name)
+
+        winner_markets = []
+        outcome_ids: list[int] = []
+        if winner_candidate_ids:
+            loaded_rows = (
+                await db.execute(
+                    select(FuturesMarket)
+                    .options(selectinload(FuturesMarket.outcomes))
+                    .where(FuturesMarket.id.in_(winner_candidate_ids))
+                )
+            ).scalars().unique().all()
+            loaded_by_id = {m.id: m for m in loaded_rows}
+            for mid in winner_candidate_ids:
+                market = loaded_by_id.get(mid)
+                if market is None:
+                    continue
+                if len(market.outcomes) <= 2:
+                    names = {(o.name or "").strip().lower() for o in market.outcomes if o.name}
+                    if names & {"yes", "no"}:
+                        continue
+                detached = detach_winner_market(market)
+                winner_markets.append(detached)
+                outcome_ids.extend(o.id for o in detached.outcomes)
+
+        full_range = (history_range or "").strip().lower() in ("full", "all")
+        now = datetime.now(timezone.utc)
+        fetch_floor = history_fetch_floor(
+            now,
+            hours=hours,
+            full_range=full_range,
+            max_reading_age=PREGAME_READING_MAX_AGE,
+        )
+        readings: list[SnapshotReading] = []
+        if outcome_ids:
+            snap_stmt = (
+                select(
+                    FuturesOddsSnapshot.outcome_id,
+                    FuturesOddsSnapshot.captured_at,
+                    FuturesOddsSnapshot.valid_until,
+                    FuturesOddsSnapshot.probability,
+                    FuturesOddsSnapshot.yes_bid,
+                    FuturesOddsSnapshot.yes_ask,
+                )
+                .where(
+                    FuturesOddsSnapshot.outcome_id.in_(outcome_ids),
+                    FuturesOddsSnapshot.probability.isnot(None),
+                    sqlfunc.coalesce(
+                        FuturesOddsSnapshot.valid_until,
+                        FuturesOddsSnapshot.captured_at,
+                    ) >= fetch_floor,
+                )
+                .order_by(FuturesOddsSnapshot.captured_at)
+            )
+            for row in (await db.execute(snap_stmt)).all():
+                readings.append(
+                    SnapshotReading(
+                        outcome_id=row.outcome_id,
+                        captured_at=row.captured_at,
+                        valid_until=row.valid_until,
+                        probability=row.probability,
+                        yes_bid=row.yes_bid,
+                        yes_ask=row.yes_ask,
+                    )
+                )
+
+        commence_dt = _parse_golf_dt(
+            tournament.get("commence_time") or tournament.get("start_date")
+        )
+        is_live = (tournament.get("schedule_status") or "").lower() in (
+            "in_progress",
+            "in-progress",
+            "live",
+        )
+        plain_entry = {
+            "key": tournament.get("key") or slug,
+            "name": tournament.get("name") or slug,
+            "market_ids": list(tournament.get("market_ids") or []),
+            "market_sources": list(tournament.get("market_sources") or []),
+            "golfers": [dict(g) for g in (tournament.get("golfers") or [])],
+            "_all_golfers": [dict(g) for g in (tournament.get("_all_golfers") or [])],
+        }
+        tourn_key = plain_entry["key"]
+
+        payload = await asyncio.to_thread(
+            build_golf_blended_timeline,
+            tourn_key,
+            winner_markets,
+            plain_entry,
+            readings,
+            build_entry=lambda k, mkts, snaps: _build_one_tournament(
+                k, [_AsOfMarket(m, snaps) for m in mkts], {}
+            ),
+            match_key_fn=_match_key,
+            top=top,
+            hours=hours,
+            full_range=full_range,
+            commence_time=commence_dt,
+            is_live=is_live,
+            max_reading_age=PREGAME_READING_MAX_AGE,
+            now=now,
+        )
+        return payload, is_live
+
+    payload, cache_state = await get_or_build_cached_timeline(
+        slug,
+        top=top,
+        hours=hours,
+        history_range=history_range,
+        builder=_build_uncached,
+    )
+    response.headers["X-Timeline-Cache"] = cache_state
+    return payload
 
 
 # ============================================================================
