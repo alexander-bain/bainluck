@@ -2093,7 +2093,9 @@ def _hydrate_market_visual_item(
             for cand_raw in (
                 display_title,
                 display_title.split(" & ", 1)[0] if " & " in display_title else None,
+                display_title.split(" & ", 1)[1] if " & " in display_title else None,
                 display_title.split(" and ", 1)[0] if " and " in display_title else None,
+                display_title.split(" and ", 1)[1] if " and " in display_title else None,
             ):
                 cand = str(cand_raw or "").strip()
                 if cand and cand not in probe_candidates:
