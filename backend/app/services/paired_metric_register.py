@@ -335,7 +335,7 @@ def _compose_live_paired_title(
         and float(e["stage_1_probability"]) >= 0.75
     )
     if high_s1 >= 2:
-        return f"{leader} leads {cat_label}, with {high_s1} {unit} at 75%+ {s1_verb}"
+        return f"{leader} leads {cat_label}, with {high_s1} {unit} at 75% or better {s1_verb}"
     if len(ranked) >= 2:
         runner_up = str(ranked[1].get("subject") or "").strip()
         if runner_up:

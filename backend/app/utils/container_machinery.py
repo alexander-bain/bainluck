@@ -3975,7 +3975,7 @@ def _build_dynamic_title_from_set(
     """Build a reader-facing title dynamically from the live set (Slice 3 Item 4).
 
     Every number and name comes directly from ``built_sections``:
-    - Paired-stage ceremony: ``"<Leader> leads <Category> at <W>%, with <N> contenders at 75%+ to be nominated"``
+    - Paired-stage ceremony: ``"<Leader> leads <Category> at <W>%, with <N> contenders at 75% or better to be nominated"``
     - Event-led slate: ``"<Away> at <Home> headlines <Dates>, with <N> toss-up games"`` (never a week number)
     - Duel + contender field: ``"<Leader> leads at <P>%, with <DuelLeader> at <D>%"``
     - Scale / market set: ``"<LeadOutcome> leads <LeadTitle> at <P>%, with <SecondTitle> at <Lead2> (<P2>%)"``
@@ -4011,7 +4011,7 @@ def _build_dynamic_title_from_set(
                 else:
                     cat_label = re.sub(r":.*$", "", raw_sec_title).strip()
                 if strong_nom >= 2:
-                    return f"{leader_name} leads {cat_label} at {win_pct}%, with {strong_nom} contenders at 75%+ to be nominated"
+                    return f"{leader_name} leads {cat_label} at {win_pct}%, with {strong_nom} contenders at 75% or better to be nominated"
                 return f"{leader_name} leads {cat_label} at {win_pct}%"
 
     # 2. Event-led slate (e.g. NFL/NBA slate — named by biggest/closest game & dates, never week number)
