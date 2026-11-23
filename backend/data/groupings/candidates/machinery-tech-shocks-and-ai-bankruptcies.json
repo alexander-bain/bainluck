@@ -13,7 +13,7 @@
   "name": "Tech Shocks & AI Bankruptcies",
   "category": "tech",
   "tag": "ODD",
-  "section_title": "Mergers, Solvency & Hardware Lists",
+  "section_title": "Mergers, Bankruptcies & Defense Lists",
   "footer": "",
   "rule": {
     "producer": "container_machinery",
@@ -35,9 +35,9 @@
     "sections": [
       {
         "key": "tech_shocks",
-        "title": "Mergers, Solvency & Hardware Lists",
+        "title": "Mergers, Bankruptcies & Defense Lists",
         "item_noun": "markets",
-        "note": "High-stakes corporate tail risks from a Tesla-SpaceX merger to AI lab solvency timelines.",
+        "note": "From a Tesla-SpaceX merger to AI lab bankruptcies and U.S. defense-list removals.",
         "atom_query": {
           "kind": "markets",
           "fun_sub_tag": "batch9-tech-shocks-ai-bankruptcies",

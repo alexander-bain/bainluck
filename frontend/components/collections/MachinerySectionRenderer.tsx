@@ -335,9 +335,20 @@ function DuelBarBlock({ items }: { items: Record<string, unknown>[] }) {
   if (!lead) return null;
   const outcomes = (lead.outcomes as MachineryOutcomeVisual[] | undefined) ?? [];
   if (outcomes.length < 2) return null;
-  const left = outcomes[0];
-  const right = outcomes[1];
+  const drawIdx =
+    outcomes.length >= 3
+      ? outcomes.findIndex((o) => /^(?:tie|draw)$/i.test(String(o.name ?? "").trim()))
+      : -1;
+  const nonDraw = drawIdx >= 0 ? outcomes.filter((_, i) => i !== drawIdx) : outcomes;
+  if (nonDraw.length < 2) return null;
+  const left = nonDraw[0];
+  const right = nonDraw[1];
+  const draw = drawIdx >= 0 ? outcomes[drawIdx] : undefined;
   const href = String(lead.href ?? "/discover");
+  const drawPct = draw ? Math.max(2, Math.min(40, draw.rendered_percent)) : 0;
+  const leftPct = draw
+    ? Math.max(6, Math.min(92 - drawPct, left.rendered_percent))
+    : Math.max(6, Math.min(94, left.rendered_percent));
   return (
     <Link
       href={href}
@@ -384,14 +395,29 @@ function DuelBarBlock({ items }: { items: Record<string, unknown>[] }) {
           ) : null}
         </div>
       </div>
+      {draw ? (
+        <div className="mt-2 flex items-center justify-center gap-1.5 text-xs font-medium text-text-secondary">
+          <span className="inline-block h-2 w-2 shrink-0 rounded-full bg-slate-300" />
+          <span>{draw.name}</span>
+          <span className="font-bold tabular-nums text-text-primary">
+            {draw.rendered_percent}%
+          </span>
+        </div>
+      ) : null}
       <div className="mt-3 flex h-3 w-full overflow-hidden rounded-full bg-surface-elevated">
         <div
           className="h-full bg-accent-brand"
           style={{
-            width: `${Math.max(6, Math.min(94, left.rendered_percent))}%`,
+            width: `${leftPct}%`,
             backgroundColor: left.art?.accent_color || undefined,
           }}
         />
+        {draw ? (
+          <div
+            className="h-full bg-slate-300"
+            style={{ width: `${drawPct}%` }}
+          />
+        ) : null}
         <div
           className="h-full flex-1 bg-slate-400"
           style={{ backgroundColor: right.art?.accent_color || undefined }}

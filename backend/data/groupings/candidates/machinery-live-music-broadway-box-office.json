@@ -39,7 +39,7 @@
           "kind": "markets",
           "fun_sub_tag": "batch9-live-music-slate",
           "shape": "any",
-          "order_by": "lead_prob_desc",
+          "order_by": "closeness_to_50",
           "min_items": 3,
           "max_items": 6,
           "max_outcomes": 1,

@@ -23,9 +23,9 @@ from app.utils.discover_opening_mix import (
     TOPIC_ENTERTAINMENT,
     TOPIC_ODD,
     TOPIC_SPORTS,
-    TOPIC_TECH_BUSINESS,
     classify_discover_opening_topic,
 )
+from app.utils.machinery_batch_gate import estimate_headline_lines_390px
 from app.utils.roundup_containers import (
     compose_roundup_container,
     compose_roundup_feed_item,
@@ -45,9 +45,8 @@ NOW = datetime(2026, 11, 23, 18, 0, tzinfo=timezone.utc)
 def _sample_batch9_markets() -> list[dict]:
     specs = [
         # 1. Golf Majors & The Ryder Cup
-        (3970169, "2027 Ryder Cup Winner", "golf", [("Team Europe", 0.53), ("Team USA", 0.40)]),
+        (3970169, "2027 Ryder Cup Winner", "golf", [("Team Europe", 0.53), ("Team USA", 0.40), ("Tie", 0.07)]),
         (61056094, "2027 The Masters Champion", "golf", [("Scottie Scheffler", 0.21), ("Rory McIlroy", 0.12)]),
-        (70709343, "The RSM Classic Winner", "golf", [("Michael Thorbjornsen", 0.37), ("Max Greyserman", 0.32)]),
         (11224673, "Will LIV Golf announce shutdown in 2026?", "golf", [("Yes", 0.03)]),
         (176, "Will Scottie Scheffler win the grand slam before 2028?", "golf", [("Yes", 0.02)]),
         # 2. UFC Next Fights & Heavyweight Boxing
@@ -182,12 +181,16 @@ async def test_batch9_six_preview_groupings_build_with_form_diversity(caplog: py
     assert len(set(forms_seen.values())) >= 5
     assert not any("dropped row pictures" in rec.message for rec in caplog.records)
 
-    # Check capitalization and headline polish across the four non-bar and two bar sets.
+    # Check capitalization, 3-row Ryder Cup with Tie, settled exclusion, timeless copy, and <=3L headlines.
     ryder_cp, ryder_card = by_slug["machinery-golf-majors-and-ryder-cup"][1], by_slug["machinery-golf-majors-and-ryder-cup"][2]
     assert "2027 Ryder Cup" in ryder_card["title"]
     assert "Team Europe" in ryder_card["title"] and "Team USA" in ryder_card["title"]
+    assert [r["name"] for r in ryder_card["rows"]] == ["Team Europe", "Team USA", "Tie"]
     for row in ryder_cp["sections"][0]["visual_block"]["items"][0]["outcomes"]:
-        assert row["art"]["url"], row
+        if row["name"] == "Tie":
+            assert not row["art"]["url"], row
+        else:
+            assert row["art"]["url"], row
 
     ufc_card = by_slug["machinery-ufc-next-fights-and-boxing"][2]
     assert "Conor McGregor's" in ufc_card["title"]
@@ -202,11 +205,18 @@ async def test_batch9_six_preview_groupings_build_with_form_diversity(caplog: py
     for row in critics_card["rows"]:
         assert row["art"]["url"], row
 
-    cosmic_card = by_slug["machinery-the-big-one-and-cosmic-risks"][2]
+    cosmic_cp, cosmic_card = by_slug["machinery-the-big-one-and-cosmic-risks"][1], by_slug["machinery-the-big-one-and-cosmic-risks"][2]
     assert cosmic_card["title"].startswith("The chance of a 5-kiloton meteor strike in 2026 ")
+    assert "shifted over the past week" not in str(cosmic_card.get("subtitle") or "")
+    for sec in cosmic_cp["sections"]:
+        assert "shifted over the past week" not in str(sec.get("note") or "")
 
     tech_card = by_slug["machinery-tech-shocks-and-ai-bankruptcies"][2]
     assert "by by" not in tech_card["title"]
+
+    for slug in BATCH9_SLUGS:
+        hl = str(by_slug[slug][2]["title"])
+        assert estimate_headline_lines_390px(hl) <= 3, (slug, estimate_headline_lines_390px(hl), hl)
 
     # Approved licenses on all configured card hero images.
     for slug in BATCH9_SLUGS:
@@ -244,6 +254,7 @@ def test_batch9_market_ids_disjoint_from_earlier_batches() -> None:
         for s in (b9.get("sets") or {}).values()
         for e in s.get("entries") or ()
     ]
+    assert 70709343 not in b9_ids
     assert len(b9_ids) == len(set(b9_ids)), "Duplicate market id inside batch9_curated_sets.json"
     overlap = set(b9_ids) & earlier_ids
     assert not overlap, f"Batch 9 overlaps earlier curated sets: {sorted(overlap)}"

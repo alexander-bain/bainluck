@@ -530,4 +530,51 @@ describe("#12288 Slice 1 — topic-free container machinery renderer", () => {
     expect(emptyPairedHtml).toBe("");
     delete process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1;
   });
+
+  it("renders three-outcome duel_bar cleanly when Tie is the third outcome (#13530)", () => {
+    const html = renderToStaticMarkup(
+      <MachinerySectionRenderer
+        members={[]}
+        visualBlock={{
+          form_id: "duel_bar",
+          items: [
+            {
+              market_id: 3970169,
+              href: "/futures/3970169",
+              outcomes: [
+                {
+                  outcome_id: 1,
+                  name: "Team Europe",
+                  probability: 0.527,
+                  rendered_percent: 53,
+                  art: { url: null, kind: "flag", detail: "", accent_color: "#2563EB", initials: "EU" },
+                },
+                {
+                  outcome_id: 2,
+                  name: "Team USA",
+                  probability: 0.405,
+                  rendered_percent: 41,
+                  art: { url: null, kind: "flag", detail: "", accent_color: "#DC2626", initials: "US" },
+                },
+                {
+                  outcome_id: 3,
+                  name: "Tie",
+                  probability: 0.068,
+                  rendered_percent: 7,
+                  art: { url: null, kind: "monogram", detail: "", accent_color: "", initials: "TI" },
+                },
+              ],
+            },
+          ],
+        }}
+      />,
+    );
+    expect(html).toContain('data-machinery-form="duel_bar"');
+    expect(html).toContain("Team Europe");
+    expect(html).toContain("53%");
+    expect(html).toContain("Team USA");
+    expect(html).toContain("41%");
+    expect(html).toContain("Tie");
+    expect(html).toContain("7%");
+  });
 });

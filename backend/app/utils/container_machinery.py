@@ -1256,6 +1256,9 @@ def _is_event_toss_up(item: Mapping[str, Any]) -> bool:
     return max(ap, hp) <= (TOSS_UP_MAX_SIDE_PROB + 1e-9)
 
 
+_DUEL_DRAW_OUTCOME_NAMES: frozenset[str] = frozenset({"tie", "draw"})
+
+
 def choose_section_form(
     atoms_kind: str,
     selected_items: Sequence[Mapping[str, Any]],
@@ -1284,6 +1287,13 @@ def choose_section_form(
         if len(selected_items) == 1:
             outcomes = selected_items[0].get("outcomes") or ()
             if len(outcomes) == 2:
+                return "duel_bar"
+            if len(outcomes) == 3 and sum(
+                1
+                for o in outcomes
+                if isinstance(o, Mapping)
+                and str(o.get("name") or "").strip().lower() in _DUEL_DRAW_OUTCOME_NAMES
+            ) == 1:
                 return "duel_bar"
             if len(outcomes) >= 3:
                 return "contender_spotlight"
@@ -4235,10 +4245,16 @@ def _build_dynamic_title_from_set(
         return max(outs, key=lambda o: float(o.get("probability") or 0.0))
 
     if spotlight_item is None and duel_item is not None and lead_sec_form == "duel_bar":
-        d_outs = sorted(
+        d_outs_all = sorted(
             [o for o in (duel_item.get("outcomes") or ()) if isinstance(o, Mapping)],
             key=lambda o: -float(o.get("probability") or 0.0),
         )
+        d_non_draw = [
+            o
+            for o in d_outs_all
+            if str(o.get("name") or "").strip().lower() not in _DUEL_DRAW_OUTCOME_NAMES
+        ]
+        d_outs = d_non_draw if len(d_non_draw) >= 2 else d_outs_all
         if len(d_outs) >= 2:
             lead_name = _prose_outcome_name(str(d_outs[0]["name"]))
             trail_name = _prose_outcome_name(str(d_outs[1]["name"]))
@@ -5299,6 +5315,19 @@ async def produce_container_machinery(
             s_idx = numerical_scale_order_indices(sliced)
             chosen_outs = [sliced[i] for i in s_idx] if s_idx is not None else sliced
             card_scale_ordered = s_idx is not None
+        elif vb_form == "duel_bar":
+            non_draw_outs = [
+                o
+                for o in all_lead_outs
+                if str(o.get("name") or "").strip().lower() not in _DUEL_DRAW_OUTCOME_NAMES
+            ]
+            draw_outs = [
+                o
+                for o in all_lead_outs
+                if str(o.get("name") or "").strip().lower() in _DUEL_DRAW_OUTCOME_NAMES
+            ]
+            chosen_outs = (non_draw_outs + draw_outs)[:card_rows_limit]
+            card_scale_ordered = False
         else:
             chosen_outs = all_lead_outs[:card_rows_limit]
             card_scale_ordered = bool(lead_market.get("scale_ordered"))
@@ -5718,6 +5747,10 @@ def _enforce_section_all_or_nothing_art(
                 if isinstance(it, Mapping) and not it.get("scale_ordered")
                 for o in (it.get("outcomes") or ())
                 if isinstance(o, Mapping)
+                and not (
+                    s_form == "duel_bar"
+                    and str(o.get("name") or "").strip().lower() in _DUEL_DRAW_OUTCOME_NAMES
+                )
             ]
             should_strip = any(has_urls) and not all(has_urls)
 

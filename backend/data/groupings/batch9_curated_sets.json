@@ -68,7 +68,7 @@
         },
         {
           "id": 70733127,
-          "short_label": "Removed from U.S. defense list by mid-2027",
+          "short_label": "Removed from U.S. defense list by June 2027",
           "headline_phrase": "{answer} leaving the U.S. defense list by June 2027",
           "headline_with_phrase": "{answer} coming off the defense list"
         }
@@ -84,7 +84,7 @@
         },
         {
           "id": 58495125,
-          "short_label": "Oscars Supporting Actor",
+          "short_label": "Supporting Actor",
           "headline_phrase": "{answer} winning Best Supporting Actor at the Oscars",
           "headline_with_phrase": "{answer} taking Oscars Supporting Actor"
         }
@@ -123,7 +123,7 @@
         {
           "id": 59693546,
           "short_label": "Broadway 2026–27 season attendance",
-          "headline_phrase": "2026–27 Broadway attendance finishing {lower_answer}",
+          "headline_phrase": "Broadway attendance topping 13.5M",
           "headline_with_phrase": "Broadway attendance topping 13.5 million"
         },
         {
@@ -136,12 +136,12 @@
           "id": 11415154,
           "short_label": "Biggest opening week movie in 2026",
           "headline_phrase": "{answer} claiming 2026's biggest opening week",
-          "headline_with_phrase": "{answer} leading 2026 box office"
+          "headline_with_phrase": "{answer} leading box office"
         },
         {
           "id": 52755614,
           "short_label": "Top-selling U.S. album of 2026",
-          "headline_phrase": "{answer} finishing as 2026's top-selling U.S. album",
+          "headline_phrase": "{answer} topping 2026 album sales",
           "headline_with_phrase": "{answer} leading 2026 album sales"
         },
         {
@@ -169,12 +169,6 @@
           "short_label": "2027 Masters champion",
           "headline_phrase": "{answer} winning the 2027 Masters",
           "headline_with_phrase": "{answer} claiming a green jacket"
-        },
-        {
-          "id": 70709343,
-          "short_label": "The RSM Classic winner",
-          "headline_phrase": "{answer} winning The RSM Classic",
-          "headline_with_phrase": "{answer} taking The RSM Classic"
         },
         {
           "id": 11224673,

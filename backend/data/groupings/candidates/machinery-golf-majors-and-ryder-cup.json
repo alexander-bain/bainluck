@@ -19,7 +19,7 @@
     "producer": "container_machinery",
     "refusal": "all-or-nothing",
     "materialize": "read-time",
-    "card_rows": 2,
+    "card_rows": 3,
     "card_section_key": "ryder_cup_duel",
     "suppress_card_photo": true,
     "sections": [
@@ -27,7 +27,7 @@
         "key": "ryder_cup_duel",
         "title": "2027 Ryder Cup Showdown",
         "item_noun": "sides",
-        "note": "Team Europe and Team USA go head-to-head for the 2027 Ryder Cup.",
+        "note": "Team Europe, Team USA, and a tie in the 2027 Ryder Cup.",
         "atom_query": {
           "kind": "markets",
           "fun_sub_tag": "batch9-ryder-cup-duel",
@@ -35,8 +35,8 @@
           "order_by": "lead_prob_desc",
           "min_items": 1,
           "max_items": 1,
-          "max_outcomes": 2,
-          "initial_visible_limit": 2,
+          "max_outcomes": 3,
+          "initial_visible_limit": 3,
           "min_lifetime_volume": 1
         }
       },
@@ -44,7 +44,7 @@
         "key": "golf_majors",
         "title": "Majors, Tour & Career Milestones",
         "item_noun": "markets",
-        "note": "2027 Masters favorites, Fall Series results, Scottie Scheffler's Grand Slam quest, and the future of LIV Golf.",
+        "note": "2027 Masters favorites, Scottie Scheffler's Grand Slam quest, and the future of LIV Golf.",
         "atom_query": {
           "kind": "markets",
           "fun_sub_tag": "batch9-golf-majors",
