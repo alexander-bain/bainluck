@@ -797,6 +797,19 @@ def collect(api, previous=None, cache=None, open_summaries=None):
             and run.get("updated_at")
         ],
     }
+    try:
+        active = api.request(
+            f"repos/{REPO}/actions/workflows/ci.yml/runs?branch=master&event=push&status=in_progress&per_page=100"
+        )
+    except READ_FAILURES:
+        active = None
+    active_ci = active.get("workflow_runs") if isinstance(active, dict) else None
+    if isinstance(active_ci, list) and all(
+        isinstance(run, dict) and run.get("status") == "in_progress"
+        and isinstance(run.get("run_started_at"), str) and run["run_started_at"]
+        for run in active_ci
+    ):
+        master["oldest_running_ci_at"] = min((run["run_started_at"] for run in active_ci), default=None)
     flight_run = next((r for r in runs if r["name"] == "TestFlight release"), None)
     if flight_run and flight_run["conclusion"] in {"failure", "cancelled", "timed_out"}:
         master["testflight"] = flight_run["conclusion"]

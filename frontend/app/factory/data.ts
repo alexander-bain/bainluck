@@ -299,7 +299,12 @@ export function validateSnapshot(payload: FactoryData): FactoryData {
   const posts = verifiedCrewPosts(payload);
   const laneUpdates = verifiedLaneUpdates(payload);
   const pictures = verifiedPictures(payload);
-  const { checks_queue: rawQueue, testflight_post: postedBuild, ...signals } = payload.signals;
+  const {
+    checks_queue: rawQueue, testflight_post: postedBuild, oldest_running_ci_at: oldestCI, ...signals
+  } = payload.signals;
+  const oldestRunningCI = oldestCI === null ||
+    (typeof oldestCI === "string" && Date.parse(oldestCI) <= Date.parse(payload.generated_at))
+    ? oldestCI : undefined;
   const checksQueue = verifiedChecksQueue(rawQueue);
   const testFlight = postedBuild && Number.isSafeInteger(postedBuild.build) && postedBuild.build > 0 &&
     /^[a-f0-9]{40}$/.test(postedBuild.commit) && Date.parse(postedBuild.at) <= Date.parse(payload.generated_at)
@@ -331,6 +336,7 @@ export function validateSnapshot(payload: FactoryData): FactoryData {
     jams: payload.jams,
     signals: {
       ...signals,
+      ...(oldestRunningCI !== undefined ? { oldest_running_ci_at: oldestRunningCI } : {}),
       ...(checksQueue ? { checks_queue: checksQueue } : {}),
       ...(testFlight ? { testflight_post: testFlight } : {}),
     },

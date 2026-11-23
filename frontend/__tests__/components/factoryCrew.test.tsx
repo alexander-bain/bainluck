@@ -428,16 +428,17 @@ it("checks for a new floor every minute while the page is visible", async () => 
   }
 });
 
-it("reports a collector failure even when the floor file did not change", async () => {
+it("reports a collector failure when the unchanged floor crosses the fifteen-minute grace", async () => {
   watchMotion();
   const savedFetch = global.fetch;
+  const data = { ...snapshot, generated_at: "2026-11-18T17:46:30Z" };
   const firstRead = "2026-11-18T18:01:00Z";
   const secondRead = "2026-11-18T18:02:00Z";
   const response = (renderedAt: string, failed: boolean) => ({
     ok: true,
     json: async () => ({
-      data: snapshot,
-      lastGoodAt: now,
+      data,
+      lastGoodAt: data.generated_at,
       readAt: renderedAt,
       renderedAt,
       readFailed: false,
@@ -451,7 +452,7 @@ it("reports a collector failure even when the floor file did not change", async 
   const container = document.createElement("div");
   const root = createRoot(container);
   try {
-    await act(async () => root.render(<FactoryFloor data={snapshot} lastGoodAt={now} renderedAt={now} />));
+    await act(async () => root.render(<FactoryFloor data={data} lastGoodAt={data.generated_at} renderedAt={now} />));
     await act(async () => { jest.advanceTimersByTime(60_000); });
     expect(container.querySelector('[data-reading-state="current"]')).toBeTruthy();
     await act(async () => { jest.advanceTimersByTime(60_000); });

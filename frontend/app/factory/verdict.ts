@@ -27,6 +27,12 @@ export type FloorVerdict = {
 
 const ACTIVITY_GRACE_MS = 15 * 60_000;
 const MAX_ACTIVITY_AGE_MS = 10 * 60_000;
+const RELEASE_WAIT_MS = 60 * 60_000;
+
+function recentActivity(now: string, activity?: GitHubActivity) {
+  const age = Date.parse(now) - Date.parse(activity?.checkedAt ?? "");
+  return age >= 0 && age <= MAX_ACTIVITY_AGE_MS ? activity : undefined;
+}
 
 export function floorReadingState(
   data: FactoryData,
@@ -36,12 +42,12 @@ export function floorReadingState(
 ) {
   const published = Date.parse(data.generated_at);
   const clock = Date.parse(now);
-  const activityAge = clock - Date.parse(activity?.checkedAt ?? "");
-  const recent = activityAge >= 0 && activityAge <= MAX_ACTIVITY_AGE_MS ? activity : undefined;
+  const recent = recentActivity(now, activity);
   const masterAt = Date.parse(recent?.masterAt ?? "");
   const ciAt = recent?.ciAt === null ? -Infinity : Date.parse(recent?.ciAt ?? "");
   const collectorAt = Date.parse(recent?.collector?.at ?? "");
-  if (recent?.collector?.failed && collectorAt > published && collectorAt <= clock) return "failed";
+  if (clock - published > ACTIVITY_GRACE_MS &&
+      recent?.collector?.failed && collectorAt > published && collectorAt <= clock) return "failed";
   const queuedAt = Date.parse(recent?.collectorQueuedAt ?? "");
   if (clock - queuedAt > MACHINE_WAIT_MS) return "waiting";
   if ([masterAt, ciAt].some(at => at > published + ACTIVITY_GRACE_MS && at <= clock)) return "failed";
@@ -58,6 +64,26 @@ function elapsed(now: string, since: string) {
   return minutes > 0 && minutes < 60
     ? `${minutes} ${minutes === 1 ? "minute" : "minutes"}`
     : duration(seconds);
+}
+
+export function releaseStallText(data: FactoryData, now: string, activity?: GitHubActivity) {
+  const recent = recentActivity(now, activity);
+  const separateRead = recent?.oldestRunningCI !== undefined &&
+    Date.parse(recent.checkedAt) >= Date.parse(data.generated_at);
+  const through = separateRead ? recent.checkedAt : data.generated_at;
+  const start = separateRead ? recent.oldestRunningCI : data.signals.oldest_running_ci_at;
+  const since = Date.parse(start ?? "");
+  const age = Date.parse(through) - since;
+  const alreadyReleased = data.changes.some(change =>
+    change.line === "Server" && change.station === "Live" && Date.parse(change.live_at ?? "") > since);
+  const running = start && age >= 0 && !alreadyReleased ? elapsed(through, start) : undefined;
+  const waiting = new Set(data.changes.filter(change =>
+    change.station === "Ship" && change.merged_at && !change.live_at).map(change => change.number)).size;
+  if (waiting < 5 && !(running && age > RELEASE_WAIT_MS)) return;
+  const queue = `${waiting} merged ${waiting === 1 ? "change" : "changes"} waiting to go live`;
+  return running
+    ? `Releases are stuck with ${queue}, and the oldest shared check has run for ${running}.`
+    : `Releases are stuck with ${queue}.`;
 }
 
 function place(station: Station, line: Line | null) {

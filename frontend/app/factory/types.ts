@@ -210,6 +210,7 @@ export interface FactoryData {
     testflight: string;
     checks_queue?: ChecksQueue;
     tests_at?: string;
+    oldest_running_ci_at?: string | null;
     last_merged_at?: Partial<Record<Line, string>>;
     testflight_post?: { build: number; at: string; commit: string };
   };

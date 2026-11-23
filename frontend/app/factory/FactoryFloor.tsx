@@ -53,7 +53,7 @@ import { validateSnapshot } from "./data";
 import { useReplayJournal } from "./replayJournal";
 import { remainingEvents, transfersSince } from "./liveTransfers";
 import { crossesSegment, eventText, WALK_PER_STATION_MS, useEventPlayer } from "./playback";
-import { factoryTabTitle, floorReadingState, floorVerdict, type FloorVerdict } from "./verdict";
+import { factoryTabTitle, floorReadingState, floorVerdict, releaseStallText, type FloorVerdict } from "./verdict";
 import {
   stations,
   stationNames,
@@ -260,6 +260,7 @@ export default function FactoryFloor(initial: {
   const pauseBays = readingState === "failed" || readingState === "last-known";
   const motion = !behind && tabVisible && reducedMotion === false;
   const verdict = floorVerdict(data, readFailed, now, activity);
+  const releaseStall = data && releaseStallText(data, now, activity);
   const tabTitle = factoryTabTitle(verdict);
   const today = pacificDay(now);
   const light = workshopLight(now);
@@ -749,6 +750,12 @@ export default function FactoryFloor(initial: {
       )}
       {readingState === "quiet" && (
         <p className={styles.sectionNote}>Last published {publishedAge} ago. No changes landed and no shared tests finished since then.</p>
+      )}
+      {releaseStall && (
+        <div className={styles.readerWarning} role="status" data-release-stall>
+          <Truck size={20} aria-hidden="true" />
+          <p>{releaseStall}</p>
+        </div>
       )}
       <section className={styles.floorCard} aria-labelledby="floor-heading">
         <div className={styles.sectionHeading}>
