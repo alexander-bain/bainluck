@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from app.services.datagolf_api import DataGolfPlayer
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import and_, or_, select, text, func as sqlfunc
+from sqlalchemy import or_, select, text, func as sqlfunc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -3852,30 +3852,31 @@ async def get_golf(
     """Get golf tournament futures with aggregated odds across sources."""
     now = datetime.now(timezone.utc)
 
-    recent = now - timedelta(days=7)
-    recent_graded_fields = and_(
-        FuturesMarket.status == "resolved",
-        FuturesMarket.mutually_exclusive.is_(True),
-        or_(
-            FuturesMarket.resolution_date.between(recent, now + _GOLF_WINNER_CLOSE_GRACE),
-            and_(FuturesMarket.resolution_date.is_(None), FuturesMarket.settled_at >= recent),
-        ),
-        FuturesMarket.outcomes.any(FuturesOutcome.is_winner.is_(True)),
-    )
-    query = (
+    golf_query = (
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.outcomes))
         .where(
-            or_(FuturesMarket.status == "open", recent_graded_fields),
             or_(
                 FuturesMarket.external_id.ilike("golf_%"),
                 FuturesMarket.llm_sport_category == "golf",
             ),
         )
     )
+    query = golf_query.where(FuturesMarket.status == "open")
     result = await db.execute(query)
-    markets_all = result.scalars().unique().all()
-    markets_all = [m for m in markets_all if _is_golf_market(m)]
+    markets_by_id = {market.id: market for market in result.scalars().unique().all()}
+    # The settlement clock is indexed. Keep this read separate so the open
+    # listing can still use its status index without scanning resolved history.
+    graded_query = golf_query.where(
+        FuturesMarket.settled_at >= now - timedelta(days=7),
+        FuturesMarket.status == "resolved",
+        FuturesMarket.mutually_exclusive.is_(True),
+        FuturesMarket.outcomes.any(FuturesOutcome.is_winner.is_(True)),
+    )
+    # A market can settle between the two reads. Prefer the freshly graded row.
+    graded = await db.execute(graded_query.execution_options(populate_existing=True))
+    markets_by_id.update((market.id, market) for market in graded.scalars().unique().all())
+    markets_all = [market for market in markets_by_id.values() if _is_golf_market(market)]
     # UX-P168. The name-side gate above cannot see a market whose title is
     # domain-neutral and whose FIELD is another sport — "Asia Masters 2026 Winner"
     # was served as a PGA Tour golf tournament over four League of Legends teams.
