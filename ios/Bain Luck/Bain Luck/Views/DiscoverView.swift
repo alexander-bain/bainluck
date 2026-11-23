@@ -2968,8 +2968,8 @@ struct DiscoverView: View {
             await refreshFeed()
         }
         .sheet(isPresented: $showOnboarding) {
-            WelcomeView()
-                .onDisappear { UserDefaults.standard.set(true, forKey: "discover_onboarded") }
+            FirstRunFlowView212A()
+                .onDisappear { UserDefaults.standard.set(true, forKey: FirstRunStorageKeys212A.onboardedKey) }
         }
         .sheet(isPresented: $showFeedbackSignIn) {
             MyStuffView()

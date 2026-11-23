@@ -165,7 +165,10 @@ struct MyStuffView: View {
                                     signedInItems: authManager.isAuthenticated ? vm.items : [],
                                     signedInTeamFutures: authManager.isAuthenticated ? vm.teamFutures : nil
                                 )
-                            }
+                            },
+                            showsEarnedSignIn212A: !authManager.isAuthenticated,
+                            onAppleSignIn212A: { authManager.signInWithApple() },
+                            onGoogleSignIn212A: { authManager.signInWithGoogle() }
                         )
                         .task(id: landingRefreshKey295A) {
                             if authManager.isAuthenticated, vm.items.isEmpty {

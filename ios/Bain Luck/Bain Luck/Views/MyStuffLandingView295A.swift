@@ -16,6 +16,9 @@ struct MyStuffLandingView295A: View {
     let onOpenDiscover: () -> Void
     let onManagePins: () -> Void
     let onRefresh: () async -> Void
+    var showsEarnedSignIn212A: Bool = false
+    var onAppleSignIn212A: () -> Void = {}
+    var onGoogleSignIn212A: () -> Void = {}
 
     @Environment(\.followManager295A) private var followManager
     @EnvironmentObject private var pinManager: PinManager
@@ -29,7 +32,10 @@ struct MyStuffLandingView295A: View {
             path: $path,
             onOpenDiscover: onOpenDiscover,
             onManagePins: onManagePins,
-            onRefresh: onRefresh
+            onRefresh: onRefresh,
+            showsEarnedSignIn212A: showsEarnedSignIn212A,
+            onAppleSignIn212A: onAppleSignIn212A,
+            onGoogleSignIn212A: onGoogleSignIn212A
         )
     }
 }
@@ -42,7 +48,11 @@ private struct MyStuffLandingBody295A: View {
     let onOpenDiscover: () -> Void
     let onManagePins: () -> Void
     let onRefresh: () async -> Void
+    var showsEarnedSignIn212A: Bool = false
+    var onAppleSignIn212A: () -> Void = {}
+    var onGoogleSignIn212A: () -> Void = {}
 
+    @AppStorage(FirstRunStorageKeys212A.earnedSignInDismissedKey) private var earnedSignInDismissed = false
     @Environment(\.colorScheme) private var colorScheme
 
     private var cardSurface: Color {
@@ -211,6 +221,14 @@ private struct MyStuffLandingBody295A: View {
                     }
                     .buttonStyle(.plain)
                     .accessibilityIdentifier("myStuff295A.openAllDiscover")
+                }
+
+                if showsEarnedSignIn212A && !earnedSignInDismissed && (!followManager.subjects.isEmpty || !pinManager.savedPins.isEmpty) {
+                    EarnedSignInCard212A(
+                        onAppleSignIn: onAppleSignIn212A,
+                        onGoogleSignIn: onGoogleSignIn212A,
+                        onDismissLocalOnly: { earnedSignInDismissed = true }
+                    )
                 }
 
                 NavigationLink(value: Route.about) {

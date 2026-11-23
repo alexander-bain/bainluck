@@ -63,21 +63,28 @@ final class WelcomeOnboardingPublishesNoStatistic7580Tests: XCTestCase {
     /// arrives in, so a failure names the class instead of printing a set diff.
     /// These fire even if someone widens the allowlist above without reading it.
     func testNoOutcomeCountAndNoErrorFigureIsPrintedOnFirstLaunch() throws {
-        let body = try String(contentsOf: Self.viewURL, encoding: .utf8)
+        let viewsToScan: [URL] = [
+            Self.viewURL,
+            Self.viewsDirectory.appendingPathComponent("FirstRunFlowView212A.swift"),
+            Self.viewsDirectory.appendingPathComponent("AboutBainLuckView212A.swift"),
+        ]
+        for fileURL in viewsToScan where FileManager.default.fileExists(atPath: fileURL.path) {
+            let body = try String(contentsOf: fileURL, encoding: .utf8)
 
-        XCTAssertNil(Self.firstMatch(#"\d+(\.\d+)?\s*(pp\b|percentage point)"#, in: body),
-                     "an error figure in percentage points is back on the onboarding screen")
-        XCTAssertNil(Self.firstMatch(#"\d+(\.\d+)?\s*[KM]\b"#, in: body),
-                     "a compact outcome/market count is back on the onboarding screen")
-        for phrase in ["resolved outcome", "calibration error", "average error", "Brier score"] {
-            XCTAssertFalse(body.localizedCaseInsensitiveContains(phrase),
-                           "onboarding publishes the accuracy statistic \"\(phrase)\" — "
-                               + "D137 confines that to the accuracy page")
+            XCTAssertNil(Self.firstMatch(#"\d+(\.\d+)?\s*(pp\b|percentage point)"#, in: body),
+                         "an error figure in percentage points is on \(fileURL.lastPathComponent)")
+            XCTAssertNil(Self.firstMatch(#"\d+(\.\d+)?\s*[KM]\b"#, in: body),
+                         "a compact outcome/market count is on \(fileURL.lastPathComponent)")
+            for phrase in ["resolved outcome", "calibration error", "average error", "Brier score"] {
+                XCTAssertFalse(body.localizedCaseInsensitiveContains(phrase),
+                               "\(fileURL.lastPathComponent) publishes the accuracy statistic \"\(phrase)\" — "
+                                   + "D137 confines that to the accuracy page")
+            }
+            // 🪤 Word-bounded: a bare case-insensitive "ECE" matches "piece" and
+            // "December", so the substring form would red this suite on ordinary copy.
+            XCTAssertNil(Self.firstMatch(#"\bECE\b"#, in: body),
+                         "\(fileURL.lastPathComponent) names the calibration-error metric")
         }
-        // 🪤 Word-bounded: a bare case-insensitive "ECE" matches "piece" and
-        // "December", so the substring form would red this suite on ordinary copy.
-        XCTAssertNil(Self.firstMatch(#"\bECE\b"#, in: body),
-                     "onboarding names the calibration-error metric")
     }
 
     /// 🪤 The fix is a deletion, and the cheap way to pass a deletion test is to
@@ -103,8 +110,8 @@ final class WelcomeOnboardingPublishesNoStatistic7580Tests: XCTestCase {
     func testOnboardingIsStillPresentedOnFirstLaunch() throws {
         let discover = try String(contentsOf: Self.discoverURL, encoding: .utf8)
 
-        XCTAssertTrue(discover.contains("WelcomeView("),
-                      "DiscoverView no longer presents the onboarding carousel")
+        XCTAssertTrue(discover.contains("FirstRunFlowView212A(") || discover.contains("WelcomeView("),
+                      "DiscoverView no longer presents the first-run onboarding flow")
         XCTAssertTrue(discover.contains("discover_onboarded"),
                       "the first-launch gate the sheet hangs on is gone")
     }

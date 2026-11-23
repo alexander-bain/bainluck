@@ -52,9 +52,11 @@ struct Bain_LuckApp: App {
         initialBinding: PinAccountBinding(userID: APIClient.persistedLastKnownUserId(), authenticated: false)
     )
     #endif
-    /// Whether the consent ask is showing. Seeded from the authority: `true`
-    /// only when no choice has ever been recorded.
+    /// Whether the consent ask is showing. Deferred past the `212-A` first-run
+    /// onboarding so a friend's first launch never meets an up-front telemetry modal
+    /// before seeing value (off by default per ruling 007; togglable anytime in Preferences).
     @State private var showTelemetryConsent = TelemetryConsent.shared.needsChoice
+        && UserDefaults.standard.bool(forKey: FirstRunStorageKeys212A.onboardedKey)
 
 
     init() {
