@@ -29688,7 +29688,7 @@ async def get_related_futures(
         response, source_status, market_ids, _cacheable = (
             await _build_related_futures(event_id, db, debug=True)
         )
-        return _strip_related_futures_american_odds(response)
+        return response
 
     # L1 — in-memory. Live 60 s, completed `rfc.FRESH_TTL_FINAL` (#6883), and a
     # miss whenever the entry was built by another release.
@@ -29703,6 +29703,7 @@ async def get_related_futures(
         _write_related_futures_memo(event_id, rfc.source_status_of(body), body)
         return body
     if state == "stale_ok" and body is not None:
+        _strip_related_futures_american_odds(body)
         # Exactly one rebuild behind the mirror, fleet-wide-ish: single-flight is
         # per process (`_STALE_REFRESH_INFLIGHT`), and the shared slot the
         # rebuild publishes is what keeps the other processes from re-doing it
@@ -29710,7 +29711,7 @@ async def get_related_futures(
         if _serve_stale_and_refresh(
             f"related_futures:{event_id}", lambda: _rebuild_related_futures(event_id)
         ):
-            return _strip_related_futures_american_odds(body)
+            return body
         # No running loop to refresh behind us — fall through and build, rather
         # than serve stale with nothing coming to replace it.
 
@@ -32283,7 +32284,9 @@ async def build_event_nuggets(
         "home_logo": home_logo,
         "away_logo": away_logo,
         "sport": event.sport.key if event.sport else None,
-        "status": event.status,
+        "status": served_event_status(
+            event.status, event.commence_time, now or datetime.now(timezone.utc)
+        ),
         "commence_time": event.commence_time.isoformat() if event.commence_time else None,
     }
     return rank_game_nuggets(
