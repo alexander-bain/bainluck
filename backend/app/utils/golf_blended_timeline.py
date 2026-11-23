@@ -63,7 +63,9 @@ def build_golf_blended_timeline(
             SnapshotReading(
                 outcome_id=s.outcome_id,
                 captured_at=_ensure_utc(s.captured_at),
-                valid_until=_ensure_utc(s.valid_until) if s.valid_until is not None else None,
+                valid_until=(
+                    _ensure_utc(s.valid_until) if s.valid_until is not None else None
+                ),
                 probability=float(s.probability) if s.probability is not None else None,
                 yes_bid=float(s.yes_bid) if s.yes_bid is not None else None,
                 yes_ask=float(s.yes_ask) if s.yes_ask is not None else None,
@@ -82,7 +84,9 @@ def build_golf_blended_timeline(
         actual_hours = hours
         cutoff = ref_now - timedelta(hours=hours)
 
-    current_golfers = list(current_entry.get("_all_golfers") or current_entry.get("golfers") or [])
+    current_golfers = list(
+        current_entry.get("_all_golfers") or current_entry.get("golfers") or []
+    )
     top_golfers = current_golfers[:top]
     top_name_by_key: dict[str, str] = {}
     for g in top_golfers:
@@ -102,7 +106,9 @@ def build_golf_blended_timeline(
 
     timeline: list[dict] = []
     if winner_markets and bucket_keys and current_golfers:
-        active: dict[int, tuple[tuple[float | None, float | None, float | None], datetime]] = {}
+        active: dict[
+            int, tuple[tuple[float | None, float | None, float | None], datetime]
+        ] = {}
         snap_idx = 0
         total_snaps = len(valid_snaps)
 
@@ -113,7 +119,9 @@ def build_golf_blended_timeline(
             eval_points.append((bucket_at, bucket_end))
 
         for bucket_at, eval_at in eval_points:
-            while snap_idx < total_snaps and valid_snaps[snap_idx].captured_at <= eval_at:
+            while (
+                snap_idx < total_snaps and valid_snaps[snap_idx].captured_at <= eval_at
+            ):
                 s = valid_snaps[snap_idx]
                 fresh_until = s.valid_until or s.captured_at
                 active[s.outcome_id] = (
@@ -139,7 +147,9 @@ def build_golf_blended_timeline(
 
             outcomes_map: dict[str, float] = {}
             field_prob = 0.0
-            hist_golfers = hist_entry.get("_all_golfers") or hist_entry.get("golfers") or []
+            hist_golfers = (
+                hist_entry.get("_all_golfers") or hist_entry.get("golfers") or []
+            )
             for g in hist_golfers:
                 prob = g.get("probability")
                 if prob is None:
@@ -155,32 +165,54 @@ def build_golf_blended_timeline(
                 if prob is not None:
                     field_prob += float(prob)
 
-            if len(current_golfers) > top and (field_prob > 0 or len(top_name_by_key) < len(hist_golfers)):
+            if len(current_golfers) > top and (
+                field_prob > 0 or len(top_name_by_key) < len(hist_golfers)
+            ):
                 outcomes_map["Field"] = round(min(field_prob, 1.0), 6)
 
             if outcomes_map:
-                timeline.append({
-                    "timestamp": bucket_at.isoformat(),
-                    "outcomes": outcomes_map,
-                })
+                timeline.append(
+                    {
+                        "timestamp": bucket_at.isoformat(),
+                        "outcomes": outcomes_map,
+                    }
+                )
 
     outcomes_meta: list[dict] = []
     for idx, g in enumerate(top_golfers, start=1):
-        outcomes_meta.append({
-            "id": idx,
-            "name": g["name"],
-            "current_probability": round(float(g["probability"]), 6) if g.get("probability") is not None else None,
-            "rank": idx,
-            "probability_change_24h": round(float(g["movement_24h"]), 4) if g.get("movement_24h") is not None else None,
-            "opening_probability": round(float(g["opening_probability"]), 4) if g.get("opening_probability") is not None else None,
-        })
+        outcomes_meta.append(
+            {
+                "id": idx,
+                "name": g["name"],
+                "current_probability": (
+                    round(float(g["probability"]), 6)
+                    if g.get("probability") is not None
+                    else None
+                ),
+                "rank": idx,
+                "probability_change_24h": (
+                    round(float(g["movement_24h"]), 4)
+                    if g.get("movement_24h") is not None
+                    else None
+                ),
+                "opening_probability": (
+                    round(float(g["opening_probability"]), 4)
+                    if g.get("opening_probability") is not None
+                    else None
+                ),
+            }
+        )
     if len(current_golfers) > top:
-        field_current = sum(float(g.get("probability") or 0.0) for g in current_golfers[top:])
-        outcomes_meta.append({
-            "id": None,
-            "name": "Field",
-            "current_probability": round(min(field_current, 1.0), 6),
-        })
+        field_current = sum(
+            float(g.get("probability") or 0.0) for g in current_golfers[top:]
+        )
+        outcomes_meta.append(
+            {
+                "id": None,
+                "name": "Field",
+                "current_probability": round(min(field_current, 1.0), 6),
+            }
+        )
 
     sources = sorted(set(current_entry.get("market_sources") or []))
     market_ids = list(current_entry.get("market_ids") or [])

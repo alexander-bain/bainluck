@@ -17,7 +17,9 @@ NOW = datetime(2031, 4, 12, 18, 0, tzinfo=timezone.utc)
 _OID = iter(range(10_000, 99_999))
 
 
-def _outcome(name: str, prob: float, *, bid: float | None = None, ask: float | None = None):
+def _outcome(
+    name: str, prob: float, *, bid: float | None = None, ask: float | None = None
+):
     oid = next(_OID)
     return SimpleNamespace(
         id=oid,
@@ -58,7 +60,14 @@ def _market(
     )
 
 
-def _snap(oid: int, ts: datetime, prob: float, *, bid: float | None = None, ask: float | None = None):
+def _snap(
+    oid: int,
+    ts: datetime,
+    prob: float,
+    *,
+    bid: float | None = None,
+    ask: float | None = None,
+):
     return SnapshotReading(
         outcome_id=oid,
         captured_at=ts,
@@ -126,7 +135,9 @@ def test_multi_source_blend_parity_and_zero_right_edge_jump():
     assert result["source"] == "blend"
     assert sorted(result["sources"]) == ["datagolf", "kalshi"]
     assert len(result["timeline"]) == 2
-    assert result["timeline"][0]["outcomes"]["Scottie Scheffler"] == pytest.approx(0.35, abs=1e-4)
+    assert result["timeline"][0]["outcomes"]["Scottie Scheffler"] == pytest.approx(
+        0.35, abs=1e-4
+    )
 
     latest = result["timeline"][-1]["outcomes"]
     current_by_name = {o["name"]: o["current_probability"] for o in result["outcomes"]}
@@ -188,7 +199,9 @@ def test_single_source_field_normalization_parity_and_placeholder_filter():
     latest = result["timeline"][-1]["outcomes"]
     current_by_name = {o["name"]: o["current_probability"] for o in result["outcomes"]}
     assert latest["Scottie Scheffler"] == pytest.approx(0.30, abs=1e-4)
-    assert latest["Scottie Scheffler"] == pytest.approx(current_by_name["Scottie Scheffler"], abs=1e-4)
+    assert latest["Scottie Scheffler"] == pytest.approx(
+        current_by_name["Scottie Scheffler"], abs=1e-4
+    )
 
 
 class _ScalarUniqueResult:
@@ -304,14 +317,20 @@ async def test_golf_tournament_timeline_route_open_completed_and_404(monkeypatch
 
     app.dependency_overrides[get_db] = override_db
     try:
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            r_open = await ac.get("/api/golf/tournaments/the-masters/probability-timeline")
+        async with AsyncClient(
+            transport=ASGITransport(app=app), base_url="http://test"
+        ) as ac:
+            r_open = await ac.get(
+                "/api/golf/tournaments/the-masters/probability-timeline"
+            )
             assert r_open.status_code == 200
             body = r_open.json()
             assert body["source"] == "blend"
             assert body["bucket_seconds"] == 900
             assert len(body["timeline"]) == 1
-            assert body["timeline"][0]["outcomes"]["Scottie Scheffler"] == pytest.approx(0.40, abs=1e-4)
+            assert body["timeline"][0]["outcomes"][
+                "Scottie Scheffler"
+            ] == pytest.approx(0.40, abs=1e-4)
 
             # Client passes range=full (EvolutionFullRange); range=all is also accepted.
             for range_val in ("full", "all"):
@@ -325,17 +344,26 @@ async def test_golf_tournament_timeline_route_open_completed_and_404(monkeypatch
                 assert full_body["actual_hours"] >= 1
 
             open_flag["open"] = False
-            r_done = await ac.get("/api/golf/tournaments/completed-masters/probability-timeline")
+            r_done = await ac.get(
+                "/api/golf/tournaments/completed-masters/probability-timeline"
+            )
             assert r_done.status_code == 200
             done_body = r_done.json()
             assert len(done_body["timeline"]) == 1
-            assert done_body["timeline"][0]["outcomes"]["Scottie Scheffler"] == pytest.approx(0.40, abs=1e-4)
+            assert done_body["timeline"][0]["outcomes"][
+                "Scottie Scheffler"
+            ] == pytest.approx(0.40, abs=1e-4)
 
-            r_404 = await ac.get("/api/golf/tournaments/no-such-tournament/probability-timeline")
+            r_404 = await ac.get(
+                "/api/golf/tournaments/no-such-tournament/probability-timeline"
+            )
             assert r_404.status_code == 404
 
             # /api/futures/cross-source-timeline must NOT be shadowed by /{market_id} (which returned 422 int parse error)
-            r_xs = await ac.get("/api/futures/cross-source-timeline", params={"canonical_key": "golf:PGA:masters:2026"})
+            r_xs = await ac.get(
+                "/api/futures/cross-source-timeline",
+                params={"canonical_key": "golf:PGA:masters:2026"},
+            )
             assert r_xs.status_code != 422
             assert r_xs.status_code == 404
     finally:

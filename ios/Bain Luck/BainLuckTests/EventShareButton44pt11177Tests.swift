@@ -210,7 +210,12 @@ final class EventShareButton44pt11177Tests: XCTestCase {
                     try VNImageRequestHandler(cgImage: XCTUnwrap(img.cgImage), options: [:]).perform([req])
                     let lines = (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
                     XCTAssertFalse(
-                        lines.contains(where: { $0.contains("…") || $0.contains("...") }),
+                        lines.contains(where: { line in
+                            let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+                            // CalendarDetailMenu10880 renders SF symbol `ellipsis.circle`, which Vision OCR reads as "(...)".
+                            guard trimmed != "(...)" && trimmed != "..." else { return false }
+                            return trimmed.contains("…") || trimmed.contains("...")
+                        }),
                         "Event toolbar/title at \(Int(width))pt \(typeSize) \(scheme) truncated: \(lines)"
                     )
 

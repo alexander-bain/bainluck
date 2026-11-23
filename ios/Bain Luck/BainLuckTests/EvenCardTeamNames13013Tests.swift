@@ -155,23 +155,29 @@ final class EvenCardTeamNames13013Tests: XCTestCase {
             }
             XCTAssertFalse(recognizedText.contains("…"), "No ellipsis allowed at \(typeSize): \(recognizedText)")
 
-            // Measure pure rendered glyph cap-heights inside the team-name column (x = 70..225 pt,
-            // past the 20pt outer margin + 16pt card inset + 28pt crest so crest letters like "KC"
-            // never inflate the Vision line box).
+            // Measure pure rendered glyph ink heights inside the team-name column (x = 68..<210 pt,
+            // past the 20pt outer margin + 16pt card inset + 28pt crest and before the Proj./Score headers
+            // so neither crests nor numeric headers enter the box).
             let nameStripObservations = try ocrNameColumnObservations(img)
-            let heightChiefs = try XCTUnwrap(wordHeightPt(of: "Chiefs", in: nameStripObservations))
-            let heightBucs = try XCTUnwrap(wordHeightPt(of: "Buccaneers", in: nameStripObservations))
-            let heightWolves = try XCTUnwrap(wordHeightPt(of: "Timberwolves", in: nameStripObservations, excludingLineContaining: "Pregame"))
+            let heightChiefs = try XCTUnwrap(renderedInkHeightPt(of: "Chiefs", in: img, nameColumnObservations: nameStripObservations))
+            let heightRams = try XCTUnwrap(renderedInkHeightPt(of: "Rams", in: img, nameColumnObservations: nameStripObservations))
+            let heightBucs = try XCTUnwrap(renderedInkHeightPt(of: "Buccaneers", in: img, nameColumnObservations: nameStripObservations))
+            let heightWolves = try XCTUnwrap(renderedInkHeightPt(of: "Timberwolves", in: img, nameColumnObservations: nameStripObservations, excludingLineContaining: "Pregame"))
 
-            XCTAssertLessThanOrEqual(
-                abs(heightBucs - heightChiefs),
-                1.5,
-                "Buccaneers (\(heightBucs) pt) must render at the same height as Chiefs (\(heightChiefs) pt) at \(typeSize)"
-            )
             XCTAssertLessThanOrEqual(
                 abs(heightWolves - heightChiefs),
                 1.5,
-                "Timberwolves (\(heightWolves) pt) must render at the same height as Chiefs (\(heightChiefs) pt) at \(typeSize)"
+                "Timberwolves (\(heightWolves) pt) must render at the same ascender height as Chiefs (\(heightChiefs) pt) at \(typeSize)"
+            )
+            XCTAssertLessThanOrEqual(
+                abs(heightBucs - heightRams),
+                1.5,
+                "Buccaneers (\(heightBucs) pt) must render at the same cap height as Rams (\(heightRams) pt) at \(typeSize)"
+            )
+            XCTAssertLessThanOrEqual(
+                abs(heightBucs - heightChiefs),
+                2.0,
+                "Buccaneers (\(heightBucs) pt) must not shrink relative to Chiefs (\(heightChiefs) pt) at \(typeSize)"
             )
         }
     }
@@ -200,16 +206,63 @@ final class EvenCardTeamNames13013Tests: XCTestCase {
         let imgHeightPt: CGFloat
     }
 
-    private func wordHeightPt(
+    private func renderedInkHeightPt(
         of target: String,
-        in observations: [OCRObs],
+        in image: UIImage,
+        nameColumnObservations: [OCRObs],
+        cropOriginXPt: CGFloat = 68,
+        cropWidthPt: CGFloat = 142,
         excludingLineContaining excluded: String? = nil
     ) -> CGFloat? {
-        for obs in observations {
+        guard let cg = image.cgImage else { return nil }
+        let scale = image.scale
+        let cropW = cropWidthPt * scale
+        let cropH = CGFloat(cg.height)
+
+        for obs in nameColumnObservations {
             if let excluded, obs.text.contains(excluded) { continue }
-            if let range = obs.text.range(of: target),
-               let box = try? obs.candidate.boundingBox(for: range) {
-                return box.boundingBox.height * obs.imgHeightPt
+            guard let range = obs.text.range(of: target),
+                  let box = try? obs.candidate.boundingBox(for: range) else { continue }
+            let b = box.boundingBox
+            let x0 = max(0, Int(floor(cropOriginXPt * scale + b.minX * cropW - 2 * scale)))
+            let x1 = min(cg.width, Int(ceil(cropOriginXPt * scale + b.maxX * cropW + 2 * scale)))
+            let y0 = max(0, Int(floor((1 - b.maxY) * cropH - 2 * scale)))
+            let y1 = min(cg.height, Int(ceil((1 - b.minY) * cropH + 2 * scale)))
+            let w = x1 - x0
+            let h = y1 - y0
+            guard w > 0, h > 0, let patch = cg.cropping(to: CGRect(x: x0, y: y0, width: w, height: h)) else {
+                continue
+            }
+
+            let bytesPerRow = w * 4
+            var pixels = [UInt8](repeating: 255, count: bytesPerRow * h)
+            let space = CGColorSpaceCreateDeviceRGB()
+            guard let ctx = CGContext(
+                data: &pixels,
+                width: w,
+                height: h,
+                bitsPerComponent: 8,
+                bytesPerRow: bytesPerRow,
+                space: space,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else { continue }
+            ctx.draw(patch, in: CGRect(x: 0, y: 0, width: w, height: h))
+
+            var minInkY: Int?
+            var maxInkY: Int?
+            for y in 0..<h {
+                let rowStart = y * bytesPerRow
+                for x in 0..<w {
+                    let i = rowStart + x * 4
+                    if pixels[i] < 115 && pixels[i + 1] < 115 && pixels[i + 2] < 115 {
+                        if minInkY == nil { minInkY = y }
+                        maxInkY = y
+                        break
+                    }
+                }
+            }
+            if let minInkY, let maxInkY {
+                return CGFloat(maxInkY - minInkY + 1) / scale
             }
         }
         return nil
@@ -221,7 +274,7 @@ final class EvenCardTeamNames13013Tests: XCTestCase {
         let cropRect = CGRect(
             x: 68 * scale,
             y: 0,
-            width: 156 * scale,
+            width: 142 * scale,
             height: CGFloat(cg.height)
         )
         let cropped = try XCTUnwrap(cg.cropping(to: cropRect))
@@ -236,10 +289,12 @@ final class EvenCardTeamNames13013Tests: XCTestCase {
         req.usesLanguageCorrection = false
         try VNImageRequestHandler(cgImage: cg).perform([req])
         let imgHeightPt = image.size.height
-        return (req.results ?? []).compactMap { obs in
-            guard let top = obs.topCandidates(1).first else { return nil }
-            return OCRObs(text: top.string, candidate: top, imgHeightPt: imgHeightPt)
-        }
+        return (req.results ?? [])
+            .sorted { $0.boundingBox.midY > $1.boundingBox.midY }
+            .compactMap { obs in
+                guard let top = obs.topCandidates(1).first else { return nil }
+                return OCRObs(text: top.string, candidate: top, imgHeightPt: imgHeightPt)
+            }
     }
 
     private func renderSportsStack(
