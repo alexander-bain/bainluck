@@ -2106,7 +2106,7 @@ async def evaluate_roundup_producer(
                     exc_info=True,
                 )
         if local_stale_fallback is not None:
-            _record_machinery_live_origin(
+            _record_roundup_live_origin(
                 local_stale_fallback[0], producer.slug, local_stale_fallback[2]
             )
             return copy.deepcopy(local_stale_fallback[1]), copy.deepcopy(
@@ -4496,6 +4496,7 @@ def render_machinery_prewarm_bundle(
         feed_machinery_page_base_key,
         feed_response_cache_key,
         feed_response_cache_ttls,
+        live_stale_ceiling_seconds,
         payload_contains_live_event,
         render_feed_page_from_base,
     )
@@ -4609,6 +4610,7 @@ def render_machinery_prewarm_bundle(
         identified=False,
         live=mach_live,
         oldest_artifact_age_s=mach_input_age_s,
+        live_stale_ceiling_s=live_stale_ceiling_seconds(mach_base_body),
     )
     if mach_live and (m_ttl <= 0 or m_stale_ttl <= 0):
         return None
