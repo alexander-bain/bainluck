@@ -68,13 +68,18 @@ def _schedule(end):
     }
 
 
-@pytest.mark.usefixtures("opening_seating_off")
-async def test_tournament_futures_and_discover_agree_after_one_venue_grades(
-    client, mock_db, monkeypatch
-):
-    end = (datetime.now(timezone.utc) - timedelta(days=1)).replace(
+@pytest.fixture
+def tournament_end() -> datetime:
+    return (datetime.now(timezone.utc) - timedelta(days=1)).replace(
         hour=0, minute=0, second=0, microsecond=0
     )
+
+
+@pytest.mark.usefixtures("opening_seating_off")
+async def test_tournament_futures_and_discover_agree_after_one_venue_grades(
+    client, mock_db, monkeypatch, tournament_end
+):
+    end = tournament_end
     open_copy = _rsm_market(70502669, end)
     settled_board = _rsm_market(70709343, end, resolved=True)
     markets = {m.id: m for m in (open_copy, settled_board)}
@@ -182,8 +187,10 @@ async def _build_without_cache(slug, *, builder, **kwargs):
     return await builder(), "miss"
 
 
-def test_a_grade_for_another_edition_or_a_placement_cannot_close_the_tournament():
-    end = datetime(2026, 11, 22, tzinfo=timezone.utc)
+def test_a_grade_for_another_edition_or_a_placement_cannot_close_the_tournament(
+    tournament_end,
+):
+    end = tournament_end
     old = _rsm_market(3, end - timedelta(days=365), resolved=True)
     placement = _rsm_market(4, end, resolved=True)
     placement.name = "The RSM Classic: Top 5 Finish"
