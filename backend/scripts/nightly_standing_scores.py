@@ -402,6 +402,7 @@ def run_standing_scores(
     headers = {
         "User-Agent": DEFAULT_USER_AGENT,
         "X-BL-Agent": bl_agent,
+        "X-Bainluck-Origin": bl_agent,
     }
 
     http_errors: list[dict[str, Any]] = []
