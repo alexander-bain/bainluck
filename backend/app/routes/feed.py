@@ -16596,6 +16596,11 @@ async def _score_futures(
                         default=None,
                     ),
                     float(market.volume_24h) if market.volume_24h is not None else None,
+                    outcome_probabilities=[
+                        float(o.current_probability)
+                        for o in sorted_outcomes
+                        if o.current_probability is not None
+                    ],
                 )
             )
             if _locked_near_certain and not runtime_filters["checks"].get(

@@ -3,11 +3,12 @@ Bain Luck API
 Main FastAPI application entry point.
 """
 
+import asyncio
 import logging
 import os
 import time
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import sentry_sdk
@@ -88,14 +89,24 @@ async def lifespan(app: FastAPI):
         await get_shared_async_redis()
     except Exception:  # pragma: no cover - never block startup on Redis
         logger.debug("shared async redis warm-up skipped", exc_info=True)
-    yield
-    # Shutdown
-    try:
-        from app.utils.request_cache import close_shared_async_redis
+    from app.services.database import engine
+    from app.services.onboarding_team_aliases import refresh_onboarding_venue_aliases
 
-        await close_shared_async_redis()
-    except Exception:  # pragma: no cover - shutdown best-effort
-        logger.debug("shared async redis close skipped", exc_info=True)
+    alias_refresh = asyncio.create_task(
+        refresh_onboarding_venue_aliases(engine), name="onboarding-venue-aliases"
+    )
+    try:
+        yield
+    finally:
+        alias_refresh.cancel()
+        with suppress(asyncio.CancelledError):
+            await alias_refresh
+        try:
+            from app.utils.request_cache import close_shared_async_redis
+
+            await close_shared_async_redis()
+        except Exception:  # pragma: no cover - shutdown best-effort
+            logger.debug("shared async redis close skipped", exc_info=True)
 
 
 app = FastAPI(

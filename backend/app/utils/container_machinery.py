@@ -2459,7 +2459,7 @@ def _history_chart_moved(chart_item: Mapping[str, Any], *, min_swing_pp: int = 3
             for pt in (s.get("points") or ())
             if isinstance(pt, Mapping) and isinstance(pt.get("pct"), (int, float))
         ]
-        swing = abs(pcts[-1] - pcts[0]) if len(pcts) >= 2 else 0
+        swing = (max(pcts) - min(pcts)) if len(pcts) >= 2 else 0
         max_swing = max(max_swing, swing)
         cur = int(s.get("current_pct")) if isinstance(s.get("current_pct"), (int, float)) else (pcts[-1] if pcts else 0)
         if cur > lead_cur:
@@ -2512,8 +2512,7 @@ def _build_history_visual_item(
             ]
         else:
             s_pcts = [p["pct"] for p in pts_clean]
-            net_move_pp = s_pcts[-1] - s_pcts[0]
-            max_swing_pp = max(max_swing_pp, abs(net_move_pp))
+            max_swing_pp = max(max_swing_pp, max(s_pcts) - min(s_pcts))
         if pts_clean:
             if earliest_iso is None or pts_clean[0]["t"] < earliest_iso:
                 earliest_iso = pts_clean[0]["t"]
@@ -3972,6 +3971,11 @@ def _build_dynamic_title_from_set(
         best_net = 0
         best_series: Optional[Mapping[str, Any]] = None
         best_start_iso = str(lead_h.get("start_iso") or "")
+        best_range_span = 0
+        best_range_lo = 0
+        best_range_hi = 0
+        best_range_series: Optional[Mapping[str, Any]] = None
+        best_range_start_iso = str(lead_h.get("start_iso") or "")
         for hs in lead_h.get("series") or ():
             if not isinstance(hs, Mapping):
                 continue
@@ -3981,13 +3985,23 @@ def _build_dynamic_title_from_set(
                 if isinstance(pt, Mapping) and isinstance(pt.get("pct"), (int, float))
             ]
             if len(pts_raw) >= 2:
-                net = int(pts_raw[-1]["pct"]) - int(pts_raw[0]["pct"])
+                pcts_vals = [int(pt["pct"]) for pt in pts_raw]
+                net = pcts_vals[-1] - pcts_vals[0]
                 if abs(net) > abs(best_net):
                     best_net = net
                     best_series = hs
                     best_start_iso = str(pts_raw[0].get("t") or best_start_iso)
-        start_label = _format_history_start_date(best_start_iso)
-        if best_series is not None and abs(best_net) >= 1:
+                lo_v = min(pcts_vals)
+                hi_v = max(pcts_vals)
+                span_v = hi_v - lo_v
+                if span_v > best_range_span:
+                    best_range_span = span_v
+                    best_range_lo = lo_v
+                    best_range_hi = hi_v
+                    best_range_series = hs
+                    best_range_start_iso = str(pts_raw[0].get("t") or best_range_start_iso)
+        if best_series is not None and abs(best_net) >= 10:
+            start_label = _format_history_start_date(best_start_iso)
             clause = _format_history_chance_clause(
                 str(lead_h.get("title") or ""),
                 str(best_series.get("name") or ""),
@@ -3995,6 +4009,15 @@ def _build_dynamic_title_from_set(
             direction = "rose" if best_net > 0 else "fell"
             since_suffix = f" since {start_label}" if start_label else ""
             return f"{clause} {direction} {abs(best_net)} points{since_suffix}"
+        if best_range_series is not None and best_range_span >= 1:
+            start_label = _format_history_start_date(best_range_start_iso)
+            clause = _format_history_chance_clause(
+                str(lead_h.get("title") or ""),
+                str(best_range_series.get("name") or ""),
+            )
+            since_suffix = f" since {start_label}" if start_label else ""
+            return f"{clause} has ranged from {best_range_lo}% to {best_range_hi}%{since_suffix}"
+        start_label = _format_history_start_date(best_start_iso)
         h_phrase = _prose_market_phrase(str(lead_h.get("title") or ""), capitalize_first=True)
         since_suffix = f" since {start_label}" if start_label else ""
         return f"The chance on {h_phrase} shifted{since_suffix}"

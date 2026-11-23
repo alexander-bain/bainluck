@@ -278,7 +278,7 @@ async def test_batch7_fable_fixes_big_ten_college_slate_and_history_first_to_las
     assert _prose_market_phrase("Big Tech Deals") == "the big tech deals"
     assert _prose_market_phrase("Top Ten Releases") == "the top ten releases"
 
-    # 2. History swing checks first-to-last, not peak-to-trough
+    # 2. History swing checks high-to-low range for keeping the chart
     bounced_flat = {
         "series": [
             {
@@ -292,7 +292,21 @@ async def test_batch7_fable_fixes_big_ten_college_slate_and_history_first_to_las
             }
         ]
     }
-    assert _history_chart_moved(bounced_flat, min_swing_pp=10) is False
+    assert _history_chart_moved(bounced_flat, min_swing_pp=10) is True
+    narrow_range = {
+        "series": [
+            {
+                "outcome_id": 1,
+                "current_pct": 30,
+                "points": [
+                    {"t": "2026-11-19T17:00:00+00:00", "pct": 27},
+                    {"t": "2026-11-20T17:00:00+00:00", "pct": 32},
+                    {"t": "2026-11-22T17:00:00+00:00", "pct": 30},
+                ],
+            }
+        ]
+    }
+    assert _history_chart_moved(narrow_range, min_swing_pp=10) is False
 
     # 3. College basketball slate: school names, drops 0%-100% & completed, visible-card toss-ups & closest game lead
     db = {
@@ -332,9 +346,9 @@ async def test_batch7_fable_fixes_big_ten_college_slate_and_history_first_to_las
     assert "Golden" not in str(row_matchups)
     assert "toss-up" not in card["title"]
 
-    # 4. Tech & space fallback when first-to-last < 10 even with peak swing >= 10
-    b7_db = _make_batch7_snapshot()
-    b7_db["market_histories"] = {
+    # 4. Tech & space ranged headline when range >= 10 but first-to-last < 10 (keeps chart)
+    b7_db_ranged = _make_batch7_snapshot()
+    b7_db_ranged["market_histories"] = {
         246471051: [
             {"timestamp": (NOW - timedelta(days=5)).isoformat(), "probability": 0.27},
             {"timestamp": (NOW - timedelta(days=3)).isoformat(), "probability": 0.40},
@@ -346,9 +360,28 @@ async def test_batch7_fable_fixes_big_ten_college_slate_and_history_first_to_las
         ],
     }
     tech_defn = load_machinery_definition(CANDIDATES_DIR / "machinery-tech-and-space-movers.json")
-    tech_res = await produce_container_machinery(
-        b7_db, tech_defn, now=NOW, build_container_fn=None
-    ) if False else await produce_container_machinery(b7_db, tech_defn, now=NOW)
+    ranged_res = await produce_container_machinery(b7_db_ranged, tech_defn, now=NOW)
+    ranged_card = sanitize_discover_feed_item(
+        compose_roundup_feed_item(build_container_machinery_producer(tech_defn), ranged_res)
+    )["data"]["roundup"]["machinery_card"]
+    assert ranged_card["form_id"] == "probability_history_chart"
+    assert ranged_card["title"] == "The chance OpenAI lists below $1T has ranged from 27% to 40% since Nov 17"
+    assert "rose" not in ranged_card["title"] and "fell" not in ranged_card["title"]
+
+    # When peak-to-trough range itself is < 10, it falls back to benchmark_strip + JWST photo.
+    b7_db = _make_batch7_snapshot()
+    b7_db["market_histories"] = {
+        246471051: [
+            {"timestamp": (NOW - timedelta(days=5)).isoformat(), "probability": 0.27},
+            {"timestamp": (NOW - timedelta(days=3)).isoformat(), "probability": 0.32},
+            {"timestamp": (NOW - timedelta(days=1)).isoformat(), "probability": 0.30},
+        ],
+        606075951: [
+            {"timestamp": (NOW - timedelta(days=2)).isoformat(), "probability": 0.52},
+            {"timestamp": (NOW - timedelta(days=1)).isoformat(), "probability": 0.58},
+        ],
+    }
+    tech_res = await produce_container_machinery(b7_db, tech_defn, now=NOW)
     tech_container = compose_roundup_container(build_container_machinery_producer(tech_defn), tech_res)
     assert tech_container["sections"][0]["visual_block"]["form_id"] == "benchmark_strip"
     assert tech_container["sections"][0]["title"] == "Tech & Space Milestone Odds"

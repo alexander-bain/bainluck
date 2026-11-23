@@ -1002,7 +1002,7 @@ def _history_window_swing_pp(chart: Mapping[str, Any]) -> float:
             ):
                 vals.append(float(pt["probability"]) * 100.0)
         if len(vals) >= 2:
-            point_spans.append(abs(vals[-1] - vals[0]))
+            point_spans.append(max(vals) - min(vals))
     if point_spans:
         return max(point_spans)
     raw_swing = chart.get("max_swing_pp")

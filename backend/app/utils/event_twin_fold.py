@@ -153,7 +153,6 @@ from __future__ import annotations
 
 import bisect
 import logging
-import math
 import re
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -166,7 +165,10 @@ from app.utils.kalshi_occurrence_start import (
     recover_kalshi_occurrence_starts,
 )
 from app.utils.name_normalization import nation_spelling, strip_diacritics
-from app.utils.proven_duplicates import merge_opening_line
+from app.utils.proven_duplicates import (
+    flip_probability_sources,
+    merge_opening_line,
+)
 from app.utils.search_fixture_dedup import FIXTURE_TIME_WINDOW_HOURS
 from app.utils.soccer_team_matching import club_alias_tokens, soccer_pair_matches
 from app.utils.sport_keys import is_season_variant, league_identity
@@ -841,6 +843,14 @@ class FoldResult:
     :attr:`merged_sources`, the fold has ALREADY applied this to the row (see
     :func:`_elect`); this is the record, for the log line and the guard tests."""
 
+    flipped_loser_ids: set[int] = field(default_factory=set)
+    """Row ids absorbed with Home/Away reversed relative to their survivor.
+
+    Callers that re-read raw DB rows for the survivor's detail/live-quote view
+    (``serve_fold_absorbed`` / ``proven_duplicates``) must flip these ids'
+    readings via :func:`flip_probability_sources` and keep oriented snapshot/prior
+    lookups off their corners."""
+
     @property
     def folded_count(self) -> int:
         return len(self.dropped_ids)
@@ -984,10 +994,14 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
     # kick-off recovery has aligned the minute and before combat-claim bouts.
     # Only whole clusters unioned; numbers turned through `corner_flips`.
     corner_flips: dict[int, "_CornerFlip"] = {}
+    reversed_ids: set[int] = set()
     try:
         league_flips: dict[int, "_CornerFlip"] = {}
         grouped = _merge_reversed_anchored_claim_twins(
-            grouped, row_identities, corner_flips=league_flips
+            grouped,
+            row_identities,
+            corner_flips=league_flips,
+            reversed_ids=reversed_ids,
         )
         corner_flips.update(league_flips)
     except Exception:  # noqa: BLE001 — gotcha #42; the clusters above stand
@@ -1001,7 +1015,11 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
     # like `keep` below. Only `_elect` reads it.
     try:
         combat_flips: dict[int, "_CornerFlip"] = {}
-        grouped = _merge_combat_claim_bouts(grouped, corner_flips=combat_flips)
+        grouped = _merge_combat_claim_bouts(
+            grouped,
+            corner_flips=combat_flips,
+            reversed_ids=reversed_ids,
+        )
         corner_flips.update(combat_flips)
     except Exception:  # noqa: BLE001 — gotcha #42; the clusters above stand
         logger.exception("twin fold: combat claim merge failed; serving groups")
@@ -1018,7 +1036,7 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
             continue
 
         try:
-            _elect(members, keep, result, corner_flips)
+            _elect(members, keep, result, corner_flips, reversed_ids=reversed_ids)
         except Exception:  # noqa: BLE001 — one group's failure keeps its rows
             logger.warning(
                 "twin fold: election failed for %s; all rows kept",
@@ -3425,65 +3443,6 @@ def _combat_sport(members: list) -> Optional[str]:
     return sports.pop() if len(sports) == 1 else None
 
 
-#: The keys a stored venue reading may carry for :func:`_flipped_reading` to turn
-#: it round (#7993 residual). `value` and `observed_value` are the home fighter's
-#: chance; the other three say where and when it was read and hold for either
-#: corner. Measured over every mma/boxing row of the last 120 days on production,
-#: 2026-09-30 17:1xZ: these five are the only keys a `kalshi`, `polymarket` or
-#: `betting` object carries. A key outside this set is a shape nobody has
-#: checked, so the reading is refused rather than guessed at.
-_FLIPPABLE_READING_KEYS = frozenset(
-    {"value", "observed_value", "updated_at", "eligibility", "observed_basis", "price_read"}
-)
-_NON_ORIENTED_SOURCE_KEYS: frozenset[str] = frozenset({"live_state_changed_at"})
-_ORIENTED_READING_KEYS = ("value", "observed_value")
-
-
-def _flipped_chance(raw: Any) -> Optional[float]:
-    """``1 - raw`` for a finite probability, else ``None``."""
-    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
-        return None
-    if not math.isfinite(raw) or not 0.0 <= raw <= 1.0:
-        return None
-    return round(1.0 - float(raw), 10)
-
-
-def _flipped_reading(name: str, reading: Any) -> tuple[bool, Any]:
-    """One stored venue entry read from the OTHER corner. ``(ok, reading)``.
-
-    A bare number or a `value`/`observed_value` pair is the home fighter's
-    chance, so the other corner's is its complement. Both halves of the pair
-    turn together, which keeps `observed_value == value` and so keeps the
-    observation basis bound to the value it dates (`stored_observation_basis`).
-    A `*_count` entry or top-level live clock (`live_state_changed_at`) is
-    non-oriented bookkeeping and is kept as is. Anything else is refused.
-    """
-    if name.endswith("_count") or name in _NON_ORIENTED_SOURCE_KEYS:
-        return True, reading
-    if not isinstance(reading, dict):
-        flipped = _flipped_chance(reading)
-        return (flipped is not None), flipped
-    if not reading.keys() <= _FLIPPABLE_READING_KEYS or "value" not in reading:
-        return False, None
-    out = dict(reading)
-    for key in _ORIENTED_READING_KEYS:
-        if key in reading:
-            flipped = _flipped_chance(reading[key])
-            if flipped is None:
-                return False, None
-            out[key] = flipped
-    if "price_read" in reading:
-        from app.utils.aggregation import stored_price_read
-
-        # #12581: the exact upstream observation follows the same number onto
-        # the other axis. Invalid age evidence cannot make a valid price vanish.
-        read = stored_price_read(reading, reading["value"])
-        out.pop("price_read", None)
-        if read is not None:
-            out["price_read"] = {**read, "value": _flipped_chance(read["value"])}
-    return True, out
-
-
 @dataclass(frozen=True)
 class _CornerFlip:
     """A reversed claim row's numbers, read from the anchor's corners."""
@@ -3495,17 +3454,11 @@ class _CornerFlip:
 
 def _corner_flip(member: Any) -> Optional[_CornerFlip]:
     """The row's readings turned round, or ``None`` if any cannot be."""
-    sources = getattr(member, "win_probability_sources", None)
-    flipped: Optional[dict] = None
-    if sources:
-        if not isinstance(sources, dict):
-            return None
-        flipped = {}
-        for name, reading in sources.items():
-            ok, turned = _flipped_reading(str(name), reading)
-            if not ok:
-                return None
-            flipped[name] = turned
+    ok, flipped = flip_probability_sources(
+        getattr(member, "win_probability_sources", None)
+    )
+    if not ok:
+        return None
     return _CornerFlip(
         sources=flipped,
         opening_home=getattr(member, "opening_away_probability", None),
@@ -3514,7 +3467,9 @@ def _corner_flip(member: Any) -> Optional[_CornerFlip]:
 
 
 def _merge_combat_claim_bouts(
-    clusters: list[list], corner_flips: Optional[dict] = None
+    clusters: list[list],
+    corner_flips: Optional[dict] = None,
+    reversed_ids: Optional[set[int]] = None,
 ) -> list[list]:
     """Fold an id-less bout claim onto the one anchored bout it names. #7993.
 
@@ -3620,9 +3575,10 @@ def _merge_combat_claim_bouts(
         if _objectively_different_games(claim_members, anchor_members):
             continue
         flips: dict[int, _CornerFlip] = {}
-        if not all(
+        corners_reversed = not all(
             _same_corners(c, a) for c in bouts[claim] for a in bouts[anchor]
-        ):
+        )
+        if corners_reversed:
             if not _anchor_is_elected(claim_members, anchor_members):
                 continue
             if _group_carries_oriented_readings(claim_members):
@@ -3641,6 +3597,8 @@ def _merge_combat_claim_bouts(
         merged_into[claim] = anchor
         if flips:
             corner_flips.update(flips)
+        if corners_reversed and reversed_ids is not None:
+            reversed_ids.update(id(member) for member in claim_members)
 
     if not merged_into:
         return clusters
@@ -3655,33 +3613,52 @@ def _merge_combat_claim_bouts(
 _REVERSED_ANCHORED_CLAIM_LEAGUES: frozenset[str] = frozenset(
     {"basketball_wncaab", "basketball_euroleague"}
 )
+_REVERSED_SAME_DAY_ANCHORED_CLAIM_LEAGUES: frozenset[str] = frozenset(
+    {"basketball_wncaab"}
+)
 
 
 def _reversed_claim_league(members: list) -> Optional[str]:
-    """Allowlisted league key shared by every member of the cluster, else ``None``."""
-    keys = set()
+    """Allowlisted league key for a cluster (tolerating same-sport catch-all
+    rows already merged onto it by `_merge_catchall_leagues`), else ``None``."""
+    allowlisted: set[str] = set()
+    catchall_prefixes: set[str] = set()
     for member in members:
         key = loaded_sport_key(member)
-        if not key or key not in _REVERSED_ANCHORED_CLAIM_LEAGUES:
+        if not key:
             return None
-        keys.add(key)
-    return keys.pop() if len(keys) == 1 else None
+        if key in _REVERSED_ANCHORED_CLAIM_LEAGUES:
+            allowlisted.add(key)
+        else:
+            prefix = _catchall_sport_prefix(key)
+            if prefix is None:
+                return None
+            catchall_prefixes.add(prefix)
+    if len(allowlisted) != 1:
+        return None
+    league = allowlisted.pop()
+    league_prefix = league.split("_", 1)[0]
+    if catchall_prefixes and catchall_prefixes != {league_prefix}:
+        return None
+    return league
 
 
 def _merge_reversed_anchored_claim_twins(
     clusters: list[list],
     identities: dict,
     corner_flips: Optional[dict] = None,
+    reversed_ids: Optional[set[int]] = None,
 ) -> list[list]:
-    """Fold a reversed id-less claim onto its same-minute anchored twin (#13142, #13238).
+    """Fold a reversed id-less claim onto its anchored twin (#13142, #13238).
 
     Narrow fail-closed pass for allowlisted leagues where a venue mints rows
     with Home/Away swapped relative to the schedule-anchored row (e.g. WBB
-    claims and Kalshi ``KXEUROLEAGUEGAME`` after ``recover_kalshi_occurrence_starts``
-    aligns its +3h expiration to the tip-off minute). Requires provenance
-    asymmetry, exact minute equality, exact reversed squashed names, 1-to-1
-    uniqueness, live safety, guaranteed anchor election, and valid complement
-    flipping.
+    claims on the same UTC calendar day and Kalshi ``KXEUROLEAGUEGAME`` after
+    ``recover_kalshi_occurrence_starts`` aligns its +3h expiration to the
+    exact tip-off minute). Requires provenance asymmetry, exact minute equality
+    (or same UTC calendar day for ``basketball_wncaab``), exact reversed
+    squashed names (time alone never folds), strict 1-to-1 uniqueness, live
+    safety, guaranteed anchor election, and valid complement flipping.
     """
     anchors: list[int] = []
     claims: list[int] = []
@@ -3701,14 +3678,22 @@ def _merge_reversed_anchored_claim_twins(
     if not anchors or not claims:
         return clusters
 
-    def is_reversed_twin(claim_members: list, anchor_members: list) -> bool:
+    def is_reversed_twin(
+        claim_members: list, anchor_members: list, sport_key: str
+    ) -> bool:
+        same_day_allowed = sport_key in _REVERSED_SAME_DAY_ANCHORED_CLAIM_LEAGUES
         for claim_row in claim_members:
             c_away, c_home, c_min = identities[id(claim_row)]
             if c_away == c_home:
                 return False
             for anchor_row in anchor_members:
                 a_away, a_home, a_min = identities[id(anchor_row)]
-                if c_min != a_min or c_away != a_home or c_home != a_away:
+                if c_away != a_home or c_home != a_away:
+                    return False
+                if same_day_allowed:
+                    if c_min.date() != a_min.date():
+                        return False
+                elif c_min != a_min:
                     return False
         return True
 
@@ -3719,7 +3704,7 @@ def _merge_reversed_anchored_claim_twins(
             anchor
             for anchor in anchors
             if sports[claim] == sports[anchor]
-            and is_reversed_twin(clusters[claim], clusters[anchor])
+            and is_reversed_twin(clusters[claim], clusters[anchor], sports[claim])
         ]
         if len(matches) != 1:
             continue
@@ -3753,6 +3738,8 @@ def _merge_reversed_anchored_claim_twins(
         merged_into[claim] = anchor
         if flips:
             corner_flips.update(flips)
+        if reversed_ids is not None:
+            reversed_ids.update(id(member) for member in claim_members)
 
     if not merged_into:
         return clusters
@@ -3789,6 +3776,7 @@ def _elect(
     keep: set,
     result: "FoldResult",
     corner_flips: Optional[dict] = None,
+    reversed_ids: Optional[set[int]] = None,
 ) -> None:
     """Pick the survivor for one group and union the losers' venues onto it.
 
@@ -3811,6 +3799,8 @@ def _elect(
     # took its place.
     for loser in losers:
         result.survivor_of[loser.id] = survivor.id
+        if id(loser) in flips or (reversed_ids and id(loser) in reversed_ids):
+            result.flipped_loser_ids.add(loser.id)
 
     merged = dict(getattr(survivor, "win_probability_sources", None) or {})
     added = False
