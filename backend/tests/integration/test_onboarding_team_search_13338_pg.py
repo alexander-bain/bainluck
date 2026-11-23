@@ -50,6 +50,8 @@ pytestmark = [
 LA_LIGA = "soccer_spain_la_liga"
 EPL = "soccer_epl"
 UCL = "soccer_uefa_champs_league"
+UCL_WOMEN = "soccer_uefa_champs_league_women"
+CLUB_FRIENDLIES = "soccer_club_friendlies"
 MLS = "soccer_usa_mls"
 NBA = "basketball_nba"
 MLB = "baseball_mlb"
@@ -106,6 +108,8 @@ async def seed_clubs(session):
         (1005, "Oviedo", LA_LIGA, None, []),
         (1006, "Real Betis", LA_LIGA, "244", []),
         (1007, "Barcelona", LA_LIGA, "83", []),
+        (1008, "Real Madrid", UCL, "86", []),
+        (1009, "Real Madrid", UCL_WOMEN, "22758", []),
         (1010, "Manchester City", EPL, "382", []),
         (1011, "Manchester United", EPL, "360", []),
         (1012, "Manchester 62", OTHER, None, []),
@@ -135,6 +139,7 @@ async def seed_clubs(session):
         (1055, "Benjamin Torrealba", "tennis_itf", None, []),
         (1060, "Internazionale", SERIE_A, "110", []),
         (1061, "Inter Milan", SERIE_A, "110", []),
+        (1062, "Real Madrid", CLUB_FRIENDLIES, "86", []),
     ]
     wrong_leagues = [
         (1090, "Montreal Canadiens", MLS),
@@ -513,6 +518,23 @@ async def test_empty_redis_returns_ranked_clubs_then_rebuild_filters(
     assert f"members={receipt['members']} bytes={receipt['bytes']}" in snapshot_lines[1]
     assert "present=True age_s=" in snapshot_lines[1]
     assert all("Tottenham" not in line for line in snapshot_lines)
+
+    madrid = await client.get("/api/me/teams/search", params={"q": "Real Madrid"})
+    assert madrid.status_code == 200
+    clubs = madrid.json()
+    assert {
+        (variant["id"], variant["sport_key"], variant["sport_display"])
+        for variant in clubs[0]["sports"]
+    } == {
+        (1001, LA_LIGA, "La Liga"),
+        (1008, UCL, "UEFA Champions League"),
+        (1062, CLUB_FRIENDLIES, "Club Friendlies"),
+    }
+    assert [(club["id"], club["name"], club["sport_key"]) for club in clubs] == [
+        (1001, "Real Madrid", LA_LIGA),
+        (1009, "Real Madrid (Women)", UCL_WOMEN),
+    ]
+    assert clubs[1]["sports"] == []
 
 
 async def test_unreachable_redis_returns_ranked_clubs(client, monkeypatch):

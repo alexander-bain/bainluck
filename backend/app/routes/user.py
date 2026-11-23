@@ -61,7 +61,12 @@ from app.utils.market_team_sport import (
     sport_key_llm_category as _sport_key_llm_category,
 )
 from app.utils.name_normalization import names_match as _names_match
-from app.utils.sport_keys import is_season_variant
+from app.utils.sport_keys import (
+    SPORT_HIERARCHY,
+    competition_gender,
+    is_season_variant,
+    sport_display_name,
+)
 from app.utils.team_linking import given_name_before_city
 
 logger = logging.getLogger(__name__)
@@ -719,6 +724,12 @@ _TEAM_SEARCH_TIER = {
     "soccer_italy_serie_a": 2,
 }
 _TEAM_SEARCH_SPORT_LABELS = {
+    **{
+        key: league["name"]
+        for sport in SPORT_HIERARCHY.values()
+        for league in sport["leagues"]
+        for key in league["sport_keys"]
+    },
     "basketball_nba": "NBA",
     "americanfootball_nfl": "NFL",
     "baseball_mlb": "MLB",
@@ -733,9 +744,26 @@ _TEAM_SEARCH_SPORT_LABELS = {
     "soccer_germany_bundesliga": "Bundesliga",
     "soccer_italy_serie_a": "Serie A",
     "soccer_france_ligue_one": "Ligue 1",
+    "soccer_uefa_champs_league": "UEFA Champions League",
+    "soccer_uefa_champs_league_women": "UEFA Women's Champions League",
     "icehockey_ncaa": "NCAA Hockey",
     "baseball_ncaa": "NCAA Baseball",
 }
+
+
+def _team_search_sport_display(sport_key: str) -> str:
+    label = _TEAM_SEARCH_SPORT_LABELS.get(sport_key)
+    if label:
+        return label
+
+    _, _, league = sport_key.partition("_")
+    if league and league != "other":
+        label = league.replace("_", " ").strip().title()
+        if label:
+            return label
+    return sport_display_name(sport_key, sport_key) or "Sport"
+
+
 _TEAM_SEARCH_PRO_LEAGUES = frozenset(
     key for key in _TEAM_SEARCH_TIER if "_ncaa" not in key
 ) | {"soccer_france_ligue_one"}
@@ -1007,11 +1035,10 @@ async def search_teams(
         key = team.id
         if team.espn_id and sport_key.startswith("soccer_"):
             key = (team.espn_id, " ".join(team.name.casefold().split()))
-        display = _TEAM_SEARCH_SPORT_LABELS.get(
-            sport_key, sport_key.split("_", 1)[-1].upper()
-        )
         variant = TeamSportVariant(
-            id=team.id, sport_key=sport_key, sport_display=display
+            id=team.id,
+            sport_key=sport_key,
+            sport_display=_team_search_sport_display(sport_key),
         )
         if key in groups:
             groups[key].sports.append(variant)
@@ -1027,7 +1054,20 @@ async def search_teams(
             )
 
     results = list(groups.values())[:20]
+    mens_soccer_names = {
+        result.name.casefold()
+        for result in results
+        if (result.sport_key or "").startswith("soccer_")
+        and competition_gender(result.sport_key) == "men"
+    }
     for result in results:
+        # A single-competition result displays its team name in the installed app.
+        if (
+            result.name.casefold() in mens_soccer_names
+            and (result.sport_key or "").startswith("soccer_")
+            and competition_gender(result.sport_key) == "women"
+        ):
+            result.name += " (Women)"
         if len(result.sports) == 1:
             result.sports = []
     return results
