@@ -175,7 +175,10 @@ def _make_batch7_snapshot() -> dict:
         _mkt(70732968, "Bundesliga: 2027 Champion", "soccer", [(707329681, "Bayern Munich", 0.76), (707329682, "Borussia Dortmund", 0.16), (707329683, "RB Leipzig", 0.04)], sport="soccer_germany_bundesliga"),
         _mkt(70732922, "Ligue 1: 2027 Champion", "soccer", [(707329221, "Paris Saint-Germain", 0.90), (707329222, "Lille", 0.02), (707329223, "Monaco", 0.02)], sport="soccer_france_ligue_one"),
         _mkt(24647105, "What will OpenAI's IPO valuation be?", "tech", [(246471051, "<$1T", 0.33), (246471052, "$1.0T–$1.25T", 0.22), (246471053, "$1.25T–$1.5T", 0.21)]),
-        _mkt(60607595, "OpenAI announces another Millennium Prize solution by...?", "tech", [(606075951, "December 31, 2027", 0.58), (606075952, "December 31, 2026", 0.10)]),
+        _mkt(68836748, "SpaceX’s Market Cap end of December 2026?", "tech", [(688367481, "$1.70-$2.00T", 0.30), (688367482, "$1.10-$1.40T", 0.25), (688367483, "$1.40-$1.70T", 0.24)]),
+        _mkt(70088624, "Will Jensen Huang join SpaceX by...?", "tech", [(700886241, "December 31, 2027", 0.24), (700886242, "March 31, 2027", 0.10), (700886243, "December 31, 2026", 0.04)]),
+        _mkt(52755607, "Will SpaceX acquire any major U.S. telecom business before 2028?", "tech", [(527556071, "Yes", 0.38)]),
+        _mkt(115378, "SpaceX or OpenAI higher IPO Market Cap?", "tech", [(1153781, "SpaceX", 0.78), (1153782, "OpenAI", 0.22)]),
         _mkt(109358, "Will 2026 be the hottest year ever?", "weather", [(1093581, "Yes", 0.91)]),
         _mkt(108220, "Will the world pass 2 degrees Celsius over pre-industrial levels before 2050?", "weather", [(1082201, "Yes", 0.69)]),
         _mkt(61054994, "Will the 2026–27 El Niño be the strongest on record?", "weather", [(610549941, "Yes", 0.58)]),
@@ -190,9 +193,17 @@ def _make_batch7_snapshot() -> dict:
             {"timestamp": (NOW - timedelta(days=5)).isoformat(), "probability": 0.33},
             {"timestamp": (NOW - timedelta(days=1)).isoformat(), "probability": 0.21},
         ],
-        606075951: [
-            {"timestamp": (NOW - timedelta(days=5)).isoformat(), "probability": 0.44},
-            {"timestamp": (NOW - timedelta(days=1)).isoformat(), "probability": 0.58},
+        688367481: [
+            {"timestamp": (NOW - timedelta(days=5)).isoformat(), "probability": 0.18},
+            {"timestamp": (NOW - timedelta(days=1)).isoformat(), "probability": 0.30},
+        ],
+        700886241: [
+            {"timestamp": (NOW - timedelta(days=5)).isoformat(), "probability": 0.12},
+            {"timestamp": (NOW - timedelta(days=1)).isoformat(), "probability": 0.24},
+        ],
+        527556071: [
+            {"timestamp": (NOW - timedelta(days=5)).isoformat(), "probability": 0.26},
+            {"timestamp": (NOW - timedelta(days=1)).isoformat(), "probability": 0.38},
         ],
     }
     reg = json.loads(_PAIRED_REGISTER_PATH.read_text(encoding="utf-8"))
@@ -249,7 +260,7 @@ async def test_batch7_eight_sets_cover_all_eight_visual_forms_and_clean_copy() -
         if card["form_id"] == "probability_history_chart":
             assert card["title"] == "The chance OpenAI lists below $1T rose 15 points since Nov 17"
             assert card["subtitle"] == (
-                "Pricing on OpenAI's IPO valuation and Millennium Prize milestones shifted sharply over the past week."
+                "Pricing on SpaceX and OpenAI milestones shifted sharply over the past week."
             )
             assert card["mini_chart"]["title"] == "OpenAI's IPO valuation"
             assert len(card["rows"]) == 3
@@ -354,9 +365,13 @@ async def test_batch7_fable_fixes_big_ten_college_slate_and_history_first_to_las
             {"timestamp": (NOW - timedelta(days=3)).isoformat(), "probability": 0.40},
             {"timestamp": (NOW - timedelta(days=1)).isoformat(), "probability": 0.30},
         ],
-        606075951: [
-            {"timestamp": (NOW - timedelta(days=2)).isoformat(), "probability": 0.52},
-            {"timestamp": (NOW - timedelta(days=1)).isoformat(), "probability": 0.58},
+        688367481: [
+            {"timestamp": (NOW - timedelta(days=5)).isoformat(), "probability": 0.18},
+            {"timestamp": (NOW - timedelta(days=1)).isoformat(), "probability": 0.30},
+        ],
+        700886241: [
+            {"timestamp": (NOW - timedelta(days=5)).isoformat(), "probability": 0.12},
+            {"timestamp": (NOW - timedelta(days=1)).isoformat(), "probability": 0.24},
         ],
     }
     tech_defn = load_machinery_definition(CANDIDATES_DIR / "machinery-tech-and-space-movers.json")
@@ -368,7 +383,32 @@ async def test_batch7_fable_fixes_big_ten_college_slate_and_history_first_to_las
     assert ranged_card["title"] == "The chance OpenAI lists below $1T has ranged from 27% to 40% since Nov 17"
     assert "rose" not in ranged_card["title"] and "fell" not in ranged_card["title"]
 
-    # When peak-to-trough range itself is < 10, it falls back to benchmark_strip + JWST photo.
+    # SpaceX Market Cap leading chart headline formats range naturally.
+    b7_db_spacex = _make_batch7_snapshot()
+    b7_db_spacex["market_histories"] = {
+        688367481: [
+            {"timestamp": (NOW - timedelta(days=5)).isoformat(), "probability": 0.15},
+            {"timestamp": (NOW - timedelta(days=1)).isoformat(), "probability": 0.30},
+        ],
+        700886241: [
+            {"timestamp": (NOW - timedelta(days=5)).isoformat(), "probability": 0.12},
+            {"timestamp": (NOW - timedelta(days=1)).isoformat(), "probability": 0.24},
+        ],
+        527556071: [
+            {"timestamp": (NOW - timedelta(days=5)).isoformat(), "probability": 0.26},
+            {"timestamp": (NOW - timedelta(days=1)).isoformat(), "probability": 0.38},
+        ],
+    }
+    spx_res = await produce_container_machinery(b7_db_spacex, tech_defn, now=NOW)
+    spx_card = sanitize_discover_feed_item(
+        compose_roundup_feed_item(build_container_machinery_producer(tech_defn), spx_res)
+    )["data"]["roundup"]["machinery_card"]
+    assert spx_card["form_id"] == "probability_history_chart"
+    assert spx_card["title"] == "The chance SpaceX ends 2026 valued between $1.70T and $2.00T rose 15 points since Nov 17"
+    assert len(spx_card["rows"]) == 3
+
+    # When peak-to-trough range itself is < 10 across all items, it falls back to
+    # benchmark_strip + JWST photo with >=3 rows naming each leading outcome explicitly.
     b7_db = _make_batch7_snapshot()
     b7_db["market_histories"] = {
         246471051: [
@@ -376,9 +416,9 @@ async def test_batch7_fable_fixes_big_ten_college_slate_and_history_first_to_las
             {"timestamp": (NOW - timedelta(days=3)).isoformat(), "probability": 0.32},
             {"timestamp": (NOW - timedelta(days=1)).isoformat(), "probability": 0.30},
         ],
-        606075951: [
-            {"timestamp": (NOW - timedelta(days=2)).isoformat(), "probability": 0.52},
-            {"timestamp": (NOW - timedelta(days=1)).isoformat(), "probability": 0.58},
+        688367481: [
+            {"timestamp": (NOW - timedelta(days=2)).isoformat(), "probability": 0.25},
+            {"timestamp": (NOW - timedelta(days=1)).isoformat(), "probability": 0.30},
         ],
     }
     tech_res = await produce_container_machinery(b7_db, tech_defn, now=NOW)
@@ -389,20 +429,17 @@ async def test_batch7_fable_fixes_big_ten_college_slate_and_history_first_to_las
         compose_roundup_feed_item(build_container_machinery_producer(tech_defn), tech_res)
     )["data"]["roundup"]["machinery_card"]
     assert "James_Webb_Primary_Mirror.jpg" in str(tech_card.get("image_url") or "")
+    assert len(tech_card["rows"]) == 3
+    row_labels = [str(r.get("name") or r.get("label") or "") for r in tech_card["rows"]]
+    assert "OpenAI lists below $1T" in row_labels
+    assert "OpenAI's IPO valuation" not in row_labels
+    assert any("SpaceX" in lbl for lbl in row_labels)
+    page_titles = [str(it.get("title") or "") for it in tech_container["sections"][0]["visual_block"]["items"]]
+    assert "OpenAI lists below $1T" in page_titles
+    assert "OpenAI's IPO valuation" not in page_titles
 
     # And when the history DOES move >= 10 pts first-to-last, mini_chart is kept and image_url is omitted.
     b7_db_moved = _make_batch7_snapshot()
-    b7_db_moved["market_histories"] = {
-        246471051: [
-            {"timestamp": (NOW - timedelta(days=5)).isoformat(), "probability": 0.18},
-            {"timestamp": (NOW - timedelta(days=3)).isoformat(), "probability": 0.25},
-            {"timestamp": (NOW - timedelta(days=1)).isoformat(), "probability": 0.30},
-        ],
-        606075951: [
-            {"timestamp": (NOW - timedelta(days=2)).isoformat(), "probability": 0.52},
-            {"timestamp": (NOW - timedelta(days=1)).isoformat(), "probability": 0.58},
-        ],
-    }
     moved_res = await produce_container_machinery(b7_db_moved, tech_defn, now=NOW)
     moved_card = sanitize_discover_feed_item(
         compose_roundup_feed_item(build_container_machinery_producer(tech_defn), moved_res)

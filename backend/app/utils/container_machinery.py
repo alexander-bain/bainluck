@@ -3827,6 +3827,55 @@ def _format_history_start_date(ts_iso: str) -> str:
         return ""
 
 
+def _format_valuation_range_phrase(raw_out: str) -> str:
+    """Turn bucket strings like `<$1T` or `$1.70-$2.00T` into readable prose."""
+    text = str(raw_out or "").strip()
+    if text.startswith("<"):
+        return f"below {text[1:].strip()}"
+    if text.startswith(">"):
+        return f"above {text[1:].strip()}"
+    if text.endswith("+"):
+        return f"at {text[:-1].strip()} or more"
+    if "–" in text or "-" in text:
+        parts = [p.strip() for p in re.split(r"[–-]", text, maxsplit=1)]
+        if len(parts) == 2:
+            lo_p, hi_p = parts
+            suffix_m = re.search(r"([TBM])\Z", hi_p)
+            if suffix_m and lo_p.startswith("$") and not re.search(r"[TBM]\Z", lo_p):
+                lo_p = f"{lo_p}{suffix_m.group(1)}"
+            return f"between {lo_p} and {hi_p}"
+    return f"at {text}"
+
+
+def _format_benchmark_row_title(
+    title: str,
+    lead_outcome_name: str,
+    *,
+    headline_phrase: Optional[str] = None,
+) -> str:
+    """Ensure multi-outcome benchmark rows name their leading outcome cleanly."""
+    clean_title = str(title or "").strip()
+    ans = str(lead_outcome_name or "").strip().rstrip("?").strip()
+    if not ans or ans.lower() in {"yes", "no"}:
+        return clean_title
+    if ans.lower() in clean_title.lower():
+        return clean_title
+    hp = str(headline_phrase or "").strip().rstrip("?").strip()
+    for suffix in (" at {pct}%", " ({pct}%)"):
+        if hp.endswith(suffix):
+            candidate = hp[: -len(suffix)].strip()
+            if candidate and "{pct}" not in candidate and "{" not in candidate:
+                return candidate
+    if ans.startswith("<"):
+        ans_for_row = f"below {ans[1:].strip()}"
+    elif ans.startswith(">"):
+        ans_for_row = f"above {ans[1:].strip()}"
+    else:
+        ans_for_row = ans
+    formatted, _ = _format_fun_lead_answer_label(clean_title, ans_for_row)
+    return formatted
+
+
 def _format_history_chance_clause(market_title: str, outcome_name: str) -> str:
     raw_title = str(market_title or "").strip().rstrip("?")
     low_title = raw_title.lower()
@@ -3836,23 +3885,37 @@ def _format_history_chance_clause(market_title: str, outcome_name: str) -> str:
 
     if "ipo valuation" in low_title or "openai's ipo" in low_title:
         subject = "OpenAI" if "openai" in low_title else raw_title.split("'", 1)[0].strip()
-        if raw_out.startswith("<"):
-            val_phrase = f"below {raw_out[1:].strip()}"
-        elif raw_out.startswith(">"):
-            val_phrase = f"above {raw_out[1:].strip()}"
-        elif raw_out.endswith("+"):
-            val_phrase = f"at {raw_out[:-1].strip()} or more"
-        elif "–" in raw_out or "-" in raw_out:
-            parts = [p.strip() for p in re.split(r"[–-]", raw_out, maxsplit=1)]
-            val_phrase = f"between {parts[0]} and {parts[1]}" if len(parts) == 2 else raw_out
-        else:
-            val_phrase = f"at {raw_out}"
+        val_phrase = _format_valuation_range_phrase(raw_out)
         return f"The chance {subject} lists {val_phrase}"
+
+    if "market cap" in low_title and ("<" in raw_out or ">" in raw_out or "-" in raw_out or "–" in raw_out or "$" in raw_out):
+        val_phrase = _format_valuation_range_phrase(raw_out)
+        subject = "SpaceX" if "spacex" in low_title else _prose_market_phrase(raw_title, capitalize_first=True)
+        if "end of 2026" in low_title or "ends 2026" in low_title:
+            return f"The chance {subject} ends 2026 valued {val_phrase}"
+        return f"The chance {subject} closes valued {val_phrase}"
+
+    if "spacex" in low_title and "openai" in low_title and "ipo" in low_title:
+        out_low = raw_out.lower()
+        if "spacex" in out_low:
+            return "The chance SpaceX finishes with a higher IPO cap than OpenAI"
+        if "openai" in out_low:
+            return "The chance OpenAI finishes with a higher IPO cap than SpaceX"
 
     if "millennium prize" in low_title:
         if "openai" in low_title:
             return f"The chance OpenAI solves a Millennium Prize problem by {raw_out}"
         return f"The chance a Millennium Prize problem is solved by {raw_out}"
+
+    if _PREP_DATE_OUTCOME_RE.match(raw_out):
+        m_prep = _PREP_DATE_OUTCOME_RE.match(raw_out)
+        assert m_prep is not None
+        prep = m_prep.group(1).lower()
+        rest = m_prep.group(2).strip()
+        return f"The chance {raw_title} {prep} {rest}"
+    if _BARE_MONTH_DAY_RE.match(raw_out) or _BARE_MONTH_YEAR_OR_YEAR_RE.match(raw_out):
+        prep = "in" if _BARE_MONTH_YEAR_OR_YEAR_RE.match(raw_out) else "by"
+        return f"The chance {raw_title} {prep} {raw_out}"
 
     phrase = _prose_market_phrase(raw_title, capitalize_first=False)
     if raw_out.lower() in {"yes", "no", ""}:
@@ -4703,11 +4766,22 @@ async def produce_container_machinery(
                     )
                     if not all_tiles_pictured:
                         form_id = "benchmark_strip"
-                        for fm_it in fallback_matched:
-                            outs = list(fm_it.get("outcomes") or ())[:1]
-                            fm_it["outcomes"] = outs
-                            if isinstance(fm_it.get("card"), dict):
-                                fm_it["card"]["outcomes"] = [dict(o) for o in outs]
+                if form_id == "benchmark_strip" and max_outcomes > 1:
+                    for fm_it in fallback_matched:
+                        outs = list(fm_it.get("outcomes") or ())[:1]
+                        fm_it["outcomes"] = outs
+                        if outs:
+                            lead_name = str(outs[0].get("name") or "").strip()
+                            fm_it["title"] = _format_benchmark_row_title(
+                                str(fm_it.get("title") or ""),
+                                lead_name,
+                                headline_phrase=fm_it.get("headline_phrase"),
+                            )
+                        if isinstance(fm_it.get("card"), dict):
+                            fm_it["card"]["outcomes"] = [dict(o) for o in outs]
+                            fm_it["card"]["name"] = str(
+                                fm_it.get("title") or fm_it["card"].get("name") or ""
+                            )
                 eff_title, eff_note = _resolve_section_heading(
                     sec_cfg,
                     aq_kind="market_history",
