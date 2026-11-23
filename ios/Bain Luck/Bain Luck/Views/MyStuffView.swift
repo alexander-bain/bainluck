@@ -35,9 +35,15 @@ struct MyStuffView: View {
     /// which is today's behaviour. The account-change rebind below still runs
     /// on whichever models the screen holds.
     private let macPlace: MacReadingPlace<MacReadingState10878.MyStuffModels>?
+    #if DEBUG
+    private let forceTeamFeedForTest: Bool
+    #endif
 
     init(macPlace: MacReadingPlace<MacReadingState10878.MyStuffModels>? = nil) {
         self.macPlace = macPlace
+        #if DEBUG
+        self.forceTeamFeedForTest = false
+        #endif
         _vm = StateObject(wrappedValue: macPlace?.models(orMake: { MacReadingState10878.MyStuffModels() }).feed ?? MyStuffViewModel())
         _pinContent = StateObject(wrappedValue: macPlace?.models(orMake: { MacReadingState10878.MyStuffModels() }).pins ?? SavedPinContentViewModel())
         _landingVM = StateObject(wrappedValue: MyStuffLandingViewModel295A())
@@ -47,6 +53,7 @@ struct MyStuffView: View {
     #if DEBUG
     init(viewModelForTest: MyStuffViewModel) {
         self.macPlace = nil
+        self.forceTeamFeedForTest = true
         _vm = StateObject(wrappedValue: viewModelForTest)
         _pinContent = StateObject(wrappedValue: SavedPinContentViewModel())
         _landingVM = StateObject(wrappedValue: MyStuffLandingViewModel295A())
@@ -55,6 +62,7 @@ struct MyStuffView: View {
 
     init(preloadedLandingForTest: MyStuffLandingViewModel295A.PreloadedSnapshot) {
         self.macPlace = nil
+        self.forceTeamFeedForTest = false
         _vm = StateObject(wrappedValue: MyStuffViewModel())
         _pinContent = StateObject(wrappedValue: SavedPinContentViewModel())
         _landingVM = StateObject(wrappedValue: MyStuffLandingViewModel295A(preloaded: preloadedLandingForTest))
@@ -88,7 +96,10 @@ struct MyStuffView: View {
     #endif
 
     private var usesLandingView295A: Bool {
-        !followManager.subjects.isEmpty
+        #if DEBUG
+        if forceTeamFeedForTest { return false }
+        #endif
+        return !followManager.subjects.isEmpty
             || hasPins
             || (authManager.isAuthenticated && authManager.user?.onboardingCompleted == true)
     }
@@ -1297,17 +1308,21 @@ private struct PlayoffJourneyCard: View {
 
     private var isAX: Bool { dynamicTypeSize.isAccessibilitySize }
 
+    private var journeyHeaderLogo: some View {
+        TeamLogoView(
+            url: journey.teamLogo,
+            teamName: journey.teamName,
+            color: Color(hex: MyStuffTeamTextColour.logoTintHex(journey.teamColor, colorScheme: colorScheme)),
+            size: 28
+        )
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             // Header: logo + name + PLAYOFFS label
             if isAX {
                 HStack(alignment: .top, spacing: 8) {
-                    TeamLogoView(
-                        url: journey.teamLogo,
-                        teamName: journey.teamName,
-                        color: Color(hex: MyStuffTeamTextColour.logoTintHex(journey.teamColor, colorScheme: colorScheme)),
-                        size: 28
-                    )
+                    journeyHeaderLogo
                     VStack(alignment: .leading, spacing: 2) {
                         Text(journey.teamName)
                             .font(.subheadline)
@@ -1321,12 +1336,7 @@ private struct PlayoffJourneyCard: View {
                 }
             } else {
                 HStack(spacing: 8) {
-                    TeamLogoView(
-                        url: journey.teamLogo,
-                        teamName: journey.teamName,
-                        color: Color(hex: MyStuffTeamTextColour.logoTintHex(journey.teamColor, colorScheme: colorScheme)),
-                        size: 28
-                    )
+                    journeyHeaderLogo
                     Text(journey.teamName)
                         .font(.subheadline)
                         .fontWeight(.medium)

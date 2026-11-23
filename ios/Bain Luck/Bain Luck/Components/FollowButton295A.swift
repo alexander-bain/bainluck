@@ -198,7 +198,7 @@ private struct GameCardTeamFollowBarBody295A: View {
                 TeamLogoView(
                     url: subject.logoUrl,
                     teamName: subject.name,
-                    color: Color(hex: MyStuffTeamTextColour.logoTintHex(subject.primaryColor)),
+                    color: Color(hex: MyStuffTeamTextColour.logoTintHex(subject.primaryColor, colorScheme: colorScheme)),
                     size: 15,
                     sportKey: sportKey,
                     opponentName: entry.opponentName
@@ -207,7 +207,7 @@ private struct GameCardTeamFollowBarBody295A: View {
                 Text(entry.shortName)
                     .font(.caption.weight(.medium))
                     .foregroundStyle(nameInk)
-                    .lineLimit(fullWidth ? 2 : 1)
+                    .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : (fullWidth ? 2 : 1))
                     .fixedSize(horizontal: !fullWidth, vertical: true)
 
                 if fullWidth {
