@@ -47,7 +47,10 @@ if sentry_dsn:
     # WorkerLostError), omitted SoftTimeLimitExceeded entirely, and tested
     # `"redis" in str(exc)` against a message that only ever names the EC2
     # endpoint — so it dropped almost nothing even in the web dyno.
-    from app.utils.sentry_filter import build_before_send
+    from app.utils.sentry_filter import (
+        SENTRY_NO_PII_DATA_COLLECTION,
+        build_before_send,
+    )
 
     _before_send = build_before_send()
 
@@ -56,8 +59,9 @@ if sentry_dsn:
         environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
         release=os.getenv("HEROKU_SLUG_COMMIT"),
         traces_sample_rate=0.1,
-        profiles_sample_rate=0.1,
-        send_default_pii=False,
+        profile_session_sample_rate=0.1,
+        profile_lifecycle="trace",
+        data_collection=SENTRY_NO_PII_DATA_COLLECTION,
         before_send=_before_send,
     )
 

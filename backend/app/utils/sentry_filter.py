@@ -915,6 +915,17 @@ def install_logger_ignores() -> tuple[str, ...]:
     return DUPLICATE_EVENT_LOGGERS
 
 
+#: Explicit zero-PII posture replacing removed ``send_default_pii=False`` in sentry-sdk 3.x.
+#: Without ``data_collection``, sentry-sdk 3.0.0 defaults to collecting user_info, cookies,
+#: request/response bodies, and gen_ai inputs/outputs.
+SENTRY_NO_PII_DATA_COLLECTION: dict[str, Any] = {
+    "user_info": False,
+    "cookies": {"mode": "off"},
+    "http_bodies": [],
+    "gen_ai": {"inputs": False, "outputs": False},
+}
+
+
 def build_before_send() -> Callable[[dict, dict | None], dict | None]:
     """Construct the filter. One instance per process (state is per-process)."""
     install_logger_ignores()
