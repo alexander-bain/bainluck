@@ -653,18 +653,23 @@ def token_overlap_score(name_a: str, name_b: str) -> float:
     norm_b = _expand_abbreviations(normalize_name(name_b))
     if not norm_a or not norm_b:
         return 0.0
-    # Exclude pure numeric/ordinal prefixes ("1.") so clubs like "1. FC Köln" and
+    # Exclude numeric ordinal prefixes ("1.") so clubs like "1. FC Köln" and
     # "1. FC Heidenheim" / "1. FC Nürnberg" cannot hit 0.5 overlap on {"1."}.
-    # Alphanumeric nicknames ("49ers", "76ers") are kept untouched.
+    # Bare club-year numbers ("05" in "FSV Mainz 05") and alphanumeric nicknames
+    # ("49ers", "76ers") are kept untouched.
     words_a = {
         w
         for w in norm_a.split()
-        if w not in _MATCH_STOPWORDS and len(w) > 1 and not w.rstrip(".").isdigit()
+        if w not in _MATCH_STOPWORDS
+        and len(w) > 1
+        and not (w.endswith(".") and w[:-1].isdigit())
     }
     words_b = {
         w
         for w in norm_b.split()
-        if w not in _MATCH_STOPWORDS and len(w) > 1 and not w.rstrip(".").isdigit()
+        if w not in _MATCH_STOPWORDS
+        and len(w) > 1
+        and not (w.endswith(".") and w[:-1].isdigit())
     }
     if not words_a or not words_b:
         return 0.0

@@ -566,7 +566,7 @@ def test_the_lazy_safe_sport_read_is_public_and_its_old_name_still_resolves():
 
 
 def test_measured_euroleague_kalshi_occurrence_is_recovered_13238():
-    """Measured 2026-11-23 across all 4 anchored comparisons: 180m exact pad (#13238)."""
+    """Measured Nov 22 across all 4 anchored comparisons: 180m exact pad (#13238)."""
     from app.utils.kalshi_occurrence_start import (
         KALSHI_MEASURED_OCCURRENCE_SPORTS,
         kalshi_occurrence_hour_is_recoverable,
