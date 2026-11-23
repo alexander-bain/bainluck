@@ -48,9 +48,67 @@ from app.utils.machinery_batch_gate import (  # noqa: E402
     _load_curated_entries_by_sub_tag,
     audit_picture_policy_for_definition,
     audit_public_assembly_for_definition,
+    check_machinery_form_rules,
     check_machinery_wording,
-    discover_changed_machinery_slugs,
 )
+
+
+def discover_changed_machinery_slugs(
+    base_ref: str = "origin/master",
+    repo_root: Optional[Path] = None,
+) -> tuple[str, ...]:
+    """Return machinery definition slugs touched by a branch or working tree."""
+    root = repo_root or _REPO_ROOT
+    all_paths = discover_machinery_candidate_paths()
+    by_slug = {p.stem: p for p in all_paths}
+
+    changed_files: set[str] = set()
+    for cmd in (
+        ["git", "-C", str(root), "diff", "--name-only", f"{base_ref}...HEAD"],
+        ["git", "-C", str(root), "diff", "--name-only"],
+        ["git", "-C", str(root), "diff", "--name-only", "--cached"],
+        ["git", "-C", str(root), "ls-files", "--others", "--exclude-standard"],
+    ):
+        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
+        if proc.returncode == 0:
+            changed_files.update(line.strip() for line in proc.stdout.splitlines() if line.strip())
+
+    slugs: list[str] = []
+    seen: set[str] = set()
+    curated_tags_touched: set[str] = set()
+
+    for rel in sorted(changed_files):
+        p = Path(rel)
+        if (
+            "backend/data/groupings/candidates" in rel
+            and p.name.startswith("machinery-")
+            and p.suffix == ".json"
+        ):
+            stem = p.stem
+            if stem in by_slug and stem not in seen:
+                seen.add(stem)
+                slugs.append(stem)
+        elif rel.startswith("backend/data/groupings/batch") and rel.endswith("_curated_sets.json"):
+            cur_path = root / rel
+            if cur_path.exists():
+                doc = json.loads(cur_path.read_text(encoding="utf-8"))
+                curated_tags_touched.update(
+                    str(k).strip().lower() for k in (doc.get("sets") or {})
+                )
+
+    if curated_tags_touched:
+        for stem, path in sorted(by_slug.items()):
+            if stem in seen:
+                continue
+            defn = load_machinery_definition(path)
+            for sec in defn.get("rule", {}).get("sections") or ():
+                sub_tag = str((sec.get("atom_query") or {}).get("fun_sub_tag") or "").strip().lower()
+                if sub_tag and sub_tag in curated_tags_touched:
+                    seen.add(stem)
+                    slugs.append(stem)
+                    break
+
+    return tuple(slugs)
 
 
 def _sample_outcomes_for_query(
@@ -360,7 +418,13 @@ class _ReadOnlyHistorySkipSession:
         return await self._inner.execute(stmt, *args, **kwargs)
 
 
-async def _load_live_db_snapshot(db_url: str, now: datetime) -> dict[str, Any]:
+async def _run_live_db_audit(
+    definitions: Mapping[str, Mapping[str, Any]],
+    db_url: str,
+    now: datetime,
+    *,
+    require_preview_pass: bool,
+) -> list[PublicAssemblyResult]:
     from sqlalchemy import text
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
@@ -372,13 +436,35 @@ async def _load_live_db_snapshot(db_url: str, now: datetime) -> dict[str, Any]:
 
     engine = create_async_engine(norm_url, isolation_level="AUTOCOMMIT", pool_pre_ping=True)
     factory = async_sessionmaker(engine, expire_on_commit=False)
+    results: list[PublicAssemblyResult] = []
     try:
         async with factory() as session:
             await session.execute(text("SET default_transaction_read_only = on"))
-            await session.execute(text("SET statement_timeout = '6000ms'"))
-            return await _load_snapshot_from_db(_ReadOnlyHistorySkipSession(session), now=now)
+            await session.execute(text("SET statement_timeout = '8000ms'"))
+            skip_session = _ReadOnlyHistorySkipSession(session)
+            for _slug, defn in definitions.items():
+                has_hist = any(
+                    ((sec.get("atom_query") or {}).get("kind") == "market_history")
+                    for sec in ((defn.get("rule") or {}).get("sections") or ())
+                    if isinstance(sec, Mapping)
+                )
+                snapshot = await _load_snapshot_from_db(
+                    session if has_hist else skip_session,
+                    defn,
+                    now,
+                )
+                results.append(
+                    await audit_public_assembly_for_definition(
+                        defn,
+                        snapshot,
+                        now=now,
+                        require_preview_pass=require_preview_pass,
+                        check_tile_pictures=True,
+                    )
+                )
     finally:
         await engine.dispose()
+    return results
 
 
 def _audit_live_api(
@@ -444,8 +530,14 @@ def _audit_live_api(
             slug=slug,
         )
         pic_res = audit_picture_policy_for_definition(defn, card=card)
+        form_res = check_machinery_form_rules(
+            card=card,
+            container=container,
+            slug=slug,
+            check_tile_pictures=True,
+        )
         member_count = int(container.get("member_count") or 0)
-        ok = wording_res.ok and pic_res.ok and member_count >= max(1, min_items)
+        ok = wording_res.ok and pic_res.ok and form_res.ok and member_count >= max(1, min_items)
         results.append(
             PublicAssemblyResult(
                 slug=slug,
@@ -464,6 +556,7 @@ def _audit_live_api(
                 member_count=member_count,
                 wording=wording_res,
                 picture=pic_res,
+                form_rules=form_res,
                 card=dict(card) if isinstance(card, Mapping) else None,
                 container=dict(container),
                 feed_item=feed_item,
@@ -479,23 +572,24 @@ async def _run_snapshot_audit(
     require_preview_pass: bool,
 ) -> list[PublicAssemblyResult]:
     now = datetime.now(timezone.utc)
-    shared_snapshot: Optional[dict[str, Any]] = None
     if live_db_url:
-        shared_snapshot = await _load_live_db_snapshot(live_db_url, now)
+        return await _run_live_db_audit(
+            definitions,
+            live_db_url,
+            now,
+            require_preview_pass=require_preview_pass,
+        )
 
     results: list[PublicAssemblyResult] = []
-    for slug, defn in definitions.items():
-        snapshot = (
-            shared_snapshot
-            if shared_snapshot is not None
-            else build_synthetic_snapshot_for_definition(defn, now=now)
-        )
+    for _slug, defn in definitions.items():
+        snapshot = build_synthetic_snapshot_for_definition(defn, now=now)
         results.append(
             await audit_public_assembly_for_definition(
                 defn,
                 snapshot,
                 now=now,
                 require_preview_pass=require_preview_pass,
+                check_tile_pictures=False,
             )
         )
     return results
@@ -550,6 +644,9 @@ def _print_summary(results: list[PublicAssemblyResult]) -> None:
         if r.picture:
             for err in r.picture.errors:
                 print(f"  PICTURE_ERR [{err.rule}] @ {err.location}: {err.detail}")
+        if r.form_rules:
+            for err in r.form_rules.errors:
+                print(f"  FORM_ERR [{err.rule}] @ {err.location}: {err.detail} ({err.text!r})")
         if r.parity_mismatches:
             print(f"  PARITY_ERR ({len(r.parity_mismatches)}): {r.parity_mismatches[0]}")
 
