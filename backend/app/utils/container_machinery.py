@@ -2728,6 +2728,67 @@ def _build_scoped_open_market_scan_stmt(cat_pool: tuple[str, ...]):
     return union_all(arm_cat, arm_null)
 
 
+def _build_machinery_history_lateral_stmt(
+    wanted_oids: Sequence[int],
+    cutoff: datetime,
+    *,
+    per_outcome_limit: int = 96,
+):
+    """Per-outcome newest-``per_outcome_limit`` snapshot query via ``LATERAL`` (#13475).
+
+    Lets PostgreSQL run one backward index scan per ``outcome_id`` on
+    ``idx_fos_outcome_captured(outcome_id, captured_at)`` stopping at
+    ``LIMIT per_outcome_limit``, instead of materializing and sorting a full
+    168-hour ``ROW_NUMBER()`` window across every outcome before discarding ``rn > 96``.
+    """
+    from sqlalchemy import Integer, column, select, true, values
+
+    from app.models.models import FuturesOddsSnapshot
+
+    unique_oids = sorted({int(oid) for oid in wanted_oids})
+    if not unique_oids:
+        return (
+            select(
+                FuturesOddsSnapshot.outcome_id,
+                FuturesOddsSnapshot.captured_at,
+                FuturesOddsSnapshot.probability,
+            )
+            .where(FuturesOddsSnapshot.id == -1)
+        )
+    want = values(
+        column("outcome_id", Integer),
+        name="want_outcomes",
+    ).data([(oid,) for oid in unique_oids])
+    per_outcome = (
+        select(
+            FuturesOddsSnapshot.outcome_id.label("outcome_id"),
+            FuturesOddsSnapshot.captured_at.label("captured_at"),
+            FuturesOddsSnapshot.probability.label("probability"),
+        )
+        .where(
+            FuturesOddsSnapshot.outcome_id == want.c.outcome_id,
+            FuturesOddsSnapshot.captured_at >= cutoff,
+            FuturesOddsSnapshot.captured_at.isnot(None),
+        )
+        .order_by(FuturesOddsSnapshot.captured_at.desc())
+        .limit(int(per_outcome_limit))
+        .lateral("recent_history")
+    )
+    return (
+        select(
+            per_outcome.c.outcome_id,
+            per_outcome.c.captured_at,
+            per_outcome.c.probability,
+        )
+        .select_from(want)
+        .join(per_outcome, true())
+        .order_by(
+            per_outcome.c.outcome_id.asc(),
+            per_outcome.c.captured_at.asc(),
+        )
+    )
+
+
 async def _load_snapshot_from_db(
     db: Any,
     definition: Mapping[str, Any],
@@ -2761,10 +2822,10 @@ async def _load_snapshot_from_db(
             "team_lookup": snap_team_lookup,
         }
 
-    from sqlalchemy import and_, func, or_, select
+    from sqlalchemy import and_, or_, select
     from sqlalchemy.orm import joinedload
 
-    from app.models.models import Event, FuturesMarket, FuturesOddsSnapshot, Sport
+    from app.models.models import Event, FuturesMarket, Sport
     from app.routes.futures import (
         _apply_verified_title_to_detail,
         _fleet_newest_observation,
@@ -3343,33 +3404,8 @@ async def _load_snapshot_from_db(
                         wanted_oids.add(int(o_d["id"]))
             if wanted_oids:
                 cutoff = now_dt - timedelta(hours=max_hours)
-                # Partition by outcome_id so large outcome IDs are never starved behind a global row cap.
-                ranked_subq = (
-                    select(
-                        FuturesOddsSnapshot.outcome_id.label("outcome_id"),
-                        FuturesOddsSnapshot.captured_at.label("captured_at"),
-                        FuturesOddsSnapshot.probability.label("probability"),
-                        func.row_number()
-                        .over(
-                            partition_by=FuturesOddsSnapshot.outcome_id,
-                            order_by=FuturesOddsSnapshot.captured_at.desc(),
-                        )
-                        .label("rn"),
-                    )
-                    .where(
-                        FuturesOddsSnapshot.outcome_id.in_(sorted(wanted_oids)),
-                        FuturesOddsSnapshot.captured_at >= cutoff,
-                    )
-                    .subquery()
-                )
-                h_stmt = (
-                    select(
-                        ranked_subq.c.outcome_id,
-                        ranked_subq.c.captured_at,
-                        ranked_subq.c.probability,
-                    )
-                    .where(ranked_subq.c.rn <= 96)
-                    .order_by(ranked_subq.c.outcome_id.asc(), ranked_subq.c.captured_at.asc())
+                h_stmt = _build_machinery_history_lateral_stmt(
+                    sorted(wanted_oids), cutoff
                 )
                 for oid_val, cap_at, prob_val in (await db.execute(h_stmt)).all():
                     oid = int(oid_val)
