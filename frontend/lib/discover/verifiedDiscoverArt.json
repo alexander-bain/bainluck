@@ -441,8 +441,7 @@
     {
       "entity_key": "where-is-my-husband-raye",
       "aliases": [
-        "WHERE IS MY HUSBAND! - RAYE",
-        "RAYE"
+        "WHERE IS MY HUSBAND! - RAYE"
       ],
       "kind": "song",
       "presentation": "cover",
@@ -732,7 +731,8 @@
       "presentation": "portrait",
       "verified_subject": "Christopher Nolan, filmmaker",
       "url": "https://image.tmdb.org/t/p/w185/xuAIuYSmsUzKlUMBFGVZaWsY3DZ.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 525
     },
     {
       "entity_key": "denis-villeneuve",
@@ -743,7 +743,8 @@
       "presentation": "portrait",
       "verified_subject": "Denis Villeneuve, filmmaker",
       "url": "https://image.tmdb.org/t/p/w185/xzQYqb4nR8xT7Zdw5itbEL9K3fd.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 137427
     },
     {
       "entity_key": "nathan-fielder",
@@ -754,7 +755,8 @@
       "presentation": "portrait",
       "verified_subject": "Nathan Fielder, filmmaker and actor",
       "url": "https://image.tmdb.org/t/p/w185/x0UOcjml8WnBfnb89QOh0iXM0w0.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1212667
     },
     {
       "entity_key": "javier-calvo-ambrossi",
@@ -767,7 +769,8 @@
       "presentation": "portrait",
       "verified_subject": "Javier Calvo, Spanish filmmaker",
       "url": "https://image.tmdb.org/t/p/w185/4XfEHAholH6DI1flBpQDHYGSC1l.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1443615
     },
     {
       "entity_key": "martin-mcdonagh",
@@ -778,7 +781,8 @@
       "presentation": "portrait",
       "verified_subject": "Martin McDonagh, playwright and filmmaker",
       "url": "https://image.tmdb.org/t/p/w185/s44uliUJ8ksUKNpP0822cM2NBkI.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 54472
     },
     {
       "entity_key": "alejandro-inarritu",
@@ -791,7 +795,8 @@
       "presentation": "portrait",
       "verified_subject": "Alejandro G. Iñárritu, filmmaker",
       "url": "https://image.tmdb.org/t/p/w185/opRQx3XlOoXH5EFlm0v8Q3O1ccn.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 223
     },
     {
       "entity_key": "john-malkovich",
@@ -802,7 +807,8 @@
       "presentation": "portrait",
       "verified_subject": "John Malkovich, actor",
       "url": "https://image.tmdb.org/t/p/w185/7GoOdGNc4ra1L0F5nJTkmIB37iu.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 6949
     },
     {
       "entity_key": "andrew-scott",
@@ -813,7 +819,8 @@
       "presentation": "portrait",
       "verified_subject": "Andrew Scott, Irish actor",
       "url": "https://image.tmdb.org/t/p/w185/4F8XpjyQCvtuu21WFm5d8RF5Rl.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 125660
     },
     {
       "entity_key": "matt-damon",
@@ -824,7 +831,8 @@
       "presentation": "portrait",
       "verified_subject": "Matt Damon, actor",
       "url": "https://image.tmdb.org/t/p/w185/aCvBXTAR9B1qRjIRzMBYhhbm1fR.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1892
     },
     {
       "entity_key": "anthony-ippolito",
@@ -835,7 +843,8 @@
       "presentation": "portrait",
       "verified_subject": "Anthony Ippolito, actor",
       "url": "https://image.tmdb.org/t/p/w185/a5wHhLA0HwOHnoajmFGpMRtY6OT.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1496755
     },
     {
       "entity_key": "tom-cruise",
@@ -846,7 +855,8 @@
       "presentation": "portrait",
       "verified_subject": "Tom Cruise, actor",
       "url": "https://image.tmdb.org/t/p/w185/maf8PhSvDCdEwjEMbYfGpojR5RP.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 500
     },
     {
       "entity_key": "ryan-gosling",
@@ -857,7 +867,8 @@
       "presentation": "portrait",
       "verified_subject": "Ryan Gosling, actor",
       "url": "https://image.tmdb.org/t/p/w185/lyUyVARQKhGxaxy0FbPJCQRpiaW.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 30614
     },
     {
       "entity_key": "julianne-moore",
@@ -868,7 +879,8 @@
       "presentation": "portrait",
       "verified_subject": "Julianne Moore, actress",
       "url": "https://image.tmdb.org/t/p/w185/3YF19rWusxWfEI59ZM33dFhasRq.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1231
     },
     {
       "entity_key": "inde-navarrette",
@@ -879,7 +891,8 @@
       "presentation": "portrait",
       "verified_subject": "Inde Navarrette, actress",
       "url": "https://image.tmdb.org/t/p/w185/qlNBUGON8FebgzcqVhhRSVFYSa5.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 2638587
     },
     {
       "entity_key": "sandra-huller",
@@ -891,7 +904,8 @@
       "presentation": "portrait",
       "verified_subject": "Sandra Hüller, German actress",
       "url": "https://image.tmdb.org/t/p/w185/jQfKXVCPTH9KEnzHHU4QemCnlMe.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 7152
     },
     {
       "entity_key": "olivia-wilde",
@@ -901,8 +915,9 @@
       "kind": "person",
       "presentation": "portrait",
       "verified_subject": "Olivia Wilde, actress and filmmaker",
-      "url": "https://image.tmdb.org/t/p/w185/eODi1QKamyVa41eSK2SjU20VAZS.jpg",
-      "credit": "TMDB"
+      "url": "https://image.tmdb.org/t/p/w185/jYopRE6nhYGqpb64fVUKrbJVMy1.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 59315
     },
     {
       "entity_key": "drake",
@@ -1904,7 +1919,8 @@
       "presentation": "portrait",
       "verified_subject": "Florence Pugh TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/qqDsryavx9rwSMhDAxW6OC7oNQg.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1373737
     },
     {
       "entity_key": "kate-o-flynn",
@@ -1916,7 +1932,8 @@
       "presentation": "portrait",
       "verified_subject": "Kate O'Flynn TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/xgQteVK9coyTuXc40WJIyx3TxfU.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 65446
     },
     {
       "entity_key": "david-harbour",
@@ -1927,7 +1944,8 @@
       "presentation": "portrait",
       "verified_subject": "David Harbour TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/qMFtMWlYVtFVyBoBhX5IoA5sN5a.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 35029
     },
     {
       "entity_key": "dtf-st-louis",
@@ -1996,7 +2014,8 @@
       "presentation": "portrait",
       "verified_subject": "Mariah Carey TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/k5vdcaZHKuP4UgHReFWVdo0MXGI.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 66586
     },
     {
       "entity_key": "elon-musk",
@@ -2007,7 +2026,8 @@
       "presentation": "portrait",
       "verified_subject": "Elon Musk TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/i5a0XRXLfu0meGB3g5Sy4qP8pY.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 57563
     },
     {
       "entity_key": "joe-keery",
@@ -2020,7 +2040,8 @@
       "presentation": "portrait",
       "verified_subject": "Joe Keery TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/ayIAVLMfZGEGIFwAo3pPnY7p59.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1467219
     },
     {
       "entity_key": "benedict-cumberbatch",
@@ -2033,7 +2054,8 @@
       "presentation": "portrait",
       "verified_subject": "Benedict Cumberbatch TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/wz3MRiMmoz6b5X3oSzMRC9nLxY1.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 71580
     },
     {
       "entity_key": "the-simpsons",
@@ -2066,7 +2088,8 @@
       "presentation": "portrait",
       "verified_subject": "Caleb McLaughlin TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/4jVS3EziBn7bf97ErxkW7jsdiLM.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1474123
     },
     {
       "entity_key": "coco-jones",
@@ -2077,7 +2100,8 @@
       "presentation": "portrait",
       "verified_subject": "Coco Jones TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/nlCyqeI93ESNFroLw8iP5TVeEPi.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1055595
     },
     {
       "entity_key": "daisy-edgar-jones",
@@ -2088,7 +2112,8 @@
       "presentation": "portrait",
       "verified_subject": "Daisy Edgar-Jones TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/4Fdc3VSoVhkkEZNx5Zpz3AU6DYz.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 2230991
     },
     {
       "entity_key": "the-daily-show",
@@ -2110,7 +2135,8 @@
       "presentation": "portrait",
       "verified_subject": "Brandon Sklenar TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/juLH1EhkY1Xx9Zai2H4icvfn4pD.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1855143
     },
     {
       "entity_key": "kevin-parker",
@@ -2122,7 +2148,8 @@
       "presentation": "portrait",
       "verified_subject": "Kevin Parker TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/pJzgpxdlgYbwezmbzHfsFyjoxj5.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 2261974
     },
     {
       "entity_key": "timoth-e-chalamet",
@@ -2134,7 +2161,8 @@
       "presentation": "portrait",
       "verified_subject": "Timothée Chalamet TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/dFxpwRpmzpVfP1zjluH68DeQhyj.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1190668
     },
     {
       "entity_key": "miley-cyrus",
@@ -2145,7 +2173,8 @@
       "presentation": "portrait",
       "verified_subject": "Miley Cyrus TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/7slnMlDLR1O65U3Hr8gcOmxDlZz.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 76594
     },
     {
       "entity_key": "tulsi-gabbard",
@@ -2156,7 +2185,8 @@
       "presentation": "portrait",
       "verified_subject": "Tulsi Gabbard TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/zVzci4hYUJqxnTGSZqyfbFu9RPq.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 2246606
     },
     {
       "entity_key": "future",
@@ -2167,7 +2197,8 @@
       "presentation": "portrait",
       "verified_subject": "Future TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/d10OaKwgAK8C3AuPz7haBgVc8J2.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 2021205
     },
     {
       "entity_key": "olivia-colman",
@@ -2178,7 +2209,8 @@
       "presentation": "portrait",
       "verified_subject": "Olivia Colman TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/lawJUdbLb1YW0niaYjiVGR9IBG8.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 39187
     },
     {
       "entity_key": "margaret-qualley",
@@ -2189,7 +2221,8 @@
       "presentation": "portrait",
       "verified_subject": "Margaret Qualley TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/r5WeMrU4YLJqRRE3joeOrBVicAH.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1392137
     },
     {
       "entity_key": "ben-whishaw",
@@ -2200,7 +2233,8 @@
       "presentation": "portrait",
       "verified_subject": "Ben Whishaw TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/e74Cz65ifeNb9zHfUTvF5rTix0d.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 17064
     },
     {
       "entity_key": "cillian-murphy",
@@ -2211,7 +2245,8 @@
       "presentation": "portrait",
       "verified_subject": "Cillian Murphy TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/2lKs67r7FI4bPu0AXxMUJZxmUXn.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 2037
     },
     {
       "entity_key": "naomie-harris",
@@ -2222,7 +2257,8 @@
       "presentation": "portrait",
       "verified_subject": "Naomie Harris TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/41TVAcYqKKF7PGf3x7QfaLvkLSW.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 2038
     },
     {
       "entity_key": "boyd-holbrook",
@@ -2233,7 +2269,8 @@
       "presentation": "portrait",
       "verified_subject": "Boyd Holbrook TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/xmkpedcct3ey1d1HGDNsUMQPHcB.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 467645
     },
     {
       "entity_key": "johnny-depp",
@@ -2245,7 +2282,8 @@
       "presentation": "portrait",
       "verified_subject": "Johnny Depp TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/k2xt6EUxQDwYRKIyI4IBdZxfs8n.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 85
     },
     {
       "entity_key": "robert-downey-jr",
@@ -2257,7 +2295,8 @@
       "presentation": "portrait",
       "verified_subject": "Robert Downey Jr. TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/5qHNjhtjMD4YWH3UP0rm4tKwxCL.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 3223
     },
     {
       "entity_key": "frank-ocean",
@@ -2269,7 +2308,8 @@
       "presentation": "portrait",
       "verified_subject": "Frank Ocean TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/761XkeFqrGPA0OKfuJN0LAuXHcg.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1667872
     },
     {
       "entity_key": "stranger-things",
@@ -2293,7 +2333,8 @@
       "presentation": "portrait",
       "verified_subject": "Bryan Johnson TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/7j2EZoDnLzIzDLowTz1pa2M5kA6.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 572591
     },
     {
       "entity_key": "joe-rogan",
@@ -2305,7 +2346,8 @@
       "presentation": "portrait",
       "verified_subject": "Joe Rogan TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/mWb6QIsGGHMdhN9yVGZXCHQIRzS.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 91609
     },
     {
       "entity_key": "mrbeast",
@@ -2318,7 +2360,8 @@
       "presentation": "portrait",
       "verified_subject": "Jimmy Donaldson TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/xB7yokhM69xmaUcNvw3CnE3rXGz.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 2282154
     },
     {
       "entity_key": "sydney-sweeney",
@@ -2330,7 +2373,8 @@
       "presentation": "portrait",
       "verified_subject": "Sydney Sweeney TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/qYiaSl0Eb7G3VaxOg8PxExCFwon.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 115440
     },
     {
       "entity_key": "scooter-braun",
@@ -2341,7 +2385,8 @@
       "presentation": "portrait",
       "verified_subject": "Scooter Braun TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/kjpSj1Z7boL5yazKFLsDrRLuU0E.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 971001
     },
     {
       "entity_key": "lewis-hamilton",
@@ -2353,7 +2398,8 @@
       "presentation": "portrait",
       "verified_subject": "Lewis Hamilton TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/5DTGgay9x3kbacqeGArXlL4Q2Ho.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 216294
     },
     {
       "entity_key": "kendall-jenner",
@@ -2364,7 +2410,8 @@
       "presentation": "portrait",
       "verified_subject": "Kendall Jenner TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/3cC2efbEUEk3bOGU1D5DyP4HkQo.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1549005
     },
     {
       "entity_key": "kylie-jenner",
@@ -2376,7 +2423,8 @@
       "presentation": "portrait",
       "verified_subject": "Kylie Jenner TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/qfT3sFRpjgRZzc2ZKsJFcXpJbhU.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1695682
     },
     {
       "entity_key": "katy-perry",
@@ -2388,7 +2436,8 @@
       "presentation": "portrait",
       "verified_subject": "Katy Perry TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/9U2JJMSlM8mDNSmEWNPvHFcUatl.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 111455
     },
     {
       "entity_key": "justin-trudeau",
@@ -2399,7 +2448,8 @@
       "presentation": "portrait",
       "verified_subject": "Justin Trudeau TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/gFyQlypOoi1A9cBHhg3n9rvXcEx.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1186633
     },
     {
       "entity_key": "tiger-woods",
@@ -2411,7 +2461,8 @@
       "presentation": "portrait",
       "verified_subject": "Tiger Woods TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/cUofgaNgM71mgoXpOUA69A5415w.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1218607
     },
     {
       "entity_key": "tate-mcrae",
@@ -2423,7 +2474,8 @@
       "presentation": "portrait",
       "verified_subject": "Tate McRae TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/8rRZv8x6svFwu7DAcEWg8hfof1h.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 3319748
     },
     {
       "entity_key": "megan-thee-stallion",
@@ -2435,7 +2487,8 @@
       "presentation": "portrait",
       "verified_subject": "Megan Thee Stallion TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/cd10XBENFARLtWxHzHjjFixj6Lw.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 2396830
     },
     {
       "entity_key": "madison-beer",
@@ -2447,7 +2500,8 @@
       "presentation": "portrait",
       "verified_subject": "Madison Beer TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/rS8HInNIFdxElVElAsoxfDt05Fj.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 3141947
     },
     {
       "entity_key": "tom-brady",
@@ -2459,7 +2513,8 @@
       "presentation": "portrait",
       "verified_subject": "Tom Brady TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/2kL8pFhFBCP5EXbHXnS0Eg5wXLy.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1223657
     },
     {
       "entity_key": "kevin-durant",
@@ -2471,7 +2526,8 @@
       "presentation": "portrait",
       "verified_subject": "Kevin Durant TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/zDUqKQP4OE9gM0Y75oOF9OPXGFB.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1009931
     },
     {
       "entity_key": "klay-thompson",
@@ -2482,7 +2538,8 @@
       "presentation": "portrait",
       "verified_subject": "Klay Thompson TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/uL6Oprp7CF3ovRQeD4N4RgHprKh.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1474779
     },
     {
       "entity_key": "beyonce",
@@ -2496,7 +2553,8 @@
       "presentation": "portrait",
       "verified_subject": "Beyoncé TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/2HbjNtiCtmbArEnELuDFU7knaVK.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 14386
     },
     {
       "entity_key": "taylor-swift-person",
@@ -2507,7 +2565,8 @@
       "presentation": "portrait",
       "verified_subject": "Taylor Swift TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/vr4QrJ23Cm8T7Y5sBN3UnnWrZ0q.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 212208
     },
     {
       "entity_key": "dua-lipa",
@@ -2518,7 +2577,8 @@
       "presentation": "portrait",
       "verified_subject": "Dua Lipa TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/aCZmliGT5oDGiF8aKvxFbct5JQm.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1959397
     },
     {
       "entity_key": "harry-styles",
@@ -2529,7 +2589,8 @@
       "presentation": "portrait",
       "verified_subject": "Harry Styles TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/9EKjDDD8Naa7dBH76renIjso6CP.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1052109
     },
     {
       "entity_key": "ralph-fiennes",
@@ -2540,7 +2601,8 @@
       "presentation": "portrait",
       "verified_subject": "Ralph Fiennes TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/tJr9GcmGNHhLVVEH3i7QYbj6hBi.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 5469
     },
     {
       "entity_key": "idris-elba",
@@ -2551,7 +2613,8 @@
       "presentation": "portrait",
       "verified_subject": "Idris Elba TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/be1bVF7qGX91a6c5WeRPs5pKXln.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 17605
     },
     {
       "entity_key": "charles-dance",
@@ -2562,7 +2625,8 @@
       "presentation": "portrait",
       "verified_subject": "Charles Dance TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/28ElvRC5ftOSzZBFM0cn4XrwH36.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 4391
     },
     {
       "entity_key": "anya-taylor-joy",
@@ -2573,7 +2637,8 @@
       "presentation": "portrait",
       "verified_subject": "Anya Taylor-Joy TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/qYNofOjlRke2MlJVihmJmEdQI4v.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1397778
     },
     {
       "entity_key": "dev-patel",
@@ -2584,7 +2649,8 @@
       "presentation": "portrait",
       "verified_subject": "Dev Patel TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/byAo6xoleVSG5O9YpGrQ5YuCRX7.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 76788
     },
     {
       "entity_key": "richard-ayoade",
@@ -2595,7 +2661,8 @@
       "presentation": "portrait",
       "verified_subject": "Richard Ayoade TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/qHKoy9kP4bsv4G9EkvU4FMUmYkS.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 98103
     },
     {
       "entity_key": "oscar-isaac",
@@ -2606,7 +2673,8 @@
       "presentation": "portrait",
       "verified_subject": "Oscar Isaac TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/dW5U5yrIIPmMjRThR9KT2xH6nTz.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 25072
     },
     {
       "entity_key": "barry-keoghan",
@@ -2617,7 +2685,8 @@
       "presentation": "portrait",
       "verified_subject": "Barry Keoghan TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/ngoitknM6hw8fffLywyvjzy6Iti.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1290466
     },
     {
       "entity_key": "adam-driver",
@@ -2628,7 +2697,8 @@
       "presentation": "portrait",
       "verified_subject": "Adam Driver TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/fsbGQ1eZFgdsG1XnKlhNSvHsiGo.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1023139
     },
     {
       "entity_key": "jodie-turner-smith",
@@ -2639,7 +2709,8 @@
       "presentation": "portrait",
       "verified_subject": "Jodie Turner-Smith TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/801hOIFSiYfakVDkX0U3vEAHAMt.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1695989
     },
     {
       "entity_key": "phoebe-dynevor",
@@ -2650,7 +2721,8 @@
       "presentation": "portrait",
       "verified_subject": "Phoebe Dynevor TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/cviluUTn94TaPy9rlVSkHpgGxRR.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1232756
     },
     {
       "entity_key": "jodie-comer",
@@ -2661,7 +2733,8 @@
       "presentation": "portrait",
       "verified_subject": "Jodie Comer TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/AfsBpnfw0E2h8NZK4zkFcOjYlEb.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 1388593
     },
     {
       "entity_key": "anthony-mackie",
@@ -2672,7 +2745,8 @@
       "presentation": "portrait",
       "verified_subject": "Anthony Mackie TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/vecvTm7SimizluJkyIwBxeLbvRm.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 53650
     },
     {
       "entity_key": "steven-yeun",
@@ -2683,7 +2757,8 @@
       "presentation": "portrait",
       "verified_subject": "Steven Yeun TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/fOMFO2Xx4duzpNgS9Q5ytO44yGb.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 215055
     },
     {
       "entity_key": "chiwetel-ejiofor",
@@ -2694,7 +2769,8 @@
       "presentation": "portrait",
       "verified_subject": "Chiwetel Ejiofor TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/kq5DDnqqofoRI0t6ddtRlsJnNPT.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 5294
     },
     {
       "entity_key": "livvy-dunne",
@@ -2707,7 +2783,8 @@
       "presentation": "portrait",
       "verified_subject": "Livvy Dunne TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/bRQLHpnUXyxj0cKGVQ790vdXO76.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 4995597
     },
     {
       "entity_key": "vanessa-trump",
@@ -2718,7 +2795,8 @@
       "presentation": "portrait",
       "verified_subject": "Vanessa Trump TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/w3FwnXSgD5zxcGDNdrl8yHUPJIh.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 2346707
     },
     {
       "entity_key": "nick-bosa",
@@ -2730,7 +2808,8 @@
       "presentation": "portrait",
       "verified_subject": "Nick Bosa TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/yys0PYQNvMCYiopJ0oX1doNrNm8.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 6012363
     },
     {
       "entity_key": "sara-saffari",
@@ -2741,7 +2820,8 @@
       "presentation": "portrait",
       "verified_subject": "Sara Saffari TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/8QanBqK7vBxtxR9pFKDIMbOzGhc.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 6441115
     },
     {
       "entity_key": "jack-hughes",
@@ -2752,7 +2832,8 @@
       "presentation": "portrait",
       "verified_subject": "Jack Hughes TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/tsz08VdCRueP7G3krvi0PZZlYV1.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 6038662
     },
     {
       "entity_key": "kay-adams",
@@ -2763,7 +2844,8 @@
       "presentation": "portrait",
       "verified_subject": "Kay Adams TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/tBpC87y54Ao2htxK1VSVPCJQCyj.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 2776195
     },
     {
       "entity_key": "jaxson-dart",
@@ -2774,7 +2856,8 @@
       "presentation": "portrait",
       "verified_subject": "Jaxson Dart TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/2nL7UXD2hUvh9bj38Jjsdfu6G5O.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 3716708
     },
     {
       "entity_key": "alix-earle",
@@ -2785,7 +2868,59 @@
       "presentation": "portrait",
       "verified_subject": "Alix Earle TMDB portrait",
       "url": "https://image.tmdb.org/t/p/w185/dT4Up3XztHhPeEfyEOHSNejEBVb.jpg",
-      "credit": "TMDB"
+      "credit": "TMDB",
+      "tmdb_person_id": 5016322
+    },
+    {
+      "entity_key": "raye",
+      "aliases": [
+        "RAYE",
+        "Raye"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "RAYE, British singer-songwriter (TMDB person 3108777)",
+      "url": "https://image.tmdb.org/t/p/w185/zA5WXnyg8iH8DPpuXvsmJpPT2n1.jpg",
+      "credit": "TMDB",
+      "tmdb_person_id": 3108777
+    },
+    {
+      "entity_key": "puka-nacua",
+      "aliases": [
+        "Puka Nacua"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Puka Nacua, NFL wide receiver (ESPN headshot 4426515)",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/4426515.png",
+      "credit": "ESPN"
+    },
+    {
+      "entity_key": "obsession-2026",
+      "aliases": [
+        "Obsession"
+      ],
+      "kind": "film",
+      "presentation": "poster",
+      "verified_subject": "Obsession (2026 film), TMDB movie 1339713",
+      "url": "https://image.tmdb.org/t/p/w342/bRwnj8WEKBCvmfeUNOukJPwB43K.jpg",
+      "credit": "TMDB",
+      "tmdb_movie_id": 1339713
+    },
+    {
+      "entity_key": "batch7-extreme-earth-2026",
+      "aliases": [
+        "Climate & Extreme Earth Benchmarks",
+        "Extreme Earth 2026"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Crescent moon seen through Earth's upper atmosphere above cloud tops from the International Space Station (NASA image ISS013-E-54329)",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/be/Top_of_Atmosphere.jpg/960px-Top_of_Atmosphere.jpg",
+      "credit": "NASA Earth Observatory (Public domain, Wikimedia Commons)",
+      "author": "NASA Earth Observatory",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Top_of_Atmosphere.jpg"
     }
   ]
 }
