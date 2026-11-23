@@ -2,6 +2,7 @@
 
 import sqlite3
 from datetime import datetime, timedelta, timezone
+from decimal import Decimal
 from unittest.mock import AsyncMock
 
 import pytest
@@ -36,6 +37,8 @@ def _rsm_market(market_id, end, *, resolved=False):
         marco.is_winner = True
         greyserman.is_winner = False
         hoejgaard.is_winner = False
+        marco.opening_probability = Decimal("0.018400")
+        greyserman.opening_probability = Decimal("0.000000")
         marco.resolution_source = greyserman.resolution_source = "api_settlement"
         hoejgaard.resolution_source = "api_settlement"
     market = _market(
@@ -75,9 +78,17 @@ def tournament_end() -> datetime:
     )
 
 
+@pytest.fixture
+def local_tournament_cache(monkeypatch):
+    monkeypatch.setenv("GOLF_TOURNAMENT_CACHE_REDIS_ENABLED", "0")
+    golf_tournament_cache._reset_for_tests()
+    yield
+    golf_tournament_cache._reset_for_tests()
+
+
 @pytest.mark.usefixtures("opening_seating_off")
 async def test_tournament_futures_and_discover_agree_after_one_venue_grades(
-    client, mock_db, monkeypatch, tournament_end
+    client, mock_db, monkeypatch, tournament_end, local_tournament_cache
 ):
     end = tournament_end
     open_copy = _rsm_market(70502669, end)
@@ -87,7 +98,6 @@ async def test_tournament_futures_and_discover_agree_after_one_venue_grades(
     monkeypatch.setattr(golf, "_get_golf_schedule", AsyncMock(return_value=[schedule]))
     monkeypatch.setattr(golf, "_fetch_24h_snapshots", AsyncMock(return_value={}))
     monkeypatch.setattr(golf, "_attach_pregame", AsyncMock())
-    monkeypatch.setattr(golf_tournament_cache, "get_or_build", _build_without_cache)
     request_cache._reset_last_good_for_tests()
     _install_redis(monkeypatch, _RecordingRedis())
 
@@ -177,14 +187,53 @@ async def test_tournament_futures_and_discover_agree_after_one_venue_grades(
     assert card["data"]["schedule_status"] == "completed"
     assert card["data"]["champion"] == winner["name"] == "Marco Penge"
     assert card["data"]["market_ids"] == [70709343]
+    assert {g["name"]: g["opening_probability"] for g in result["golfers"]} == {
+        "Marco Penge": 0.0184,
+        "Max Greyserman": 0.0,
+        "Rasmus Hojgaard": None,
+    }
     for golfers in (result["golfers"], card["data"]["golfers"]):
         assert golfers[0]["name"] == winner["name"]
         assert golfers[0]["source_mark"] == winner["source_mark"]
         assert [g["probability"] for g in golfers] == [1.0, 0.0, 0.0]
+        for golfer in golfers:
+            for field in (
+                "probability",
+                "opening_probability",
+                "movement_24h",
+                "american_odds",
+                "rank",
+                "rendered_percent",
+                "top_5_prob",
+                "top_10_prob",
+                "top_20_prob",
+                "top_40_prob",
+                "make_cut_prob",
+            ):
+                value = golfer.get(field)
+                assert value is None or type(value) in (int, float), (field, value)
 
 
-async def _build_without_cache(slug, *, builder, **kwargs):
-    return await builder(), "miss"
+async def test_cached_golf_openings_still_decode_on_the_installed_app(
+    client, local_tournament_cache
+):
+    await golf_tournament_cache.publish_tournament_payload_async(
+        "the-rsm-classic",
+        {
+            "tournament": {"schedule_status": "completed"},
+            "golfers": [
+                {"opening_probability": "0.018400"},
+                {"opening_probability": "0.000000"},
+                {"opening_probability": None},
+            ],
+        },
+    )
+    response = await client.get("/api/golf/tournaments/the-rsm-classic")
+    assert response.status_code == 200
+    assert response.headers["X-Feed-Cache"] == "hit"
+    assert [g["opening_probability"] for g in response.json()["golfers"]] == [
+        0.0184, 0.0, None
+    ]
 
 
 def test_a_grade_for_another_edition_or_a_placement_cannot_close_the_tournament(

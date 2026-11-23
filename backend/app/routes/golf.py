@@ -12,6 +12,7 @@ import sys
 import time
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
+from decimal import Decimal
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -4387,6 +4388,16 @@ def _settled_outcome_signal(outcome) -> float | None:
     return None
 
 
+def _golf_opening_probability(value: Decimal | float | str | None) -> float | None:
+    if value is None:
+        return None
+    try:
+        probability = float(value)
+    except (TypeError, ValueError):
+        return None
+    return round(probability, 4) if 0.0 <= probability <= 1.0 else None
+
+
 def _assemble_completed_winner_field(
     tournament_markets: list,
 ) -> tuple[list[dict], list[int], list[str], list[str]]:
@@ -4450,7 +4461,9 @@ def _assemble_completed_winner_field(
                         "probability": prob,
                         "american_odds": outcome.current_american_odds,
                         "movement_24h": None,
-                        "opening_probability": outcome.opening_probability,
+                        "opening_probability": _golf_opening_probability(
+                            outcome.opening_probability
+                        ),
                         "rank": 0,
                         "sources": {},
                         "won": False,
@@ -4798,12 +4811,18 @@ async def get_golf_tournament_cached_payload(
     300s-idle envelope kept warm by the in-play DataGolf poll and settlement
     hooks, with singleflight coalescing cold misses onto one build.
     """
-    return await golf_tournament_cache.get_or_build(
+    payload, state = await golf_tournament_cache.get_or_build(
         slug,
         builder=lambda: get_golf_tournament(slug=slug, db=db),
         bg_builder=lambda: _bg_build_golf_tournament(slug),
         fresh=fresh,
     )
+    # The previous cache writer serialized Decimal readings as strings.
+    for golfer in payload.get("golfers") or ():
+        opening = golfer.get("opening_probability")
+        if isinstance(opening, str):
+            golfer["opening_probability"] = _golf_opening_probability(opening)
+    return payload, state
 
 
 async def warm_golf_tournament_pages(
