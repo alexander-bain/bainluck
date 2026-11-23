@@ -124,6 +124,7 @@ from app.utils.event_taxonomy import compute_event_tags, compute_market_tags
 from app.utils.market_display_name import (
     elided_trailing_preposition,
     fill_market_display_name_blank,
+    futures_reader_name,
 )
 from app.utils.hero_probability import resolve_hero
 from app.utils.probability_eligibility import is_refused
@@ -10759,7 +10760,7 @@ def _score_market_trace(
     # string the card prints; the raw stored `name` is served separately by
     # `build_discover_market_trace`.
     display_name = fill_market_display_name_blank(
-        market.name,
+        futures_reader_name(market),
         leader_name,
         outcome_count=len(outcomes_data),
     )
@@ -14633,7 +14634,7 @@ async def _score_sports_mode_futures(
         # every decision we make is still made from `market.name` — printed vs
         # interpreted, see `clean_market_display_name`.
         display_name = fill_market_display_name_blank(
-            market.name,
+            futures_reader_name(market),
             leader_name,
             outcome_count=len(outcomes_data),
         )
@@ -16610,7 +16611,7 @@ async def _score_futures(
 
             # #3513: printed vs interpreted — see `_score_sports_mode_futures`.
             display_name = fill_market_display_name_blank(
-                market.name,
+                futures_reader_name(market),
                 leader_name,
                 outcome_count=len(outcomes_data),
             )

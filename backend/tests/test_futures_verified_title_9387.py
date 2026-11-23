@@ -540,6 +540,59 @@ async def test_incomplete_field_labels_its_individual_markets_11995(prices, inde
         assert sum(row["rendered_percent"] for row in board["outcomes"]) == 100
 
 
+class TestReviewedSuperBowlAlias12530:
+    async def test_alias_names_canonical_page_and_keeps_its_source_ids(self):
+        source, _ = await detail(PM_ID, trio(), "source")
+        alias, _ = await detail(PM_ID, trio(), VERIFIED)
+        canonical, _ = await detail(ODDS_ID, trio(), VERIFIED)
+
+        assert "canonical_market_id" not in source
+        assert alias["id"] == PM_ID
+        assert alias["canonical_market_id"] == canonical["id"] == ODDS_ID
+        assert {row["id"] for row in alias["outcomes"]} == {
+            row["id"] for row in source["outcomes"]
+        }
+
+    async def test_2027_url_does_not_redirect_to_a_rolled_sportsbook_board(self):
+        markets = trio()
+        anchor = dict(markets[0].market_metadata["odds_api_current_event"])
+        anchor["commence_time"] = "2028-02-13T23:30:00+00:00"
+        markets[0].market_metadata = {"odds_api_current_event": anchor}
+        alias, _ = await detail(PM_ID, markets, VERIFIED)
+        assert "canonical_market_id" not in alias
+
+    async def test_title_plus_team_recalls_canonical_board_on_an_empty_search(self, monkeypatch):
+        import time
+        from unittest.mock import AsyncMock
+        from app.routes import events
+
+        canonical = trio()[0]
+        canonical.outcomes.append(_outcome(9001, "New England Patriots", 0.02, POLLED))
+        db = AsyncMock()
+        load = AsyncMock(return_value=canonical)
+        monkeypatch.setattr(events, "_load_current_2027_super_bowl", load)
+        deadline = time.monotonic() + 10
+        for name in ("superbowl patriots", "Bills Super Bowl", "Super Bowl winner"):
+            assert await events._route_super_bowl_search(db, [], name, deadline) == [canonical]
+        assert await events._route_super_bowl_search(db, [], "super bowl MVP", deadline) == []
+        assert await events._route_super_bowl_search(db, [], "super bowl 2028", deadline) == []
+        seen = load.await_count
+        assert await events._route_super_bowl_search(db, [], "buffalo bills", deadline) == []
+        assert load.await_count == seen
+
+    async def test_team_search_replaces_the_alias_once_at_its_original_rank(self):
+        import time
+        from app.routes.events import _route_super_bowl_search
+
+        by_id = {market.id: market for market in trio()}
+        canonical, kalshi, alias = (by_id[mid] for mid in (ODDS_ID, KALSHI_ID, PM_ID))
+        with _at():
+            rows = await _route_super_bowl_search(
+                None, [kalshi, alias, canonical], "Bills", time.monotonic() + 10
+            )
+        assert rows == [kalshi, canonical]
+
+
 class TestVerifiedTitleGameDate12530:
     @pytest.mark.parametrize("mid", [ODDS_ID, KALSHI_ID, PM_ID])
     async def test_detail_and_search_share_the_proved_game_date(self, mid):

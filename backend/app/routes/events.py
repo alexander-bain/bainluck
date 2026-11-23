@@ -50,7 +50,7 @@ from app.utils.scheduled_start import (
 # and safe — `market_label_normalization` imports only `utils.futures_categorization`,
 # so there is no cycle to defer around; `tests/test_startup.py` is the guard.
 from app.utils.market_label_normalization import non_sport_topic_label, rewrite_venue_league_vocabulary
-from app.utils.market_display_name import rewrite_question_colon_display
+from app.utils.market_display_name import futures_reader_name, rewrite_question_colon_display
 # #6993: the four-arm price refusal, asked here so the search surfaces cannot
 # serve a number the detail page refuses. Imported from the route that owns it
 # rather than copied, which is the whole point of the hook — its own docstring
@@ -65,8 +65,11 @@ from app.routes.futures import (
     WITHHELD_PRICE_FIELDS,
     _board_has_a_verdict,
     _fleet_newest_observation,
+    _is_current_2027_super_bowl,
+    _load_current_2027_super_bowl,
     _withheld_price_outcome_ids,
 )
+from app.utils.futures_verified_title import SUPER_BOWL_2027_ALIAS_ID, SUPER_BOWL_2027_BOARD_ID
 from app.utils.feed_reasons import _points as format_movement_points
 from app.utils.game_market_club_names import (
     SEARCH_CARD_FIELDS,
@@ -734,7 +737,7 @@ def _futures_dedup_question_key(market) -> str:
     Split out rather than duplicated so the two cannot drift: the tiered key
     above is exactly this plus `:<tier>`, byte-for-byte what it always was.
     """
-    name = (market.name or "").strip()
+    name = (futures_reader_name(market) or "").strip()
     name = _FUTURES_DEDUP_STRIP.sub("", name).strip()
     name = re.sub(r"\s*[?!]\s*$", "", name)
     name_lower = name.lower()
@@ -883,7 +886,7 @@ def _is_paraphrase_of_a_kept_board(market, kept_boards: list) -> bool:
             continue
         if not _search_boards_list_the_same_field(names, kept_names):
             continue
-        if is_same_question(market.name, kept_name):
+        if is_same_question(futures_reader_name(market), kept_name):
             return True
     return False
 
@@ -1063,7 +1066,7 @@ def _search_same_question_as_a_kept_card(market, withheld, kept: list) -> bool:
         item = {
             "type": "futures",
             "data": {
-                "name": market.name,
+                "name": futures_reader_name(market),
                 "source": market.source,
                 "resolution_date": market.resolution_date,
                 "top_outcomes": _build_search_top_outcomes(market, withheld=withheld),
@@ -1150,7 +1153,7 @@ def _admit_search_future(
     kept_boards.append(
         (
             getattr(market, "source", None),
-            market.name,
+            futures_reader_name(market),
             _search_listed_names(market),
             _search_award_race(market),
             getattr(market, "resolution_date", None),
@@ -12909,6 +12912,9 @@ async def search_events(
             await _recover_search_session(db, _deadline)
             futures_markets_raw = []
             degraded.append("futures")
+    futures_markets_raw = await _route_super_bowl_search(
+        db, futures_markets_raw, q, _deadline
+    )
     _mark("futures")
 
     # #7355: the teams stage runs HERE, between the futures window and its
@@ -16285,6 +16291,9 @@ async def typeahead_search(
     #: `(market id, kalshi ticker, event id)` for every row that reaches the
     #: dropdown — plain scalars, read while the ORM row is live. #6447 residual.
     _ta_market_facts: list[tuple[int, Optional[str], Optional[int]]] = []
+    ta_futures_ranked = await _route_super_bowl_search(
+        db, ta_futures_ranked, q, _ta_deadline
+    )
     for market in ta_futures_ranked:
         if len(futures_pool) >= 5:
             break
@@ -16370,7 +16379,7 @@ async def typeahead_search(
             # reader meet `Pro Football` first and `NFL` second, for one market.
             # Display only; `_ta_market_facts` above still carries the raw name,
             # so ranking and the club-name repair are unaffected.
-            "text": rewrite_venue_league_vocabulary(market.name),
+            "text": rewrite_venue_league_vocabulary(futures_reader_name(market)),
             "market_id": market.id,
             "market_tier": market.market_tier,
             "market_type_label": label or market.market_type or "Market",
@@ -42376,6 +42385,71 @@ async def _search_verified_titles(
     return out
 
 
+_SUPER_BOWL_PHRASE = re.compile(r"\bsuper\s*bowl\b", re.IGNORECASE)
+_SUPER_BOWL_TITLE_WORDS = frozenset(
+    {"the", "who", "will", "win", "wins", "winner", "champion", "championship", "nfl", "2027"}
+)
+
+
+def _super_bowl_query_matches(market: FuturesMarket, words: set[str]) -> bool:
+    return not words or any(
+        words <= set(_SEARCH_WORD.findall(name.casefold()))
+        for outcome in market.outcomes
+        for name in (
+            outcome.name or "",
+            *curated_team_aliases("americanfootball_nfl", outcome.name or ""),
+        )
+    )
+
+
+async def _route_super_bowl_search(
+    db: AsyncSession, markets: list, query: str, deadline: float
+) -> list:
+    """Recall the reviewed title board or replace its alternate URL in place."""
+    names_title = _SUPER_BOWL_PHRASE.search(query) is not None
+    has_alias = any(m.id == SUPER_BOWL_2027_ALIAS_ID for m in markets)
+    if not names_title and not has_alias:
+        return markets
+
+    canonical = next(
+        (m for m in markets if _is_current_2027_super_bowl(m)), None
+    )
+    if canonical is None:
+        if time.monotonic() >= deadline:
+            return markets
+        savepoint = await db.begin_nested()
+        try:
+            bound_ms = min(250, max(1, int((deadline - time.monotonic()) * 1000)))
+            await _apply_search_statement_timeout(db, deadline, bound_ms=bound_ms)
+            canonical = await _load_current_2027_super_bowl(db)
+        except Exception as exc:
+            await savepoint.rollback()
+            if not _is_query_timeout(exc):
+                raise
+            logger.warning("2027 Super Bowl search lookup timed out")
+            return markets
+        else:
+            await savepoint.commit()
+            await _apply_search_statement_timeout(db, deadline)
+    if canonical is None:
+        return markets
+
+    words = set(_SEARCH_WORD.findall(_SUPER_BOWL_PHRASE.sub("", query.casefold())))
+    if not has_alias and not _super_bowl_query_matches(canonical, words - _SUPER_BOWL_TITLE_WORDS):
+        return markets
+
+    result = []
+    inserted = False
+    for market in markets:
+        if market.id in {SUPER_BOWL_2027_BOARD_ID, SUPER_BOWL_2027_ALIAS_ID}:
+            if not inserted:
+                result.append(canonical)
+                inserted = True
+        else:
+            result.append(market)
+    return result if inserted else [canonical, *result]
+
+
 def _dedup_verified_title_markets(markets, verified_by_id: dict) -> list:
     """One card for an identity the resolver has proved, preserving rank order."""
     seen = set()
@@ -42475,7 +42549,7 @@ def _format_futures_for_search(
         # still do not. Applied to THIS output only: the dedup, family and
         # eligibility steps upstream read `market.name`.
         "name": rewrite_question_colon_display(rewrite_venue_league_vocabulary(
-            getattr(verified, "canonical_market_name", None) or market.name
+            getattr(verified, "canonical_market_name", None) or futures_reader_name(market)
         )),
         "sport": market.sport.key if market.sport else None,
         # #6444: the FUTURES arm of the same search response Alex photographed.

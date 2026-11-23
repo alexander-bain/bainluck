@@ -256,6 +256,14 @@ export default async function FuturesDetailLayout({
   // only ever taken on a market the server has positively named as a container.
   const { id } = await params;
   const lookup = await fetchMarket(id);
+  if (lookup.ok) {
+    const canonicalId = lookup.market.canonical_market_id;
+    if (typeof canonicalId === "number" && Number.isSafeInteger(canonicalId)
+        && canonicalId > 0 && canonicalId !== lookup.market.id
+        && canonicalId !== Number(id)) {
+      redirect(`/futures/${canonicalId}`);
+    }
+  }
   const target = lookup.ok ? gameContainerRedirectPath(lookup.market) : null;
   if (target) redirect(target);
   return <>{children}</>;

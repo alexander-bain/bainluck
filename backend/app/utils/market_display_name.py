@@ -333,6 +333,19 @@ def rewrite_question_colon_display(name: str | None) -> str | None:
     return f"{question}{_QUESTION_COLON_SEPARATOR}{match.group('matchup')}"
 
 
+# #13089: these two boards grade different outcomes if the election call and
+# inauguration disagree. Keep the venue rules visible in the market title.
+PRESIDENTIAL_INAUGURATION_2029_ID = 108326
+PRESIDENTIAL_ELECTION_CALL_2028_ID = 112897
+
+
+def futures_reader_name(market) -> str | None:
+    market_id = getattr(market, "id", None)
+    if market_id == PRESIDENTIAL_INAUGURATION_2029_ID and market.source == "kalshi":
+        return "Who will be inaugurated U.S. president in 2029?"
+    return market.name
+
+
 def clean_market_display_name(name: str | None) -> str | None:
     """Return ``name`` with Polymarket's template blank gone.
 

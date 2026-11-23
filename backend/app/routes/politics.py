@@ -39,7 +39,12 @@ from app.utils.futures_liveness import (
     market_reads_settled,
 )
 from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
-from app.utils.market_display_name import clean_served_questions
+from app.utils.market_display_name import (
+    PRESIDENTIAL_ELECTION_CALL_2028_ID,
+    PRESIDENTIAL_INAUGURATION_2029_ID,
+    clean_served_questions,
+    futures_reader_name,
+)
 from app.utils.market_staleness import (
     expired_ladder_rungs,
     should_exclude_from_featured,
@@ -847,7 +852,7 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
     ] or outcomes
 
     return {
-        "q": market.name,
+        "q": futures_reader_name(market),
         # #6255 — the `if top_outcomes else 0` sentinel is REMOVED, not kept as
         # insurance. `priced` is non-empty by the refusal above, so this list
         # cannot be empty, and #2950's own note in `economics._market_row` rules
@@ -1367,11 +1372,15 @@ def _build_presidential(
             if src in ("kalshi", "polymarket"):
                 contenders.append({
                     "src": src,
-                    "contest": _contest_key(name_lower),
+                    "contest": (
+                        "inauguration"
+                        if src == "kalshi" and m.id == PRESIDENTIAL_INAUGURATION_2029_ID
+                        else _contest_key(name_lower)
+                    ),
                     "market": m,
                     "entry": {
                         "market_id": m.id,
-                        "q": m.name,
+                        "q": futures_reader_name(m),
                         "outcomes": outcomes,
                         "market": m,
                     },
@@ -1396,7 +1405,16 @@ def _build_presidential(
     # widest. When Kalshi is absent the poly headline sets the contest, which is
     # the previous behaviour for that case unchanged.
     best_kalshi = _largest("kalshi", None)
-    if best_kalshi is not None:
+    if best_kalshi is not None and best_kalshi["contest"] == "inauguration":
+        # The election call leads when available. Inauguration has its own row.
+        best_poly = next(
+            (c for c in contenders if c["src"] == "polymarket"
+             and c["market"].id == PRESIDENTIAL_ELECTION_CALL_2028_ID),
+            None,
+        )
+        if best_poly is not None:
+            best_kalshi = None
+    elif best_kalshi is not None:
         # Kalshi sets the contest, so re-filtering the Kalshi side by it would
         # return `best_kalshi` again by construction. Only the poly side is
         # actually constrained here.

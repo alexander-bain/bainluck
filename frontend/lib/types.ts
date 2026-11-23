@@ -1305,6 +1305,8 @@ export interface FuturesMarketsResponse {
 }
 
 export interface FuturesMarketDetailResponse extends FuturesMarket {
+  /** Verified title board to open for this alternate market address. */
+  canonical_market_id?: number | null;
   outcomes: FuturesOutcome[];
   outcome_prices_are_independent?: boolean;
   display_category?: string;

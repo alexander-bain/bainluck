@@ -75,6 +75,9 @@ from app.utils.futures_verified_title import (
     CONTRIBUTOR_SOURCES as VERIFIED_TITLE_SOURCES,
     SOURCE as REPRESENTATION_SOURCE,
     VERIFIED_TITLE as REPRESENTATION_VERIFIED_TITLE,
+    NFL_TITLE,
+    SUPER_BOWL_2027_ALIAS_ID,
+    SUPER_BOWL_2027_BOARD_ID,
     BoardRow,
     Composition,
     MarketFacts,
@@ -119,6 +122,7 @@ from app.utils.leader_order import leader_first_outcomes
 from app.utils.market_display_name import (
     clean_market_display_name,
     fill_market_display_name_blank,
+    futures_reader_name,
 )
 from app.utils.event_rails import live_scheduled_settled_order
 from app.utils.event_twin_fold import fold_twin_events
@@ -4912,9 +4916,16 @@ async def get_futures_market(
         )
         detail["outcome_count"] = len(detail["outcomes"])
     elif representation == REPRESENTATION_VERIFIED_TITLE:
-        _apply_verified_title_to_detail(
-            detail, await _resolve_verified_title(db, market), market
-        )
+        verdict = await _resolve_verified_title(db, market)
+        _apply_verified_title_to_detail(detail, verdict, market)
+        if market_id == SUPER_BOWL_2027_ALIAS_ID and (
+            getattr(verdict, "canonical_market_id", None) == SUPER_BOWL_2027_BOARD_ID
+            or (
+                getattr(verdict, "reason", None) != "resolver_error"
+                and await _load_current_2027_super_bowl(db) is not None
+            )
+        ):
+            detail["canonical_market_id"] = SUPER_BOWL_2027_BOARD_ID
     served_outcomes = detail.get("outcomes") or ()
     if (
         detail.get("status") in {"open", "active"}
@@ -5021,6 +5032,22 @@ def _verified_title_market_stmt(*, outcome_team: bool = False):
     if outcome_team:
         outcomes = outcomes.selectinload(FuturesOutcome.team)
     return select(FuturesMarket).options(outcomes, selectinload(FuturesMarket.sport))
+
+
+def _is_current_2027_super_bowl(market: FuturesMarket) -> bool:
+    """The sportsbook board's fresh anchor must still name the 2027 game."""
+    if market.id != SUPER_BOWL_2027_BOARD_ID:
+        return False
+    member = member_of(NFL_TITLE, _verified_title_facts(market), datetime.now(timezone.utc))
+    return isinstance(member, Member) and member.source == "odds_api" and member.edition == "2027"
+
+
+async def _load_current_2027_super_bowl(db: AsyncSession) -> FuturesMarket | None:
+    result = await db.execute(
+        _verified_title_market_stmt().where(FuturesMarket.id == SUPER_BOWL_2027_BOARD_ID)
+    )
+    market = result.unique().scalar_one_or_none()
+    return market if market is not None and _is_current_2027_super_bowl(market) else None
 
 
 def _verified_title_candidates_stmt(spec, edition: str, exclude_id: int):
@@ -11263,12 +11290,12 @@ def _format_market_detail(
         # card payload, so the two surfaces now agree rather than diverge.
         "name": (
             fill_market_display_name_blank(
-                market.name,
+                futures_reader_name(market),
                 leader_name,
                 outcome_count=len(outcomes),
             )
             if outcomes
-            else clean_market_display_name(market.name)
+            else clean_market_display_name(futures_reader_name(market))
         ),
         "description": market.description,
         "sport": market.sport.key if market.sport else None,
