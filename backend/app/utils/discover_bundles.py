@@ -8,6 +8,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any, Optional
 
+from app.utils.bundle_visual_form import stamp_bundle_form_id
 from app.utils.congress_control_story import (
     US_CONGRESS_CONTROL_QUESTION,
     US_CONGRESS_CONTROL_TITLE,
@@ -664,7 +665,7 @@ def _make_bundle_item(
         for item in public_items
     ]
     subtitle = _bundle_subtitle(measure, len(items))
-    return {
+    built = {
         "type": "bundle",
         "score": score,
         "reason": subtitle,
@@ -691,6 +692,8 @@ def _make_bundle_item(
         },
         "_sort_time": sort_time,
     }
+    stamp_bundle_form_id(built)
+    return built
 
 
 def assemble_discover_comparison_bundles(
@@ -1289,7 +1292,7 @@ def _make_theme_bundle_item(
         )
         return None
     public_items = [_public_member_item(item) for item in ranked]
-    return {
+    built = {
         "type": "bundle",
         "score": score,
         "reason": question,
@@ -1316,6 +1319,8 @@ def _make_theme_bundle_item(
         },
         "_sort_time": sort_time,
     }
+    stamp_bundle_form_id(built)
+    return built
 
 
 #: A trailing parenthetical qualifier on a market title (#4479).
@@ -2323,7 +2328,7 @@ def _make_awards_bundle_item(
     # D1 clause c (#4066): the heading is the one sentence saying why these
     # members belong together. It is the venue's own parent question, or absent.
     question = _award_group_question(ranked)
-    return {
+    built = {
         "type": "bundle",
         "score": score,
         "reason": question or "",
@@ -2350,6 +2355,8 @@ def _make_awards_bundle_item(
         },
         "_sort_time": sort_time,
     }
+    stamp_bundle_form_id(built)
+    return built
 
 
 def assemble_awards_theme_bundles(
@@ -2443,7 +2450,7 @@ def _make_deadline_family_bundle_item(
     title = str(family_payload["title"])
     shared_question = str(family_payload["shared_question"])
 
-    return {
+    built = {
         "type": "bundle",
         "score": score,
         "_rank_score": rank_score,
@@ -2473,6 +2480,8 @@ def _make_deadline_family_bundle_item(
         },
         "_sort_time": sort_time,
     }
+    stamp_bundle_form_id(built)
+    return built
 
 
 def _expand_refused_single_ladder_item(item: dict[str, Any]) -> list[dict[str, Any]] | None:
@@ -2807,7 +2816,7 @@ def _make_swings_bundle_item(scored: list[tuple[float, dict[str, Any]]]) -> dict
     sort_time = max(float(it.get("_sort_time") or 0) for it in ranked)
     member_ids = [_futures_data(it).get("id") for it in ranked]
     names = [str(_futures_data(it).get("name") or "") for it in ranked]
-    return {
+    built = {
         "type": "bundle",
         "score": score,
         # D1 clause c (#4066): this one already named a signal rather than
@@ -2833,6 +2842,8 @@ def _make_swings_bundle_item(scored: list[tuple[float, dict[str, Any]]]) -> dict
         },
         "_sort_time": sort_time,
     }
+    stamp_bundle_form_id(built)
+    return built
 
 
 def assemble_swings_theme_bundles(
@@ -2990,7 +3001,7 @@ def assemble_nfl_division_roundup(
             "pair": {"kalshi_market_id": int(b.kalshi_market_id), "polymarket_market_id": int(b.polymarket_market_id)},
         })
     member_ids = [r["market_id"] for r in rows]
-    return {
+    built = {
         "type": "bundle",
         "score": float(score),
         "reason": NFL_DIVISION_ROUNDUP_TITLE,
@@ -3014,6 +3025,8 @@ def assemble_nfl_division_roundup(
             },
         },
     }
+    stamp_bundle_form_id(built)
+    return built
 
 
 def _format_kalshi_roundup_base_card(

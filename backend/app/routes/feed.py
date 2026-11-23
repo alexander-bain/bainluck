@@ -8035,6 +8035,12 @@ def _publish_feed_item(item: dict) -> None:
     # crests or deterministic `image_monogram` (initials on a colour) are served.
     apply_discover_image_policy_in_place(item)
 
+    # 353: A — ensure every bundle (legacy round-ups, themes, comparisons, and
+    # machinery cards) carries an additive `form_id` on publish, including base caches.
+    from app.utils.bundle_visual_form import stamp_bundle_form_id
+
+    stamp_bundle_form_id(item)
+
     # Strip internal keys BY PREFIX, not by an enumerated list.
     #
     # This was ten `pop` calls naming ten keys, and the contract it

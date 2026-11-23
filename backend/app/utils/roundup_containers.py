@@ -889,10 +889,13 @@ def compose_roundup_feed_item(
         "collection_count": len(member_ids),
     }
     if members.feed_item is not None:
+        from app.utils.bundle_visual_form import stamp_bundle_form_id
+
         out = copy.deepcopy(members.feed_item)
         if isinstance(out.get("data"), dict):
             out["data"]["items"] = member_items
             out["data"]["collection_ref"] = collection_ref
+        stamp_bundle_form_id(out)
         return out
     tag_value = (
         producer.tag if producer.tag is not None else producer.category.upper()
@@ -939,7 +942,9 @@ def compose_roundup_feed_item(
         )
         if verified_caption is not None:
             roundup_contract["caption"] = verified_caption
-    return {
+    from app.utils.bundle_visual_form import stamp_bundle_form_id
+
+    built = {
         "type": "bundle",
         "score": base_score,
         "reason": effective_title,
@@ -958,6 +963,8 @@ def compose_roundup_feed_item(
             "roundup": roundup_contract,
         },
     }
+    stamp_bundle_form_id(built)
+    return built
 
 
 def _redis_cache_key(slug: str) -> str:
@@ -3940,6 +3947,15 @@ def insert_roundup_feed_items(
     """
     if not items or not roundup_items:
         return items
+
+    from app.utils.bundle_visual_form import stamp_bundle_form_id
+
+    for entry in items:
+        if isinstance(entry, dict) and entry.get("type") == "bundle":
+            stamp_bundle_form_id(entry)
+    for entry in roundup_items:
+        if isinstance(entry, dict) and entry.get("type") == "bundle":
+            stamp_bundle_form_id(entry)
 
     valid_roundups = [
         r

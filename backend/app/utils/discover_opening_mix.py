@@ -42,6 +42,7 @@ from app.utils.discover_opening_seating import (
     _parse as _parse_utc_datetime,
     classify_card,
 )
+from app.utils.bundle_visual_form import card_visual_form_id as card_visual_form_id
 from app.utils.highlights import get_season_multiplier
 from app.utils.majors_calendar import fixture_marquee_pinned
 from app.utils.roundup_containers import (
@@ -63,26 +64,6 @@ OPENING_MIX_SINGLE_CAP = 1
 OPENING_MIX_MAX_PER_FORM = 2
 OPENING_MIX_DEFAULT_SINGLE_SEAT = 4  # 0-based index -> seat 5
 OPENING_MIX_LIVE_SPORTS_FLAG = "opening_mix_live_sports_seat"
-
-
-def card_visual_form_id(item: Mapping[str, Any]) -> Optional[str]:
-    """Return the visual ``machinery_card.form_id`` of a Discover item, if any."""
-    if not isinstance(item, Mapping):
-        return None
-    data = item.get("data")
-    if not isinstance(data, Mapping):
-        return None
-    roundup = data.get("roundup")
-    if not isinstance(roundup, Mapping):
-        return None
-    machinery_card = roundup.get("machinery_card")
-    if not isinstance(machinery_card, Mapping):
-        return None
-    form_id = machinery_card.get("form_id")
-    if isinstance(form_id, str):
-        cleaned = form_id.strip()
-        return cleaned or None
-    return None
 
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 PWM_SUBTOPIC_POLITICS_WORLD = "politics_or_world"
