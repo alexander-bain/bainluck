@@ -1247,7 +1247,7 @@ def is_placeholder_flat_field(
 # news) or a high-volume market stays eligible.
 FEED_LOCKED_CERTAIN_HIGH = 0.99  # leader rounds to 100%
 FEED_LOCKED_CERTAIN_LOW = 0.01  # leader rounds to 0%
-FEED_LOCKED_ALL_EXTREME_HIGH = 0.95  # #13093: every priced outcome >=95% or <=5%
+FEED_LOCKED_ALL_EXTREME_HIGH = 0.95  # #13093: every priced outcome >95% or <5%
 FEED_LOCKED_ALL_EXTREME_LOW = 0.05
 FEED_LOCKED_CERTAIN_KEEP_MOVE = 0.10  # >=10pt 24h swing = genuine mover
 FEED_LOCKED_CERTAIN_KEEP_VOLUME = 25000.0  # live money = keep
@@ -1263,9 +1263,9 @@ def is_locked_near_certain(
     """True if an UNRESOLVED market is pinned at a dead-extreme price (#1004, #13093).
 
     Suppresses a market when EITHER:
-      1. every priced outcome sits in the 95%/5% extremes (``>= 0.95`` or ``<= 0.05``,
-         zero contested outcomes in ``(0.05, 0.95)``) unless it had a ``>= 10``-point
-         24h swing (#13093), OR
+      1. every priced outcome sits strictly outside ``[0.05, 0.95]`` (``> 0.95``
+         or ``< 0.05``, zero contested outcomes in ``[0.05, 0.95]``) unless it had
+         a ``>= 10``-point 24h swing (#13093), OR
       2. the leader alone sits at ``>= 0.99`` or ``<= 0.01`` with neither a ``>= 10``-pt
          24h swing nor high 24h volume (``>= 25,000``) (#1004).
     """
@@ -1276,7 +1276,7 @@ def is_locked_near_certain(
     if outcome_probabilities is not None:
         priced = [float(p) for p in outcome_probabilities if p is not None]
         if priced and all(
-            p >= FEED_LOCKED_ALL_EXTREME_HIGH or p <= FEED_LOCKED_ALL_EXTREME_LOW
+            p > FEED_LOCKED_ALL_EXTREME_HIGH or p < FEED_LOCKED_ALL_EXTREME_LOW
             for p in priced
         ):
             return not is_genuine_mover

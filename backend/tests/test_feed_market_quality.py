@@ -3621,17 +3621,23 @@ class TestLockedNearCertain:
         # #13093: #59616424 Liga Profesional relegation (98.5% / 97.0% / 4.7% / 3.3%)
         probs = [0.985, 0.970, 0.047, 0.033]
         assert is_locked_near_certain(0.985, 0.0, None, outcome_probabilities=probs) is True
-        # Binary all-extreme <=5% / >=95% even with high 24h volume but zero 10pt move
+        # Binary all-extreme strictly <5% / >95% even with high 24h volume but zero 10pt move
         assert is_locked_near_certain(0.032, 0.0, 32176.0, outcome_probabilities=[0.032]) is True
-        assert is_locked_near_certain(0.96, 0.02, 50000.0, outcome_probabilities=[0.96, 0.04]) is True
+        assert is_locked_near_certain(0.040, 0.0, None, outcome_probabilities=[0.040]) is True
+        assert is_locked_near_certain(0.951, 0.02, 50000.0, outcome_probabilities=[0.951, 0.049]) is True
 
     def test_all_outcomes_in_95_5_kept_on_10pt_24h_move(self):
         probs = [0.96, 0.04]
         assert is_locked_near_certain(0.96, 0.10, None, outcome_probabilities=probs) is False
         assert is_locked_near_certain(0.96, -0.14, None, outcome_probabilities=probs) is False
 
-    def test_contested_outcome_between_5_and_95_not_suppressed(self):
-        # 0.239 and 0.215 are strictly inside (0.05, 0.95)
+    def test_contested_outcome_including_exact_5_and_95_not_suppressed(self):
+        # Exact [0.05, 0.95] boundaries stay eligible (#4079 META_ID 0.05/0.95 & #6552 0.95)
+        assert is_locked_near_certain(0.95, None, None, outcome_probabilities=[0.95, 0.05]) is False
+        assert is_locked_near_certain(
+            0.95, 0.05, None, outcome_probabilities=[0.95, 0.03, 0.01, 0.01]
+        ) is False
+        # 0.239 and 0.215 are strictly inside [0.05, 0.95]
         probs = [0.974, 0.239, 0.215, 0.170]
         assert is_locked_near_certain(0.974, 0.0, None, outcome_probabilities=probs) is False
 
