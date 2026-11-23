@@ -431,6 +431,7 @@ def _reset_loaded_request_caches(retained=None):
         ("app.utils.event_history_cache", ("_reset_for_tests",)),
         ("app.utils.futures_page_cache", ("_reset_for_tests",)),
         ("app.utils.golf_tournament_cache", ("_reset_for_tests",)),
+        ("app.utils.roundup_containers", ("_reset_roundup_swr_state_for_tests",)),
         ("app.utils.prematch_reading", ("_reset_prematch_cache_for_tests",)),
         ("app.utils.pregame_projection", ("clear_pregame_projection_cache",)),
         ("app.routes.calibration", ()),

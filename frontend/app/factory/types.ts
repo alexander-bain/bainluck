@@ -61,6 +61,7 @@ export interface Change {
   parked?: boolean;
   held_for_108?: boolean;
   checks_running?: boolean;
+  checks_failed?: boolean;
   merge_announced_at?: string;
   live_posted_at?: string;
   live_post_observed_at?: string;

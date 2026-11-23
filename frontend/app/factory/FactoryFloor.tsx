@@ -43,6 +43,7 @@ import CrateJourney from "./CrateJourney";
 import ChecksQueue from "./ChecksQueue";
 import FactoryMascot, { MascotMove, mascotAction } from "./FactoryMascot";
 import InjurySign from "./InjurySign";
+import { explainedCheck, hasFailedCheck, lessonForFloor, testDefinition } from "./lesson";
 import { builderOfDay, clipboard, median } from "./signs";
 import { useDayReplay } from "./useDayReplay";
 import { useFactoryDisplay } from "./useFactoryDisplay";
@@ -438,6 +439,8 @@ export default function FactoryFloor(initial: {
     builders.filter(key => dayLeader.builders.includes(key)).map(key => names[key]),
   ) : null;
   const onFloor = data.changes.filter(onActiveFloor);
+  const lesson = lessonForFloor(data, now);
+  const checkLesson = explainedCheck(data);
   const recordTime = behind ? data.generated_at : now;
   const clockedIn = new Set(
     data.changes
@@ -739,7 +742,6 @@ export default function FactoryFloor(initial: {
       {readingState === "quiet" && (
         <p className={styles.sectionNote}>Last published {publishedAge} ago. No changes landed and no shared tests finished since then.</p>
       )}
-
       <section className={styles.floorCard} aria-labelledby="floor-heading">
         <div className={styles.sectionHeading}>
           <h2 id="floor-heading">The floor</h2>
@@ -1101,6 +1103,9 @@ export default function FactoryFloor(initial: {
                 {selected.check_progress && (
                   <p>{selected.check_progress.done} of {selected.check_progress.total} checks finished.</p>
                 )}
+                {hasFailedCheck(selected) && (
+                  <p>{testDefinition} A check flagged this change before it could go live.</p>
+                )}
                 {selected.approvals?.bot && <p>Bot approved.</p>}
                 {selected.approvals?.fable && <p>{names.Fable} cleared.</p>}
                 {selected.unsure && <p>Unsure. {selected.reasons.join(" ")}</p>}
@@ -1143,6 +1148,11 @@ export default function FactoryFloor(initial: {
         )}
       </section>
 
+      <aside className={styles.wordLesson} aria-label="Word of the day" data-factory-lesson>
+        <p><strong>Word of the day</strong> <dfn>{lesson.word}</dfn> {lesson.definition}</p>
+        <span>{lesson.count}</span>
+        {checkLesson && <p className={styles.checkLesson} data-check-lesson>{testDefinition} {checkLesson}</p>}
+      </aside>
       <div className={styles.records}>
         <div className={styles.shelfGroup}>
           <section className={styles.shelf} aria-label="Side shelves">

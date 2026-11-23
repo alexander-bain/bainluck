@@ -185,9 +185,13 @@ async function captureMode(browser, { webUrl, feedBody, slugs, colorScheme, scal
     await page.setViewportSize({ width: VIEWPORT_WIDTH, height: docHeight + 120 });
     await page.waitForTimeout(350);
 
-    // Wait for every image inside rendered machinery cards to finish loading cleanly.
+    // Wait for every image inside rendered machinery/paired roundup cards to finish loading cleanly.
     const imgStatus = await page.evaluate(async (expectedSlugs) => {
-      const imgs = [...document.querySelectorAll('[data-testid="machinery-discover-card"] img')];
+      const imgs = [
+        ...document.querySelectorAll(
+          '[data-testid="machinery-discover-card"] img, [data-testid="roundup-card-slot"] img',
+        ),
+      ];
       await Promise.all(
         imgs.map((img) =>
           img.complete
@@ -205,12 +209,15 @@ async function captureMode(browser, { webUrl, feedBody, slugs, colorScheme, scal
 
       const slots = {};
       for (const slug of expectedSlugs) {
-        const card = document.querySelector(`[data-testid="machinery-discover-card"][href="/collections/${slug}"]`);
-        if (!card) continue;
-        const slot = card.closest('[data-testid="roundup-card-slot"]') || card;
+        const cardLink =
+          document.querySelector(`[data-testid="machinery-discover-card"][href="/collections/${slug}"]`) ||
+          document.querySelector(`[data-testid="paired-card-machinery-link"][href="/collections/${slug}"]`);
+        if (!cardLink) continue;
+        const slot = cardLink.closest('[data-testid="roundup-card-slot"]') || cardLink;
+        const cardSurface = slot.querySelector('[data-testid="machinery-discover-card"], article') || cardLink;
         const rect = slot.getBoundingClientRect();
-        const headline = card.querySelector("h3")?.textContent?.trim() || "";
-        const style = getComputedStyle(card);
+        const headline = slot.querySelector("h2, h3")?.textContent?.trim() || "";
+        const style = getComputedStyle(cardSurface);
         slots[slug] = {
           y: Math.max(0, Math.floor(rect.top) - 8),
           height: Math.ceil(rect.height) + 16,

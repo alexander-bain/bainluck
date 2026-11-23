@@ -487,3 +487,54 @@ def test_every_tmdb_person_entry_records_positive_tmdb_person_id() -> None:
         assert isinstance(pid, int) and not isinstance(pid, bool) and pid > 0, (
             f"Missing/invalid tmdb_person_id on {e['entity_key']}: {pid!r}"
         )
+
+
+def test_nfl_2026_mvp_portraits_and_jaxson_spelling_alias_resolve() -> None:
+    resolver = SubjectArtResolver()
+    expected = {
+        "Joe Burrow": "https://a.espncdn.com/i/headshots/nfl/players/full/3915511.png",
+        "Brock Purdy": "https://a.espncdn.com/i/headshots/nfl/players/full/4361741.png",
+        "Patrick Mahomes": "https://a.espncdn.com/i/headshots/nfl/players/full/3139477.png",
+        "Josh Allen": "https://a.espncdn.com/i/headshots/nfl/players/full/3918298.png",
+        "Trevor Lawrence": "https://a.espncdn.com/i/headshots/nfl/players/full/4360310.png",
+        "Jaxson Smith-Njigba": "https://a.espncdn.com/i/headshots/nfl/players/full/4430878.png",
+        "Jaxon Smith-Njigba": "https://a.espncdn.com/i/headshots/nfl/players/full/4430878.png",
+        "Caleb Williams": "https://a.espncdn.com/i/headshots/nfl/players/full/4431611.png",
+        "Justin Herbert": "https://a.espncdn.com/i/headshots/nfl/players/full/4038941.png",
+    }
+    for name, url in expected.items():
+        art = resolver.resolve(name, allow_team_lookup=False)
+        assert art["url"] == url, (name, art)
+        assert art["kind"] == "person", (name, art)
+
+
+@pytest.mark.asyncio
+async def test_nfl_week_2026_mvp_section_draws_all_portraits() -> None:
+    import copy
+    from tests.test_container_machinery_slice1_12288 import FIXED_NOW, _sample_snapshot
+
+    clear_fun_markets_cache()
+    paths_by_slug = {p.stem: p for p in discover_machinery_candidate_paths()}
+    nfl_defn = load_machinery_definition(paths_by_slug["machinery-nfl-week"])
+    snapshot = copy.deepcopy(_sample_snapshot())
+    for m in snapshot["markets"]:
+        if m.get("id") == 40532:
+            m["id"] = 7585490
+            m["name"] = "Pro Football: 2026 MVP Winner"
+            m["llm_sport_category"] = "football"
+            m["top_outcomes"] = [
+                {"id": 1, "name": "Joe Burrow", "probability": 0.49},
+                {"id": 2, "name": "Brock Purdy", "probability": 0.28},
+                {"id": 3, "name": "Patrick Mahomes", "probability": 0.08},
+                {"id": 4, "name": "Josh Allen", "probability": 0.07},
+                {"id": 5, "name": "Trevor Lawrence", "probability": 0.03},
+                {"id": 6, "name": "Jaxson Smith-Njigba", "probability": 0.02},
+            ]
+            break
+
+    res = await produce_container_machinery(snapshot, nfl_defn, now=FIXED_NOW)
+    assert hasattr(res, "sections"), res
+    mvp_sec = next(s for s in res.sections if s.get("class") == "mvp_race")
+    outs = mvp_sec["visual_block"]["items"][0]["outcomes"]
+    assert len(outs) == 6
+    assert all((o.get("art") or {}).get("url") for o in outs), outs
