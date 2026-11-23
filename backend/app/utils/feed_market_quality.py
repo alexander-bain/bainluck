@@ -1263,9 +1263,10 @@ def is_locked_near_certain(
     """True if an UNRESOLVED market is pinned at a dead-extreme price (#1004, #13093).
 
     Suppresses a market when EITHER:
-      1. every priced outcome sits strictly outside ``[0.05, 0.95]`` (``> 0.95``
-         or ``< 0.05``, zero contested outcomes in ``[0.05, 0.95]``) unless it had
-         a ``>= 10``-point 24h swing (#13093), OR
+      1. it has 2 or more priced outcomes and every priced outcome sits strictly
+         outside ``[0.05, 0.95]`` (``> 0.95`` or ``< 0.05``, zero contested
+         outcomes in ``[0.05, 0.95]``) unless it had a ``>= 10``-point 24h
+         swing (#13093; one-outcome yes-or-no markets stay on rule 2), OR
       2. the leader alone sits at ``>= 0.99`` or ``<= 0.01`` with neither a ``>= 10``-pt
          24h swing nor high 24h volume (``>= 25,000``) (#1004).
     """
@@ -1275,7 +1276,7 @@ def is_locked_near_certain(
     )
     if outcome_probabilities is not None:
         priced = [float(p) for p in outcome_probabilities if p is not None]
-        if priced and all(
+        if len(priced) >= 2 and all(
             p > FEED_LOCKED_ALL_EXTREME_HIGH or p < FEED_LOCKED_ALL_EXTREME_LOW
             for p in priced
         ):

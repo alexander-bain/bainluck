@@ -3621,10 +3621,19 @@ class TestLockedNearCertain:
         # #13093: #59616424 Liga Profesional relegation (98.5% / 97.0% / 4.7% / 3.3%)
         probs = [0.985, 0.970, 0.047, 0.033]
         assert is_locked_near_certain(0.985, 0.0, None, outcome_probabilities=probs) is True
-        # Binary all-extreme strictly <5% / >95% even with high 24h volume but zero 10pt move
-        assert is_locked_near_certain(0.032, 0.0, 32176.0, outcome_probabilities=[0.032]) is True
-        assert is_locked_near_certain(0.040, 0.0, None, outcome_probabilities=[0.040]) is True
+        # Even high 24h volume does not rescue an all-extreme multi-row field without >=10pt move
+        assert is_locked_near_certain(0.985, 0.0, 50000.0, outcome_probabilities=probs) is True
         assert is_locked_near_certain(0.951, 0.02, 50000.0, outcome_probabilities=[0.951, 0.049]) is True
+
+    def test_single_outcome_binary_uses_older_99_1_and_volume_rule(self):
+        # #13093 Fable narrowing: one-outcome markets stay on the older 99%/1% rule
+        # so a heavily traded 3% yes-or-no market stays shown on Discover.
+        assert is_locked_near_certain(0.032, 0.0, 32176.0, outcome_probabilities=[0.032]) is False
+        assert is_locked_near_certain(0.040, 0.0, None, outcome_probabilities=[0.040]) is False
+        assert is_locked_near_certain(0.975, 0.0, None, outcome_probabilities=[0.975]) is False
+        # One-outcome at <=1% without high volume or >=10pt move still suppressed under older rule
+        assert is_locked_near_certain(0.008, 0.0, 100.0, outcome_probabilities=[0.008]) is True
+        assert is_locked_near_certain(0.008, 0.0, 32176.0, outcome_probabilities=[0.008]) is False
 
     def test_all_outcomes_in_95_5_kept_on_10pt_24h_move(self):
         probs = [0.96, 0.04]
