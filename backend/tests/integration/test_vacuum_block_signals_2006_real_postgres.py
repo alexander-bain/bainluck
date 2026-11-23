@@ -193,6 +193,19 @@ async def _burn_xids(conn, count: int) -> None:
         await conn.execute("SELECT txid_current()")
 
 
+async def _await_no_competing_xmin(conn, timeout_s: float = 10.0) -> None:
+    """Wait briefly for sibling/vacuum backends to release ``backend_xmin`` (#12626)."""
+    deadline = asyncio.get_running_loop().time() + timeout_s
+    while asyncio.get_running_loop().time() < deadline:
+        others = await conn.fetch(
+            "SELECT pid FROM pg_stat_activity "
+            "WHERE backend_xmin IS NOT NULL AND pid <> pg_backend_pid()"
+        )
+        if not others:
+            return
+        await asyncio.sleep(0.1)
+
+
 @pytest.fixture
 async def pg():
     """This gate's own database, its two probe tables, and the probe role.
@@ -308,6 +321,7 @@ class TestTheShippedSqlRunsOnARealServer:
     async def test_the_xid_signal_names_the_backend_holding_the_horizon(self, pg):
         from app.tasks.watchdog import Q_VACUUM_OLDEST_XMIN
 
+        await _await_no_competing_xmin(pg)
         async with _HeldTransaction(_gate_dsn()) as held:
             await _burn_xids(pg, 60)
             row = await pg.fetchrow(Q_VACUUM_OLDEST_XMIN)
@@ -332,6 +346,7 @@ class TestTheShippedSqlRunsOnARealServer:
 
         from app.tasks.watchdog import Q_VACUUM_OLDEST_XACT, Q_VACUUM_OLDEST_XMIN
 
+        await _await_no_competing_xmin(pg)
         async with _HeldTransaction(_role_dsn()) as held:
             # Let the held transaction age past a second so the reader cannot
             # pass the age assertion on a zero.
@@ -370,6 +385,7 @@ class TestTheShippedSqlRunsOnARealServer:
         from app.tasks.watchdog import Q_VACUUM_OLDEST_XMIN
 
         # The holder is the SUPERUSER — a different role from the reader.
+        await _await_no_competing_xmin(pg)
         async with _HeldTransaction(_gate_dsn()) as held:
             await _burn_xids(pg, 60)
             reader = await asyncpg.connect(_role_dsn())
