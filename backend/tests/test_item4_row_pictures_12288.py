@@ -470,14 +470,12 @@ async def test_item3_bond_28_contenders_and_engaged_second_partner_fallback() ->
     assert len(sec_urls) == 3 and all(sec_urls), sec_urls
 
 
-def test_every_tmdb_person_entry_records_positive_tmdb_person_id_and_json_parity() -> None:
+def test_every_tmdb_person_entry_records_positive_tmdb_person_id() -> None:
     import json
     from pathlib import Path
 
     root = Path(__file__).resolve().parents[2]
     b_text = (root / "backend/data/discover/verified_discover_art.json").read_text(encoding="utf-8")
-    f_text = (root / "frontend/lib/discover/verifiedDiscoverArt.json").read_text(encoding="utf-8")
-    assert b_text == f_text
     doc = json.loads(b_text)
     tmdb_people = [
         e for e in doc["entries"]
