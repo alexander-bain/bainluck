@@ -389,10 +389,16 @@ async def test_live_machinery_prioritizes_missing_and_trickles_at_most_two_due(m
         def mget(self, keys: list[str]):
             return [store.get(k) for k in keys]
 
-    recorded: list[tuple[tuple[str, ...], int | None]] = []
+    recorded: list[tuple[tuple[str, ...], int | None, bool]] = []
 
     async def _fake_warm(deadline_s: float = 25.0, *, slugs=None):
-        recorded.append((tuple(slugs or ()), pcp._PREWARM_MACHINERY_CONCURRENCY_VAR.get()))
+        recorded.append(
+            (
+                tuple(slugs or ()),
+                pcp._PREWARM_MACHINERY_CONCURRENCY_VAR.get(),
+                pcp._PREWARM_MACHINERY_WALL_BUDGET_VAR.get(),
+            )
+        )
         return {
             "outcome": "ok",
             "warmed": len(slugs or ()),
@@ -418,30 +424,38 @@ async def test_live_machinery_prioritizes_missing_and_trickles_at_most_two_due(m
                 enabled=lambda: True,
             )
 
+        assert pcp._PREWARM_MACHINERY_WALL_BUDGET_VAR.get() is False
         with (
             patch("app.utils.roundup_containers.ensure_optional_roundup_candidates", lambda: None),
             patch.object(pcp, "_prewarm_machinery_roundups", _fake_warm),
         ):
             res = await pcp._prewarm_live_machinery_roundups(_FakeMgetRedis(), deadline_s=20.0)
+        assert pcp._PREWARM_MACHINERY_WALL_BUDGET_VAR.get() is False
 
         assert res["outcome"] == "ok"
         assert res["live_slugs"] == ["machinery-live-1"]
         assert res["absent_slugs"] == ["machinery-missing-1", "machinery-due-b", "machinery-due-d"]
         assert recorded == [
-            (("machinery-live-1",), 2),
-            (("machinery-missing-1",), 2),
-            (("machinery-due-b", "machinery-due-d"), 1),
+            (("machinery-live-1",), 2, True),
+            (("machinery-missing-1",), 2, True),
+            (("machinery-due-b", "machinery-due-d"), 1, True),
         ]
     finally:
         rc_mod.ROUNDUP_PRODUCERS.clear()
         rc_mod.ROUNDUP_PRODUCERS.update(saved)
 
 
-@pytest.mark.asyncio
-async def test_prewarm_machinery_roundups_skips_when_wall_budget_exhausted(monkeypatch: pytest.MonkeyPatch):
+async def _run_slow_machinery_wall_budget_case(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    deadline_s: float,
+    enforce_wall_budget: bool | None = None,
+) -> tuple[list[str], list[int | None]]:
+    """Run 3 slow (0.08s) machinery slugs sequentially under concurrency=1 and return outcomes + session timeouts."""
     monkeypatch.setenv("CONTAINER_MACHINERY_ENABLED", "true")
     monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
     monkeypatch.setenv("CONTAINER_MACHINERY_SLICE1_ENABLED", "true")
+    seen_timeouts: list[int | None] = []
 
     async def _slow_eval(prod, db, **kwargs):
         await asyncio.sleep(0.08)
@@ -449,6 +463,7 @@ async def test_prewarm_machinery_roundups_skips_when_wall_budget_exhausted(monke
 
     @asynccontextmanager
     async def _fake_session(*, statement_timeout_ms=None):
+        seen_timeouts.append(statement_timeout_ms)
         yield MagicMock()
 
     class _DummyRc:
@@ -481,14 +496,38 @@ async def test_prewarm_machinery_roundups_skips_when_wall_budget_exhausted(monke
                 patch("app.utils.roundup_containers.evaluate_roundup_producer", _slow_eval),
                 patch("app.tasks.base.get_task_session", _fake_session),
             ):
-                res = await pcp._prewarm_machinery_roundups(deadline_s=0.55, slugs=slugs, rc=_DummyRc())
+                kwargs: dict = {"deadline_s": deadline_s, "slugs": slugs, "rc": _DummyRc()}
+                if enforce_wall_budget is not None:
+                    kwargs["enforce_wall_budget"] = enforce_wall_budget
+                res = await pcp._prewarm_machinery_roundups(**kwargs)
         finally:
             pcp._PREWARM_MACHINERY_CONCURRENCY_VAR.reset(tok)
 
-        outcomes = [v["outcome"] for v in res["slugs"].values()]
-        # With deadline=0.55s: s1 finishes in 0.08s, leaving <0.5s (0.47s < 0.5s guard),
-        # so s2 and s3 cleanly skip without checking out DB sessions past budget.
-        assert outcomes == ["refused", "skipped_no_time", "skipped_no_time"]
+        return [v["outcome"] for v in res["slugs"].values()], seen_timeouts
     finally:
         rc_mod.ROUNDUP_PRODUCERS.clear()
         rc_mod.ROUNDUP_PRODUCERS.update(saved)
+
+
+@pytest.mark.asyncio
+async def test_prewarm_machinery_roundups_skips_when_wall_budget_exhausted(monkeypatch: pytest.MonkeyPatch):
+    outcomes, seen_timeouts = await _run_slow_machinery_wall_budget_case(
+        monkeypatch, deadline_s=0.55, enforce_wall_budget=True
+    )
+    # With deadline=0.55s and enforce_wall_budget=True: s1 finishes in 0.08s, leaving
+    # <0.5s (0.47s < 0.5s guard), so s2 and s3 cleanly skip past budget.
+    assert outcomes == ["refused", "skipped_no_time", "skipped_no_time"]
+    assert len(seen_timeouts) == 1
+
+
+@pytest.mark.asyncio
+async def test_prewarm_machinery_roundups_main_job_attempts_every_slug_when_early_slugs_are_slow(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # Default enforce_wall_budget=False: 3 x 0.08s = 0.24s > deadline_s=0.15s, yet every
+    # slug still runs with its own full deadline_s rather than getting cut off by earlier slugs.
+    outcomes, seen_timeouts = await _run_slow_machinery_wall_budget_case(
+        monkeypatch, deadline_s=0.15
+    )
+    assert outcomes == ["refused", "refused", "refused"]
+    assert seen_timeouts == [1000, 1000, 1000]

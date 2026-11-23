@@ -29,6 +29,9 @@ _PREWARM_MACHINERY_SNAPSHOT_CACHE_VAR: contextvars.ContextVar[dict[Any, Any] | N
 _PREWARM_MACHINERY_CONCURRENCY_VAR: contextvars.ContextVar[int | None] = (
     contextvars.ContextVar("_PREWARM_MACHINERY_CONCURRENCY_VAR", default=None)
 )
+_PREWARM_MACHINERY_WALL_BUDGET_VAR: contextvars.ContextVar[bool] = (
+    contextvars.ContextVar("_PREWARM_MACHINERY_WALL_BUDGET_VAR", default=False)
+)
 
 
 def _redis_mget_safe(rc: Any, keys: list[str]) -> list[Any] | None:
@@ -2118,6 +2121,7 @@ async def _prewarm_machinery_roundups(
     slugs: list[str] | set[str] | tuple[str, ...] | None = None,
     stage: str | None = None,
     rc: object | None = None,
+    enforce_wall_budget: bool = False,
 ) -> dict:
     """Warm registered `machinery-*` roundup caches into shared Redis in parallel."""
     import asyncio
@@ -2184,24 +2188,29 @@ async def _prewarm_machinery_roundups(
 
     wall_started = _time.monotonic()
     max_conc = max(1, int(_PREWARM_MACHINERY_CONCURRENCY_VAR.get() or 3))
+    use_wall_budget = bool(enforce_wall_budget or _PREWARM_MACHINERY_WALL_BUDGET_VAR.get())
     db_sem = asyncio.Semaphore(max_conc)
 
     async def _warm_one(prod) -> tuple[str, dict]:
         t0 = _time.monotonic()
         try:
             async with db_sem:
-                rem = deadline_s - (_time.monotonic() - wall_started)
-                if rem < 0.5:
-                    return prod.slug, {
-                        "outcome": "skipped_no_time",
-                        "elapsed_ms": 0.0,
-                        "live": False,
-                        "redis_written": False,
-                        "redis_read_back": False,
-                        "redis_ttl_s": None,
-                    }
+                if use_wall_budget:
+                    rem = deadline_s - (_time.monotonic() - wall_started)
+                    if rem < 0.5:
+                        return prod.slug, {
+                            "outcome": "skipped_no_time",
+                            "elapsed_ms": 0.0,
+                            "live": False,
+                            "redis_written": False,
+                            "redis_read_back": False,
+                            "redis_ttl_s": None,
+                        }
+                    item_timeout = rem
+                else:
+                    item_timeout = deadline_s
                 async with get_task_session(
-                    statement_timeout_ms=max(1000, int(rem * 1000))
+                    statement_timeout_ms=max(1000, int(item_timeout * 1000))
                 ) as db:
                     import inspect as _inspect
 
@@ -2211,7 +2220,7 @@ async def _prewarm_machinery_roundups(
                         eval_kwargs["outcome_meta"] = eval_meta
                     fi, cp = await asyncio.wait_for(
                         evaluate_roundup_producer(prod, db, **eval_kwargs),
-                        timeout=rem,
+                        timeout=item_timeout,
                     )
                     elapsed_ms = round((_time.monotonic() - t0) * 1000.0, 1)
                     ok = fi is not None and cp is not None
@@ -2741,9 +2750,11 @@ async def _prewarm_live_machinery_roundups(rc, *, deadline_s: float = 20.0) -> d
 
     async def _run_batch(conc: int, budget_s: float, slugs_batch: list[str]) -> dict:
         tok = _PREWARM_MACHINERY_CONCURRENCY_VAR.set(conc)
+        wall_tok = _PREWARM_MACHINERY_WALL_BUDGET_VAR.set(True)
         try:
             return await _prewarm_machinery_roundups(deadline_s=budget_s, slugs=slugs_batch)
         finally:
+            _PREWARM_MACHINERY_WALL_BUDGET_VAR.reset(wall_tok)
             _PREWARM_MACHINERY_CONCURRENCY_VAR.reset(tok)
 
     if live_slugs and deadline_s >= 1.0:
