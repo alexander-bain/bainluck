@@ -1,6 +1,6 @@
 {
   "slug": "machinery-ai-math-and-data-centers",
-  "stage": "preview",
+  "stage": "public",
   "look": "bars",
   "membership": "computed-produced",
   "kind": "roundup",
@@ -42,6 +42,7 @@
         "atom_query": {
           "kind": "markets",
           "fun_sub_tag": "batch8-ai-math-and-data-centers",
+          "date_ladder_pick": "nearest_open",
           "shape": "any",
           "order_by": "lead_prob_desc",
           "min_items": 3,

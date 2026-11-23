@@ -681,10 +681,11 @@ _SPORTS_TITLE_SPORT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\b(?:uefa\s+)?champions\s+league\b|\bucl\b", re.IGNORECASE), "soccer_uefa_champs_league"),
     (re.compile(r"\beuropa\s+league\b", re.IGNORECASE), "soccer_uefa_europa_league"),
     (re.compile(r"\b(?:english\s+)?premier\s+league\b|\bepl\b", re.IGNORECASE), "soccer_epl"),
-    (re.compile(r"\bla\s+liga\b", re.IGNORECASE), "soccer_spain_la_liga"),
+    (re.compile(r"\blaliga\b|\bla\s+liga\b", re.IGNORECASE), "soccer_spain_la_liga"),
     (re.compile(r"\bbundesliga\b", re.IGNORECASE), "soccer_germany_bundesliga"),
     (re.compile(r"\bserie\s+a\b", re.IGNORECASE), "soccer_italy_serie_a"),
     (re.compile(r"\bligue\s+1\b", re.IGNORECASE), "soccer_france_ligue_one"),
+    (re.compile(r"\bliga\s+mx\b", re.IGNORECASE), "soccer_mexico_ligamx"),
     (re.compile(r"\bmls\b", re.IGNORECASE), "soccer_usa_mls"),
     (re.compile(r"\bfifa\s+world\s+cup\b|\bworld\s+cup\b", re.IGNORECASE), "soccer_fifa_world_cup"),
     (
@@ -700,7 +701,7 @@ _SPORTS_TITLE_SPORT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bstanley\s+cup\b|\bnhl\b", re.IGNORECASE), "icehockey_nhl"),
     (
         re.compile(
-            r"\bsuper\s+bowl\b(?!\s+(?:halftime|half-time|commercial|ads?|anthem|broadcast|viewership))|\bnfl\b",
+            r"\bsuper\s+bowl\b(?!\s+(?:halftime|half-time|commercial|ads?|anthem|broadcast|viewership))|\bnfl\b|\bpro\s+football\b|\b(?:afc|nfc)\s+(?:north|south|east|west|champion|championship|#1\s+seed)\b",
             re.IGNORECASE,
         ),
         "americanfootball_nfl",
@@ -708,6 +709,25 @@ _SPORTS_TITLE_SPORT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bcollege\s+football\b|\bcfp\b|\bncaaf\b|\bheisman\b", re.IGNORECASE), "americanfootball_ncaaf"),
     (re.compile(r"\bworld\s+series\b|\bmlb\b", re.IGNORECASE), "baseball_mlb"),
 )
+
+_LLM_LEAGUE_TO_SPORT_KEY: dict[str, str] = {
+    "nfl": "americanfootball_nfl",
+    "nba": "basketball_nba",
+    "nhl": "icehockey_nhl",
+    "mlb": "baseball_mlb",
+    "wnba": "basketball_wnba",
+    "epl": "soccer_epl",
+    "mls": "soccer_usa_mls",
+    "liga_mx": "soccer_mexico_ligamx",
+    "la_liga": "soccer_spain_la_liga",
+    "laliga": "soccer_spain_la_liga",
+    "europa": "soccer_uefa_europa_league",
+    "ucl": "soccer_uefa_champs_league",
+    "fifa_wc": "soccer_fifa_world_cup",
+    "ncaaf": "americanfootball_ncaaf",
+    "ncaab": "basketball_ncaab",
+    "wncaab": "basketball_wncaab",
+}
 
 
 def _strip_club_affixes(name: str) -> str:
@@ -737,6 +757,9 @@ def _infer_sports_key_for_market(
         raw = str(market.get(key_field) or "").strip().lower()
         if raw and "_" in raw:
             return raw
+    raw_league = str(market.get("llm_league") or "").strip().lower()
+    if raw_league in _LLM_LEAGUE_TO_SPORT_KEY:
+        return _LLM_LEAGUE_TO_SPORT_KEY[raw_league]
     title = str(market.get("name") or market.get("raw_title") or "").strip()
     if title:
         for pat, sk in _SPORTS_TITLE_SPORT_PATTERNS:
@@ -753,6 +776,10 @@ def _infer_sports_key_for_market(
         }
         if len(sec_sports) == 1:
             return next(iter(sec_sports))
+        def_tag = str(definition.get("tag") or "").strip().lower()
+        def_cat = str(definition.get("category") or "").strip().lower()
+        if def_tag == "nfl" or (def_cat == "football" and "college" not in str(definition.get("name") or "").lower()):
+            return "americanfootball_nfl"
     return None
 
 
@@ -914,6 +941,45 @@ class SubjectArtResolver:
                 self._team_prefix_unique,
             )
 
+    _NFL_CITY_TO_CANONICAL_TEAM: dict[str, str] = {
+        "arizona": "Arizona Cardinals",
+        "atlanta": "Atlanta Falcons",
+        "baltimore": "Baltimore Ravens",
+        "buffalo": "Buffalo Bills",
+        "carolina": "Carolina Panthers",
+        "chicago": "Chicago Bears",
+        "cincinnati": "Cincinnati Bengals",
+        "cleveland": "Cleveland Browns",
+        "dallas": "Dallas Cowboys",
+        "denver": "Denver Broncos",
+        "detroit": "Detroit Lions",
+        "green bay": "Green Bay Packers",
+        "houston": "Houston Texans",
+        "indianapolis": "Indianapolis Colts",
+        "jacksonville": "Jacksonville Jaguars",
+        "kansas city": "Kansas City Chiefs",
+        "las vegas": "Las Vegas Raiders",
+        "los angeles c": "Los Angeles Chargers",
+        "la chargers": "Los Angeles Chargers",
+        "los angeles r": "Los Angeles Rams",
+        "la rams": "Los Angeles Rams",
+        "miami": "Miami Dolphins",
+        "minnesota": "Minnesota Vikings",
+        "new england": "New England Patriots",
+        "new orleans": "New Orleans Saints",
+        "new york g": "New York Giants",
+        "ny giants": "New York Giants",
+        "new york j": "New York Jets",
+        "ny jets": "New York Jets",
+        "philadelphia": "Philadelphia Eagles",
+        "pittsburgh": "Pittsburgh Steelers",
+        "san francisco": "San Francisco 49ers",
+        "seattle": "Seattle Seahawks",
+        "tampa bay": "Tampa Bay Buccaneers",
+        "tennessee": "Tennessee Titans",
+        "washington": "Washington Commanders",
+    }
+
     def _resolve_from_team_lookup(
         self,
         subject: str,
@@ -927,7 +993,12 @@ class SubjectArtResolver:
             _team_for_event_by_name,
         )
 
-        candidates: list[str] = [subject]
+        candidates: list[str] = []
+        subj_key = " ".join(subject.strip().lower().split())
+        if sport_key == "americanfootball_nfl" and subj_key in self._NFL_CITY_TO_CANONICAL_TEAM:
+            candidates.append(self._NFL_CITY_TO_CANONICAL_TEAM[subj_key])
+        if subject not in candidates:
+            candidates.append(subject)
         stripped_subject = _strip_club_affixes(subject)
         subject_forms = [subject]
         if stripped_subject and stripped_subject != subject:
@@ -948,8 +1019,31 @@ class SubjectArtResolver:
         for cand in candidates:
             team_row = _team_for_event_by_name(self._team_lookup, cand, sport_key)
             rec = _extract_team_crest_record(team_row)
-            if rec is not None:
+            if rec is not None and (
+                not sport_key or _static_team_logo_matches_sport(rec.get("url"), sport_key)
+            ):
                 return rec
+
+        if sport_key and sport_key.startswith("soccer_"):
+            by_league = getattr(self._team_lookup, "by_league", None)
+            if isinstance(by_league, Mapping):
+                want_women = "women" in sport_key
+                for prefer_same_gender in (True, False):
+                    for cand in candidates:
+                        rows = by_league.get(cand)
+                        if not isinstance(rows, Mapping):
+                            continue
+                        for row in rows.values():
+                            rsk = str(getattr(row, "sport_key", None) or "").lower()
+                            if not rsk.startswith("soccer"):
+                                continue
+                            if prefer_same_gender and (("women" in rsk) != want_women):
+                                continue
+                            rec = _extract_team_crest_record(row)
+                            if rec is not None and _static_team_logo_matches_sport(
+                                rec.get("url"), sport_key
+                            ):
+                                return rec
 
         if sport_key == "basketball_wncaab":
             for cand in candidates:
@@ -1889,6 +1983,43 @@ def _format_fun_lead_answer_label(
     return f"{base_title}: {ans}", False
 
 
+def _parse_outcome_deadline_date(name: str) -> Optional[date]:
+    """Parse cumulative date-ladder outcome labels (``Before Jan 1, 2027``, ``Dec 31, 2026``, ``Before 2028``)."""
+    raw = name.strip().rstrip("?").strip()
+    m_prep = _PREP_DATE_OUTCOME_RE.match(raw)
+    if m_prep:
+        if m_prep.group(1).lower() == "after":
+            return None
+        raw = m_prep.group(2).strip()
+    for fmt in ("%B %d, %Y", "%b %d, %Y", "%B %Y", "%b %Y", "%Y"):
+        try:
+            parsed = datetime.strptime(raw, fmt)
+            return date(parsed.year, parsed.month if "%b" in fmt or "%B" in fmt else 1, parsed.day if "%d" in fmt else 1)
+        except ValueError:
+            continue
+    return None
+
+
+def _pick_nearest_open_date_ladder_outcome(
+    outcomes: Sequence[Mapping[str, Any]],
+    *,
+    ref_date: date,
+) -> Optional[Mapping[str, Any]]:
+    """Select the earliest future tradeable deadline rung from a cumulative date ladder."""
+    dated: list[tuple[date, float, Mapping[str, Any]]] = []
+    for o in outcomes:
+        deadline = _parse_outcome_deadline_date(str(o.get("name") or ""))
+        if deadline is not None:
+            dated.append((deadline, float(o.get("probability") or 0.0), o))
+    if len(dated) < 2:
+        return None
+    future = [item for item in dated if item[0] >= ref_date]
+    if not future:
+        return None
+    future.sort(key=lambda item: (item[0], -item[1]))
+    return future[0][2]
+
+
 def _hydrate_market_visual_item(
     market: Mapping[str, Any],
     *,
@@ -1899,6 +2030,8 @@ def _hydrate_market_visual_item(
     fun_sub_tag: Optional[str] = None,
     sport_key: Optional[str] = None,
     allow_team_lookup: Optional[bool] = None,
+    now_dt: Optional[datetime] = None,
+    date_ladder_pick: Optional[str] = None,
 ) -> dict[str, Any]:
     mid = int(market["id"])
     if "top_outcomes" in market and isinstance(market["top_outcomes"], (list, tuple)):
@@ -1955,6 +2088,16 @@ def _hydrate_market_visual_item(
         # non-"After" release-window outcome so the row ranks by actual arrival odds
         # while keeping 100% member-page parity on its real outcome_id.
         if (
+            use_fun_short_label
+            and max_outcomes == 1
+            and date_ladder_pick == "nearest_open"
+            and ordered_valid
+        ):
+            ref_d = (now_dt or datetime.now(timezone.utc)).date()
+            nearest = _pick_nearest_open_date_ladder_outcome(ordered_valid, ref_date=ref_d)
+            if nearest is not None:
+                ordered_valid = [nearest] + [o for o in ordered_valid if o is not nearest]
+        elif (
             use_fun_short_label
             and max_outcomes == 1
             and ordered_valid
@@ -4712,6 +4855,7 @@ async def produce_container_machinery(
         if aq_kind == "market_history":
             hours = int(aq.get("hours") or 168)
             fun_sub_tag_val = str(aq.get("fun_sub_tag") or "").strip() or None
+            date_ladder_pick_val = str(aq.get("date_ladder_pick") or "").strip() or None
             matched_h = [
                 _hydrate_market_visual_item(
                     m,
@@ -4722,6 +4866,8 @@ async def produce_container_machinery(
                     fun_sub_tag=fun_sub_tag_val,
                     sport_key=_infer_sports_key_for_market(m, definition),
                     allow_team_lookup=_is_sports_context(m, definition),
+                    now_dt=now_dt,
+                    date_ladder_pick=date_ladder_pick_val,
                 )
                 for m in all_markets
                 if (MEMBER_MARKET, int(m["id"])) not in seen_member_keys
@@ -4873,6 +5019,7 @@ async def produce_container_machinery(
         explicit_ck = str(aq.get("content_kind") or "").strip().lower() or None
         fun_sub_tag_val = str(aq.get("fun_sub_tag") or "").strip() or None
         use_fun_short = bool(fun_sub_tag_val)
+        date_ladder_pick_val = str(aq.get("date_ladder_pick") or "").strip() or None
         matched = [
             _hydrate_market_visual_item(
                 m,
@@ -4883,6 +5030,8 @@ async def produce_container_machinery(
                 fun_sub_tag=fun_sub_tag_val,
                 sport_key=_infer_sports_key_for_market(m, definition),
                 allow_team_lookup=_is_sports_context(m, definition),
+                now_dt=now_dt,
+                date_ladder_pick=date_ladder_pick_val,
             )
             for m in all_markets
             if (MEMBER_MARKET, int(m["id"])) not in seen_member_keys
@@ -5074,37 +5223,51 @@ async def produce_container_machinery(
                 }
             )
     elif vb_form == "probability_history_chart":
-        lead_chart = (vb.get("items") or [{}])[0]
-        mid = int(lead_chart.get("market_id") or 1)
-        card_scale_ordered = bool(lead_chart.get("scale_ordered"))
-        for s in list(lead_chart.get("series") or ())[:card_rows_limit]:
-            if not isinstance(s, Mapping):
-                continue
-            cur_pct = int(s.get("current_pct") or 0)
-            prob = round(cur_pct / 100.0, 4)
-            oid = int(s.get("outcome_id") or 0)
-            label = str(s.get("name") or "")
-            art = s.get("art") if isinstance(s.get("art"), Mapping) else {}
-            rows_out.append(
-                {
-                    "market_id": mid,
-                    "outcome_id": oid,
-                    "label": label,
-                    "probability": prob,
-                    "rendered_percent": cur_pct,
-                }
-            )
-            card_visual_rows.append(
-                {
-                    "market_id": mid,
-                    "outcome_id": oid,
-                    "href": lead_chart.get("href") or f"/futures/{mid}",
-                    "name": label,
-                    "probability": prob,
-                    "rendered_percent": cur_pct,
-                    "art": dict(art),
-                }
-            )
+        chart_items = [
+            ch
+            for ch in (vb.get("items") or ())
+            if isinstance(ch, Mapping) and (ch.get("series") or ())
+        ]
+        card_scale_ordered = False
+        if len(chart_items) >= 2:
+            for ch in chart_items[:card_rows_limit]:
+                c_mid = int(ch.get("market_id") or 1)
+                series_list = [s for s in (ch.get("series") or ()) if isinstance(s, Mapping)]
+                lead_s = max(
+                    series_list,
+                    key=lambda s: (
+                        int(s.get("current_pct") or 0),
+                        abs(int(s.get("net_move_pp") or 0)),
+                        str(s.get("name") or ""),
+                    ),
+                )
+                cur_pct = int(lead_s.get("current_pct") or 0)
+                prob = round(cur_pct / 100.0, 4)
+                oid = int(lead_s.get("outcome_id") or 0)
+                ch_title = str(ch.get("title") or "").strip()
+                ans_name = str(lead_s.get("name") or "").strip()
+                label, _ = _format_fun_lead_answer_label(ch_title, ans_name)
+                art = lead_s.get("art") if isinstance(lead_s.get("art"), Mapping) else {}
+                rows_out.append(
+                    {
+                        "market_id": c_mid,
+                        "outcome_id": oid,
+                        "label": label,
+                        "probability": prob,
+                        "rendered_percent": cur_pct,
+                    }
+                )
+                card_visual_rows.append(
+                    {
+                        "market_id": c_mid,
+                        "outcome_id": oid,
+                        "href": ch.get("href") or f"/futures/{c_mid}",
+                        "name": label,
+                        "probability": prob,
+                        "rendered_percent": cur_pct,
+                        "art": dict(art),
+                    }
+                )
     else:
         lead_market = (vb.get("items") or [{}])[0]
         mid = int(lead_market.get("market_id") or 1)
@@ -5167,7 +5330,7 @@ async def produce_container_machinery(
     if (
         not hide_row_art
         and card_visual_rows
-        and vb_form in {"benchmark_strip", "sibling_fields_grid", "leader_bars"}
+        and vb_form in {"benchmark_strip", "sibling_fields_grid", "leader_bars", "probability_history_chart"}
         and not card_scale_ordered
     ):
         row_has_url = [

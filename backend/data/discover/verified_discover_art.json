@@ -2988,6 +2988,7 @@
     {
       "entity_key": "batch8-chess-milestones-curiosities",
       "aliases": [
+        "World Chess & Grandmaster Races",
         "Chess, Milestones & Curiosities",
         "batch8-chess-milestones-curiosities"
       ],
@@ -3033,21 +3034,23 @@
     {
       "entity_key": "batch8-tv-and-gaming-2026",
       "aliases": [
+        "TV & Late Night Races",
         "TV, Stage & Gaming Drops",
         "batch8-tv-and-gaming-2026"
       ],
       "kind": "topic",
       "presentation": "photo",
-      "verified_subject": "Vintage cinema projection booth with twin film projectors and control panel",
-      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/da/Projector_met_bijbehorende_apparatuur_van_het_Chicago_Theater.jpg/960px-Projector_met_bijbehorende_apparatuur_van_het_Chicago_Theater.jpg",
-      "credit": "Unknown author (CC0 1.0 Public Domain, Wikimedia Commons)",
-      "author": "Unknown author",
+      "verified_subject": "Studio camera and colorful stage lights during a television shoot",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/00/Stand_In_%28Unsplash%29.jpg/960px-Stand_In_%28Unsplash%29.jpg",
+      "credit": "Jakob Owens (CC0 1.0 Public Domain, Wikimedia Commons)",
+      "author": "Jakob Owens",
       "license": "CC0 1.0 Public Domain",
-      "source_page": "https://commons.wikimedia.org/wiki/File:Projector_met_bijbehorende_apparatuur_van_het_Chicago_Theater.jpg"
+      "source_page": "https://commons.wikimedia.org/wiki/File:Stand_In_(Unsplash).jpg"
     },
     {
       "entity_key": "batch8-soccer-cups-and-relegation",
       "aliases": [
+        "Global Soccer Races",
         "Soccer Cups & Relegation",
         "batch8-soccer-cups-and-relegation"
       ],
@@ -3089,6 +3092,50 @@
       "author": "TSgt. Bob Wickley",
       "license": "Public domain",
       "source_page": "https://commons.wikimedia.org/wiki/File:Circuit_image_on_Rubylith.jpg"
+    },
+    {
+      "entity_key": "kylian-mbappe",
+      "aliases": [
+        "Kylian Mbappé",
+        "Kylian Mbappe"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Kylian Mbappé, French forward",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/95/Kylian_Mbappe_France_v_Senegal_16_June_2026-391_%28cropped%29.jpg/500px-Kylian_Mbappe_France_v_Senegal_16_June_2026-391_%28cropped%29.jpg",
+      "credit": "Bryan Berlin (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "Bryan Berlin",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Kylian_Mbappe_France_v_Senegal_16_June_2026-391_(cropped).jpg"
+    },
+    {
+      "entity_key": "raphinha",
+      "aliases": [
+        "Raphinha",
+        "Raphael Dias Belloli"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Raphinha (Raphael Dias Belloli), Brazilian winger",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5e/Raphael_Dias_Belloli_2023.jpg/500px-Raphael_Dias_Belloli_2023.jpg",
+      "credit": "Government of Catalonia (Attribution, Wikimedia Commons)",
+      "author": "Government of Catalonia",
+      "license": "Attribution",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Raphael_Dias_Belloli_2023.jpg"
+    },
+    {
+      "entity_key": "lamine-yamal",
+      "aliases": [
+        "Lamine Yamal"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Lamine Yamal, Spanish forward",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b9/Lamine_Yamal_Argentina_v_Spain_19_July_2026-144_%28cropped%29.jpg/500px-Lamine_Yamal_Argentina_v_Spain_19_July_2026-144_%28cropped%29.jpg",
+      "credit": "Bryan Berlin (CC BY-SA 4.0, Wikimedia Commons)",
+      "author": "Bryan Berlin",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Lamine_Yamal_Argentina_v_Spain_19_July_2026-144_(cropped).jpg"
     }
   ]
 }
