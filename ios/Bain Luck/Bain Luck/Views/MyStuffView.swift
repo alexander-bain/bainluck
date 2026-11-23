@@ -256,6 +256,7 @@ struct MyStuffView: View {
                         .background(.black)
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
+                    .disabled(authManager.isSigningIn)
 
                     Button {
                         authManager.signInWithGoogle()
@@ -271,6 +272,7 @@ struct MyStuffView: View {
                         .background(Color(red: 0.26, green: 0.52, blue: 0.96))
                         .clipShape(RoundedRectangle(cornerRadius: 12))
                     }
+                    .disabled(authManager.isSigningIn)
 
                     if let error = authManager.error {
                         Text(error)

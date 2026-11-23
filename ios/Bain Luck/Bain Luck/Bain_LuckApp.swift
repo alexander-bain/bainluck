@@ -78,6 +78,9 @@ struct Bain_LuckApp: App {
         }
         FirebaseConfiguration.shared.setLoggerLevel(.min)
         FirebaseApp.configure()
+        // Pre-configure Google Sign-In and purge any leftover keychain state once
+        // on clean install after `_keychainStore` is initialized (#13516).
+        AuthManager.prepareGoogleSignIn()
         // Resolve consent BEFORE the first telemetry call below (Queue 311 A3 /
         // ruling 007, #1632). Collection is off by default in the plist, so
         // this either leaves it off (no choice yet, or a refusal) or restores a

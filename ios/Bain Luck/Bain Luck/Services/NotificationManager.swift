@@ -8,6 +8,9 @@
 import Combine
 import FirebaseMessaging
 import Foundation
+#if canImport(GoogleSignIn)
+import GoogleSignIn
+#endif
 import os
 import UserNotifications
 #if canImport(UIKit)
@@ -478,6 +481,18 @@ class BainLuckAppDelegate: NSObject, UIApplicationDelegate {
         didFailToRegisterForRemoteNotificationsWithError error: Error
     ) {
         NotificationManager.shared.didFailToRegisterForRemoteNotifications(error: error)
+    }
+
+    func application(
+        _ app: UIApplication,
+        open url: URL,
+        options: [UIApplication.OpenURLOptionsKey: Any] = [:]
+    ) -> Bool {
+        #if canImport(GoogleSignIn)
+        return GIDSignIn.sharedInstance.handle(url)
+        #else
+        return false
+        #endif
     }
 }
 #elseif os(macOS)
