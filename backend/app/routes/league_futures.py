@@ -1811,7 +1811,6 @@ def _format_game_brief(
     away_prob = None
     if _unified_chance is not None:
         home_prob = _unified_chance.home_probability
-        away_prob = _unified_chance.away_probability
     elif _is_finished:
         _finished_hero = resolve_hero(event)
         _finished_sc = settled_current_chance(_finished_hero, sport_key=sport_key)
@@ -3917,7 +3916,6 @@ async def build_league(sport_key: str, db: AsyncSession) -> dict:
             fault_tolerant_external=True,
             fault_tolerant_odds=True,
         )
-        _tag_folded = _unified_rails.folded_card_map
 
         def _format_all(events: list) -> list[dict]:
             out: list[dict] = []

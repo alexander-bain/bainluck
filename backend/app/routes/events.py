@@ -11900,7 +11900,7 @@ async def search_events(
         post_fold_filter_fn=_search_post_fold,
         fold_fn=fold_twin_events,
         fold_card_fn=folded_card_numbers_batch,
-        odds_query_fn=lambda event_ids: latest_odds_per_bookmaker_query(event_ids),
+        odds_query_fn=latest_odds_per_bookmaker_query,
         on_stage=_on_search_stage,
         fault_tolerant_external=True,
         now=datetime.now(timezone.utc),
@@ -20532,6 +20532,7 @@ async def get_event(
         include_live_projections=True,
         include_recent_projections=True,
         include_fold_revision=True,
+        include_series_fold_ids=True,
         fold_revision_fn=folded_probability_sources_with_revision,
         odds_query_fn=latest_odds_per_bookmaker_query,
     )
@@ -20660,14 +20661,6 @@ async def get_event(
         filtered_snapshots = _unified_ev.odds_data["snapshots"]
         aggregated = _unified_ev.odds_data["aggregated"]
         latest_time = _unified_ev.odds_data.get("captured_at")
-
-        # Detect bookmakers with reversed home/away odds
-        reversed_bookmakers = detect_reversed_bookmakers(filtered_snapshots)
-
-        # Aggregate snapshots kept for live line projection / fallback
-        agg_snapshots = [s for s in filtered_snapshots if s.bookmaker not in reversed_bookmakers]
-        if not agg_snapshots:
-            agg_snapshots = filtered_snapshots
 
         # Hero probability: use multi-source aggregate (matching feed),
         # fall back to bookmaker-only consensus if aggregate unavailable.

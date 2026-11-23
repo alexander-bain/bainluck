@@ -325,7 +325,8 @@ async def _assemble_event_cards(
         include_live_projections=True,
         include_recent_projections=True,
         fold_card_fn=_timed_fold_cards,
-        odds_query_fn=lambda eids: latest_odds_per_bookmaker_query(eids),
+        odds_query_fn=latest_odds_per_bookmaker_query,
+        stage_timer_fn=_time_stage,
         fault_tolerant_external=True,
         fault_tolerant_odds=False,
     )

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable, Sequence
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -37,28 +38,8 @@ from app.utils.hero_probability import resolve_hero
 from app.utils.kalshi_occurrence_start import loaded_sport_key
 from app.utils.odds_filtering import filter_stale_bookmaker_snapshots
 from app.utils.odds_math import aggregate_bookmaker_odds, detect_reversed_bookmakers
-from app.utils.proven_duplicates import (
-    FoldedBlendView,
-    FoldedCardNumbers,
-    flip_probability_sources,
-    folded_card_numbers_batch,
-    folded_probability_sources_with_revision,
-    group_latest_snapshots_by_event,
-    is_corner_flipped_absorbed,
-    merge_opening_line,
-    merge_probability_sources,
-    not_a_proven_duplicate,
-)
+from app.utils import proven_duplicates as _pd_mod
 from app.utils import serve_fold_absorbed as _serve_fold_mod
-from app.utils.serve_fold_absorbed import (
-    CANDIDATE_CAP,
-    _coalesced_list_time_predicate,
-    _extra_foldable_sport_keys,
-    _has_priced_signal_predicate,
-    _keep_page_survivor,
-    _same_day_idless_claim_predicate,
-    _sport_prefix,
-)
 from app.utils.settled_hero import is_finished_status, settled_current_chance
 from app.utils.source_mark import headline_source_marks, no_source_mark
 
@@ -114,7 +95,7 @@ class UnifiedGameRead:
     event: Any
     folded_sources: dict | None
     folded_opening: tuple[Any, Any] | None
-    blend_view: FoldedBlendView
+    blend_view: _pd_mod.FoldedBlendView
     blend_fold_revision: dict[str, int] | None = None
     absorbed_rows: list[Any] = field(default_factory=list)
     absorbed_ids: tuple[int, ...] = ()
@@ -132,7 +113,7 @@ class UnifiedGameReadBatch:
     events: list[Any]
     by_id: dict[int, UnifiedGameRead]
     fold_result: FoldResult
-    folded_card_map: dict[int, FoldedCardNumbers]
+    folded_card_map: dict[int, _pd_mod.FoldedCardNumbers]
     odds_map: dict[int, dict[str, Any]]
     complete: bool = True
 
@@ -271,12 +252,12 @@ async def _fetch_external_candidates_batch(
             continue
         if not getattr(ev, "home_team_name", None) or not getattr(ev, "away_team_name", None):
             continue
-        extra_keys = _extra_foldable_sport_keys(sk)
+        extra_keys = _serve_fold_mod._extra_foldable_sport_keys(sk)
         if include_same_league_external:
             extra_keys = [sk, *[k for k in extra_keys if k != sk]]
         is_catchall = sk.endswith("_other")
         if is_catchall:
-            other_prefixes.add(_sport_prefix(sk))
+            other_prefixes.add(_serve_fold_mod._sport_prefix(sk))
         for k in extra_keys:
             all_target_keys.add(k)
         anchored_claim = (
@@ -313,14 +294,16 @@ async def _fetch_external_candidates_batch(
     prefix_to_sport_ids: dict[str, list[int]] = {}
     for sid, sk in _extract_sport_pairs(sp_rows):
         key_to_sport_id[sk] = sid
-        prefix_to_sport_ids.setdefault(_sport_prefix(sk), []).append(sid)
+        prefix_to_sport_ids.setdefault(_serve_fold_mod._sport_prefix(sk), []).append(sid)
 
     group_clauses: list[Any] = []
     for (sk, anchored_claim), group_evs in by_group.items():
         if sk.endswith("_other"):
-            sids = sorted(set(prefix_to_sport_ids.get(_sport_prefix(sk), [])))
+            sids = sorted(
+                set(prefix_to_sport_ids.get(_serve_fold_mod._sport_prefix(sk), []))
+            )
         else:
-            tkeys = _extra_foldable_sport_keys(sk)
+            tkeys = _serve_fold_mod._extra_foldable_sport_keys(sk)
             if include_same_league_external:
                 tkeys = [sk, *[k for k in tkeys if k != sk]]
             sids = sorted({key_to_sport_id[k] for k in tkeys if k in key_to_sport_id})
@@ -331,11 +314,11 @@ async def _fetch_external_candidates_batch(
         ]
         if not commence_times:
             continue
-        time_pred = _coalesced_list_time_predicate(commence_times)
+        time_pred = _serve_fold_mod._coalesced_list_time_predicate(commence_times)
         group_clauses.append(and_(Event.sport_id.in_(sids), time_pred))
         if anchored_claim and sk in key_to_sport_id:
             claim_preds = [
-                _same_day_idless_claim_predicate(ct)
+                _serve_fold_mod._same_day_idless_claim_predicate(ct)
                 for ct in {ct for ct in commence_times}
             ]
             group_clauses.append(
@@ -348,7 +331,7 @@ async def _fetch_external_candidates_batch(
     if not group_clauses:
         return [], True
 
-    batch_cap = CANDIDATE_CAP * 4
+    batch_cap = _serve_fold_mod.CANDIDATE_CAP * 4
     stmt = (
         select(Event)
         .join(Sport, Event.sport_id == Sport.id)
@@ -356,8 +339,8 @@ async def _fetch_external_candidates_batch(
         .where(
             Event.id.notin_(sorted(page_ids)),
             Event.status.notin_(list(RETIRED_STATUSES)),
-            not_a_proven_duplicate(),
-            _has_priced_signal_predicate(),
+            _pd_mod.not_a_proven_duplicate(),
+            _serve_fold_mod._has_priced_signal_predicate(),
             or_(*group_clauses),
         )
         .limit(batch_cap)
@@ -383,7 +366,7 @@ def _absorb_external_without_dropping_page(
 
     # First resolve which page events survive vs collapse using _keep_page_survivor,
     # ensuring no external *_other row ever replaces a page event.
-    kept = _keep_page_survivor(events, page_ids, inner, fold_fn=fold_fn)
+    kept = _serve_fold_mod._keep_page_survivor(events, page_ids, inner, fold_fn=fold_fn)
     kept_by_id = {int(e.id): e for e in kept.events if getattr(e, "id", None) is not None}
 
     # Build direct clusters from `inner` so external candidates absorbed directly
@@ -423,6 +406,8 @@ async def _fetch_odds_snapshots(
     db: Any,
     odds_query_ids: list[int],
     odds_query_fn: Any,
+    *,
+    single_event: bool = False,
 ) -> list[Any]:
     if not odds_query_ids:
         return []
@@ -438,9 +423,10 @@ async def _fetch_odds_snapshots(
     return [
         s
         for s in rows
-        if isinstance(getattr(s, "event_id", None), int)
+        if not isinstance(s, (Event, Sport))
         and isinstance(getattr(s, "bookmaker", None), str)
         and isinstance(getattr(s, "captured_at", None), datetime)
+        and (single_event or isinstance(getattr(s, "event_id", None), int))
     ]
 
 
@@ -456,6 +442,7 @@ async def load_unified_game_reads(
     include_live_projections: bool = False,
     include_recent_projections: bool = False,
     include_fold_revision: bool = False,
+    include_series_fold_ids: bool = False,
     post_fold_filter_fn: Callable[[list[Any]], Awaitable[list[Any]]] | None = None,
     fold_fn=fold_twin_events,
     fold_card_fn=None,
@@ -463,6 +450,7 @@ async def load_unified_game_reads(
     fold_revision_fn=None,
     odds_query_fn=None,
     on_stage: Callable[[str], None] | None = None,
+    stage_timer_fn: Callable[[str], Any] | None = None,
     fault_tolerant_external: bool = False,
     fault_tolerant_odds: bool = False,
     now: datetime | None = None,
@@ -478,6 +466,9 @@ async def load_unified_game_reads(
             odds_map={},
             complete=True,
         )
+
+    def _stage_ctx(stage_name: str):
+        return stage_timer_fn(stage_name) if stage_timer_fn is not None else nullcontext()
 
     clock_now = now or datetime.now(timezone.utc)
     complete = True
@@ -567,7 +558,7 @@ async def load_unified_game_reads(
             inpage_absorbed_by_surv.setdefault(int(surv_id), []).append(row)
 
     # 2. Tagged duplicate fold (batched or with revision)
-    folded_card_map: dict[int, FoldedCardNumbers] = {}
+    folded_card_map: dict[int, _pd_mod.FoldedCardNumbers] = {}
     revisions_by_id: dict[int, dict[str, int] | None] = {}
     combined_absorbed_by_id: dict[int, list[Any]] = {}
     for ev in ev_list:
@@ -581,11 +572,88 @@ async def load_unified_game_reads(
         combined_absorbed_by_id[eid] = [seen_a[k] for k in sorted(seen_a)]
 
     if include_fold_revision:
-        rev_loader = fold_revision_fn or folded_probability_sources_with_revision
+        rev_loader = fold_revision_fn or _pd_mod.folded_probability_sources_with_revision
         for ev in ev_list:
             eid = int(ev.id)
             abs_for_ev = combined_absorbed_by_id.get(eid, ())
-            sources, rev = await rev_loader(db, ev, abs_for_ev)
+            non_flipped_abs = [
+                r for r in abs_for_ev if not _pd_mod.is_corner_flipped_absorbed(r)
+            ]
+            flipped_abs_ids = {
+                int(r.id) for r in abs_for_ev if _pd_mod.is_corner_flipped_absorbed(r)
+            }
+            try:
+                sources, rev = await rev_loader(db, ev, abs_for_ev)
+            except Exception:
+                if not fault_tolerant_external:
+                    raise
+                logger.exception(
+                    "unified game read: revision fold failed for event %s; "
+                    "keeping own/runtime sources",
+                    eid,
+                )
+                complete = False
+                oriented_pairs_fb: list[tuple[int, dict | None]] = []
+                for abs_row in abs_for_ev:
+                    raw_bag = getattr(abs_row, "win_probability_sources", None)
+                    if _pd_mod.is_corner_flipped_absorbed(abs_row) and raw_bag:
+                        ok, turned = _pd_mod.flip_probability_sources(raw_bag)
+                        oriented_bag = turned if ok else None
+                    else:
+                        oriented_bag = raw_bag
+                    oriented_pairs_fb.append((int(abs_row.id), oriented_bag))
+                sources = (
+                    _pd_mod.merge_probability_sources(
+                        getattr(ev, "win_probability_sources", None),
+                        oriented_pairs_fb,
+                        event_status=getattr(ev, "status", None),
+                        now=clock_now,
+                    )
+                    if oriented_pairs_fb
+                    else getattr(ev, "win_probability_sources", None)
+                )
+                rev = None
+
+            if include_series_fold_ids:
+                try:
+                    series_ids = await _pd_mod.folded_series_event_ids(db, eid, non_flipped_abs)
+                except Exception:
+                    if not fault_tolerant_external:
+                        raise
+                    logger.exception(
+                        "unified game read: series fold ids failed for event %s",
+                        eid,
+                    )
+                    complete = False
+                    series_ids = [eid, *(int(r.id) for r in non_flipped_abs)]
+                fold_abs_ids = tuple(
+                    int(tid)
+                    for tid in series_ids
+                    if int(tid) != eid and int(tid) not in flipped_abs_ids
+                )
+            else:
+                seen_ids: set[int] = set()
+                fold_abs_list: list[int] = []
+                if isinstance(rev, dict):
+                    for raw_k in rev:
+                        try:
+                            kid = int(raw_k)
+                        except (TypeError, ValueError):
+                            continue
+                        if (
+                            kid != eid
+                            and kid not in flipped_abs_ids
+                            and kid not in seen_ids
+                        ):
+                            seen_ids.add(kid)
+                            fold_abs_list.append(kid)
+                for r in non_flipped_abs:
+                    rid = int(r.id)
+                    if rid != eid and rid not in seen_ids:
+                        seen_ids.add(rid)
+                        fold_abs_list.append(rid)
+                fold_abs_ids = tuple(fold_abs_list)
+
             sources = _sync_folded_betting_book_count(
                 sources,
                 getattr(ev, "win_probability_sources", None),
@@ -599,37 +667,56 @@ async def load_unified_game_reads(
                     getattr(r, "opening_home_probability", None),
                     getattr(r, "opening_away_probability", None),
                 )
-                for r in abs_for_ev
-                if not is_corner_flipped_absorbed(r)
+                for r in non_flipped_abs
             ]
             merged_opening = (
-                merge_opening_line(open_h, open_a, open_pairs)
+                _pd_mod.merge_opening_line(open_h, open_a, open_pairs)
                 if open_pairs
                 else (open_h, open_a)
             )
-            folded_card_map[eid] = FoldedCardNumbers(
+            folded_card_map[eid] = _pd_mod.FoldedCardNumbers(
                 win_probability_sources=sources,
                 opening=merged_opening,
-                absorbed_ids=tuple(int(r.id) for r in abs_for_ev),
+                absorbed_ids=fold_abs_ids,
             )
             revisions_by_id[eid] = rev
     else:
         if fold_sources_fn is not None:
-            raw_sources_map = await fold_sources_fn(db, ev_list)
-            folded_card_map = {
-                eid: FoldedCardNumbers(
-                    win_probability_sources=srcs,
-                    opening=(None, None),
-                    absorbed_ids=(),
+            try:
+                raw_sources_map = await fold_sources_fn(db, ev_list)
+                folded_card_map = {
+                    eid: _pd_mod.FoldedCardNumbers(
+                        win_probability_sources=srcs,
+                        opening=(None, None),
+                        absorbed_ids=(),
+                    )
+                    for eid, srcs in (raw_sources_map or {}).items()
+                }
+            except Exception:
+                if not fault_tolerant_external:
+                    raise
+                logger.exception(
+                    "unified game read: tagged source fold failed; "
+                    "keeping own/runtime sources"
                 )
-                for eid, srcs in (raw_sources_map or {}).items()
-            }
+                complete = False
+                folded_card_map = {}
         else:
-            card_loader = fold_card_fn or folded_card_numbers_batch
-            folded_card_map = await card_loader(db, ev_list)
+            card_loader = fold_card_fn or _pd_mod.folded_card_numbers_batch
+            try:
+                folded_card_map = await card_loader(db, ev_list)
+            except Exception:
+                if not fault_tolerant_external:
+                    raise
+                logger.exception(
+                    "unified game read: tagged card fold failed; "
+                    "keeping own/runtime sources"
+                )
+                complete = False
+                folded_card_map = {}
 
         # Merge tagged sources/opening + oriented runtime absorbed rows identically to get_event
-        updated_card_map: dict[int, FoldedCardNumbers] = {}
+        updated_card_map: dict[int, _pd_mod.FoldedCardNumbers] = {}
         for ev in ev_list:
             eid = int(ev.id)
             own_sources = getattr(ev, "win_probability_sources", None)
@@ -666,9 +753,9 @@ async def load_unified_game_reads(
             for abs_row in absorbed_for_ev:
                 aid = int(abs_row.id)
                 raw_bag = getattr(abs_row, "win_probability_sources", None)
-                flipped = is_corner_flipped_absorbed(abs_row)
+                flipped = _pd_mod.is_corner_flipped_absorbed(abs_row)
                 if flipped and raw_bag:
-                    ok, turned = flip_probability_sources(raw_bag)
+                    ok, turned = _pd_mod.flip_probability_sources(raw_bag)
                     oriented_bag = turned if ok else None
                 else:
                     oriented_bag = raw_bag
@@ -687,7 +774,7 @@ async def load_unified_game_reads(
                         seen_abs_ids.add(aid)
 
             merged_sources = (
-                merge_probability_sources(
+                _pd_mod.merge_probability_sources(
                     base_sources,
                     oriented_pairs,
                     event_status=getattr(ev, "status", None),
@@ -700,11 +787,11 @@ async def load_unified_game_reads(
                 merged_sources, own_sources, twin_bags
             )
             merged_opening = (
-                merge_opening_line(base_opening[0], base_opening[1], opening_pairs)
+                _pd_mod.merge_opening_line(base_opening[0], base_opening[1], opening_pairs)
                 if opening_pairs
                 else base_opening
             )
-            updated_card_map[eid] = FoldedCardNumbers(
+            updated_card_map[eid] = _pd_mod.FoldedCardNumbers(
                 win_probability_sources=merged_sources,
                 opening=merged_opening,
                 absorbed_ids=tuple(base_absorbed_ids),
@@ -726,12 +813,13 @@ async def load_unified_game_reads(
             if itid != eid and itid not in seen_tids:
                 seen_tids.add(itid)
                 abs_ids.append(itid)
-        for row in combined_absorbed_by_id.get(eid, ()):
-            if not is_corner_flipped_absorbed(row):
-                itid = int(row.id)
-                if itid != eid and itid not in seen_tids:
-                    seen_tids.add(itid)
-                    abs_ids.append(itid)
+        if not include_series_fold_ids:
+            for row in combined_absorbed_by_id.get(eid, ()):
+                if not _pd_mod.is_corner_flipped_absorbed(row):
+                    itid = int(row.id)
+                    if itid != eid and itid not in seen_tids:
+                        seen_tids.add(itid)
+                        abs_ids.append(itid)
         same_orient_ids_by_ev[eid] = tuple(abs_ids)
 
         if not include_odds:
@@ -750,85 +838,119 @@ async def load_unified_game_reads(
     latest_snaps_by_owner: dict[int, list[Any]] = {}
     odds_map: dict[int, dict[str, Any]] = {}
 
-    if include_odds and odds_query_ids:
-        query_fn = odds_query_fn or _default_odds_query_fn()
-        raw_snapshots: list[Any] = []
-        try:
-            raw_snapshots = await _fetch_odds_snapshots(db, odds_query_ids, query_fn)
-        except Exception:
-            if not fault_tolerant_odds:
-                raise
-            logger.exception("unified game read: odds snapshot lookup failed")
-            raw_snapshots = []
-
-        if on_stage is not None:
-            on_stage("event_odds_query")
-
-        for snap in raw_snapshots:
-            seid = getattr(snap, "event_id", None)
-            if seid is None:
-                continue
-            owner = owner_by_event_id.get(int(seid))
-            if owner is not None:
-                raw_snapshots_by_owner.setdefault(owner, []).append(snap)
-
-        latest_snaps_by_owner = group_latest_snapshots_by_event(
-            raw_snapshots, owner_by_event_id
+    _apply_live_line_projection = None
+    _event_state_clock = None
+    if include_live_projections:
+        from app.utils.live_line_clock import (
+            apply_live_line_projection as _apply_live_line_projection,
+            event_state_clock as _event_state_clock,
         )
-        ev_by_id = {int(e.id): e for e in ev_list}
 
-        if include_live_projections:
-            from app.utils.live_line_clock import (
-                apply_live_line_projection as _apply_live_line_projection,
-                event_state_clock as _event_state_clock,
-            )
+    if include_odds:
+        with _stage_ctx("bookmaker_odds"):
+            if odds_query_ids:
+                query_fn = odds_query_fn or _default_odds_query_fn()
+                raw_snapshots: list[Any] = []
+                try:
+                    raw_snapshots = await _fetch_odds_snapshots(
+                        db,
+                        odds_query_ids,
+                        query_fn,
+                        single_event=(len(ev_list) == 1),
+                    )
+                except Exception:
+                    if not fault_tolerant_odds:
+                        raise
+                    logger.exception("unified game read: odds snapshot lookup failed")
+                    raw_snapshots = []
 
-        for owner_id, snaps in latest_snaps_by_owner.items():
-            ev = ev_by_id.get(owner_id)
-            filtered_snaps = filter_stale_bookmaker_snapshots(
-                snaps,
-                event_status=(ev.status if ev is not None else "scheduled"),
-                commence_time=(ev.commence_time if ev is not None else None),
-            )
-            reversed_bks = detect_reversed_bookmakers(filtered_snaps)
-            agg_snaps = (
-                [s for s in filtered_snaps if s.bookmaker not in reversed_bks]
-                if reversed_bks
-                else filtered_snaps
-            )
-            if not agg_snaps:
-                agg_snaps = filtered_snaps
-            aggregated = aggregate_bookmaker_odds(agg_snaps)
-            if include_live_projections and ev is not None:
-                card = folded_card_map.get(owner_id)
-                bag_for_clock = (
-                    card.win_probability_sources
-                    if card is not None and card.win_probability_sources is not None
-                    else getattr(ev, "win_probability_sources", None)
-                )
-                aggregated = _apply_live_line_projection(
-                    aggregated,
-                    agg_snaps,
-                    now=clock_now,
-                    state_changed_at=_event_state_clock(ev, bag_for_clock),
-                )
-            latest_time = max(
-                (s.captured_at for s in filtered_snaps if getattr(s, "captured_at", None)),
-                default=None,
-            )
-            odds_map[owner_id] = {
-                "snapshots": filtered_snaps,
-                "all_snapshots": snaps,
-                "aggregated": aggregated,
-                "captured_at": latest_time,
-            }
+                if on_stage is not None:
+                    on_stage("event_odds_query")
 
-        if include_recent_projections and odds_map:
-            from app.utils.recent_line_readings import apply_recent_line_projections
+                if len(ev_list) == 1:
+                    eid0 = int(ev_list[0].id)
+                    if raw_snapshots:
+                        raw_snapshots_by_owner[eid0] = list(raw_snapshots)
+                        deduped = _pd_mod.latest_snapshot_for_each_bookmaker(
+                            raw_snapshots, eid0
+                        )
+                        if deduped:
+                            latest_snaps_by_owner[eid0] = deduped
+                else:
+                    for snap in raw_snapshots:
+                        seid = getattr(snap, "event_id", None)
+                        if seid is None:
+                            continue
+                        owner = owner_by_event_id.get(int(seid))
+                        if owner is not None:
+                            raw_snapshots_by_owner.setdefault(owner, []).append(snap)
 
-            proj_events = [e for e in ev_list if int(e.id) in odds_map]
-            if proj_events:
-                await apply_recent_line_projections(db, proj_events, odds_map)
+                    latest_snaps_by_owner = _pd_mod.group_latest_snapshots_by_event(
+                        raw_snapshots, owner_by_event_id
+                    )
+
+                ev_by_id = {int(e.id): e for e in ev_list}
+                for owner_id, snaps in latest_snaps_by_owner.items():
+                    ev = ev_by_id.get(owner_id)
+                    filtered_snaps = filter_stale_bookmaker_snapshots(
+                        snaps,
+                        event_status=(ev.status if ev is not None else "scheduled"),
+                        commence_time=(ev.commence_time if ev is not None else None),
+                    )
+                    reversed_bks = detect_reversed_bookmakers(filtered_snaps)
+                    agg_snaps = (
+                        [s for s in filtered_snaps if s.bookmaker not in reversed_bks]
+                        if reversed_bks
+                        else filtered_snaps
+                    )
+                    if not agg_snaps:
+                        agg_snaps = filtered_snaps
+                    aggregated = aggregate_bookmaker_odds(agg_snaps)
+                    if (
+                        include_live_projections
+                        and ev is not None
+                        and _apply_live_line_projection is not None
+                        and _event_state_clock is not None
+                    ):
+                        card = folded_card_map.get(owner_id)
+                        bag_for_clock = (
+                            card.win_probability_sources
+                            if card is not None and card.win_probability_sources is not None
+                            else getattr(ev, "win_probability_sources", None)
+                        )
+                        aggregated = _apply_live_line_projection(
+                            aggregated,
+                            agg_snaps,
+                            now=clock_now,
+                            state_changed_at=_event_state_clock(ev, bag_for_clock),
+                        )
+                    latest_time = max(
+                        (
+                            s.captured_at
+                            for s in filtered_snaps
+                            if getattr(s, "captured_at", None)
+                        ),
+                        default=None,
+                    )
+                    odds_map[owner_id] = {
+                        "snapshots": filtered_snaps,
+                        "all_snapshots": snaps,
+                        "aggregated": aggregated,
+                        "captured_at": latest_time,
+                    }
+            elif on_stage is not None and ev_list:
+                on_stage("event_odds_query")
+
+        if include_recent_projections:
+            with _stage_ctx("recent_lines"):
+                if odds_map:
+                    from app.utils.recent_line_readings import (
+                        apply_recent_line_projections,
+                    )
+
+                    proj_events = [e for e in ev_list if int(e.id) in odds_map]
+                    if proj_events:
+                        await apply_recent_line_projections(db, proj_events, odds_map)
     elif on_stage is not None and ev_list:
         on_stage("event_odds_query")
 
@@ -850,7 +972,7 @@ async def load_unified_game_reads(
             and (card.opening[0] is not None or card.opening[1] is not None)
             else None
         )
-        blend_view = FoldedBlendView(ev, folded_sources, opening=folded_opening)
+        blend_view = _pd_mod.FoldedBlendView(ev, folded_sources, opening=folded_opening)
         odds_entry = odds_map.get(eid)
         three_way_books: tuple[float, float] | None = None
         bk_count = 0
@@ -895,7 +1017,7 @@ def resolve_unified_card_chance(
     view = read.blend_view
     raw_wps = getattr(view, "win_probability_sources", None)
     if not isinstance(raw_wps, (dict, type(None))):
-        view = FoldedBlendView(view, None, opening=read.folded_opening)
+        view = _pd_mod.FoldedBlendView(view, None, opening=read.folded_opening)
     hero_inputs: list[tuple[str, float]] = []
     hero_method: list[str] = []
     hero = resolve_hero(view, source_inputs=hero_inputs, source_method=hero_method)
