@@ -4925,6 +4925,7 @@ def _calibration_population_ctes(
                     -- when <3 members are present at the snapshot.
                     mfc.market_id AS candidate_market_id,
                     mfd.cp_sum AS mnm_cp_sum,
+                    mfd.present_eligible_n AS mnm_present_eligible_n,
                     fo.market_id AS market_id,
                     -- Queue #259 Item 2: carry outcome identity + per-market shape
                     -- so the cohort sweep selects the SAME final rows (row identity)
@@ -5315,6 +5316,13 @@ def _calibration_population_ctes(
             -- ``is_field`` reduces to the old candidate membership exactly and a
             -- structural-but-below-threshold market keeps flowing to the multi pool
             -- (neither normalized nor dropped) exactly as before.
+            -- (#13463) When any terminal-eligible member of a proved-exhaustive
+            -- field lacks a reading at this horizon (present_eligible_n <
+            -- fc.eligible_n), the field MUST count as is_field_incomplete
+            -- whatever the present subset sums to — missing members lower
+            -- mnm_cp_sum and would otherwise fall below MEX_NORMALIZE_THRESHOLD
+            -- and leak un-normalized into the multi pool. Complete fields whose
+            -- present readings sum <= threshold still flow to multi as before.
             normalized AS (
                 SELECT ro.*,
                     (ro.candidate_market_id IS NOT NULL
@@ -5323,7 +5331,8 @@ def _calibration_population_ctes(
                      AND fc.survivor_win_n = 1
                      AND fc.survivor_n >= 3) AS is_mex_normalized,
                     (ro.candidate_market_id IS NOT NULL
-                     AND ro.mnm_cp_sum > {MEX_NORMALIZE_THRESHOLD}
+                     AND (ro.mnm_cp_sum > {MEX_NORMALIZE_THRESHOLD}
+                          OR COALESCE(ro.mnm_present_eligible_n, 0) < fc.eligible_n)
                      AND NOT (fc.survivor_n = fc.eligible_n
                               AND fc.survivor_win_n = 1
                               AND fc.survivor_n >= 3)) AS is_field_incomplete,
