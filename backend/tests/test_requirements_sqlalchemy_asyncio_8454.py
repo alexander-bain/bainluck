@@ -36,6 +36,14 @@ def _parse(text: str) -> dict[str, tuple[set[str], str]]:
     return out
 
 
+def _bounds_below_2_1(spec: str) -> bool:
+    """Return True when spec bounds SQLAlchemy strictly below 2.1 (range or exact <2.1 pin)."""
+    if re.search(r"<\s*2\.1(\.0)?(,|$)", spec):
+        return True
+    exact = re.fullmatch(r"==\s*(\d+)\.(\d+)(?:\.[A-Za-z0-9_.+-]+)?", spec)
+    return bool(exact and (int(exact.group(1)), int(exact.group(2))) < (2, 1))
+
+
 def _violations(text: str) -> list[str]:
     reqs = _parse(text)
     problems: list[str] = []
@@ -44,7 +52,7 @@ def _violations(text: str) -> list[str]:
     extras, spec = reqs["sqlalchemy"]
     if "asyncio" not in extras and "greenlet" not in reqs:
         problems.append("greenlet is not installed: need sqlalchemy[asyncio] or an explicit greenlet line")
-    if not re.search(r"<\s*2\.1(\.0)?(,|$)", spec):
+    if not _bounds_below_2_1(spec):
         problems.append(f"sqlalchemy has no <2.1 upper bound (spec {spec!r})")
     return problems
 
@@ -66,4 +74,14 @@ def test_an_explicit_greenlet_line_satisfies_the_install_check():
 def test_an_extra_without_the_bound_is_still_refused():
     assert _violations("sqlalchemy[asyncio]>=2.0.50\n") == [
         "sqlalchemy has no <2.1 upper bound (spec '>=2.0.50')"
+    ]
+
+
+def test_an_exact_2_0_pin_satisfies_the_upper_bound():
+    assert _violations("sqlalchemy[asyncio]==2.0.58\n") == []
+
+
+def test_an_exact_2_1_pin_is_refused():
+    assert _violations("sqlalchemy[asyncio]==2.1.0\n") == [
+        "sqlalchemy has no <2.1 upper bound (spec '==2.1.0')"
     ]
