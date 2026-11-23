@@ -11763,8 +11763,10 @@ async def search_events(
         try:
             _fold = fold_twin_events(events)
             if _fold.dropped_ids:
+                _flipped_ids = getattr(_fold, "flipped_loser_ids", None) or ()
                 for _loser, _survivor in _fold.survivor_of.items():
-                    _prematch_absorbed_ids.setdefault(_survivor, []).append(_loser)
+                    if _loser not in _flipped_ids:
+                        _prematch_absorbed_ids.setdefault(_survivor, []).append(_loser)
                 for _survivor_id, _merged in _fold.merged_sources.items():
                     _survivor = next(e for e in _fold.events if e.id == _survivor_id)
                     set_committed_value(_survivor, "win_probability_sources", _merged)
@@ -19143,8 +19145,10 @@ async def list_events(
     try:
         _fold = fold_twin_events(events)
         if _fold.dropped_ids:
+            _flipped_ids = getattr(_fold, "flipped_loser_ids", None) or ()
             for _loser, _survivor in _fold.survivor_of.items():
-                _prematch_absorbed_ids.setdefault(_survivor, []).append(_loser)
+                if _loser not in _flipped_ids:
+                    _prematch_absorbed_ids.setdefault(_survivor, []).append(_loser)
             for _survivor_id, _merged in _fold.merged_sources.items():
                 _survivor = next(e for e in _fold.events if e.id == _survivor_id)
                 set_committed_value(_survivor, "win_probability_sources", _merged)
@@ -20443,8 +20447,12 @@ async def _settled_prematch_odds(
     by_source: dict[str, tuple] = {}
     binds = prematch_prior_binds([event], live_detail=live_detail)
     if binds is not None and absorbed:
+        from app.utils.proven_duplicates import is_corner_flipped_absorbed
+
         cutoff = binds["cutoffs"][0]
         for row in absorbed:
+            if is_corner_flipped_absorbed(row):
+                continue
             binds["ids"].append(row.id)
             binds["cutoffs"].append(cutoff)
     if binds is not None:
@@ -20717,11 +20725,13 @@ async def get_event(
     from app.utils.proven_duplicates import (
         folded_series_event_ids,
         latest_snapshot_for_each_bookmaker,
+        oriented_series_event_ids,
     )
     from app.utils.serve_fold_absorbed import serve_fold_absorbed_rows
 
     absorbed = await serve_fold_absorbed_rows(db, event)
     odds_event_ids = await folded_series_event_ids(db, event_id, absorbed)
+    odds_event_ids = oriented_series_event_ids(odds_event_ids, absorbed)
     # #2920 C1 — the raw per-(event, sportsbook) rows are kept: the marked
     # in-play pair reads only this event's own rows, exactly as its card does.
     _latest_rows = list(
@@ -34022,6 +34032,7 @@ async def get_event_odds_history(
     from app.utils.proven_duplicates import (
         folded_probability_sources_with_revision,
         folded_series_event_ids,
+        oriented_series_event_ids,
         series_row_for_each_source,
     )
 
@@ -34061,6 +34072,8 @@ async def get_event_odds_history(
             membership_complete=absorbed_complete,
         )
 
+    oriented_series_ids = oriented_series_event_ids(series_event_ids, absorbed)
+
     # Get snapshots within time range
     # For completed/closed events, return ALL snapshots (no time window)
     # so users can always see the full probability history.
@@ -34095,7 +34108,7 @@ async def get_event_odds_history(
         snapshots_override = await _snapshots_with_split_budget(
             db,
             select(OddsSnapshot).where(
-                OddsSnapshot.event_id.in_(series_event_ids)
+                OddsSnapshot.event_id.in_(oriented_series_ids)
             ),
             split_at=event.commence_time,
         )
@@ -34123,7 +34136,7 @@ async def get_event_odds_history(
         )
 
         query = select(OddsSnapshot).where(
-            OddsSnapshot.event_id.in_(series_event_ids)
+            OddsSnapshot.event_id.in_(oriented_series_ids)
         )
         if end_cap:
             query = query.where(OddsSnapshot.captured_at <= end_cap)
@@ -34162,7 +34175,7 @@ async def get_event_odds_history(
                 snapshots_override = await _snapshots_with_split_budget(
                     db,
                     select(OddsSnapshot).where(
-                        OddsSnapshot.event_id.in_(series_event_ids)
+                        OddsSnapshot.event_id.in_(oriented_series_ids)
                     ),
                     split_at=event.commence_time,
                 )
@@ -34186,7 +34199,7 @@ async def get_event_odds_history(
         snapshots_override = await _snapshots_with_split_budget(
             db,
             select(OddsSnapshot).where(
-                OddsSnapshot.event_id.in_(series_event_ids)
+                OddsSnapshot.event_id.in_(oriented_series_ids)
             ),
             split_at=cutoff,
             pre_window_extra=or_(
@@ -34224,7 +34237,7 @@ async def get_event_odds_history(
     #
     # Skipped entirely for an untagged event, where the picker is a no-op over
     # one id: the common page pays one `len()`, not a `Counter` over 3,000 rows.
-    if len(series_event_ids) > 1:
+    if len(oriented_series_ids) > 1:
         series_row_by_bookmaker = series_row_for_each_source(
             Counter((s.bookmaker, s.event_id) for s in snapshots), event_id
         )
@@ -34389,12 +34402,12 @@ async def get_event_odds_history(
     try:
         score_result = await db.execute(
             select(ScoreSnapshot)
-            .where(ScoreSnapshot.event_id.in_(series_event_ids))
+            .where(ScoreSnapshot.event_id.in_(oriented_series_ids))
             .order_by(ScoreSnapshot.captured_at)
         )
         score_snapshots = score_result.scalars().all()
 
-        if len(series_event_ids) > 1:
+        if len(oriented_series_ids) > 1:
             score_series_row = series_row_for_each_source(
                 Counter((_SCORE_SERIES_KEY, s.event_id) for s in score_snapshots),
                 event_id,
@@ -34482,7 +34495,7 @@ async def get_event_odds_history(
         )
 
         wp_query = select(WinProbSnapshot).where(
-            WinProbSnapshot.event_id.in_(series_event_ids),
+            WinProbSnapshot.event_id.in_(oriented_series_ids),
         )
         if cutoff is not None:
             wp_query = wp_query.where(WinProbSnapshot.captured_at >= cutoff)

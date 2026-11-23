@@ -531,6 +531,26 @@ def orientation_agrees(
     return aligned and not crossed
 
 
+def is_corner_flipped_absorbed(row: object) -> bool:
+    """True when serve-time fold absorbed ``row`` with Home/Away reversed."""
+    return bool(getattr(row, "_serve_fold_corner_flipped", False))
+
+
+def oriented_series_event_ids(
+    series_event_ids: Sequence[int], absorbed: Sequence = ()
+) -> list[int]:
+    """Filter corner-flipped absorbed ids out of oriented snapshot lookups."""
+    flipped_ids = {
+        row.id
+        for row in absorbed
+        if is_corner_flipped_absorbed(row)
+        and getattr(row, "id", None) is not None
+    }
+    if not flipped_ids:
+        return list(series_event_ids)
+    return [eid for eid in series_event_ids if eid not in flipped_ids]
+
+
 async def folded_series_event_ids(
     db, canonical_event_id: int, absorbed: Sequence = ()
 ) -> list[int]:
@@ -999,13 +1019,18 @@ async def _read_fold(db, event, absorbed: Sequence, *, bags: bool):
     for row_id in sorted(absorbed_by_id):
         if row_id in seen:
             continue
+        absorbed_row = absorbed_by_id[row_id]
         if row_id in read:
-            oriented.append((row_id, read[row_id][2], read[row_id][3]))
+            raw_bag, row_rev = read[row_id][2], read[row_id][3]
         else:
             one_snapshot = False
-            oriented.append(
-                (row_id, absorbed_by_id[row_id].win_probability_sources, None)
-            )
+            raw_bag, row_rev = absorbed_row.win_probability_sources, None
+        if bags and is_corner_flipped_absorbed(absorbed_row) and raw_bag:
+            from app.utils.event_twin_fold import flip_probability_sources
+
+            ok, turned = flip_probability_sources(raw_bag)
+            raw_bag = turned if ok else None
+        oriented.append((row_id, raw_bag, row_rev))
 
     revision = (
         fold_revision_vector(

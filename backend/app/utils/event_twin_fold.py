@@ -841,6 +841,14 @@ class FoldResult:
     :attr:`merged_sources`, the fold has ALREADY applied this to the row (see
     :func:`_elect`); this is the record, for the log line and the guard tests."""
 
+    flipped_loser_ids: set[int] = field(default_factory=set)
+    """Row ids absorbed with Home/Away reversed relative to their survivor.
+
+    Callers that re-read raw DB rows for the survivor's detail/live-quote view
+    (``serve_fold_absorbed`` / ``proven_duplicates``) must flip these ids'
+    readings via :func:`flip_probability_sources` and keep oriented snapshot/prior
+    lookups off their corners."""
+
     @property
     def folded_count(self) -> int:
         return len(self.dropped_ids)
@@ -984,10 +992,14 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
     # kick-off recovery has aligned the minute and before combat-claim bouts.
     # Only whole clusters unioned; numbers turned through `corner_flips`.
     corner_flips: dict[int, "_CornerFlip"] = {}
+    reversed_ids: set[int] = set()
     try:
         league_flips: dict[int, "_CornerFlip"] = {}
         grouped = _merge_reversed_anchored_claim_twins(
-            grouped, row_identities, corner_flips=league_flips
+            grouped,
+            row_identities,
+            corner_flips=league_flips,
+            reversed_ids=reversed_ids,
         )
         corner_flips.update(league_flips)
     except Exception:  # noqa: BLE001 — gotcha #42; the clusters above stand
@@ -1001,7 +1013,11 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
     # like `keep` below. Only `_elect` reads it.
     try:
         combat_flips: dict[int, "_CornerFlip"] = {}
-        grouped = _merge_combat_claim_bouts(grouped, corner_flips=combat_flips)
+        grouped = _merge_combat_claim_bouts(
+            grouped,
+            corner_flips=combat_flips,
+            reversed_ids=reversed_ids,
+        )
         corner_flips.update(combat_flips)
     except Exception:  # noqa: BLE001 — gotcha #42; the clusters above stand
         logger.exception("twin fold: combat claim merge failed; serving groups")
@@ -1018,7 +1034,7 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
             continue
 
         try:
-            _elect(members, keep, result, corner_flips)
+            _elect(members, keep, result, corner_flips, reversed_ids=reversed_ids)
         except Exception:  # noqa: BLE001 — one group's failure keeps its rows
             logger.warning(
                 "twin fold: election failed for %s; all rows kept",
@@ -3493,19 +3509,28 @@ class _CornerFlip:
     opening_away: Any
 
 
+def flip_probability_sources(sources: Optional[dict]) -> tuple[bool, Optional[dict]]:
+    """Turn a reversed twin's ``win_probability_sources`` dict round, or fail closed."""
+    if not sources:
+        return True, None
+    if not isinstance(sources, dict):
+        return False, None
+    flipped = {}
+    for name, reading in sources.items():
+        ok, turned = _flipped_reading(str(name), reading)
+        if not ok:
+            return False, None
+        flipped[name] = turned
+    return True, flipped
+
+
 def _corner_flip(member: Any) -> Optional[_CornerFlip]:
     """The row's readings turned round, or ``None`` if any cannot be."""
-    sources = getattr(member, "win_probability_sources", None)
-    flipped: Optional[dict] = None
-    if sources:
-        if not isinstance(sources, dict):
-            return None
-        flipped = {}
-        for name, reading in sources.items():
-            ok, turned = _flipped_reading(str(name), reading)
-            if not ok:
-                return None
-            flipped[name] = turned
+    ok, flipped = flip_probability_sources(
+        getattr(member, "win_probability_sources", None)
+    )
+    if not ok:
+        return None
     return _CornerFlip(
         sources=flipped,
         opening_home=getattr(member, "opening_away_probability", None),
@@ -3514,7 +3539,9 @@ def _corner_flip(member: Any) -> Optional[_CornerFlip]:
 
 
 def _merge_combat_claim_bouts(
-    clusters: list[list], corner_flips: Optional[dict] = None
+    clusters: list[list],
+    corner_flips: Optional[dict] = None,
+    reversed_ids: Optional[set[int]] = None,
 ) -> list[list]:
     """Fold an id-less bout claim onto the one anchored bout it names. #7993.
 
@@ -3620,9 +3647,10 @@ def _merge_combat_claim_bouts(
         if _objectively_different_games(claim_members, anchor_members):
             continue
         flips: dict[int, _CornerFlip] = {}
-        if not all(
+        corners_reversed = not all(
             _same_corners(c, a) for c in bouts[claim] for a in bouts[anchor]
-        ):
+        )
+        if corners_reversed:
             if not _anchor_is_elected(claim_members, anchor_members):
                 continue
             if _group_carries_oriented_readings(claim_members):
@@ -3641,6 +3669,8 @@ def _merge_combat_claim_bouts(
         merged_into[claim] = anchor
         if flips:
             corner_flips.update(flips)
+        if corners_reversed and reversed_ids is not None:
+            reversed_ids.update(id(member) for member in claim_members)
 
     if not merged_into:
         return clusters
@@ -3658,20 +3688,35 @@ _REVERSED_ANCHORED_CLAIM_LEAGUES: frozenset[str] = frozenset(
 
 
 def _reversed_claim_league(members: list) -> Optional[str]:
-    """Allowlisted league key shared by every member of the cluster, else ``None``."""
-    keys = set()
+    """Allowlisted league key for a cluster (tolerating same-sport catch-all
+    rows already merged onto it by `_merge_catchall_leagues`), else ``None``."""
+    allowlisted: set[str] = set()
+    catchall_prefixes: set[str] = set()
     for member in members:
         key = loaded_sport_key(member)
-        if not key or key not in _REVERSED_ANCHORED_CLAIM_LEAGUES:
+        if not key:
             return None
-        keys.add(key)
-    return keys.pop() if len(keys) == 1 else None
+        if key in _REVERSED_ANCHORED_CLAIM_LEAGUES:
+            allowlisted.add(key)
+        else:
+            prefix = _catchall_sport_prefix(key)
+            if prefix is None:
+                return None
+            catchall_prefixes.add(prefix)
+    if len(allowlisted) != 1:
+        return None
+    league = allowlisted.pop()
+    league_prefix = league.split("_", 1)[0]
+    if catchall_prefixes and catchall_prefixes != {league_prefix}:
+        return None
+    return league
 
 
 def _merge_reversed_anchored_claim_twins(
     clusters: list[list],
     identities: dict,
     corner_flips: Optional[dict] = None,
+    reversed_ids: Optional[set[int]] = None,
 ) -> list[list]:
     """Fold a reversed id-less claim onto its same-minute anchored twin (#13142, #13238).
 
@@ -3753,6 +3798,8 @@ def _merge_reversed_anchored_claim_twins(
         merged_into[claim] = anchor
         if flips:
             corner_flips.update(flips)
+        if reversed_ids is not None:
+            reversed_ids.update(id(member) for member in claim_members)
 
     if not merged_into:
         return clusters
@@ -3789,6 +3836,7 @@ def _elect(
     keep: set,
     result: "FoldResult",
     corner_flips: Optional[dict] = None,
+    reversed_ids: Optional[set[int]] = None,
 ) -> None:
     """Pick the survivor for one group and union the losers' venues onto it.
 
@@ -3811,6 +3859,8 @@ def _elect(
     # took its place.
     for loser in losers:
         result.survivor_of[loser.id] = survivor.id
+        if id(loser) in flips or (reversed_ids and id(loser) in reversed_ids):
+            result.flipped_loser_ids.add(loser.id)
 
     merged = dict(getattr(survivor, "win_probability_sources", None) or {})
     added = False
