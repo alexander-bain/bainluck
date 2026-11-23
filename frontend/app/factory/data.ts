@@ -99,15 +99,15 @@ function verifiedCrew(payload: FactoryData) {
 
 function verifiedCrewPosts(payload: FactoryData) {
   const posts: NonNullable<FactoryData["crew_posts"]> = {};
-  const through = Date.parse(payload.generated_at);
   for (const lane of builderLanes) {
     const post = payload.crew_posts?.[lane];
-    const at = typeof post?.at === "string" ? Date.parse(post.at) : NaN;
-    if (!(at <= through)) continue;
-    const number = post?.waiting_on;
-    posts[lane] = { at: new Date(at).toISOString() };
-    if (typeof number === "number" && Number.isSafeInteger(number) && number > 0)
-      posts[lane].waiting_on = number;
+    if (typeof post?.at !== "string" || !recentLaneUpdate(post.at, payload.generated_at)) continue;
+    const { waiting_on, comment_id } = post;
+    posts[lane] = { at: new Date(post.at).toISOString() };
+    if (typeof waiting_on === "number" && Number.isSafeInteger(waiting_on) && waiting_on > 0)
+      posts[lane].waiting_on = waiting_on;
+    if (typeof comment_id === "number" && Number.isSafeInteger(comment_id) && comment_id > 0)
+      posts[lane].comment_id = comment_id;
   }
   if (Object.keys(posts).length) return posts;
 }

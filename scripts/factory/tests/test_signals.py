@@ -42,13 +42,26 @@ class CrewPosts(unittest.TestCase):
             "W": {"at": "2026-11-18T17:58:00Z"},
         })
 
+    def test_keeps_recent_signed_reports_as_timestamps_and_comment_ids(self):
+        at = "2026-11-23T06:46:34Z"
+        observed = instant("2026-11-23T07:25:33Z")
+        recent = {**self.post("Builder F — Finished the recorded layout check.", at=at),
+                  "id": 7093663542}
+        older = {**self.post("Builder F: A different report.", at=at), "id": 7093663501}
+        boundary = {**self.post("Atlas: Posted an update.", at="2026-11-23T04:25:33Z"),
+                    "id": 7093663500}
+        self.assertEqual(crew_posts_from([recent, older, boundary], observed), {
+            "F": {"at": at, "comment_id": 7093663542},
+            "D": {"at": "2026-11-23T04:25:33Z", "comment_id": 7093663500},
+        })
+
     def test_unsigned_outside_quoted_old_and_future_posts_clock_in_nobody(self):
         posts = [
             self.post("Waiting on #12998."),
             self.post("Speed: Waiting on #12998.", association="CONTRIBUTOR"),
             self.post("**Fable: Floor report.**\n> Waiting on #12998 — Builder E"),
             self.post("> Waiting on #12998 — Atlas"),
-            self.post("Builder C: Checked the floor.", at="2026-11-18T17:44:59Z"),
+            self.post("Builder C: Checked the floor.", at="2026-11-18T14:59:59Z"),
             self.post("Builder B: Checked the floor.", at="2026-11-18T18:00:01Z"),
         ]
         self.assertEqual(crew_posts_from(posts, self.now), {})

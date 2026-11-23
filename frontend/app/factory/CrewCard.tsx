@@ -46,6 +46,7 @@ export default function CrewCard({ identity, name, pose, clockedIn, number, post
 }) {
   const longest = habits?.longest;
   const recentPost = post && recentlyActive(post.at, now) ? post : undefined;
+  const checkIn = post ? `Posted on NOW at ${time(post.at)} PT` : undefined;
   return (
     <div className={styles.builderCard} data-crew={identity} data-pose={pose}>
       {identity === "Factory"
@@ -60,14 +61,19 @@ export default function CrewCard({ identity, name, pose, clockedIn, number, post
           <span>Posted at {time(update.at)} PT</span>
           <p className={styles.crewSpeech} data-source="lane">{update.text}</p>
         </>
-      ) : (
-        <>
-          <span>{recentPost ? `Active at ${time(recentPost.at)} PT` : clockedIn ? "Clocked in" : "Quiet for 15 minutes"}</span>
-          <span>{recentPost?.waiting_on ? `Waiting on #${recentPost.waiting_on}` : <>{poses[pose]}{number && ` #${number}`}</>}</span>
-          {voice && !(recentPost && voice.mood === "asleep") && (
-            <p className={styles.crewSpeech} data-source={voice.source}>{voice.text}</p>
-          )}
-        </>
+      ) : checkIn ? (
+        <p className={styles.crewSpeech} data-source="check-in">
+          {post?.comment_id ? (
+            <a href={`https://github.com/alexander-bain/bainluck/issues/12779#issuecomment-${post.comment_id}`}
+              target="_blank" rel="noreferrer">{checkIn}</a>
+          ) : checkIn}
+        </p>
+      ) : <span>{clockedIn ? "Clocked in" : "Quiet for 15 minutes"}</span>}
+      {(!update || number) && (
+        <span>{recentPost?.waiting_on ? `Waiting on #${recentPost.waiting_on}` : <>{poses[pose]}{number && ` #${number}`}</>}</span>
+      )}
+      {voice && !update && !checkIn && (
+        <p className={styles.crewSpeech} data-source={voice.source}>{voice.text}</p>
       )}
       {habits ? (
         <dl className={styles.crewHabits}>

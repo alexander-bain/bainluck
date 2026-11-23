@@ -16,6 +16,7 @@ export function isBuilder(value: unknown): value is Builder {
 
 export interface CrewPost {
   at: string;
+  comment_id?: number;
   waiting_on?: number;
 }
 
