@@ -178,7 +178,7 @@ async def test_batch6_builds_clean_headlines_google_card_split_and_no_elon_lead(
                 )
                 assert container["sections"][0]["visual_block"]["form_id"] == "paired_stage_bars"
                 assert container["sections"][1]["visual_block"]["form_id"] == "benchmark_strip"
-                assert title == "Julianne Moore leads Best Actress (Comedy or Musical) at 77%, with 4 contenders at 75%+ to be nominated"
+                assert title == "Julianne Moore leads Best Actress (Comedy or Musical) at 77%, with 4 contenders at 75% or better to be nominated"
 
             if slug == "machinery-google-year-in-search-2026":
                 card_mids = {r["market_id"] for r in mc["rows"]}
