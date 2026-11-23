@@ -109,16 +109,34 @@
     "batch7-tech-and-space-movers": {
       "entries": [
         {
+          "id": 68836748,
+          "short_label": "SpaceX market cap end of 2026",
+          "headline_phrase": "SpaceX year-end cap hits {answer} at {pct}%",
+          "headline_with_phrase": "SpaceX finishing 2026 at {answer} is at {pct}%"
+        },
+        {
           "id": 24647105,
           "short_label": "OpenAI's IPO valuation",
           "headline_phrase": "OpenAI lists {answer} at {pct}%",
           "headline_with_phrase": "OpenAI listing {answer} is at {pct}%"
         },
         {
-          "id": 60607595,
-          "short_label": "OpenAI solving a Millennium Prize problem",
-          "headline_phrase": "OpenAI is at {pct}% to solve a Millennium Prize problem {answer}",
-          "headline_with_phrase": "OpenAI solving a Millennium Prize problem {answer} is at {pct}%"
+          "id": 70088624,
+          "short_label": "Jensen Huang joins SpaceX",
+          "headline_phrase": "Jensen Huang joins SpaceX {lower_answer} at {pct}%",
+          "headline_with_phrase": "Jensen Huang joining SpaceX {lower_answer} is at {pct}%"
+        },
+        {
+          "id": 52755607,
+          "short_label": "SpaceX buys a U.S. telecom before 2028",
+          "headline_phrase": "SpaceX is at {pct}% to buy a U.S. telecom before 2028",
+          "headline_with_phrase": "SpaceX buying a U.S. telecom before 2028 is at {pct}%"
+        },
+        {
+          "id": 115378,
+          "short_label": "SpaceX vs. OpenAI IPO cap",
+          "headline_phrase": "Higher IPO cap: {answer} at {pct}%",
+          "headline_with_phrase": "SpaceX vs. OpenAI IPO cap is at {pct}% for {answer}"
         }
       ]
     },

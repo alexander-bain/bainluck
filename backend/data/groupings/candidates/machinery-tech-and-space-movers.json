@@ -38,16 +38,16 @@
         "fallback_title": "Tech & Space Milestone Odds",
         "item_noun": "charts",
         "preserve_note": true,
-        "note": "Pricing on OpenAI's IPO valuation and Millennium Prize milestones shifted sharply over the past week.",
+        "note": "Pricing on SpaceX and OpenAI milestones shifted sharply over the past week.",
         "atom_query": {
           "kind": "market_history",
           "fun_sub_tag": "batch7-tech-and-space-movers",
           "shape": "any",
           "order_by": "movement_desc",
-          "min_items": 1,
-          "max_items": 2,
+          "min_items": 3,
+          "max_items": 5,
           "max_outcomes": 3,
-          "initial_visible_limit": 2,
+          "initial_visible_limit": 3,
           "hours": 168,
           "min_lifetime_volume": 1
         }
