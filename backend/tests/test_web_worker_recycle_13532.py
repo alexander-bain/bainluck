@@ -1,8 +1,8 @@
-"""Regression guards for #13532 uvicorn worker recycling on web dynos.
+"""Regression guards for #13532 web dyno memory caps and uvicorn worker recycling.
 
 Why all three flags belong together on `backend/Procfile`'s `web:` line:
-- `--limit-max-requests`: recycles each worker process periodically so accumulated
-  per-worker L1 caches do not push `web.1` over its 1,024 MB memory quota into swap.
+- `--limit-max-requests`: loose backstop recycling each worker process so slow
+  residual growth cannot push `web.1` over its 1,024 MB memory quota into swap.
 - `--limit-max-requests-jitter`: staggers recycles across the two `WEB_CONCURRENCY=2`
   workers so both do not restart together.
 - `--timeout-graceful-shutdown`: bounded shutdown (`15`s). Without it, uvicorn's
@@ -10,6 +10,11 @@ Why all three flags belong together on `backend/Procfile`'s `web:` line:
   `/api/markets/stream` hold SSE connections for up to `MAX_CONNECTION_S = 900` s
   and `Multiprocess.Process.always_pong` keeps healthchecks green — leaving a
   recycling worker closed to new requests yet holding all its RAM for up to 15 min.
+
+Why the three in-process L1 caps are tightened alongside it:
+- `_game_markets_cache` (`routes/events.py`) and `_related_futures_cache`
+  (`routes/events.py`): `30 -> 10` per worker (both sit in front of Redis L2).
+- `_LAST_GOOD_MAX` (`utils/request_cache.py`): `512 -> 48` per worker.
 """
 
 from __future__ import annotations
@@ -23,7 +28,8 @@ from unittest.mock import patch
 import uvicorn.config
 import uvicorn.server
 
-from app.routes import event_stream, market_stream
+from app.routes import event_stream, events as events_route, market_stream
+from app.utils import request_cache as rc
 
 BACKEND_DIR = Path(__file__).resolve().parents[1]
 PROCFILE_PATH = BACKEND_DIR / "Procfile"
@@ -59,7 +65,7 @@ class TestWebWorkerRecycleProcfile:
         jitter = params["limit_max_requests_jitter"]
         graceful_shutdown = params["timeout_graceful_shutdown"]
 
-        assert isinstance(max_requests, int) and 200 <= max_requests <= 2000
+        assert isinstance(max_requests, int) and 2000 <= max_requests <= 10000
         assert isinstance(jitter, int) and 0 < jitter < max_requests
         assert isinstance(graceful_shutdown, int) and 5 <= graceful_shutdown <= 30
 
@@ -87,8 +93,8 @@ class TestWebWorkerRecycleProcfile:
                 timeout_graceful_shutdown=params["timeout_graceful_shutdown"],
             )
         assert cfg.workers == 2
-        assert cfg.limit_max_requests == 600
-        assert cfg.limit_max_requests_jitter == 150
+        assert cfg.limit_max_requests == 5000
+        assert cfg.limit_max_requests_jitter == 1000
         assert cfg.timeout_graceful_shutdown == 15
 
     async def test_uvicorn_server_on_tick_triggers_exit_with_jitter_band(self) -> None:
@@ -103,10 +109,29 @@ class TestWebWorkerRecycleProcfile:
         )
         server = uvicorn.server.Server(cfg)
         threshold = server.limit_max_requests
-        assert threshold is not None and 600 <= threshold <= 750
+        assert threshold is not None and 5000 <= threshold <= 6000
 
         server.server_state.total_requests = threshold - 1
         assert await server.on_tick(1) is False
 
         server.server_state.total_requests = threshold
         assert await server.on_tick(2) is True
+
+
+class TestL1CacheCaps13532:
+    def test_l1_caps_are_tightened(self) -> None:
+        assert events_route._GAME_MARKETS_MAX_SIZE == 10
+        assert events_route._RELATED_FUTURES_MAX_SIZE == 10
+        assert rc._LAST_GOOD_MAX == 48
+
+    def test_last_good_evicts_past_cap(self) -> None:
+        rc._reset_last_good_for_tests()
+        try:
+            for i in range(rc._LAST_GOOD_MAX + 5):
+                rc.remember_last_good(f"k:{i}", {"i": i}, built_at=float(i + 1))
+            assert len(rc._last_good) <= rc._LAST_GOOD_MAX
+            assert len(rc._last_good) == rc._LAST_GOOD_MAX
+            assert "k:0" not in rc._last_good
+            assert f"k:{rc._LAST_GOOD_MAX + 4}" in rc._last_good
+        finally:
+            rc._reset_last_good_for_tests()
