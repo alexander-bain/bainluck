@@ -1,0 +1,376 @@
+{
+  "schema_version": 1,
+  "description": "Curated preview grouping sets for Batch 8 (#12288): Earth, Quakes & Storms; Chess, Aliens & Odd Bets; Water, Rain & Climate Shifts; Grammys & Chart Leaders; TV, Stage & Gaming Drops; NFL Division & Seed Races; and AI Math & Data Centers.",
+  "sets": {
+    "batch8-earth-quakes-storms-2026": {
+      "entries": [
+        {
+          "id": 113358,
+          "short_label": "Hottest year rank for 2026",
+          "headline_phrase": "2026 finishing #{answer} on record for heat",
+          "headline_with_phrase": "2026 ranking #{answer} for global heat"
+        },
+        {
+          "id": 114134,
+          "short_label": "7.0+ earthquakes in 2026",
+          "headline_phrase": "{answer} major 7.0+ earthquakes in 2026",
+          "headline_with_phrase": "{answer} major earthquakes this year"
+        },
+        {
+          "id": 114137,
+          "short_label": "Major VEI 4+ volcano eruptions in 2026",
+          "headline_phrase": "{answer} major volcanic eruption in 2026",
+          "headline_with_phrase": "{answer} major volcanic eruption"
+        },
+        {
+          "id": 58435808,
+          "short_label": "Tropical cyclone landfalls in China in 2026",
+          "headline_phrase": "{answer} tropical cyclones hitting China in 2026",
+          "headline_with_phrase": "{answer} China cyclone landfalls"
+        },
+        {
+          "id": 1234182,
+          "short_label": "U.S. tornadoes confirmed in 2026",
+          "headline_phrase": "{answer} U.S. tornadoes in 2026",
+          "headline_with_phrase": "{answer} U.S. tornadoes"
+        },
+        {
+          "id": 59129330,
+          "short_label": "Peak El Niño oceanic index for 2026–27",
+          "headline_phrase": "El Niño peaking {lower_answer} in 2026–27",
+          "headline_with_phrase": "an El Niño peak {lower_answer}"
+        }
+      ]
+    },
+    "batch8-climate-water-energy": {
+      "entries": [
+        {
+          "id": 65521875,
+          "short_label": "Napa seasonal rainfall reaching {rank_slot}",
+          "plain_short_label": "Napa seasonal rainfall by March",
+          "headline_phrase": "Napa seasonal rainfall topping {lower_answer}",
+          "headline_with_phrase": "Napa rainfall clearing {lower_answer}"
+        },
+        {
+          "id": 63828305,
+          "short_label": "Melbourne's wettest month of 2026",
+          "headline_phrase": "{answer} finishing as Melbourne's wettest month of 2026",
+          "headline_with_phrase": "{answer} taking Melbourne's rain crown"
+        },
+        {
+          "id": 61980420,
+          "short_label": "Lowest Mississippi gauge level at Baton Rouge",
+          "headline_phrase": "The Baton Rouge Mississippi falling to {lower_answer}",
+          "headline_with_phrase": "a {lower_answer} Baton Rouge low"
+        },
+        {
+          "id": 108250,
+          "short_label": "Top source of global primary energy in 2030",
+          "headline_phrase": "{answer} remaining the world's top energy source in 2030",
+          "headline_with_phrase": "{answer} leading world energy"
+        },
+        {
+          "id": 108248,
+          "short_label": "When the U.S. meets its climate targets",
+          "headline_phrase": "The U.S. meeting climate targets {answer}",
+          "headline_with_phrase": "U.S. climate compliance {answer}"
+        }
+      ]
+    },
+    "batch8-music-and-grammys-2026": {
+      "entries": [
+        {
+          "id": 52755801,
+          "short_label": "Grammy Album of the Year",
+          "headline_phrase": "{answer} winning Album of the Year at the Grammys",
+          "headline_with_phrase": "{answer} for Album of the Year"
+        },
+        {
+          "id": 56775571,
+          "short_label": "Grammy Best New Artist",
+          "headline_phrase": "{answer} winning Best New Artist",
+          "headline_with_phrase": "{answer} for Best New Artist"
+        },
+        {
+          "id": 62368119,
+          "short_label": "Grammy Contemporary Country Album",
+          "headline_phrase": "{answer} taking Best Contemporary Country Album",
+          "headline_with_phrase": "{answer} in country album voting"
+        },
+        {
+          "id": 58492244,
+          "short_label": "Grammy Best Rap Album",
+          "headline_phrase": "{answer} winning Best Rap Album",
+          "headline_with_phrase": "{answer} for Best Rap Album"
+        },
+        {
+          "id": 114301,
+          "short_label": "Billboard #1 Artist of 2026",
+          "headline_phrase": "{answer} finishing as Billboard's top artist of 2026",
+          "headline_with_phrase": "{answer} atop Billboard's artist chart"
+        },
+        {
+          "id": 109508,
+          "short_label": "Most streamed global song on Spotify in 2026",
+          "headline_phrase": "\"{answer}\" finishing as Spotify's top global song",
+          "headline_with_phrase": "\"{answer}\" leading Spotify streams"
+        },
+        {
+          "id": 57576624,
+          "short_label": "#2 U.S. Spotify Song of 2026",
+          "headline_phrase": "{answer} holding #2 on U.S. Spotify",
+          "headline_with_phrase": "{answer} at #2 in U.S. streams"
+        },
+        {
+          "id": 52755612,
+          "short_label": "Top-selling vinyl album of 2026",
+          "headline_phrase": "{answer} topping 2026 U.S. vinyl sales",
+          "headline_with_phrase": "{answer} leading vinyl sales"
+        },
+        {
+          "id": 109520,
+          "short_label": "Top U.S. Spotify Album of 2026",
+          "headline_phrase": "{answer} finishing as Spotify's top U.S. album",
+          "headline_with_phrase": "{answer} leading U.S. album streams"
+        }
+      ]
+    },
+    "batch8-tv-and-gaming-2026": {
+      "entries": [
+        {
+          "id": 60481087,
+          "short_label": "Dancing with the Stars Season 35 winner",
+          "headline_phrase": "{answer} winning Dancing with the Stars",
+          "headline_with_phrase": "{answer} for the Mirrorball trophy"
+        },
+        {
+          "id": 70160350,
+          "short_label": "The Voice Season 30 winner",
+          "headline_phrase": "{answer} winning The Voice Season 30",
+          "headline_with_phrase": "{answer} winning The Voice"
+        },
+        {
+          "id": 60473244,
+          "short_label": "GTA VI Online launch window",
+          "headline_phrase": "GTA VI Online launching {answer}",
+          "headline_with_phrase": "a GTA VI Online launch {answer}"
+        },
+        {
+          "id": 63336233,
+          "short_label": "Rockstar launches GTA VI on PC",
+          "headline_phrase": "Rockstar releasing GTA VI on PC {answer}",
+          "headline_with_phrase": "a PC launch {answer}"
+        },
+        {
+          "id": 71176017,
+          "short_label": "GTA VI units sold before 2027",
+          "headline_phrase": "GTA VI crossing {answer} units sold before 2027",
+          "headline_with_phrase": "{answer} GTA VI copies sold"
+        },
+        {
+          "id": 69096405,
+          "short_label": "PGL Major Singapore 2026 champion",
+          "headline_phrase": "{answer} winning the Counter-Strike Major in Singapore",
+          "headline_with_phrase": "{answer} winning the Singapore Major"
+        },
+        {
+          "id": 65536362,
+          "short_label": "Critics Choice Best Comedy Series Actor",
+          "headline_phrase": "{answer} winning Critics Choice Best Comedy Actor",
+          "headline_with_phrase": "{answer} for Comedy Actor"
+        },
+        {
+          "id": 65536308,
+          "short_label": "Critics Choice Best Foreign Film",
+          "headline_phrase": "{answer} winning Critics Choice Best Foreign Film",
+          "headline_with_phrase": "{answer} for Best Foreign Film"
+        }
+      ]
+    },
+    "batch8-nfl-conference-division-races": {
+      "entries": [
+        {
+          "id": 129171,
+          "short_label": "NFC Champion 2027",
+          "headline_phrase": "The {answer} winning the NFC Championship",
+          "headline_with_phrase": "the {answer} taking the NFC"
+        },
+        {
+          "id": 129172,
+          "short_label": "AFC Champion 2027",
+          "headline_phrase": "The {answer} winning the AFC Championship",
+          "headline_with_phrase": "the {answer} taking the AFC"
+        },
+        {
+          "id": 2248395,
+          "short_label": "NFC East Division champion",
+          "headline_phrase": "The {answer} winning the NFC East",
+          "headline_with_phrase": "the {answer} winning the NFC East"
+        },
+        {
+          "id": 53677,
+          "short_label": "AFC North Division champion",
+          "headline_phrase": "{answer} winning the AFC North",
+          "headline_with_phrase": "{answer} taking the AFC North"
+        },
+        {
+          "id": 53676,
+          "short_label": "AFC South Division champion",
+          "headline_phrase": "{answer} winning the AFC South",
+          "headline_with_phrase": "{answer} taking the AFC South"
+        },
+        {
+          "id": 52755859,
+          "short_label": "NFC #1 playoff seed",
+          "headline_phrase": "{answer} locking up the NFC #1 seed",
+          "headline_with_phrase": "{answer} earning the NFC top seed"
+        },
+        {
+          "id": 52755860,
+          "short_label": "AFC #1 playoff seed",
+          "headline_phrase": "{answer} locking up the AFC #1 seed",
+          "headline_with_phrase": "{answer} earning the AFC top seed"
+        }
+      ]
+    },
+    "batch8-ai-math-and-data-centers": {
+      "entries": [
+        {
+          "id": 60607593,
+          "short_label": "Millennium Prize solutions by AI in 2026",
+          "headline_phrase": "AI solving {answer} more Millennium Prize problem in 2026",
+          "headline_with_phrase": "{answer} Millennium solution this year"
+        },
+        {
+          "id": 60626097,
+          "short_label": "Next Millennium Prize problem solved by AI",
+          "headline_phrase": "The {answer} being the next Millennium problem solved by AI",
+          "headline_with_phrase": "{answer} next on the Millennium list"
+        },
+        {
+          "id": 60518652,
+          "short_label": "Next AI Millennium Prize deadline",
+          "headline_phrase": "An AI lab announcing a Millennium solution {answer}",
+          "headline_with_phrase": "an AI proof arriving {answer}"
+        },
+        {
+          "id": 2415248,
+          "short_label": "When any lab announces AGI",
+          "headline_phrase": "An AI lab declaring AGI {answer}",
+          "headline_with_phrase": "AGI arrival {answer}"
+        },
+        {
+          "id": 20571305,
+          "short_label": "First AI data center in orbit",
+          "headline_phrase": "An orbital AI data center operating {answer}",
+          "headline_with_phrase": "an orbital cluster {answer}"
+        },
+        {
+          "id": 63267956,
+          "short_label": "Louisiana data center moratorium",
+          "headline_phrase": "Louisiana passing a data center pause {answer}",
+          "headline_with_phrase": "a Louisiana moratorium {answer}"
+        },
+        {
+          "id": 63263361,
+          "short_label": "Texas data center moratorium",
+          "headline_phrase": "Texas passing a data center pause {answer}",
+          "headline_with_phrase": "a Texas moratorium {answer}"
+        },
+        {
+          "id": 63267959,
+          "short_label": "Indiana data center moratorium",
+          "headline_phrase": "Indiana passing a data center pause {answer}",
+          "headline_with_phrase": "an Indiana moratorium {answer}"
+        },
+        {
+          "id": 70732962,
+          "short_label": "Any U.S. state data center moratorium this year",
+          "headline_phrase": "A U.S. state passing a data center pause before year end",
+          "headline_with_phrase": "a state moratorium before year end"
+        },
+        {
+          "id": 109305,
+          "short_label": "Next OpenAI hardware form factor",
+          "headline_phrase": "OpenAI and Jony Ive's first device being a {lower_answer}",
+          "headline_with_phrase": "a {lower_answer} OpenAI device"
+        }
+      ]
+    },
+    "batch8-soccer-cups-and-relegation": {
+      "entries": [
+        {
+          "id": 59156925,
+          "short_label": "LaLiga Top Goalscorer 2026–27",
+          "headline_phrase": "{answer} winning the LaLiga Golden Boot",
+          "headline_with_phrase": "{answer} leading LaLiga scorers"
+        },
+        {
+          "id": 59516509,
+          "short_label": "Premier League relegation",
+          "headline_phrase": "{answer} facing Premier League relegation",
+          "headline_with_phrase": "{answer} heading down in the Premier League"
+        },
+        {
+          "id": 55674269,
+          "short_label": "Liga MX Apertura champion",
+          "headline_phrase": "{answer} winning Liga MX Apertura",
+          "headline_with_phrase": "{answer} taking Liga MX"
+        },
+        {
+          "id": 128718,
+          "short_label": "MLS Cup 2026 champion",
+          "headline_phrase": "{answer} lifting MLS Cup 2026",
+          "headline_with_phrase": "{answer} taking MLS Cup"
+        },
+        {
+          "id": 70732925,
+          "short_label": "UEFA Europa League 2027 champion",
+          "headline_phrase": "{answer} winning the 2027 Europa League",
+          "headline_with_phrase": "{answer} lifting the Europa League"
+        },
+        {
+          "id": 56775477,
+          "short_label": "2030 FIFA World Cup champion",
+          "headline_phrase": "{answer} winning the 2030 FIFA World Cup",
+          "headline_with_phrase": "{answer} taking the 2030 World Cup"
+        }
+      ]
+    },
+    "batch8-chess-milestones-curiosities": {
+      "entries": [
+        {
+          "id": 221,
+          "short_label": "World Chess Championship 2026 winner",
+          "headline_phrase": "{answer} winning the 2026 World Chess Championship",
+          "headline_with_phrase": "{answer} winning the World Chess crown",
+          "art_subject": "Javokhir Sindarov"
+        },
+        {
+          "id": 59693602,
+          "short_label": "Rock Hall of Fame expansion finished",
+          "headline_phrase": "The Rock & Roll Hall of Fame expansion finishing {answer}",
+          "headline_with_phrase": "the Rock Hall expansion wrapping up {answer}"
+        },
+        {
+          "id": 52755900,
+          "short_label": "Taylor Swift wedding dress designer",
+          "headline_phrase": "{answer} designing Taylor Swift's wedding dress",
+          "headline_with_phrase": "{answer} for Taylor Swift's dress"
+        },
+        {
+          "id": 109379,
+          "short_label": "FDA approval of a psychedelic medicine this year",
+          "headline_phrase": "FDA approval of a psychedelic therapy this year",
+          "headline_with_phrase": "a psychedelic FDA approval"
+        },
+        {
+          "id": 109264,
+          "short_label": "Time's Person of the Year 2026",
+          "headline_phrase": "{answer} named Time's 2026 Person of the Year",
+          "headline_with_phrase": "{answer} for Person of the Year"
+        }
+      ]
+    }
+  }
+}

@@ -742,6 +742,41 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
             category=cat,
             outcomes=outs,
         )
+
+    # 14. #12288 Batch 8 preview groupings
+    for mid, ext, name, cat, outs in (
+        (113358, "PMB8-HOTYR", "Where will 2026 rank among the hottest years on record?", "weather", [("1", 0.94, 0.91), ("2", 0.05, 0.07)]),
+        (114134, "PMB8-QUAKE", "How many 7.0 or above earthquakes in 2026?", "weather", [("14–16", 0.75, 0.72), ("17–19", 0.19, 0.21)]),
+        (58435808, "PMB8-CYCL", "How many tropical cyclones will make landfall in China during 2026?", "weather", [("8", 0.74, 0.70), ("Greater than 8", 0.14, 0.16)]),
+        (221, "KXB8-CHESS", "FIDE World Chess Championship 2026 Winner", "chess", [("Javokhir Sindarov", 0.77, 0.74), ("Gukesh Dommaraju", 0.24, 0.26)]),
+        (59693602, "KXB8-HOF", "When will the Rock & Roll Hall of Fame expansion be completed?", "entertainment", [("Before Mar 1, 2027", 0.81, 0.78), ("Before Mar 1, 2028", 0.90, 0.88)]),
+        (52755900, "KXB8-DRESS", "Taylor Swift: Wedding Dress", "entertainment", [("Dior", 0.42, 0.40), ("Armani Privé", 0.05, 0.05)]),
+        (65521875, "KXB8-NAPA", "How much will it rain in Napa in November 2026 through March 2027?", "weather", [("Above 10 inches", 0.88, 0.85), ("Above 15 inches", 0.79, 0.77)]),
+        (63828305, "PMB8-MELB", "Melbourne's wettest month of 2026?", "weather", [("October", 0.91, 0.89), ("December", 0.05, 0.06)]),
+        (108250, "KXB8-ENERGY", "What will be the largest source of global primary energy consumption in 2030?", "weather", [("Oil", 0.65, 0.62), ("Coal", 0.14, 0.15)]),
+        (52755801, "KXB8-GAOY", "Grammy Winner: Album of the Year", "entertainment", [("Lux", 0.52, 0.50), ("This Music May Contain Hope", 0.11, 0.12)]),
+        (56775571, "KXB8-GBNA", "Grammy Winner: Best New Artist", "entertainment", [("Ella Langley", 0.75, 0.72), ("SIENNA SPIRO", 0.20, 0.21)]),
+        (62368119, "KXB8-GCTRY", "Grammy Winner: Best Contemporary Country Album", "entertainment", [("Dandelion", 0.89, 0.87), ("Middle of Nowhere", 0.07, 0.08)]),
+        (60481087, "KXB8-DWTS", "Dancing with the Stars Season 35 Winner", "entertainment", [("Ezra Frech", 0.48, 0.45), ("Amber Glenn", 0.28, 0.29)]),
+        (70160350, "KXB8-VOICE", "Who will win The Voice Season 30?", "entertainment", [("Joey Henley", 0.56, 0.53), ("Mia Knight", 0.13, 0.14)]),
+        (65536362, "KXB8-CCCOM", "Critics Choice Awards: Best Actor in a Comedy Series", "entertainment", [("Matthew Rhys", 0.82, 0.80), ("Jeremy Allen White", 0.04, 0.05)]),
+        (59156925, "PMB8-LLBOOT", "LaLiga: Top Goalscorer 2026-27", "soccer", [("Kylian Mbappé", 0.52, 0.50), ("Robert Lewandowski", 0.14, 0.15)]),
+        (59516509, "PMB8-EPLREL", "Premier League: Teams relegated (2026-27)", "soccer", [("Coventry City", 0.50, 0.48), ("Leeds United", 0.35, 0.36)]),
+        (128718, "PMB8-MLSCUP", "MLS Cup Winner 2026", "soccer", [("Vancouver Whitecaps FC", 0.28, 0.26), ("Inter Miami", 0.22, 0.23)]),
+        (53676, "KXB8-AFCS", "AFC South Division Winner", "football", [("Jacksonville", 0.92, 0.90), ("Houston", 0.08, 0.09)]),
+        (53677, "KXB8-AFCN", "AFC North Division Winner", "football", [("Cincinnati", 0.88, 0.86), ("Cleveland", 0.07, 0.08)]),
+        (52755859, "KXB8-NFC1", "Pro Football: NFC #1 Seed", "football", [("San Francisco", 0.69, 0.67), ("Chicago", 0.17, 0.18)]),
+        (60607593, "PMB8-MILLN", "How many more Millennium Prize Problems will AI solve in 2026?", "tech", [("1", 0.42, 0.40), ("0", 0.39, 0.41)]),
+        (60626097, "PMB8-MILLW", "Which Millennium Prize Problem will AI solve next?", "tech", [("Riemann Hypothesis", 0.64, 0.61), ("Birch and Swinnerton-Dyer", 0.09, 0.10)]),
+        (2415248, "KXB8-AGI", "When will any company achieve AGI?", "tech", [("Before Jan 1, 2031", 0.76, 0.74), ("Before Jan 1, 2029", 0.70, 0.68)]),
+    ):
+        await _add_market(
+            market_id=mid,
+            external_id=ext,
+            name=name,
+            category=cat,
+            outcomes=outs,
+        )
     await session.commit()
 
 
