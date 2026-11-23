@@ -60,7 +60,6 @@ from app.models import Team, Event, Sport, FuturesMarket, FuturesOutcome, TeamId
 from app.services import get_db
 from app.utils import season_windows
 from app.utils.proven_duplicates import (
-    FoldedBlendView,
     folded_probability_sources_batch,
     not_a_proven_duplicate,
 )
@@ -891,11 +890,28 @@ async def _folded_briefs(
     with a 500 for the sake of a number a reader would otherwise still see.
     """
     rows = [event for rail in rails for event in rail]
-    folded: dict[int, dict] = {}
-    try:
-        folded = await folded_probability_sources_batch(db, rows)
-    except Exception:
-        logger.exception("team page: twin fold failed for team %s", team.id)
+    from app.utils.unified_game_read import load_unified_game_reads
+
+    async def _fold_sources_with_log(sess, evs):
+        try:
+            return await folded_probability_sources_batch(sess, evs)
+        except Exception:
+            logger.exception("team page: twin fold failed for team %s", team.id)
+            return {}
+
+    unified_by_id: dict = {}
+    if rows:
+        unified_batch = await load_unified_game_reads(
+            db,
+            rows,
+            collapse_in_page=False,
+            include_same_league_external=False,
+            include_odds=True,
+            fold_sources_fn=_fold_sources_with_log,
+            fault_tolerant_external=True,
+            fault_tolerant_odds=True,
+        )
+        unified_by_id = unified_batch.by_id
 
     # #10589: a finished row's "we had them at N%" is the number its own page
     # prints as "Pre-match N%" — one read for both rails, the event route's
@@ -905,17 +921,17 @@ async def _folded_briefs(
 
     return [
         [
-            # The row's OWN sources are the default, never ``None``: the batch
-            # promises an entry per event, but a miss must degrade to today's
-            # unfolded answer rather than to a card whose number vanishes.
             _format_event_brief(
-                FoldedBlendView(
-                    event, folded.get(int(event.id), event.win_probability_sources)
+                (
+                    unified_by_id[int(event.id)].blend_view
+                    if int(event.id) in unified_by_id
+                    else event
                 ),
                 team,
                 club_ids,
                 club_names,
                 prematch=prematch.get(int(event.id)),
+                unified_read=unified_by_id.get(int(event.id)),
             )
             for event in rail
         ]
@@ -945,7 +961,12 @@ def _order_upcoming_team_briefs(briefs: list[dict]) -> list[dict]:
 
 
 def _format_event_brief(
-    event: Event, team: Team, club_ids=None, club_names=None, prematch=None
+    event: Event,
+    team: Team,
+    club_ids=None,
+    club_names=None,
+    prematch=None,
+    unified_read: object | None = None,
 ) -> dict:
     """Compact event format for team page game lists."""
     sport = event.sport
@@ -995,7 +1016,26 @@ def _format_event_brief(
     from app.utils.settled_hero import is_finished_status, settled_current_chance
     from app.utils.source_mark import headline_source_marks
 
-    if is_finished_status(status):
+    _bk_count = None
+    if unified_read is not None:
+        from app.utils.unified_game_read import resolve_unified_card_chance
+
+        _uc = resolve_unified_card_chance(
+            unified_read, sport_key=sport_key, served_status=status
+        )
+        _bk_count = _uc.bookmaker_count
+        if is_finished_status(status) or _uc.draw_probability is not None:
+            wp = _uc.home_probability if is_home else _uc.away_probability
+            draw_prob = _uc.draw_probability
+            current_mark = _uc.source_mark if is_home else _uc.away_source_mark
+        elif _uc.home_probability is not None:
+            wp = (
+                _uc.home_probability
+                if is_home
+                else (round(1.0 - _uc.home_probability, 6) if not away_unavailable else None)
+            )
+            current_mark = _uc.source_mark if is_home else _uc.away_source_mark
+    elif is_finished_status(status):
         # #13172 Option B — finished games serve their settled result (team-relative
         # 1.0 win / 0.0 loss, 0.0 with draw_probability=1.0 on a draw-priced draw)
         # and None when final_unresolved, never the last live price.
@@ -1131,6 +1171,7 @@ def _format_event_brief(
             else {}
         ),
         "source_mark": current_mark,
+        **({"bookmaker_count": _bk_count} if _bk_count is not None else {}),
         "pregame_win_probability": round(float(pre), 3) if pre is not None else None,
         "pregame_source_mark": pregame_mark,
         "completed_at": event.completed_at.isoformat() if event.completed_at else None,
