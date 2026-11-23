@@ -10,6 +10,7 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { AwardCategoryPairedCard } from "@/components/discover/forms/AwardCategoryPairedCard";
+import { RoundupCard } from "@/components/discover/roundup/RoundupCard";
 import MachinerySectionRenderer, {
   MachineryDiscoverCard,
   resolveDistinctChartSeries,
@@ -660,5 +661,82 @@ describe("#12288 Slice 6 — Website parity, error states, and non-repeating fir
     expect(html).toContain("/teamlogos/ncaa/500/127.png");
     expect(html).toContain("Open all 2 sections");
     expect(html).not.toContain('data-testid="machinery-avatar-initials"');
+  });
+
+  it("343: A: paired card footer renders set name without repeating card headline", () => {
+    const prev = process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1;
+    process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1 = "true";
+    try {
+      const ggHeadline =
+        "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, with 4 contenders at 75%+ to be nominated";
+      const pairedSet: PairedMetricSet = {
+        ...baseOscarsSet,
+        kicker: "GOLDEN GLOBES 2027 · BEST ACTRESS (COMEDY OR MUSICAL)",
+        title: ggHeadline,
+      };
+      const machineryCard: MachineryCardContract = {
+        slug: "machinery-golden-globes-2027",
+        form_id: "paired_stage_bars",
+        kicker: pairedSet.kicker,
+        title: ggHeadline,
+        subtitle: "84th Golden Globes · Nominated % paired beside Wins %.",
+        footer: "",
+        section_count: 2,
+        destination_href: "/collections/machinery-golden-globes-2027",
+        rows: [],
+      };
+      const contract = {
+        kicker: pairedSet.kicker,
+        footer: "",
+        rows: [],
+        paired_metric_set: pairedSet,
+        machinery_card: machineryCard,
+      };
+
+      const cleanHtml = renderToStaticMarkup(
+        <RoundupCard
+          title={ggHeadline}
+          contract={contract}
+          collectionRef={{
+            slug: "machinery-golden-globes-2027",
+            href: "/collections/machinery-golden-globes-2027",
+            name: "Golden Globes 2027",
+            revision: 1,
+            collection_count: 10,
+          }}
+          items={[]}
+          bundleId="roundup:machinery-golden-globes-2027"
+        />,
+      );
+      expect(cleanHtml).toContain('data-testid="paired-card-machinery-link"');
+      expect(cleanHtml).toContain("Golden Globes 2027");
+      expect(cleanHtml).toContain("Open all 2 sections");
+      expect(cleanHtml.split(ggHeadline)).toHaveLength(2);
+
+      const staleDupHtml = renderToStaticMarkup(
+        <RoundupCard
+          title={ggHeadline}
+          contract={contract}
+          collectionRef={{
+            slug: "machinery-golden-globes-2027",
+            href: "/collections/machinery-golden-globes-2027",
+            name: ggHeadline,
+            revision: 1,
+            collection_count: 10,
+          }}
+          items={[]}
+          bundleId="roundup:machinery-golden-globes-2027"
+        />,
+      );
+      expect(staleDupHtml).toContain('data-testid="paired-card-machinery-link"');
+      expect(staleDupHtml).toContain("Open all 2 sections");
+      expect(staleDupHtml.split(ggHeadline)).toHaveLength(2);
+    } finally {
+      if (prev === undefined) {
+        delete process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1;
+      } else {
+        process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1 = prev;
+      }
+    }
   });
 });
