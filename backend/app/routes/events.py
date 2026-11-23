@@ -8198,7 +8198,7 @@ def _serve_stale_and_refresh(name: str, rebuild) -> bool:
 _game_markets_cache: dict[int, tuple[float, str, str, dict]] = {}
 # event_id → (timestamp, source_status, build_id, response)
 _GAME_MARKETS_LIVE_TTL = 30
-_GAME_MARKETS_MAX_SIZE = 30
+_GAME_MARKETS_MAX_SIZE = 10
 
 
 def _current_build_id() -> str:
@@ -29628,7 +29628,7 @@ async def _build_game_markets(
 _related_futures_cache: dict[int, tuple[float, str, str, dict]] = {}
 # event_id → (timestamp, source_status, build_id, response)
 _RELATED_FUTURES_LIVE_TTL = 60
-_RELATED_FUTURES_MAX_SIZE = 30
+_RELATED_FUTURES_MAX_SIZE = 10
 
 
 @router.get("/{event_id}/related-futures")
