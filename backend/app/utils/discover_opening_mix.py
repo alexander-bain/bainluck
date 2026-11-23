@@ -16,10 +16,12 @@ Composes seats 1..10 of the Discover deck for ``machinery=1`` readers:
   market unless nothing else qualifies) and does not duplicate a covered market.
 * Concept cards (``type == "concept"``) are never pinned or promoted.
 * No single game card enters seats 1..10. While any game is live and an
-  eligible live sports grouping exists, the live sports grouping holding the
-  most live games (tie-breaking on higher deck rank) takes one of the two
-  sports seats in seats 1..10 (Decision 342: B). No second live grouping and no
-  ordinary live game may enter seats 1..10.
+  eligible live sports grouping exists, the live sports grouping carrying the
+  biggest live game (postseason/marquee > nationally featured tier-1 > ordinary
+  live game, with season-stage tiebreak among major games, then live-game count,
+  then deck rank) takes one of the two sports seats in seats 1..10
+  (Decision 342: B). No second live grouping and no ordinary live game may enter
+  seats 1..10.
 * Grouped cards may sit adjacent inside seats 1..10; Decision 123-A
   non-adjacency for round-up cards still holds from seat 11 onward (index >= 10).
 """
@@ -37,8 +39,11 @@ from app.utils.discover_opening_seating import (
     EVENT_LIVE_STATUSES,
     LIVE,
     _group_members,
+    _parse as _parse_utc_datetime,
     classify_card,
 )
+from app.utils.highlights import get_season_multiplier
+from app.utils.majors_calendar import fixture_marquee_pinned
 from app.utils.roundup_containers import (
     ROUNDUP_PRODUCERS,
     _CLIENT_SPORT_CATEGORIES,
@@ -874,6 +879,84 @@ def _order_opening_ten(
     ]
 
 
+def _live_event_occasion_rank(
+    child: Mapping[str, Any],
+    tags_by_event_id: Mapping[Any, Any],
+    *,
+    now: datetime,
+) -> tuple[int, float]:
+    """Return ``(occasion_tier, season_multiplier)`` for a live child event.
+
+    * Tier 2: championship/playoff on tier-1/2 or a calendar marquee pin.
+    * Tier 1: nationally featured tier-1 regular-season fixture.
+    * Tier 0: ordinary live game (season multiplier 0.0 so live count wins).
+    """
+    cdata = child.get("data")
+    if not isinstance(cdata, Mapping):
+        return (0, 0.0)
+    raw_tags = (
+        cdata.get("_event_tags")
+        or cdata.get("event_tags")
+        or tags_by_event_id.get(cdata.get("id"))
+        or ()
+    )
+    tags = {str(t) for t in raw_tags if t}
+    sport_key = str(cdata.get("sport") or "").strip()
+    commence = _parse_utc_datetime(cdata.get("commence_time"))
+    is_marquee_pin = False
+    if sport_key and commence is not None:
+        try:
+            is_marquee_pin = bool(fixture_marquee_pinned(sport_key, commence, now))
+        except Exception:  # noqa: BLE001 — fail closed to non-pinned tiering
+            is_marquee_pin = False
+
+    if (
+        "importance:championship" in tags
+        or ("importance:playoff" in tags and ("tier:1" in tags or "tier:2" in tags))
+        or is_marquee_pin
+    ):
+        tier = 2
+    elif (
+        "tier:1" in tags
+        and "timing:national_tv" in tags
+        and "audience:national_interest" in tags
+    ):
+        tier = 1
+    else:
+        return (0, 0.0)
+
+    try:
+        season_mult = float(get_season_multiplier(sport_key, now)) if sport_key else 1.0
+    except Exception:  # noqa: BLE001 — fail closed to neutral multiplier
+        season_mult = 1.0
+    return (tier, season_mult)
+
+
+def _live_sports_group_rank_key(
+    pair: tuple[int, dict[str, Any]],
+    tags_by_event_id: Mapping[Any, Any],
+    *,
+    now: datetime,
+) -> tuple[int, float, int, int]:
+    """Order live sports groupings by biggest live game, then live count, then deck rank."""
+    idx, item = pair
+    data = item.get("data")
+    peak_tier = 0
+    peak_season_mult = 0.0
+    live_count = 0
+    if isinstance(data, Mapping):
+        for child in data.get("items") or ():
+            if not isinstance(child, Mapping) or child.get("type") != "event":
+                continue
+            if classify_card(dict(child), now=now).lifecycle != LIVE:
+                continue
+            live_count += 1
+            tier, mult = _live_event_occasion_rank(child, tags_by_event_id, now=now)
+            if (tier, mult) > (peak_tier, peak_season_mult):
+                peak_tier, peak_season_mult = tier, mult
+    return (-peak_tier, -peak_season_mult, -live_count, idx)
+
+
 def apply_discover_opening_mix(
     items: list[dict[str, Any]],
     *,
@@ -886,8 +969,9 @@ def apply_discover_opening_mix(
     Returns ``items`` unchanged when the deck has ``<= seat_count`` cards or no
     opening-eligible grouped cards. Never pins ``concept`` cards and never puts a
     single game card (or a second live grouping) into seats 1..10. When at least
-    one eligible sports grouping holds live games, the one with the most live
-    games (tie-breaking on higher deck rank) takes one of the two sports seats.
+    one eligible sports grouping holds live games, the one with the biggest
+    live game (then most live games, then higher deck rank) takes one of the
+    two sports seats.
     """
     if not items or len(items) <= seat_count:
         return items
@@ -905,6 +989,13 @@ def apply_discover_opening_mix(
         and it.get("type") == "event"
         and isinstance(it.get("data"), Mapping)
     }
+    tags_by_event_id = {
+        it["data"].get("id"): (it["data"].get("_event_tags") or it["data"].get("event_tags") or ())
+        for it in items
+        if isinstance(it, Mapping)
+        and it.get("type") == "event"
+        and isinstance(it.get("data"), Mapping)
+    }
     live_sports_candidates: list[tuple[int, dict[str, Any]]] = [
         (idx, it)
         for idx, it in enumerate(items)
@@ -913,9 +1004,8 @@ def apply_discover_opening_mix(
     chosen_live_sports_group: Optional[tuple[int, dict[str, Any]]] = (
         min(
             live_sports_candidates,
-            key=lambda pair: (
-                -_live_event_count_in_group(pair[1], now=effective_now),
-                pair[0],
+            key=lambda pair: _live_sports_group_rank_key(
+                pair, tags_by_event_id, now=effective_now
             ),
         )
         if live_sports_candidates
@@ -1021,7 +1111,7 @@ def apply_discover_opening_mix(
 
     # Decision 342: B — While any game is live and an eligible live sports
     # grouping exists, reserve one of the two sports seats for the live sports
-    # grouping holding the most live games (tie-breaking on higher rank).
+    # grouping holding the biggest live game (then most live games, then higher deck rank).
     if chosen_live_sports_group is not None and len(chosen_groups) < non_pwm_grouped_target:
         _add_group(*chosen_live_sports_group)
 
