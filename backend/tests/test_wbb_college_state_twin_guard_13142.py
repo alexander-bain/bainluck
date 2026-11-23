@@ -11,7 +11,7 @@ import pytest
 from sqlalchemy import create_engine, event as sa_event, select
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.ext.compiler import compiles
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
 
 @compiles(JSONB, "sqlite")
@@ -46,7 +46,11 @@ from app.utils.prediction_market_matching import (  # noqa: E402
     normalize_wbb_mascot,
     wbb_mascot_variants,
 )
-from app.utils.serve_fold_absorbed import _commence_arms  # noqa: E402
+from app.utils.serve_fold_absorbed import (  # noqa: E402
+    _commence_arms,
+    _same_day_idless_claim_predicate,
+    serve_fold_absorbed_rows,
+)
 
 
 def _make_event(
@@ -951,13 +955,267 @@ def _portable_odds_query(event_ids):
     return select(OddsSnapshot).where(OddsSnapshot.event_id.in_(event_ids))
 
 
+class _CountingAsyncWbb(_SyncAsAsyncWbb):
+    def __init__(self, session: Session):
+        super().__init__(session)
+        self.execute_calls = 0
+
+    async def execute(self, statement, *args, **kwargs):
+        self.execute_calls += 1
+        return await super().execute(statement, *args, **kwargs)
+
+
 class TestWbbSameDayDetailParity13142:
-    def test_commence_arms_widens_to_full_utc_day_only_for_wncaab(self):
+    def test_commence_arms_stays_near_time_and_day_predicate_requires_idless(self):
         commence = datetime(2025, 11, 23, 14, 0, tzinfo=timezone.utc)
-        wbb_sql = str(_commence_arms(commence, "basketball_wncaab"))
-        euro_sql = str(_commence_arms(commence, "basketball_euroleague"))
-        assert wbb_sql.count("events.commence_time >=") == 1
-        assert "events.commence_time >=" not in euro_sql
+        near_sql = str(_commence_arms(commence))
+        assert "events.commence_time >=" not in near_sql
+        assert "events.commence_time <" not in near_sql
+        day_sql = str(_same_day_idless_claim_predicate(commence))
+        assert "events.commence_time >=" in day_sql
+        assert "events.commence_time <" in day_sql
+        assert "events.espn_id IS NULL" in day_sql
+        assert "events.external_id IS NULL" in day_sql
+        assert "events.statpal_fixture_id IS NULL" in day_sql
+
+    def test_idless_wbb_page_skips_day_wide_read(self):
+        """An id-less copy is never the survivor in this pass, so it skips the day read."""
+        eng = create_engine("sqlite://")
+        Base.metadata.create_all(eng)
+        anchor_commence = datetime(2026, 11, 23, 12, 0, tzinfo=timezone.utc)
+        with Session(eng) as s:
+            s.add(Sport(id=10, key="basketball_wncaab", name="WNCAAB", group="Basketball"))
+            s.add(
+                Event(
+                    id=15348085,
+                    sport_id=10,
+                    away_team_name="Missouri Tigers",
+                    home_team_name="Kansas State Wildcats",
+                    commence_time=anchor_commence,
+                    status="scheduled",
+                    external_id=None,
+                )
+            )
+            s.add(
+                Event(
+                    id=15352902,
+                    sport_id=10,
+                    away_team_name="Kansas St Wildcats",
+                    home_team_name="Missouri Tigers",
+                    commence_time=anchor_commence + timedelta(hours=2),
+                    status="scheduled",
+                    external_id="f27a19d9369dd20d4a858e617ab21bcb",
+                )
+            )
+            s.commit()
+
+        with Session(eng) as s:
+            sa_event.listen(s, "loaded_as_persistent", _restore_sqlite_utc)
+            db = _CountingAsyncWbb(s)
+            ev = s.execute(
+                select(Event).options(selectinload(Event.sport)).where(Event.id == 15348085)
+            ).scalar_one()
+            absorbed = asyncio.run(serve_fold_absorbed_rows(db, ev))
+        assert absorbed == []
+        assert db.execute_calls == 2
+
+    def test_day_wide_read_excludes_anchored_statpal_and_catchall_rows(self):
+        """Anchored WBB pages read only id-less same-league rows on the UTC day."""
+        eng = create_engine("sqlite://")
+        Base.metadata.create_all(eng)
+        anchor_commence = datetime(2026, 11, 23, 12, 0, tzinfo=timezone.utc)
+        with Session(eng) as s:
+            s.add(Sport(id=10, key="basketball_wncaab", name="WNCAAB", group="Basketball"))
+            s.add(Sport(id=37872, key="basketball_other", name="Basketball", group="Basketball"))
+            s.add(
+                Event(
+                    id=100,
+                    sport_id=10,
+                    away_team_name="Kansas St Wildcats",
+                    home_team_name="Missouri Tigers",
+                    commence_time=anchor_commence,
+                    status="scheduled",
+                    espn_id="401900001",
+                )
+            )
+            # Same-day anchored, StatPal-only, and basketball_other id-less rows >4.5h away
+            # must NOT be returned; reversed same-league id-less row +6h MUST fold.
+            s.add(
+                Event(
+                    id=101,
+                    sport_id=10,
+                    away_team_name="Texas Longhorns",
+                    home_team_name="Baylor Bears",
+                    commence_time=anchor_commence + timedelta(hours=6),
+                    status="scheduled",
+                    external_id="anchored-other-game",
+                )
+            )
+            s.add(
+                Event(
+                    id=102,
+                    sport_id=10,
+                    away_team_name="UConn Huskies",
+                    home_team_name="Duke Blue Devils",
+                    commence_time=anchor_commence + timedelta(hours=6),
+                    status="scheduled",
+                    statpal_fixture_id="sp-99",
+                )
+            )
+            s.add(
+                Event(
+                    id=103,
+                    sport_id=37872,
+                    away_team_name="Missouri Tigers",
+                    home_team_name="Kansas State Wildcats",
+                    commence_time=anchor_commence + timedelta(hours=7),
+                    status="scheduled",
+                )
+            )
+            s.add(
+                Event(
+                    id=104,
+                    sport_id=10,
+                    away_team_name="Missouri Tigers",
+                    home_team_name="Kansas State Wildcats",
+                    commence_time=anchor_commence + timedelta(hours=6),
+                    status="scheduled",
+                    win_probability_sources={"polymarket": {"value": 0.92}},
+                )
+            )
+            s.commit()
+
+        with Session(eng) as s:
+            sa_event.listen(s, "loaded_as_persistent", _restore_sqlite_utc)
+            db = _CountingAsyncWbb(s)
+            ev = s.execute(
+                select(Event).options(selectinload(Event.sport)).where(Event.id == 100)
+            ).scalar_one()
+            absorbed = asyncio.run(serve_fold_absorbed_rows(db, ev))
+        assert [r.id for r in absorbed] == [104]
+        assert getattr(absorbed[0], "_serve_fold_corner_flipped", False) is True
+        assert db.execute_calls == 3
+
+    def test_busy_250_game_day_still_folds_near_time_and_reversed_same_day_pair(self):
+        """A 250-game UTC day must never push near-time or newest reversed id-less twin past cap."""
+        eng = create_engine("sqlite://")
+        Base.metadata.create_all(eng)
+        now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+        yesterday = (now - timedelta(days=1)).date()
+        anchor_commence = datetime(
+            yesterday.year, yesterday.month, yesterday.day, 14, 0, tzinfo=timezone.utc
+        )
+        completed_at = anchor_commence + timedelta(hours=3)
+        src_stamp = (anchor_commence - timedelta(hours=1)).isoformat()
+
+        with Session(eng) as s:
+            s.add(Sport(id=10, key="basketball_wncaab", name="WNCAAB", group="Basketball"))
+            s.add(Sport(id=37872, key="basketball_other", name="Basketball", group="Basketball"))
+            s.add(
+                Event(
+                    id=15352902,
+                    sport_id=10,
+                    away_team_name="Kansas St Wildcats",
+                    home_team_name="Missouri Tigers",
+                    commence_time=anchor_commence,
+                    completed_at=completed_at,
+                    status="completed",
+                    home_score=72,
+                    away_score=64,
+                    external_id="f27a19d9369dd20d4a858e617ab21bcb",
+                    win_probability_sources={"stat_model": {"value": 0.0812, "updated_at": src_stamp}},
+                    win_probability_sources_rev=10,
+                )
+            )
+            # 250 earlier-ID same-UTC-day games (exceeding CANDIDATE_CAP=200) + 50 basketball_other noise
+            for i in range(250):
+                stagger = timedelta(hours=5 + (i % 4), minutes=i % 60)
+                s.add(
+                    Event(
+                        id=16000000 + i,
+                        sport_id=10,
+                        away_team_name=f"Visitor Team {i}",
+                        home_team_name=f"Home Team {i}",
+                        commence_time=anchor_commence + stagger,
+                        completed_at=anchor_commence + stagger + timedelta(hours=2),
+                        status="completed",
+                        home_score=70,
+                        away_score=65,
+                        external_id=f"busy-day-anchor-{i}",
+                        win_probability_sources={"stat_model": {"value": 0.55}},
+                    )
+                )
+            for j in range(50):
+                s.add(
+                    Event(
+                        id=16001000 + j,
+                        sport_id=37872,
+                        away_team_name=f"Other Away {j}",
+                        home_team_name=f"Other Home {j}",
+                        commence_time=anchor_commence + timedelta(hours=1, minutes=j % 60),
+                        status="scheduled",
+                    )
+                )
+            # Highest IDs: a same-minute claim twin + a +2h reversed id-less twin well past row 200
+            s.add(
+                Event(
+                    id=16999001,
+                    sport_id=10,
+                    away_team_name="Kansas St Wildcats",
+                    home_team_name="Missouri Tigers",
+                    commence_time=anchor_commence + timedelta(minutes=5),
+                    completed_at=completed_at,
+                    status="completed",
+                    win_probability_sources={"kalshi": {"value": 0.11, "updated_at": src_stamp}},
+                    win_probability_sources_rev=3,
+                )
+            )
+            s.add(
+                Event(
+                    id=16999002,
+                    sport_id=10,
+                    away_team_name="Missouri Tigers",
+                    home_team_name="Kansas State Wildcats",
+                    commence_time=anchor_commence + timedelta(hours=2),
+                    completed_at=completed_at,
+                    status="completed",
+                    external_id=None,
+                    win_probability_sources={
+                        "polymarket": {"value": 0.96, "observed_value": 0.96, "updated_at": src_stamp}
+                    },
+                    win_probability_sources_rev=5,
+                )
+            )
+            s.commit()
+
+        with Session(eng) as s:
+            sa_event.listen(s, "loaded_as_persistent", _restore_sqlite_utc)
+            ev = s.execute(
+                select(Event).options(selectinload(Event.sport)).where(Event.id == 15352902)
+            ).scalar_one()
+            absorbed = asyncio.run(serve_fold_absorbed_rows(_SyncAsAsyncWbb(s), ev))
+        assert [r.id for r in absorbed] == [16999001, 16999002]
+        assert getattr(absorbed[0], "_serve_fold_corner_flipped", False) is False
+        assert getattr(absorbed[1], "_serve_fold_corner_flipped", False) is True
+
+        events_route._event_detail_cache.clear()
+        with (
+            patch("app.routes.events._load_gei_percentiles", new=AsyncMock(return_value={})),
+            patch("app.routes.events._build_team_lookup", new=AsyncMock(return_value={})),
+            patch("app.routes.events.latest_odds_per_bookmaker_query", new=_portable_odds_query),
+            patch("app.utils.price_evidence.load_price_evidence", new=AsyncMock(return_value="tradeable_book")),
+        ):
+            with Session(eng) as s_detail:
+                sa_event.listen(s_detail, "loaded_as_persistent", _restore_sqlite_utc)
+                detail_payload = asyncio.run(
+                    get_event(15352902, db=_SyncAsAsyncWbb(s_detail), fresh=True)
+                )
+        events_route._event_detail_cache.clear()
+        wps = detail_payload["win_probability_sources"]
+        assert wps["polymarket"]["value"] == pytest.approx(0.04)
+        assert wps["kalshi"]["value"] == pytest.approx(0.11)
+        assert detail_payload["hero_probability_source"] == "settled"
+        assert detail_payload["hero_probability"] == pytest.approx(1.0)
 
     @pytest.mark.parametrize("state", ["live", "finished"])
     def test_same_utc_day_two_hour_offset_list_and_detail_agree(self, state: str):

@@ -55,6 +55,7 @@ from app.models.models import Event, Sport
 from app.utils.event_twin_fold import (
     _REVERSED_SAME_DAY_ANCHORED_CLAIM_LEAGUES,
     _catchall_sport_prefix,
+    _group_is_id_anchored,
     cross_board_identity,
     fold_twin_events,
 )
@@ -80,13 +81,13 @@ def _sport_prefix(key: str) -> str:
     return _catchall_sport_prefix(key) or key.split("_", 1)[0]
 
 
-async def _foldable_sport_ids(db, sport_key: str) -> list[int]:
-    """Sport rows the fold could pair a row of ``sport_key`` with.
+async def _partition_foldable_sport_ids(db, sport_key: str) -> tuple[list[int], list[int]]:
+    """Return ``(foldable_sport_ids, own_league_sport_ids)`` for ``sport_key``.
 
-    The same league (season variants included, via `league_identity`), plus the
-    sport's `*_other` catch-all; a catch-all row itself can meet any league of
-    its sport (`_merge_catchall_leagues`). Plus the other board of a game listed
-    on two (`cross_board_identity`, #5774). The `sports` table is small.
+    ``foldable_sport_ids`` covers the same league (season variants via
+    ``league_identity``), its ``*_other`` catch-all, and cross-board siblings
+    (#5774). ``own_league_sport_ids`` keeps only exact same-league ids (never
+    ``*_other``) for same-UTC-day reversed claims (#13142).
     """
     prefix = _sport_prefix(sport_key)
     own_identity = league_identity(sport_key)
@@ -95,6 +96,7 @@ async def _foldable_sport_ids(db, sport_key: str) -> list[int]:
         await db.execute(select(Sport.id, Sport.key).where(Sport.key.like(f"{prefix}%")))
     ).all()
     ids = []
+    own_league_ids = []
     for sport_id, key in rows:
         if not key or _sport_prefix(key) != prefix:
             continue
@@ -106,24 +108,85 @@ async def _foldable_sport_ids(db, sport_key: str) -> list[int]:
             or cross_board_identity(sport_key) == league_identity(key)
         ):
             ids.append(sport_id)
+            # Standalone catch-all claims are refused by `_reversed_claim_league`,
+            # so excluded here to avoid loading hundreds of `basketball_other` rows.
+            if (
+                not own_is_catchall
+                and _catchall_sport_prefix(key) is None
+                and league_identity(key) == own_identity
+            ):
+                own_league_ids.append(sport_id)
+    return ids, own_league_ids
+
+
+async def _foldable_sport_ids(db, sport_key: str) -> list[int]:
+    """Sport rows the fold could pair a row of ``sport_key`` with.
+
+    The same league (season variants included, via `league_identity`), plus the
+    sport's `*_other` catch-all; a catch-all row itself can meet any league of
+    its sport (`_merge_catchall_leagues`). Plus the other board of a game listed
+    on two (`cross_board_identity`, #5774). The `sports` table is small.
+    """
+    ids, _own_league_ids = await _partition_foldable_sport_ids(db, sport_key)
     return ids
 
 
-def _commence_arms(commence: datetime, sport_key: str = "") -> Any:
-    lo_pad, hi_pad = PAD_BAND
+def _utc_day_bounds(commence: datetime) -> tuple[datetime, datetime]:
+    """Return UTC ``[day_start, next_day_start)`` matching ``commence`` tz awareness."""
     utc_commence = commence.astimezone(timezone.utc) if commence.tzinfo else commence
     tz = timezone.utc if commence.tzinfo else None
     day_start = datetime.combine(utc_commence.date(), time(0), tzinfo=tz)
-    arms = [
+    return day_start, day_start + timedelta(days=1)
+
+
+def _commence_arms(commence: datetime) -> Any:
+    """Near-time commence windows for serve-time candidate selection."""
+    lo_pad, hi_pad = PAD_BAND
+    day_start, _day_end = _utc_day_bounds(commence)
+    return or_(
         Event.commence_time.between(commence - NEAR, commence + NEAR),
         Event.commence_time.between(commence + lo_pad, commence + hi_pad),
         Event.commence_time.between(commence - hi_pad, commence - lo_pad),
         Event.commence_time == day_start,
-    ]
-    if sport_key in _REVERSED_SAME_DAY_ANCHORED_CLAIM_LEAGUES:
-        day_end = day_start + timedelta(days=1)
-        arms.append(and_(Event.commence_time >= day_start, Event.commence_time < day_end))
-    return or_(*arms)
+    )
+
+
+def _same_day_idless_claim_predicate(commence: datetime) -> Any:
+    """Select id-less own-league claim rows on ``commence``'s UTC calendar day (#13142)."""
+    day_start, day_end = _utc_day_bounds(commence)
+    return and_(
+        Event.commence_time >= day_start,
+        Event.commence_time < day_end,
+        Event.espn_id.is_(None),
+        Event.external_id.is_(None),
+        Event.statpal_fixture_id.is_(None),
+    )
+
+
+async def _read_candidates(
+    db, event_id: int, sport_ids: list[int], time_predicate: Any
+) -> list:
+    """Read up to ``CANDIDATE_CAP`` untagged twin candidates matching ``time_predicate``."""
+    return list(
+        (
+            await db.execute(
+                select(Event)
+                .options(selectinload(Event.sport))
+                .where(
+                    and_(
+                        Event.id != event_id,
+                        Event.sport_id.in_(sport_ids),
+                        time_predicate,
+                        not_a_proven_duplicate(),
+                    )
+                )
+                .order_by(Event.id)
+                .limit(CANDIDATE_CAP)
+            )
+        )
+        .scalars()
+        .all()
+    )
 
 
 async def serve_fold_absorbed_rows(db, event) -> list:
@@ -140,7 +203,7 @@ async def serve_fold_absorbed_rows_with_completeness(db, event) -> tuple[list, b
     """``(rows, complete)``: the absorbed rows, and whether the fold ran whole.
 
     ``complete`` is False when the fold raised (the rows are then ``[]``, as
-    they always were) or the candidate read hit `CANDIDATE_CAP`, so a row past
+    they always were) or a candidate read hit `CANDIDATE_CAP`, so a row past
     the cap could be missing. A caller that CERTIFIES its membership
     (#10090 `history_fold_revision`) must not certify either; every other
     caller reads only the rows.
@@ -149,10 +212,11 @@ async def serve_fold_absorbed_rows_with_completeness(db, event) -> tuple[list, b
     a row whose sport is not in memory cannot be keyed by league and folds
     nothing, which is today's page.
 
-    The candidate read is not wrapped: it is two indexed statements, and a
-    failure there is the database failing (the reasoning `folded_event_ids`
-    gives, gotcha #53). The fold itself is pure and is wrapped — gotcha #42: a
-    fold that cannot run leaves the page exactly as it was.
+    The candidate read is not wrapped: it is two (or three for anchored
+    same-day-allowlisted pages) indexed statements, and a failure there is the
+    database failing (the reasoning `folded_event_ids` gives, gotcha #53). The
+    fold itself is pure and is wrapped — gotcha #42: a fold that cannot run
+    leaves the page exactly as it was.
     """
     sport_key = loaded_sport_key(event)
     commence = getattr(event, "commence_time", None)
@@ -161,31 +225,34 @@ async def serve_fold_absorbed_rows_with_completeness(db, event) -> tuple[list, b
     if not event.home_team_name or not event.away_team_name:
         return [], True
 
-    sport_ids = await _foldable_sport_ids(db, sport_key)
+    sport_ids, own_league_sport_ids = await _partition_foldable_sport_ids(db, sport_key)
     if not sport_ids:
         return [], True
-    candidates = list(
-        (
-            await db.execute(
-                select(Event)
-                .options(selectinload(Event.sport))
-                .where(
-                    and_(
-                        Event.id != event.id,
-                        Event.sport_id.in_(sport_ids),
-                        _commence_arms(commence, sport_key),
-                        not_a_proven_duplicate(),
-                    )
-                )
-                .order_by(Event.id)
-                .limit(CANDIDATE_CAP)
-            )
-        )
-        .scalars()
-        .all()
+    near_candidates = await _read_candidates(
+        db, event.id, sport_ids, _commence_arms(commence)
     )
-    if not candidates:
+    same_day_claims: list = []
+    if (
+        sport_key in _REVERSED_SAME_DAY_ANCHORED_CLAIM_LEAGUES
+        and own_league_sport_ids
+        and _group_is_id_anchored([event])
+    ):
+        same_day_claims = await _read_candidates(
+            db,
+            event.id,
+            own_league_sport_ids,
+            _same_day_idless_claim_predicate(commence),
+        )
+    if not near_candidates and not same_day_claims:
         return [], True
+
+    if same_day_claims:
+        seen_ids = {row.id for row in near_candidates}
+        candidates = list(near_candidates) + [
+            row for row in same_day_claims if row.id not in seen_ids
+        ]
+    else:
+        candidates = near_candidates
 
     try:
         fold = fold_twin_events([event, *candidates])
@@ -204,4 +271,8 @@ async def serve_fold_absorbed_rows_with_completeness(db, event) -> tuple[list, b
     for row in rows:
         if row.id in flipped_ids:
             setattr(row, "_serve_fold_corner_flipped", True)
-    return rows, len(candidates) < CANDIDATE_CAP
+    complete = (
+        len(near_candidates) < CANDIDATE_CAP
+        and len(same_day_claims) < CANDIDATE_CAP
+    )
+    return rows, complete
