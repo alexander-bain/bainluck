@@ -345,12 +345,33 @@
     {
       "key": "jaxon-smith-njigba",
       "aliases": [
-        "Jaxon Smith-Njigba"
+        "Jaxon Smith-Njigba",
+        "Jaxson Smith-Njigba"
       ],
       "kind": "person",
       "detail": "WR · Seattle",
       "accent_color": "#002244",
       "url": "https://a.espncdn.com/i/headshots/nfl/players/full/4430878.png"
+    },
+    {
+      "key": "caleb-williams",
+      "aliases": [
+        "Caleb Williams"
+      ],
+      "kind": "person",
+      "detail": "QB · Chicago",
+      "accent_color": "#0B162A",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/4431611.png"
+    },
+    {
+      "key": "justin-herbert",
+      "aliases": [
+        "Justin Herbert"
+      ],
+      "kind": "person",
+      "detail": "QB · Los Angeles",
+      "accent_color": "#0080C6",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/4038941.png"
     },
     {
       "key": "jahmyr-gibbs",

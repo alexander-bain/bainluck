@@ -727,3 +727,272 @@ def test_336a_batch5_sets_classify_and_seat_in_opening_mix() -> None:
     assert counts[TOPIC_SPORTS] == 2
     assert counts[TOPIC_TECH_BUSINESS] == 2
     assert counts[TOPIC_PWM] <= 1
+
+
+def _live_sports_bundle(
+    slug: str,
+    title: str,
+    games: list[dict],
+    *,
+    score: float = 82.0,
+) -> dict:
+    children = [
+        {
+            "type": "event",
+            "score": float(g.get("score", 80.0)),
+            "data": {
+                "id": g["id"],
+                "sport": g["sport"],
+                "status": "live",
+                "commence_time": g["commence_time"],
+                **({"_event_tags": list(g["_event_tags"])} if "_event_tags" in g else {}),
+                **({"event_tags": list(g["event_tags"])} if "event_tags" in g else {}),
+            },
+        }
+        for g in games
+    ]
+    return {
+        "type": "bundle",
+        "score": score,
+        "reason": title,
+        "headline": title,
+        "data": {
+            "id": f"roundup:{slug}",
+            "title": title,
+            "kind": "roundup",
+            "story_key": f"roundup:{slug}",
+            "category": "sports",
+            "item_count": len(children),
+            "member_ids": [g["id"] for g in games],
+            "items": children,
+            "collection_ref": {
+                "slug": slug,
+                "href": f"/collections/{slug}",
+                "name": title,
+                "revision": "rev",
+                "collection_count": len(children),
+            },
+            "roundup": {"kicker": "SPORTS", "tag": "SPORTS", "footer": "", "rows": []},
+        },
+    }
+
+
+def _mix_filler_deck(extra: list[dict]) -> list[dict]:
+    return [
+        _roundup("machinery-elon-musk-side-quests", "Musk", kicker="ODD", category="entertainment", member_ids=[9001, 9002], score=95.0),
+        _roundup("machinery-long-shots", "Long shots", kicker="ODD", category="entertainment", member_ids=[9003, 9004], score=94.0),
+        _roundup("machinery-google-year-in-search-2026", "Search", kicker="ODD", category="entertainment", member_ids=[9005, 9006], score=93.0),
+        _roundup("machinery-2026-summed-up", "2026", kicker="ENTERTAINMENT", category="entertainment", member_ids=[9007, 9008], score=92.0),
+        _roundup("machinery-next-james-bond", "Bond", kicker="ENTERTAINMENT", category="entertainment", member_ids=[9009, 9010], score=91.0),
+        _roundup("machinery-ai-model-leaderboard-2026", "AI", kicker="TECH", category="tech", member_ids=[9011, 9012], score=90.0),
+        _roundup("machinery-big-tech-deals-hardware", "Big Tech", kicker="TECH", category="tech", member_ids=[9013, 9014], score=89.0),
+        _roundup("machinery-2028-presidential", "2028", kicker="POLITICS", category="politics", member_ids=[9015, 9016], score=88.0),
+        _single(9101, "Standout Oscar market", category="entertainment", score=86.0),
+        *extra,
+        _roundup("cfp-picture", "CFP", kicker="SPORTS", category="sports", member_ids=[9201, 9202], score=70.0),
+    ]
+
+
+class TestLiveSportsGroupTieBreak:
+    def test_replay_1_tonight_snf_national_nfl_beats_four_ordinary_nba(self) -> None:
+        """Replay 1: 1 live national SNF NFL game beats 4 ordinary live NBA games."""
+        snf_now = datetime(2026, 11, 23, 2, 0, tzinfo=timezone.utc)
+        live_ts = (snf_now - timedelta(minutes=30)).isoformat()
+        nba_four = _live_sports_bundle(
+            "machinery-nba-night",
+            "Suns at Pelicans headlines the Nov 22-23 slate",
+            score=96.0,
+            games=[
+                {"id": 9501 + i, "sport": "basketball_nba", "commence_time": live_ts, "_event_tags": ["sport:basketball", "tier:1", "timing:primetime"]}
+                for i in range(4)
+            ],
+        )
+        nfl_snf = _live_sports_bundle(
+            "machinery-nfl-week",
+            "Vikings at 49ers headlines the Sunday slate",
+            score=84.0,
+            games=[
+                {
+                    "id": 14639207,
+                    "sport": "americanfootball_nfl",
+                    "commence_time": live_ts,
+                    "_event_tags": ["sport:football", "tier:1", "timing:national_tv", "audience:national_interest"],
+                }
+            ],
+        )
+        out = apply_discover_opening_mix(_mix_filler_deck([nba_four, nfl_snf]), now=snf_now)
+        top10_ids = {(c.get("data") or {}).get("id") for c in out[:10]}
+        assert "roundup:machinery-nfl-week" in top10_ids
+        assert "roundup:machinery-nba-night" not in top10_ids
+
+    def test_replay_2_ordinary_night_most_live_games_and_rank_tiebreak(self) -> None:
+        """Replay 2: With only ordinary live games, most live games wins; equal counts break on rank."""
+        ordinary_now = datetime(2026, 11, 24, 2, 0, tzinfo=timezone.utc)
+        live_ts = (ordinary_now - timedelta(minutes=25)).isoformat()
+        one_ordinary_nfl = _live_sports_bundle(
+            "machinery-nfl-week",
+            "1 ordinary live NFL game",
+            score=95.0,
+            games=[{"id": 9601, "sport": "americanfootball_nfl", "commence_time": live_ts, "_event_tags": ["tier:1", "timing:primetime"]}],
+        )
+        four_ordinary_nba = _live_sports_bundle(
+            "machinery-nba-night",
+            "4 ordinary live NBA games",
+            score=80.0,
+            games=[
+                {"id": 9610 + i, "sport": "basketball_nba", "commence_time": live_ts, "_event_tags": ["tier:1", "timing:primetime"]}
+                for i in range(4)
+            ],
+        )
+        out = apply_discover_opening_mix(_mix_filler_deck([one_ordinary_nfl, four_ordinary_nba]), now=ordinary_now)
+        top10_ids = {(c.get("data") or {}).get("id") for c in out[:10]}
+        assert "roundup:machinery-nba-night" in top10_ids
+        assert "roundup:machinery-nfl-week" not in top10_ids
+
+        # Equal live counts with only ordinary games preserve deck rank
+        higher_rank_nhl = _live_sports_bundle(
+            "machinery-nhl-night",
+            "1 ordinary live NHL game (higher deck rank)",
+            score=92.0,
+            games=[{"id": 9620, "sport": "icehockey_nhl", "commence_time": live_ts, "_event_tags": ["tier:1", "timing:national_tv"]}],
+        )
+        lower_rank_nba = _live_sports_bundle(
+            "machinery-nba-night",
+            "1 ordinary live NBA game (lower deck rank)",
+            score=88.0,
+            games=[{"id": 9621, "sport": "basketball_nba", "commence_time": live_ts, "_event_tags": ["tier:1", "timing:primetime"]}],
+        )
+        tie_out = apply_discover_opening_mix(_mix_filler_deck([higher_rank_nhl, lower_rank_nba]), now=ordinary_now)
+        tie_ids = {(c.get("data") or {}).get("id") for c in tie_out[:10]}
+        assert "roundup:machinery-nhl-night" in tie_ids
+        assert "roundup:machinery-nba-night" not in tie_ids
+
+    def test_replay_3_playoff_beats_national_regular_season_and_controls(self) -> None:
+        """Replay 3: Playoff tier-1/2 (or marquee pin) beats national regular-season; minor-league playoff does not."""
+        nov_now = datetime(2026, 11, 23, 2, 0, tzinfo=timezone.utc)
+        live_ts = (nov_now - timedelta(minutes=30)).isoformat()
+        national_nfl = _live_sports_bundle(
+            "machinery-nfl-week",
+            "National regular-season NFL slate",
+            score=95.0,
+            games=[
+                {
+                    "id": 9701 + i,
+                    "sport": "americanfootball_nfl",
+                    "commence_time": live_ts,
+                    "_event_tags": ["tier:1", "timing:national_tv", "audience:national_interest"],
+                }
+                for i in range(4)
+            ],
+        )
+        playoff_nba = _live_sports_bundle(
+            "machinery-nba-night",
+            "NBA Playoff Game",
+            score=80.0,
+            games=[
+                {
+                    "id": 9710,
+                    "sport": "basketball_nba",
+                    "commence_time": live_ts,
+                    "_event_tags": ["tier:1", "importance:playoff"],
+                }
+            ],
+        )
+        out = apply_discover_opening_mix(_mix_filler_deck([national_nfl, playoff_nba]), now=nov_now)
+        top10_ids = {(c.get("data") or {}).get("id") for c in out[:10]}
+        assert "roundup:machinery-nba-night" in top10_ids
+        assert "roundup:machinery-nfl-week" not in top10_ids
+
+        # Minor-league playoff (no tier:1 / tier:2) must NOT outrank national tier:1 regular season
+        minor_playoff = _live_sports_bundle(
+            "machinery-nba-night",
+            "Minor league playoff",
+            score=95.0,
+            games=[
+                {
+                    "id": 9720,
+                    "sport": "soccer_germany_bundesliga2",
+                    "commence_time": live_ts,
+                    "_event_tags": ["tier:3", "importance:playoff"],
+                }
+            ],
+        )
+        out_minor = apply_discover_opening_mix(_mix_filler_deck([minor_playoff, national_nfl]), now=nov_now)
+        minor_ids = {(c.get("data") or {}).get("id") for c in out_minor[:10]}
+        assert "roundup:machinery-nfl-week" in minor_ids
+        assert "roundup:machinery-nba-night" not in minor_ids
+
+    def test_publish_feed_item_strips_private_event_tags_from_bundle_children(self) -> None:
+        """Condition (2): _event_tags stays strictly server-side and is stripped at publish."""
+        from app.routes.feed import _publish_feed_item
+
+        card = _live_sports_bundle(
+            "machinery-nfl-week",
+            "SNF",
+            games=[
+                {
+                    "id": 14639207,
+                    "sport": "americanfootball_nfl",
+                    "commence_time": NOW.isoformat(),
+                    "_event_tags": ["tier:1", "timing:national_tv", "audience:national_interest"],
+                }
+            ],
+        )
+        card["_internal"] = True
+        card["data"]["_internal_data"] = True
+        card["data"]["items"][0]["_internal_child"] = True
+
+        _publish_feed_item(card)
+
+        assert not any(k.startswith("_") for k in card)
+        assert not any(k.startswith("_") for k in card["data"])
+        child = card["data"]["items"][0]
+        assert not any(k.startswith("_") for k in child)
+        assert not any(k.startswith("_") for k in child["data"])
+        assert child["data"]["id"] == 14639207
+        assert child["data"]["sport"] == "americanfootball_nfl"
+
+    def test_computed_event_tags_and_marquee_pin_tier(self) -> None:
+        """container_machinery copies stored + computed event_tags into private _event_tags,
+        and a calendar marquee pin promotes a live child into Tier 2."""
+        from types import SimpleNamespace
+        from app.utils.container_machinery import _computed_event_tags
+        from app.utils.majors_calendar import fixture_marquee_pinned
+
+        snf_now = datetime(2026, 11, 23, 2, 0, tzinfo=timezone.utc)
+        ev = SimpleNamespace(
+            status="live",
+            commence_time=snf_now - timedelta(minutes=30),
+            llm_importance=None,
+            llm_gender="men",
+            llm_level="pro",
+            llm_league="NFL",
+            raw_ei=0.85,
+            broadcast_info="NBC",
+            event_tags=["audience:national_interest"],
+        )
+        tags = _computed_event_tags(ev, "americanfootball_nfl")
+        assert "tier:1" in tags
+        assert "timing:national_tv" in tags
+        assert "audience:national_interest" in tags
+
+        # Season-calendar marquee pin on a regular-season game reaches Tier 2
+        from unittest.mock import patch
+
+        with patch("app.utils.discover_opening_mix.fixture_marquee_pinned", return_value=True) as pin_mock:
+            pinned = _live_sports_bundle(
+                "machinery-cfb-week",
+                "Marquee pinned CFB game",
+                score=78.0,
+                games=[{"id": 9801, "sport": "americanfootball_ncaaf", "commence_time": (snf_now - timedelta(minutes=30)).isoformat(), "_event_tags": ["tier:2"]}],
+            )
+            national_nfl = _live_sports_bundle(
+                "machinery-nfl-week",
+                "National regular-season NFL",
+                score=95.0,
+                games=[{"id": 9802, "sport": "americanfootball_nfl", "commence_time": (snf_now - timedelta(minutes=30)).isoformat(), "_event_tags": ["tier:1", "timing:national_tv", "audience:national_interest"]}],
+            )
+            pin_mock.side_effect = lambda sk, _dt, _now: sk == "americanfootball_ncaaf"
+            out = apply_discover_opening_mix(_mix_filler_deck([national_nfl, pinned]), now=snf_now)
+            assert "roundup:machinery-cfb-week" in {(c.get("data") or {}).get("id") for c in out[:10]}
+            assert fixture_marquee_pinned is not None
