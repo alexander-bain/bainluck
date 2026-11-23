@@ -1,0 +1,211 @@
+{
+  "deck_id": "discover-blind-40-2026-11-23",
+  "created_at": "2026-11-23",
+  "seed": 20261123,
+  "counts": {
+    "model_proposed": 20,
+    "hand_written": 20
+  },
+  "cards": {
+    "blind-01": {
+      "origin": "model_proposed",
+      "source_ref": "who-gets-cast",
+      "model_or_batch": "claude-opus-5-5"
+    },
+    "blind-02": {
+      "origin": "hand_written",
+      "source_ref": "machinery-long-shots",
+      "model_or_batch": "curated_candidates"
+    },
+    "blind-03": {
+      "origin": "model_proposed",
+      "source_ref": "moon-race",
+      "model_or_batch": "claude-opus-5-5"
+    },
+    "blind-04": {
+      "origin": "model_proposed",
+      "source_ref": "rap-album-watch",
+      "model_or_batch": "claude-opus-5-5"
+    },
+    "blind-05": {
+      "origin": "hand_written",
+      "source_ref": "machinery-music-and-grammys-2026",
+      "model_or_batch": "curated_candidates"
+    },
+    "blind-06": {
+      "origin": "model_proposed",
+      "source_ref": "wrapped-2026",
+      "model_or_batch": "claude-opus-5-5"
+    },
+    "blind-07": {
+      "origin": "hand_written",
+      "source_ref": "machinery-cast-delayed-cancelled",
+      "model_or_batch": "curated_candidates"
+    },
+    "blind-08": {
+      "origin": "model_proposed",
+      "source_ref": "big-unsolved",
+      "model_or_batch": "claude-opus-5-5"
+    },
+    "blind-09": {
+      "origin": "model_proposed",
+      "source_ref": "cost-of-a-good-time",
+      "model_or_batch": "claude-opus-5-5"
+    },
+    "blind-10": {
+      "origin": "hand_written",
+      "source_ref": "machinery-stage-and-cover",
+      "model_or_batch": "curated_candidates"
+    },
+    "blind-11": {
+      "origin": "hand_written",
+      "source_ref": "machinery-climate-water-and-energy",
+      "model_or_batch": "curated_candidates"
+    },
+    "blind-12": {
+      "origin": "hand_written",
+      "source_ref": "machinery-pop-culture-oddities",
+      "model_or_batch": "curated_candidates"
+    },
+    "blind-13": {
+      "origin": "hand_written",
+      "source_ref": "machinery-ai-model-leaderboard-2026",
+      "model_or_batch": "curated_candidates"
+    },
+    "blind-14": {
+      "origin": "hand_written",
+      "source_ref": "machinery-golden-globes-2027",
+      "model_or_batch": "curated_candidates"
+    },
+    "blind-15": {
+      "origin": "model_proposed",
+      "source_ref": "big-game-no-football",
+      "model_or_batch": "claude-opus-5-5"
+    },
+    "blind-16": {
+      "origin": "model_proposed",
+      "source_ref": "spice-vs-snap",
+      "model_or_batch": "claude-opus-5-5"
+    },
+    "blind-17": {
+      "origin": "hand_written",
+      "source_ref": "machinery-space-race",
+      "model_or_batch": "curated_candidates"
+    },
+    "blind-18": {
+      "origin": "hand_written",
+      "source_ref": "machinery-long-awaited",
+      "model_or_batch": "curated_candidates"
+    },
+    "blind-19": {
+      "origin": "model_proposed",
+      "source_ref": "gta-vi-countdown",
+      "model_or_batch": "claude-opus-5-5"
+    },
+    "blind-20": {
+      "origin": "hand_written",
+      "source_ref": "machinery-elon-musk-side-quests",
+      "model_or_batch": "curated_candidates"
+    },
+    "blind-21": {
+      "origin": "hand_written",
+      "source_ref": "machinery-2026-summed-up",
+      "model_or_batch": "curated_candidates"
+    },
+    "blind-22": {
+      "origin": "model_proposed",
+      "source_ref": "put-a-ring-on-it-2026",
+      "model_or_batch": "claude-opus-5-5"
+    },
+    "blind-23": {
+      "origin": "model_proposed",
+      "source_ref": "chart-toppers-2026",
+      "model_or_batch": "claude-opus-5-5"
+    },
+    "blind-24": {
+      "origin": "model_proposed",
+      "source_ref": "will-it-ever-come-out",
+      "model_or_batch": "claude-opus-5-5"
+    },
+    "blind-25": {
+      "origin": "hand_written",
+      "source_ref": "machinery-earth-quakes-and-storms-2026",
+      "model_or_batch": "curated_candidates"
+    },
+    "blind-26": {
+      "origin": "model_proposed",
+      "source_ref": "starship-season",
+      "model_or_batch": "claude-opus-5-5"
+    },
+    "blind-27": {
+      "origin": "hand_written",
+      "source_ref": "machinery-google-year-in-search-2026",
+      "model_or_batch": "curated_candidates"
+    },
+    "blind-28": {
+      "origin": "hand_written",
+      "source_ref": "machinery-ai-math-and-data-centers",
+      "model_or_batch": "curated_candidates"
+    },
+    "blind-29": {
+      "origin": "hand_written",
+      "source_ref": "machinery-ai-and-big-tech-race",
+      "model_or_batch": "curated_candidates"
+    },
+    "blind-30": {
+      "origin": "model_proposed",
+      "source_ref": "elon-unfiltered-2026",
+      "model_or_batch": "claude-opus-5-5"
+    },
+    "blind-31": {
+      "origin": "hand_written",
+      "source_ref": "machinery-2026-box-office-showdown",
+      "model_or_batch": "curated_candidates"
+    },
+    "blind-32": {
+      "origin": "model_proposed",
+      "source_ref": "fresh-or-rotten",
+      "model_or_batch": "claude-opus-5-5"
+    },
+    "blind-33": {
+      "origin": "model_proposed",
+      "source_ref": "how-2026-gets-summed-up",
+      "model_or_batch": "claude-opus-5-5"
+    },
+    "blind-34": {
+      "origin": "model_proposed",
+      "source_ref": "the-unthinkable-list",
+      "model_or_batch": "claude-opus-5-5"
+    },
+    "blind-35": {
+      "origin": "hand_written",
+      "source_ref": "machinery-big-tech-deals-hardware",
+      "model_or_batch": "curated_candidates"
+    },
+    "blind-36": {
+      "origin": "model_proposed",
+      "source_ref": "oscars-big-six",
+      "model_or_batch": "claude-opus-5-5"
+    },
+    "blind-37": {
+      "origin": "hand_written",
+      "source_ref": "machinery-game-awards-2026",
+      "model_or_batch": "curated_candidates"
+    },
+    "blind-38": {
+      "origin": "hand_written",
+      "source_ref": "machinery-extreme-earth-2026",
+      "model_or_batch": "curated_candidates"
+    },
+    "blind-39": {
+      "origin": "model_proposed",
+      "source_ref": "tv-finale-night",
+      "model_or_batch": "claude-opus-5-5"
+    },
+    "blind-40": {
+      "origin": "model_proposed",
+      "source_ref": "game-awards-night",
+      "model_or_batch": "claude-opus-5-5"
+    }
+  }
+}
