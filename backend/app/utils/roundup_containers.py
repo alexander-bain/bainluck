@@ -2845,12 +2845,12 @@ def _roundup_covered_market_ids(roundup_item: Mapping[str, Any]) -> set[int]:
 
 
 def _is_roundup_bundle_card(card: Any) -> bool:
-    return (
-        isinstance(card, Mapping)
-        and card.get("type") == "bundle"
-        and isinstance(card.get("data"), Mapping)
-        and card["data"].get("kind") == "roundup"
-    )
+    if type(card) is not dict and not isinstance(card, Mapping):
+        return False
+    if card.get("type") != "bundle":
+        return False
+    data = card.get("data")
+    return (type(data) is dict or isinstance(data, Mapping)) and data.get("kind") == "roundup"
 
 
 def _opening_eligible_floor_index(
@@ -3238,7 +3238,7 @@ _CLIENT_SPORT_CATEGORIES: frozenset[str] = frozenset(
 
 def _is_grouped_feed_card(item: Any) -> bool:
     """Return True when ``item`` is any grouped feed card (bundle, collection, or round-up)."""
-    if not isinstance(item, Mapping):
+    if type(item) is not dict and not isinstance(item, Mapping):
         return False
     if item.get("type") in ("bundle", "collection"):
         return True
@@ -3246,11 +3246,11 @@ def _is_grouped_feed_card(item: Any) -> bool:
 
 
 def _client_sport_category(item: Any) -> str:
-    if not isinstance(item, Mapping):
+    if type(item) is not dict and not isinstance(item, Mapping):
         return "other"
     item_type = item.get("type")
     data = item.get("data")
-    if not isinstance(data, Mapping):
+    if type(data) is not dict and not isinstance(data, Mapping):
         return "other"
     if item_type == "event":
         sport = str(data.get("sport") or "")
@@ -3259,45 +3259,67 @@ def _client_sport_category(item: Any) -> str:
         return str(data.get("llm_sport_category") or "other")
     if item_type == "bundle":
         members = data.get("items")
-        if isinstance(members, Sequence) and members:
+        if (type(members) is list or isinstance(members, Sequence)) and members:
             return _client_sport_category(members[0])
         return "other"
     return "golf"
 
 
-def _client_space_by_sport(
-    items: Sequence[Mapping[str, Any]],
-) -> list[Mapping[str, Any]]:
-    if len(items) <= 2:
-        return list(items)
-    non_sports_count = sum(
-        1 for it in items if _client_sport_category(it) not in _CLIENT_SPORT_CATEGORIES
-    )
+def _space_sport_tags(
+    tagged: Sequence[tuple[str, bool, Any]],
+) -> list[tuple[str, bool, Any]]:
+    """O(M) per-category FIFO deque equivalent of ``_client_space_by_sport`` (#13445)."""
+    n = len(tagged)
+    if n <= 2:
+        return list(tagged)
+    non_sport_q: deque[tuple[int, tuple[str, bool, Any]]] = deque()
+    sport_qs: dict[str, deque[tuple[int, tuple[str, bool, Any]]]] = {}
+    for orig_idx, entry in enumerate(tagged):
+        cat, is_sport, _ = entry
+        if is_sport:
+            q = sport_qs.get(cat)
+            if q is None:
+                q = deque()
+                sport_qs[cat] = q
+            q.append((orig_idx, entry))
+        else:
+            non_sport_q.append((orig_idx, entry))
+
+    non_sports_count = len(non_sport_q)
     max_sports_run = 2 if non_sports_count >= 4 else 3
-    remaining = list(items)
-    result: list[Mapping[str, Any]] = []
+    result: list[tuple[str, bool, Any]] = []
     last_sport = ""
     sports_since_non_sport = 0
-    while remaining:
-        pick = -1
-        for idx, it in enumerate(remaining):
-            cat = _client_sport_category(it)
-            if cat not in _CLIENT_SPORT_CATEGORIES or (
-                sports_since_non_sport < max_sports_run and cat != last_sport
-            ):
-                pick = idx
-                break
-        if pick == -1:
-            for idx, it in enumerate(remaining):
-                if _client_sport_category(it) != last_sport:
-                    pick = idx
-                    break
-        if pick == -1:
-            pick = 0
-        chosen = remaining.pop(pick)
-        cat = _client_sport_category(chosen)
+
+    for _ in range(n):
+        best_idx = n
+        best_q: deque[tuple[int, tuple[str, bool, Any]]] | None = None
+        if non_sport_q:
+            best_idx = non_sport_q[0][0]
+            best_q = non_sport_q
+        if sports_since_non_sport < max_sports_run:
+            for cat, q in sport_qs.items():
+                if q and cat != last_sport and q[0][0] < best_idx:
+                    best_idx = q[0][0]
+                    best_q = q
+        if best_q is None:
+            for cat, q in sport_qs.items():
+                if q and cat != last_sport and q[0][0] < best_idx:
+                    best_idx = q[0][0]
+                    best_q = q
+        if best_q is None:
+            if non_sport_q and non_sport_q[0][0] < best_idx:
+                best_idx = non_sport_q[0][0]
+                best_q = non_sport_q
+            for q in sport_qs.values():
+                if q and q[0][0] < best_idx:
+                    best_idx = q[0][0]
+                    best_q = q
+        assert best_q is not None
+        _, chosen = best_q.popleft()
+        cat, is_sport, _ = chosen
         result.append(chosen)
-        if cat in _CLIENT_SPORT_CATEGORIES:
+        if is_sport:
             last_sport = cat
             sports_since_non_sport += 1
         else:
@@ -3306,19 +3328,44 @@ def _client_space_by_sport(
     return result
 
 
+def _client_space_by_sport(
+    items: Sequence[Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
+    if len(items) <= 2:
+        return list(items)
+    tagged = []
+    for it in items:
+        cat = _client_sport_category(it)
+        tagged.append((cat, cat in _CLIENT_SPORT_CATEGORIES, it))
+    return [entry[2] for entry in _space_sport_tags(tagged)]
+
+
+def _spaced_tags_have_adjacent_roundup(
+    tagged: Sequence[tuple[str, bool, tuple[bool, bool]]],
+) -> bool:
+    spaced = _space_sport_tags(_space_sport_tags(tagged))
+    for i in range(len(spaced) - 1):
+        a_grp, a_rnd = spaced[i][2]
+        b_grp, b_rnd = spaced[i + 1][2]
+        if a_grp and b_grp and (a_rnd or b_rnd):
+            return True
+    return False
+
+
 def _spaced_has_adjacent_roundup(
     items: Sequence[Mapping[str, Any]],
 ) -> bool:
-    spaced = _client_space_by_sport(_client_space_by_sport(items))
-    for i in range(len(spaced) - 1):
-        a, b = spaced[i], spaced[i + 1]
-        if (
-            _is_grouped_feed_card(a)
-            and _is_grouped_feed_card(b)
-            and (_is_roundup_bundle_card(a) or _is_roundup_bundle_card(b))
-        ):
-            return True
-    return False
+    tagged = []
+    for it in items:
+        cat = _client_sport_category(it)
+        tagged.append(
+            (
+                cat,
+                cat in _CLIENT_SPORT_CATEGORIES,
+                (_is_grouped_feed_card(it), _is_roundup_bundle_card(it)),
+            )
+        )
+    return _spaced_tags_have_adjacent_roundup(tagged)
 
 
 def _find_non_adjacent_roundup_seat(
@@ -3332,19 +3379,51 @@ def _find_non_adjacent_roundup_seat(
     """Find the earliest insertion index ``pos >= max(floor_idx, start_idx)`` where neither neighbour is a grouped card (Decision 123-A)."""
     start_pos = max(int(floor_idx), int(start_idx))
     n = len(items)
+    if start_pos > n:
+        return None
+    if candidate_item is None:
+        item_grouped = [_is_grouped_feed_card(it) for it in items]
+        pos = start_pos
+        while pos <= n:
+            prev_is_grouped = pos > 0 and item_grouped[pos - 1]
+            next_is_grouped = pos < n and item_grouped[pos]
+            if not prev_is_grouped and not next_is_grouped:
+                return pos
+            pos += 1
+        return None
+
+    item_tags: list[tuple[str, bool, tuple[bool, bool]]] = []
+    for it in items:
+        cat = _client_sport_category(it)
+        item_tags.append(
+            (
+                cat,
+                cat in _CLIENT_SPORT_CATEGORIES,
+                (_is_grouped_feed_card(it), _is_roundup_bundle_card(it)),
+            )
+        )
+    cand_cat = _client_sport_category(candidate_item)
+    cand_tag = (
+        cand_cat,
+        cand_cat in _CLIENT_SPORT_CATEGORIES,
+        (
+            _is_grouped_feed_card(candidate_item),
+            _is_roundup_bundle_card(candidate_item),
+        ),
+    )
+
     first_raw_non_adjacent: Optional[int] = None
     pos = start_pos
+    win_floor = int(page_window)
     while pos <= n:
-        prev_is_grouped = pos > 0 and _is_grouped_feed_card(items[pos - 1])
-        next_is_grouped = pos < n and _is_grouped_feed_card(items[pos])
+        prev_is_grouped = pos > 0 and item_tags[pos - 1][2][0]
+        next_is_grouped = pos < n and item_tags[pos][2][0]
         if not prev_is_grouped and not next_is_grouped:
             if first_raw_non_adjacent is None:
                 first_raw_non_adjacent = pos
-            if candidate_item is None:
-                return pos
-            trial = [*items[:pos], candidate_item, *items[pos:]]
-            window_slice = trial[: max(int(page_window), pos + 2)]
-            if not _spaced_has_adjacent_roundup(window_slice):
+            win_end = max(win_floor, pos + 2)
+            window_tags = item_tags[:pos] + [cand_tag] + item_tags[pos : win_end - 1]
+            if not _spaced_tags_have_adjacent_roundup(window_tags):
                 return pos
         pos += 1
     return first_raw_non_adjacent
