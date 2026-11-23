@@ -119,7 +119,10 @@ async def pg():
         await _run_ingest(session, _venue_event_before_the_book_opens())
         event = await _link_to_a_future_event(session)
         await session.execute(
-            text("UPDATE events SET status = 'live', commence_time = :t WHERE id = :id"),
+            text(
+                "UPDATE events SET status = 'live', commence_time = :t, "
+                "commence_time_source = 'espn' WHERE id = :id"
+            ),
             {"t": datetime.now(timezone.utc) - timedelta(minutes=40), "id": event.id},
         )
         await session.commit()
