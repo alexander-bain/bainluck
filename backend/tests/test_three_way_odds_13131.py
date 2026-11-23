@@ -464,3 +464,43 @@ def test_feed_format_event_data_serves_three_way_and_suppresses_one_leg():
     assert card_settled["hero_probability"] == 1.0
     assert card_settled["hero_probability_away"] == 0.0
     assert card_settled["hero_settled_result"] == "home"
+
+
+@pytest.mark.asyncio
+async def test_one_leg_live_soccer_activitykit_payload_falls_back_to_score_only():
+    """When a live soccer match only has one leg, ActivityKit omits percentages and serves score-only state."""
+    import json
+    from app.utils.activitykit_payload import build_activitykit_update
+    from app.utils.activitykit_projection import project_activitykit_snapshot
+
+    now = datetime.now(timezone.utc)
+    ev_detail = _detail_event(
+        sport_key="soccer_epl",
+        home_prob=0.63,
+        event_id=15345098,
+        status="live",
+        home_score=2,
+        away_score=1,
+        opening_home=None,
+        opening_away=None,
+    )
+    ev_detail.commence_time = now - timedelta(minutes=20)
+    ev_detail.score_source = "espn"
+    ev_detail.score_observed_at = now
+
+    detail_payload = await _detail_payload(ev_detail, snapshots=[])
+    snapshot = project_activitykit_snapshot(detail_payload)
+    assert snapshot.home_score == 2
+    assert snapshot.away_score == 1
+    assert snapshot.score_observed_at == now
+    assert snapshot.home_rendered_percent is None
+    assert snapshot.probability_observed_at is None
+
+    push = build_activitykit_update(snapshot, sent_at=now)
+    aps = json.loads(push.body)["aps"]
+    snap_payload = aps["content-state"]["snapshot"]
+    assert snap_payload["homeScore"] == 2
+    assert "homeRenderedPercent" not in snap_payload
+    assert "probabilityObservedAt" not in snap_payload
+    assert aps["stale-date"] > aps["timestamp"]
+
