@@ -131,7 +131,12 @@ const present = existsSync(APP_ROOT);
   });
 
   it("spells every recorded source through the one enum, never a literal", () => {
-    const owners = ["Views/DiscoverView.swift", "Views/EventDetailView.swift", "Views/FuturesDetailView.swift"];
+    const owners = [
+      "Views/DiscoverView.swift",
+      "Views/EventDetailView.swift",
+      "Views/FuturesDetailView.swift",
+      "Views/ContainerHubView.swift",
+    ];
     for (const file of owners) {
       const source = stripComments(readFileSync(join(APP_ROOT, file), "utf8"));
       const recordingBlocks = source.split(MODIFIER).slice(1);
