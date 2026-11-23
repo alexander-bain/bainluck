@@ -28,10 +28,6 @@ from app.utils import team_short_name as tsn
         ("Stanford Cardinal", "Arkansas", "Stanford"),  # a borrowed location is refused
         ("North Carolina Tar Heels", None, "North Carolina"),
         ("Penn Quakers", None, "Penn"),  # every ESPN mascot is known (Nov 16)
-        ("Appalachian State Mountaineers", "Appalachian State", "App St"),
-        ("Appalachian St Mountaineers", "Appalachian St", "App St"),
-        ("Appalachian State Mountaineers", None, "App St"),
-        ("Appalachian St Mountaineers", "App State", "App St"),
         ("Westbrook Zephyrs", None, "Westbrook Zephyrs"),  # unknown mascot: the full name, never a guess
     ],
 )

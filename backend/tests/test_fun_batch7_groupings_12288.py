@@ -233,9 +233,14 @@ def test_batch7_sets_are_preview_and_disjoint_from_prior_batches() -> None:
     assert b7_ids.isdisjoint(prior_ids), f"Overlap with Batch 3-6: {sorted(b7_ids & prior_ids)}"
 
     categories = set()
+    held_preview = {
+        "machinery-afc-west-duel",
+        "machinery-college-basketball-slate",
+        "machinery-tech-and-space-movers",
+    }
     for slug in BATCH7_SLUGS:
         defn = load_machinery_definition(CANDIDATES_DIR / f"{slug}.json")
-        expected_stage = "preview" if slug == "machinery-tech-and-space-movers" else "public"
+        expected_stage = "preview" if slug in held_preview else "public"
         assert defn["stage"] == expected_stage, f"{slug} stage expected {expected_stage}, got {defn['stage']}"
         categories.add(defn["category"])
     assert len(categories) >= 5
@@ -277,6 +282,9 @@ async def test_batch7_eight_sets_cover_all_eight_visual_forms_and_clean_copy() -
             assert card.get("image_url", "").endswith("Top_of_Atmosphere.jpg")
         elif card["slug"] == "machinery-college-basketball-slate":
             assert card["title"] == "Florida at Duke headlines the Nov 22–23 slate"
+        elif card["slug"] == "machinery-oscars-best-actor-2027":
+            assert "75%+" not in card["title"]
+            assert "75% or better" in card["title"]
 
     assert seen_forms == set(MACHINERY_FORM_IDS)
 
