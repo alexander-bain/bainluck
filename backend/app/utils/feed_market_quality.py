@@ -1247,6 +1247,8 @@ def is_placeholder_flat_field(
 # news) or a high-volume market stays eligible.
 FEED_LOCKED_CERTAIN_HIGH = 0.99  # leader rounds to 100%
 FEED_LOCKED_CERTAIN_LOW = 0.01  # leader rounds to 0%
+FEED_LOCKED_ALL_EXTREME_HIGH = 0.95  # #13093: every priced outcome >=95% or <=5%
+FEED_LOCKED_ALL_EXTREME_LOW = 0.05
 FEED_LOCKED_CERTAIN_KEEP_MOVE = 0.10  # >=10pt 24h swing = genuine mover
 FEED_LOCKED_CERTAIN_KEEP_VOLUME = 25000.0  # live money = keep
 
@@ -1255,12 +1257,30 @@ def is_locked_near_certain(
     leader_probability: "float | None",
     max_abs_movement_24h: "float | None" = None,
     volume_24h: "float | None" = None,
+    *,
+    outcome_probabilities: "Sequence[float | None] | None" = None,
 ) -> bool:
-    """True if an UNRESOLVED market is pinned at a dead-extreme price with no live
-    interest (#1004). The caller applies this only to open/unresolved feed
-    candidates. Guarded so a near-certain MOVER or a high-volume market is kept —
-    only the boring locked-certain cards are suppressed.
+    """True if an UNRESOLVED market is pinned at a dead-extreme price (#1004, #13093).
+
+    Suppresses a market when EITHER:
+      1. every priced outcome sits in the 95%/5% extremes (``>= 0.95`` or ``<= 0.05``,
+         zero contested outcomes in ``(0.05, 0.95)``) unless it had a ``>= 10``-point
+         24h swing (#13093), OR
+      2. the leader alone sits at ``>= 0.99`` or ``<= 0.01`` with neither a ``>= 10``-pt
+         24h swing nor high 24h volume (``>= 25,000``) (#1004).
     """
+    is_genuine_mover = (
+        max_abs_movement_24h is not None
+        and abs(max_abs_movement_24h) >= FEED_LOCKED_CERTAIN_KEEP_MOVE
+    )
+    if outcome_probabilities is not None:
+        priced = [float(p) for p in outcome_probabilities if p is not None]
+        if priced and all(
+            p >= FEED_LOCKED_ALL_EXTREME_HIGH or p <= FEED_LOCKED_ALL_EXTREME_LOW
+            for p in priced
+        ):
+            return not is_genuine_mover
+
     if leader_probability is None:
         return False
     if not (
@@ -1269,10 +1289,7 @@ def is_locked_near_certain(
     ):
         return False
     # Genuine mover — a big recent swing is interesting even at a dead extreme.
-    if (
-        max_abs_movement_24h is not None
-        and abs(max_abs_movement_24h) >= FEED_LOCKED_CERTAIN_KEEP_MOVE
-    ):
+    if is_genuine_mover:
         return False
     # Live money — high 24h volume means the market is actively traded.
     if volume_24h is not None and volume_24h >= FEED_LOCKED_CERTAIN_KEEP_VOLUME:
