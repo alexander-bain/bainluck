@@ -15,9 +15,8 @@ struct MyStuffView: View {
     @State private var path: NavigationPath
     @State private var showOnboarding = false
     @State private var showPinManagement = false
-    /// Width available to the iPad card grid, in points. 0 until the first
-    /// geometry pass resolves, which `DiscoverMasonry.columnCount` reads as one
-    /// column (#3709).
+    /// Width available to the iPad card grid (#3709), kept so `DiscoverMasonry`
+    /// measures the actual card-area width and never emits a multi-column layout on Split View.
     @State private var gridWidth: CGFloat = 0
     /// The render generation already reported to the first-card rail (L2-217 Item 3
     /// / C88). Keying the once-only guard on the token's IMMUTABLE id — not a
@@ -25,6 +24,7 @@ struct MyStuffView: View {
     /// refresh emit its new generation while a stale re-appear cannot double-emit.
     @State private var lastEmittedRenderGenerationId: Int?
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     #if os(macOS)
     @Environment(\.openWindow) private var openWindow
     #endif
@@ -40,6 +40,15 @@ struct MyStuffView: View {
         _pinContent = StateObject(wrappedValue: macPlace?.models(orMake: { MacReadingState10878.MyStuffModels() }).pins ?? SavedPinContentViewModel())
         _path = State(initialValue: macPlace?.path ?? NavigationPath())
     }
+
+    #if DEBUG
+    init(viewModelForTest: MyStuffViewModel) {
+        self.macPlace = nil
+        _vm = StateObject(wrappedValue: viewModelForTest)
+        _pinContent = StateObject(wrappedValue: SavedPinContentViewModel())
+        _path = State(initialValue: NavigationPath())
+    }
+    #endif
 
     /// Whether the gear that leads to Preferences — and so to Delete Account —
     /// is offered. Being signed in is the whole test.
@@ -463,11 +472,11 @@ struct MyStuffView: View {
     /// The Pinned section for a `List`: real cards first, then any pin whose
     /// content has not loaded, is gone, or failed — each still removable.
     @ViewBuilder
-    private var pinnedListSections: some View {
+    private func pinnedListSections(twoColumns: Bool) -> some View {
         let pinned = pinnedSection
         if !pinned.items.isEmpty {
             feedSection(title: "Pinned", systemImage: "bookmark.fill", imageColor: .orange,
-                        items: pinned.items, count: pinManager.savedPins.count)
+                        items: pinned.items, count: pinManager.savedPins.count, twoColumns: twoColumns)
         }
         if !pinned.fallbacks.isEmpty {
             Section {
@@ -566,135 +575,138 @@ struct MyStuffView: View {
 
 
     private var teamFeedList: some View {
-        List {
-            // #6445: the same unfinished experience Discover's challenge card
-            // and resolution digest promote. See `ReleaseSurfaces` — saved
-            // predictions and history are untouched, only this summary is.
-            if ReleaseSurfaces.predictionsExperienceEnabled,
-               let stats = predictionStats, stats.total > 0 {
-                Section {
-                    NavigationLink(value: Route.predictionStats) {
-                        HStack(spacing: 16) {
-                            VStack(spacing: 2) {
-                                Text("\(Int(stats.accuracy * 100))%")
-                                    .font(.title2.weight(.black).monospacedDigit())
-                                    .foregroundStyle(stats.accuracy >= 0.6 ? .green : stats.accuracy >= 0.45 ? .primary : .red)
-                                Text("Accuracy")
-                                    .font(.caption2)
-                                    .foregroundStyle(.secondary)
-                            }
-                            .frame(width: 70)
-
-                            VStack(alignment: .leading, spacing: 4) {
-                                HStack(spacing: 12) {
-                                    Label("\(stats.total) predictions", systemImage: "target")
-                                    if stats.currentStreak > 1 {
-                                        Label("\(stats.currentStreak) streak", systemImage: "flame.fill")
-                                            .foregroundStyle(.orange)
-                                    }
-                                }
-                                .font(.caption.weight(.semibold))
-
-                                if stats.bestStreak > 1 {
-                                    Text("Best streak: \(stats.bestStreak)")
+        GeometryReader { geo in
+            let innerWidth = RegularWidthTwoColumnGrid108.innerWidth(containerWidth: geo.size.width)
+            let twoColumns = RegularWidthTwoColumnGrid108.columnCount(
+                horizontalSizeClass: sizeClass,
+                dynamicTypeSize: dynamicTypeSize,
+                availableWidth: innerWidth
+            ) == 2
+            List {
+                // #6445: the same unfinished experience Discover's challenge card
+                // and resolution digest promote. See `ReleaseSurfaces` — saved
+                // predictions and history are untouched, only this summary is.
+                if ReleaseSurfaces.predictionsExperienceEnabled,
+                   let stats = predictionStats, stats.total > 0 {
+                    Section {
+                        NavigationLink(value: Route.predictionStats) {
+                            HStack(spacing: 16) {
+                                VStack(spacing: 2) {
+                                    Text("\(Int(stats.accuracy * 100))%")
+                                        .font(.title2.weight(.black).monospacedDigit())
+                                        .foregroundStyle(stats.accuracy >= 0.6 ? .green : stats.accuracy >= 0.45 ? .primary : .red)
+                                    Text("Accuracy")
                                         .font(.caption2)
                                         .foregroundStyle(.secondary)
                                 }
+                                .frame(width: 70)
+
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack(spacing: 12) {
+                                        Label("\(stats.total) predictions", systemImage: "target")
+                                        if stats.currentStreak > 1 {
+                                            Label("\(stats.currentStreak) streak", systemImage: "flame.fill")
+                                                .foregroundStyle(.orange)
+                                        }
+                                    }
+                                    .font(.caption.weight(.semibold))
+
+                                    if stats.bestStreak > 1 {
+                                        Text("Best streak: \(stats.bestStreak)")
+                                            .font(.caption2)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                }
+
+                                Spacer()
                             }
-
-                            Spacer()
+                            .padding(.vertical, 4)
                         }
-                        .padding(.vertical, 4)
-                    }
-                } header: {
-                    Label("Predictions", systemImage: "chart.bar.fill")
-                }
-            }
-
-            pinnedListSections
-            teamFeedStatusRow
-            if !vm.liveNow.isEmpty {
-                // live/048 — the header reads the bucket. See `EventState`.
-                feedSection(title: EventState.liveSectionTitle(hasSuspended: vm.liveNowHasSuspended), systemImage: "circle.fill", imageColor: .red, items: vm.liveNow)
-            }
-            if !vm.justHappened.isEmpty {
-                feedSection(title: "Just Happened", systemImage: "clock.arrow.circlepath", imageColor: .secondary, items: vm.justHappened)
-            }
-            if !vm.upcoming.isEmpty {
-                feedSection(title: "Upcoming", systemImage: "calendar", imageColor: .blue, items: vm.upcoming)
-            }
-            if !vm.topMarkets.isEmpty {
-                feedSection(title: "Your Markets", systemImage: "chart.bar.fill", imageColor: .purple, items: vm.topMarkets)
-            }
-            if let futures = vm.teamFutures, !futures.items.isEmpty {
-                TeamFuturesSection(futures: futures, path: $path)
-            }
-
-            Section {
-                if authManager.isAdmin {
-                    NavigationLink(value: Route.discoverLabeling) {
-                        Label("Discover Labeling", systemImage: "tag.circle.fill")
+                    } header: {
+                        Label("Predictions", systemImage: "chart.bar.fill")
                     }
                 }
-                NavigationLink(value: Route.about) {
-                    Label("About Bain Luck", systemImage: "info.circle")
+
+                pinnedListSections(twoColumns: twoColumns)
+                teamFeedStatusRow
+                if !vm.liveNow.isEmpty {
+                    // live/048 — the header reads the bucket. See `EventState`.
+                    feedSection(title: EventState.liveSectionTitle(hasSuspended: vm.liveNowHasSuspended), systemImage: "circle.fill", imageColor: .red, items: vm.liveNow, twoColumns: twoColumns)
+                }
+                if !vm.justHappened.isEmpty {
+                    feedSection(title: "Just Happened", systemImage: "clock.arrow.circlepath", imageColor: .secondary, items: vm.justHappened, twoColumns: twoColumns)
+                }
+                if !vm.upcoming.isEmpty {
+                    feedSection(title: "Upcoming", systemImage: "calendar", imageColor: .blue, items: vm.upcoming, twoColumns: twoColumns)
+                }
+                if !vm.topMarkets.isEmpty {
+                    feedSection(title: "Your Markets", systemImage: "chart.bar.fill", imageColor: .purple, items: vm.topMarkets, twoColumns: twoColumns)
+                }
+                if let futures = vm.teamFutures, !futures.items.isEmpty {
+                    TeamFuturesSection(futures: futures, path: $path, twoColumns: twoColumns)
+                }
+
+                Section {
+                    if authManager.isAdmin {
+                        NavigationLink(value: Route.discoverLabeling) {
+                            Label("Discover Labeling", systemImage: "tag.circle.fill")
+                        }
+                    }
+                    NavigationLink(value: Route.about) {
+                        Label("About Bain Luck", systemImage: "info.circle")
+                    }
                 }
             }
-        }
-        #if os(iOS)
-        .listStyle(.insetGrouped)
-        #endif
-        .refreshable {
-            async let pins: Void = pinContent.load(pinManager.savedPins, refresh: true)
-            await vm.startLoad()
-            await pins
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             #if os(iOS)
-            UIImpactFeedbackGenerator(style: .light).impactOccurred()
+            .listStyle(.insetGrouped)
             #endif
+            .refreshable {
+                async let pins: Void = pinContent.load(pinManager.savedPins, refresh: true)
+                await vm.startLoad()
+                await pins
+                #if os(iOS)
+                UIImpactFeedbackGenerator(style: .light).impactOccurred()
+                #endif
+            }
+            .macReadingOffset(macPlace)
         }
-        .macReadingOffset(macPlace)
     }
 
     // MARK: - Section Builder
 
-    private func feedSection(title: String, systemImage: String, imageColor: Color, items: [FeedItem], count: Int? = nil) -> some View {
+    private func feedSection(title: String, systemImage: String, imageColor: Color, items: [FeedItem], count: Int? = nil, twoColumns: Bool = false) -> some View {
         Section {
             if sizeClass == .regular {
-                // iPad: multi-column masonry with context menu for pin.
-                //
-                // #3709 — this was a `LazyVGrid` over
-                // `GridItem(.adaptive(minimum: 340), spacing: 12)`, the same
-                // shape #3651 fixed in Discover, and it fails the same way:
-                // `LazyVGrid` lays out in ROWS and pads every cell to the
-                // tallest cell in its row. A My Stuff section mixes the tall
-                // `EventCardView` with the short `FuturesCardView` /
-                // `MyTeamFuturesCard` strip, so the pairs are exactly the ones
-                // that show it. The surplus lands as dead space BELOW the
-                // shorter card in its column — the cell content is top-aligned
-                // in the padded row and `.background` wraps the content, not
-                // the row frame, so the card does not stretch, the gap under it
-                // grows. Measured on the photographed sibling surface: 50 px of
-                // right-column gap against the left column's 28 px.
-                //
-                // `DiscoverMasonry` deals the cards into per-column stacks,
-                // which pack at exactly their spacing, so no cell is ever
-                // padded to a neighbour's height. At one column that is one
-                // stack in the order the view model served — but the phone
-                // never reaches this branch at all (`sizeClass == .regular`).
-                //
-                // `VStack`, not `LazyVStack`: this whole grid is a single
-                // `List` row, so the List has already sized it and there is
-                // nothing left to be lazy about. A My Stuff section is a
-                // handful of items, not Discover's paged hundreds.
-                let columnCount = DiscoverMasonry.listColumnCount(availableWidth: gridWidth)
+                let detectedColumns = DiscoverMasonry.listColumnCount(availableWidth: gridWidth)
+                let columnCount = (dynamicTypeSize.isAccessibilitySize || !twoColumns)
+                    ? 1
+                    : min(2, detectedColumns)
                 let masonryColumns = DiscoverMasonry.columns(
                     cardCount: items.count,
                     columnCount: columnCount
                 )
-                HStack(alignment: .top, spacing: DiscoverMasonry.listCardSpacing) {
-                    ForEach(Array(masonryColumns.enumerated()), id: \.offset) { _, indices in
+                let rankOrder = (0..<(masonryColumns.map(\.count).max() ?? 0)).flatMap { row in
+                    masonryColumns.compactMap { row < $0.count ? $0[row] : nil }
+                }
+                Group {
+                    if columnCount == 2 {
+                        // Regular width >= 700 pt inner, non-AX: lay out cards round-robin in two
+                        // top-aligned columns while keeping source rank order for VoiceOver.
+                        TwoColumnMasonryLayout108(spacing: DiscoverMasonry.listCardSpacing) {
+                            ForEach(Array(rankOrder.enumerated()), id: \.element) { rank, idx in
+                                feedRow(items[idx])
+                                    .padding(12)
+                                    .background(Color.cardBackgroundDark)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                                    .contextMenu { pinContextMenu(items[idx]) }
+                                    .onAppear { emitMyStuffFirstRenderIfNeeded() }
+                                    .accessibilitySortPriority(RegularWidthTwoColumnGrid108.sortPriority(index: rank))
+                            }
+                        }
+                    } else {
                         VStack(spacing: DiscoverMasonry.listCardSpacing) {
-                            ForEach(indices, id: \.self) { idx in
+                            ForEach(rankOrder, id: \.self) { idx in
                                 feedRow(items[idx])
                                     .padding(12)
                                     .background(Color.cardBackgroundDark)
@@ -706,11 +718,6 @@ struct MyStuffView: View {
                         .frame(maxWidth: .infinity)
                     }
                 }
-                // The card area's own width, which is what decides the column
-                // count. Read from a `.background` so it cannot influence the
-                // layout it measures; there is no feedback loop, because this
-                // width comes from the enclosing List row and not from the
-                // cards, so `columnCount` never changes it.
                 .background(
                     GeometryReader { geo in
                         Color.clear
@@ -721,6 +728,8 @@ struct MyStuffView: View {
                     }
                 )
                 .listRowInsets(EdgeInsets(top: 8, leading: 16, bottom: 8, trailing: 16))
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
             } else {
                 ForEach(items) { item in
                     feedRow(item)
@@ -894,9 +903,9 @@ enum MyStuffTeamTextColour {
     /// it is standing in for.
     static let fallbackHex = "#6b7280"
 
-    /// The team's colour when it is readable, otherwise the row's own default.
-    static func probabilityHex(_ primaryColor: String?) -> String {
-        TeamTextContrast.textHexOnCard(primaryColor, fallback: fallbackHex)
+    /// The team's colour when it is readable against the active card surface.
+    static func probabilityHex(_ primaryColor: String?, colorScheme: ColorScheme = .light) -> String {
+        TeamTextContrast.textHexOnSurface(primaryColor, fallback: fallbackHex, colorScheme: colorScheme)
     }
 
     /// #7036, fourth arm — the crest circle beside those same rows, and on the
@@ -916,8 +925,8 @@ enum MyStuffTeamTextColour {
     ///
     /// Same rule and same default as `probabilityHex`, named separately so the
     /// wiring test can anchor on the site rather than on the rule.
-    static func logoTintHex(_ primaryColor: String?) -> String {
-        TeamTextContrast.textHexOnCard(primaryColor, fallback: fallbackHex)
+    static func logoTintHex(_ primaryColor: String?, colorScheme: ColorScheme = .light) -> String {
+        TeamTextContrast.textHexOnSurface(primaryColor, fallback: fallbackHex, colorScheme: colorScheme)
     }
 
     /// #7036, sixth arm — the playoff-journey card's probability CAPSULE.
@@ -957,8 +966,8 @@ enum MyStuffTeamTextColour {
     ///
     /// Falls back to `fallbackHex`, so a floored club's bar is drawn exactly as a
     /// club with no stored colour has always drawn it.
-    static func progressFillHex(_ primaryColor: String?) -> String {
-        TeamTextContrast.textHexOnCard(primaryColor, fallback: fallbackHex)
+    static func progressFillHex(_ primaryColor: String?, colorScheme: ColorScheme = .light) -> String {
+        TeamTextContrast.textHexOnSurface(primaryColor, fallback: fallbackHex, colorScheme: colorScheme)
     }
 
     /// #7036, sixth arm — the journey card's 3pt leading stripe, which is the
@@ -1218,30 +1227,55 @@ private func detectPlayoffJourneys(_ merged: [MergedTeamFuture]) -> (journeys: [
 private struct PlayoffJourneyCard: View {
     private let journey: PlayoffJourney
     private let onStageTap: (Int) -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorScheme) private var colorScheme
 
     init(journey: PlayoffJourney, onStageTap: @escaping (Int) -> Void) {
         self.journey = journey
         self.onStageTap = onStageTap
     }
 
+    private var isAX: Bool { dynamicTypeSize.isAccessibilitySize }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             // Header: logo + name + PLAYOFFS label
-            HStack(spacing: 8) {
-                TeamLogoView(
-                    url: journey.teamLogo,
-                    teamName: journey.teamName,
-                    color: Color(hex: MyStuffTeamTextColour.logoTintHex(journey.teamColor)),
-                    size: 28
-                )
-                Text(journey.teamName)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .lineLimit(1)
-                Spacer()
-                Text("PLAYOFFS")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary)
+            if isAX {
+                HStack(alignment: .top, spacing: 8) {
+                    TeamLogoView(
+                        url: journey.teamLogo,
+                        teamName: journey.teamName,
+                        color: Color(hex: MyStuffTeamTextColour.logoTintHex(journey.teamColor, colorScheme: colorScheme)),
+                        size: 28
+                    )
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(journey.teamName)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("PLAYOFFS")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    TeamLogoView(
+                        url: journey.teamLogo,
+                        teamName: journey.teamName,
+                        color: Color(hex: MyStuffTeamTextColour.logoTintHex(journey.teamColor, colorScheme: colorScheme)),
+                        size: 28
+                    )
+                    Text(journey.teamName)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .lineLimit(1)
+                    Spacer()
+                    Text("PLAYOFFS")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
             }
 
             // Stage rows
@@ -1252,46 +1286,87 @@ private struct PlayoffJourneyCard: View {
                 Button {
                     onStageTap(stage.merged.primary.marketId)
                 } label: {
-                    HStack(spacing: 6) {
-                        // Status dot
-                        Circle()
-                            .fill(achieved ? Color.green : Color.secondary.opacity(0.3))
-                            .frame(width: 7, height: 7)
-
-                        // Stage label
-                        Text(stage.label)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                        // Probability bar
-                        GeometryReader { geo in
-                            ZStack(alignment: .leading) {
-                                Capsule()
-                                    .fill(Color.secondary.opacity(0.15))
-                                Capsule()
-                                    .fill(achieved
-                                          ? Color.green
-                                          : Color(hex: MyStuffTeamTextColour.progressFillHex(journey.teamColor)).opacity(0.5))
-                                    .frame(width: geo.size.width * min(prob, 1.0))
+                    if isAX {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                Circle()
+                                    .fill(achieved ? Color.green : Color.secondary.opacity(0.3))
+                                    .frame(width: 7, height: 7)
+                                Text(stage.label)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                Text(achieved ? "done" : formatProbability(prob))
+                                    .font(.system(.caption, design: .monospaced))
+                                    .fontWeight(.medium)
+                                    .foregroundStyle(probTextColor(prob, achieved: achieved))
+                            }
+                            GeometryReader { geo in
+                                ZStack(alignment: .leading) {
+                                    Capsule()
+                                        .fill(Color.secondary.opacity(0.15))
+                                    Capsule()
+                                        .fill(achieved
+                                              ? Color.green
+                                              : Color(hex: MyStuffTeamTextColour.progressFillHex(journey.teamColor, colorScheme: colorScheme)).opacity(0.65))
+                                        .frame(width: geo.size.width * min(prob, 1.0))
+                                }
+                            }
+                            .frame(height: 5)
+                            if stage.merged.sources.count > 1 {
+                                HStack(spacing: 3) {
+                                    ForEach(stage.merged.sources, id: \.source) { s in
+                                        Circle()
+                                            .fill(sourceColors[s.source] ?? .gray)
+                                            .frame(width: 4, height: 4)
+                                    }
+                                }
                             }
                         }
-                        .frame(width: 40, height: 4)
+                        .padding(.vertical, 2)
+                    } else {
+                        HStack(spacing: 6) {
+                            // Status dot
+                            Circle()
+                                .fill(achieved ? Color.green : Color.secondary.opacity(0.3))
+                                .frame(width: 7, height: 7)
 
-                        // Probability value
-                        Text(achieved ? "done" : formatProbability(prob))
-                            .font(.system(.caption, design: .monospaced))
-                            .fontWeight(.medium)
-                            .foregroundStyle(probTextColor(prob, achieved: achieved))
-                            .frame(minWidth: 34, alignment: .trailing)
+                            // Stage label
+                            Text(stage.label)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
 
-                        // Source dots
-                        if stage.merged.sources.count > 1 {
-                            HStack(spacing: 2) {
-                                ForEach(stage.merged.sources, id: \.source) { s in
-                                    Circle()
-                                        .fill(sourceColors[s.source] ?? .gray)
-                                        .frame(width: 4, height: 4)
+                            // Probability bar
+                            GeometryReader { geo in
+                                ZStack(alignment: .leading) {
+                                    Capsule()
+                                        .fill(Color.secondary.opacity(0.15))
+                                    Capsule()
+                                        .fill(achieved
+                                              ? Color.green
+                                              : Color(hex: MyStuffTeamTextColour.progressFillHex(journey.teamColor, colorScheme: colorScheme)).opacity(0.5))
+                                        .frame(width: geo.size.width * min(prob, 1.0))
+                                }
+                            }
+                            .frame(width: 40, height: 4)
+
+                            // Probability value
+                            Text(achieved ? "done" : formatProbability(prob))
+                                .font(.system(.caption, design: .monospaced))
+                                .fontWeight(.medium)
+                                .foregroundStyle(probTextColor(prob, achieved: achieved))
+                                .frame(minWidth: 34, alignment: .trailing)
+
+                            // Source dots
+                            if stage.merged.sources.count > 1 {
+                                HStack(spacing: 2) {
+                                    ForEach(stage.merged.sources, id: \.source) { s in
+                                        Circle()
+                                            .fill(sourceColors[s.source] ?? .gray)
+                                            .frame(width: 4, height: 4)
+                                    }
                                 }
                             }
                         }
@@ -1326,13 +1401,17 @@ private struct PlayoffJourneyCard: View {
 private struct TeamFuturesSection: View {
     private let futures: TeamFuturesResponse
     @Binding private var path: NavigationPath
+    private let twoColumns: Bool
     @State private var expanded = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorScheme) private var colorScheme
 
     private static let initialShow = 8
 
-    init(futures: TeamFuturesResponse, path: Binding<NavigationPath>) {
+    init(futures: TeamFuturesResponse, path: Binding<NavigationPath>, twoColumns: Bool = false) {
         self.futures = futures
         self._path = path
+        self.twoColumns = twoColumns
     }
 
     private var processed: (journeys: [PlayoffJourney], awards: [MergedTeamFuture], other: [MergedTeamFuture]) {
@@ -1370,11 +1449,25 @@ private struct TeamFuturesSection: View {
         Section {
             // Progression ladder cards
             if !data.journeys.isEmpty {
-                ForEach(data.journeys) { journey in
-                    PlayoffJourneyCard(journey: journey) { marketId in
-                        path.append(Route.futuresDetail(id: marketId))
+                if twoColumns && data.journeys.count >= 2 {
+                    TwoColumnMasonryLayout108 {
+                        ForEach(Array(data.journeys.enumerated()), id: \.element.id) { index, journey in
+                            PlayoffJourneyCard(journey: journey) { marketId in
+                                path.append(Route.futuresDetail(id: marketId))
+                            }
+                            .accessibilitySortPriority(RegularWidthTwoColumnGrid108.sortPriority(index: index))
+                        }
                     }
                     .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+                } else {
+                    ForEach(data.journeys) { journey in
+                        PlayoffJourneyCard(journey: journey) { marketId in
+                            path.append(Route.futuresDetail(id: marketId))
+                        }
+                        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 4, trailing: 16))
+                    }
                 }
             }
 
@@ -1450,75 +1543,144 @@ private struct TeamFuturesSection: View {
         let isMultiSource = merged.sources.count > 1
         let displayProb = isMultiSource ? merged.avgProbability : merged.primary.probability
         let item = merged.primary
+        let isAX = dynamicTypeSize.isAccessibilitySize
+        let probHex = MyStuffTeamTextColour.probabilityHex(item.matchedTeam?.primaryColor, colorScheme: colorScheme)
+        let logoHex = MyStuffTeamTextColour.logoTintHex(item.matchedTeam?.primaryColor, colorScheme: colorScheme)
 
-        return HStack(spacing: 10) {
-            // Team logo
-            TeamLogoView(
-                url: item.matchedTeam?.logoSmall,
-                teamName: item.matchedTeam?.name ?? "",
-                color: Color(hex: MyStuffTeamTextColour.logoTintHex(item.matchedTeam?.primaryColor)),
-                size: 28
-            )
+        return Group {
+            if isAX {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .top, spacing: 10) {
+                        TeamLogoView(
+                            url: item.matchedTeam?.logoSmall,
+                            teamName: item.matchedTeam?.name ?? "",
+                            color: Color(hex: logoHex),
+                            size: 28
+                        )
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.outcomeName)
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(cleanMarketName(item.marketName))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if isMultiSource {
+                                HStack(spacing: 3) {
+                                    ForEach(merged.sources, id: \.source) { s in
+                                        Circle()
+                                            .fill(sourceColors[s.source] ?? .gray)
+                                            .frame(width: 4, height: 4)
+                                    }
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
 
-            // Name + market + source dots
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.outcomeName)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .lineLimit(1)
-                Text(cleanMarketName(item.marketName))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                if isMultiSource {
-                    HStack(spacing: 3) {
-                        ForEach(merged.sources, id: \.source) { s in
-                            Circle()
-                                .fill(sourceColors[s.source] ?? .gray)
-                                .frame(width: 4, height: 4)
+                    HStack(spacing: 8) {
+                        if let change = merged.bestChange, abs(change) >= 0.001 {
+                            let isUp = change > 0
+                            Text("\(isUp ? "↑" : "↓")\(String(format: "%.1f", abs(change * 100)))%")
+                                .font(.caption2)
+                                .fontWeight(.medium)
+                                .foregroundStyle(isUp ? .green : .red)
+                        }
+                        Spacer(minLength: 0)
+                        if isMultiSource {
+                            Text(displayProb.map { formatProbability($0) } ?? "—")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .monospacedDigit()
+                                .foregroundStyle(Color(hex: probHex))
+                        } else if let prob = displayProb {
+                            HStack(spacing: 4) {
+                                Text(formatProbability(prob))
+                                    .font(.subheadline)
+                                    .fontWeight(.semibold)
+                                    .monospacedDigit()
+                                    .foregroundStyle(Color(hex: probHex))
+                                if let mark = SourceMarkButton(item.sourceMark, number: prob, subject: item.outcomeName, subtitle: cleanMarketName(item.marketName), numberSize: 15, compactRow: true) {
+                                    mark.buttonStyle(.borderless)
+                                }
+                            }
                         }
                     }
                 }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 6)
+                .padding(.horizontal, 4)
+            } else {
+                HStack(spacing: 10) {
+                    // Team logo
+                    TeamLogoView(
+                        url: item.matchedTeam?.logoSmall,
+                        teamName: item.matchedTeam?.name ?? "",
+                        color: Color(hex: logoHex),
+                        size: 28
+                    )
 
-            // 24h change
-            if let change = merged.bestChange, abs(change) >= 0.001 {
-                let isUp = change > 0
-                Text("\(isUp ? "↑" : "↓")\(String(format: "%.1f", abs(change * 100)))%")
-                    .font(.caption2)
-                    .fontWeight(.medium)
-                    .foregroundStyle(isUp ? .green : .red)
-                    .lineLimit(1)
-            }
+                    // Name + market + source dots
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.outcomeName)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .lineLimit(1)
+                        Text(cleanMarketName(item.marketName))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        if isMultiSource {
+                            HStack(spacing: 3) {
+                                ForEach(merged.sources, id: \.source) { s in
+                                    Circle()
+                                        .fill(sourceColors[s.source] ?? .gray)
+                                        .frame(width: 4, height: 4)
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-            // Probability
-            if isMultiSource {
-                Text(displayProb.map { formatProbability($0) } ?? "—")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .monospacedDigit()
-                    .foregroundStyle(Color(hex: MyStuffTeamTextColour.probabilityHex(item.matchedTeam?.primaryColor)))
-                    .lineLimit(1)
-                    .frame(minWidth: 44, alignment: .trailing)
-            } else if let prob = displayProb {
-                HStack(spacing: 4) {
-                    Text(formatProbability(prob))
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .monospacedDigit()
-                        .foregroundStyle(Color(hex: MyStuffTeamTextColour.probabilityHex(item.matchedTeam?.primaryColor)))
-                        .lineLimit(1)
-                    if let mark = SourceMarkButton(item.sourceMark, number: prob, subject: item.outcomeName, subtitle: cleanMarketName(item.marketName), numberSize: 15, compactRow: true) {
-                        mark.buttonStyle(.borderless)
+                    // 24h change
+                    if let change = merged.bestChange, abs(change) >= 0.001 {
+                        let isUp = change > 0
+                        Text("\(isUp ? "↑" : "↓")\(String(format: "%.1f", abs(change * 100)))%")
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .foregroundStyle(isUp ? .green : .red)
+                            .lineLimit(1)
+                    }
+
+                    // Probability
+                    if isMultiSource {
+                        Text(displayProb.map { formatProbability($0) } ?? "—")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .monospacedDigit()
+                            .foregroundStyle(Color(hex: probHex))
+                            .lineLimit(1)
+                            .frame(minWidth: 44, alignment: .trailing)
+                    } else if let prob = displayProb {
+                        HStack(spacing: 4) {
+                            Text(formatProbability(prob))
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .monospacedDigit()
+                                .foregroundStyle(Color(hex: probHex))
+                                .lineLimit(1)
+                            if let mark = SourceMarkButton(item.sourceMark, number: prob, subject: item.outcomeName, subtitle: cleanMarketName(item.marketName), numberSize: 15, compactRow: true) {
+                                mark.buttonStyle(.borderless)
+                            }
+                        }
+                        .frame(minWidth: 44, alignment: .trailing)
                     }
                 }
-                .frame(minWidth: 44, alignment: .trailing)
+                .padding(.vertical, 6)
+                .padding(.horizontal, 4)
             }
         }
-        .padding(.vertical, 6)
-        .padding(.horizontal, 4)
     }
 
     private func cleanMarketName(_ name: String) -> String {

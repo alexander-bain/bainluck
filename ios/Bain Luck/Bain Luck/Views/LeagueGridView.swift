@@ -5,6 +5,8 @@ import SwiftUI
 struct LeagueGridView: View {
     let slug: String
     @StateObject private var viewModel: LeagueGridViewModel
+    @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var showAllUpcoming = false
     @State private var showAllRecent = false
 
@@ -14,18 +16,27 @@ struct LeagueGridView: View {
     }
 
     var body: some View {
-        Group {
-            if viewModel.loading && viewModel.grid == nil && viewModel.leagueMarkets == nil {
-                gridSkeleton
-            } else if let error = viewModel.error, viewModel.grid == nil && viewModel.leagueMarkets == nil {
-                ContentUnavailableView(
-                    "Error",
-                    systemImage: "exclamationmark.triangle",
-                    description: Text(error)
-                )
-            } else {
-                gridContent(viewModel.grid)
+        GeometryReader { geo in
+            let innerWidth = RegularWidthTwoColumnGrid108.innerWidth(containerWidth: geo.size.width)
+            let twoColumns = RegularWidthTwoColumnGrid108.columnCount(
+                horizontalSizeClass: sizeClass,
+                dynamicTypeSize: dynamicTypeSize,
+                availableWidth: innerWidth
+            ) == 2
+            Group {
+                if viewModel.loading && viewModel.grid == nil && viewModel.leagueMarkets == nil {
+                    gridSkeleton
+                } else if let error = viewModel.error, viewModel.grid == nil && viewModel.leagueMarkets == nil {
+                    ContentUnavailableView(
+                        "Error",
+                        systemImage: "exclamationmark.triangle",
+                        description: Text(error)
+                    )
+                } else {
+                    gridContent(viewModel.grid, twoColumns: twoColumns)
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .navigationTitle(viewModel.displayName)
         #if os(iOS)
@@ -77,10 +88,10 @@ struct LeagueGridView: View {
 
     // MARK: - Grid Content
 
-    private func gridContent(_ grid: ChampionshipGridResponse?) -> some View {
+    private func gridContent(_ grid: ChampionshipGridResponse?, twoColumns: Bool = false) -> some View {
         List {
             // #13001 + #12932: Games first (live, upcoming, recent), then futures.
-            leagueGamesSections
+            leagueGamesSections(twoColumns: twoColumns)
 
             if let grid {
                 // Season info
@@ -137,17 +148,30 @@ struct LeagueGridView: View {
                 // phone. Each card carries its own milestone labels (in-cell), so no shared
                 // column rail is needed; sorted by championship probability.
                 Section("Championship Probabilities") {
-                    ForEach(Array(rankedTeams(grid.columns).enumerated()), id: \.element.id) { index, team in
-                        LadderCardView(gridTeam: team, columns: grid.columns, rank: index + 1)
-                            .listRowInsets(EdgeInsets(top: 5, leading: 12, bottom: 5, trailing: 12))
-                            .listRowBackground(Color.clear)
-                            .listRowSeparator(.hidden)
+                    let ranked = rankedTeams(grid.columns)
+                    if twoColumns {
+                        TwoColumnMasonryLayout108 {
+                            ForEach(Array(ranked.enumerated()), id: \.element.id) { index, team in
+                                LadderCardView(gridTeam: team, columns: grid.columns, rank: index + 1)
+                                    .accessibilitySortPriority(RegularWidthTwoColumnGrid108.sortPriority(index: index))
+                            }
+                        }
+                        .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
+                    } else {
+                        ForEach(Array(ranked.enumerated()), id: \.element.id) { index, team in
+                            LadderCardView(gridTeam: team, columns: grid.columns, rank: index + 1)
+                                .listRowInsets(EdgeInsets(top: 5, leading: 12, bottom: 5, trailing: 12))
+                                .listRowBackground(Color.clear)
+                                .listRowSeparator(.hidden)
+                        }
                     }
                 }
             }
 
             // League market sections (series, awards, playoff props, etc.)
-            leagueMarketSections
+            leagueMarketSections(twoColumns: twoColumns)
         }
         #if os(iOS)
         .listStyle(.insetGrouped)
@@ -155,7 +179,7 @@ struct LeagueGridView: View {
     }
 
     @ViewBuilder
-    private var leagueGamesSections: some View {
+    private func leagueGamesSections(twoColumns: Bool) -> some View {
         let live = viewModel.liveGames
         let upcoming = viewModel.upcomingGames
         let recent = viewModel.recentGames
@@ -178,7 +202,8 @@ struct LeagueGridView: View {
                 imageColor: .red,
                 games: live,
                 limit: live.count,
-                expanded: .constant(true)
+                expanded: .constant(true),
+                twoColumns: twoColumns
             )
         }
 
@@ -189,7 +214,8 @@ struct LeagueGridView: View {
                 imageColor: .blue,
                 games: upcoming,
                 limit: 5,
-                expanded: $showAllUpcoming
+                expanded: $showAllUpcoming,
+                twoColumns: twoColumns
             )
         }
 
@@ -200,7 +226,8 @@ struct LeagueGridView: View {
                 imageColor: .secondary,
                 games: recent,
                 limit: 4,
-                expanded: $showAllRecent
+                expanded: $showAllRecent,
+                twoColumns: twoColumns
             )
         }
     }
@@ -211,20 +238,45 @@ struct LeagueGridView: View {
         imageColor: Color,
         games: [FeedEventData],
         limit: Int,
-        expanded: Binding<Bool>
+        expanded: Binding<Bool>,
+        twoColumns: Bool
     ) -> some View {
         let visible = expanded.wrappedValue ? games : Array(games.prefix(limit))
         return Section {
-            ForEach(visible) { event in
-                NavigationLink(value: Route.eventDetail(id: event.id)) {
-                    EventCardView(
-                        event: event,
-                        reason: nil,
-                        personalizationReasons: nil,
-                        headline: nil
-                    )
+            if twoColumns {
+                TwoColumnMasonryLayout108 {
+                    ForEach(Array(visible.enumerated()), id: \.element.id) { index, event in
+                        NavigationLink(value: Route.eventDetail(id: event.id)) {
+                            EventCardView(
+                                event: event,
+                                reason: nil,
+                                personalizationReasons: nil,
+                                headline: nil
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .padding(12)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.cardBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: 12))
+                        .accessibilitySortPriority(RegularWidthTwoColumnGrid108.sortPriority(index: index))
+                    }
                 }
-                .buttonStyle(.plain)
+                .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
+            } else {
+                ForEach(visible) { event in
+                    NavigationLink(value: Route.eventDetail(id: event.id)) {
+                        EventCardView(
+                            event: event,
+                            reason: nil,
+                            personalizationReasons: nil,
+                            headline: nil
+                        )
+                    }
+                    .buttonStyle(.plain)
+                }
             }
             if games.count > limit {
                 Button {
@@ -264,14 +316,34 @@ struct LeagueGridView: View {
     // catalog carries the measurement and the reasoning.
 
     @ViewBuilder
-    private var leagueMarketSections: some View {
+    private func leagueMarketSections(twoColumns: Bool) -> some View {
         if let leagueData = viewModel.leagueMarkets {
             ForEach(LeagueMarketSections.order, id: \.self) { key in
                 if let markets = leagueData.sections[key], !markets.isEmpty {
                     Section {
-                        ForEach(markets.prefix(8)) { market in
-                            NavigationLink(value: Route.futuresDetail(id: market.id)) {
-                                leagueMarketRow(market)
+                        let shownMarkets = Array(markets.prefix(8))
+                        if twoColumns {
+                            TwoColumnMasonryLayout108 {
+                                ForEach(Array(shownMarkets.enumerated()), id: \.element.id) { index, market in
+                                    NavigationLink(value: Route.futuresDetail(id: market.id)) {
+                                        leagueMarketRow(market)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .padding(12)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(Color.cardBackground)
+                                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                                    .accessibilitySortPriority(RegularWidthTwoColumnGrid108.sortPriority(index: index))
+                                }
+                            }
+                            .listRowInsets(EdgeInsets(top: 6, leading: 12, bottom: 6, trailing: 12))
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                        } else {
+                            ForEach(shownMarkets) { market in
+                                NavigationLink(value: Route.futuresDetail(id: market.id)) {
+                                    leagueMarketRow(market)
+                                }
                             }
                         }
                         if markets.count > 8 {
@@ -291,11 +363,13 @@ struct LeagueGridView: View {
     }
 
     private func leagueMarketRow(_ market: LeagueMarketItem) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let isAX = dynamicTypeSize.isAccessibilitySize
+        return VStack(alignment: .leading, spacing: 4) {
             Text(market.name)
                 .font(.subheadline)
                 .fontWeight(.medium)
-                .lineLimit(2)
+                .lineLimit(isAX ? nil : 2)
+                .fixedSize(horizontal: false, vertical: true)
 
             if let outcomes = market.topOutcomes, !outcomes.isEmpty {
                 let shown = NumericalMarketScaleOrder228.orderedSlice(
@@ -306,11 +380,12 @@ struct LeagueGridView: View {
                     totalOutcomeCount: market.outcomeCount ?? outcomes.count
                 )?.map(\.element) ?? Array(outcomes.prefix(3))
                 ForEach(Array(shown.enumerated()), id: \.offset) { _, o in
-                    HStack(spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
                         Text(o.name)
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                            .lineLimit(isAX ? nil : 1)
+                            .fixedSize(horizontal: false, vertical: true)
                         Spacer()
                         Text("\(Int(o.prob))%")
                             .font(.caption)
