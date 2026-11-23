@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from app.services.datagolf_api import DataGolfPlayer
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import or_, select, text, func as sqlfunc
+from sqlalchemy import and_, or_, select, text, func as sqlfunc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -38,6 +38,7 @@ from app.utils.competition_identity import next_edition, resolve_competition  # 
 from app.utils.majors_calendar import _as_utc_date  # one parser for the calendar's dates
 from app.utils.odds_math import probability_to_american
 from app.utils.golf_source_mark import golfer_price_mark, golfer_result_mark
+from app.utils.futures_source_mark import futures_outcome_source_mark
 from app.utils.source_mark import no_source_mark, quote_source_mark
 from app.utils.futures_market_snapshot import reader_change_24h  # #10248
 from app.utils.golf_event_format import (  # #7985
@@ -2774,6 +2775,24 @@ def _build_tournament_entry(
 
     golfers = all_golfers[:_MAX_GOLFERS]
 
+    return {
+        **_tournament_metadata(tourn_key, tourn_markets, earliest_commence, latest_resolution),
+        "market_ids": market_ids,
+        "market_sources": market_sources,
+        "market_names": [m.name for m in tourn_markets],
+        "golfers": golfers,
+        "prop_markets": prop_markets_list,
+        "_all_golfers": all_golfers,
+        **({"overflow_outcomes": overflow_outcomes} if overflow_outcomes else {}),
+    }
+
+
+def _tournament_metadata(
+    tourn_key: str,
+    tourn_markets: list[FuturesMarket],
+    earliest_commence: datetime | None,
+    latest_resolution: datetime | None,
+) -> dict:
     order_idx = TOURNAMENT_ORDER.index(tourn_key) if tourn_key in TOURNAMENT_ORDER else 50
     # The hand-maintained maps win, then the venue's own spelling, and only then
     # the slug. Re-casing the key is lossy (#7020) and every entry the maps have
@@ -2792,7 +2811,6 @@ def _build_tournament_entry(
     if is_tour_event and latest_resolution:
         order_idx = 50
 
-    market_names = [m.name for m in tourn_markets]
     is_womens = (
         bool(_WOMENS_RE.search(display_name))
         or any(_WOMENS_RE.search(m.name) for m in tourn_markets)
@@ -2839,13 +2857,6 @@ def _build_tournament_entry(
             else None
         ),
         "resolution_date": latest_resolution.isoformat() if latest_resolution else None,
-        "market_ids": market_ids,
-        "market_sources": market_sources,
-        "market_names": market_names,
-        "golfers": golfers,
-        "prop_markets": prop_markets_list,
-        "_all_golfers": all_golfers,
-        **({"overflow_outcomes": overflow_outcomes} if overflow_outcomes else {}),
     }
 
 
@@ -3078,26 +3089,33 @@ def _build_h2h_entry(market, tourn_key: str) -> dict:
     }
 
 
+_SCHEDULE_KEYS = {
+    "masters": "masters_tournament",
+    "us_open": "u_s_open",
+    "the_open": "the_open_championship",
+    "players": "the_players_championship",
+}
+
+
+def _schedule_for_tournament(key: str, schedule_by_key: dict[str, dict]) -> dict:
+    return schedule_by_key.get(key) or schedule_by_key.get(_SCHEDULE_KEYS.get(key, "")) or {}
+
+
 def _enrich_with_schedule(
     tournaments: list[dict], schedule_by_key: dict[str, dict],
 ) -> None:
     """Enrich tournaments with DataGolf schedule data (venue, dates, etc.)."""
-    _TOURN_TO_SCHED_KEY = {
-        "masters": "masters_tournament",
-        "us_open": "u_s_open",
-        "the_open": "the_open_championship",
-        "players": "the_players_championship",
-    }
     for t in tournaments:
         t["slug"] = _clean_slug(t["name"])
-        sched = schedule_by_key.get(t["key"]) or schedule_by_key.get(_TOURN_TO_SCHED_KEY.get(t["key"], ""))
+        sched = _schedule_for_tournament(t["key"], schedule_by_key)
         if sched:
             t["venue"] = sched.get("venue") or t.get("venue") or None
             t["location"] = sched.get("location") or None
-            t["schedule_status"] = sched.get("status") or None
-            # #9212: ESPN's champion for a tournament it calls final.
-            t["champion"] = sched.get("champion") or None
-            _name_champion_as_the_card_does(t)
+            if not t.get("winner_market_id"):
+                t["schedule_status"] = sched.get("status") or None
+                # #9212: ESPN's champion for a tournament it calls final.
+                t["champion"] = sched.get("champion") or None
+                _name_champion_as_the_card_does(t)
             if sched.get("start_date"):
                 t["start_date"] = sched["start_date"]
             if sched.get("end_date"):
@@ -3307,7 +3325,7 @@ def _filter_stale_tournaments(tournaments: list[dict], now: datetime) -> list[di
     now_date = now.date()
     filtered = []
     for t in tournaments:
-        if t.get("schedule_status") == "completed":
+        if t.get("schedule_status") == "completed" and not t.get("winner_market_id"):
             continue
         end_date_str = t.get("end_date")
         if end_date_str:
@@ -3402,6 +3420,10 @@ def _upcoming_from_schedule(
 #: that hardcoded the string could drift from the writer and fail silently open,
 #: which reads as "the fix did nothing" rather than as an error.
 GOLF_CATEGORY_CACHE_KEY = "bainluck:category:golf"
+
+# A venue close can follow the final putt by weeks. It identifies the
+# edition, while an explicit outcome grade establishes the result.
+_GOLF_WINNER_CLOSE_GRACE = timedelta(days=21)
 
 
 #: #12740 — how long before the first tee a reading may have last stood and
@@ -3829,12 +3851,21 @@ async def get_golf(
     """Get golf tournament futures with aggregated odds across sources."""
     now = datetime.now(timezone.utc)
 
-    # Query + filter golf markets
+    recent = now - timedelta(days=7)
+    recent_graded_fields = and_(
+        FuturesMarket.status == "resolved",
+        FuturesMarket.mutually_exclusive.is_(True),
+        or_(
+            FuturesMarket.resolution_date.between(recent, now + _GOLF_WINNER_CLOSE_GRACE),
+            and_(FuturesMarket.resolution_date.is_(None), FuturesMarket.settled_at >= recent),
+        ),
+        FuturesMarket.outcomes.any(FuturesOutcome.is_winner.is_(True)),
+    )
     query = (
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.outcomes))
         .where(
-            FuturesMarket.status == "open",
+            or_(FuturesMarket.status == "open", recent_graded_fields),
             or_(
                 FuturesMarket.external_id.ilike("golf_%"),
                 FuturesMarket.llm_sport_category == "golf",
@@ -3855,7 +3886,7 @@ async def get_golf(
     h2h_markets_raw: list = []
     markets: list = []
     for m in markets_all:
-        if _is_h2h_matchup(m):
+        if getattr(m, "status", "open") == "open" and _is_h2h_matchup(m):
             h2h_markets_raw.append(m)
         else:
             markets.append(m)
@@ -3867,6 +3898,8 @@ async def get_golf(
     # 24h movement snapshots
     all_outcome_ids = []
     for market in markets:
+        if getattr(market, "status", "open") != "open":
+            continue
         for outcome in market.outcomes:
             if outcome.current_probability is not None:
                 all_outcome_ids.append(outcome.id)
@@ -3897,7 +3930,13 @@ async def get_golf(
     # Build tournament entries with cross-source aggregation
     tournaments = []
     for tourn_key, tourn_markets in tournament_markets.items():
-        entry = _build_one_tournament(tourn_key, tourn_markets, prob_24h_ago)
+        entry = _build_graded_tournament(
+            tourn_key, tourn_markets, _schedule_for_tournament(tourn_key, schedule_by_key)
+        )
+        if entry is None:
+            open_markets = [m for m in tourn_markets if getattr(m, "status", "open") == "open"]
+            if open_markets:
+                entry = _build_one_tournament(tourn_key, open_markets, prob_24h_ago)
         if entry:
             tournaments.append(entry)
 
@@ -3935,6 +3974,9 @@ async def get_golf(
 
     # Attach and dedupe H2H matchups
     for t in tournaments:
+        if t.get("winner_market_id"):
+            t["h2h_matchups"] = []
+            continue
         raw_matchups = h2h_by_tournament.get(t["key"], [])
         seen_pairs: set[tuple[str, str]] = set()
         deduped: list[dict] = []
@@ -4054,7 +4096,10 @@ def _find_current_event(
     # commence filter (Phase 2) still keep a finished major from displacing the true
     # current event, and _tournament_importance ranks a live major above any tour
     # event when both qualify. (#1075)
-    tour_events = [t for t in tournaments if t.get("is_tour_event") or t.get("is_major")]
+    tour_events = [
+        t for t in tournaments
+        if (t.get("is_tour_event") or t.get("is_major")) and not t.get("winner_market_id")
+    ]
     if not tour_events:
         return None
 
@@ -4468,6 +4513,85 @@ def _assemble_completed_winner_field(
     return golfers, market_ids, market_names, market_sources
 
 
+def _market_matches_golf_edition(market: FuturesMarket, start: date, end: date) -> bool:
+    close = _as_utc_date(market.resolution_date) or _as_utc_date(market.settled_at)
+    return close is not None and start <= close <= end + _GOLF_WINNER_CLOSE_GRACE
+
+
+def _build_graded_tournament(
+    key: str, markets: list[FuturesMarket], schedule: dict
+) -> dict | None:
+    """Use a graded outright field for this scheduled edition on both readers."""
+    start = _as_utc_date(schedule.get("start_date"))
+    end = _as_utc_date(schedule.get("end_date"))
+    if start is None or end is None or start > end or is_team_match_play_key(key):
+        return None
+
+    graded = []
+    for market in markets:
+        if (
+            getattr(market, "status", None) != "resolved"
+            or not market.mutually_exclusive
+            or market.market_type not in (None, "field")
+            or _tournament_market_type(market.name)[0] != "winner"
+            or not _market_matches_golf_edition(market, start, end)
+        ):
+            continue
+        winners = [outcome for outcome in market.outcomes if outcome.is_winner is True]
+        if len(winners) != 1:
+            continue
+        winner = winners[0]
+        mark = futures_outcome_source_mark(market, winner, {}, served_settled=True)
+        if mark["state"] == "settled" and not (
+            is_prop_outcome(winner.name) or is_foreign_domain(winner.name)
+        ):
+            graded.append((market, winner))
+
+    if len({_match_key(winner.name) for _, winner in graded}) != 1:
+        return None
+    market, winner = max(
+        graded,
+        key=lambda pair: (
+            sum(outcome.is_winner is not None for outcome in pair[0].outcomes),
+            -pair[0].id,
+        ),
+    )
+    golfers, market_ids, names, sources = _assemble_completed_winner_field([market])
+    outcomes_by_name = {outcome.name.strip(): outcome for outcome in market.outcomes}
+    outcomes_by_name[winner.name.strip()] = winner
+    for golfer in golfers:
+        outcome = outcomes_by_name[golfer["name"]]
+        golfer.update(
+            is_winner=outcome.is_winner,
+            resolution_source=outcome.resolution_source,
+            source_mark=futures_outcome_source_mark(
+                market, outcome, {}, served_settled=True
+            ),
+            sources={},
+            american_odds=None,
+        )
+    return {
+        **_tournament_metadata(key, [market], market.commence_time, market.resolution_date),
+        "schedule_status": "completed",
+        "champion": winner.name.strip(),
+        "winner_market_id": market.id,
+        "market_ids": market_ids,
+        "market_names": names,
+        "market_sources": sources,
+        "golfers": golfers[:_MAX_GOLFERS],
+        "_all_golfers": golfers,
+        "prop_markets": [],
+        "h2h_matchups": [],
+        "settled_winner_sibling_ids": [
+            candidate.id
+            for candidate in markets
+            if candidate.id != market.id
+            and _tournament_market_type(candidate.name)[0] == "winner"
+            and _market_matches_golf_edition(candidate, start, end)
+        ],
+    }
+
+
 async def _build_completed_tournament(
     slug: str,
     db: AsyncSession,
@@ -4613,6 +4737,19 @@ async def _build_completed_tournament(
                 break
     except Exception:
         pass
+
+    graded = _build_graded_tournament(
+        key, tournament_markets, {"start_date": start_date, "end_date": end_date}
+    )
+    if graded:
+        return {
+            **graded,
+            "slug": slug,
+            "start_date": start_date,
+            "end_date": end_date,
+            "venue": venue,
+            "resolution_date": end_date,
+        }
 
     return {
         "name": display_name,
@@ -4904,7 +5041,7 @@ async def get_golf_tournament(
     # Find the winner market for the evolution chart. The RANKING is policy and
     # lives in `app.utils.golf_evolution_market` (pure, no session — ruling 005);
     # what stays here is fetching the three facts it ranks on.
-    evolution_market_id = None
+    evolution_market_id = tournament.get("winner_market_id")
     # #8381: a cup never enters the golfer ranking below — its chart is the two
     # teams or nothing (see `select_team_match_play_evolution_market`). The
     # outcome read only runs for a cup whose h2h list does not already name the
@@ -4926,6 +5063,8 @@ async def get_golf_tournament(
             tournament.get("h2h_matchups"), market_ids, cup_outcome_names
         )
     for g in sorted_groups:
+        if evolution_market_id is not None:
+            break
         if not team_match_play and g["type"] == "winner" and g["market_ids"]:
             # LAT-P020/#1107: this ranking used to issue THREE queries PER candidate
             # market from inside the loop — an outcome count, a snapshot count, and a
@@ -5479,6 +5618,7 @@ async def get_golf_tournament(
             "venue": tournament.get("venue"),
             "location": tournament.get("location"),
             "schedule_status": tournament.get("schedule_status"),
+            "champion": tournament.get("champion"),
             "commence_time": tournament.get("commence_time"),
             "resolution_date": tournament.get("resolution_date"),
         },

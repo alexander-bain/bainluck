@@ -18317,7 +18317,8 @@ async def _score_golf_tournaments(
                     "name": g["name"],
                     "probability": g["probability"],
                     "source_mark": (
-                        golfer_result_mark(g["name"], matched_champion) if champion
+                        g["source_mark"] if t.get("winner_market_id")
+                        else golfer_result_mark(g["name"], matched_champion) if champion
                         else g.get("source_mark") or no_source_mark("source_evidence_incomplete")
                     ),
                     **({"rendered_percent": g["rendered_percent"]}
@@ -18422,7 +18423,7 @@ def _tournament_blended_market_ids(t: dict) -> frozenset[int]:
         if _NON_WINNER_MARKET_RE.search(name):
             continue
         blended.add(market_id)
-    return frozenset(blended)
+    return frozenset(blended.union(t.get("settled_winner_sibling_ids") or ()))
 
 
 def _drop_futures_blended_into_tournaments(items: list[dict]) -> list[dict]:
@@ -18509,7 +18510,7 @@ def _score_tournament(t: dict, now: datetime) -> int:
             if days_until <= 0 and days_until >= -4:
                 # Currently in progress or just started (4-day tournament window)
                 score += 20
-            elif days_until < -4:
+            elif days_until < -4 and not t.get("winner_market_id"):
                 # Stale — started more than 4 days ago, probably over
                 return 0
             elif days_until <= 3:
