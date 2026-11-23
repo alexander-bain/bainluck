@@ -1395,7 +1395,6 @@ async def _warm_tournament_pages_after_live_poll(stats: dict, redis_client) -> l
         return []
     if not (stats.get("live_events", 0) > 0 or stats.get("markets_resolved", 0) > 0):
         return []
-    import asyncio
     from app.routes.golf import warm_golf_tournament_pages
     from app.tasks.base import get_task_session
 

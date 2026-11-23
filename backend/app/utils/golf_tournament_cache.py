@@ -331,7 +331,7 @@ def _trigger_bg_refresh(slug: str, bg_builder: Optional[Callable[[], Awaitable[d
         except asyncio.CancelledError:
             raise
         except Exception:
-            logger.debug("Golf tournament SWR background refresh failed for %s", slug, exc_info=True)
+            logger.debug("Golf tournament SWR background refresh failed", exc_info=True)
         finally:
             if _bg_refresh_tasks.get(slug) is task:
                 _bg_refresh_tasks.pop(slug, None)
@@ -360,8 +360,8 @@ async def _singleflight_build(
             # one was started later, otherwise starts its own after current finishes.
             try:
                 await asyncio.shield(shared)
-            except BaseException:
-                pass
+            except Exception:
+                logger.debug("Prior in-flight golf tournament build failed before fresh bypass")
             if _inflight.get(slug, (None, None))[1] is shared:
                 continue
             continue
@@ -474,5 +474,5 @@ def _reset_for_tests() -> None:
         try:
             task.cancel()
         except RuntimeError:
-            pass
+            logger.debug("Skipping golf background refresh task cancel on closed loop")
     _bg_refresh_tasks.clear()
