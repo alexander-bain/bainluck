@@ -156,8 +156,10 @@ struct DistributionCardView: View {
                     mark
                 }
                 // #4351: named, or not drawn — was `src.uppercased()`, which is
-                // how this card printed `ODDS_API`. Card faces omit Kalshi/Polymarket.
-                if let src = SourceLabels.cardFaceLabel(
+                // how this card printed `ODDS_API`. Card faces omit Kalshi/Polymarket,
+                // and omit `"2 sources"` once `ⓘ` source marks draw on the numbers (#11920).
+                if !data.hasDrawableSourceMark,
+                   let src = SourceLabels.cardFaceLabel(
                     for: data.source,
                     sources: data.sources,
                     sourceCount: data.sourceCount
