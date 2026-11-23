@@ -220,14 +220,14 @@ class TestOnlyEligibleCollections:
             sport_id=nfl.id,
             home_team_name="Home W4",
             away_team_name="Away W4",
-            commence_time=datetime(2026, 10, 4, 17, 0, tzinfo=timezone.utc),
+            commence_time=datetime(2026, 9, 20, 17, 0, tzinfo=timezone.utc),
             status="completed",
         )
         ev12 = Event(
             sport_id=nfl.id,
             home_team_name="Home W12",
             away_team_name="Away W12",
-            commence_time=datetime(2026, 11, 26, 17, 0, tzinfo=timezone.utc),
+            commence_time=datetime(2026, 10, 11, 17, 0, tzinfo=timezone.utc),
             status="scheduled",
         )
         pg_session.add_all([ev4, ev12])
@@ -258,8 +258,8 @@ class TestOnlyEligibleCollections:
 
         after = await discovery.discover_collections(pg_session, league="nfl", season=2026)
         assert [c["slug"] for c in after.collections] == ["nfl-2026-week-12", "nfl-2026-week-4"]
-        assert after.collections[0]["window_start"] == "2026-11-26T17:00:00+00:00"
-        assert after.collections[1]["window_start"] == "2026-10-04T17:00:00+00:00"
+        assert after.collections[0]["window_start"] == "2026-10-11T17:00:00+00:00"
+        assert after.collections[1]["window_start"] == "2026-09-20T17:00:00+00:00"
 
 
 class TestRelevance:
