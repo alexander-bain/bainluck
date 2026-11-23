@@ -16,7 +16,7 @@ from app.utils.container_machinery import (
 
 
 def test_build_machinery_history_lateral_stmt_compiles_with_lateral_limit_and_no_window() -> None:
-    cutoff = datetime(2026, 11, 16, 6, 0, tzinfo=timezone.utc)
+    cutoff = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(hours=168)
     stmt = _build_machinery_history_lateral_stmt([101, 202, 101], cutoff)
     compiled = str(
         stmt.compile(
@@ -34,7 +34,7 @@ def test_build_machinery_history_lateral_stmt_compiles_with_lateral_limit_and_no
 
 
 def test_build_machinery_history_lateral_stmt_handles_empty_outcomes() -> None:
-    cutoff = datetime(2026, 11, 16, 6, 0, tzinfo=timezone.utc)
+    cutoff = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(hours=168)
     stmt = _build_machinery_history_lateral_stmt([], cutoff)
     compiled = str(stmt.compile(dialect=postgresql.dialect()))
     assert "futures_odds_snapshots" in compiled.lower()
@@ -45,7 +45,7 @@ def test_build_machinery_history_lateral_stmt_handles_empty_outcomes() -> None:
 async def test_load_snapshot_from_db_executes_lateral_history_and_collects_points(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    now_dt = datetime(2026, 11, 23, 6, 0, tzinfo=timezone.utc)
+    now_dt = datetime.now(timezone.utc).replace(microsecond=0)
     defn = {
         "slug": "machinery-fed-and-macro",
         "name": "Fed & U.S. Macro",

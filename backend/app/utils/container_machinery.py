@@ -2718,6 +2718,7 @@ def _build_machinery_history_lateral_stmt(
         .where(
             FuturesOddsSnapshot.outcome_id == want.c.outcome_id,
             FuturesOddsSnapshot.captured_at >= cutoff,
+            FuturesOddsSnapshot.captured_at.isnot(None),
         )
         .order_by(FuturesOddsSnapshot.captured_at.desc())
         .limit(int(per_outcome_limit))
