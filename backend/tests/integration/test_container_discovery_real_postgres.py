@@ -208,6 +208,59 @@ class TestOnlyEligibleCollections:
         assert cards[hubs["wk6"]]["game_count"] == 1
         assert cards[hubs["wk5"]]["revision"] == 4
 
+    async def test_nfl_weeks_with_null_windows_sort_newest_first_after_backfill(self, pg_session):
+        from app.models.models import Container, Event, EventEdge, Sport
+        from app.tasks.container_assembly import _backfill_missing_nfl_week_windows
+
+        nfl = Sport(key="americanfootball_nfl", name="NFL", active=True)
+        pg_session.add(nfl)
+        await pg_session.flush()
+
+        ev4 = Event(
+            sport_id=nfl.id,
+            home_team_name="Home W4",
+            away_team_name="Away W4",
+            commence_time=datetime(2026, 10, 4, 17, 0, tzinfo=timezone.utc),
+            status="completed",
+        )
+        ev12 = Event(
+            sport_id=nfl.id,
+            home_team_name="Home W12",
+            away_team_name="Away W12",
+            commence_time=datetime(2026, 11, 26, 17, 0, tzinfo=timezone.utc),
+            status="scheduled",
+        )
+        pg_session.add_all([ev4, ev12])
+        await pg_session.flush()
+
+        wk4 = Container(kind="season", name="NFL 2026 · Week 4", slug="nfl-2026-week-4", status="scheduled", window_start=None, window_end=None)
+        wk12 = Container(kind="season", name="NFL 2026 · Week 12", slug="nfl-2026-week-12", status="scheduled", window_start=None, window_end=None)
+        pg_session.add_all([wk4, wk12])
+        await pg_session.flush()
+
+        pg_session.add_all([
+            EventEdge(parent_type="container", parent_id=wk4.id, child_type="event", child_id=ev4.id, kind="contains", edge_class="match_winner", source="register", confidence=1),
+            EventEdge(parent_type="container", parent_id=wk12.id, child_type="event", child_id=ev12.id, kind="contains", edge_class="match_winner", source="register", confidence=1),
+        ])
+        await pg_session.flush()
+        await pg_session.execute(
+            text("UPDATE containers SET publication_state='published', membership_revision=1 WHERE id IN (:a, :b)"),
+            {"a": wk4.id, "b": wk12.id},
+        )
+        await pg_session.commit()
+
+        before = await discovery.discover_collections(pg_session, league="nfl", season=2026)
+        assert [c["slug"] for c in before.collections] == ["nfl-2026-week-4", "nfl-2026-week-12"]
+
+        updated = await _backfill_missing_nfl_week_windows(pg_session)
+        assert updated == 2
+        await pg_session.commit()
+
+        after = await discovery.discover_collections(pg_session, league="nfl", season=2026)
+        assert [c["slug"] for c in after.collections] == ["nfl-2026-week-12", "nfl-2026-week-4"]
+        assert after.collections[0]["window_start"] == "2026-11-26T17:00:00+00:00"
+        assert after.collections[1]["window_start"] == "2026-10-04T17:00:00+00:00"
+
 
 class TestRelevance:
     async def test_given_games_only_hubs_holding_them_come_back_most_matched_first(self, pg_session):
