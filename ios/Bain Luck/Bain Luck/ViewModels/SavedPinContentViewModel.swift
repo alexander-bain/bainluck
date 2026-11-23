@@ -36,10 +36,9 @@ nonisolated enum SavedPinContent: Sendable {
         return true
     }
 
-    /// The Pinned section, in saved-pin order. A pin the team feed already
-    /// carries keeps that feed card (it has the reason/headline); every other
-    /// pin with loaded content becomes the same card family built from its
-    /// detail payload. Pins with nothing to draw yet are `fallbacks` — they stay
+    /// The Pinned section, in saved-pin order. Futures use the detail's current
+    /// field when available. Game pins keep the team feed card when present.
+    /// Pins with nothing to draw yet are `fallbacks` — they stay
     /// listed and removable rather than disappearing. A confirmed gone answer
     /// (404/410) outranks a feed card for the same item: the feed can still
     /// carry a deleted row, and that card would read as a live game. A failed
@@ -56,6 +55,10 @@ nonisolated enum SavedPinContent: Sendable {
                 fallbacks.append(pin)
                 continue
             }
+            if pin.type == "future", case .market(let f) = content[pin] {
+                items.append(item(type: "futures", event: nil, futures: f))
+                continue
+            }
             if let fed = feed.first(where: { matches($0, pin) }) {
                 items.append(fed)
                 continue
@@ -63,8 +66,6 @@ nonisolated enum SavedPinContent: Sendable {
             switch content[pin] {
             case .event(let e) where pin.type == "event":
                 items.append(item(type: "event", event: e, futures: nil))
-            case .market(let f) where pin.type == "future":
-                items.append(item(type: "futures", event: nil, futures: f))
             default:
                 fallbacks.append(pin)
             }
@@ -146,7 +147,9 @@ final class SavedPinContentViewModel: ObservableObject {
             if pin.type == "event" {
                 return .event(FeedEventData(savedPinDetail: try await APIClient.shared.fetchEvent(id: pin.value)))
             }
-            return .market(FeedFuturesData(savedPinDetail: try await APIClient.shared.fetchFuturesDetail(id: pin.value)))
+            return .market(FeedFuturesData(savedPinDetail: try await APIClient.shared.fetchFuturesDetail(
+                id: pin.value, representation: .verifiedTitle
+            )))
         } catch APIError.httpError(let code, _) where code == 404 || code == 410 {
             return .unavailable
         } catch {
@@ -167,6 +170,7 @@ extension FeedEventData {
             id: d.id, externalId: d.externalId, sport: d.sport, sportName: nil,
             homeTeam: d.homeTeam, awayTeam: d.awayTeam, commenceTime: d.commenceTime,
             startIsTbd: d.startIsTbd, status: d.status, homeScore: d.homeScore, awayScore: d.awayScore,
+            scoreSourceUnavailable: d.scoreSourceUnavailable,
             blendFoldRevision: d.blendFoldRevision, heroProbabilitySource: d.heroProbabilitySource,
             heroProbabilityObservedAt: d.heroProbabilityObservedAt, currentOdds: d.currentOdds,
             openingOdds: d.openingOdds, prematchOdds: d.prematchOdds,
@@ -195,8 +199,10 @@ extension FeedFuturesData {
             return (a.probability ?? -1) > (b.probability ?? -1)
         }
         let leaders = ordered.prefix(3).enumerated().map { index, o in
-            FeedFuturesOutcome(id: o.id, name: o.name, probability: o.probability,
-                               rank: index + 1, movement: o.probabilityChange24h)
+            var leader = FeedFuturesOutcome(id: o.id, name: o.name, probability: o.probability,
+                                            rank: index + 1, movement: o.probabilityChange24h)
+            leader.renderedPercent = o.renderedPercent
+            return leader
         }
         self.init(
             id: d.id, externalId: d.externalId, name: d.name, sport: d.sport, sportName: d.sportName,

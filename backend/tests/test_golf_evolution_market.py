@@ -127,13 +127,15 @@ def test_the_facts_are_fetched_as_grouped_batches():
     """
     winner_block = _route_code_without_comments().split("placement_market_ids")[0]
 
-    assert winner_block.count("group_by(FuturesOutcome.market_id)") == 2, (
-        "expected exactly two grouped counts (outcomes, snapshots) for the "
-        "evolution pick"
-    )
+    assert winner_block.count("group_by(FuturesOutcome.market_id)") == 1
+    assert winner_block.count("group_by(ranked_outcomes.c.market_id)") == 1
     assert "distinct(FuturesOutcome.market_id)" in winner_block, (
         "the graded-winner lookup lost its DISTINCT ON — it is either back to a "
         "per-market LIMIT 1 or returning every snapshot"
+    )
+    assert "FuturesOddsSnapshot.id" not in winner_block, (
+        "#13436: counting FuturesOddsSnapshot.id forces heap fetches across ~100k "
+        "rows (20-58 s cold); richness must use index-only COUNT(*) over bounded top contenders"
     )
     for bound in ("in_(candidate_ids)", "in_(eligible_ids)"):
         assert bound in winner_block, (
@@ -146,9 +148,8 @@ def test_the_expensive_count_is_only_paid_when_it_can_change_the_answer():
     """The larger half of #1107's win, and the easiest thing to regress.
 
     Resolution decides whenever it produces an answer, so building `snap_counts`
-    eagerly means paying a ~4.7s count (193,981 rows for ONE market, measured
-    2026-08-09) to compute a value that `or` then discards. Every completed major
-    grades at 0.895-0.9995, so that was the cost on the whole #1107 population.
+    eagerly means paying a snapshot count to compute a value that `or` then
+    discards.
 
     Asserts the SEQUENCE — resolve, then a conditional richness fetch — because
     the cost is in the ordering, not in either query alone.
@@ -156,7 +157,7 @@ def test_the_expensive_count_is_only_paid_when_it_can_change_the_answer():
     code = _route_code_without_comments()
     resolve_at = code.find("select_by_settled_resolution(")
     guard_at = code.find("if evolution_market_id is None")
-    count_at = code.find("sqlfunc.count(FuturesOddsSnapshot.id)")
+    count_at = code.find("sqlfunc.count()")
     richness_at = code.find("select_by_snapshot_richness(")
 
     assert -1 not in (resolve_at, guard_at, count_at, richness_at), (

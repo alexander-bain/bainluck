@@ -188,6 +188,8 @@ export interface Event {
   status: EventStatus;
   home_score: number | null;
   away_score: number | null;
+  /** #13000 (`250: A`) — present and `true` when no score source carries this live match. */
+  score_source_unavailable?: boolean;
   /**
    * The per-period line under the score, when the authority holds one.
    *
@@ -422,6 +424,7 @@ export interface Event {
 export interface EventsResponse {
   events: Event[];
   count: number;
+  next_offset?: number | null;
 }
 
 export interface BookmakerOddsDetail {
@@ -948,6 +951,8 @@ export interface SettlementDisplay {
 
 export interface FuturesOutcome {
   rendered_percent?: number | null;
+  /** Venue-graded elimination on an otherwise open field. */
+  is_out?: boolean;
   id: number;
   name: string;
   probability: number | null;
@@ -1300,7 +1305,10 @@ export interface FuturesMarketsResponse {
 }
 
 export interface FuturesMarketDetailResponse extends FuturesMarket {
+  /** Verified title board to open for this alternate market address. */
+  canonical_market_id?: number | null;
   outcomes: FuturesOutcome[];
+  outcome_prices_are_independent?: boolean;
   display_category?: string;
   /** #8892: on a game container, the id of the match-winner outcome a hero leads
    *  with. Null everywhere else; absent on builds before #8894. */
@@ -1775,6 +1783,8 @@ export interface FeedEventData {
   status: EventStatus;
   home_score: number | null;
   away_score: number | null;
+  /** #13000 (`250: A`) — present and `true` when no score source carries this live match. */
+  score_source_unavailable?: boolean;
   /**
    * #5811 — the venue already graded this scoreless row. Same keys, same
    * shared reader and same three states (absent / `false` / `true`) as
@@ -1920,6 +1930,8 @@ export interface FeedFuturesOutcome {
 export interface FeedFuturesData {
   id: number;
   name: string;
+  /** #13390 / #13393: single-row bundle title already names the resolved template answer. */
+  title_states_single_answer?: boolean;
   sport: string | null;
   sport_name: string | null;
   llm_sport_category: string | null;

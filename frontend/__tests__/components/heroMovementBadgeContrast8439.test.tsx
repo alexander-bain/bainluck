@@ -147,8 +147,8 @@ function renderTournament(movement: number): string {
 
 describe("#8439 · TournamentCard — the hero's move badge is readable on the green hero", () => {
   it.each([
-    ["up", 0.098, "Up", "9.8 pts"],
-    ["down", -0.098, "Down", "9.8 pts"],
+    ["up", 0.098, "Up", "9.8 points"],
+    ["down", -0.098, "Down", "9.8 points"],
   ])("%s move: badge drawn, says its number, no white-card skin, readable at every stop", (_dir, movement, word, pts) => {
     const hero = heroOf(renderTournament(movement as number));
     const badge = badgeOf(hero.inner);

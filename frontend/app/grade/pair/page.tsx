@@ -15,11 +15,15 @@ import { adminFetch, adminFetchJSON } from "@/lib/adminFetch";
 import { setDiscoverLearningGate } from "@/lib/discoverInteractions";
 import { handleGradeDeckReadError, normalizeGraderName, saveWithOneRetry } from "@/lib/ranking/gradeSession";
 import {
+  MORNING_NOT_READY_MESSAGE,
   PAIR_CHOICES,
   PAIR_CHOICE_LABELS,
-  pairFromSearch,
+  formatCaptureDayPt,
   gradeDeckHref,
+  isCapturedTodayPt,
+  normalizeMorningError,
   pairPath,
+  pairTargetFromSearch,
   type PairChoice,
   type PairDeck,
   type PairSide,
@@ -60,7 +64,7 @@ function Column({ side, label }: { side: PairSide[]; label: string }) {
 
 function PairSession() {
   const { secret, clearSecret } = useAdminAuth();
-  const [ref, setRef] = useState<{ slate: string; pair: string } | null | undefined>(undefined);
+  const [ref, setRef] = useState<{ slate: string | null; pair: string | null } | null | undefined>(undefined);
   const [deck, setDeck] = useState<PairDeck | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [grader, setGrader] = useState("");
@@ -74,7 +78,7 @@ function PairSession() {
   const [alreadyPicked, setAlreadyPicked] = useState(false);
 
   useEffect(() => {
-    setRef(pairFromSearch(window.location.search));
+    setRef(pairTargetFromSearch(window.location.search));
     try {
       setGrader(localStorage.getItem(GRADER_KEY) || "");
     } catch {
@@ -86,8 +90,22 @@ function PairSession() {
     if (!ref) return;
     let cancelled = false;
     adminFetchJSON<PairDeck>(pairPath(ref.slate, ref.pair), secret)
-      .then((d) => !cancelled && setDeck(d))
-      .catch((e: unknown) => !cancelled && handleGradeDeckReadError(e, "Could not load the two first tens", { clearSecret, setError }));
+      .then((d) => {
+        if (cancelled) return;
+        // Defense in depth: the bare morning link never shows yesterday's slate.
+        if (!ref.slate && d.captured_at && !isCapturedTodayPt(d.captured_at)) {
+          setError(MORNING_NOT_READY_MESSAGE);
+          return;
+        }
+        setDeck(d);
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        handleGradeDeckReadError(e, "Could not load the two first tens", {
+          clearSecret,
+          setError: (msg) => setError(normalizeMorningError(msg)),
+        });
+      });
     return () => {
       cancelled = true;
     };
@@ -139,11 +157,15 @@ function PairSession() {
   if (!deck) return <Shell><p className="text-sm text-text-muted animate-pulse">Loading the two first tens…</p></Shell>;
 
   const canPick = !!normalizeGraderName(grader) && opened !== null && !saved && !alreadyPicked && !saving;
+  const captureDay = formatCaptureDayPt(deck.captured_at);
   return (
     <Shell>
-      <h1 className="text-base font-semibold text-text-primary">Which first ten would you rather open Discover to?</h1>
+      <p className="text-xs font-semibold uppercase tracking-wide text-accent-brand">
+        Step 1 of 3: pick{captureDay ? ` · ${captureDay}` : ""}
+      </p>
+      <h1 className="mt-1 text-base font-semibold text-text-primary">Which first ten would you rather open Discover to?</h1>
       <p className="mt-1 text-sm text-text-secondary">
-        Two orders of the same morning&apos;s cards. Pick before grading today&apos;s deck.
+        Two orders of {captureDay ? `${captureDay}'s` : "this morning's"} cards. Pick first, then grade Step 2 (the deck) and Step 3 (extra set, if any).
       </p>
       {!normalizeGraderName(grader) && (
         <input
@@ -211,16 +233,16 @@ function PairSession() {
       {alreadyPicked && (
         <p className="mt-1 text-sm text-text-secondary" role="status">
           Already picked for this morning. The first pick stands.{" "}
-          <a className="font-semibold text-accent-brand hover:underline" href={gradeDeckHref(deck.slate_id)}>
-            Now grade this morning&apos;s deck →
+          <a className="font-semibold text-accent-brand hover:underline" href={gradeDeckHref(deck.slate_id, deck.pair)}>
+            Continue to Step 2 of 3: the deck →
           </a>
         </p>
       )}
       {saved && (
         <p className="mt-1 text-sm text-text-secondary" role="status">
           Saved: {PAIR_CHOICE_LABELS[saved]}.{" "}
-          <a className="font-semibold text-accent-brand hover:underline" href={gradeDeckHref(deck.slate_id)}>
-            Now grade this morning&apos;s deck →
+          <a className="font-semibold text-accent-brand hover:underline" href={gradeDeckHref(deck.slate_id, deck.pair)}>
+            Continue to Step 2 of 3: the deck →
           </a>
         </p>
       )}

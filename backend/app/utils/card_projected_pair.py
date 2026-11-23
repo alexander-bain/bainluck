@@ -83,15 +83,23 @@ they already hold.
 
 from __future__ import annotations
 
+import asyncio
+import copy
+import json
 import logging
 import math
+import os
 import re
-from collections import defaultdict
-from datetime import datetime
+import threading
+import time
+from collections import OrderedDict, defaultdict
+from datetime import datetime, timezone
 from typing import Any, Iterable, Optional
 
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.utils.live_line_clock import stored_state_clock
 from app.utils.odds_filtering import _effective_time, filter_stale_bookmaker_snapshots
 from app.utils.odds_math import aggregate_bookmaker_odds, detect_reversed_bookmakers
 from app.utils.pregame_projection import (
@@ -150,6 +158,10 @@ CARD_PROJECTION_READ_CAP_MS = 1500
 CARD_PROJECTION_DEADLINE_MARGIN_MS = 500
 #: Below this, the read is not started at all.
 CARD_PROJECTION_MIN_READ_MS = 50
+#: Chunk size for uncached card projected-pair reads so one cold build never sends
+#: 100-200 IDs into one `latest_odds_per_bookmaker_query` savepoint and lose all progress
+#: to `statement_timeout`.
+CARD_PROJECTION_BATCH_SIZE = 25
 
 
 def card_projection_wanted(
@@ -204,6 +216,11 @@ def card_projection_card(
         "sport_key": sport_key,
         "live_boundary_at": boundary_at,
         "period": _loaded(event, "period"),
+        # #12938: the live clock the odds job stored; already-loaded state only.
+        "state_changed_at": (
+            stored_state_clock(_loaded(event, "win_probability_sources"))
+            if event.status == "live" else None
+        ),
     }
 
 
@@ -241,6 +258,7 @@ def card_projected_pair(
     sport_key: Optional[str],
     live_boundary_at: Optional[datetime] = None,
     period: Optional[str] = None,
+    state_changed_at: Optional[datetime] = None,
 ) -> Optional[dict]:
     """The card's projected pair from one event's latest row per sportsbook, or None.
 
@@ -249,6 +267,9 @@ def card_projected_pair(
     ``served_status`` is the status the card prints and decides admission.
     ``live_boundary_at`` and ``period`` (`card_projection_card`) decide the
     marked in-play object on a live card; without them it is not served.
+    ``state_changed_at`` (#12938, the clock the odds job stored; `live_line_clock`) is a live
+    game's clock: given, only current lines project, and none current means no
+    pair. Absent, the pair is built as before.
     """
     if not snapshots or not card_projection_wanted(served_status, sport_key):
         return None
@@ -256,6 +277,12 @@ def card_projected_pair(
     filtered = filter_stale_bookmaker_snapshots(
         snapshots, event_status=stored_status, commence_time=commence_time
     )
+    if filtered and stored_status == "live" and state_changed_at is not None:
+        from app.utils.live_line_clock import current_lines
+
+        filtered = current_lines(
+            filtered, now=datetime.now(timezone.utc), state_changed_at=state_changed_at
+        )
     if not filtered:
         return None
 
@@ -377,6 +404,7 @@ def event_live_projection(
         sport_key=sport_key,
         live_boundary_at=card["live_boundary_at"],
         period=card["period"],
+        state_changed_at=card["state_changed_at"],
     )
     return pair.get(LIVE_PROJECTION_KEY) if pair else None
 
@@ -429,21 +457,226 @@ def scheduled_card_pair(latest_rows: Iterable[Any], recent_rows: Iterable[Any], 
     }
 
 
-async def read_card_projected_pairs(db: Any, cards: Iterable[dict]) -> dict[int, dict]:
-    """``{event_id: pair}`` for the cards that may carry one, in ONE statement.
+# ── #11931: Per-event L1 + Redis L2 cache for scheduled card projected pairs ──
+#
+# Scheduled games' projected pairs come from sportsbook lines within the 90-min
+# `PROJECTION_LINES_BOUND`, polled every 2–60 min. Previously every unwarmed
+# feed/sport/league build re-ran `latest_odds_per_bookmaker_query` +
+# `read_recent_lines` over all 50–100 scheduled cards and hit the 1,500 ms cap
+# on `/api/feed?mode=sports&sport=football`.
+#
+# Live cards (`stored_status == "live"` or `served_status == "live"`) NEVER use
+# this cache — they always read fresh from Postgres. Because both statuses are
+# checked in `_scheduled_card_cache_key`, a `scheduled -> live` transition
+# bypasses the cache immediately. Transient `read_failed` answers and per-event
+# computation errors are never cached.
 
-    Each card is `card_projection_card`'s dict (``live_boundary_at`` and
-    ``period`` may be absent: no in-play object then). Cards that `card_projection_wanted` refuses are not read.
-    Nothing is caught here: the caller decides what a failed read costs.
-    """
-    from app.routes.events import latest_odds_per_bookmaker_query
+CARD_PROJECTION_CACHE_ENV = "CARD_PROJECTION_CACHE_ENABLED"
+CARD_PROJECTION_CACHE_SHARED_ENV = "CARD_PROJECTION_CACHE_SHARED_ENABLED"
+CARD_PROJECTION_CACHE_TTL_SECONDS = 180
+_CARD_CACHE_L1_MAX_ENTRIES = 2048
+_CARD_CACHE_L2_PREFIX = "card_proj:v1"
+_CARD_CACHE_ABSENT = {"_absent": True}
 
-    wanted: dict[int, dict] = {}
-    for card in cards:
-        if card_projection_wanted(card.get("served_status"), card.get("sport_key")):
-            wanted[int(card["id"])] = card
-    if not wanted:
+_card_l1_lock = threading.Lock()
+_card_l1_cache: OrderedDict[tuple[int, str, str, str], tuple[float, dict]] = OrderedDict()
+
+
+def clear_card_projection_cache() -> None:
+    """Clear the process-local scheduled card projected-pair cache (tests)."""
+    with _card_l1_lock:
+        _card_l1_cache.clear()
+
+
+def card_projection_cache_enabled() -> bool:
+    """Rollback switch for scheduled card projected-pair caching. Defaults ON."""
+    raw = os.environ.get(CARD_PROJECTION_CACHE_ENV, "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def card_projection_cache_shared_enabled() -> bool:
+    """Rollback switch for the Redis L2 tier. Defaults ON."""
+    raw = os.environ.get(CARD_PROJECTION_CACHE_SHARED_ENV, "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _scheduled_card_cache_key(card: dict) -> Optional[tuple[int, str, str, str]]:
+    """Cache key for a scheduled card, or None for live / non-cacheable cards."""
+    stored = card.get("stored_status")
+    served = card.get("served_status")
+    if stored != "scheduled" or served != "scheduled":
+        return None
+    event_id = card.get("id")
+    sport_key = card.get("sport_key")
+    if type(event_id) is not int or not isinstance(sport_key, str) or not sport_key:
+        return None
+    return (event_id, stored, served, sport_key)
+
+
+def _card_l1_get(key: tuple[int, str, str, str]) -> Optional[dict]:
+    now_mono = time.monotonic()
+    with _card_l1_lock:
+        entry = _card_l1_cache.get(key)
+        if entry is None:
+            return None
+        expires_at, payload = entry
+        if now_mono >= expires_at:
+            _card_l1_cache.pop(key, None)
+            return None
+        _card_l1_cache.move_to_end(key)
+        return copy.deepcopy(payload)
+
+
+def _card_l1_put(key: tuple[int, str, str, str], payload: dict) -> None:
+    expires_at = time.monotonic() + CARD_PROJECTION_CACHE_TTL_SECONDS
+    stored = copy.deepcopy(payload)
+    with _card_l1_lock:
+        _card_l1_cache[key] = (expires_at, stored)
+        _card_l1_cache.move_to_end(key)
+        while len(_card_l1_cache) > _CARD_CACHE_L1_MAX_ENTRIES:
+            _card_l1_cache.popitem(last=False)
+
+
+def _card_l2_redis_key(key: tuple[int, str, str, str]) -> str:
+    event_id, stored, served, sport_key = key
+    return f"{_CARD_CACHE_L2_PREFIX}:{event_id}:{stored}:{served}:{sport_key}"
+
+
+def _card_l2_redis_client():
+    from app.tasks.redis_state import get_redis_client
+
+    return get_redis_client(socket_timeout=0.5, fast_fail=True)
+
+
+def _is_valid_cached_card_payload(parsed: Any) -> bool:
+    if not isinstance(parsed, dict):
+        return False
+    if parsed == _CARD_CACHE_ABSENT:
+        return True
+    if parsed.get("projection_unavailable") == "read_failed":
+        return False
+    return any(k in parsed for k in CARD_PROJECTION_KEYS)
+
+
+async def _card_l2_mget(
+    keys: list[tuple[int, str, str, str]],
+) -> dict[tuple[int, str, str, str], dict]:
+    if not keys or not card_projection_cache_shared_enabled():
         return {}
+    try:
+        client = _card_l2_redis_client()
+        if client is None:
+            return {}
+        redis_keys = [_card_l2_redis_key(k) for k in keys]
+        blobs = await asyncio.to_thread(client.mget, redis_keys)
+    except Exception:
+        logger.debug("card_projected_pair L2 mget skipped", exc_info=True)
+        return {}
+
+    hits: dict[tuple[int, str, str, str], dict] = {}
+    for key, blob in zip(keys, blobs or []):
+        if not blob:
+            continue
+        try:
+            raw = blob.decode("utf-8") if isinstance(blob, (bytes, bytearray)) else str(blob)
+            parsed = json.loads(raw)
+            if _is_valid_cached_card_payload(parsed):
+                hits[key] = parsed
+        except Exception:
+            logger.debug("card_projected_pair L2 decode skipped", exc_info=True)
+    return hits
+
+
+async def _card_l2_mset(items: list[tuple[tuple[int, str, str, str], dict]]) -> None:
+    if not items or not card_projection_cache_shared_enabled():
+        return
+    try:
+        client = _card_l2_redis_client()
+        if client is None:
+            return
+
+        def _write() -> None:
+            pipe = client.pipeline(transaction=False)
+            for key, payload in items:
+                pipe.set(
+                    _card_l2_redis_key(key),
+                    json.dumps(payload, separators=(",", ":")),
+                    ex=CARD_PROJECTION_CACHE_TTL_SECONDS,
+                )
+            pipe.execute()
+
+        await asyncio.to_thread(_write)
+    except Exception:
+        logger.debug("card_projected_pair L2 mset skipped", exc_info=True)
+
+
+async def _resolve_cached_scheduled_cards(
+    wanted: dict[int, dict],
+) -> tuple[dict[int, dict], list[dict], dict[int, tuple[int, str, str, str]]]:
+    """Split ``wanted`` into cached answers and cards that still need a DB read."""
+    cached_pairs: dict[int, dict] = {}
+    uncached_cards: list[dict] = []
+    miss_keys: dict[int, tuple[int, str, str, str]] = {}
+    l2_candidates: list[tuple[int, dict, tuple[int, str, str, str]]] = []
+
+    for event_id, card in wanted.items():
+        cache_key = _scheduled_card_cache_key(card)
+        if cache_key is None:
+            uncached_cards.append(card)
+            continue
+        hit = _card_l1_get(cache_key)
+        if hit is not None:
+            if hit != _CARD_CACHE_ABSENT:
+                cached_pairs[event_id] = hit
+        else:
+            l2_candidates.append((event_id, card, cache_key))
+
+    if l2_candidates:
+        l2_hits = await _card_l2_mget([c[2] for c in l2_candidates])
+        for event_id, card, cache_key in l2_candidates:
+            hit = l2_hits.get(cache_key)
+            if hit is not None:
+                _card_l1_put(cache_key, hit)
+                if hit != _CARD_CACHE_ABSENT:
+                    cached_pairs[event_id] = copy.deepcopy(hit)
+            else:
+                uncached_cards.append(card)
+                miss_keys[event_id] = cache_key
+
+    return cached_pairs, uncached_cards, miss_keys
+
+
+async def _store_cached_scheduled_cards(
+    miss_keys: dict[int, tuple[int, str, str, str]],
+    computed: dict[int, dict],
+    *,
+    skip_ids: set[int],
+) -> None:
+    if not miss_keys:
+        return
+    to_store: list[tuple[tuple[int, str, str, str], dict]] = []
+    for event_id, cache_key in miss_keys.items():
+        if event_id in skip_ids:
+            continue
+        pair = computed.get(event_id)
+        if pair is None:
+            payload = _CARD_CACHE_ABSENT
+        elif pair.get("projection_unavailable") == "read_failed":
+            continue
+        else:
+            payload = pair
+        _card_l1_put(cache_key, payload)
+        to_store.append((cache_key, payload))
+    if to_store:
+        await _card_l2_mset(to_store)
+
+
+async def _read_card_projected_pairs_uncached(
+    db: Any, wanted: dict[int, dict]
+) -> tuple[dict[int, dict], set[int]]:
+    """Run the DB reads for ``wanted`` and return ``(pairs, errored_ids)``."""
+    from app.routes.events import latest_odds_per_bookmaker_query
+    from app.utils import recent_line_readings as _rl
 
     by_event: dict[int, list] = defaultdict(list)
     for snap in (
@@ -456,8 +689,6 @@ async def read_card_projected_pairs(db: Any, cards: Iterable[dict]) -> dict[int,
     # #12595: a scheduled card in scope takes its pair from recent line readings
     # (the same rule, the same function, as detail and search), so the card never
     # leads the page with a day-old pair.
-    from app.utils import recent_line_readings as _rl
-
     scheduled_ids = sorted(
         eid for eid, card in wanted.items()
         if eid in by_event and _rl.card_in_scope(card.get("stored_status"), card.get("sport_key"))
@@ -469,7 +700,10 @@ async def read_card_projected_pairs(db: Any, cards: Iterable[dict]) -> dict[int,
         try:
             recent_by_event = await _rl.read_recent_lines(
                 db,
-                _rl.books_needing_lines({eid: by_event[eid] for eid in scheduled_ids}),
+                _rl.books_needing_lines(
+                    {eid: by_event[eid] for eid in scheduled_ids},
+                    since=_now - _rl.PROJECTION_LINES_BOUND,
+                ),
                 now=_now,
                 bounded=False,
             )
@@ -478,6 +712,7 @@ async def read_card_projected_pairs(db: Any, cards: Iterable[dict]) -> dict[int,
             recent_failed = True
 
     pairs: dict[int, dict] = {}
+    errored_ids: set[int] = set()
     for event_id, snaps in by_event.items():
         card = wanted.get(event_id)
         if card is None:
@@ -485,11 +720,13 @@ async def read_card_projected_pairs(db: Any, cards: Iterable[dict]) -> dict[int,
         if event_id in scheduled_ids:
             if recent_failed:
                 pairs[event_id] = {"projection_unavailable": _rl.READ_FAILED}
+                errored_ids.add(event_id)
                 continue
             try:
                 pair = scheduled_card_pair(snaps, recent_by_event.get(event_id) or [], now=_now)
             except Exception:  # noqa: BLE001 — gotcha #42: one event, not the page
                 logger.exception("scheduled card pair failed for event %s", event_id)
+                errored_ids.add(event_id)
                 continue
             if pair is not None:
                 pairs[event_id] = pair
@@ -503,13 +740,54 @@ async def read_card_projected_pairs(db: Any, cards: Iterable[dict]) -> dict[int,
                 sport_key=card.get("sport_key"),
                 live_boundary_at=card.get("live_boundary_at"),
                 period=card.get("period"),
+                # #12938: live cards project from current lines only.
+                state_changed_at=card.get("state_changed_at"),
             )
         except Exception:  # noqa: BLE001 — gotcha #42: one event, not the page
             logger.exception("card projected pair failed for event %s", event_id)
+            errored_ids.add(event_id)
             continue
         if pair is not None:
             pairs[event_id] = pair
+    return pairs, errored_ids
+
+
+async def read_card_projected_pairs(
+    db: Any, cards: Iterable[dict], *, _use_cache: bool = True
+) -> dict[int, dict]:
+    """``{event_id: pair}`` for the cards that may carry one, in ONE statement.
+
+    Each card is `card_projection_card`'s dict (``live_boundary_at`` and
+    ``period`` may be absent: no in-play object then). Cards that `card_projection_wanted` refuses are not read.
+    Nothing is caught here: the caller decides what a failed read costs.
+    """
+    wanted: dict[int, dict] = {}
+    for card in cards:
+        if card_projection_wanted(card.get("served_status"), card.get("sport_key")):
+            wanted[int(card["id"])] = card
+    if not wanted:
+        return {}
+
+    use_cache = (
+        _use_cache
+        and isinstance(db, AsyncSession)
+        and card_projection_cache_enabled()
+    )
+    if use_cache:
+        cached_pairs, uncached_cards, miss_keys = await _resolve_cached_scheduled_cards(wanted)
+        if not uncached_cards:
+            return cached_pairs
+        uncached_wanted = {int(c["id"]): c for c in uncached_cards}
+        fresh_pairs, errored_ids = await _read_card_projected_pairs_uncached(db, uncached_wanted)
+        await _store_cached_scheduled_cards(miss_keys, fresh_pairs, skip_ids=errored_ids)
+        cached_pairs.update(fresh_pairs)
+        return cached_pairs
+
+    pairs, _ = await _read_card_projected_pairs_uncached(db, wanted)
     return pairs
+
+
+_DEFAULT_READ_CARD_PROJECTED_PAIRS = read_card_projected_pairs
 
 
 async def read_card_projected_pairs_bounded(
@@ -527,13 +805,103 @@ async def read_card_projected_pairs_bounded(
 
     No wanted card, or ``timeout_ms`` below the floor, means no round trip at all.
     """
-    if timeout_ms < CARD_PROJECTION_MIN_READ_MS or not any(
-        card_projection_wanted(c.get("served_status"), c.get("sport_key"))
-        for c in cards
-    ):
+    if timeout_ms < CARD_PROJECTION_MIN_READ_MS:
         return {}
-    async with db.begin_nested() as savepoint:
-        await db.execute(text(f"SET LOCAL statement_timeout = '{int(timeout_ms)}ms'"))
-        pairs = await read_card_projected_pairs(db, cards)
-        await savepoint.rollback()
-    return pairs
+    wanted: dict[int, dict] = {}
+    for card in cards:
+        if card_projection_wanted(card.get("served_status"), card.get("sport_key")):
+            wanted[int(card["id"])] = card
+    if not wanted:
+        return {}
+
+    if read_card_projected_pairs is not _DEFAULT_READ_CARD_PROJECTED_PAIRS:
+        async with db.begin_nested() as savepoint:
+            await db.execute(text(f"SET LOCAL statement_timeout = '{int(timeout_ms)}ms'"))
+            pairs = await read_card_projected_pairs(db, cards)
+            await savepoint.rollback()
+        return pairs
+
+    use_cache = isinstance(db, AsyncSession) and card_projection_cache_enabled()
+    cached_pairs: dict[int, dict] = {}
+    miss_keys: dict[int, tuple[int, str, str, str]] = {}
+    if use_cache:
+        cached_pairs, uncached_cards, miss_keys = await _resolve_cached_scheduled_cards(wanted)
+        if not uncached_cards:
+            return cached_pairs
+    else:
+        uncached_cards = list(wanted.values())
+
+    # Live cards first so if a cold multi-batch read exhausts its budget, live cards keep
+    # their pairs while scheduled cards progressively fill L1 + L2 chunk by chunk.
+    ordered_uncached = [
+        c
+        for c in uncached_cards
+        if c.get("served_status") == "live" or c.get("stored_status") == "live"
+    ] + [
+        c
+        for c in uncached_cards
+        if not (c.get("served_status") == "live" or c.get("stored_status") == "live")
+    ]
+    batch_size = max(1, int(CARD_PROJECTION_BATCH_SIZE))
+    batches = [
+        ordered_uncached[idx : idx + batch_size]
+        for idx in range(0, len(ordered_uncached), batch_size)
+    ]
+
+    deadline = time.monotonic() + (int(timeout_ms) / 1000.0)
+    fresh_pairs: dict[int, dict] = {}
+    completed_cards = 0
+    for batch_idx, batch in enumerate(batches):
+        if batch_idx == 0:
+            batch_timeout_ms = int(timeout_ms)
+        else:
+            remaining_ms = int((deadline - time.monotonic()) * 1000)
+            if remaining_ms < CARD_PROJECTION_MIN_READ_MS:
+                logger.warning(
+                    "card_projected_pair budget exhausted after %d/%d cards (%d/%d batches)",
+                    completed_cards,
+                    len(ordered_uncached),
+                    batch_idx,
+                    len(batches),
+                )
+                break
+            batch_timeout_ms = min(int(timeout_ms), remaining_ms)
+
+        batch_wanted = {int(c["id"]): c for c in batch}
+        try:
+            async with db.begin_nested() as savepoint:
+                await db.execute(
+                    text(f"SET LOCAL statement_timeout = '{batch_timeout_ms}ms'")
+                )
+                batch_pairs, batch_errored = await _read_card_projected_pairs_uncached(
+                    db, batch_wanted
+                )
+                await savepoint.rollback()
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning(
+                "card_projected_pair batch %d/%d (size=%d, completed_cards=%d) aborted: %s",
+                batch_idx + 1,
+                len(batches),
+                len(batch),
+                completed_cards,
+                exc,
+            )
+            break
+
+        fresh_pairs.update(batch_pairs)
+        completed_cards += len(batch)
+        if use_cache and miss_keys:
+            batch_miss_keys = {
+                eid: miss_keys[eid] for eid in batch_wanted if eid in miss_keys
+            }
+            if batch_miss_keys:
+                await _store_cached_scheduled_cards(
+                    batch_miss_keys, batch_pairs, skip_ids=batch_errored
+                )
+
+    if cached_pairs:
+        cached_pairs.update(fresh_pairs)
+        return cached_pairs
+    return fresh_pairs

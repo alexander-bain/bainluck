@@ -44,6 +44,34 @@ class UnsupportedModelError(RuntimeError):
 
 
 @dataclass(frozen=True)
+class ImageModelSpec:
+    model: str
+    text_input_per_m: int
+    image_input_per_m: int
+    image_output_per_m: int
+    price_url: str
+
+
+_FACTORY_IMAGE = ImageModelSpec(
+    model="gpt-image-2.6-flare",
+    text_input_per_m=5,
+    image_input_per_m=8,
+    image_output_per_m=30,
+    price_url="https://developers.openai.com/api/docs/models/gpt-image-2.6-flare",
+)
+
+
+def image_model_for_task(task: str) -> ImageModelSpec:
+    # The global chat-model override does not apply to the Images API.
+    if task != "factory_picture":
+        raise UnsupportedModelError("No image model is configured for that task")
+    choice = os.getenv("LLM_MODEL_FACTORY_PICTURE", _FACTORY_IMAGE.model).strip()
+    if choice != _FACTORY_IMAGE.model:
+        raise UnsupportedModelError("No Factory image rate is recorded for that model")
+    return _FACTORY_IMAGE
+
+
+@dataclass(frozen=True)
 class ModelSpec:
     """What the request layer must know about a model before it may call it.
 
@@ -65,14 +93,20 @@ class ModelSpec:
     #: After this date the provider no longer serves the model.
     shutdown: Optional[date] = None
     replacement: Optional[str] = None
+    #: Provider family: ``"openai"`` (Chat Completions) or ``"anthropic"`` (Messages).
+    provider: str = "openai"
 
 
 LEGACY_MODEL = "gpt-4o-mini"
 REPLACEMENT_MODEL = "gpt-6-luna"
+#: Nightly fun scout Claude set-writing models (#13102, Ruling 276: B).
+#: List prices read Nov 19, 2026: Sonnet $2/$10, Opus $4/$20 per million tokens.
+CLAUDE_SONNET_MODEL = "claude-sonnet-5-5"
+CLAUDE_OPUS_MODEL = "claude-opus-5-5"
 
-#: Rates from the provider model pages as recorded in #11042 (2026-10-14).
-#: Re-check them at the canary: a lower listed rate does not prove a lower task
-#: cost, and an unrecorded rate is a refusal, not a guess.
+#: Rates from the provider model pages as recorded in #11042 (2026-10-14) and
+#: #13102 (2026-11-19). Re-check them at the canary: a lower listed rate does
+#: not prove a lower task cost, and an unrecorded rate is a refusal, not a guess.
 MODELS: dict[str, ModelSpec] = {
     LEGACY_MODEL: ModelSpec(
         model=LEGACY_MODEL,
@@ -81,6 +115,7 @@ MODELS: dict[str, ModelSpec] = {
         output_per_m=0.60,
         shutdown=date(2027, 1, 14),
         replacement=REPLACEMENT_MODEL,
+        provider="openai",
     ),
     REPLACEMENT_MODEL: ModelSpec(
         model=REPLACEMENT_MODEL,
@@ -88,6 +123,21 @@ MODELS: dict[str, ModelSpec] = {
         input_per_m=0.10,
         output_per_m=0.50,
         reasoning_effort="none",
+        provider="openai",
+    ),
+    CLAUDE_SONNET_MODEL: ModelSpec(
+        model=CLAUDE_SONNET_MODEL,
+        reasoning=False,
+        input_per_m=2.00,
+        output_per_m=10.00,
+        provider="anthropic",
+    ),
+    CLAUDE_OPUS_MODEL: ModelSpec(
+        model=CLAUDE_OPUS_MODEL,
+        reasoning=False,
+        input_per_m=4.00,
+        output_per_m=20.00,
+        provider="anthropic",
     ),
 }
 
@@ -121,7 +171,24 @@ TASKS: dict[str, str] = {
     # other
     "admin_diagnosis": "admin ops diagnosis panel",
     "bug_fixed_email": "bug-fixed notification email body",
+    "factory_notes": "Factory floor and station captions",
+    "testflight_screenshot_summary": "TestFlight bug-report screenshot description (249-A)",
+    # utils/discover_fun_scout.py (#13102, Ruling 276: B)
+    "fun_scout_tag": "Nightly fun scout tagging pass over open non-sports titles",
+    "fun_scout_sets": "Nightly fun scout set-writing pass (Claude)",
 }
+
+#: Tasks whose default model differs from ``LEGACY_MODEL`` (e.g., Anthropic tasks).
+_TASK_DEFAULT_MODEL: dict[str, str] = {
+    "fun_scout_sets": CLAUDE_SONNET_MODEL,
+}
+
+
+def default_model_for_task(task: str) -> str:
+    """Return the default model registered for ``task``."""
+    if task not in TASKS:
+        raise UnsupportedModelError(f"unregistered LLM task {task!r}")
+    return _TASK_DEFAULT_MODEL.get(task, LEGACY_MODEL)
 
 #: Pre-registry per-family override, still honoured so an existing deployment
 #: setting keeps its meaning. Neither production app sets it (2026-10-14 read).
@@ -138,18 +205,31 @@ def _today_utc() -> date:
 def resolve_model(task: str, *, today: Optional[date] = None) -> str:
     """The model ``task`` should call now.
 
-    Order: ``LLM_MODEL_<TASK>``, the task's pre-registry variable, ``LLM_MODEL``,
-    then ``LEGACY_MODEL`` (today's behaviour). Raises ``UnsupportedModelError``
-    for an unregistered task or an unrecorded model.
+    Order: ``LLM_MODEL_<TASK>``, the task's pre-registry variable, ``LLM_MODEL``
+    (for tasks sharing the same provider family as ``LLM_MODEL``), then the
+    task's registered default (``LEGACY_MODEL`` for OpenAI tasks,
+    ``CLAUDE_SONNET_MODEL`` for ``fun_scout_sets``). Raises
+    ``UnsupportedModelError`` for an unregistered task or an unrecorded model.
     """
     if task not in TASKS:
         raise UnsupportedModelError(f"unregistered LLM task {task!r}")
+    default_model = default_model_for_task(task)
+    default_provider = MODELS[default_model].provider
+    global_override = (os.getenv("LLM_MODEL") or "").strip() or None
+    if (
+        global_override is not None
+        and global_override in MODELS
+        and MODELS[global_override].provider != default_provider
+    ):
+        # Never let a global OpenAI migration override (e.g. LLM_MODEL=gpt-6-luna)
+        # silently redirect an Anthropic task onto OpenAI (or vice versa).
+        global_override = None
     candidates = (
         os.getenv(f"LLM_MODEL_{task.upper()}"),
         os.getenv(_LEGACY_ENV[task]) if task in _LEGACY_ENV else None,
-        os.getenv("LLM_MODEL"),
+        global_override,
     )
-    model = next((c.strip() for c in candidates if c and c.strip()), LEGACY_MODEL)
+    model = next((c.strip() for c in candidates if c and c.strip()), default_model)
     spec = MODELS.get(model)
     if spec is None:
         raise UnsupportedModelError(f"no recorded request shape/price for model {model!r}")
@@ -238,6 +318,8 @@ def estimate_cost_usd(model: str, usage: Any) -> Optional[float]:
     """USD for one response's ``usage``, or ``None`` when it cannot be known.
 
     ``None`` for an unrecorded model or a response with no usable token counts.
+    Supports both OpenAI (``prompt_tokens`` / ``completion_tokens``) and
+    Anthropic (``input_tokens`` / ``output_tokens``) usage payloads.
     Reasoning tokens are billed as output and are already inside
     ``completion_tokens``; cached prompt tokens are charged at the full input
     rate (see ``ModelSpec``).
@@ -247,6 +329,9 @@ def estimate_cost_usd(model: str, usage: Any) -> Optional[float]:
         return None
     prompt = getattr(usage, "prompt_tokens", None)
     completion = getattr(usage, "completion_tokens", None)
+    if prompt is None and completion is None:
+        prompt = getattr(usage, "input_tokens", None)
+        completion = getattr(usage, "output_tokens", None)
     if not isinstance(prompt, int) or not isinstance(completion, int):
         return None
     if prompt < 0 or completion < 0:

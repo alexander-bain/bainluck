@@ -40,12 +40,17 @@ final class HeadlineStyleTable199Tests: XCTestCase {
             .appendingPathComponent("BainLuckWidget/GameLiveActivity.swift")
         let view = try String(contentsOf: url, encoding: .utf8).filter { !$0.isWhitespace }
         XCTAssertTrue(view.contains("case.before:Text(\"Chance\")"), "before: one Chance column")
-        XCTAssertTrue(view.contains("case.during:Text(\"Score\")"), "during: Score")
-        XCTAssertTrue(view.contains("Text(\"Now\").frame(width:Self.nowWidth"), "during: Now")
+        XCTAssertTrue(view.contains("case.during:ifreading.showsScore{Text(\"Score\")"), "during: Score gated by showsScore (250-A)")
+        XCTAssertTrue(view.contains("Text(\"Now\").lineLimit(1).fixedSize(horizontal:true,vertical:false).frame(minWidth:metrics.nowWidth"), "during: Now")
         XCTAssertTrue(view.contains("case.after:ifreading.hasPregame{Text(\"Pregame\")"), "after: Pregame (direction 209)")
-        XCTAssertTrue(view.contains("Text(\"Final\").frame(width:Self.scoreWidth"), "after: Final")
+        XCTAssertTrue(view.contains("Text(\"Final\").lineLimit(1).fixedSize(horizontal:true,vertical:false).frame(minWidth:metrics.scoreWidth"), "after: Final")
         XCTAssertTrue(view.contains("Text(reading.shortName(side))"), "the Lock Screen prints the short name once")
-        XCTAssertTrue(view.contains("ifreading.phase!=.before{Text(reading.scoreText(side))"), "no score before kickoff")
+        XCTAssertTrue(view.contains("guardphase!=.beforeelse{returnfalse}"), "no score before kickoff")
+        XCTAssertTrue(view.contains("ifreading.showsScore{"), "score row gated by showsScore (250-A)")
         XCTAssertTrue(view.contains("varchanceHeader:String{phase==.before?\"Chance\":\"Now\"}"))
+        XCTAssertFalse(view.contains("Asof"), "no 'As of' lines on Live Activity (#12999)")
+        XCTAssertFalse(view.contains("taptorefresh"), "no 'tap to refresh' on Live Activity (#12999)")
+        XCTAssertFalse(view.contains("reading.singleChanceLabel"), "no second layout prose line (#12999)")
+        XCTAssertTrue(view.contains("snapshot.probabilityObservedAt!=nil"), "rule 14: Now shows a chance only with its time")
     }
 }

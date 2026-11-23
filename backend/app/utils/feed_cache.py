@@ -7,6 +7,7 @@ import json
 import logging
 import math
 import os
+import time
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
@@ -27,6 +28,12 @@ FEED_PREWARM_KEY_SCOPE_KEY = "bainluck_feed_prewarm_key"
 # back into during a pre-warm, so the warmer reports and escalates held-back
 # cards per shape without coupling the public response payload to internal state.
 FEED_PREWARM_OPENING_SCOPE_KEY = "bainluck_feed_prewarm_opening"
+
+# #12288: Scope slot the route writes the freshly built anonymous page-base deck
+# and cache shape into during a pre-warm so the warmer can publish the
+# `machinery=1` Discover response and `:machinery` page base from the same DB
+# build in pure Python (<5 ms, zero duplicate DB queries) via sync Redis.
+FEED_PREWARM_MACHINERY_BASE_SCOPE_KEY = "bainluck_feed_prewarm_machinery_base"
 
 # Response-cache TTLs by principal (see ``feed_response_cache_ttl``).
 FEED_RESPONSE_TTL_ANON_SECONDS = 60
@@ -63,6 +70,12 @@ FEED_RESPONSE_TTL_MY_TEAMS_SECONDS = 30
 FEED_RESPONSE_TTL_LIVE_SECONDS = 30
 FEED_RESPONSE_STALE_TTL_LIVE_SECONDS = 60
 FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS = 60
+
+# Decision 346: A (#13443): Discover pages that are live ONLY through a
+# grouping (bundle holding live child games, with no standalone live game card)
+# use a 120s hard ceiling while `prewarm_live_feed_shapes` overruns its 30s
+# slot. Tightens back to 60 when #13445 is done — one-line change here.
+FEED_RESPONSE_STALE_TTL_LIVE_GROUPING_ONLY_SECONDS = 120
 
 # --- #2236: the republish period lives beside the ceiling it must respect ------
 # The ceiling above is a bound on how OLD a served live payload may be. A warmer
@@ -305,7 +318,11 @@ def live_republish_headroom_s() -> int:
 
 
 # --- LAT-P230 (#3144): the OTHER term the ceiling never counted ---------------
-def live_total_age_headroom_s(oldest_artifact_age_s: float) -> int:
+def live_total_age_headroom_s(
+    oldest_artifact_age_s: float,
+    *,
+    ceiling_seconds: int = FEED_RESPONSE_STALE_TTL_LIVE_SECONDS,
+) -> int:
     """Seconds a live payload may still be CACHED for, given its inputs' age.
 
     The ceiling above bounds how old a served live payload may be. It was written
@@ -339,7 +356,7 @@ def live_total_age_headroom_s(oldest_artifact_age_s: float) -> int:
     seconds of the ceiling, not 59.
     """
     spent = math.ceil(max(0.0, oldest_artifact_age_s))
-    return max(0, FEED_RESPONSE_STALE_TTL_LIVE_SECONDS - spent)
+    return max(0, int(ceiling_seconds) - spent)
 
 
 def nonlive_total_age_headroom_s(strict_artifact_age_s: float) -> int:
@@ -448,7 +465,12 @@ FEED_PAGE_BASE_BUILT_AT_FIELD = "_page_base_built_at"
 # zlib wire form: a web Discover deck is ~0.6 MB of JSON, held six times longer
 # than its stale mirror in a 100 MB allkeys-lru Redis.
 FEED_PAGE_BASE_LAST_GOOD_SUFFIX = ":last_good"
-FEED_PAGE_BASE_LAST_GOOD_MAX_AGE_SECONDS = 1800
+# #11259: durable emergency copy kept 6 hours in Redis (read ONLY by the
+# incomplete-build emergency terminal when a cold build runs out of time).
+# Stale live and already-started event cards are stripped past the 60s live
+# ceiling so overnight or mid-game budget misses never serve an empty page
+# and never serve a stale live score.
+FEED_PAGE_BASE_LAST_GOOD_MAX_AGE_SECONDS = 21600
 
 #: #5105. Folded into BOTH cache keys when a build opted into opening seating
 #: (``discover_opening_seating.seat_opening``). A seated deck and an unseated
@@ -494,6 +516,7 @@ def feed_page_base_cache_key(
     category: Optional[str] = None,
     collections: Optional[str] = None,
     opening_seating: bool = False,
+    fun_admission: bool = False,
 ) -> str:
     """Key for one stored, offset-independent Discover build.
 
@@ -537,7 +560,25 @@ def feed_page_base_cache_key(
         # #5105. Prepended under the `if`, like every segment above, so a
         # legacy build keeps its byte-identical key.
         parts = f"{FEED_OPENING_SEATING_KEY_MARKER}|{parts}"
+    if fun_admission:
+        # #13097 / Ruling 272: A. Prepended under the `if` so switch-OFF keys
+        # stay byte-identical and toggling the switch never reads a stale build.
+        parts = f"fun=1|{parts}"
     return f"{FEED_PAGE_BASE_CACHE_PREFIX}:{hashlib.md5(parts.encode()).hexdigest()}"
+
+
+def feed_machinery_page_base_key(page_base_key: str) -> str:
+    """Derived Redis key for the `machinery=1` spliced page base (#12288).
+
+    Lives under the `feed:` invalidation prefix (`feed:machinery_pagebase:...`)
+    distinct from `feed:pagebase:...` so `feed_page_base_cache_key` keeps its
+    exact signature and 1.0.6/plain readers never read a machinery card, while
+    `machinery=1` readers hit a pre-spliced base in ~15 ms with zero DB work.
+    """
+    prefix = f"{FEED_PAGE_BASE_CACHE_PREFIX}:"
+    if page_base_key.startswith(prefix):
+        return f"feed:machinery_pagebase:{page_base_key[len(prefix):]}"
+    return f"feed:machinery_pagebase:{page_base_key}"
 
 
 def render_feed_page_from_base(
@@ -719,28 +760,80 @@ def base_has_started_scheduled_game(base: Any, *, now: float) -> bool:
     return False
 
 
+def _item_is_stale_live_or_started(item: Any, *, now: float) -> bool:
+    """#11259: whether one feed card is live or a scheduled game past kickoff.
+
+    Past ``FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS`` (60s), these cards are
+    stripped from the durable emergency base instead of discarding the entire
+    Discover deck. Bundles carrying any live or started event sub-item are
+    stripped with the same rule so live matchup slates never serve stale scores.
+    """
+    if not isinstance(item, dict):
+        return False
+    data = item.get("data")
+    if not isinstance(data, dict):
+        return False
+    status = str(data.get("status") or "").strip().lower()
+    if status in {"live", "in_progress", "halftime"}:
+        return True
+    if item.get("type") == "event" and status == "scheduled":
+        start = _feed_start_epoch(data.get("commence_time"))
+        if start is not None and start <= now:
+            return True
+    if item.get("type") == "bundle":
+        sub_items = data.get("items")
+        if isinstance(sub_items, list) and any(
+            _item_is_stale_live_or_started(sub, now=now) for sub in sub_items
+        ):
+            return True
+    return False
+
+
+def strip_live_and_started_items_for_last_good(
+    base: Any, *, now: float | None = None
+) -> Any:
+    """#11259: strip live and already-started event cards BEFORE writing ``:last_good``.
+
+    For a mixed Discover deck (non-live cards + one or more live/started games),
+    stripping on write guarantees no live score is ever persisted into the 6h
+    emergency Redis copy, while allowing ``feed_page_base_last_good_max_age_s(
+    live=payload_contains_live_event(stripped))`` to derive the 6h TTL cleanly
+    through the #2216 live-ceiling helper.
+
+    When every item in the deck is live/started (a live-only deck), returns
+    ``base`` unchanged so ``payload_contains_live_event`` remains ``True`` and
+    the live-ceiling helper clamps retention to 60s.
+    """
+    if not isinstance(base, dict):
+        return base
+    items = base.get("items")
+    if not isinstance(items, list) or not items:
+        return base
+    ts = time.time() if now is None else float(now)
+    kept = [
+        it for it in items if not _item_is_stale_live_or_started(it, now=ts)
+    ]
+    if not kept or len(kept) == len(items):
+        return base
+    return {**base, "items": kept, "total": len(kept)}
+
+
 def base_from_last_good(
     raw: Any, *, now: float
 ) -> tuple[Optional[dict], Optional[float]]:
     """#11259: ``(base, origin)`` from a durable copy, or ``(None, None)``.
 
-    Pure, so every refusal is testable without a cache. The caller renders the
-    base exactly as the page-base read tier does (sliced, or composed at its
-    own clock for a seated request). Fails closed on anything it cannot vouch
-    for:
+    Pure, so every refusal is testable without a cache. Fails closed on
+    corrupted, truncated, or undated bases, and on anything older than
+    ``FEED_PAGE_BASE_LAST_GOOD_MAX_AGE_SECONDS`` (6h).
 
-    * anything that is not ``encode_base_last_good``'s wire form (bounded
-      inflation, as ``wire_decode`` does for every shared artifact);
-    * an undecodable base, or one whose ``items`` is not a list or disagrees
-      with ``total`` (truncated, legacy or half-written — the slicer's rule);
-    * a base with no stored origin: its age cannot be bounded, so it cannot be
-      served under a bound;
-    * content older than ``feed_page_base_last_good_max_age_s``. Liveness is
-      read off the WHOLE base, the same conservative direction the publish
-      takes: a live game at position 60 bounds page 1 too. A game the copy
-      still calls ``scheduled`` whose start is at or before ``now`` counts as
-      live (``base_has_started_scheduled_game``): the copy cannot see the
-      kickoff, so it is held to the live ceiling rather than 30 minutes.
+    Within ``FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS`` (60s), the full base
+    (including live and just-started games) is served intact. Past 60s and up
+    to 6h, any live or already-started ``event`` cards (and bundles holding
+    them) are stripped while preserving the rest of the Discover deck — so a
+    single live game never causes an empty page while #2216's 60s live-score
+    truth bound stays unbroken. If stripping leaves zero items, returns
+    ``(None, None)``.
     """
     from app.utils.principal_independent_cache import wire_decode
 
@@ -760,12 +853,23 @@ def base_from_last_good(
     origin = feed_page_base_built_at(base)
     if origin is None:
         return None, None
-    max_age = feed_page_base_last_good_max_age_s(
-        live=payload_contains_live_event(base)
-        or base_has_started_scheduled_game(base, now=now)
-    )
-    if now - origin > max_age:
+    age_s = now - origin
+    if age_s > FEED_PAGE_BASE_LAST_GOOD_MAX_AGE_SECONDS:
         return None, None
+    if age_s <= FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS:
+        return base, origin
+    if payload_contains_live_event(base) or base_has_started_scheduled_game(
+        base, now=now
+    ):
+        kept = [
+            it
+            for it in items
+            if not _item_is_stale_live_or_started(it, now=now)
+        ]
+        if not kept:
+            return None, None
+        filtered = {**base, "items": kept, "total": len(kept)}
+        return filtered, origin
     return base, origin
 
 
@@ -958,6 +1062,8 @@ def feed_response_cache_key(
     edition: Optional[str] = None,
     collections: Optional[str] = None,
     opening_seating: bool = False,
+    machinery: bool | str = False,
+    fun_admission: bool = False,
 ) -> str:
     """Build the Redis response-cache key for one ``GET /api/feed`` shape.
 
@@ -1028,6 +1134,18 @@ def feed_response_cache_key(
         # #5105. A page cut from a seated deck is not the legacy page at the
         # same offset. Same `if` as `edition` above: legacy keys are unchanged.
         parts = f"{FEED_OPENING_SEATING_KEY_MARKER}|{parts}"
+    if machinery:
+        # #12288 / Ruling 252: A. Website and iOS 1.0.7+ opt in via `machinery=1`;
+        # older app versions (1.0.6) omit it and hash the byte-identical key they
+        # always did, hitting the single 1.0.6-safe prewarmed base feed.
+        # #13097: `machinery=preview` hashes under `mach=preview` so preview sets
+        # never share a cached response with public `machinery=1` readers.
+        mach_tag = "preview" if machinery == "preview" else "1"
+        parts = f"mach={mach_tag}|{parts}"
+    if fun_admission:
+        # #13097 / Ruling 272: A. Prepended under the `if` so switch-OFF keys
+        # stay byte-identical and toggling the switch never reads a stale build.
+        parts = f"fun=1|{parts}"
     return f"{FEED_RESPONSE_CACHE_PREFIX}:{hashlib.md5(parts.encode()).hexdigest()}"
 
 
@@ -1047,6 +1165,37 @@ def feed_response_cache_ttl(
         if identified
         else FEED_RESPONSE_TTL_ANON_SECONDS
     )
+
+
+def _item_is_direct_live_card(item: Any) -> bool:
+    """Whether one non-bundle item declares itself live directly."""
+    if not isinstance(item, dict) or item.get("type") == "bundle":
+        return False
+    data = item.get("data")
+    return isinstance(data, dict) and data.get("status") == "live"
+
+
+def _item_is_live_grouping(item: Any) -> bool:
+    """Whether one bundle/grouping item is live or carries a live child game."""
+    if not isinstance(item, dict) or item.get("type") != "bundle":
+        return False
+    data = item.get("data")
+    if not isinstance(data, dict):
+        return False
+    if data.get("status") == "live":
+        return True
+    children = data.get("items")
+    if isinstance(children, list):
+        for child in children:
+            if not isinstance(child, dict):
+                continue
+            cdata = child.get("data")
+            if not isinstance(cdata, dict):
+                continue
+            cstatus = str(cdata.get("status") or "").strip().lower()
+            if cstatus in ("live", "in_progress", "halftime"):
+                return True
+    return False
 
 
 def payload_contains_live_event(payload: Any) -> bool:
@@ -1078,13 +1227,35 @@ def payload_contains_live_event(payload: Any) -> bool:
     items = payload.get("items")
     if not isinstance(items, list):
         return False
+    return any(
+        _item_is_direct_live_card(item) or _item_is_live_grouping(item)
+        for item in items
+    )
+
+
+def payload_is_live_only_via_grouping(payload: Any) -> bool:
+    """Whether a payload is live exclusively through grouping/bundle cards (Decision 346: A)."""
+    if not isinstance(payload, dict):
+        return False
+    items = payload.get("items")
+    if not isinstance(items, list):
+        return False
+    has_live_grouping = False
     for item in items:
-        if not isinstance(item, dict):
-            continue
-        data = item.get("data")
-        if isinstance(data, dict) and data.get("status") == "live":
-            return True
-    return False
+        if _item_is_direct_live_card(item):
+            return False
+        if _item_is_live_grouping(item):
+            has_live_grouping = True
+    return has_live_grouping
+
+
+def live_stale_ceiling_seconds(payload: Any) -> int:
+    """Hard age ceiling for a live payload: 120s if live only via grouping, else 60s."""
+    return (
+        FEED_RESPONSE_STALE_TTL_LIVE_GROUPING_ONLY_SECONDS
+        if payload_is_live_only_via_grouping(payload)
+        else FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+    )
 
 
 def feed_response_cache_ttls(
@@ -1094,6 +1265,7 @@ def feed_response_cache_ttls(
     live: bool = False,
     oldest_artifact_age_s: float = 0.0,
     strict_artifact_age_s: float = 0.0,
+    live_stale_ceiling_s: Optional[int] = None,
 ) -> tuple[int, int]:
     """``(fresh_ttl, stale_ttl)`` for one feed response cache entry (#2216).
 
@@ -1121,11 +1293,17 @@ def feed_response_cache_ttls(
     )
     stale = FEED_RESPONSE_STALE_TTL_SECONDS
     if live:
+        ceiling_s = (
+            FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+            if live_stale_ceiling_s is None
+            else int(live_stale_ceiling_s)
+        )
         fresh = min(fresh, FEED_RESPONSE_TTL_LIVE_SECONDS)
-        stale = min(stale, FEED_RESPONSE_STALE_TTL_LIVE_SECONDS)
+        stale = min(stale, ceiling_s)
         # The inputs have already spent part of the ceiling.
         headroom = live_total_age_headroom_s(
-            max(oldest_artifact_age_s, strict_artifact_age_s)
+            max(oldest_artifact_age_s, strict_artifact_age_s),
+            ceiling_seconds=ceiling_s,
         )
         fresh = min(fresh, headroom)
         stale = min(stale, headroom)

@@ -5,22 +5,53 @@ All endpoints require authentication unless noted otherwise.
 """
 
 import logging
+import re
 import time
 from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from pydantic import BaseModel
-from sqlalchemy import select, delete, and_, or_, case, cast, func, String, union_all
+from sqlalchemy import (
+    Integer,
+    Select,
+    String,
+    and_,
+    bindparam,
+    case,
+    cast,
+    delete,
+    false,
+    func,
+    or_,
+    select,
+    tuple_,
+    union,
+)
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import load_only, selectinload
 
 from app.dependencies.auth import get_current_user, get_optional_user
 from app.models.models import (
-    User, UserPin, UserFavorite, UserPreference, Team, Sport,
-    FuturesMarket, FuturesOutcome, TeamIdentityMapping,
+    User,
+    UserPin,
+    UserFavorite,
+    UserPreference,
+    Team,
+    Sport,
+    RetiredTeamRedirect,
+    FuturesMarket,
+    FuturesOutcome,
+    TeamIdentityMapping,
 )
 from app.services.database import get_db, get_db_rw
+from app.services.onboarding_team_aliases import VenueAliases, onboarding_venue_aliases
+from app.services.onboarding_team_membership import (
+    club_filters,
+    onboarding_team_members,
+)
+from app.utils.futures_source_mark import futures_outcome_source_mark
 from app.utils.series_card_labels import market_threshold_label, reader_outcome_name
 from app.utils.market_team_sport import (
     link_crosses_gender as _link_crosses_gender,
@@ -30,6 +61,8 @@ from app.utils.market_team_sport import (
     sport_key_llm_category as _sport_key_llm_category,
 )
 from app.utils.name_normalization import names_match as _names_match
+from app.utils.sport_keys import is_season_variant
+from app.utils.team_linking import given_name_before_city
 
 logger = logging.getLogger(__name__)
 
@@ -452,6 +485,7 @@ async def remove_pin(
 # Onboarding & Preferences endpoints
 # =============================================================================
 
+
 @router.post("/onboarding")
 async def submit_onboarding(
     body: OnboardingRequest,
@@ -465,6 +499,40 @@ async def submit_onboarding(
     This is a batch endpoint — saves location, teams, sport affinities,
     and raw inputs all at once.
     """
+    selections = (
+        (body.local_teams, "local"),
+        (body.follow_teams, "follow"),
+        (body.alma_mater_teams, "alma_mater"),
+        (body.rival_teams, "rival"),
+    )
+    submitted = {ref.team_id for refs, _ in selections for ref in refs}
+    candidate_ids = {team_id for team_id in submitted if -(2**31) <= team_id < 2**31}
+    canonical_ids: dict[int, int] = {}
+    if candidate_ids:
+        from app.utils.team_redirects import resolve_retired_team_ids_batch
+
+        canonical_ids = await resolve_retired_team_ids_batch(db, candidate_ids)
+        # Hold the team keys until the favorites have been saved. A concurrent
+        # club fold cannot delete a validated team between this read and flush.
+        existing = set(
+            (
+                await db.execute(
+                    select(Team.id)
+                    .where(Team.id.in_(sorted(canonical_ids.values())))
+                    .order_by(Team.id)
+                    .with_for_update(read=True, key_share=True)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        canonical_ids = {
+            original: canonical
+            for original, canonical in canonical_ids.items()
+            if canonical in existing
+        }
+    skipped = sorted(submitted - canonical_ids.keys())
+
     # 1. Delete existing onboarding-sourced favorites
     await db.execute(
         delete(UserFavorite).where(
@@ -480,31 +548,21 @@ async def submit_onboarding(
     # multiple relations (e.g., both "local" and "follow"). We track (team_id, relation_type)
     # pairs to prevent exact duplicates within a single submission.
     seen_pairs: set[tuple[int, str]] = set()
-
-    def _add_favorite(team_id: int, relation_type: str) -> None:
-        pair = (team_id, relation_type)
-        if pair in seen_pairs:
-            return
-        seen_pairs.add(pair)
-        db.add(UserFavorite(
-            user_id=user.id,
-            team_id=team_id,
-            relation_type=relation_type,
-            source="onboarding",
-            weight=1.0,
-        ))
-
-    for team_ref in body.local_teams:
-        _add_favorite(team_ref.team_id, "local")
-
-    for team_ref in body.follow_teams:
-        _add_favorite(team_ref.team_id, "follow")
-
-    for team_ref in body.alma_mater_teams:
-        _add_favorite(team_ref.team_id, "alma_mater")
-
-    for team_ref in body.rival_teams:
-        _add_favorite(team_ref.team_id, "rival")
+    for refs, relation_type in selections:
+        for ref in refs:
+            canonical_id = canonical_ids.get(ref.team_id)
+            if canonical_id is None or (canonical_id, relation_type) in seen_pairs:
+                continue
+            seen_pairs.add((canonical_id, relation_type))
+            db.add(
+                UserFavorite(
+                    user_id=user.id,
+                    team_id=canonical_id,
+                    relation_type=relation_type,
+                    source="onboarding",
+                    weight=1.0,
+                )
+            )
 
     # 3. Expand sport affinities to backend keys
     expanded_affinities = _expand_sport_affinities(body.sport_affinities)
@@ -553,7 +611,16 @@ async def submit_onboarding(
         f"{len(seen_pairs)} team-relations, {len(expanded_affinities)} sport keys"
     )
 
-    return {"status": "ok", "onboarding_completed": True}
+    response: dict[str, str | bool | list[int]] = {
+        "status": "ok",
+        "onboarding_completed": True,
+    }
+    if skipped:
+        response["skipped_team_ids"] = skipped
+        response["message"] = (
+            "Saved your preferences. Some selected teams no longer exist."
+        )
+    return response
 
 
 @router.get("/preferences", response_model=PreferencesResponse)
@@ -637,277 +704,332 @@ async def get_preferences(
 # Team search (for onboarding autocomplete)
 # =============================================================================
 
+_TEAM_SEARCH_TIER = {
+    "basketball_nba": 1,
+    "americanfootball_nfl": 1,
+    "baseball_mlb": 1,
+    "icehockey_nhl": 1,
+    "soccer_epl": 1,
+    "soccer_usa_mls": 1,
+    "basketball_wnba": 2,
+    "basketball_ncaab": 2,
+    "americanfootball_ncaaf": 2,
+    "soccer_germany_bundesliga": 2,
+    "soccer_spain_la_liga": 2,
+    "soccer_italy_serie_a": 2,
+}
+_TEAM_SEARCH_SPORT_LABELS = {
+    "basketball_nba": "NBA",
+    "americanfootball_nfl": "NFL",
+    "baseball_mlb": "MLB",
+    "icehockey_nhl": "NHL",
+    "soccer_usa_mls": "MLS",
+    "basketball_wnba": "WNBA",
+    "basketball_ncaab": "NCAAB",
+    "basketball_wncaab": "WNCAAB",
+    "americanfootball_ncaaf": "NCAAF",
+    "soccer_epl": "EPL",
+    "soccer_spain_la_liga": "La Liga",
+    "soccer_germany_bundesliga": "Bundesliga",
+    "soccer_italy_serie_a": "Serie A",
+    "soccer_france_ligue_one": "Ligue 1",
+    "icehockey_ncaa": "NCAA Hockey",
+    "baseball_ncaa": "NCAA Baseball",
+}
+_TEAM_SEARCH_PRO_LEAGUES = frozenset(
+    key for key in _TEAM_SEARCH_TIER if "_ncaa" not in key
+) | {"soccer_france_ligue_one"}
+_TEAM_SEARCH_COLUMNS = load_only(
+    Team.id,
+    Team.sport_id,
+    Team.name,
+    Team.espn_id,
+    Team.location,
+    Team.logo_url,
+    Team.logo_url_small,
+    Team.abbreviation,
+)
+
+
+def _onboarding_venue_pairs(pairs: set[tuple[int, int]]):
+    if not pairs:
+        return false()
+    team_ids, sport_ids = zip(*sorted(pairs))
+    return tuple_(Team.id, Team.sport_id).in_(
+        select(
+            func.unnest(bindparam(None, list(team_ids), type_=ARRAY(Integer))),
+            func.unnest(bindparam(None, list(sport_ids), type_=ARRAY(Integer))),
+        )
+    )
+
+
+def _onboarding_name_candidates(
+    words: list[str],
+    venue_aliases: VenueAliases,
+) -> Select[tuple[Team, str]]:
+    # Tokens contain only letters and digits. Anchor at the start of a word
+    # so Real cannot match Montreal and Los cannot match Carlos.
+    aliases_json = cast(Team.alternate_names, String)
+    aliases = case((aliases_json.startswith("["), aliases_json), else_="")
+    search_fields = (Team.name, Team.abbreviation, Team.location, aliases)
+    retired = select(RetiredTeamRedirect.retired_team_id).where(
+        RetiredTeamRedirect.canonical_team_id == Team.id,
+        RetiredTeamRedirect.sport_id == Team.sport_id,
+    )
+
+    def retired_alias_match(pattern: str):
+        return retired.where(
+            RetiredTeamRedirect.retired_name.regexp_match(pattern)
+        ).exists()
+
+    venue_prefix = {
+        word: _onboarding_venue_pairs(venue_aliases.prefix(word))
+        for word in dict.fromkeys(words)
+    }
+    # Every result needs this term. The name arm can use ix_teams_name_trgm
+    # separately from the saved location, abbreviation and JSON aliases.
+    anchor = max(words, key=len)
+    substring = f"%{anchor}%"
+    possible_ids = union(
+        select(Team.id).where(Team.name.ilike(substring)),
+        select(Team.id).where(
+            or_(
+                Team.abbreviation.ilike(substring),
+                Team.location.ilike(substring),
+                aliases_json.ilike(substring),
+            )
+        ),
+        select(RetiredTeamRedirect.canonical_team_id).where(
+            RetiredTeamRedirect.retired_name.ilike(substring)
+        ),
+        select(Team.id).where(venue_prefix[anchor]),
+    ).cte("possible_onboarding_team_ids")
+
+    word_start = r"(?i)(?:^|\W|_)"
+    matches = [
+        or_(
+            *(field.regexp_match(word_start + word) for field in search_fields),
+            retired_alias_match(word_start + word),
+            venue_prefix[word],
+        )
+        for word in dict.fromkeys(words)
+    ]
+    phrase = r"(?:\W|_)+".join(words)
+    exact = rf"(?i)^\s*{phrase}\s*$"
+    # Keep an exact alias inside a single JSON string.
+    alias_phrase = r"(?:[\s.'’_&/-]+)".join(words)
+    relevance = case(
+        (Team.name.regexp_match(exact), 0),
+        (
+            or_(
+                Team.abbreviation.regexp_match(exact),
+                aliases.regexp_match(rf'(?i)"{alias_phrase}"'),
+                retired_alias_match(exact),
+                _onboarding_venue_pairs(venue_aliases.exact(words)),
+            ),
+            1,
+        ),
+        (Team.name.regexp_match(rf"(?i)^\s*{phrase}"), 2),
+        (Team.name.regexp_match(word_start + phrase), 3),
+        else_=4,
+    )
+    has_espn_id = func.nullif(Team.espn_id, "").is_not(None)
+    tier = case(_TEAM_SEARCH_TIER, value=Sport.key, else_=5)
+    order = [
+        relevance,
+        has_espn_id.desc(),
+        func.length(Team.name),
+        tier,
+        Team.name,
+        Team.id,
+    ]
+    if len(words) == 1:
+        full_word = Team.name.regexp_match(word_start + words[0] + r"(?:$|\W|_)")
+        pro_club = and_(
+            Sport.key.in_(_TEAM_SEARCH_PRO_LEAGUES), or_(full_word, relevance <= 1)
+        )
+        order.insert(0, pro_club.desc().nulls_last())
+    return (
+        select(Team, Sport.key)
+        .options(_TEAM_SEARCH_COLUMNS)
+        .join(possible_ids, possible_ids.c.id == Team.id)
+        .join(Sport, Team.sport_id == Sport.id)
+        .where(*matches, *club_filters(include_mlb_preseason=True))
+        .order_by(*order)
+        .limit(60)
+    )
+
+
+async def _fold_onboarding_season_clubs(
+    db: AsyncSession,
+    clubs: list[tuple[Team, str]],
+) -> list[tuple[Team, str]]:
+    parents = {
+        key: key.removesuffix("_preseason").removesuffix("_summer_league")
+        for _, key in clubs
+        if is_season_variant(key)
+    }
+    if not parents:
+        return clubs
+
+    variants = [team for team, key in clubs if key in parents]
+    espn_ids = {team.espn_id for team in variants if team.espn_id}
+    names = {team.name for team in variants}
+    # Search the parent leagues in one read. Literal ILIKE can use the name
+    # index even when the preseason copy differs in case.
+    name_matches = []
+    for name in sorted(names):
+        escaped = name.replace("|", "||").replace("%", "|%").replace("_", "|_")
+        name_matches.append(Team.name.ilike(escaped, escape="|"))
+    parent_rows = (
+        await db.execute(
+            select(Team, Sport.key)
+            .options(_TEAM_SEARCH_COLUMNS)
+            .join(Sport, Team.sport_id == Sport.id)
+            .where(
+                Sport.key.in_(sorted(set(parents.values()))),
+                or_(Team.espn_id.in_(sorted(espn_ids)), *name_matches),
+                *club_filters(),
+            )
+        )
+    ).all()
+
+    folded = []
+    for team, sport_key in clubs:
+        if sport_key not in parents:
+            folded.append((team, sport_key))
+            continue
+        parent_key = parents[sport_key]
+        league_clubs = [parent for parent, key in parent_rows if key == parent_key]
+        matching_ids = [
+            parent
+            for parent in league_clubs
+            if team.espn_id and parent.espn_id == team.espn_id
+        ]
+        matching_names = [
+            parent
+            for parent in league_clubs
+            if parent.name.casefold() == team.name.casefold()
+            and not (parent.espn_id and team.espn_id and parent.espn_id != team.espn_id)
+        ]
+        # Equivalent ESPN rows still go through the membership winner below.
+        if matching_ids:
+            folded.append((min(matching_ids, key=lambda club: club.id), parent_key))
+        elif (
+            matching_names
+            and len({parent.espn_id for parent in matching_names if parent.espn_id})
+            <= 1
+        ):
+            preferred = min(
+                matching_names, key=lambda club: (not club.espn_id, club.id)
+            )
+            folded.append((preferred, parent_key))
+        elif sport_key != "baseball_mlb_preseason":
+            folded.append((team, sport_key))
+    return folded
+
+
+async def _verified_onboarding_clubs(
+    db: AsyncSession,
+    rows: list[tuple[Team, str]],
+) -> list[tuple[Team, str]]:
+    eligible = await onboarding_team_members(
+        [(team.sport_id, team.id) for team, _ in rows]
+    )
+    if eligible is None:
+        return rows
+
+    by_id = {team.id: team for team, _ in rows}
+    other_ids = set(eligible.values()) - by_id.keys()
+    if other_ids:
+        # A verified ESPN alias can match when its canonical club did not.
+        # Fetch only the canonical IDs named for the shortlisted candidates.
+        teams = await db.scalars(
+            select(Team)
+            .options(_TEAM_SEARCH_COLUMNS)
+            .join(Sport, Sport.id == Team.sport_id)
+            .where(Team.id.in_(sorted(other_ids)), *club_filters())
+        )
+        by_id.update((team.id, team) for team in teams)
+
+    verified = []
+    for matched, sport_key in rows:
+        canonical_id = eligible.get((matched.sport_id, matched.id))
+        if canonical_id is None:
+            continue
+        canonical = by_id.get(canonical_id)
+        if (
+            canonical
+            and canonical.sport_id == matched.sport_id
+            and canonical.espn_id == matched.espn_id
+        ):
+            verified.append((canonical, sport_key))
+    return verified
+
+
 @router.get("/teams/search", response_model=list[TeamSearchResult])
 async def search_teams(
     q: str,
     db: AsyncSession = Depends(get_db),
-):
-    """
-    Search teams by name for autocomplete.
-    Does not require auth — used during onboarding flow.
-    Searches team name, alternate_names, and location.
-
-    Falls back to the events table for teams that don't have Team records yet
-    (common for college teams that haven't been on an ESPN scoreboard).
-    Auto-creates Team records for matches found in events.
-    """
-    if len(q) < 2:
+) -> list[TeamSearchResult]:
+    """Rank saved clubs, then filter by league when the snapshot is available."""
+    if len(q) > 200:
+        return []
+    words = re.findall(r"[^\W_]+", q)
+    if len(words) > 12 or sum(map(len, words)) < 2:
         return []
 
-    # Split multi-word queries into individual search terms.
-    # "Brown University" → search for teams matching "Brown" OR "University"
-    # This lets users type school names like "Harvard University" and find
-    # "Harvard Crimson", or "Brown University" and find "Brown Bears".
-    words = [w.strip() for w in q.split() if len(w.strip()) >= 2]
-    if not words:
+    venue_aliases = onboarding_venue_aliases(db)
+    rows = (await db.execute(_onboarding_name_candidates(words, venue_aliases))).all()
+    if not rows:
         return []
-
-    from app.models.models import Sport, Event
-    conditions = []
-    for word in words:
-        pattern = f"%{word}%"
-        conditions.append(Team.name.ilike(pattern))
-        conditions.append(Team.location.ilike(pattern))
-        conditions.append(Team.abbreviation.ilike(pattern))
-        # Search alternate_names JSONB (stored as ["Lakers", "LA Lakers"])
-        conditions.append(cast(Team.alternate_names, String).ilike(pattern))
-
-    # Relevance ordering: exact name match > starts-with > contains
-    q_lower = q.lower()
-    relevance = case(
-        (Team.name.ilike(q), 0),            # Exact match
-        (Team.name.ilike(f"{q}%"), 1),       # Starts with
-        (Team.abbreviation.ilike(q), 2),     # Abbreviation match
-        else_=3,                              # Contains
+    folded = await _fold_onboarding_season_clubs(
+        db, [(team, key) for team, key in rows]
     )
+    clubs = await _verified_onboarding_clubs(db, folded) if folded else []
 
-    # Sport keys to exclude: preseason, minor leagues, obscure foreign leagues
-    _EXCLUDED_SPORT_KEYS = {
-        "baseball_mlb_preseason",
-        "soccer_copa_sudamericana", "soccer_copa_libertadores",
-        "soccer_brazil_campeonato", "soccer_brazil_serie_b",
-        "soccer_argentina_primera_division",
-        "soccer_chile_primera_division", "soccer_colombia_primera_a",
-    }
-
-    # Tier ordering: lower = more relevant. Used for dedup (keep best tier).
-    _SPORT_TIER = {
-        "basketball_nba": 1, "americanfootball_nfl": 1, "baseball_mlb": 1,
-        "icehockey_nhl": 1, "soccer_epl": 1, "soccer_usa_mls": 1,
-        "basketball_wnba": 2, "basketball_ncaab": 2,
-        "americanfootball_ncaaf": 2, "soccer_germany_bundesliga": 2,
-        "soccer_spain_la_liga": 2, "soccer_italy_serie_a": 2,
-    }
-
-    result = await db.execute(
-        select(Team, Sport.key.label("sport_key"))
-        .join(Sport, Team.sport_id == Sport.id)
-        .where(
-            or_(*conditions),
-            Sport.key.notin_(_EXCLUDED_SPORT_KEYS),
+    # ESPN uses a shared soccer club key across competitions. Require the
+    # full name to agree too. All other rows keep their stored team identity.
+    groups: dict[int | tuple[str, str], TeamSearchResult] = {}
+    seen_names_and_leagues: set[tuple[str, str]] = set()
+    seen_espn_ids_and_leagues: set[tuple[str, str]] = set()
+    for team, sport_key in clubs:
+        name_and_league = (team.name, sport_key)
+        espn_id_and_league = (team.espn_id, sport_key) if team.espn_id else None
+        if (
+            name_and_league in seen_names_and_leagues
+            or espn_id_and_league in seen_espn_ids_and_leagues
+        ):
+            continue
+        seen_names_and_leagues.add(name_and_league)
+        if espn_id_and_league:
+            seen_espn_ids_and_leagues.add(espn_id_and_league)
+        key = team.id
+        if team.espn_id and sport_key.startswith("soccer_"):
+            key = (team.espn_id, " ".join(team.name.casefold().split()))
+        display = _TEAM_SEARCH_SPORT_LABELS.get(
+            sport_key, sport_key.split("_", 1)[-1].upper()
         )
-        .order_by(relevance, Team.name)
-        .limit(50)  # Fetch extra for dedup
-    )
-    rows = result.all()
-
-    # Group by normalized team name — collect all sport variants
-    _SPORT_DISPLAY = {
-        "basketball_nba": "NBA", "americanfootball_nfl": "NFL",
-        "baseball_mlb": "MLB", "icehockey_nhl": "NHL",
-        "soccer_usa_mls": "MLS", "basketball_wnba": "WNBA",
-        "basketball_ncaab": "NCAAB", "basketball_wncaab": "WNCAAB",
-        "americanfootball_ncaaf": "NCAAF",
-        "soccer_epl": "EPL", "soccer_spain_la_liga": "La Liga",
-        "soccer_germany_bundesliga": "Bundesliga",
-        "soccer_italy_serie_a": "Serie A", "soccer_france_ligue_one": "Ligue 1",
-        "icehockey_ncaa": "NCAA Hockey", "baseball_ncaa": "NCAA Baseball",
-    }
-
-    grouped: dict[str, dict] = {}
-    for team, sport_key in rows:
-        norm = team.name.lower().strip()
-        tier = _SPORT_TIER.get(sport_key, 5)
-        display = _SPORT_DISPLAY.get(sport_key, sport_key.split("_", 1)[-1].upper() if sport_key else "OTHER")
-        variant = TeamSportVariant(id=team.id, sport_key=sport_key, sport_display=display)
-
-        # Find an existing group that fuzzy-matches this team name.
-        # Handles "Stanford" vs "Stanford Cardinal" being the same team.
-        matched_key = None
-        for existing_key in grouped:
-            if _names_match(norm, existing_key):
-                matched_key = existing_key
-                break
-
-        if matched_key is None:
-            grouped[norm] = {
-                "primary": team,
-                "sport_key": sport_key,
-                "tier": tier,
-                "logo": team.logo_url_small or team.logo_url,
-                "variants": [variant],
-            }
+        variant = TeamSportVariant(
+            id=team.id, sport_key=sport_key, sport_display=display
+        )
+        if key in groups:
+            groups[key].sports.append(variant)
         else:
-            grouped[matched_key]["variants"].append(variant)
-            if tier < grouped[matched_key]["tier"]:
-                grouped[matched_key]["primary"] = team
-                grouped[matched_key]["sport_key"] = sport_key
-                grouped[matched_key]["tier"] = tier
-                if team.logo_url_small or team.logo_url:
-                    grouped[matched_key]["logo"] = team.logo_url_small or team.logo_url
-            # Prefer the longer (more specific) name as the display name
-            elif len(norm) > len(matched_key) and tier <= grouped[matched_key]["tier"]:
-                grouped[matched_key]["primary"] = team
-                if team.logo_url_small or team.logo_url:
-                    grouped[matched_key]["logo"] = team.logo_url_small or team.logo_url
-
-    results = []
-    for norm, g in grouped.items():
-        team = g["primary"]
-        variants = sorted(g["variants"], key=lambda v: _SPORT_TIER.get(v.sport_key or "", 5))
-        results.append(TeamSearchResult(
-            id=team.id,
-            name=team.name,
-            location=team.location,
-            sport_key=g["sport_key"],
-            logo_url=g["logo"],
-            abbreviation=team.abbreviation,
-            sports=variants if len(variants) > 1 else [],
-        ))
-    results.sort(key=lambda r: _SPORT_TIER.get(r.sport_key or "", 5))
-    results = results[:20]
-
-    # -------------------------------------------------------------------------
-    # Events table fallback: find teams from events that lack Team records.
-    # This catches college teams (Harvard, Brown, Stanford, etc.) that The Odds
-    # API tracks but ESPN sync hasn't created Team records for yet.
-    # -------------------------------------------------------------------------
-    if len(results) < 15:
-        existing_ids = {r.id for r in results}
-        existing_name_sports: set[tuple[str, int]] = set()
-        # Build a set of (name, sport_id) from existing results to avoid duplicates.
-        # We need sport_id (not sport_key) for dedup, so re-query if needed.
-        for team, sport_key in rows:
-            existing_name_sports.add((team.name, team.sport_id))
-
-        # Search both home and away team names in events
-        home_conds = [Event.home_team_name.ilike(f"%{w}%") for w in words]
-        away_conds = [Event.away_team_name.ilike(f"%{w}%") for w in words]
-
-        home_subq = (
-            select(
-                Event.home_team_name.label("team_name"),
-                Sport.id.label("sport_id"),
-                Sport.key.label("sport_key"),
-            )
-            .join(Sport, Event.sport_id == Sport.id)
-            .where(or_(*home_conds))
-        )
-        away_subq = (
-            select(
-                Event.away_team_name.label("team_name"),
-                Sport.id.label("sport_id"),
-                Sport.key.label("sport_key"),
-            )
-            .join(Sport, Event.sport_id == Sport.id)
-            .where(or_(*away_conds))
-        )
-        combined = union_all(home_subq, away_subq).subquery()
-
-        event_teams_result = await db.execute(
-            select(
-                combined.c.team_name,
-                combined.c.sport_id,
-                combined.c.sport_key,
-            ).distinct().limit(50)
-        )
-        event_teams = event_teams_result.all()
-
-        teams_created = 0
-        for team_name, sport_id, sport_key in event_teams:
-            if (team_name, sport_id) in existing_name_sports:
-                continue
-
-            # Also skip if a fuzzy-matching team is already in results
-            # (e.g., "Stanford" when "Stanford Cardinal" is already showing)
-            if any(
-                _names_match(team_name, existing_name)
-                for existing_name, existing_sid in existing_name_sports
-                if existing_sid == sport_id
-            ):
-                continue
-
-            # Check if a Team record already exists (may not be in our initial
-            # search results due to missing location/alternate_names)
-            team_check = await db.execute(
-                select(Team).where(
-                    Team.name == team_name,
-                    Team.sport_id == sport_id,
-                )
-            )
-            team = team_check.scalar_one_or_none()
-
-            # Fuzzy match: find existing team with a matching name
-            if not team:
-                _first_word = team_name.split()[0] if team_name else ""
-                if len(_first_word) >= 3:
-                    fuzzy_check = await db.execute(
-                        select(Team).where(
-                            Team.sport_id == sport_id,
-                            Team.name.ilike(f"%{_first_word}%"),
-                        )
-                    )
-                    for candidate in fuzzy_check.scalars():
-                        if _names_match(team_name, candidate.name):
-                            team = candidate
-                            break
-
-            if not team:
-                # Auto-create Team record — this team exists in events but has
-                # no Team record (usually college teams not on ESPN scoreboard).
-                # Copy logo/location from an existing Team with the same name
-                # (different sport) so the logo shows up consistently.
-                team = Team(name=team_name, sport_id=sport_id)
-
-                existing_with_logo = await db.execute(
-                    select(Team).where(
-                        Team.name == team_name,
-                        Team.logo_url_small.isnot(None),
-                    ).limit(1)
-                )
-                donor = existing_with_logo.scalar_one_or_none()
-                if donor:
-                    team.logo_url = donor.logo_url
-                    team.logo_url_small = donor.logo_url_small
-                    team.location = donor.location
-                    team.primary_color = donor.primary_color
-                    team.secondary_color = donor.secondary_color
-
-                db.add(team)
-                await db.flush()
-                teams_created += 1
-
-            if team.id not in existing_ids:
-                results.append(TeamSearchResult(
-                    id=team.id,
-                    name=team.name,
-                    location=team.location,
-                    sport_key=sport_key,
-                    logo_url=team.logo_url_small or team.logo_url,
-                    abbreviation=team.abbreviation,
-                ))
-                existing_ids.add(team.id)
-                existing_name_sports.add((team_name, sport_id))
-
-            if len(results) >= 20:
-                break
-
-        if teams_created > 0:
-            logger.info(
-                f"Auto-created {teams_created} Team records from events "
-                f"fallback (query='{q}')"
+            groups[key] = TeamSearchResult(
+                id=team.id,
+                name=team.name,
+                location=team.location,
+                sport_key=sport_key,
+                logo_url=team.logo_url_small or team.logo_url,
+                abbreviation=team.abbreviation,
+                sports=[variant],
             )
 
+    results = list(groups.values())[:20]
+    for result in results:
+        if len(result.sports) == 1:
+            result.sports = []
     return results
 
 
@@ -1005,9 +1127,19 @@ async def add_favorite(
     if body.relation_type not in valid_types:
         raise HTTPException(status_code=400, detail=f"relation_type must be one of {valid_types}")
 
-    # Verify team exists
-    result = await db.execute(select(Team).where(Team.id == body.team_id))
+    # Verify team exists (following retired_team_redirects for folded duplicate rows, #13229)
+    target_team_id = body.team_id
+    result = await db.execute(select(Team).where(Team.id == target_team_id))
     team = result.scalar_one_or_none()
+    if not team:
+        from app.utils.team_redirects import resolve_retired_team_id
+
+        canonical_id = await resolve_retired_team_id(db, target_team_id)
+        if canonical_id != target_team_id:
+            canonical_result = await db.execute(select(Team).where(Team.id == canonical_id))
+            team = canonical_result.scalar_one_or_none()
+            if team:
+                target_team_id = team.id
     if not team:
         raise HTTPException(status_code=404, detail="Team not found")
 
@@ -1016,7 +1148,7 @@ async def add_favorite(
         select(UserFavorite).where(
             and_(
                 UserFavorite.user_id == user.id,
-                UserFavorite.team_id == body.team_id,
+                UserFavorite.team_id == target_team_id,
                 UserFavorite.relation_type == body.relation_type,
             )
         )
@@ -1026,14 +1158,25 @@ async def add_favorite(
 
     db.add(UserFavorite(
         user_id=user.id,
-        team_id=body.team_id,
+        team_id=target_team_id,
         relation_type=body.relation_type,
         source="manual",
         weight=1.0,
     ))
     await db.flush()
 
-    logger.info(f"Added favorite: user={user.id} team={body.team_id} type={body.relation_type}")
+    safe_relation_type = {
+        "follow": "follow",
+        "local": "local",
+        "alma_mater": "alma_mater",
+        "rival": "rival",
+    }[body.relation_type]
+    logger.info(
+        "Added favorite: user=%d team=%d type=%s",
+        int(user.id),
+        int(target_team_id),
+        safe_relation_type,
+    )
     return {"status": "added"}
 
 
@@ -1049,20 +1192,49 @@ async def remove_favorite(
     if relation_type not in valid_types:
         raise HTTPException(status_code=400, detail=f"relation_type must be one of {valid_types}")
 
+    target_team_id = team_id
     result = await db.execute(
         delete(UserFavorite).where(
             and_(
                 UserFavorite.user_id == user.id,
-                UserFavorite.team_id == team_id,
+                UserFavorite.team_id == target_team_id,
                 UserFavorite.relation_type == relation_type,
             )
         )
     )
 
     if result.rowcount == 0:
+        from app.utils.team_redirects import resolve_retired_team_id
+
+        canonical_id = await resolve_retired_team_id(db, team_id)
+        if canonical_id != team_id:
+            target_team_id = canonical_id
+            retry_result = await db.execute(
+                delete(UserFavorite).where(
+                    and_(
+                        UserFavorite.user_id == user.id,
+                        UserFavorite.team_id == target_team_id,
+                        UserFavorite.relation_type == relation_type,
+                    )
+                )
+            )
+            result = retry_result
+
+    if result.rowcount == 0:
         raise HTTPException(status_code=404, detail="Favorite not found")
 
-    logger.info(f"Removed favorite: user={user.id} team={team_id} type={relation_type}")
+    safe_relation_type = {
+        "follow": "follow",
+        "local": "local",
+        "alma_mater": "alma_mater",
+        "rival": "rival",
+    }[relation_type]
+    logger.info(
+        "Removed favorite: user=%d team=%d type=%s",
+        int(user.id),
+        int(target_team_id),
+        safe_relation_type,
+    )
     return {"status": "removed"}
 
 
@@ -1780,6 +1952,21 @@ async def _query_team_futures(
         market_sport_cat: str | None = market.llm_sport_category
         if not market_sport_cat and market_sport_key:
             market_sport_cat = _sport_key_llm_category(market_sport_key)
+        outcome_name = outcome.name or ""
+        market_name = (market.name or "").casefold()
+
+        def _coach_surname_matches_city(team: Team) -> bool:
+            # A stored Blues link can put Canadiens coach Martin St. Louis
+            # on the Blues rail. A full roster match can still bind.
+            if "coach of the year" not in market_name and "jack adams award" not in market_name:
+                return False
+            if player_to_team_id.get(outcome_name.lower()) == team.id:
+                return False
+            aliases = getattr(team, "alternate_names", None)
+            return isinstance(aliases, list) and any(
+                given_name_before_city(outcome_name, alias, team.name, ignore_city_periods=True)
+                for alias in aliases if isinstance(alias, str)
+            )
 
         # Direct team_id match. Resolve dup ids onto the canonical row so a
         # market linked to a bare-location dupe still matches the followed
@@ -1834,15 +2021,15 @@ async def _query_team_futures(
             canonical_id = None
         if canonical_id and canonical_id in teams:
             t = teams[canonical_id]
-            return {
-                "id": t.id,
-                "name": t.name,
-                "logo_small": t.logo_url_small or t.logo_url,
-                "primary_color": t.primary_color,
-            }
+            if not _coach_surname_matches_city(t):
+                return {
+                    "id": t.id,
+                    "name": t.name,
+                    "logo_small": t.logo_url_small or t.logo_url,
+                    "primary_color": t.primary_color,
+                }
         # Name matching — use strict suffix-word logic to prevent
         # "Bears" (from "Brown Bears") matching "Chicago Bears".
-        outcome_name = outcome.name or ""
         for t in teams.values():
             if any(
                 _strict_team_name_matches(nm, outcome_name)
@@ -1853,8 +2040,8 @@ async def _query_team_futures(
                     team_cat = team_sport_categories.get(t.id)
                     if team_cat and team_cat != market_sport_cat:
                         continue  # sport mismatch — try next team
-                if _crosses_side(t.id):
-                    continue  # the other side's market (#9593)
+                if _crosses_side(t.id) or _coach_surname_matches_city(t):
+                    continue
                 return {
                     "id": t.id,
                     "name": t.name,
@@ -2012,7 +2199,10 @@ async def _query_team_futures(
             # identical but whose ticker leg is a player code, not a team code.
             # A short name is visibly short; a wrong one is not.
             "outcome_name": reader_outcome_name(
-                outcome.external_id, outcome.name, market_threshold_label(market)
+                getattr(outcome, "external_id", None),
+                outcome.name,
+                market_threshold_label(market),
+                market_name=getattr(market, "name", None),
             )
             or outcome.name,
             "market_id": market.id,
@@ -2021,6 +2211,7 @@ async def _query_team_futures(
             "category": market.llm_sport_category,
             "source": market.source,
             "probability": prob,
+            "source_mark": futures_outcome_source_mark(market, outcome, {"probability": prob}),
             "probability_change_24h": change,
             "rank": outcome.rank,
             "total_outcomes": outcome_total,

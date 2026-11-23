@@ -70,6 +70,7 @@ struct NativeEventDiscoverCard: View {
     /// THIS card draws at THIS text size, so both of these are inputs to a layout
     /// decision rather than decoration. See `GameCardStatusColumn`.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject var clock = MinuteClock.shared
     @State private var heroContentWidth: Double = 0
 
@@ -94,7 +95,19 @@ struct NativeEventDiscoverCard: View {
     /// `ProbabilityBarPalette.colors(awayHex:homeHex:)` compiles, renders and
     /// leaves every contrast test green. A test drives this on a real payload.
     var barColorHexes: (away: String, home: String) {
-        TeamTextContrast.cardColorHexes(
+        barColorHexes(for: .light)
+    }
+
+    func barColorHexes(for scheme: ColorScheme) -> (away: String, home: String) {
+        if scheme == .dark {
+            return TeamTextContrast.darkSurfaceColorHexes(
+                awayHex: event.awayTeamData?.primaryColor,
+                homeHex: event.homeTeamData?.primaryColor,
+                awaySecondaryHex: event.awayTeamData?.secondaryColor,
+                homeSecondaryHex: event.homeTeamData?.secondaryColor
+            )
+        }
+        return TeamTextContrast.cardColorHexes(
             awayHex: event.awayTeamData?.primaryColor,
             homeHex: event.homeTeamData?.primaryColor,
             awaySecondaryHex: event.awayTeamData?.secondaryColor
@@ -102,7 +115,7 @@ struct NativeEventDiscoverCard: View {
     }
 
     private var barColors: (away: Color, home: Color) {
-        let hexes = barColorHexes
+        let hexes = barColorHexes(for: colorScheme)
         return (Color(hex: hexes.away), Color(hex: hexes.home))
     }
 
@@ -971,12 +984,38 @@ struct NativeEventDiscoverCard: View {
     }
 
     private func renderedShareImage() -> PlatformImage? {
+        if EventState.isFinished(event.status) || event.heroProbabilitySource == "settled" {
+            let pregame = PrematchReading.resolve(prematch: event.prematchOdds, opening: event.openingOdds)
+            guard event.awayScore != nil || event.homeScore != nil || pregame != nil else {
+                return nil
+            }
+            let awayWithheld = pregame?.awayIsComplement == true && DrawPricedWinner.sportPricesADraw(event.sport)
+            return ShareCardRenderer.renderEventCard(
+                homeTeam: event.homeTeam,
+                awayTeam: event.awayTeam,
+                homeProbability: pregame?.homeProbability ?? 0.5,
+                awayProbability: awayWithheld ? nil : pregame?.awayProbability,
+                awayRenderedPercent: pregame?.percents.first ?? nil,
+                homeRenderedPercent: (pregame?.percents.count ?? 0) > 1 ? pregame?.percents[1] : nil,
+                sportName: event.sportName ?? event.sport ?? "Sports",
+                homeColor: homeColor,
+                awayColor: awayColor,
+                status: "completed",
+                homeScore: event.homeScore,
+                awayScore: event.awayScore,
+                commenceTime: event.commenceTime?.asDate,
+                pregameReading: pregame,
+                sportKey: event.sport,
+                authorityPeriod: event.espn?.period
+            )
+        }
         // #5363 — the same pair rule the card's own strip draws, so the image a
         // reader shares carries the reading they were looking at.
-        guard let printable = DrawPricedWinner.printablePair(
-            away: event.currentOdds?.awayProbability,
-            home: event.currentOdds?.homeProbability,
-            sport: event.sport) else {
+        guard event.heroProbabilitySource != OpeningLineHero.openingSource,
+              let printable = DrawPricedWinner.printablePair(
+                  away: event.currentOdds?.awayProbability,
+                  home: event.currentOdds?.homeProbability,
+                  sport: event.sport) else {
             return nil
         }
         return ShareCardRenderer.renderEventCard(

@@ -577,11 +577,13 @@ struct PreferencesView: View {
                     .font(.subheadline)
                     .fontWeight(isActive ? .semibold : .regular)
                     .foregroundStyle(isActive ? .primary : .secondary)
-                    .lineLimit(1)
+                    .lineLimit(2)
+                    .allowsTightening(true)
                     .minimumScaleFactor(AffinityRowMetrics.nameMinimumScaleFactor)
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
-            Spacer()
+            Spacer(minLength: 0)
 
             // Affinity capsules
             HStack(spacing: AffinityRowMetrics.capsuleSpacing) {
@@ -958,7 +960,7 @@ struct PreferencesView: View {
                                 .fontWeight(.medium)
                                 .foregroundStyle(.primary)
                                 .fixedSize(horizontal: false, vertical: true)
-                            Text("Show the 4 machinery-built groupings on Discover (private owner switch, default off)")
+                            Text("Show the 5 machinery-built groupings on Discover (private owner switch, default off)")
                                 .font(.caption2)
                                 .foregroundStyle(Color.secondary.opacity(0.75))
                                 .fixedSize(horizontal: false, vertical: true)

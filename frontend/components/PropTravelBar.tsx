@@ -104,7 +104,8 @@ export function signedTravelPoints(row: DivergenceRow): string {
  */
 export function surprisePoints(row: DivergenceRow): string | null {
   if (row.surprise == null) return null;
-  return `${Math.round(row.surprise * 100)} pts`;
+  const n = Math.round(row.surprise * 100);
+  return `${n} ${n === 1 ? "point" : "points"}`;
 }
 
 /**

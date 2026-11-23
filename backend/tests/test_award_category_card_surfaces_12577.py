@@ -15,7 +15,6 @@ from app.services.paired_metric_register import (
 )
 from app.utils.roundup_containers import (
     ROUNDUP_PRODUCERS,
-    add_roundup_feed_items,
     evaluate_roundup_producer,
     insert_roundup_feed_items,
     register_roundup_definitions_from_dir,
@@ -150,6 +149,16 @@ async def test_live_paired_metric_hydration_uses_db_prices_never_stale_snapshot_
     odyssey = next(e for e in bp["entries"] if e["subject"] == "The Odyssey")
     assert odyssey["stage_2_probability"] == pytest.approx(0.52)
     assert odyssey["stage_1_probability"] == pytest.approx(0.95)
+    assert odyssey["stage_2_source_mark"]["state"] == "single"
+    assert odyssey["stage_1_source_mark"]["state"] == "blend"
+    assert [
+        (s["key"], s["probability"], s["observed_at"])
+        for s in odyssey["stage_2_source_mark"]["sources"]
+    ] == [("kalshi", 0.52, None)]
+    assert [
+        (s["key"], s["probability"], s["observed_at"])
+        for s in odyssey["stage_1_source_mark"]["sources"]
+    ] == [("kalshi", 0.96, None), ("polymarket", 0.94, None)]
     assert odyssey["stage_1_blend_authority"] == "server:futures_source_merge.blend_with_verdict"
     assert "#" not in bp["subtitle"]
     assert "The Odyssey leads Best Picture" in bp["title"]
@@ -164,6 +173,28 @@ async def test_live_paired_metric_hydration_uses_db_prices_never_stale_snapshot_
     by_subj = {e["subject"]: e for e in s_bp["entries"]}
     assert by_subj["The Odyssey"]["stage_1_settled_state"] == "yes"
     assert by_subj["Dune: Part Three"]["stage_1_settled_state"] == "no"
+    assert by_subj["The Odyssey"]["stage_1_source_mark"]["reason"] == "result_unknown"
+
+
+@pytest.mark.asyncio
+async def test_paired_stage_mark_names_the_divergence_winner_and_preserves_unknown_source():
+    markets = _live_best_picture_markets(
+        odyssey_win=0.35, odyssey_nom_kalshi=0.45, odyssey_nom_poly=0.95,
+    )
+    markets[2]["source"] = None
+    loaded = await load_live_paired_metric_sets(
+        markets, set_ids=["oscars-2027-best-picture"],
+    )
+    bp = loaded["oscars-2027-best-picture"]
+    odyssey = next(e for e in bp["entries"] if e["subject"] == "The Odyssey")
+    assert odyssey["stage_1_blend_rule"] == "divergence_gate"
+    assert odyssey["stage_1_probability"] == 0.45
+    assert odyssey["stage_1_source_mark"]["state"] == "single"
+    assert [s["key"] for s in odyssey["stage_1_source_mark"]["sources"]] == ["kalshi"]
+    assert odyssey["stage_2_probability"] == 0.35
+    assert odyssey["stage_2_source_mark"] == {
+        "state": "none", "sources": [], "reason": "source_evidence_incomplete",
+    }
 
 
 def test_find_paired_set_id_for_market_resolves_stage1_companion_and_stage2():
@@ -190,6 +221,19 @@ async def test_roundup_oscars_best_picture_serves_discover_paired_card_and_folds
     assert feed_item["data"]["roundup"]["paired_metric_set"]["set_id"] == "oscars-2027-best-picture"
     assert container_payload["paired_metric_set"]["set_id"] == "oscars-2027-best-picture"
     assert container_payload["parent"]["slug"] == "oscars-2027"
+    roundup = feed_item["data"]["roundup"]
+    odyssey = next(e for e in roundup["paired_metric_set"]["entries"] if e["subject"] == "The Odyssey")
+    row = roundup["rows"][0]
+    assert row["label"] == "The Odyssey"
+    assert row["source_mark"] == odyssey["stage_2_source_mark"]
+    assert row["secondary_source_mark"] == odyssey["stage_1_source_mark"]
+    assert container_payload["paired_metric_set"]["entries"] == roundup["paired_metric_set"]["entries"]
+    for member in container_payload["sections"][0]["members"]:
+        for outcome in member["card"]["top_outcomes"]:
+            [source] = outcome["source_mark"]["sources"]
+            assert source["key"] == member["card"]["source"]
+            assert source["probability"] == outcome["probability"]
+            assert source["observed_at"] is None
 
     # Contradictory win > nomination (>2pp tolerance) refuses cleanly
     bad_pool = _live_best_picture_markets(odyssey_win=0.80, odyssey_nom_kalshi=0.50, odyssey_nom_poly=0.50)

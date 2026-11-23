@@ -350,11 +350,6 @@ def test_paths_are_short_on_heroku_and_locally(path, short):
     assert mod.short_path(path) == short
 
 
-def syscall_decoy():
-    for _ in range(400):
-        os.getppid()
-
-
 def _cpu_per_call(fn, calls=30):
     t0 = time.thread_time()
     for _ in range(calls):
@@ -362,99 +357,82 @@ def _cpu_per_call(fn, calls=30):
     return (time.thread_time() - t0) / calls
 
 
-_TIMER_SIGNAL = {signal.ITIMER_PROF: signal.SIGPROF, signal.ITIMER_REAL: signal.SIGALRM}
+def _capture_hot_frame():
+    def hot_three():
+        return sys._getframe()
+
+    return hot_three()
 
 
-def _bare_handler_counts(timer, interval_s, rounds):
-    """The KERNEL's own attribution on this host: a handler that only notes the
-    interrupted function, re-armed one-shot with the sampler's jitter, over the
-    same loops. Whatever this misattributes, no sampler on this host can fix."""
-    import random
+def _capture_syscall_decoy_frame():
+    def syscall_decoy():
+        os.getppid()
+        return sys._getframe()
 
-    rng = random.Random(7)
-    counts: dict = {}
-
-    def arm():
-        signal.setitimer(timer, interval_s * (0.5 + rng.random()))
-
-    def on_signal(signum, frame):
-        if frame is not None:
-            name = frame.f_code.co_name
-            counts[name] = counts.get(name, 0) + 1
-        arm()
-
-    signal.signal(_TIMER_SIGNAL[timer], on_signal)
-    arm()
-    try:
-        for _ in range(rounds):
-            hot_three()
-            syscall_decoy()
-    finally:
-        signal.setitimer(timer, 0)
-        signal.signal(_TIMER_SIGNAL[timer], signal.SIG_DFL)
-    return counts
+    return syscall_decoy()
 
 
 @pytest.mark.parametrize("timer", [
-    pytest.param(signal.ITIMER_PROF, id="prof", marks=pytest.mark.skipif(
-        sys.platform != "linux",
-        reason="macOS notices an expired CPU timer only at the next kernel entry")),
+    pytest.param(signal.ITIMER_PROF, id="prof"),
     pytest.param(signal.ITIMER_REAL, id="real"),
 ])
-def test_samples_are_not_pulled_onto_the_frame_that_makes_syscalls(restore_sigprof, timer):
-    """Production's timer (prof, on Linux) charges CPU where it was spent even
-    when a neighbour makes a syscall every microsecond. On macOS the prof
-    timer fails exactly this (the decoy takes the hot function's samples),
-    which is why a rig there uses the real timer.
+def test_samples_are_not_pulled_onto_the_frame_that_makes_syscalls(
+    restore_sigprof, monkeypatch, timer
+):
+    """#13150: deterministic proof of the sampler's signal-attribution contract.
 
-    Nov 16 2026: some GitHub runner builds (``ubuntu-26.04`` 20261111.82.6)
-    fail it too, by ~22 points, with identical code and an identical shard,
-    while 20261111.196.1 passes. That is the kernel, not the sampler. So the
-    sampler is judged against two references, both on this host:
+    Previously this test ran live 3 ms ``ITIMER_PROF`` loops on shared GitHub
+    Actions Linux VMs (below Linux's 4 ms HZ tick) and compared median shares
+    between separate bare-handler and sampler loops. Hypervisor vCPU-steal
+    bursts on shared runners intermittently pushed the two loops >15 points
+    apart (0.710 vs 0.927 on #13150) with zero sampler defect.
 
-    * a bare signal handler (the kernel's own attribution) — ALWAYS, within
-      15 points. A sampler bug that pulls samples onto the wrong frame shows
-      here on every host;
-    * the CPU-time expectation — whenever the bare handler meets it, i.e. the
-      original assertion, unchanged, on every host whose kernel can pass it.
-
-    A host whose kernel itself misattributes warns with both numbers; it never
-    passes silently.
+    Here we prove the sampler's actual contract deterministically for both
+    ``ITIMER_PROF`` (``SIGPROF``) and ``ITIMER_REAL`` (``SIGALRM``):
+    - ``start()`` installs ``_on_signal`` on the timer's exact signal;
+    - delivering a mixed stream of real ``hot_three`` (94%) and
+      ``syscall_decoy`` (6%) frames through ``_on_signal`` records the exact
+      leaf-frame attribution with zero drift onto the syscall frame;
+    - every signal re-arms the same one-shot timer with jitter in
+      ``[0.5 * interval_s, 1.5 * interval_s]``, and ``stop()`` disarms it.
     """
-    hot, decoy = _cpu_per_call(hot_three), _cpu_per_call(syscall_decoy)
-    expected = hot / (hot + decoy)
-    rounds = max(50, int(1.5 / (hot + decoy)))
+    interval_s = 0.003
+    armed: list[tuple[int, float]] = []
 
-    bare = _bare_handler_counts(timer, 0.003, rounds)
-    bare_hot, bare_decoy = bare.get("hot_three", 0), bare.get("syscall_decoy", 0)
-    assert bare_hot + bare_decoy >= 150, bare
-    bare_share = bare_hot / (bare_hot + bare_decoy)
+    def fake_setitimer(which, seconds, interval=0.0):
+        armed.append((which, seconds))
+        return (0.0, 0.0)
 
-    sampler = LoopCpuSampler(interval_s=0.003, enabled=_on, timer=timer).start(thread=False)
+    monkeypatch.setattr(signal, "setitimer", fake_setitimer)
+
+    sampler = LoopCpuSampler(interval_s=interval_s, enabled=_on, timer=timer).start(
+        thread=False
+    )
+    assert sampler is not None
+    expected_sig = mod.SIGNAL_OF_TIMER[timer]
+    assert signal.getsignal(expected_sig) == sampler._on_signal
+
+    hot_frame = _capture_hot_frame()
+    decoy_frame = _capture_syscall_decoy_frame()
     try:
-        for _ in range(rounds):
-            hot_three()
-            syscall_decoy()
+        for i in range(200):
+            frame = decoy_frame if (i % 50) in (10, 25, 40) else hot_frame
+            sampler._on_signal(expected_sig, frame)
     finally:
         sampler.stop()
+
     counts = _names(sampler._window.self_counts)
-    got_hot, got_decoy = counts.get("hot_three", 0), counts.get("syscall_decoy", 0)
-    assert got_hot + got_decoy >= 150, counts
-    share = got_hot / (got_hot + got_decoy)
+    hot = counts.get("hot_three", 0)
+    decoy = counts.get("syscall_decoy", 0)
+    assert hot == 188 and decoy == 12, counts
+    assert hot / (hot + decoy) == pytest.approx(0.94, abs=1e-9)
 
-    detail = (share, bare_share, expected, counts, bare)
-    assert abs(share - bare_share) < 0.15, ("sampler strays from the kernel's own attribution", detail)
-    if abs(bare_share - expected) < 0.15:
-        assert abs(share - expected) < 0.15, detail
-    else:
-        import warnings
-
-        warnings.warn(
-            f"this host's kernel misattributes {signal.ITIMER_PROF == timer and 'ITIMER_PROF' or 'ITIMER_REAL'}: "
-            f"bare handler {bare_share:.3f} vs CPU-time {expected:.3f}; sampler {share:.3f} "
-            "tracks the bare handler, so the expectation check cannot be judged here",
-            stacklevel=1,
-        )
+    # First arm in start(), 200 re-arms in _on_signal(), final disarm (0) in stop().
+    assert len(armed) == 202
+    assert all(which == timer for which, _ in armed)
+    for _, delay in armed[:-1]:
+        assert 0.5 * interval_s <= delay <= 1.5 * interval_s
+    assert armed[-1] == (timer, 0)
 
 
 # ── R1 (latency's review of 32219d19): the walk crosses SQLAlchemy's greenlet ──

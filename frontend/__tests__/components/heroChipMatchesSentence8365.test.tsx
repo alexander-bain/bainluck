@@ -60,16 +60,16 @@ describe("#8365 — the hero chip says what its sentence says", () => {
     expect(render(fixture.whole_point)).toContain("Down 27 points today");
   });
 
-  test("the 30-year Treasury chip reads '↓ 27 pts', not '27.0'", () => {
+  test("the 30-year Treasury chip reads '↓ 27 points', not '27.0'", () => {
     const html = render(fixture.whole_point);
-    expect(heroChips(html)).toEqual(["↓ 27 pts"]);
+    expect(heroChips(html)).toEqual(["↓ 27 points"]);
     expect(html).toContain('title="Down 27 points in the last 24h"');
     expect(html).not.toContain("27.0");
   });
 
-  test("a tenth-point move is unchanged: '↑ 37.6 pts' beside 'Up 37.6 points today'", () => {
+  test("a tenth-point move is unchanged: '↑ 37.6 points' beside 'Up 37.6 points today'", () => {
     const html = render(fixture.tenth_point);
     expect(html).toContain("Up 37.6 points today");
-    expect(heroChips(html)).toEqual(["↑ 37.6 pts"]);
+    expect(heroChips(html)).toEqual(["↑ 37.6 points"]);
   });
 });

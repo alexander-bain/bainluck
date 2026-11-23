@@ -1,18 +1,12 @@
 import type { Metadata } from "next";
+import { cache } from "react";
 import { Inter, Space_Grotesk } from "next/font/google";
-import { unstable_cache } from "next/cache";
 import FactoryFloor from "./FactoryFloor";
-import { createFactoryReader } from "./data";
+import { loadFactoryReading } from "./displayReading";
+import { factoryTabTitle, floorVerdict } from "./verdict";
 
 export const revalidate = 60;
 export const dynamic = "force-dynamic";
-
-export const metadata: Metadata = {
-  title: "The Factory",
-  description:
-    "Follow each change to Bain Luck, from its first lines to going live.",
-  alternates: { canonical: "/factory" },
-};
 
 const inter = Inter({
   subsets: ["latin"],
@@ -24,19 +18,23 @@ const spaceGrotesk = Space_Grotesk({
   display: "swap",
   variable: "--factory-heading",
 });
-const loadFactory = unstable_cache(createFactoryReader(), ["factory-live-v3"], {
-  revalidate: 60,
-});
+const loadFactory = cache(loadFactoryReading);
+
+export async function generateMetadata(): Promise<Metadata> {
+  const { data, readFailed, renderedAt, activity } = await loadFactory();
+  return {
+    title: { absolute: factoryTabTitle(floorVerdict(data, readFailed, renderedAt, activity)) },
+    description:
+      "Follow each change to Bain Luck, from its first lines to going live.",
+    alternates: { canonical: "/factory" },
+  };
+}
 
 export default async function FactoryPage() {
-  const { data, lastGoodAt } = await loadFactory();
+  const read = await loadFactory();
   return (
     <div className={`${inter.variable} ${spaceGrotesk.variable}`}>
-      <FactoryFloor
-        data={data}
-        lastGoodAt={lastGoodAt}
-        renderedAt={new Date().toISOString()}
-      />
+      <FactoryFloor {...read} />
     </div>
   );
 }

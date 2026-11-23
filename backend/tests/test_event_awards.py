@@ -2,11 +2,15 @@
 the real KX award ticker/name shapes (verified live 2026-07-12). The adapter's
 build_event is exercised via the route test (test_route_event_concept.py)."""
 
+import ast
+import inspect
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
+from app.utils import event_awards, futures_price_screen
 from app.utils.event_awards import (
     CEREMONIES,
     AwardsEventAdapter,
@@ -15,7 +19,9 @@ from app.utils.event_awards import (
     clean_category_label,
     derive_awards_concept,
     edition_year,
+    grammy_nominee_fields,
     parse_awards_slug,
+    prefer_grammy_nominee_fields,
 )
 
 
@@ -227,12 +233,14 @@ def _category(id_, name, ticker, *, status="open", outcomes=None, deadline=None)
         resolution_date=deadline,
         outcomes=[
             SimpleNamespace(
+                id=id_ * 100 + index,
                 name=name,
                 current_probability=probability,
                 is_winner=won,
+                resolution_source=None,
                 last_updated=None,
             )
-            for name, probability, won in (
+            for index, (name, probability, won) in enumerate(
                 outcomes or [("Favorite", 0.55, False), ("Other nominee", 0.45, False)]
             )
         ],
@@ -254,12 +262,15 @@ class _AwardsResult:
 
 
 class _AwardsDB:
-    def __init__(self, markets):
+    def __init__(self, markets, fleet_stamp=None):
         self.markets = markets
+        self.fleet_stamp = fleet_stamp
         self.queries = []
 
     async def execute(self, query):
         self.queries.append(query)
+        if "max(futures_outcomes.last_updated)" in str(query):
+            return SimpleNamespace(scalar_one_or_none=lambda: self.fleet_stamp)
         return _AwardsResult(self.markets)
 
 
@@ -453,3 +464,116 @@ async def test_wrong_edition_remains_absent_and_ceremony_identity_independent():
     assert current["children"][0]["settled"] is False
     assert await _build(markets, "oscars-2025") is None
     assert await _build(markets, "golden-globes") is None
+
+
+async def test_old_best_actor_prices_cannot_appear_in_the_awards_hero_or_rail():
+    # #13114: the same 16-row prior Oscars field the market page withheld.
+    old_actor = _category(
+        109566,
+        "Oscar for Best Actor?",
+        "KXOSCARACTO-26",
+        outcomes=[
+            ("Michael B. Jordan", 0.45, False),
+            ("Timothée Chalamet", 0.41, False),
+            ("Jesse Plemons", 0.50, False),
+            *((f"Nominee {i}", 0.50, False) for i in range(13)),
+        ],
+    )
+    old_actor.updated_at = datetime(2026, 3, 12, tzinfo=timezone.utc)
+    for outcome in old_actor.outcomes:
+        outcome.last_updated = old_actor.updated_at
+
+    fresh = _category(120000, "Oscar for Best Director?", "KXOSCARDIR-26")
+    fleet_stamp = datetime(2026, 11, 20, tzinfo=timezone.utc)
+    fresh.updated_at = fleet_stamp
+    for outcome in fresh.outcomes:
+        outcome.last_updated = fleet_stamp
+
+    db = _AwardsDB([fresh, old_actor], fleet_stamp)
+    body = await AwardsEventAdapter().build_event("oscars-2026", db)
+
+    assert body["primary"]["evolution_market_id"] == fresh.id
+    assert [child["market_id"] for child in body["children"]] == [fresh.id]
+    assert body["sections"][0]["market_ids"] == [fresh.id]
+    assert [o["probability"] for o in body["primary"]["competitors"]] == [0.55, 0.45]
+    assert len(db.queries) == 2  # Selection and one shared fleet read.
+
+    old_actor.status = "resolved"
+    old_actor.outcomes[0].is_winner = True
+    body = await AwardsEventAdapter().build_event("oscars-2026", db)
+    result = next(child for child in body["children"] if child["market_id"] == 109566)
+    assert result["graded_winner"] == "Michael B. Jordan"
+    assert result["probability"] is None
+    assert all(outcome["probability"] is None for outcome in result["outcomes"])
+
+
+def test_awards_price_screen_has_no_route_imports():
+    for module in (event_awards, futures_price_screen):
+        imports = set()
+        for node in ast.walk(ast.parse(inspect.getsource(module))):
+            if isinstance(node, ast.Import):
+                imports.update(alias.name for alias in node.names)
+            if isinstance(node, ast.ImportFrom) and node.module:
+                imports.update(f"{node.module}.{alias.name}" for alias in node.names)
+        route_imports = sorted(
+            name for name in imports
+            if name == "app.routes" or name.startswith("app.routes.")
+        )
+        assert not route_imports, f"{module.__name__} loads routes {route_imports}"
+
+
+@pytest.mark.parametrize("count", [7, 8, 9])
+async def test_grammy_nominee_board_requires_the_named_field(count):
+    nominees = [
+        "Berghain", "Choosin' Texas", "the cure", "hate that i made you love me",
+        "I Knew It, I Knew You", "Man I Need", "Risk It All", "WHERE IS MY HUSBAND!",
+        "An extra contender",
+    ]
+    original = SimpleNamespace(id=58492243, source="polymarket", external_id="805158")
+    candidate = SimpleNamespace(
+        source="kalshi",
+        status="open",
+        external_id="KXGRAMMY-SOTY69",
+        outcomes=[
+            *(SimpleNamespace(name=name) for name in [*nominees[:count], "Tie"]),
+            SimpleNamespace(
+                name="An August guess",
+                is_winner=False,
+                resolution_source="api_settlement",
+                current_probability=0.0,
+            ),
+        ],
+    )
+    db = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(scalars=lambda: [candidate])))
+    assert await grammy_nominee_fields(db, [original]) == (
+        {original.id: candidate} if count == 8 else {}
+    )
+    assert set(db.execute.await_args.args[0].compile().params["external_id_1"]) == {
+        "KXGRAMMY-SOTY69"
+    }
+
+
+async def test_other_futures_do_not_read_a_grammy_replacement():
+    db = SimpleNamespace(execute=AsyncMock())
+    unrelated = SimpleNamespace(id=7, source="polymarket", external_id="future-grammy-edition")
+    assert await grammy_nominee_fields(db, [unrelated]) == {}
+    db.execute.assert_not_awaited()
+
+
+async def test_cached_nominee_board_replaces_the_old_discovery_row_once():
+    db = SimpleNamespace(execute=AsyncMock())
+    old = SimpleNamespace(id=58492243, source="polymarket", external_id="805158")
+    nominee = SimpleNamespace(
+        id=100,
+        source="kalshi",
+        status="open",
+        external_id="KXGRAMMY-SOTY69",
+        outcomes=[SimpleNamespace(name=name) for name in (
+            "Berghain", "Choosin' Texas", "the cure", "hate that i made you love me",
+            "I Knew It, I Knew You", "Man I Need", "Risk It All", "WHERE IS MY HUSBAND!", "Tie",
+        )],
+    )
+    other = SimpleNamespace(id=8, source="kalshi", external_id="OTHER", status="open")
+    replacements = await grammy_nominee_fields(db, [old, other, nominee], available=[nominee, other])
+    assert prefer_grammy_nominee_fields([old, other, nominee], replacements) == [nominee, other]
+    db.execute.assert_not_awaited()

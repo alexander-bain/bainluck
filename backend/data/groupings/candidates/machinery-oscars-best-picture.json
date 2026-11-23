@@ -22,6 +22,17 @@
     "refusal": "all-or-nothing",
     "materialize": "read-time",
     "card_rows": 3,
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/41/Disused_Cinema_%28Unsplash%29.jpg/1280px-Disused_Cinema_%28Unsplash%29.jpg",
+    "card_image_alt": "Rows of red velvet cinema seats flanking a lit center aisle in a darkened movie theater",
+    "card_image_credit": "Felix Mooneeram (CC0 1.0 Public Domain, Wikimedia Commons)",
+    "card_image_author": "Felix Mooneeram",
+    "card_image_license": "CC0 1.0 Public Domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Disused_Cinema_(Unsplash).jpg",
+    "replaces": [
+      "roundup-oscars-best-picture"
+    ],
+    "replaces_themes": [],
     "sections": [
       {
         "key": "best_picture_paired",

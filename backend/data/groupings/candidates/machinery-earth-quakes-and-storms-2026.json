@@ -1,0 +1,52 @@
+{
+  "slug": "machinery-earth-quakes-and-storms-2026",
+  "stage": "public",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_window",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "ODD · EARTH & SKY",
+  "name": "Earth, Quakes & Storms",
+  "category": "weather",
+  "tag": "ODD",
+  "section_title": "Natural Extremes 2026",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "card_rows": 3,
+    "card_section_key": "earth_extremes",
+    "hide_row_art": true,
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/25/1959_eruption_of_Kilauea_Volcano.jpg/960px-1959_eruption_of_Kilauea_Volcano.jpg",
+    "card_image_alt": "Glowing lava fountain rising from Kilauea Iki Crater during the 1959 eruption",
+    "card_image_credit": "Hawaii Volcano Observatory, USGS (Public domain, Wikimedia Commons)",
+    "card_image_author": "Hawaii Volcano Observatory, USGS",
+    "card_image_license": "Public domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:1959_eruption_of_Kilauea_Volcano.jpg",
+    "sections": [
+      {
+        "key": "earth_extremes",
+        "title": "Natural Extremes 2026",
+        "item_noun": "markets",
+        "note": "Earthquake counts, major eruptions, cyclones, tornado totals, El Niño intensity, and global heat ranks.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch8-earth-quakes-storms-2026",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 8,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}

@@ -87,8 +87,8 @@ async def load_from_session(session: Any) -> list[dict[str, Any]]:
         + """
         SELECT
             outcome_id, market_id, outcome_name, is_winner,
-            source, llm_league,
-            category AS llm_sport_category, market_type,
+            deduped.source, deduped.llm_league,
+            deduped.category AS llm_sport_category, deduped.market_type,
             vm_id AS question_id,
             adj_opening_probability AS probability,
             fm.resolution_date,

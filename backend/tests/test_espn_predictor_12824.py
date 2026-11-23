@@ -17,6 +17,7 @@ from app.services.espn_api import ESPNEvent, ESPNTeam
 from app.tasks import espn_predictor as ep
 
 NOW = datetime(2031, 3, 4, 12, 0, tzinfo=timezone.utc)
+_REAL_TWIN_PRICE_VIEWS = ep.twin_price_views
 
 
 def _stamp(dt: datetime) -> str:
@@ -217,9 +218,19 @@ class _FakeSession:
         self.rollbacks += 1
 
 
-def _db_row(event_id, sources, commence=None):
+def _db_row(event_id, sources, commence=None, tags=None):
     return (event_id, "americanfootball_nfl", None, commence or NOW + timedelta(days=20),
-            "New England Patriots", "Buffalo Bills", sources, None, None, None, None)
+            "New England Patriots", "Buffalo Bills", sources, None, None, None, None, tags)
+
+
+@pytest.fixture(autouse=True)
+def _no_duplicate_rows(monkeypatch):
+    """The run tests' fake session answers every statement with the candidates,
+    so the duplicate fold is pinned to "no duplicates" unless a test says otherwise."""
+    async def none(_session, _rows):
+        return {}
+
+    monkeypatch.setattr(ep, "twin_price_views", none)
 
 
 @pytest.mark.asyncio
@@ -241,7 +252,7 @@ async def test_run_writes_withdraws_and_keeps(monkeypatch):
         yield session
 
     plans = {
-        1: ("write", 0.1415, {"basis": "espn_predictor"}),
+        1: ("write", 0.1415, {"basis": "espn_predictor"}, NOW),
         2: ("remove", "predictor-stale"),
         3: ("keep", "board-dark"),
         4: ("keep", "predictor-dark"),
@@ -292,7 +303,7 @@ async def test_one_failed_write_does_not_cost_the_rest(monkeypatch):
         yield session
 
     async def fake_read(read_rows, now, stats):
-        return {1: ("write", 0.3, {}), 2: ("write", 0.4, {})}
+        return {1: ("write", 0.3, {}, NOW), 2: ("write", 0.4, {}, NOW)}
 
     writes = []
 
@@ -447,36 +458,62 @@ class TestNeverStepBack:
         assert stats["older_copy"] == 2 and stats["kept"] == 1 and stats["removed"] == 1
 
 
-def test_a_write_carries_espns_last_modified_inside_the_entry(monkeypatch):
-    """So the next run can tell an older copy from a refresh."""
-    import asyncio
+@pytest.mark.asyncio
+async def test_same_predictor_price_advances_the_read_time(monkeypatch):
     from contextlib import asynccontextmanager
 
-    session = _FakeSession([_db_row(1, {})])
+    from app.services import espn_api
+
+    when = NOW + timedelta(days=20)
+    modified_at = NOW - timedelta(hours=1)
+    started_again = NOW + timedelta(minutes=15)
+    first_read = NOW + timedelta(seconds=2)
+    second_read = started_again + timedelta(seconds=3)
+    instants = iter((NOW, first_read, started_again, second_read))
+    session = _FakeSession([_db_row(1, {}, when)])
 
     @asynccontextmanager
     async def fake_session(**_kw):
         yield session
 
-    async def fake_read(rows, now, stats):
-        return {1: ("write", 0.1415, {"basis": "espn_predictor", "espn_id": "401873105",
-                                      "last_modified": "2031-03-04T02:00Z"})}
+    class FakeESPN:
+        def __init__(self, *, rate_limit_delay):
+            pass
 
-    seen = {}
+        async def get_scoreboard(self, *args, **kwargs):
+            return [_game(PATS, BILLS, when)]
 
-    async def fake_write(session_, target, source, value, **kw):
-        seen.update(kw)
+        async def get_predictor(self, *args, **kwargs):
+            return _nfl_payload(modified_at)
+
+        async def close(self):
+            pass
+
+    class Clock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return next(instants)
+
+    writes = []
+
+    async def fake_write(_session, _target, source, value, *, price_read_at, entry_extra, **_kw):
+        writes.append((source, value, price_read_at, entry_extra))
 
     async def fake_publish(_session):
         return None
 
     monkeypatch.delenv("ESPN_PREDICTOR_MODE", raising=False)
+    monkeypatch.setattr(espn_api, "ESPNAPIService", FakeESPN)
+    monkeypatch.setattr(ep, "datetime", Clock)
     monkeypatch.setattr("app.tasks.base.get_task_session", fake_session)
-    monkeypatch.setattr(ep, "_read_espn", fake_read)
     monkeypatch.setattr("app.utils.nonvenue_live_push.write_nonvenue_probability", fake_write)
     monkeypatch.setattr("app.utils.nonvenue_live_push.publish_committed_nonvenue_frames", fake_publish)
-    asyncio.run(ep._run_refresh_espn_predictor())
-    assert seen["entry_extra"] == {"predictor_last_modified": "2031-03-04T02:00Z"}
+    assert (await ep._run_refresh_espn_predictor())["written"] == 1
+    assert (await ep._run_refresh_espn_predictor())["written"] == 1
+    assert writes == [
+        ("espn", 0.14151, first_read, {"predictor_last_modified": _stamp(modified_at)}),
+        ("espn", 0.14151, second_read, {"predictor_last_modified": _stamp(modified_at)}),
+    ]
 
 
 def test_the_writer_refuses_an_unlisted_entry_key():
@@ -509,7 +546,7 @@ class TestRuling226A:
         async def fake_read(rows, now, stats):
             read_rows.extend(r.event_id for r in rows)
             return {r.event_id: ("write", 0.1415, {"basis": "espn_predictor",
-                                                   "last_modified": _stamp(NOW)}) for r in rows}
+                                                   "last_modified": _stamp(NOW)}, NOW) for r in rows}
 
         async def fake_write(session_, target, source, value, **kw):
             if value is None:
@@ -617,3 +654,143 @@ class TestNotAMove:
             assert "pregame_blend_rests_on_espn_alone(event)" in inspect.getsource(module), module.__name__
         src = inspect.getsource(taxonomy._tag_event)
         assert "pregame_blend_rests_on_espn_alone(event)" in src
+
+
+class TestDuplicateRows:
+    """A price on a proven duplicate row prices the game, as on the page.
+
+    Ole Miss–Wofford and Alabama–Chattanooga, Nov 17: Kalshi sat on each game's
+    duplicate row, the page folded it in, and the run, reading only the row,
+    wrote ESPN on top every 15 minutes (served hero = ESPN's number).
+    """
+
+    async def _run(self, monkeypatch, db_rows, fold):
+        from contextlib import asynccontextmanager
+
+        bags = {r[0]: {k: (dict(v) if isinstance(v, dict) else v) for k, v in r[6].items()} for r in db_rows}
+        session = _FakeSession(db_rows)
+        read_rows, writes = [], []
+
+        @asynccontextmanager
+        async def fake_session(**_kw):
+            yield session
+
+        async def fake_read(rows, now, stats):
+            read_rows.extend(r.event_id for r in rows)
+            return {r.event_id: ("write", 0.9965, {"basis": "espn_predictor"}, NOW) for r in rows}
+
+        async def fake_write(session_, target, source, value, **kw):
+            writes.append((target.id, value, (kw.get("evidence") or {}).get("withdrawn")))
+            if value is None:
+                bags[target.id].pop(source, None)
+            else:
+                bags[target.id][source] = {"value": value, "updated_at": NOW.isoformat()}
+
+        async def fake_publish(_session):
+            return None
+
+        class _Clock(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return NOW
+
+        monkeypatch.delenv("ESPN_PREDICTOR_MODE", raising=False)
+        monkeypatch.setattr(ep, "twin_price_views", fold)
+        monkeypatch.setattr("app.tasks.base.get_task_session", fake_session)
+        monkeypatch.setattr(ep, "_read_espn", fake_read)
+        monkeypatch.setattr("app.utils.nonvenue_live_push.write_nonvenue_probability", fake_write)
+        monkeypatch.setattr("app.utils.nonvenue_live_push.publish_committed_nonvenue_frames", fake_publish)
+        monkeypatch.setattr(ep, "datetime", _Clock)
+        stats = await ep._run_refresh_espn_predictor()
+        return bags, read_rows, writes, stats
+
+    @staticmethod
+    def _folding(extra_by_id):
+        async def fold(_session, rows):
+            return {r.event_id: {**r.sources, **extra_by_id.get(r.event_id, {})}
+                    for r in rows if r.duplicate_of is None}
+        return fold
+
+    @pytest.mark.asyncio
+    async def test_a_venue_on_the_duplicate_takes_espn_off_the_game(self, monkeypatch):
+        rows = [_db_row(1, {"espn": _entry(0.9965, NOW - timedelta(minutes=10))})]
+        bags, read_rows, writes, stats = await self._run(
+            monkeypatch, rows, self._folding({1: {"kalshi": _entry(0.995, NOW)}}))
+        assert read_rows == [] and writes == [(1, None, "priced")]
+        assert "espn" not in bags[1] and stats["removed"] == 1
+
+    @pytest.mark.asyncio
+    async def test_a_venue_on_the_duplicate_means_espn_is_never_written(self, monkeypatch):
+        rows = [_db_row(1, {"betting_book_count": 2})]
+        bags, read_rows, writes, stats = await self._run(
+            monkeypatch, rows, self._folding({1: {"kalshi": _entry(0.995, NOW)}}))
+        assert read_rows == [] and writes == [] and "espn" not in bags[1]
+
+    @pytest.mark.asyncio
+    async def test_an_unpriced_game_with_an_unpriced_duplicate_still_gets_espn(self, monkeypatch):
+        rows = [_db_row(1, {})]
+        bags, read_rows, writes, stats = await self._run(monkeypatch, rows, self._folding({}))
+        assert read_rows == [1] and bags[1]["espn"]["value"] == 0.9965
+
+    @pytest.mark.asyncio
+    async def test_a_duplicate_row_is_never_read_and_its_espn_leaves(self, monkeypatch):
+        tag = ["provenance:duplicate-of:1"]
+        rows = [
+            _db_row(1, {}),
+            _db_row(2, {"espn": _entry(0.9965, NOW - timedelta(minutes=10))}, tags=tag),
+            _db_row(3, {}, tags=["provenance:duplicate-of:1"]),
+        ]
+        bags, read_rows, writes, stats = await self._run(monkeypatch, rows, self._folding({}))
+        assert read_rows == [1]
+        assert (2, None, "duplicate") in writes and "espn" not in bags[2]
+        assert not any(w[0] == 3 for w in writes) and stats["duplicates"] == 2
+
+    @pytest.mark.asyncio
+    async def test_a_failed_fold_reads_nothing_and_old_readings_still_age_out(self, monkeypatch):
+        async def broken(_session, _rows):
+            raise RuntimeError("fold exploded")
+
+        rows = [
+            _db_row(1, {"espn": _entry(0.5, NOW - timedelta(minutes=10))}),   # fresh: kept
+            _db_row(2, {"espn": _entry(0.5, NOW - timedelta(hours=3))}),      # 3 h: leaves
+            _db_row(3, {}),                                                   # unpriced: not read
+            _db_row(4, {"kalshi": _entry(0.3, NOW), "espn": _entry(0.5, NOW)}),  # priced: leaves
+        ]
+        bags, read_rows, writes, stats = await self._run(monkeypatch, rows, broken)
+        assert read_rows == [] and stats["written"] == 0
+        assert sorted(w[0] for w in writes) == [2, 4]
+        assert "espn" in bags[1] and stats["kept"] == 1
+        assert any(e.startswith("fold:") for e in stats["errors"])
+
+    @pytest.mark.asyncio
+    async def test_the_real_fold_sees_the_duplicates_kalshi(self):
+        """`twin_price_views` through the page's own fold, orientation check included."""
+        from app.services.anchor_channel import duplicate_tag
+
+        kalshi = _entry(0.995, NOW)
+
+        class _FoldSession:
+            async def execute(self, _stmt):
+                rows = [
+                    (9, "New England Patriots", "Buffalo Bills", {"kalshi": kalshi},
+                     [duplicate_tag(1)], None, None),
+                    (8, "Buffalo Bills", "New England Patriots", {"polymarket": kalshi},
+                     [duplicate_tag(2)], None, None),   # inverted: must not fold
+                ]
+                return SimpleNamespace(all=lambda: rows)
+
+        game = ep.PredictorRow(event_id=1, sport_key="americanfootball_nfl", espn_id=None,
+                               commence_time=NOW, home_team_name="New England Patriots",
+                               away_team_name="Buffalo Bills", sources={})
+        other = ep.PredictorRow(event_id=2, sport_key="americanfootball_nfl", espn_id=None,
+                                commence_time=NOW, home_team_name="New England Patriots",
+                                away_team_name="Buffalo Bills", sources={})
+        folded = await _REAL_TWIN_PRICE_VIEWS(_FoldSession(), [game, other])
+        assert folded[1]["kalshi"]["value"] == 0.995
+        assert ep.is_priced(folded[1])
+        assert folded[2] == {}  # an inverted duplicate is not folded
+        dup = ep.PredictorRow(event_id=9, sport_key="americanfootball_nfl", espn_id=None,
+                              commence_time=NOW, home_team_name="New England Patriots",
+                              away_team_name="Buffalo Bills", sources={"kalshi": kalshi},
+                              duplicate_of=1)
+        assert 9 not in await _REAL_TWIN_PRICE_VIEWS(_FoldSession(), [game, dup])

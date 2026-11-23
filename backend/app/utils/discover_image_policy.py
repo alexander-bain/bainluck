@@ -29,7 +29,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from app.utils.music_image_guard import sanitize_market_image_fields
+from app.utils.music_image_guard import (
+    is_music_market_ineligible_for_tmdb,
+    sanitize_market_image_fields,
+)
 
 from app.utils.nation_flags import flag_url as nation_flag_url
 
@@ -1132,7 +1135,11 @@ def resolve_discover_market_image(
 
     # 2. Check verified entity/landmark register
     verified = _lookup_verified_entry(name, subject, top_outcomes)
-    if verified:
+    if verified and not (
+        is_music_market_ineligible_for_tmdb(name)
+        and is_tmdb_url(verified.get("url"))
+        and verified.get("url") not in _VERIFIED_TMDB_MUSIC_AWARD_URLS
+    ):
         return _entry_to_resolved_dict(verified)
 
     # 3. Check official team / club / nation crest map
@@ -1462,6 +1469,71 @@ def sanitize_discover_feed_item(item: dict[str, Any]) -> dict[str, Any]:
             sanitize_discover_feed_item(sub) if isinstance(sub, dict) else sub
             for sub in (raw_data.get("items") or [])
         ]
+        # Machinery groupings can explicitly suppress card photography (e.g. map-only
+        # weather sets or named-couple sets without a verified photo of the named pair)
+        # so neither generic domain fallbacks nor member stock photos leak onto the card.
+        roundup_meta = raw_data.get("roundup") if isinstance(raw_data.get("roundup"), dict) else None
+        mc_meta = roundup_meta.get("machinery_card") if isinstance(roundup_meta, dict) else None
+        explicit_mc_image = (
+            str(mc_meta.get("image_url") or "").strip() or None
+            if isinstance(mc_meta, dict)
+            else None
+        )
+        explicit_mc_credit = (
+            str(mc_meta.get("image_credit") or "").strip() or None
+            if isinstance(mc_meta, dict) and explicit_mc_image
+            else None
+        )
+        explicit_mc_author = (
+            str(mc_meta.get("image_author") or "").strip() or None
+            if isinstance(mc_meta, dict) and explicit_mc_image
+            else None
+        )
+        explicit_mc_license = (
+            str(mc_meta.get("image_license") or "").strip() or None
+            if isinstance(mc_meta, dict) and explicit_mc_image
+            else None
+        )
+        explicit_mc_source_page = (
+            str(mc_meta.get("image_source_page") or "").strip() or None
+            if isinstance(mc_meta, dict) and explicit_mc_image
+            else None
+        )
+        if isinstance(mc_meta, dict) and mc_meta.get("suppress_card_photo") is True:
+            cleared_sub_items = []
+            for sub in sub_items:
+                if isinstance(sub, dict) and isinstance(sub.get("data"), dict):
+                    cleared_sub_items.append(
+                        {
+                            **sub,
+                            "data": {
+                                **sub["data"],
+                                "image_url": None,
+                                "image_presentation": None,
+                                "image_monogram": None,
+                                "image_credit": None,
+                                "image_author": None,
+                                "image_license": None,
+                                "image_source_page": None,
+                            },
+                        }
+                    )
+                else:
+                    cleared_sub_items.append(sub)
+            return {
+                **item,
+                "data": {
+                    **raw_data,
+                    "items": cleared_sub_items,
+                    "image_url": explicit_mc_image,
+                    "image_presentation": "photo" if explicit_mc_image else None,
+                    "image_monogram": None,
+                    "image_credit": explicit_mc_credit,
+                    "image_author": explicit_mc_author,
+                    "image_license": explicit_mc_license,
+                    "image_source_page": explicit_mc_source_page,
+                },
+            }
         # Resolve bundle-level representative art for non-roundup / audit consumers
         # (`RoundupCard.tsx` deliberately renders text + bars only per Oct 6 R4).
         bundle_img: str | None = None

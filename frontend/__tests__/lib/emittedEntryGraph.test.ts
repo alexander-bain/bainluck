@@ -192,12 +192,15 @@ describeBuild("LAT-P201 the parse sees a real artifact", () => {
     expect(routes).toContain("index.html");
 
     // `/` — the Discover landing page, and the route the CERT-732 measurement
-    // was taken on. 21 modern scripts after that fix (22 before). Bounded
-    // rather than pinned: this guard is about WHAT is in the graph, and a
-    // pinned count would red on every unrelated page split.
+    // was taken on. Grew from 21 modern scripts at CERT-732 to 37 on normal
+    // builds (345 kB First Load JS) and 40 when Webpack SplitChunksPlugin
+    // omits `chunks/main-app` (29.6 kB) from the shared bucket (90.9 kB vs
+    // 119 kB shared) across identical source and `.next/cache` builds. Keep
+    // the upper bound well above chunk-split jitter (yet far below allChunks)
+    // since this guard is about WHAT is in the graph rather than exact splits.
     const home = entryScripts("index.html");
     expect(home.length).toBeGreaterThan(10);
-    expect(home.length).toBeLessThan(40);
+    expect(home.length).toBeLessThan(60);
 
     // Every path resolved to a file that exists — a typo in the `/_next/`
     // rewrite above would otherwise yield empty strings that contain no

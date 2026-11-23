@@ -1265,9 +1265,16 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     # #12824: `refresh-espn-predictor` names background; census on the tree
     # merged with 2e276ac262 (179-A composed) printed explicit 111 implicit 38
     # total 149.
-    assert explicit == 111, f"explicitly-routed background beats moved: {explicit}"
+    # #13102 (Ruling 276: B): `discover-fun-scout-nightly` names background once
+    # daily at 09:00 UTC (gated OFF behind DISCOVER_FUN_SCOUT_ENABLED); census
+    # printed explicit 112 implicit 38 total 150.
+    # #13241: `sync-espn-standings-records` names background every 2 hours at :23
+    # (outside the :31-:44 settlement sweep window); census over assembled
+    # `beat_schedule` printed explicit 113 implicit 38 total 151.
+    # #13338 schedules a daily onboarding membership refresh on background.
+    assert explicit == 114, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 38, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 149
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 152
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.

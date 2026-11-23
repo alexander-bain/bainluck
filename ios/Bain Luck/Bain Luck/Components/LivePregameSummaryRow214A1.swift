@@ -143,6 +143,7 @@ struct LivePregameSummaryRow214A1: View {
     var scaledSize: CGFloat? = nil
     var minScale: CGFloat = 0.78
     var accessibilityIdentifier: String = "live-pregame-summary-214a1"
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     /// Neutral quiet connector grey (`#767C85`, regular weight) so connecting prose
     /// (`" · projected "`, `"–"`) stays visually lighter and neutral beside a team on
@@ -172,7 +173,7 @@ struct LivePregameSummaryRow214A1: View {
     var body: some View {
         composedText
             .font(HeadlineStyleTable199.quietText(surface, monospacedDigits: true, scaledSize: scaledSize))
-            .lineLimit(1)
+            .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
             .minimumScaleFactor(minScale)
             .allowsTightening(true)
             .truncationMode(.tail)

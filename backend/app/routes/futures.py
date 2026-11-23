@@ -4,6 +4,7 @@ import asyncio
 import logging
 import os
 import re
+from time import perf_counter
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -12,14 +13,24 @@ from types import SimpleNamespace
 from typing import NamedTuple, Optional, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import select, and_, or_, func, exists
+from sqlalchemy import select, and_, or_, func, exists, union, true
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased, joinedload, selectinload
+from sqlalchemy.orm import joinedload, selectinload
 
 from app.models import Event, FuturesMarket, FuturesOutcome, FuturesOddsSnapshot, Sport, Team
 from app.services import get_db, OddsAPIService
-from app.utils import movement_pool, probability_to_american
+from app.utils import futures_page_cache as _futures_page_cache
+from app.utils import futures_price_screen, movement_pool, probability_to_american
 from app.utils.durable_venue_receipt import log_durable_venue_serve
+from app.utils.event_awards import (
+    GRAMMY_TIE_LABEL,
+    append_grammy_out_rows,
+    grammy_nominee_fields,
+    grammy_pre_nomination_board,
+    is_grammy_general_field_market,
+    is_grammy_graded_loss,
+    is_grammy_tie,
+)
 from app.utils.observed_span_steps import add_history_steps, add_timeline_steps
 from app.utils.settlement_display import (
     VERDICT_UNKNOWN as SETTLEMENT_VERDICT_UNKNOWN,
@@ -43,10 +54,30 @@ from app.utils.futures_market_snapshot import (
     normalized_field_comparisons,
     reader_change_24h,
 )
+from app.utils.futures_price_screen import (
+    _as_float,
+    _board_has_a_verdict,
+    _book_refuted_outcome_ids,
+    _closest_trade_by_outcome,
+    _empty_book_outcome_ids,
+    _fleet_newest_observation,
+    _leg_prices_an_empty_book,
+    _newest_kalshi_trades,
+    _newest_venue_trade_rows,
+    _refuted_midpoint_candidates,
+    _refuted_midpoint_verdicts,
+    _unlocated_in_broken_field_outcome_ids,
+    _unsupported_head_outcome_ids,
+    _unsupported_price_candidates,
+    _unsupported_price_verdicts,
+)
 from app.utils.futures_verified_title import (
     CONTRIBUTOR_SOURCES as VERIFIED_TITLE_SOURCES,
     SOURCE as REPRESENTATION_SOURCE,
     VERIFIED_TITLE as REPRESENTATION_VERIFIED_TITLE,
+    NFL_TITLE,
+    SUPER_BOWL_2027_ALIAS_ID,
+    SUPER_BOWL_2027_BOARD_ID,
     BoardRow,
     Composition,
     MarketFacts,
@@ -78,30 +109,21 @@ from app.utils.full_range_live import (
     hours_since as full_range_hours_since,
     read_older_live,
 )
-from app.utils.kalshi_empty_book import KALSHI_BOOKMAKER
 from app.utils.futures_unsupported_price import (
     MIDPOINT_TRADE_SOURCES,
     WITHHELD_PRICE_FIELDS,
-    field_names_two_favourites,
-    leg_has_no_live_support,
     market_is_proved_exclusive_field,
-    midpoint_refuted_by_last_trade,
-    needs_trade_disconfirmation,
-    needs_trade_evidence,
-    needs_unbacked_ask_evidence,
-    price_is_an_unbacked_ask,
-    price_is_an_unbacked_majority,
-    price_is_unlocated_in_broken_field,
-    price_is_unsupported,
-    price_refuted_by_live_book,
     row_carries_a_verdict,
     snapshot_price_is_unsupported,
-    unsupported_legs_above_the_supported_head,
 )
 from app.utils.series_card_labels import market_threshold_label, reader_outcome_name
 from app.utils.hook_staleness import hook_names_unpriced_outcome, is_hook_stale
 from app.utils.leader_order import leader_first_outcomes
-from app.utils.market_display_name import clean_market_display_name
+from app.utils.market_display_name import (
+    clean_market_display_name,
+    fill_market_display_name_blank,
+    futures_reader_name,
+)
 from app.utils.event_rails import live_scheduled_settled_order
 from app.utils.event_twin_fold import fold_twin_events
 from app.utils.lifecycle import served_event_status
@@ -125,6 +147,12 @@ from app.utils.tournament_stages import (
     tournament_names_match,
     is_game_level_market,
 )
+
+# Keep the route's existing batch entry point for the shared price screen.
+withheld_price_outcome_ids_for_markets = (
+    futures_price_screen.withheld_price_outcome_ids_for_markets
+)
+
 
 logger = logging.getLogger(__name__)
 
@@ -1113,7 +1141,15 @@ def _movers_payload(outcomes, hours: int) -> dict:
         "movers": [
             {
                 "outcome_id": o.id,
-                "name": o.name,
+                "name": (
+                    reader_outcome_name(
+                        getattr(o, "external_id", None),
+                        o.name,
+                        market_threshold_label(o.market) if getattr(o, "market", None) else None,
+                        market_name=getattr(getattr(o, "market", None), "name", None),
+                    )
+                    or o.name
+                ),
                 "market_id": o.market_id,
                 "market_name": o.market.name if o.market else None,
                 "current_probability": float(o.current_probability) if o.current_probability is not None else None,
@@ -1406,6 +1442,7 @@ async def browse_futures(
     # search drop AFTER normalization, and browse has no basis step to sit either
     # side of.
     from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
+    from app.utils.futures_source_mark import mark_futures_card_rows
     from app.utils.outcome_display import (
         drop_dominant_field_outcomes,
         drop_incoherent_ladder_outcomes,
@@ -1500,10 +1537,20 @@ async def browse_futures(
         # "judge the number RENDERED" rule needs it, since the raw price is no
         # longer the rendered number once a leg is withheld.
         display_outcomes = []
+        _browse_threshold_label = market_threshold_label(market)
+        _browse_market_name = getattr(market, "name", None)
         for o in sorted_outcomes:
             od = {
                 "id": o.id,
-                "name": o.name,
+                "name": (
+                    reader_outcome_name(
+                        getattr(o, "external_id", None),
+                        o.name,
+                        _browse_threshold_label,
+                        market_name=_browse_market_name,
+                    )
+                    or o.name
+                ),
                 "probability": float(o.current_probability) if o.current_probability is not None else None,
                 # #10248 D5 — `reader_change_24h`.
                 "movement": (
@@ -1555,6 +1602,7 @@ async def browse_futures(
                 o["movement"] = None
         leader_pick_order(display_outcomes)
         top3 = display_outcomes[:3]
+        mark_futures_card_rows(market, top3)
         items.append({
             "id": market.id,
             "name": market.name,
@@ -1856,6 +1904,7 @@ async def faceted_futures_search(
     import json as _json
     from sqlalchemy import literal_column, text as sql_text
     from app.utils.event_taxonomy import validate_tag
+    from app.utils.futures_source_mark import mark_futures_card_rows
 
     # Build tag filter from both sources
     tag_filter: list[str] = []
@@ -1986,10 +2035,20 @@ async def faceted_futures_search(
             reverse=True,
         )
         top3 = []
+        _hl_threshold_label = market_threshold_label(market)
+        _hl_market_name = getattr(market, "name", None)
         for o in sorted_outcomes[:3]:
             od = {
                 "id": o.id,
-                "name": o.name,
+                "name": (
+                    reader_outcome_name(
+                        getattr(o, "external_id", None),
+                        o.name,
+                        _hl_threshold_label,
+                        market_name=_hl_market_name,
+                    )
+                    or o.name
+                ),
                 "probability": float(o.current_probability) if o.current_probability is not None else None,
                 # #10248 D5 — `reader_change_24h`.
                 "movement": (
@@ -2005,6 +2064,7 @@ async def faceted_futures_search(
                     if field in od:
                         od[field] = None
             top3.append(od)
+        mark_futures_card_rows(market, top3)
         formatted.append({
             "id": market.id,
             "name": market.name,
@@ -2784,74 +2844,6 @@ _FULL_RANGE_DOC = (
 PLACEMENT_GRID_FEED_ROWS = 8
 
 
-def _leg_prices_an_empty_book(outcome) -> bool:
-    """Is this leg's number the midpoint of a book with nothing in it? (#6676)
-
-    WHAT A READER SAW. Three consecutive Game Props cards in one 390px viewport
-    on ``/sports``, each printing **Over 50% / Under 50%** with the bar drawn at
-    exactly half, directly beneath a card whose 57/43 was real — so the reader
-    had no way to tell a manufactured coin flip from a forecast. The stored rows
-    behind them (outcomes 230498576, 230496527, 230475436, read 2026-09-17):
-    ``current_probability 0.500000`` beside ``current_yes_bid 0.0200 /
-    current_yes_ask 0.9700``, ``volume`` and ``price_changed_at`` both NULL. That
-    quote bounds nothing, and its own midpoint is 0.495 — the stored number is
-    half a cent off the book it was averaged from. A fabricated 50% is the one
-    number that looks most like an answer.
-
-    THE RULE IS NOT NEW AND IS NOT RE-DERIVED HERE. :func:`is_empty_book_midpoint`
-    is #5247's shipped predicate, with its own measured constants, and the
-    expression below is field for field the one already running at its call site
-    in ``routes/events.py`` (``game-markets``). That surface got the rule and this
-    one did not, which is the entire defect: the strip and the event page draw
-    from the same rows and disagreed about whether those rows have a price. A
-    second, differently-spelled copy of a price rule is exactly what
-    ``futures_unsupported_price`` exists to prevent, so this is a delegation with
-    a name, not a policy.
-
-    IT IS A NAMED FUNCTION AND NOT AN INLINE COMPREHENSION for the reason
-    :func:`_market_has_priced_outcome` states directly below: the one property
-    that makes it a fix has to be testable without standing up the route.
-
-    A LEG, NOT A MARKET, for the reason the shipped call site gives: a props
-    market carries real lines beside its unpriced ones and dropping the card
-    would take the real ones with it. A market whose legs are ALL empty-book then
-    has no priced outcome left, and ``_market_has_priced_outcome`` drops its card
-    BEFORE the truncation (#2710) — so the vacated slot is backfilled from the
-    ``limit * 5`` rows the route already loaded and the strip stays a full strip.
-
-    WHAT IT DELIBERATELY DOES NOT TOUCH. Read-side only (gotcha #21): nothing
-    here rewrites a stored price, and withholding rather than rewriting is the
-    standing rule, because ``calibration_probability`` coalesces to stored values
-    (gotcha #144 / ruling 103) and an invented price becomes a forecast we are
-    graded on. A genuine 50% on a tight book (49c/51c), a one-sided real ask and
-    every model price (both book columns NULL) are all passed through by the
-    predicate's own construction.
-
-    🪤 "A TRADED 50% IS PASSED THROUGH" USED TO BE ON THAT LIST AND IT WAS WRONG.
-    The #5333 bid-bound move (0.02 -> 0.05, 2026-09-17) made it measurable: of the
-    1,119 rows it newly reaches, two are a genuinely traded 0.500 sitting on a
-    now-empty 3c/97c book, and this function withdraws them. It cannot do
-    otherwise — it reads three columns and the serve path carries no provenance of
-    where a stored price came from. The writer's volume-gated last-trade exception
-    protects the ingest side by SUBSTITUTING the trade price; nothing carries that
-    label through to here. So the honest sentence for this surface is "no current
-    quote supports this number", never "this number was never real".
-    """
-    # `getattr` RATHER THAN ATTRIBUTE ACCESS, matching `_book_refuted_outcome_ids`
-    # below, and #6757 is why it changed. Until then this ran on exactly one call
-    # site holding ORM rows, where the three columns always exist. It now also runs
-    # on every `/api/futures/{id}` request, and a serve path must not 500 because a
-    # caller handed it an object without a book — the absent case is "no book to
-    # call empty", which falls through to the honest answer of leaving the price
-    # alone. `is_empty_book_midpoint` already returns False for a null book, so this
-    # is the same fail-open the predicate documents and not a second rule.
-    return is_empty_book_midpoint(
-        getattr(outcome, "current_probability", None),
-        getattr(outcome, "current_yes_bid", None),
-        getattr(outcome, "current_yes_ask", None),
-    )
-
-
 def _exact_score_field_nobody_prices(field: list[tuple]) -> bool:
     """Is this exact-score card a handful of maker quotes rather than a forecast?
 
@@ -3053,6 +3045,7 @@ async def load_container_field_folds(
     strip's own comment records a 192-golfer market whose card led with 0.09%.
     So the fold reads the group's FULL membership and ranks that.
     """
+    from ..utils.futures_source_mark import futures_outcome_source_mark
     from ..utils.market_grouping import detect_container_field_groups
 
     pool_by_group: dict[str, int] = defaultdict(int)
@@ -3097,8 +3090,11 @@ async def load_container_field_folds(
             FuturesMarket.id,
             FuturesMarket.name,
             FuturesMarket.source,
+            FuturesMarket.status,
             FuturesOutcome.name,
             FuturesOutcome.current_probability,
+            FuturesOutcome.is_winner,
+            FuturesOutcome.resolution_source,
         )
         .join(FuturesOutcome, FuturesOutcome.market_id == FuturesMarket.id)
         .where(
@@ -3109,7 +3105,9 @@ async def load_container_field_folds(
         )
     )
     members_by_id: dict[int, dict] = {}
-    for group_id, market_id, name, source, leg, probability in member_rows.all():
+    for (
+        group_id, market_id, name, source, status, leg, probability, grade, authority
+    ) in member_rows.all():
         member = members_by_id.setdefault(
             market_id,
             {
@@ -3121,12 +3119,19 @@ async def load_container_field_folds(
                 "complement_probability": None,
             },
         )
-        key = (
-            "probability"
-            if (leg or "").strip().lower() == "yes"
-            else "complement_probability"
-        )
-        member[key] = probability
+        if (leg or "").strip().lower() == "yes":
+            member["probability"] = probability
+            member["source_mark"] = futures_outcome_source_mark(
+                SimpleNamespace(source=source, status=status),
+                SimpleNamespace(
+                    current_probability=probability,
+                    is_winner=grade,
+                    resolution_source=authority,
+                ),
+                member,
+            )
+        else:
+            member["complement_probability"] = probability
 
     members_by_group: dict[str, list[dict]] = defaultdict(list)
     for member in members_by_id.values():
@@ -3163,10 +3168,10 @@ async def grouped_feed_slate(db: AsyncSession, filters: list, limit: int):
     and the Braves–Dodgers postseason game's own market never reached the 100.
     Supply was there; selection never looked at it.
 
-    THIS READ: up to ``limit`` open markets (every pool filter applies, so a
-    finished game's props stay out — #10064) linked to an unfinished tier-1/2
-    game inside the slate window, at most ``SLATE_MARKETS_PER_EVENT`` per game
-    and ``SLATE_EVENTS_PER_LEAGUE`` games per league.
+    THIS READ: up to ``limit`` open markets linked to a scheduled or live
+    tier-1/2 game inside the slate window, at most ``SLATE_MARKETS_PER_EVENT``
+    per game and ``SLATE_EVENTS_PER_LEAGUE`` games per league. The linked game
+    status is checked here. The caller supplies the other pool filters.
     Games rank postseason first (``llm_importance``), then tier 1 before tier 2,
     then kickoff — the order the strip should lead in.
 
@@ -3176,86 +3181,92 @@ async def grouped_feed_slate(db: AsyncSession, filters: list, limit: int):
     """
     from app.utils.highlights import get_league_tier, tier_12_sport_keys
     from sqlalchemy import case
-    from sqlalchemy.orm import aliased
 
     tier_keys = sorted(tier_12_sport_keys())
     if not tier_keys:
         return [], {}
     tier1_keys = [k for k in tier_keys if get_league_tier(k) == 1]
     now = datetime.now(timezone.utc)
-    # Aliased so the #10064 `exists(Event ...)` clause in `filters` stays
-    # correlated on the market alone, exactly as in the pool query.
-    game = aliased(Event)
-    league = aliased(Sport)
-    ranked = (
+    postseason = case((Event.llm_importance.in_(_SLATE_POSTSEASON), 0), else_=1)
+    market_filters = (
+        *filters,
+        ~and_(
+            FuturesMarket.group_type == "kalshi_event",
+            FuturesMarket.market_type == "duel",
+        ),
+        or_(
+            FuturesMarket.group_type.is_(None),
+            FuturesMarket.group_type != "polymarket_event",
+        ),
+    )
+    # A game earns a league slot only when at least one market can fill it.
+    # The scalar LIMIT keeps this an event-ID lookup that stops at the first hit.
+    eligible_market = (
+        select(FuturesMarket.id)
+        .where(FuturesMarket.event_id == Event.id, *market_filters)
+        .correlate(Event)
+        .limit(1)
+        .scalar_subquery()
+    )
+    ranked_games = (
         select(
-            FuturesMarket.id.label("market_id"),
-            FuturesMarket.event_id.label("event_id"),
-            case((game.llm_importance.in_(_SLATE_POSTSEASON), 0), else_=1).label("postseason"),
-            case((league.key.in_(tier1_keys), 1), else_=2).label("tier"),
-            game.commence_time.label("commence_time"),
-            # Inside a game, the questions the game card does NOT already ask
-            # come first: totals, player props, prop legs before `duel`s (the
-            # moneyline leg and spreads), so a duel only fills a slot a game
-            # has no other question for.
+            Event.id.label("event_id"),
+            postseason.label("postseason"),
+            case((Sport.key.in_(tier1_keys), 1), else_=2).label("tier"),
+            Event.commence_time,
             func.row_number()
             .over(
-                partition_by=FuturesMarket.event_id,
-                order_by=(
-                    case((FuturesMarket.market_type == "duel", 1), else_=0),
-                    FuturesMarket.updated_at.desc(),
-                ),
-            )
-            .label("rn"),
-            func.dense_rank()
-            .over(
-                partition_by=league.key,
-                order_by=(
-                    case((game.llm_importance.in_(_SLATE_POSTSEASON), 0), else_=1),
-                    game.commence_time,
-                    FuturesMarket.event_id,
-                ),
+                partition_by=Sport.key,
+                order_by=(postseason, Event.commence_time, Event.id),
             )
             .label("league_rank"),
         )
-        .join(game, game.id == FuturesMarket.event_id)
-        .join(league, league.id == game.sport_id)
+        .join(Sport, Sport.id == Event.sport_id)
         .where(
-            and_(*filters),
-            game.status.in_(("scheduled", "live")),
-            game.commence_time >= now - SLATE_WINDOW_BEFORE,
-            game.commence_time <= now + SLATE_WINDOW_AFTER,
-            league.key.in_(tier_keys),
-            # The game's own winner market is the question the game card above
-            # the strip already asks ("Game 1: Chicago WS vs Cleveland", Kalshi
-            # `kalshi_event` × `duel`); the slate brings the game's OTHER
-            # questions. It stays eligible through the recency pool as before.
-            ~and_(
-                FuturesMarket.group_type == "kalshi_event",
-                FuturesMarket.market_type == "duel",
-            ),
-            # Polymarket's game WRAPPER is a container whose legs are its own
-            # sub-markets; the strip withholds it (#9466), so here it would only
-            # spend a slot that yields no card.
-            or_(
-                FuturesMarket.group_type.is_(None),
-                FuturesMarket.group_type != "polymarket_event",
-            ),
+            Event.status.in_(("scheduled", "live")),
+            Event.commence_time >= now - SLATE_WINDOW_BEFORE,
+            Event.commence_time <= now + SLATE_WINDOW_AFTER,
+            Sport.key.in_(tier_keys),
+            eligible_market.is_not(None),
         )
         .subquery()
     )
-    stmt = (
-        select(ranked.c.market_id, ranked.c.event_id)
-        .where(
-            ranked.c.rn <= SLATE_MARKETS_PER_EVENT,
-            ranked.c.league_rank <= SLATE_EVENTS_PER_LEAGUE,
+    games = (
+        select(
+            ranked_games.c.event_id,
+            ranked_games.c.postseason,
+            ranked_games.c.tier,
+            ranked_games.c.commence_time,
         )
+        .where(ranked_games.c.league_rank <= SLATE_EVENTS_PER_LEAGUE)
+        .cte("grouped_slate_games")
+        .prefix_with("MATERIALIZED")
+    )
+    duel_priority = case((FuturesMarket.market_type == "duel", 1), else_=0)
+    game_markets = (
+        select(
+            FuturesMarket.id.label("market_id"),
+            duel_priority.label("duel_priority"),
+            FuturesMarket.updated_at,
+        )
+        .where(FuturesMarket.event_id == games.c.event_id, *market_filters)
+        .correlate(games)
+        # Totals and player props precede duels, which fill any remaining slots.
+        .order_by(duel_priority, FuturesMarket.updated_at.desc(), FuturesMarket.id)
+        .limit(SLATE_MARKETS_PER_EVENT)
+        .lateral("grouped_slate_markets")
+    )
+    stmt = (
+        select(game_markets.c.market_id, games.c.event_id)
+        .select_from(games.join(game_markets, true()))
         .order_by(
-            ranked.c.postseason,
-            ranked.c.tier,
-            ranked.c.commence_time,
-            ranked.c.event_id,
-            ranked.c.rn,
+            games.c.postseason,
+            games.c.tier,
+            games.c.commence_time,
+            games.c.event_id,
+            game_markets.c.duel_priority,
+            game_markets.c.updated_at.desc(),
+            game_markets.c.market_id,
         )
         .limit(limit)
     )
@@ -3444,6 +3455,16 @@ async def _publish_grouped_feed_cache(cache_key: str, payload: dict) -> None:
         logger.debug("grouped-feed cache write failed", exc_info=True)
 
 
+def _grouped_market_first_price(market: dict) -> dict:
+    from ..utils.source_mark import no_source_mark
+
+    outcomes = market["outcomes"]
+    if not outcomes:
+        return {"probability": None, "source_mark": no_source_mark("no_probability")}
+    first = outcomes[0]
+    return {"probability": first["probability"], "source_mark": first["source_mark"]}
+
+
 @router.get("/grouped-feed")
 async def grouped_feed(
     request: Request,
@@ -3476,6 +3497,7 @@ async def grouped_feed(
     anything, and the request path still publishes on a miss so the cache works
     even if the beat is broken.
     """
+    from ..utils.futures_source_mark import futures_outcome_source_mark
     from ..utils.market_grouping import (
         detect_exact_score_groups,
         detect_placement_groups,
@@ -3507,6 +3529,7 @@ async def grouped_feed(
     response.headers[GROUPED_FEED_CACHE_HEADER] = (
         "prewarm" if _prewarm_rebuild else "miss"
     )
+    build_started = perf_counter()
 
     filters = [
         FuturesMarket.status.in_(["active", "open"]),
@@ -3517,20 +3540,6 @@ async def grouped_feed(
         or_(
             FuturesMarket.resolution_date.is_(None),
             FuturesMarket.resolution_date >= datetime.now(timezone.utc),
-        ),
-        # #10064: a game prop whose match is over. Kalshi keeps these rows
-        # `open` (gotcha #33) with an expiration two weeks out and a mid-range
-        # last price, so neither clause above nor #9899's >99% rule can see
-        # them — Safiullin vs Cobolli "Total Games 61% / 47% / 36%" was served
-        # 4.5 h after the match ended. The fact lives on the linked event. A
-        # status used to WITHHOLD (settled_hero's note): `voided`/`merged`
-        # rows are not in the set, since their markets may await a relink.
-        or_(
-            FuturesMarket.event_id.is_(None),
-            ~exists().where(
-                Event.id == FuturesMarket.event_id,
-                Event.status.in_(FINISHED_STATUSES),
-            ),
         ),
     ]
     if category:
@@ -3552,8 +3561,23 @@ async def grouped_feed(
     # current major-game slate, which the recency pool alone never reaches.
     slate_market_ids: list = []
     slate_market_event: dict = {}
+    started = perf_counter()
     if sports_only and not sport and not category:
         slate_market_ids, slate_market_event = await grouped_feed_slate(db, filters, limit)
+    slate_ms = (perf_counter() - started) * 1000
+
+    # #10064: a finished game's props can still say open at the venue. The
+    # recency pool needs their current game status when it loads the rows,
+    # including slate rows whose game could have ended since the slate read.
+    filters.append(
+        or_(
+            FuturesMarket.event_id.is_(None),
+            ~exists().where(
+                Event.id == FuturesMarket.event_id,
+                Event.status.in_(FINISHED_STATUSES),
+            ),
+        )
+    )
 
     stmt = (
         select(FuturesMarket)
@@ -3564,26 +3588,32 @@ async def grouped_feed(
     )
     if slate_market_ids:
         # The same recency pool, plus the slate rows it missed — in ONE read.
+        # #11931: combine the two small ID sets via UNION and join back on PK
+        # instead of `OR(id IN (subquery), id IN (slate_market_ids))`. Postgres
+        # cannot turn an `IN (SELECT ...)` inside an `OR` into a semi-join, so
+        # the old form scanned all of `futures_markets` (13-24 s on prod); the
+        # UNION join bounds the outer lookup to <= limit*5 + len(slate) PK hits.
         recent_ids = (
-            select(FuturesMarket.id)
+            select(FuturesMarket.id.label("id"))
             .where(and_(*filters))
             .order_by(FuturesMarket.updated_at.desc())
             .limit(limit * 5)
         )
+        slate_ids = select(FuturesMarket.id.label("id")).where(
+            FuturesMarket.id.in_(slate_market_ids),
+            and_(*filters),
+        )
+        pool_ids = union(recent_ids, slate_ids).subquery("grouped_feed_pool_ids")
         stmt = (
             select(FuturesMarket)
             .options(selectinload(FuturesMarket.outcomes))
-            .where(
-                and_(*filters),
-                or_(
-                    FuturesMarket.id.in_(recent_ids),
-                    FuturesMarket.id.in_(slate_market_ids),
-                ),
-            )
+            .join(pool_ids, FuturesMarket.id == pool_ids.c.id)
             .order_by(FuturesMarket.updated_at.desc())
         )
+    started = perf_counter()
     result = await db.execute(stmt)
     markets = result.scalars().unique().all()
+    pool_ms = (perf_counter() - started) * 1000
     if slate_market_ids:
         # Slate rows first, in slate order, so the ungrouped pass's `[:limit]`
         # can never cut the very rows the lead below is built from.
@@ -3592,7 +3622,9 @@ async def grouped_feed(
             markets, key=lambda m: slate_rank.get(m.id, len(slate_rank))
         )
     # #9466: a game container's legs are copies of its own sub-markets.
+    started = perf_counter()
     container_parent_ids = await _grouped_feed_container_parent_ids(db, markets)
+    parents_ms = (perf_counter() - started) * 1000
 
     market_dicts = []
     outcome_dicts = []
@@ -3632,6 +3664,7 @@ async def grouped_feed(
                 "group_id": m.group_id,
                 "source": m.source,
             }
+            o_dict["source_mark"] = futures_outcome_source_mark(m, o, o_dict)
             m_dict["outcomes"].append(o_dict)
             outcome_dicts.append(o_dict)
             leg_books[o.id] = (
@@ -3657,7 +3690,9 @@ async def grouped_feed(
     # #4153 — one Polymarket container group is ONE question, not one card per
     # member. Loaded here rather than detected from `market_dicts` because the
     # fold needs the group's whole membership; see `load_container_field_folds`.
+    started = perf_counter()
     container_folds = await load_container_field_folds(db, market_dicts)
+    folds_ms = (perf_counter() - started) * 1000
 
     grouped_market_ids = set()
     grouped_outcome_ids = set()
@@ -3715,6 +3750,7 @@ async def grouped_feed(
                         "market_name": fold["title"],
                         "group_id": group_id,
                         "source": e["source"],
+                        "source_mark": e["source_mark"],
                     }
                     for e in entries
                 ],
@@ -3736,7 +3772,7 @@ async def grouped_feed(
                 {
                     "id": gm["id"],
                     "name": gm["name"],
-                    "probability": gm["outcomes"][0]["probability"] if gm.get("outcomes") else None,
+                    **_grouped_market_first_price(gm),
                     "threshold_value": gm.get("threshold_value", 0),
                     "threshold_direction": gm.get("threshold_direction", "above"),
                     "source": gm.get("source", ""),
@@ -3762,7 +3798,7 @@ async def grouped_feed(
                     "name": gm["name"],
                     "stage_name": gm.get("stage_name", ""),
                     "stage_order": gm.get("stage_order", 0),
-                    "probability": gm["outcomes"][0]["probability"] if gm.get("outcomes") else None,
+                    **_grouped_market_first_price(gm),
                     "source": gm.get("source", ""),
                 }
                 for gm in group_markets
@@ -3838,6 +3874,7 @@ async def grouped_feed(
                     "id": o["id"],
                     "name": o["name"],
                     "probability": o.get("probability"),
+                    "source_mark": o["source_mark"],
                     # The rung label IS the outcome. No threshold is claimed.
                     "label": o["score_label"],
                     "threshold_value": 0,
@@ -3869,6 +3906,7 @@ async def grouped_feed(
                     "id": o["id"],
                     "name": o["name"],
                     "probability": o.get("probability"),
+                    "source_mark": o["source_mark"],
                     "threshold_value": o.get("threshold_value", 0),
                     "threshold_unit": o.get("threshold_unit", ""),
                     "threshold_direction": o.get("threshold_direction", "above"),
@@ -3953,6 +3991,11 @@ async def grouped_feed(
     if payload["feed"]:
         await _publish_grouped_feed_cache(_cache_key, payload)
 
+    response.headers["Server-Timing"] = (
+        f"grouped-slate;dur={slate_ms:.1f}, grouped-pool;dur={pool_ms:.1f}, "
+        f"grouped-parents;dur={parents_ms:.1f}, grouped-folds;dur={folds_ms:.1f}, "
+        f"grouped-build;dur={(perf_counter() - build_started) * 1000:.1f}"
+    )
     return payload
 
 
@@ -4325,16 +4368,6 @@ async def get_multi_market_history(
     }
 
 
-def _as_float(value) -> Optional[float]:
-    """`Numeric` columns arrive as `Decimal`; the price predicates take floats.
-
-    None-preserving on purpose: ``is_lone_ask_on_empty_book`` distinguishes a
-    missing book from a zero bid, and coercing None to 0.0 here would hand it a
-    bid nobody recorded and call it nobody bidding.
-    """
-    return None if value is None else float(value)
-
-
 def _exclusive_field_outcome_ids(markets) -> set[int]:
     """Outcome ids belonging to markets the classifier PROVED are single-winner fields.
 
@@ -4512,215 +4545,6 @@ async def _unsupported_price_outcome_ids(
     return _unsupported_price_verdicts(market, candidates, latest_trade)
 
 
-def _unsupported_price_candidates(market: FuturesMarket) -> list:
-    """The legs of this market worth spending a trade read on (#7632 split).
-
-    THE SCREEN, LIFTED OUT OF THE ARM SO TWO CALLERS SHARE ONE SPELLING. The
-    page asks this market-by-market; the feed's snapshot builder asks it of
-    every candidate board at once so it can issue ONE trade query for the whole
-    pool instead of one per board. Both reach the same rows because both call
-    THIS — the alternative is a second copy of the screen, which is precisely
-    what `_withheld_price_outcome_ids`'s "ONE HELPER, NOT A FIFTH SPELLING"
-    forbids. Nothing about the rule moved; only the fetch did.
-    """
-    # `getattr` for the same reason the outcome reads below use it: a caller may
-    # hand this a market object that never loaded these columns, and an absent
-    # attribute must read as "not proved" rather than raise or, worse, be taken
-    # for evidence. The gate fails closed on None, so the leg is served.
-    in_exclusive_field = market_is_proved_exclusive_field(
-        getattr(market, "market_type", None),
-        getattr(market, "market_metadata", None),
-    )
-    # 🔴 #7747 — A SECOND ARM SHARES THIS CANDIDATE LIST AND THIS SNAPSHOT READ.
-    # `price_is_an_unbacked_ask` asks a different question of the same three
-    # columns (does the book LOCATE the price, not does it REFUTE it) and needs
-    # the same one thing from the snapshot table: the newest Kalshi trade. It is
-    # unioned in here rather than given its own `_..._outcome_ids` helper so the
-    # page still issues ONE trade query per market — the arm adds 38 candidate
-    # legs across 34 boards on production, so the widened `IN` list is noise
-    # against the 429 the sibling already sends.
-    return [
-        o
-        for o in market.outcomes
-        if needs_trade_evidence(
-            market.source,
-            o.resolution_source,
-            _as_float(getattr(o, "current_yes_bid", None)),
-            _as_float(getattr(o, "current_yes_ask", None)),
-            in_exclusive_field=in_exclusive_field,
-        )
-        or needs_unbacked_ask_evidence(
-            market.source,
-            o.resolution_source,
-            _as_float(getattr(o, "current_probability", None)),
-            _as_float(getattr(o, "current_yes_bid", None)),
-            _as_float(getattr(o, "current_yes_ask", None)),
-            in_exclusive_field=in_exclusive_field,
-            volume_24h=getattr(o, "volume_24h", None),
-            volume_24h_at=getattr(o, "volume_24h_at", None),
-            last_seen_at=getattr(o, "last_updated", None),
-        )
-    ]
-
-
-def _newest_capture_per_outcome(outcome_ids: list[int], bookmaker: str):
-    """`(outcome_id, captured_at)`: each leg's newest capture on `bookmaker` (#2316).
-
-    The two trade reads below join their rows back to this. It used to be
-    `max(captured_at) ... GROUP BY outcome_id` over `futures_odds_snapshots`,
-    and Postgres has no index skip scan, so that form read EVERY snapshot a
-    leg has ever had to find its newest one — a cost that grows for as long as
-    we keep pricing the market, on an append-only 51 GB table. Production
-    `pg_stat_statements`, 2026-10-10: ~2.8 s mean, 10-21 s max, ~285k buffers
-    per call to return ~1,150 rows. One `EXPLAIN ANALYZE` over 150 hockey
-    season legs: 57,430 index entries and 1,587 ms.
-
-    Here each leg asks the question by itself, as an UNGROUPED `max()` keyed on
-    its own id, which Postgres answers as a one-row backward probe of
-    `(outcome_id, bookmaker, captured_at DESC)`. Same 150 legs: 9 ms. `max()`
-    is kept on purpose rather than `ORDER BY ... LIMIT 1`, because `captured_at`
-    is nullable and `max()` already ignores NULLs exactly as the old aggregate
-    did; a leg with no capture gets NULL here and joins nothing, as before.
-
-    Driven from `futures_outcomes` by primary key so it stays portable SQL (the
-    SQLite rigs run these readers too). That is the same set of legs: the FK
-    `futures_odds_snapshots_outcome_id_fkey` is validated, so no snapshot names
-    an outcome that is not there. Proven on production as a FULL OUTER JOIN of
-    old and new answers: 0 mismatches over 376 Kalshi legs (max price), 400
-    Polymarket legs (raw rows, 148 with a NULL price) and 376 Kalshi legs (raw).
-
-    The inner snapshot table is an alias so the correlation can only bind to
-    the outcome row, never to the outer query's own `futures_odds_snapshots`.
-    """
-    capture = aliased(FuturesOddsSnapshot)
-    newest_at = (
-        select(func.max(capture.captured_at))
-        .where(
-            capture.outcome_id == FuturesOutcome.id,
-            capture.bookmaker == bookmaker,
-        )
-        .correlate(FuturesOutcome)
-        .scalar_subquery()
-    )
-    return (
-        select(
-            FuturesOutcome.id.label("outcome_id"),
-            newest_at.label("captured_at"),
-        )
-        .where(FuturesOutcome.id.in_(outcome_ids))
-        .subquery()
-    )
-
-
-async def _newest_kalshi_trades(db: AsyncSession, outcome_ids: list[int]) -> dict:
-    """`{outcome_id: last_price}` at each leg's newest Kalshi capture (#7632).
-
-    THE ONLY PART OF THIS ARM THAT TOUCHES THE DATABASE, AND IT IS KEYED ON AN
-    ID LIST RATHER THAN A MARKET SO IT BATCHES. The page passes one board's
-    candidates; the snapshot builder passes every candidate leg on the feed's
-    whole pool and gets back one dict in ONE query. The per-board loop the naive
-    wiring would have written is what turns "share the page's rule" into a
-    per-card query on `/api/feed`, which decision (b) explicitly forbids.
-
-    An empty id list is answered WITHOUT a query — a pool whose boards hold no
-    candidate must cost nothing, which is the same property the per-market arm
-    had before the split.
-    """
-    if not outcome_ids:
-        return {}
-    newest = _newest_capture_per_outcome(outcome_ids, KALSHI_BOOKMAKER)
-    rows = await db.execute(
-        select(
-            FuturesOddsSnapshot.outcome_id,
-            func.max(FuturesOddsSnapshot.last_price),
-        )
-        .join(
-            newest,
-            and_(
-                FuturesOddsSnapshot.outcome_id == newest.c.outcome_id,
-                FuturesOddsSnapshot.captured_at == newest.c.captured_at,
-            ),
-        )
-        .where(FuturesOddsSnapshot.bookmaker == KALSHI_BOOKMAKER)
-        .group_by(FuturesOddsSnapshot.outcome_id)
-    )
-    # Two Kalshi snapshots can share one `captured_at`; the aggregate above keeps
-    # the HIGHEST last_price among them, which is the fail-open direction — any
-    # trade evidence at all leaves the price on the page.
-    return {outcome_id: price for outcome_id, price in rows.all()}
-
-
-def _unsupported_price_verdicts(
-    market: FuturesMarket, candidates: list, latest_trade: dict
-) -> set[int]:
-    """Which candidates the two #5611/#7747 screens actually refuse (#7632 split).
-
-    Pure, so the batched builder and the per-market page path reach an identical
-    answer from an identical dict. `latest_trade` may hold ids belonging to other
-    boards when the builder batches — every read here is keyed on `o.id`, so a
-    wider dict is inert rather than contaminating.
-    """
-    in_exclusive_field = market_is_proved_exclusive_field(
-        getattr(market, "market_type", None),
-        getattr(market, "market_metadata", None),
-    )
-    return {
-        o.id
-        for o in candidates
-        if price_is_unsupported(
-            market.source,
-            o.resolution_source,
-            _as_float(getattr(o, "current_yes_bid", None)),
-            _as_float(getattr(o, "current_yes_ask", None)),
-            _as_float(latest_trade.get(o.id)),
-            has_trade_evidence=o.id in latest_trade
-            and latest_trade[o.id] is not None,
-            in_exclusive_field=in_exclusive_field,
-        )
-        # #7747. An OR, so the arms are independent screens over one candidate
-        # list: a leg ANY arm refuses is withheld, and none can acquit what
-        # another caught. #8210 added a third below and relies on that property —
-        # it deliberately OVERLAPS the arm above on legs printing at their ask.
-        or price_is_an_unbacked_ask(
-            market.source,
-            o.resolution_source,
-            _as_float(getattr(o, "current_probability", None)),
-            _as_float(getattr(o, "current_yes_bid", None)),
-            _as_float(getattr(o, "current_yes_ask", None)),
-            _as_float(latest_trade.get(o.id)),
-            has_trade_evidence=o.id in latest_trade
-            and latest_trade[o.id] is not None,
-            in_exclusive_field=in_exclusive_field,
-            # `getattr` throughout: a caller may hand this a market whose
-            # outcomes never loaded these columns, and an absent stamp must read
-            # as "do not withhold" rather than raise.
-            volume_24h=getattr(o, "volume_24h", None),
-            volume_24h_at=getattr(o, "volume_24h_at", None),
-            last_seen_at=getattr(o, "last_updated", None),
-        )
-        # #8210. The third independent screen over the same candidate list, and
-        # the one that reaches rule 2's trade-evidence exemption: the arm above
-        # needs the price AT its own ask, so a stale trade locating a price
-        # strictly INSIDE an unbid spread is acquitted by every other arm. Same
-        # book shape and same volume term as its sibling; only the position of
-        # the print in the spread differs.
-        or price_is_an_unbacked_majority(
-            market.source,
-            o.resolution_source,
-            _as_float(getattr(o, "current_probability", None)),
-            _as_float(getattr(o, "current_yes_bid", None)),
-            _as_float(getattr(o, "current_yes_ask", None)),
-            _as_float(latest_trade.get(o.id)),
-            has_trade_evidence=o.id in latest_trade
-            and latest_trade[o.id] is not None,
-            in_exclusive_field=in_exclusive_field,
-            volume_24h=getattr(o, "volume_24h", None),
-            volume_24h_at=getattr(o, "volume_24h_at", None),
-            last_seen_at=getattr(o, "last_updated", None),
-        )
-    }
-
-
 async def _refuted_midpoint_outcome_ids(
     db: AsyncSession, market: FuturesMarket
 ) -> set[int]:
@@ -4763,450 +4587,6 @@ async def _refuted_midpoint_outcome_ids(
     rows = await _newest_venue_trade_rows(db, venue, [o.id for o in candidates])
     latest_trade = _closest_trade_by_outcome(candidates, rows)
     return _refuted_midpoint_verdicts(market, candidates, latest_trade)
-
-
-def _refuted_midpoint_candidates(market: FuturesMarket) -> list:
-    """The legs of this market worth a venue trade read (#7632 split).
-
-    Carries the VENUE GATE, not just the per-leg screen, so a caller batching
-    many boards cannot accidentally send a non-midpoint venue's legs to the
-    trade query: a market whose source is outside `MIDPOINT_TRADE_SOURCES` has
-    no candidates at all, exactly as the per-market arm decided before the
-    split. See `_unsupported_price_candidates` for why the screen is a named
-    function rather than an inline comprehension.
-    """
-    if (market.source or "").strip().lower() not in MIDPOINT_TRADE_SOURCES:
-        return []
-    return [
-        o
-        for o in market.outcomes
-        if needs_trade_disconfirmation(
-            market.source,
-            o.resolution_source,
-            _as_float(o.current_probability),
-            _as_float(getattr(o, "current_yes_bid", None)),
-            _as_float(getattr(o, "current_yes_ask", None)),
-        )
-    ]
-
-
-async def _newest_venue_trade_rows(
-    db: AsyncSession, venue: str, outcome_ids: list[int]
-) -> list:
-    """Raw `(outcome_id, last_price)` at each leg's newest capture on `venue`.
-
-    RAW ROWS, NOT A DICT, because this arm's pick is not "the max" — it is "the
-    trade closest to the served midpoint among those sharing the newest
-    `captured_at`", and that choice needs the served probability, which is a
-    per-market fact. So the query batches (one call per venue for the whole
-    pool) and `_closest_trade_by_outcome` folds per board. Empty id list costs
-    no query, same as the Kalshi sibling.
-    """
-    if not outcome_ids:
-        return []
-    newest = _newest_capture_per_outcome(outcome_ids, venue)
-    rows = await db.execute(
-        select(
-            FuturesOddsSnapshot.outcome_id,
-            FuturesOddsSnapshot.last_price,
-        )
-        .join(
-            newest,
-            and_(
-                FuturesOddsSnapshot.outcome_id == newest.c.outcome_id,
-                FuturesOddsSnapshot.captured_at == newest.c.captured_at,
-            ),
-        )
-        .where(FuturesOddsSnapshot.bookmaker == venue)
-    )
-    return list(rows.all())
-
-
-def _closest_trade_by_outcome(candidates: list, rows: list) -> dict:
-    """Per leg, the newest-capture trade nearest its served midpoint (#7632 split).
-
-    ⚠️ ROWS BELONGING TO OTHER BOARDS ARE SKIPPED, NOT FOLDED. When the snapshot
-    builder batches a venue's whole pool into one query, this fold is handed
-    rows for legs that are not this market's candidates. Keying the skip on
-    `served` membership keeps the batched answer byte-identical to the
-    per-market one — and on the per-market path every row is a candidate, so
-    the filter is a no-op there rather than a behaviour change.
-    """
-    served = {o.id: _as_float(o.current_probability) for o in candidates}
-    latest_trade: dict[int, float] = {}
-    for outcome_id, last_price in rows:
-        if outcome_id not in served:
-            continue
-        price = _as_float(last_price)
-        if price is None:
-            continue
-        target = served.get(outcome_id)
-        held = latest_trade.get(outcome_id)
-        if held is None or (
-            target is not None and abs(price - target) < abs(held - target)
-        ):
-            latest_trade[outcome_id] = price
-    return latest_trade
-
-
-def _refuted_midpoint_verdicts(
-    market: FuturesMarket, candidates: list, latest_trade: dict
-) -> set[int]:
-    """Which candidates the #5876 midpoint screen actually refuses (#7632 split)."""
-    return {
-        o.id
-        for o in candidates
-        if midpoint_refuted_by_last_trade(
-            market.source,
-            o.resolution_source,
-            _as_float(o.current_probability),
-            _as_float(getattr(o, "current_yes_bid", None)),
-            _as_float(getattr(o, "current_yes_ask", None)),
-            latest_trade.get(o.id),
-            has_trade_evidence=o.id in latest_trade,
-        )
-    }
-
-
-def _book_refuted_outcome_ids(market: FuturesMarket) -> set[int]:
-    """Which of this market's outcomes serve a price their own book prices out.
-
-    #6532, the third arm, and the only one of the three that costs NOTHING. Its
-    two siblings each need the newest snapshot to answer "did this ever trade" or
-    "what did it last trade at", so each runs a query. This one reads the served
-    price against the book columns sitting on the same row — three fields of one
-    write — so it is a pass over outcomes already in memory, no query, no index,
-    and synchronous for that reason rather than by omission.
-
-    The rule and everything measured about it are in
-    :func:`app.utils.futures_unsupported_price.price_refuted_by_live_book`,
-    including why a graded winner is never touched and why a graded loser is asked
-    only half the predicate.
-    """
-    return {
-        o.id
-        for o in market.outcomes
-        if price_refuted_by_live_book(
-            market.source,
-            o.resolution_source,
-            o.is_winner,
-            _as_float(o.current_probability),
-            _as_float(getattr(o, "current_yes_bid", None)),
-            _as_float(getattr(o, "current_yes_ask", None)),
-        )
-    }
-
-
-def _empty_book_outcome_ids(market: FuturesMarket) -> set[int]:
-    """Which of this market's outcomes price a book with nothing in it (#6757).
-
-    WHAT A READER SAW. ``/futures/57777176`` — "NBA: Steph Curry Next Team" —
-    printed a confident percentage against all 30 teams and not one of them was
-    a traded price: sixteen clubs read **48%**, the ladder summed to **1112.5%**,
-    and every row had been written in one batch six weeks earlier
-    (``2026-08-01 00:19:45.171081``, identical microsecond ⇒ one batch writer).
-    The same shape answers a real election on ``/futures/110297`` — "Who will win
-    the 2026 Colombia Senate election? Opposition 49.7% / Government Alliance
-    49.1%" — and prices five mutually exclusive CPI rungs at 50% EACH on
-    ``/futures/109681``.
-
-    THE RULE IS NOT NEW AND IS NOT RE-DERIVED HERE. This is
-    :func:`_leg_prices_an_empty_book`, the same object the grouped feed already
-    calls at its one shipped call site, which is in turn #5247's measured
-    predicate wearing #6727's spread form. The defect was never the rule; it was
-    that this route never asked it. Three read surfaces refuse these rows today
-    — ``game-markets``, the search slice and the grouped feed — so the strip and
-    the page a reader opens FROM the strip disagreed about the same row in the
-    same hour, which is the whole of #6757.
-
-    WITHHELD, NOT SKIPPED, and that is the difference from the grouped-feed call
-    site rather than an inconsistency with it. The strip drops the leg from a
-    five-row card; this page IS the full field, and dropping sixteen clubs out of
-    "Steph Curry Next Team" would answer a question nobody asked. The price is
-    nulled and the row stays — the contract the three arms above already keep.
-
-    A GRADED ROW IS EXEMPT, and that exemption is this function's and NOT the
-    shared predicate's. ``_leg_prices_an_empty_book`` reads three price columns
-    and knows nothing about settlement, which is right for the strip; here it
-    would mean withholding the price of a row the venue has already decided, and
-    #6532 states the cost of that plainly — withholding a settled row deletes a
-    result. Settled means settled, so the grade is checked HERE, at the call
-    site, rather than by teaching the shared rule a fourth condition its three
-    other consumers never asked for. Measured on production 2026-09-17: 58 of the
-    4,192 legs this arm reaches are graded, so the exemption costs the ship
-    nothing and buys back the one class where withholding does harm.
-
-    NO QUERY, like :func:`_book_refuted_outcome_ids` directly above and for the
-    same reason — the columns it reads are on rows already in memory.
-
-    MEASURED BEFORE SHIPPING (production, 2026-09-17): 4,192 legs across 2,402
-    open markets. 1,973 of those markets are left with no priced leg at all, and
-    1,910 of THOSE carry one or two legs — an untraded binary whose only book is
-    empty, which is exactly the row that should print nothing rather than a
-    manufactured coin flip. Eleven markets with six or more legs blank entirely.
-
-    A RETRACTION IS NOT A GRADE, and this is the one refinement the exemption
-    has needed since it shipped. ``ungradeable_result`` is the no-result
-    sentinel (CAL-P056): a leg carrying it has been declared unknowable, not
-    decided, so there is no result for the exemption to protect — only the
-    empty-book midpoint it was written to withhold. ``/futures/2951399`` printed
-    thirteen identical 49s under that badge on an open market resolving in
-    2027, ``prices_withheld: 0`` beneath them.
-
-    THE TEST IS NOT WRITTEN HERE. :func:`row_carries_a_verdict` (#6876) is the
-    codebase's one spelling of "is there a grade at all", and this route's price
-    rails already ask it — ``needs_trade_evidence`` and
-    ``price_refuted_by_live_book`` both call it. This arm and the chart arm in
-    :func:`_drop_unsupported_snapshot_points` call the same function so the
-    ladder, the graph and the rails cannot read one row three ways. Every other
-    non-null source keeps the exemption exactly as before: whether a terminal
-    no-winner source such as ``all_losers`` should also yield is a settlement
-    question, and the tests pin today's answer so it is changed visibly.
-    """
-    return {
-        o.id
-        for o in market.outcomes
-        if not row_carries_a_verdict(getattr(o, "resolution_source", None))
-        and _leg_prices_an_empty_book(o)
-    }
-
-
-def _unlocated_in_broken_field_outcome_ids(
-    market: FuturesMarket, already_withheld: set[int]
-) -> set[int]:
-    """Which outcomes price a book that bounds nothing, inside a field that cannot be one (#7059).
-
-    The fifth arm, and the second one to cost no query: like
-    :func:`_book_refuted_outcome_ids` it reads columns already on rows in memory.
-
-    The rule, the specimen and every number behind it are in
-    :func:`app.utils.futures_unsupported_price.price_is_unlocated_in_broken_field`
-    and its field-level half :func:`field_names_two_favourites` — including why the
-    recency question is never asked and why both halves are load-bearing.
-
-    ``already_withheld`` IS THE WHOLE REASON THIS ARM TAKES AN ARGUMENT AND THE
-    OTHERS DO NOT. Its gate is a fact about the COLUMN A READER SEES, so it has to
-    be computed over the legs that survive the four arms above rather than over
-    every stored row — "the caller passes the list it will actually print, because
-    that is the set whose coherence the page is claiming"
-    (``classify_field_openings``). On the specimen this is not academic: Tyson Fury
-    stores 0.97 and is ALREADY refused by :func:`_book_refuted_outcome_ids` (he
-    serves above his own ask), so counting stored rows would credit the field with a
-    favourite no reader is shown. It still names two — Usyk 0.93 and Kabayel 0.87 —
-    so the gate holds either way here, but a rule about what a page claims may not
-    be measured on rows the page withholds.
-
-    THE ORDER IS THEREFORE FIXED AND ONE-PASS. This arm runs last, over the survivors
-    of the other four, and its own refusals do NOT re-open the gate. Iterating to a
-    coherent column would be chasing a sum, which this module does not do
-    (gotcha #21, withholding never rewriting); one pass also makes the result
-    independent of the order ids happen to arrive in.
-
-    A MARKET WHOSE SHAPE IS NOT PROVED EXCLUSIVE NEVER REACHES THE GATE, and the
-    check fails closed on absent metadata exactly as it does at the #6846 call site
-    above — ``market_is_proved_exclusive_field`` reads the persisted classifier, not
-    ``futures_markets.mutually_exclusive``, which defaults to true and is evidence of
-    nothing.
-    """
-    if not market_is_proved_exclusive_field(
-        getattr(market, "market_type", None),
-        getattr(market, "market_metadata", None),
-    ):
-        return set()
-    served = [o for o in market.outcomes if o.id not in already_withheld]
-    if not field_names_two_favourites(
-        [_as_float(getattr(o, "current_probability", None)) for o in served]
-    ):
-        return set()
-    return {
-        o.id
-        for o in served
-        if _as_float(getattr(o, "current_probability", None)) is not None
-        and price_is_unlocated_in_broken_field(
-            market.source,
-            o.resolution_source,
-            _as_float(getattr(o, "current_yes_bid", None)),
-            _as_float(getattr(o, "current_yes_ask", None)),
-        )
-    }
-
-
-def _unsupported_head_outcome_ids(
-    market: FuturesMarket, already_withheld: set[int]
-) -> set[int]:
-    """Which outcomes would head a proved field on a print nobody bids on or trades (#8265).
-
-    The sixth arm, and like #7059's it costs no query and takes the ids the arms
-    above refused, for the same reason: its ceiling is a fact about the column a
-    reader is SHOWN. On the specimen that is the whole case — Jakub Mensik's 3¢ bid
-    is the only bid on the board, and #7747 already withholds his price, so counting
-    stored rows would credit the field with support no reader sees.
-
-    Runs after #7059's arm and reads its refusals too. The rule and its measurement
-    live on :func:`unsupported_legs_above_the_supported_head`.
-
-    A board carrying a verdict is a RESULT and is skipped whole (settled means
-    settled), and a market whose shape is not proved exclusive never reaches the
-    rule — outside a one-winner field there is no column for a leg to head.
-    """
-    if not market_is_proved_exclusive_field(
-        getattr(market, "market_type", None),
-        getattr(market, "market_metadata", None),
-    ):
-        return set()
-    outcomes = getattr(market, "outcomes", None) or []
-    if _board_has_a_verdict(outcomes):
-        return set()
-    served = []
-    for o in outcomes:
-        if o.id in already_withheld:
-            continue
-        probability = _as_float(getattr(o, "current_probability", None))
-        if probability is None:
-            continue
-        served.append(
-            (
-                o.id,
-                probability,
-                leg_has_no_live_support(
-                    market.source,
-                    getattr(o, "resolution_source", None),
-                    _as_float(getattr(o, "current_yes_bid", None)),
-                    _as_float(getattr(o, "current_yes_ask", None)),
-                    volume_24h=getattr(o, "volume_24h", None),
-                    volume_24h_at=getattr(o, "volume_24h_at", None),
-                    last_seen_at=getattr(o, "last_updated", None),
-                ),
-            )
-        )
-    return unsupported_legs_above_the_supported_head(served)
-
-
-def _board_has_a_verdict(outcomes) -> bool:
-    """Has anybody actually settled this board? (#8011 / CERT-3298)
-
-    🔴 `status == 'open'` DOES NOT ANSWER THIS, which is the whole reason this
-    exists. Gotcha #33: settled Kalshi markets stay `status='open'` in our
-    database because polling only ever sees open markets. 444 of the 969 boards
-    #8011's predicate admits carry a verdict under this test, and every one of
-    them is a RESULT that must survive — `/futures/413`'s "Jalen Brunson 99%" is
-    the Finals MVP answer, with `api_settlement` on all 57 legs.
-
-    Delegates to `futures_liveness.leg_is_graded`, the shared semantics #7387
-    and #4788 already read, rather than testing `is_winner` here. That column is
-    `default=False`, so False is what a row is BORN with and not a grader's
-    decision, and `ungradeable_result` is a RETRACTION of a fabricated loss
-    rather than a verdict. A local test would get both wrong.
-    """
-    from app.utils.futures_liveness import leg_is_graded
-
-    return any(
-        leg_is_graded(
-            getattr(o, "is_winner", None), getattr(o, "resolution_source", None)
-        )
-        for o in outcomes
-    )
-
-
-async def _fleet_newest_observation(
-    db: AsyncSession, market: FuturesMarket
-) -> "datetime | None":
-    """The newest futures leg observation the system holds, anywhere (#8011).
-
-    `unobserved_board_keys` needs a reference a single board cannot supply: is
-    anyone writing prices AT ALL right now? This is that reference, and it is
-    deliberately the same column the per-leg rule reads
-    (`futures_outcomes.last_updated`) so the two lags are commensurable.
-
-    🔴 SKIPPED ENTIRELY FOR ANY BOARD THAT COULD NOT QUALIFY, and that gate is
-    the reason this route's query count does not move. Every stamp is in the
-    past, so `fleet <= now`; a board whose own newest stamp is inside the floor
-    of `now` therefore cannot be inside it of the fleet either, and the read
-    would only confirm what `board_cannot_be_unobserved` already proved. That
-    covers ~92% of boards (2,662 of 31,716 open priced boards carry a leg stamp
-    past the floor) and, in particular, every board LAT-P127's cache guard
-    exercises — its fixtures carry no leg stamp at all.
-
-    SINCE #2077 THE STATUS GATE ADMITS "resolved" TOO, and the cost of that is
-    bounded by the two refusals immediately below it rather than by the status
-    test. A graded board still costs no query (the verdict early-return), and a
-    board whose own newest stamp is recent still costs no query
-    (`board_cannot_be_unobserved`, which is status-agnostic and unchanged). What
-    is newly eligible is exactly the defect population: settled, ungraded, and
-    last observed beyond the floor. This route serves ONE board per request, so
-    the worst case it adds is a single 0.042 ms Index Only Scan Backward to a
-    detail page that would otherwise print a coin flip.
-
-    The bound is one-directional by construction: it can only suppress the
-    read, never cause a withhold. `unobserved_board_keys` still decides against
-    the fleet, so a fleet-wide stall still withholds nothing.
-
-    NOT MEMOISED, ON PURPOSE. `ix_futures_outcomes_last_updated` makes this an
-    Index Only Scan Backward: measured on production 2026-09-22 at **0.042 ms**
-    / 6 shared hit blocks against a 1.1M-row parent table. A cache would buy
-    nothing measurable on top of the gate above, and would cost the two things
-    caches cost here — a per-uvicorn-worker copy (`WEB_CONCURRENCY=2`, so the
-    hit rate is not what a single process reports) and a stale reference that
-    could only ever push a live board towards being read as unobserved.
-
-    Returns None — which `unobserved_board_keys` reads as "withhold nothing" —
-    if the board cannot qualify, if the query fails, or if the table is empty. A
-    database this route could not reach must degrade to today's behaviour, never
-    to a blanked board.
-    """
-    from app.utils.market_staleness import (
-        board_cannot_be_unobserved,
-        board_touched_at,
-    )
-
-    # 🔴 #2077, CERT-3308 — THIS LINE IS WHY WIDENING THE FORMATTER ALONE
-    # CHANGED NOTHING A READER COULD SEE.
-    #
-    # `_format_market_detail` names both statuses so an ungraded settled board
-    # reaches `unobserved_board_keys`. But the rule fails open on a missing
-    # `fleet_newest_observation`, and THIS function — the only thing that
-    # supplies it — returned None without a query for every status but "open".
-    # So the widened formatter was handed None on exactly the population it had
-    # just been widened for, took its fail-open path, and withheld nothing:
-    # `/futures/56916563` went on serving `Under 0.5`, and an exact-sha
-    # reproduction read `resolved_result=None db_execute_awaits=0`.
-    #
-    # THE GENERAL LESSON, AND IT IS THE SECOND TIME THIS RULE HAS BITTEN THIS
-    # SHIP: the same `status == "open"` test lived in three places, not two.
-    # Mutation caught the dead copy INSIDE the formatter; it could not see this
-    # one, because the tests inject `fleet_newest_observation` directly into
-    # `_format_market_detail` and therefore never traverse this seam. A guard
-    # that hands the callee an input the caller never supplies cannot observe a
-    # caller that never supplies it — which is why the repair below is a
-    # ROUTE-level regression, not another formatter unit.
-    #
-    # Named, not inverted, for the reason the formatter states: `status` is
-    # exactly {open, resolved} today, so a new status inherits today's
-    # behaviour and must come back through this line deliberately.
-    if getattr(market, "status", None) not in ("open", "resolved"):
-        return None
-    # A settled board WITH A VERDICT is a result and is exempt, so there is
-    # nothing to ask the fleet about. Checked here as well as in the rule so a
-    # graded board costs no query either — and so the two places cannot
-    # disagree about which semantics decide it. This is the line that keeps
-    # `/futures/413` ("Jalen Brunson 99%", api_settlement on all 57 legs)
-    # protected by construction now that the status gate admits "resolved".
-    if _board_has_a_verdict(getattr(market, "outcomes", None) or []):
-        return None
-    if board_cannot_be_unobserved(
-        ((o.id, o.last_updated) for o in (getattr(market, "outcomes", None) or [])),
-        board_touched_at=board_touched_at(market),
-        now=datetime.now(timezone.utc),
-    ):
-        return None
-
-    try:
-        return (
-            await db.execute(select(func.max(FuturesOutcome.last_updated)))
-        ).scalar_one_or_none()
-    except Exception:
-        logger.warning("fleet newest observation unavailable", exc_info=True)
-        return None
 
 
 async def _game_container_leg_sides(
@@ -5390,139 +4770,34 @@ async def _withheld_price_outcome_ids(
     return ids
 
 
-async def withheld_price_outcome_ids_for_markets(
-    db: AsyncSession, markets: Sequence[FuturesMarket]
-) -> dict[int, set[int]]:
-    """`_withheld_price_outcome_ids` over MANY boards, in a constant query count.
-
-    #7632. THE CARD AND THE PAGE DISAGREED BECAUSE ONLY THE PAGE ASKED. The
-    detail route refuses a leg's price through the five arms above; the Discover
-    card ran none of them, so it printed prices the page withholds and divided by
-    a mass that still contained them. Three boards on the served feed of
-    2026-09-23 06:09Z, matched by outcome id:
-
-        61960017  WTA Seoul      card: Birrell/Tararudee/Bondar all 49%
-                                 page: prices 1 of 16 legs, all three withheld
-        61437318  WTA Singapore  card leader Kasatkina 31%
-                                 page withholds her; hero is Eala 28.5%
-        61734333  LPGA NW Ark.   page withholds 100 of 144, prints Yamashita 11%
-                                 card divides by the fuller mass, prints 7.65%
-
-    Seoul is the one to read: a card offering three co-favourites at 49% lands on
-    a page that will not price any of them. Singapore is worse in kind — the card
-    NAMES A LEADER the page refuses, so a tap inverts the story.
-
-    ═══ WHY A SEPARATE ENTRY POINT AND NOT A LOOP ═══
-
-    Calling the per-market helper once per board is the obvious wiring and it is
-    the one thing decision (b) forbids: two queries per card on the feed's build
-    path. Both database arms are `IN`-list reads keyed on a bookmaker, so they
-    batch — the Kalshi arm collapses to ONE query for the entire pool, and the
-    midpoint arm to one per distinct venue, of which `MIDPOINT_TRADE_SOURCES`
-    admits two. **Four queries at most, whatever the pool size.** That is
-    strictly cheaper than the per-board budget the decision approved.
-
-    The arms are not re-implemented here. Each was split into (candidates → trade
-    read → verdict) and this function reuses the same pure halves the page path
-    calls, which is `_withheld_price_outcome_ids`'s own "ONE HELPER, NOT A FIFTH
-    SPELLING" obeyed rather than evaded: a sixth arm, or a change to any existing
-    one, reaches the card and the page together or not at all.
-
-    ⚠️ THE CALLER MUST HAVE LOADED `resolution_source`, `volume_24h`,
-    `volume_24h_at` AND `is_winner`. Every read of them below is a `getattr`
-    defaulting to `None`, which on a `load_only`-restricted row is not a crash —
-    it is a screen that quietly refuses nothing, the "a DIFFERENT feed, not a
-    cheaper one" failure `futures_market_snapshot` exists to prevent. Those four
-    are in `OUTCOME_LOAD_ONLY_EXTRA` for exactly this reason, and
-    `test_card_and_page_share_the_withheld_set_7632` pins them there.
-
-    Returns a mapping keyed by market id, holding an empty set for a board that
-    refuses nothing. A board is OMITTED only when evaluating it raised — see the
-    per-market guard below. Missing and empty are different facts downstream
-    (see `_drop_withheld_price_legs`), which is what makes omission safe.
-
-    ⚠️ ONE BAD BOARD MUST NEVER WIPE THE POOL (gotcha #42). This runs OUTSIDE
-    the serializers' per-item `try`, in the shared-artifact builder, so an
-    unconverted string on one market's leg would otherwise take down the whole
-    futures pass — `test_poison_market_does_not_wipe_futures_pass` caught
-    exactly that on the first cut of this function and was right to. Every
-    market is therefore evaluated under its own guard, and a board that raises
-    is left OUT of the map, which the consumer reads as "not computed" and so
-    serves at its pre-#7632 numbers. The failure direction is one card keeping
-    the prices the page refuses, never a feed with no futures in it.
-    """
-    unsupported_candidates: dict[int, list] = {}
-    midpoint_candidates: dict[int, list] = {}
-    kalshi_ids: list[int] = []
-    venue_ids: dict[str, list[int]] = {}
-    unreadable: set[int] = set()
-
-    for market in markets:
-        try:
-            unsupported = _unsupported_price_candidates(market)
-            midpoint = _refuted_midpoint_candidates(market)
-        except Exception:
-            logger.warning(
-                "withheld-price screen could not read market %s — its card "
-                "keeps its pre-#7632 prices",
-                getattr(market, "id", None),
-                exc_info=True,
-            )
-            unreadable.add(getattr(market, "id", None))
-            continue
-        if unsupported:
-            unsupported_candidates[market.id] = unsupported
-            kalshi_ids.extend(o.id for o in unsupported)
-        if midpoint:
-            midpoint_candidates[market.id] = midpoint
-            venue = (market.source or "").strip().lower()
-            venue_ids.setdefault(venue, []).extend(o.id for o in midpoint)
-
-    latest_kalshi_trade = await _newest_kalshi_trades(db, kalshi_ids)
-    venue_rows = {
-        venue: await _newest_venue_trade_rows(db, venue, ids)
-        for venue, ids in venue_ids.items()
-    }
-
-    withheld: dict[int, set[int]] = {}
-    for market in markets:
-        if getattr(market, "id", None) in unreadable:
-            continue
-        try:
-            ids: set[int] = set()
-            unsupported = unsupported_candidates.get(market.id)
-            if unsupported:
-                ids |= _unsupported_price_verdicts(
-                    market, unsupported, latest_kalshi_trade
-                )
-            midpoint = midpoint_candidates.get(market.id)
-            if midpoint:
-                venue = (market.source or "").strip().lower()
-                ids |= _refuted_midpoint_verdicts(
-                    market,
-                    midpoint,
-                    _closest_trade_by_outcome(midpoint, venue_rows.get(venue, [])),
-                )
-            ids |= _book_refuted_outcome_ids(market)
-            ids |= _empty_book_outcome_ids(market)
-            # Last, and reading the four above — the same composition order as
-            # the per-market helper, because this arm's gate is a fact about
-            # what the OTHER four already took away.
-            ids |= _unlocated_in_broken_field_outcome_ids(market, ids)
-            ids |= _unsupported_head_outcome_ids(market, ids)
-        except Exception:
-            logger.warning(
-                "withheld-price screen could not grade market %s — its card "
-                "keeps its pre-#7632 prices",
-                getattr(market, "id", None),
-                exc_info=True,
-            )
-            continue
-        withheld[market.id] = ids
-    return withheld
-
-
 @router.get("/{market_id}")
+async def get_futures_market_cached(
+    market_id: int,
+    db: AsyncSession = Depends(get_db),
+    representation: str = Query(
+        REPRESENTATION_SOURCE,
+        description=(
+            "`source` (default) serves this market row alone. `verified_title` "
+            "(#9387) serves one current number per outcome across every venue "
+            "that provably asks the same title question, or source mode when "
+            "that cannot be proved."
+        ),
+    ),
+    fresh: bool = False,
+):
+    """Cached HTTP entry for ``GET /api/futures/{market_id}`` (<= 15 s, singleflight)."""
+    return await _futures_page_cache.serve_cached_or_build(
+        key=_futures_page_cache.detail_key(market_id, representation),
+        fresh=fresh,
+        build=lambda: get_futures_market(
+            market_id=market_id,
+            db=db,
+            representation=representation,
+        ),
+        ttl_for=_futures_page_cache.detail_ttl,
+    )
+
+
 async def get_futures_market(
     market_id: int,
     db: AsyncSession = Depends(get_db),
@@ -5558,6 +4833,17 @@ async def get_futures_market(
 
     if not market:
         raise HTTPException(status_code=404, detail="Market not found")
+
+    nominee_field = (await grammy_nominee_fields(db, [market])).get(market.id)
+    requested_id = market_id
+    legacy_market = (
+        market if nominee_field is not None else await grammy_pre_nomination_board(db, market)
+    )
+    if nominee_field is not None:
+        market = nominee_field
+        market_id = market.id
+    if is_grammy_general_field_market(market):
+        representation = REPRESENTATION_SOURCE
 
     # The provenance half — which books contributed, and their latest price per
     # outcome — is the whole cost of this endpoint and it is the only half that
@@ -5620,11 +4906,36 @@ async def get_futures_market(
     # #10165: the game this board is the Polymarket container OF, so the page can
     # send the reader to the game instead of drawing the container as a field.
     detail["container_of_event_id"] = await _game_container_of_event_id(db, market)
-    # #9387: opt-in only. The default response is untouched, field for field.
-    if representation == REPRESENTATION_VERIFIED_TITLE:
-        _apply_verified_title_to_detail(
-            detail, await _resolve_verified_title(db, market), market
+    if legacy_market is not None:
+        # Preserve old page addresses and give search and Discover the same
+        # field when they link to Kalshi. Polymarket supplies only its Out rows.
+        retired = _format_market_detail(legacy_market, normalize_numbers=False)
+        detail["id"] = requested_id
+        append_grammy_out_rows(
+            detail["outcomes"], retired["outcomes"], match_artist_suffix=True
         )
+        detail["outcome_count"] = len(detail["outcomes"])
+    elif representation == REPRESENTATION_VERIFIED_TITLE:
+        verdict = await _resolve_verified_title(db, market)
+        _apply_verified_title_to_detail(detail, verdict, market)
+        if market_id == SUPER_BOWL_2027_ALIAS_ID and (
+            getattr(verdict, "canonical_market_id", None) == SUPER_BOWL_2027_BOARD_ID
+            or (
+                getattr(verdict, "reason", None) != "resolver_error"
+                and await _load_current_2027_super_bowl(db) is not None
+            )
+        ):
+            detail["canonical_market_id"] = SUPER_BOWL_2027_BOARD_ID
+    served_outcomes = detail.get("outcomes") or ()
+    if (
+        detail.get("status") in {"open", "active"}
+        and detail.get("market_type") == "field"
+        and detail.get("source") in {"kalshi", "polymarket"}
+        and len(served_outcomes) > 1
+        and any(row.get("probability") is not None for row in served_outcomes)
+        and not any(row.get("rendered_percent") for row in served_outcomes)
+    ):
+        detail["outcome_prices_are_independent"] = True
     return detail
 
 
@@ -5721,6 +5032,22 @@ def _verified_title_market_stmt(*, outcome_team: bool = False):
     if outcome_team:
         outcomes = outcomes.selectinload(FuturesOutcome.team)
     return select(FuturesMarket).options(outcomes, selectinload(FuturesMarket.sport))
+
+
+def _is_current_2027_super_bowl(market: FuturesMarket) -> bool:
+    """The sportsbook board's fresh anchor must still name the 2027 game."""
+    if market.id != SUPER_BOWL_2027_BOARD_ID:
+        return False
+    member = member_of(NFL_TITLE, _verified_title_facts(market), datetime.now(timezone.utc))
+    return isinstance(member, Member) and member.source == "odds_api" and member.edition == "2027"
+
+
+async def _load_current_2027_super_bowl(db: AsyncSession) -> FuturesMarket | None:
+    result = await db.execute(
+        _verified_title_market_stmt().where(FuturesMarket.id == SUPER_BOWL_2027_BOARD_ID)
+    )
+    market = result.unique().scalar_one_or_none()
+    return market if market is not None and _is_current_2027_super_bowl(market) else None
 
 
 def _verified_title_candidates_stmt(spec, edition: str, exclude_id: int):
@@ -5890,6 +5217,9 @@ async def _compose_verified_title(db: AsyncSession, market: FuturesMarket):
             value.observed_at for value in canonical_verdict.overlay.values()
             if value.probability is not None and value.observed_at is not None
         ]
+        # Membership already proves this game instant across the loaded
+        # venues. A no-winner deadline (Polymarket) is not the game's date.
+        game_at = min((m.instant for m in members if m.instant is not None), default=None)
         card_fields = {
             "sport": canonical.sport.key if canonical.sport else None,
             "sport_name": (
@@ -5897,7 +5227,7 @@ async def _compose_verified_title(db: AsyncSession, market: FuturesMarket):
                 if canonical.sport else None
             ),
             "resolution_date": (
-                canonical.resolution_date.isoformat() if canonical.resolution_date else None
+                game_at.isoformat() if game_at is not None else None
             ),
             "outcome_count": len(boards[canonical.id]),
             "updated_at": canonical.updated_at.isoformat() if canonical.updated_at else None,
@@ -6050,14 +5380,29 @@ def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
     requested row's provenance. Badges are renumbered by the canonical
     `assign_display_ranks`, because the client sorts on the value it is given.
     """
-    from app.utils.outcome_display import assign_display_ranks, normalize_display_probs
+    from app.utils.outcome_display import (
+        assign_display_ranks, encode_one_cent_kalshi_bounds, normalize_display_probs,
+    )
     from app.utils.futures_verified_title import apply_title_display
+    from app.utils.futures_source_mark import (
+        describe_field_normalization, verified_futures_source_mark,
+    )
 
     _stamp_representation(detail, verdict)
     changed = False
     if isinstance(verdict, Composition):
+        game_at = verdict.canonical_card_fields.get("resolution_date")
+        if game_at is not None:
+            detail["resolution_date"] = game_at
         for row in detail["outcomes"]:
-            changed |= _overlay_current(row, verdict.overlay.get(row["id"]), "probability")
+            overlay = verdict.overlay.get(row["id"])
+            changed |= _overlay_current(row, overlay, "probability")
+            if row.get("source_mark", {}).get("state") != "settled":
+                row["source_mark"] = verified_futures_source_mark(
+                    overlay.source_inputs if overlay is not None else (),
+                    row["probability"],
+                    overlay.aggregation_rule if overlay is not None else "unsupported",
+                )
     # A source-only/refused composition can retain complete references. A
     # changed blend has no historical field with those same contributors;
     # its old source-only references are still withheld by _overlay_current.
@@ -6102,6 +5447,19 @@ def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
             for key in ("opening_probability", "opening_american_odds", "probability_change_24h"):
                 row[key] = None
     assign_display_ranks(detail["outcomes"])
+    source_outcomes = {o.id: o for o in market.outcomes}
+    for row in detail["outcomes"]:
+        overlay = verdict.overlay.get(row["id"]) if isinstance(verdict, Composition) else None
+        describe_field_normalization(
+            row["source_mark"],
+            input_probability=(
+                overlay.probability if overlay else getattr(
+                    source_outcomes.get(row["id"]), "current_probability", None,
+                )
+            ),
+            displayed_probability=row["probability"],
+        )
+    encode_one_cent_kalshi_bounds(market, detail["outcomes"], source_outcomes)
     # The stored sentence was written about the source row's numbers.
     if changed and detail.get("hook_description"):
         detail["hook_description"] = None
@@ -6269,6 +5627,23 @@ def _outcome_names_its_team(outcome_name: Optional[str], team_name: Optional[str
 
 
 @router.get("/{market_id}/related-events")
+async def get_related_events_cached(
+    market_id: int,
+    db: AsyncSession = Depends(get_db),
+    fresh: bool = False,
+):
+    """Cached HTTP entry for ``GET /api/futures/{market_id}/related-events`` (<= 60 s)."""
+    return await _futures_page_cache.serve_cached_or_build(
+        key=_futures_page_cache.related_events_key(market_id),
+        fresh=fresh,
+        build=lambda: get_related_events(
+            market_id=market_id,
+            db=db,
+        ),
+        ttl_for=_futures_page_cache.related_events_ttl,
+    )
+
+
 async def get_related_events(
     market_id: int,
     db: AsyncSession = Depends(get_db),
@@ -6423,7 +5798,15 @@ async def get_related_events(
             # detail in another representation can print that row's own number
             # by id instead of this route's source value beside it.
             "outcome_id": o.id,
-            "outcome_name": o.name,
+            "outcome_name": (
+                reader_outcome_name(
+                    getattr(o, "external_id", None),
+                    o.name,
+                    market_threshold_label(market),
+                    market_name=getattr(market, "name", None),
+                )
+                or o.name
+            ),
             "probability": _served_probability(o),
             "american_odds": None if o.id in withheld else o.current_american_odds,
             "rank": o.rank,
@@ -6669,6 +6052,37 @@ async def get_related_events(
 
 
 @router.get("/{market_id}/progression")
+async def get_progression_cached(
+    market_id: int,
+    top_n: int = Query(32, ge=1, le=64, description="Max participants to return"),
+    golf_card_receipt: Optional[str] = Query(
+        None,
+        max_length=64,
+        description=(
+            "Receipt of the GET /api/golf card snapshot the caller is displaying "
+            "(UX-P271). Golf only. Binds the Win column to that exact snapshot "
+            "rather than to whatever the cache holds at request time, which is not "
+            "the same thing once the card has been served from an HTTP cache. The "
+            "receipt actually applied is echoed back as `golf_card_receipt`."
+        ),
+    ),
+    db: AsyncSession = Depends(get_db),
+    fresh: bool = False,
+):
+    """Cached HTTP entry for ``GET /api/futures/{market_id}/progression`` (<= 60 s)."""
+    return await _futures_page_cache.serve_cached_or_build(
+        key=_futures_page_cache.progression_key(market_id, top_n, golf_card_receipt),
+        fresh=fresh,
+        build=lambda: get_progression(
+            market_id=market_id,
+            top_n=top_n,
+            golf_card_receipt=golf_card_receipt,
+            db=db,
+        ),
+        ttl_for=_futures_page_cache.subroute_ttl,
+    )
+
+
 async def get_progression(
     market_id: int,
     top_n: int = Query(32, ge=1, le=64, description="Max participants to return"),
@@ -8172,6 +7586,12 @@ async def get_probability_timeline(
     if not market:
         raise HTTPException(status_code=404, detail="Market not found")
 
+    nominee_field = (await grammy_nominee_fields(db, [market])).get(market.id)
+    if nominee_field is not None:
+        market = nominee_field
+    if is_grammy_general_field_market(market):
+        representation = REPRESENTATION_SOURCE
+
     # #6641 — ONE CONDITION, ONE LINE. A Polymarket "field" row is served to us
     # twice over: the bare condition id carries the named rung ("March 31,
     # 2026") and the decomposition branch writes the same condition's two legs
@@ -9288,7 +8708,7 @@ def _select_charted_outcome_ids(
 
 
 @router.get("/{market_id}/history")
-async def get_futures_history(
+async def get_futures_history_cached(
     market_id: int,
     outcome_id: Optional[int] = Query(None, description="Filter to specific outcome"),
     hours: int = Query(168, description="Hours of history (default 7 days)"),
@@ -9301,6 +8721,45 @@ async def get_futures_history(
     ),
     db: AsyncSession = Depends(get_db),
     history_range: Optional[str] = Query(None, alias="range", description=_FULL_RANGE_DOC),
+    fresh: bool = False,
+):
+    """Cached HTTP entry for ``GET /api/futures/{market_id}/history`` (<= 60 s)."""
+    return await _futures_page_cache.serve_cached_or_build(
+        key=_futures_page_cache.history_key(
+            market_id,
+            outcome_id,
+            hours,
+            top_n,
+            champion,
+            history_range,
+        ),
+        fresh=fresh,
+        build=lambda: get_futures_history(
+            market_id=market_id,
+            outcome_id=outcome_id,
+            hours=hours,
+            top_n=top_n,
+            champion=champion,
+            db=db,
+            history_range=history_range,
+        ),
+        ttl_for=_futures_page_cache.history_ttl,
+    )
+
+
+async def get_futures_history(
+    market_id: int,
+    outcome_id: Optional[int] = Query(None, description="Filter to specific outcome"),
+    hours: int = Query(168, description="Hours of history (default 7 days)"),
+    top_n: int = Query(10, description="Number of top outcomes to return (default 10, max 50)"),
+    champion: Optional[str] = Query(
+        None,
+        description="Settled winner-field champion NAME (#232). When the market carries "
+        "no is_winner grade (odds_api winner fields never do), resolve this outcome's "
+        "evolution line to 1.0. Callers pass the concept's authoritative structural crown.",
+    ),
+    db: AsyncSession = Depends(get_db),
+    history_range: Optional[str] = None,
 ):
     """
     Get historical odds movement for a futures market.
@@ -9327,6 +8786,11 @@ async def get_futures_history(
 
     if not market:
         raise HTTPException(status_code=404, detail="Market not found")
+
+    nominee_field = (await grammy_nominee_fields(db, [market])).get(market.id)
+    if nominee_field is not None and not any(o.id == outcome_id for o in market.outcomes):
+        # Read the nominee field while keeping the response tied to the requested URL.
+        market = nominee_field
 
     # #6641, same rule and same reason as `get_probability_timeline` above —
     # this is the other half of the same chart. No iOS client reads it, but the
@@ -9429,7 +8893,7 @@ async def get_futures_history(
         select(FuturesOddsSnapshot)
         .join(FuturesOutcome, FuturesOutcome.id == FuturesOddsSnapshot.outcome_id)
         .where(
-            FuturesOutcome.market_id == market_id,
+            FuturesOutcome.market_id == market.id,
             FuturesOddsSnapshot.captured_at >= cutoff,
         )
         .order_by(FuturesOddsSnapshot.captured_at)
@@ -9646,7 +9110,7 @@ async def get_futures_history(
                     FuturesOutcome.id == FuturesOddsSnapshot.outcome_id,
                 )
                 .where(
-                    FuturesOutcome.market_id == market_id,
+                    FuturesOutcome.market_id == market.id,
                     FuturesOddsSnapshot.captured_at >= extended_cutoff,
                 )
                 .order_by(FuturesOddsSnapshot.captured_at)
@@ -9767,7 +9231,10 @@ async def get_futures_history(
             _leg_side_label(leg_sides[o.external_id], o.name)
             if o.external_id in leg_sides
             else reader_outcome_name(
-                o.external_id, o.name, market_threshold_label(market)
+                getattr(o, "external_id", None),
+                o.name,
+                market_threshold_label(market),
+                market_name=getattr(market, "name", None),
             )
             or o.name
         )
@@ -10213,7 +9680,15 @@ def _format_market_summary(market: FuturesMarket, source_count_map: dict = None)
     outcome_dicts = [
         {
             "id": o.id,
-            "name": o.name,
+            "name": (
+                reader_outcome_name(
+                    getattr(o, "external_id", None),
+                    o.name,
+                    market_threshold_label(market),
+                    market_name=getattr(market, "name", None),
+                )
+                or o.name
+            ),
             "probability": float(o.current_probability) if o.current_probability is not None else None,
             "american_odds": o.current_american_odds,
             "rank": o.rank,
@@ -10238,6 +9713,9 @@ def _format_market_summary(market: FuturesMarket, source_count_map: dict = None)
             getattr(market, "name", "") or "",
         )
     top_outcomes = outcome_dicts[:5]
+    from app.utils.futures_source_mark import mark_futures_card_rows
+
+    mark_futures_card_rows(market, top_outcomes)
 
     # Cross-source info from canonical key
     source_info = None
@@ -10618,6 +10096,7 @@ def _format_market_detail(
     from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
     from app.utils.superseded_name_twins import drop_superseded_name_twins
     from app.utils.field_opening_coherence import field_openings_publishable
+    from app.utils.settled_price import SETTLED_NO_PRICE
     from app.utils.odds_api_retirement import NOT_LIVE_STATUSES, WITHDRAWN_STATUS
     from app.utils.market_staleness import (
         expired_ladder_rungs,
@@ -10635,6 +10114,7 @@ def _format_market_detail(
         drop_dominant_field_outcomes,
         drop_incoherent_near_certain,
         drop_unbacked_legs,
+        encode_one_cent_kalshi_bounds,
     )
 
     # Q480: one condition, one outcome. Dropped here, on the ORM rows, because the
@@ -10751,7 +10231,10 @@ def _format_market_detail(
                 _leg_side_label(leg_sides[o.external_id], o.name)
                 if leg_sides and o.external_id in leg_sides
                 else reader_outcome_name(
-                    o.external_id, o.name, market_threshold_label(market)
+                    getattr(o, "external_id", None),
+                    o.name,
+                    market_threshold_label(market),
+                    market_name=getattr(market, "name", None),
                 )
                 or o.name
             ),
@@ -11270,6 +10753,35 @@ def _format_market_detail(
     if _board_status == WITHDRAWN_STATUS:
         withheld = withheld | {o.id for o in sorted_outcomes}
 
+    eliminated = []
+    grammy_open_field = (
+        _board_status == "open"
+        and is_grammy_general_field_market(market)
+        and getattr(market, "mutually_exclusive", None) is True
+    )
+    if grammy_open_field:
+        # A venue-graded No is out of the field even if an old trade was
+        # written over its terminal price. Keep it on the board, without a
+        # quote or clock, and compute the live distribution without it.
+        for row in outcomes:
+            if is_grammy_graded_loss(
+                row["is_winner"], row["resolution_source"], row["probability"]
+            ):
+                row["is_out"] = True
+                for field in (
+                    *WITHHELD_PRICE_FIELDS,
+                    "rank",
+                    "rank_change_24h",
+                    "opening_probability",
+                    "opening_american_odds",
+                    "last_updated",
+                    "price_changed_at",
+                ):
+                    row[field] = None
+                eliminated.append(row)
+        if eliminated:
+            outcomes = [row for row in outcomes if not row.get("is_out")]
+
     prices_withheld = 0
     if withheld:
         for o in outcomes:
@@ -11443,7 +10955,9 @@ def _format_market_detail(
     # two-row count is what the combat adapters read as a fight — so letting the
     # expiry drop feed this would invent a breadcrumb on a river-level market.
     # The identity answer stays bit-identical to the one served before #7274.
-    concept_outcome_count = len(outcomes) + expired_rungs_dropped + raw_dominant_dropped
+    concept_outcome_count = len(outcomes) + (
+        len(eliminated) + expired_rungs_dropped + raw_dominant_dropped
+    )
 
     # #4253: a single-winner field cannot have five different winners. Measured
     # live 2026-09-09, `/api/futures/12764689` (*Dancing with the Stars*) served
@@ -11538,7 +11052,33 @@ def _format_market_detail(
     #
     # Prices and eligibility are untouched by design — this only overwrites the one
     # field whose whole job is to say where the row sits, using the list it sits in.
+    if grammy_open_field and market.source == "kalshi":
+        outcomes.sort(key=lambda row: is_grammy_tie(row["name"]))
+        for row in outcomes:
+            if is_grammy_tie(row["name"]):
+                row["name"] = GRAMMY_TIE_LABEL
     assign_display_ranks(outcomes)
+    if eliminated:
+        append_grammy_out_rows(outcomes, eliminated)
+
+    # The source price is the selected stored input, before field normalization.
+    # Withheld values and unresolved results keep an explicit refusal.
+    from app.utils.futures_source_mark import (
+        describe_field_normalization, futures_outcome_source_mark,
+    )
+
+    source_outcomes = {o.id: o for o in sorted_outcomes}
+    for row in outcomes:
+        row["source_mark"] = futures_outcome_source_mark(
+            market, source_outcomes[row["id"]], row,
+        )
+        describe_field_normalization(
+            row["source_mark"],
+            input_probability=source_outcomes[row["id"]].current_probability,
+            displayed_probability=row["probability"],
+        )
+    if normalize_numbers:
+        encode_one_cent_kalshi_bounds(market, outcomes, source_outcomes)
 
     # #5906: THE HOOK GOES THROUGH THE SAME GATE THE DISCOVER CARD HAS ALWAYS
     # USED. `routes/feed.py` has run every stored hook past `is_hook_stale`
@@ -11733,6 +11273,11 @@ def _format_market_detail(
     except Exception:
         pass
 
+    # Installed clients still read probability for a graded No on an open
+    # field. Supply the terminal value only after ranking and price checks.
+    for row in eliminated:
+        row["probability"] = float(SETTLED_NO_PRICE)
+
     return {
         "id": market.id,
         # #3513: the card and the page it links to must ask the SAME question.
@@ -11743,7 +11288,15 @@ def _format_market_detail(
         # the clients that interpret this key (frontend `marketEventKey`,
         # `conceptDisplayLabel`) already receive the cleaned string from the feed
         # card payload, so the two surfaces now agree rather than diverge.
-        "name": clean_market_display_name(market.name),
+        "name": (
+            fill_market_display_name_blank(
+                futures_reader_name(market),
+                leader_name,
+                outcome_count=len(outcomes),
+            )
+            if outcomes
+            else clean_market_display_name(futures_reader_name(market))
+        ),
         "description": market.description,
         "sport": market.sport.key if market.sport else None,
         # #6444: `/api/futures/61182733` served `sport_name: "tennis_other"` —
@@ -11846,6 +11399,23 @@ def _outcome_merge_key_from_entry(entry: dict) -> str:
 
 
 @router.get("/groups/{group_id:path}")
+async def get_group_cached(
+    group_id: str,
+    db: AsyncSession = Depends(get_db),
+    fresh: bool = False,
+):
+    """Cached HTTP entry for ``GET /api/futures/groups/{group_id}`` (<= 60 s)."""
+    return await _futures_page_cache.serve_cached_or_build(
+        key=_futures_page_cache.group_key(group_id),
+        fresh=fresh,
+        build=lambda: get_group(
+            group_id=group_id,
+            db=db,
+        ),
+        ttl_for=_futures_page_cache.subroute_ttl,
+    )
+
+
 async def get_group(
     group_id: str,
     db: AsyncSession = Depends(get_db),
@@ -11901,7 +11471,15 @@ async def get_group(
         ):
             od = {
                 "id": o.id,
-                "name": o.name,
+                "name": (
+                    reader_outcome_name(
+                        getattr(o, "external_id", None),
+                        o.name,
+                        market_threshold_label(m),
+                        market_name=getattr(m, "name", None),
+                    )
+                    or o.name
+                ),
                 "probability": o.current_probability,
                 "american_odds": probability_to_american(o.current_probability) if o.current_probability and 0 < o.current_probability < 1 else None,
                 "market_id": m.id,

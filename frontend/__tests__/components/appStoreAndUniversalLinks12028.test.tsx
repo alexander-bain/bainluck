@@ -9,10 +9,11 @@ import * as fs from "fs";
 import * as path from "path";
 
 const mockTrack = jest.fn();
+let mockPathname = "/";
 
 jest.mock("next/navigation", () => ({
   __esModule: true,
-  usePathname: () => "/",
+  usePathname: () => mockPathname,
 }));
 
 jest.mock("@/components/Analytics", () => ({
@@ -29,6 +30,7 @@ const FRONTEND_ROOT = path.join(__dirname, "..", "..");
 describe("#12028 — App Store links on the website and Universal Links for both hosts", () => {
   beforeEach(() => {
     mockTrack.mockReset();
+    mockPathname = "/";
   });
 
   test("APP_STORE_URL points to the public App Store listing", () => {
@@ -59,6 +61,14 @@ describe("#12028 — App Store links on the website and Universal Links for both
     expect(phoneLinkMatch).not.toBeNull();
     expect(phoneLinkMatch![0]).toContain(`href="${APP_STORE_URL}"`);
     expect(phoneLinkMatch![1].trim()).toBe("Get the app");
+  });
+
+  test("Footer omits duplicate App Store links on /collections/[slug] shared-set landings (#13103)", () => {
+    mockPathname = "/collections/roundup-cfp-picture";
+    const html = renderToStaticMarkup(<Footer />);
+    expect(html).not.toContain('data-testid="footer-phone-get-the-app-row"');
+    expect(html).not.toContain('data-testid="footer-app-store-badge"');
+    expect(html).not.toContain(APP_STORE_URL);
   });
 
   test("RootLayout uses Safari's banner and removes the custom top bar", () => {

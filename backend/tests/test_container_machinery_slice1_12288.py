@@ -577,9 +577,14 @@ def test_slice1_candidates_are_switched_off_and_contain_zero_hand_placed_ids() -
 
 def test_choose_section_form_is_purely_data_shape_driven() -> None:
     assert choose_section_form("paired_stage", [{}, {}, {}]) == "paired_stage_bars"
+    # Ruling 253: A — coin_flip_matchups requires >= 2 games with neither side above 55%.
     assert (
-        choose_section_form("events", [{"fav_prob": 0.52}, {"fav_prob": 0.58}])
+        choose_section_form("events", [{"fav_prob": 0.52}, {"fav_prob": 0.55}])
         == "coin_flip_matchups"
+    )
+    assert (
+        choose_section_form("events", [{"fav_prob": 0.52}, {"fav_prob": 0.56}])
+        == "matchup_slate"
     )
     assert (
         choose_section_form("events", [{"fav_prob": 0.85}, {"fav_prob": 0.79}])
@@ -689,15 +694,23 @@ def test_slice2_bar_no_question_word_proper_case_and_definition_only_fourth_grou
         discover_machinery_candidate_paths,
     )
 
-    # 1. All 4 unlike groupings discovered automatically (including machinery-fed-and-macro.json)
+    # 1. All 4 core unlike groupings discovered automatically (plus any definition-only candidates)
     paths = discover_machinery_candidate_paths()
     slugs = [load_machinery_definition(p)["slug"] for p in paths]
-    assert slugs == [
+    assert {
         "machinery-2028-presidential",
         "machinery-fed-and-macro",
         "machinery-nfl-week",
         "machinery-oscars-best-picture",
-    ]
+    }.issubset(set(slugs))
+    for p in paths:
+        assert not (CONTAINERS_DATA_DIR / p.name).exists()
+        raw_p = json.loads(p.read_text(encoding="utf-8"))
+        for bad_key in HAND_LIST_ID_RULE_KEYS:
+            assert bad_key not in raw_p.get("rule", {})
+        ser_p = json.dumps(raw_p)
+        assert "market_id" not in ser_p
+        assert "event_id" not in ser_p
 
     # 2. Proper-casing miscased names without mangling numeric/rate brackets
     assert _proper_case_outcome_label("Anne hathaway") == "Anne Hathaway"
@@ -779,7 +792,7 @@ async def test_admin_only_machinery_preview_blocks_public_and_serves_admin(
         auth = (getattr(request, "headers", None) or {}).get("Authorization", "")
         return auth == "Bearer admin-ok"
 
-    async def _fake_read_published(_db: Any, slug: str) -> Any:
+    async def _fake_read_published(_db: Any, slug: str, *, include_headers: bool) -> Any:
         return SimpleNamespace(
             state=container_corrections.READ_UNAVAILABLE,
             slug=slug,
@@ -878,13 +891,14 @@ async def test_slice3_all_four_groupings_pass_227a_and_direction_228() -> None:
     )
 
     snap = _sample_snapshot()
-    items = await evaluate_machinery_candidates_preview(snap, now=FIXED_NOW)
-    assert [it["slug"] for it in items] == [
+    core_slugs = [
         "machinery-nfl-week",
         "machinery-oscars-best-picture",
         "machinery-2028-presidential",
         "machinery-fed-and-macro",
     ]
+    items = await evaluate_machinery_candidates_preview(snap, slugs=core_slugs, now=FIXED_NOW)
+    assert [it["slug"] for it in items] == core_slugs
 
     for it in items:
         rep = it["diversity_report"]
@@ -921,15 +935,20 @@ async def test_slice3_all_four_groupings_pass_227a_and_direction_228() -> None:
     jan_sec = next(s for s in fed_page["sections"] if s["class"] == "jan_fomc")
     jan_names = [o["name"] for o in jan_sec["visual_block"]["items"][0]["outcomes"]]
     assert jan_names == [
-        "25 bps decrease",
+        "Quarter-point cut",
         "No change",
-        "25 bps increase",
-        "50+ bps increase",
+        "Quarter-point increase",
+        "Half-point or larger increase",
     ]
     rate_sec = next(s for s in fed_page["sections"] if s["class"] == "rate_path")
     by_mid = {m["market_id"]: [o["name"] for o in m["outcomes"]] for m in rate_sec["visual_block"]["items"]}
     assert by_mid[114367] == ["3.75%", "4.0%", "4.25%", "≥ 4.5%"]
-    assert by_mid[70732744] == ["1 (25 bps)", "2 (50 bps)", "3 (75 bps)", "5+ (125+ bps)"]
+    assert by_mid[70732744] == [
+        "1 hike (quarter point)",
+        "2 hikes (half point)",
+        "3 hikes (three-quarter point)",
+        "5+ hikes (1.25 points or more)",
+    ]
 
     # Negative check: scrambling a numerical-scale market fails direction_228_numerical_scale_order
     tampered = copy.deepcopy(fed_page)
@@ -956,7 +975,16 @@ async def test_slice4_card_charts_own_headline_flat_line_is_not_picture_and_natu
     )
 
     snap = _sample_snapshot()
-    items = await evaluate_machinery_candidates_preview(snap, now=FIXED_NOW)
+    items = await evaluate_machinery_candidates_preview(
+        snap,
+        slugs=[
+            "machinery-nfl-week",
+            "machinery-oscars-best-picture",
+            "machinery-2028-presidential",
+            "machinery-fed-and-macro",
+        ],
+        now=FIXED_NOW,
+    )
     by_slug = {it["slug"]: it for it in items}
 
     # 1. Card's mini_chart shows the card's OWN headline market (57574217 "Fed Decision in January"),
@@ -974,7 +1002,9 @@ async def test_slice4_card_charts_own_headline_flat_line_is_not_picture_and_natu
 
     fed_title = by_slug["machinery-fed-and-macro"]["container"]["container"]["name"]
     assert "End-of-2026 Fed Rate" not in fed_title
-    assert "The January Fed decision prices" in fed_title
+    assert "A quarter-point increase leads the January Fed decision" in fed_title
+    assert "bps" not in fed_title.lower()
+    assert "prices" not in fed_title.lower()
     assert "end-of-2026 Fed rate" in fed_title
 
     # 3. A flat line is not a picture:
@@ -1107,7 +1137,16 @@ async def test_slice5_fable_six_notes_pairs_moving_charts_subject_headings_title
     assert _history_chart_moved(pinned_lock_chart) is False
 
     snap = _sample_snapshot()
-    items = await evaluate_machinery_candidates_preview(snap, now=FIXED_NOW)
+    items = await evaluate_machinery_candidates_preview(
+        snap,
+        slugs=[
+            "machinery-nfl-week",
+            "machinery-oscars-best-picture",
+            "machinery-2028-presidential",
+            "machinery-fed-and-macro",
+        ],
+        now=FIXED_NOW,
+    )
     by_slug = {it["slug"]: it for it in items}
 
     # 3. Charts on the grouping's subject: 2028 Presidential never seats Senate or House seats.
@@ -1151,11 +1190,14 @@ async def test_slice5_fable_six_notes_pairs_moving_charts_subject_headings_title
     assert _clean_section_market_label("What will Fed Rate hit before 2027?") == "Fed Rate Highs & Lows Before 2027"
     assert _clean_section_market_label("Fed decision in Apr 2027?") == "April 2027 Fed Decision"
     assert _clean_section_market_label("Oscar Winner: Best Music (Original Score)") == "Best Original Score"
-    assert _clean_outcome_label("Hike 25bps") == "25 bps increase"
-    assert _clean_outcome_label("Hike >25bps") == "50+ bps increase"
-    assert _clean_outcome_label("Cut 25bps") == "25 bps decrease"
-    assert _clean_outcome_label("Cut >25bps") == "50+ bps decrease"
+    assert _clean_outcome_label("Hike 25bps") == "Quarter-point increase"
+    assert _clean_outcome_label("Hike >25bps") == "Half-point or larger increase"
+    assert _clean_outcome_label("Cut 25bps") == "Quarter-point cut"
+    assert _clean_outcome_label("Cut >25bps") == "Half-point or larger cut"
     assert _clean_outcome_label("Fed maintains rate") == "No change"
+    assert _clean_outcome_label("1 (25 bps)") == "1 hike (quarter point)"
+    assert _clean_outcome_label("2 (50 bps)") == "2 hikes (half point)"
+    assert _clean_outcome_label("3 (75 bps)") == "3 hikes (three-quarter point)"
     assert _clean_outcome_label("Exactly 4.1%") == "4.1%"
 
     # 6. Fed's third screen has a real picture (moving chart) and passes 227: A across all screens.

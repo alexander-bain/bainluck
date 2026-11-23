@@ -6,17 +6,194 @@ import re
 ROOT = Path(__file__).resolve().parents[2]
 
 
+APPROVED_TIMEOUT_OVERRIDES = sorted(
+    [
+        (
+            "PickerAliasJourneyTests.swift",
+            "testResolvedAliasRetainsReadingAtAccessibilitySize",
+            300,
+        ),
+        (
+            "PickerAliasJourneyTests.swift",
+            "testResolvedAliasRetainsReadingOfflineAndAfterRestart",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testAdaptiveScoreLongFinalAtAccessibilitySize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testAdaptiveScoreMissingFinalAtAccessibilitySize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testAdaptiveScoreShortLiveAtAccessibilitySize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testAlternativeCardSelectionAndCurrentReturnAtAccessibilitySize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testConfirmedFinalOutcomeAtAccessibilitySize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testConfirmedFinalOutcomeAtStandardSize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testCurrentGameAndOfflineDetailsAtAccessibilitySize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testCurrentGameSurvivesPartialOfflineAndEmptyLists",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testHandoffHelpExplainsPhoneGestureAtAccessibilitySize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testHandoffHelpExplainsPhoneGestureAtStandardSize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testLiveMissingAwayScoreIsExplainedAtAccessibilitySize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testLiveMissingAwayScoreIsExplainedAtStandardSize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testLiveMissingBothScoreIsExplainedAtAccessibilitySize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testLiveMissingBothScoreIsExplainedAtStandardSize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testLiveMissingHomeScoreIsExplainedAtAccessibilitySize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testLiveMissingHomeScoreIsExplainedAtStandardSize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testSavedCurrentCardAndReturnPreserveIndependentClocksAtAccessibilitySize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testScheduledPickerShowsSuppliedTimeAtAccessibilitySize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testScheduledPickerShowsSuppliedTimeAtStandardSize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testScheduledStartBoundariesAtAccessibilitySize",
+            300,
+        ),
+        (
+            "PickerCurrentGameJourneyTests.swift",
+            "testScheduledStartBoundariesAtStandardSize",
+            300,
+        ),
+        (
+            "PickerReturnJourneyTests.swift",
+            "testNetworkFailureGuidanceRetainsChoicesAndRecoversSelection",
+            300,
+        ),
+        (
+            "PickerSelectedStateJourneyTests.swift",
+            "testSelectedGameIsMarkedAtAccessibilitySize",
+            300,
+        ),
+        (
+            "PickerSelectedStateJourneyTests.swift",
+            "testSelectedGameIsMarkedInPickerAndCanChange",
+            300,
+        ),
+        (
+            "ProbabilityRoundingJourneyTests.swift",
+            "testPairedRoundingPersistsOfflineAndDrawSportKeepsScalarRounding",
+            540,
+        ),
+        (
+            "RectangularWidgetHostJourneyTests.swift",
+            "testActualRectangularLauncherAndTap",
+            540,
+        ),
+        (
+            "WatchDiagnosticsJourneyTests.swift",
+            "testConsentSettingPersistsAndRevokesAtAccessibilitySize",
+            300,
+        ),
+        (
+            "WatchDiagnosticsJourneyTests.swift",
+            "testConsentSettingPersistsAndRevokesAtStandardSize",
+            300,
+        ),
+        ("WidgetTapJourneyTests.swift", "testActualCircularLauncherAndTap", 540),
+        ("WidgetTapJourneyTests.swift", "testActualComplicationHost", 540),
+        ("WidgetTapJourneyTests.swift", "testActualCornerLauncherAndTap", 540),
+        (
+            "WidgetTapJourneyTests.swift",
+            "testColdActualWidgetTapOffersPickerWithoutSelection",
+            540,
+        ),
+        (
+            "WidgetTapJourneyTests.swift",
+            "testColdActualWidgetTapRetainsOfflineReading",
+            540,
+        ),
+        (
+            "WidgetTapJourneyTests.swift",
+            "testFreshConfiguredFaceIsActiveBeforeActualLauncherTap",
+            540,
+        ),
+    ]
+)
+
+
 def test_retained_watch_cases_have_no_timeout_override():
     harness = (ROOT / "tools/watch-ui-journey.sh").read_text()
     assert "-test-timeouts-enabled YES" in harness
-    assert "-default-test-execution-time-allowance 180" in harness
-    assert "-maximum-test-execution-time-allowance 300" in harness
+    # b8e27ec342 (#12513): the measured suite gives every case 300 s on the hosted
+    # Watch, not 180 s; the 540 s ceiling and the approved overrides are unchanged.
+    assert "-default-test-execution-time-allowance 300" in harness
+    assert "-default-test-execution-time-allowance 180" not in harness
+    assert "-maximum-test-execution-time-allowance 540" in harness
     overrides = []
     for path in (ROOT / "ios/Bain Luck/BainLuckWatchUITests").glob("*.swift"):
         source = path.read_text()
         for match in re.finditer(r"executionTimeAllowance\s*=\s*(\d+)", source):
             methods = re.findall(r"func\s+(\w+)\s*\(", source[: match.start()])
             overrides.append((path.name, methods[-1], int(match[1])))
-    # The only original override belonged to the now-deferred Discoveries
-    # offline journey. Retained cases keep their original default allowance.
-    assert overrides == []
+    # #12513: approved per-case overrides only (300s picker journeys; 540s Carousel
+    # face-gallery / clockface-idle journeys plus the 4-launch probability-rounding journey).
+    assert sorted(overrides) == APPROVED_TIMEOUT_OVERRIDES

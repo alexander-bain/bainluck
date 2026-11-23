@@ -26,6 +26,7 @@ enum EventChartTypography {
 
 struct ChartTimeAxisLabels: View {
     @ScaledMetric(relativeTo: .caption2) private var scaledFontSize: CGFloat = 12
+    @Environment(\.timeZone) private var timeZone
     private var fontSize: CGFloat { EventChartTypography.labelSize(scaled: scaledFontSize) }
     let ticks: [Date]
     let plan: OddsChartView.XAxisPlan
@@ -54,7 +55,7 @@ struct ChartTimeAxisLabels: View {
             plotWidth: plotFrame.width,
             labelWidth: OddsChartView.xAxisLabelWidth(for: plan.labelStyle) * fontSize / 9)
         ForEach(Array(placed.enumerated()), id: \.offset) { index, item in
-            Text(item.tick, format: plan.format)
+            Text(item.tick, format: plan.format(in: timeZone))
                 .font(.system(size: fontSize))
                 .foregroundStyle(Color.primary)
                 .lineLimit(1)

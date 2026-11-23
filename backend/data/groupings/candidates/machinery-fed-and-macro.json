@@ -21,6 +21,13 @@
     "materialize": "read-time",
     "card_rows": 3,
     "card_section_key": "jan_fomc",
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/8/89/Eccles_Building_%2826088200676%29.jpg/960px-Eccles_Building_%2826088200676%29.jpg",
+    "card_image_alt": "Marble facade of the Marriner S. Eccles Federal Reserve Board Building in Washington, D.C.",
+    "card_image_credit": "Board of Governors of the Federal Reserve System (Public domain, Wikimedia Commons)",
+    "card_image_author": "Board of Governors of the Federal Reserve System",
+    "card_image_license": "Public domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Eccles_Building_(26088200676).jpg",
     "sections": [
       {
         "key": "jan_fomc",
@@ -60,17 +67,21 @@
       },
       {
         "key": "rate_path",
-        "title": "Year-End Rate & Hike Count",
-        "note": "Mutually exclusive year-end target rate and 2026 rate-hike count scales.",
+        "title": "December FOMC, Year-End Rate & Hike Count",
+        "note": "Upcoming December FOMC move alongside mutually exclusive year-end target rate and 2026 rate-hike count scales.",
         "dynamic_item_note": true,
         "atom_query": {
           "kind": "markets",
-          "any_tokens": ["fed rate be at the end of 2026", "fed rate hikes in 2026"],
+          "any_tokens": [
+            "fed decision in december",
+            "fed rate be at the end of 2026",
+            "fed rate hikes in 2026"
+          ],
           "exclude_tokens": ["above", "below", "hit"],
           "shape": "field",
           "order_by": "closeness_to_50",
           "min_items": 2,
-          "max_items": 2,
+          "max_items": 3,
           "max_outcomes": 4
         }
       },
@@ -118,6 +129,7 @@
           ],
           "shape": "field",
           "order_by": "movement_desc",
+          "max_horizon_years": 2,
           "min_items": 1,
           "max_items": 2,
           "max_outcomes": 3,

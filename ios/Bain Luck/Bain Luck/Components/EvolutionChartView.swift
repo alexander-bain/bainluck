@@ -392,6 +392,7 @@ struct EvolutionChartView: View {
     var onOpenAllField: (() -> Void)? = nil
     var preloadedTimeline: ProbabilityTimelineResponse? = nil
     var referenceNow: Date? = nil
+    var onTimelineOutcomesLoaded: (([TimelineOutcomeMeta]) -> Void)? = nil
 
     @State private var data: ProbabilityTimelineResponse?
     /// #10955 — the settled lines' results, set aside from `data`'s timeline.
@@ -455,7 +456,8 @@ struct EvolutionChartView: View {
         allFieldButtonLabel: String? = nil,
         onOpenAllField: (() -> Void)? = nil,
         preloadedTimeline: ProbabilityTimelineResponse? = nil,
-        referenceNow: Date? = nil
+        referenceNow: Date? = nil,
+        onTimelineOutcomesLoaded: (([TimelineOutcomeMeta]) -> Void)? = nil
     ) {
         self.marketId = marketId
         self.hours = hours
@@ -475,6 +477,7 @@ struct EvolutionChartView: View {
         self.onOpenAllField = onOpenAllField
         self.preloadedTimeline = preloadedTimeline
         self.referenceNow = referenceNow
+        self.onTimelineOutcomesLoaded = onTimelineOutcomesLoaded
         _data = State(initialValue: preloadedTimeline)
         _loading = State(initialValue: preloadedTimeline == nil)
         _requestedHours = State(initialValue: preloadedTimeline?.hours ?? 0)
@@ -843,6 +846,9 @@ struct EvolutionChartView: View {
             }
             error = nil
             loading = false
+            if let outcomes = data?.outcomes {
+                onTimelineOutcomesLoaded?(outcomes)
+            }
         } catch let apiError as APIError {
             guard !Task.isCancelled, generation == requestGeneration else { return }
             if apiError.isCancellation {
@@ -1599,26 +1605,22 @@ struct EvolutionChartView: View {
         return ChartScaleRule201.futuresCeilingPercent(peakPercent: peak)
     }
 
-    nonisolated static func shortEndLabel192A(name: String, percentValue: Double?) -> String {
-        let stripped = name
-            .components(separatedBy: " · ").first?
-            .components(separatedBy: " — ").first?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? name
-        let shortName: String
-        if stripped.count <= 9 {
-            shortName = stripped
-        } else {
-            let words = stripped.split(whereSeparator: \.isWhitespace).map(String.init)
-            if let last = words.last, words.count >= 2, last.count >= 3, !last.hasPrefix("(") {
-                shortName = last.count <= 9 ? last : String(last.prefix(8)) + "…"
-            } else {
-                shortName = String(stripped.prefix(8)) + "…"
-            }
-        }
+    nonisolated static func shortEndLabel192A(
+        name: String, percentValue: Double?, renderedPercent: Int? = nil
+    ) -> String {
+        let shortName = TeamShortName.futuresChartLabel(name)
         if let pct = percentValue {
-            return "\(shortName) \(Int(pct.rounded()))%"
+            return "\(shortName) \(formatProbability(pct / 100, renderedPercent: renderedPercent))"
         }
         return shortName
+    }
+
+    nonisolated static func currentEndLabel192A(name: String, outcome: TimelineOutcomeMeta?) -> String {
+        shortEndLabel192A(
+            name: name,
+            percentValue: outcome?.currentProbability.map { $0 * 100 },
+            renderedPercent: outcome?.renderedPercent
+        )
     }
 
     private func lineWidth(for name: String, isCombined: Bool) -> CGFloat {
@@ -1899,7 +1901,7 @@ struct EvolutionChartView: View {
 
             if isFirstScreenInline192A && !dynamicTypeSize.isAccessibilitySize {
                 rightEdgeLabelsColumn192A(entries: entries, ceiling: ceiling192A)
-                    .frame(width: 84, height: height)
+                    .frame(width: 104, height: height)
             }
         }
         .padding(.horizontal, isFirstScreenInline192A ? 14 : 16)
@@ -1943,12 +1945,16 @@ struct EvolutionChartView: View {
             ForEach(Array(names.enumerated()), id: \.element) { idx, name in
                 let styleIdx = displayedNames.firstIndex(of: name) ?? idx
                 let color = colorForOutcome(name: name, index: styleIdx)
-                let label = Self.shortEndLabel192A(name: name, percentValue: lastProbs[idx])
+                let current = servedOutcomes.first { $0.name == name }
+                let label = Self.currentEndLabel192A(name: name, outcome: current)
                 Text(label)
-                    .font(.system(size: 10, weight: .bold).monospacedDigit())
+                    .font(.system(size: 10.5, weight: .bold).monospacedDigit())
                     .foregroundStyle(color)
                     .lineLimit(1)
-                    .position(x: 42, y: yPositions[idx])
+                    .minimumScaleFactor(0.68)
+                    .allowsTightening(true)
+                    .frame(width: 102, alignment: .leading)
+                    .position(x: 52, y: yPositions[idx])
             }
         }
     }

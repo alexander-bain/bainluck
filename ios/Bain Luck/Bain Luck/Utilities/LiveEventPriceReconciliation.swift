@@ -206,8 +206,18 @@ nonisolated enum LiveEventPriceReconciliation {
     /// moved by a quote. An opening/consensus label, a phase change, a sport
     /// or event mismatch, a non-blend hero and different fold membership
     /// (`incomparable`) keep the authoritative paired read.
+    /// #13509 — a game whose served `current_odds` carries a draw chance
+    /// (three-way market: home, draw, away). Single-scalar pushed prices (`p`)
+    /// cannot update one leg without inventing `away = 1 - p` and corrupting the
+    /// three-way sum, so the three served numbers stay until the next full read.
+    static func hasDrawChance(_ odds: CurrentOdds?) -> Bool {
+        guard let draw = odds?.drawProbability else { return false }
+        return draw.isFinite
+    }
+
     static func foldedQuoteDecision(_ frame: LiveStreamFrame, held: EventDetail) -> FoldedQuoteDecision {
         guard frame.eventId == held.id, let heldRevision = pairedFoldRevision(in: held) else { return .fallback }
+        if hasDrawChance(held.currentOdds) { return .fallback }
         guard frame.foldedResult else {
             // Only the raw PROMISE defers. An absent status is no claim (a
             // sibling's invalidation carries none); a different one is a phase
@@ -255,6 +265,7 @@ nonisolated enum LiveEventPriceReconciliation {
     static func shouldPreserve(_ frame: LiveStreamFrame?, over polled: EventDetail, streamRecoverable: Bool) -> Bool {
         guard streamRecoverable, let frame, frame.eventId == polled.id,
               EventPriceStreaming.isEligible(polled.status),
+              !hasDrawChance(polled.currentOdds),
               let p = frame.p, p.isFinite, (0...1).contains(p),
               let served = polled.currentOdds?.homeProbability, served.isFinite else { return false }
         // #9051: when the response's blend carries its fold revision, commit
@@ -279,7 +290,8 @@ nonisolated enum LiveEventPriceReconciliation {
 
     static func applying(_ frame: LiveStreamFrame?, to polled: EventDetail, streamRecoverable: Bool) -> EventDetail {
         guard shouldPreserve(frame, over: polled, streamRecoverable: streamRecoverable),
-              let frame, let p = frame.p, var odds = polled.currentOdds else { return polled }
+              let frame, let p = frame.p, var odds = polled.currentOdds,
+              !hasDrawChance(odds) else { return polled }
         odds.homeProbability = p
         odds.awayProbability = 1 - p
         odds.homeRenderedPercent = nil

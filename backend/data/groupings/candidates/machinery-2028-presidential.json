@@ -21,6 +21,13 @@
     "materialize": "read-time",
     "card_rows": 3,
     "card_section_key": "presidential_field",
+    "suppress_card_photo": true,
+    "card_image_url": "https://api.bainluck.com/api/containers/machinery-2028-presidential/card-art.jpg",
+    "card_image_alt": "Aerial view of the White House, West Wing, East Wing, and surrounding lawns in Washington, D.C.",
+    "card_image_credit": "Carol M. Highsmith (Public domain, Library of Congress / Wikimedia Commons)",
+    "card_image_author": "Carol M. Highsmith",
+    "card_image_license": "Public domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Aerial_view_of_the_White_House.jpg",
     "sections": [
       {
         "key": "party_duel",

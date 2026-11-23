@@ -284,6 +284,12 @@ describe("LAT-P172 — the second uninvited feed build, at first paint", () => {
     );
     expect(observerDeps).not.toBeNull();
     expect(observerDeps![1]).toContain("isLoading");
+    // #13195: sentinel JSX is also gated on !authLoading, !savedDeckPreview, and hasMore;
+    // when page 1 finishes before Firebase authLoading clears, omitting authLoading here
+    // left sentinelRef.current null and permanently stuck the bottom spinner.
+    expect(observerDeps![1]).toContain("authLoading");
+    expect(observerDeps![1]).toContain("savedDeckPreview");
+    expect(observerDeps![1]).toContain("hasMore");
   });
 
   // 🪤 `page.tsx` builds TWO `IntersectionObserver`s. Anchoring on that

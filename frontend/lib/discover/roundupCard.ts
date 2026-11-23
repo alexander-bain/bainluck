@@ -79,6 +79,15 @@ export type RoundupRefusal =
 const isPositiveInt = (v: unknown): v is number => typeof v === "number" && Number.isInteger(v) && v > 0;
 const text = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
 
+/** Shorten "Sat Nov 21" -> "Sat 21" so 3-box strip cards never truncate dates at 288 px (#13189). */
+export function compactStripDateLabel(raw: string | null | undefined): string {
+  const s = text(raw);
+  if (!s) return "";
+  const m = s.match(/^([A-Za-z]{3})\s+[A-Za-z]{3,9}\s+(\d{1,2})$/);
+  if (m) return `${m[1]} ${m[2]}`;
+  return s;
+}
+
 export function buildRoundupCardModel(
   title: string | null | undefined,
   contract: FeedRoundupContract | null | undefined,

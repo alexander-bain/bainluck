@@ -51,7 +51,7 @@ function claimUpcoming() {
       deltaPoints={4.2}
       stateLabel="Resolves Sep 17"
       timestamp="5m ago"
-      angle={{ kind: "mover", label: "Moved 12 pts this week" }}
+      angle={{ kind: "mover", label: "Moved 12 points this week" }}
       categorySlug="politics"
       categoryLabel="Politics"
       categoryEmoji="🏛"
@@ -131,7 +131,7 @@ function duelLive() {
       homeProb={0.29}
       liveLabel="Bot 6"
       timestamp="Live"
-      angle={{ kind: "mover", label: "Flipped 20 pts" }}
+      angle={{ kind: "mover", label: "Flipped 20 points" }}
       gradientKey="baseball"
       categorySlug="baseball"
       categoryLabel="MLB"
@@ -200,7 +200,7 @@ function fieldLive() {
       stateLabel="R3"
       liveLabel="R3"
       timestamp="Live"
-      angle={{ kind: "mover", label: "Åberg up 6 pts in R3" }}
+      angle={{ kind: "mover", label: "Åberg up 6 points in R3" }}
       categorySlug="golf"
       categoryLabel="Golf"
       categoryEmoji="⛳"
@@ -262,7 +262,7 @@ function quantityDateBuckets() {
         { key: "mar", label: "Mar '27", probability: 0.91, value: 4 },
       ]}
       timestamp="1h ago"
-      angle={{ kind: "mover", label: "Sep jumped 9 pts" }}
+      angle={{ kind: "mover", label: "Sep jumped 9 points" }}
       categorySlug="politics"
       categoryLabel="Politics"
       categoryEmoji="🏛"

@@ -1,0 +1,36 @@
+name: Tier-B policy trigger
+
+# Fable Call 1 (Thu Nov 19, #12957 / #12873): signal Tier-B review policy from
+# a `pull_request` workflow instead of `pull_request_target`.
+#
+# Why: `tools/release/tier_b.cjs` publishes "Tier-B approval" via checks.create,
+# which attaches to the oldest github-actions check-suite on head_sha. Whenever
+# a `pull_request_target` workflow created its check-suite 1s before `push`
+# (`gitleaks`), GitHub attached "Tier-B approval" to the `pull_request_target`
+# check-suite — which branch protection refuses to count toward required checks
+# ("Required status check 'Tier-B approval' is expected.").
+#
+# This trigger runs on `pull_request` with zero permissions and no checkout, so
+# every check-suite on head_sha is `push` or `pull_request`, while the trusted
+# evaluator in tier-b.yml still runs from the default branch via `workflow_run`.
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled, ready_for_review, edited]
+
+permissions: {}
+
+concurrency:
+  group: tier-b-policy-trigger-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  signal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Signal Tier-B policy evaluation
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_ACTION: ${{ github.event.action }}
+        run: echo "PR ${PR_NUMBER} (${PR_ACTION})"

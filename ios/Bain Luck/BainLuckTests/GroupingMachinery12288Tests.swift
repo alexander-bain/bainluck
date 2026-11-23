@@ -59,7 +59,7 @@ final class GroupingMachinery12288Tests: XCTestCase {
 
         let publicUser = AuthUser(
             id: 9001,
-            email: "reader@example.com",
+            email: nil,
             displayName: "Public Reader",
             photoUrl: nil,
             onboardingCompleted: true,
@@ -67,7 +67,7 @@ final class GroupingMachinery12288Tests: XCTestCase {
         )
         let nonOwnerFamilyUser = AuthUser(
             id: 500,
-            email: "member@example.com",
+            email: nil,
             displayName: "Family Member",
             photoUrl: nil,
             onboardingCompleted: true,
@@ -75,7 +75,7 @@ final class GroupingMachinery12288Tests: XCTestCase {
         )
         let ownerAlex = AuthUser(
             id: 364,
-            email: "owner@example.com",
+            email: nil,
             displayName: "Owner Account",
             photoUrl: nil,
             onboardingCompleted: true,
@@ -144,8 +144,35 @@ final class GroupingMachinery12288Tests: XCTestCase {
             "Alex must see 'Grouping machinery preview' in Preferences: \(ownerPrefsOCR)"
         )
 
-        // Network request prevention across ALL 4 non-authorized states (anonymous, public user,
-        // non-owner family admin, and Alex with switch OFF):
+        // 252: A — 1.0.7 sends `machinery=1` on Discover `GET /api/feed` (default nil mode and
+        // explicit "discover" mode), while Sports mode and filtered feeds omit it.
+        var discoverDefaultQ: [String: String] = ["limit": "50", "offset": "0"]
+        APIClient.addDiscoverMachinery252A(to: &discoverDefaultQ)
+        XCTAssertEqual(discoverDefaultQ["machinery"], "1")
+
+        var discoverExplicitQ: [String: String] = ["limit": "50", "offset": "20"]
+        APIClient.addDiscoverMachinery252A(mode: "discover", to: &discoverExplicitQ)
+        XCTAssertEqual(discoverExplicitQ["machinery"], "1")
+
+        var sportsModeQ: [String: String] = ["limit": "50", "offset": "0"]
+        APIClient.addDiscoverMachinery252A(mode: "sports", to: &sportsModeQ)
+        XCTAssertNil(sportsModeQ["machinery"])
+
+        var sportFilterQ: [String: String] = ["limit": "50", "offset": "0"]
+        APIClient.addDiscoverMachinery252A(sport: "basketball_nba", to: &sportFilterQ)
+        XCTAssertNil(sportFilterQ["machinery"])
+
+        var myTeamsQ: [String: String] = ["limit": "50", "offset": "0"]
+        APIClient.addDiscoverMachinery252A(myTeamsOnly: true, to: &myTeamsQ)
+        XCTAssertNil(myTeamsQ["machinery"])
+
+        var tagFilterQ: [String: String] = ["limit": "50", "offset": "0"]
+        APIClient.addDiscoverMachinery252A(tags: ["politics"], to: &tagFilterQ)
+        XCTAssertNil(tagFilterQ["machinery"])
+
+        // 252: A — In 1.0.7, the client owner-only gate on opening `machinery-*` grouping pages
+        // is removed so any 1.0.7 reader can open served groupings, while `/api/containers/preview/machinery`
+        // stays strictly gated off for public, non-owner, and switched-off accounts.
         for candidateUser in [nil, publicUser, nonOwnerFamilyUser, ownerAlex] {
             GroupingMachineryGate12288.setActiveUser(candidateUser)
 
@@ -156,23 +183,14 @@ final class GroupingMachinery12288Tests: XCTestCase {
             let loaderItems = try await loader.loadPreview(user: candidateUser)
             XCTAssertTrue(loaderItems.isEmpty)
 
-            do {
-                _ = try await APIClient.shared.fetchContainerHub(slug: "machinery-nfl-week")
-                XCTFail("Expected 404 before network on machinery-nfl-week for unauthorized/off user")
-            } catch let APIError.httpError(statusCode, _) {
-                XCTAssertEqual(statusCode, 404)
-            }
-
             let spyHub = SpyContainerHubService()
             let hubVM = ContainerHubViewModel(slug: "machinery-oscars-best-picture", service: spyHub)
             await hubVM.load()
-            XCTAssertEqual(spyHub.loadCallCount, 0, "Zero network requests allowed for machinery-* when gated off")
-            XCTAssertEqual(spyHub.pairedCallCount, 0)
-            if case .unavailable = hubVM.state {
-                // expected
-            } else {
-                XCTFail("Expected .unavailable for gated machinery-* slug, got \(hubVM.state)")
-            }
+            XCTAssertEqual(
+                spyHub.loadCallCount,
+                1,
+                "252: A — 1.0.7 must allow any reader to request /api/containers/machinery-* without owner switch"
+            )
 
             let spyDiscoverLoader = SpyMachineryPreviewLoader()
             let discoverAuth = AuthManager()
@@ -189,7 +207,7 @@ final class GroupingMachinery12288Tests: XCTestCase {
             XCTAssertEqual(
                 spyDiscoverLoader.callCount,
                 0,
-                "DiscoverView must make ZERO machinery requests for \(String(describing: candidateUser?.email)) while switch is off"
+                "DiscoverView must make ZERO admin preview requests while switch is off"
             )
         }
 
@@ -273,15 +291,200 @@ final class GroupingMachinery12288Tests: XCTestCase {
         XCTAssertFalse(strings.contains("GC"), "Must never render placeholder monogram letters 'GC': \(joined)")
     }
 
+    // MARK: - 2b. Follow-Up Polish (#12924): Shared Left Edge, Distinct Chart Series Colours & No Duplicate Page Headline
+
+    func testFollowUpPolishSharedNameLeftEdgeDistinctChartSeriesColorsAndNoDuplicatePageHeadline() throws {
+        // (1) Distinct chart series colours even when the server sends 3 identical purple or blue hexes.
+        let threePurple: [MachineryHistorySeries] = [
+            .init(outcomeId: 1, name: "Kevin Warsh", currentPct: 42, color: "#7C3AED", points: [.init(t: "2026-11-10T00:00:00Z", pct: 35), .init(t: "2026-11-17T00:00:00Z", pct: 42)]),
+            .init(outcomeId: 2, name: "Scott Bessent", currentPct: 31, color: "#7C3AED", points: [.init(t: "2026-11-10T00:00:00Z", pct: 34), .init(t: "2026-11-17T00:00:00Z", pct: 31)]),
+            .init(outcomeId: 3, name: "Christopher Waller", currentPct: 19, color: "#7C3AED", points: [.init(t: "2026-11-10T00:00:00Z", pct: 22), .init(t: "2026-11-17T00:00:00Z", pct: 19)])
+        ]
+        let threeBlue: [MachineryHistorySeries] = [
+            .init(outcomeId: 1, name: "No change", currentPct: 54, color: "#2563EB", points: [.init(t: "2026-11-10T00:00:00Z", pct: 48), .init(t: "2026-11-17T00:00:00Z", pct: 54)]),
+            .init(outcomeId: 2, name: "25 bps cut", currentPct: 36, color: "#2563EB", points: [.init(t: "2026-11-10T00:00:00Z", pct: 41), .init(t: "2026-11-17T00:00:00Z", pct: 36)]),
+            .init(outcomeId: 3, name: "50+ bps cut", currentPct: 10, color: "#2563EB", points: [.init(t: "2026-11-10T00:00:00Z", pct: 11), .init(t: "2026-11-17T00:00:00Z", pct: 10)])
+        ]
+        for isDark in [false, true] {
+            let resolvedPurple = MachineryChartSeriesPalette12288.resolvedHexes(for: threePurple, isDark: isDark)
+            let resolvedBlue = MachineryChartSeriesPalette12288.resolvedHexes(for: threeBlue, isDark: isDark)
+            XCTAssertEqual(Set(resolvedPurple).count, 3, "Expected 3 distinct colours for 3 purple series (isDark=\(isDark)): \(resolvedPurple)")
+            XCTAssertEqual(Set(resolvedBlue).count, 3, "Expected 3 distinct colours for 3 blue series (isDark=\(isDark)): \(resolvedBlue)")
+            for group in [resolvedPurple, resolvedBlue] {
+                let metrics = try group.map { try XCTUnwrap(MachineryChartSeriesPalette12288.parseMetrics($0)) }
+                XCTAssertTrue(MachineryChartSeriesPalette12288.areDistinct(metrics[0], metrics[1]))
+                XCTAssertTrue(MachineryChartSeriesPalette12288.areDistinct(metrics[0], metrics[2]))
+                XCTAssertTrue(MachineryChartSeriesPalette12288.areDistinct(metrics[1], metrics[2]))
+            }
+        }
+        // Served distinct colours (Blue vs Red) stay intact in light mode.
+        let twoDistinct: [MachineryHistorySeries] = [
+            .init(outcomeId: 1, name: "Democratic", currentPct: 52, color: "#2563EB", points: []),
+            .init(outcomeId: 2, name: "Republican", currentPct: 48, color: "#DC2626", points: [])
+        ]
+        XCTAssertEqual(
+            MachineryChartSeriesPalette12288.resolvedHexes(for: twoDistinct, isDark: false),
+            ["#2563EB", "#DC2626"]
+        )
+
+        // (2) Shared left edge: an outcome without art aligns with its illustrated neighbour's name left edge.
+        let samplePosterURL = "https://image.tmdb.org/t/p/w342/sample_poster_12288.jpg"
+        let solidPoster = UIGraphicsImageRenderer(size: CGSize(width: 56, height: 80)).image { ctx in
+            UIColor(red: 0.14, green: 0.42, blue: 0.34, alpha: 1.0).setFill()
+            ctx.fill(CGRect(x: 0, y: 0, width: 56, height: 80))
+        }
+        let siblingMarket = MachineryMarketVisualItem(
+            marketId: 99101,
+            title: "Animated Feature",
+            outcomes: [
+                MachineryOutcomeVisual(
+                    outcomeId: 1,
+                    name: "Wildwood",
+                    probability: 0.46,
+                    renderedPercent: 46,
+                    art: .init(url: samplePosterURL, kind: "tmdb_poster")
+                ),
+                MachineryOutcomeVisual(
+                    outcomeId: 2,
+                    name: "Hoppers",
+                    probability: 0.34,
+                    renderedPercent: 34,
+                    art: nil
+                )
+            ]
+        )
+        let siblingBlock = MachineryVisualBlock(
+            formId: .siblingFieldsGrid,
+            initialVisibleLimit: 3,
+            marketItems: [siblingMarket]
+        )
+        let siblingImg = renderSurface(
+            MachinerySectionBlockView(visualBlock: siblingBlock, members: []).padding(16),
+            preloadedImages: [samplePosterURL: solidPoster],
+            style: .light,
+            dynamicType: .large,
+            maxHeight: 600
+        )
+        let siblingBoxes = try recognizeObservationBoxes(in: XCTUnwrap(siblingImg.cgImage))
+        let wildwoodX = try XCTUnwrap(siblingBoxes.first(where: { $0.text.contains("Wildwood") })?.minXPx)
+        let hoppersX = try XCTUnwrap(siblingBoxes.first(where: { $0.text.contains("Hoppers") })?.minXPx)
+        XCTAssertLessThanOrEqual(
+            abs(wildwoodX - hoppersX),
+            12.0,
+            "Artless sibling 'Hoppers' (\(hoppersX) px) must share 'Wildwood' left edge (\(wildwoodX) px)"
+        )
+
+        // (3) Embedded paired card inside a page section drops its own eyebrow and duplicate headline,
+        // while the Discover card keeps both.
+        let oscarsSetJSON = """
+        {
+          "set_id": "oscars-best-picture",
+          "category": "entertainment",
+          "kicker": "Awards · Oscars",
+          "title": "Oscars Best Picture",
+          "subtitle": "99th Academy Awards",
+          "stage1_label": "Nominated",
+          "stage2_label": "Winner",
+          "stage1_settled": false,
+          "primary_stage1_market_id": 501,
+          "primary_stage2_market_id": 502,
+          "entries": [
+            {
+              "subject_key": "odyssey",
+              "subject": "The Odyssey",
+              "detail": "",
+              "stage1_market_id": 501,
+              "stage2_market_id": 502,
+              "stage1_probability": 0.88,
+              "stage2_probability": 0.29,
+              "art": {
+                "kind": "tmdb_poster",
+                "url": "\(samplePosterURL)",
+                "verified_subject_match": true
+              }
+            },
+            {
+              "subject_key": "hoppers",
+              "subject": "Hoppers",
+              "detail": "",
+              "stage1_market_id": 501,
+              "stage2_market_id": 502,
+              "stage1_probability": 0.54,
+              "stage2_probability": 0.11
+            }
+          ]
+        }
+        """
+        let oscarsSet = try JSONDecoder().decode(PairedMetricSet.self, from: Data(oscarsSetJSON.utf8))
+        let pagePairedBlock = MachineryVisualBlock(
+            formId: .pairedStageBars,
+            initialVisibleLimit: 3,
+            pairedMetricSet: oscarsSet
+        )
+        let pageSectionImg = renderSurface(
+            MachinerySectionBlockView(visualBlock: pagePairedBlock, members: []).padding(16),
+            preloadedImages: [samplePosterURL: solidPoster],
+            style: .light,
+            dynamicType: .large,
+            maxHeight: 800
+        )
+        let pageSectionBoxes = try recognizeObservationBoxes(in: XCTUnwrap(pageSectionImg.cgImage))
+        let pageSectionJoined = pageSectionBoxes.map { $0.text }.joined(separator: " | ")
+        XCTAssertFalse(
+            pageSectionJoined.localizedCaseInsensitiveContains("Oscars Best Picture"),
+            "Embedded page section card must drop its own duplicate headline: \(pageSectionJoined)"
+        )
+        XCTAssertFalse(
+            pageSectionJoined.localizedCaseInsensitiveContains("AWARDS"),
+            "Embedded page section card must drop its own eyebrow: \(pageSectionJoined)"
+        )
+        let odysseyX = try XCTUnwrap(pageSectionBoxes.first(where: { $0.text.contains("The Odyssey") })?.minXPx)
+        let pairedHoppersX = try XCTUnwrap(pageSectionBoxes.first(where: { $0.text.contains("Hoppers") })?.minXPx)
+        XCTAssertLessThanOrEqual(
+            abs(odysseyX - pairedHoppersX),
+            12.0,
+            "Artless paired row 'Hoppers' (\(pairedHoppersX) px) must share 'The Odyssey' left edge (\(odysseyX) px)"
+        )
+
+        // Meanwhile, the Discover card still renders its eyebrow and headline.
+        let oscarsCardJSON = """
+        {
+          "slug": "machinery-oscars-best-picture",
+          "form_id": "paired_stage_bars",
+          "kicker": "Awards · Oscars",
+          "title": "Oscars Best Picture",
+          "subtitle": "99th Academy Awards",
+          "section_count": 4,
+          "footer": ""
+        }
+        """
+        let oscarsCard = try JSONDecoder().decode(MachineryCardContract.self, from: Data(oscarsCardJSON.utf8))
+        let discoverCardImg = renderSurface(
+            MachineryDiscoverEntryCardView(card: oscarsCard, pairedMetricSet: oscarsSet).padding(16),
+            preloadedImages: [samplePosterURL: solidPoster],
+            style: .light,
+            dynamicType: .large,
+            maxHeight: 900
+        )
+        let discoverJoined = try recognizeStrings(in: XCTUnwrap(discoverCardImg.cgImage)).joined(separator: " | ")
+        XCTAssertTrue(discoverJoined.localizedCaseInsensitiveContains("Oscars Best Picture"))
+    }
+
     // MARK: - 3. Live 4 Groupings: Decode, 227: A Screen Counts, Largest Dynamic Type & 390 px Renders
 
     func testLiveFourGroupingsCardsPagesDiversityCountsAnd390PxRenders() throws {
-        let renderDir = URL(fileURLWithPath: "/Users/bain/.gemini/antigravity/brain/4c590449-f20c-4ff4-921d-f7e1343a4327/renders-12288")
-        let liveJSONPath = renderDir.appendingPathComponent("live_machinery_preview_12288.json")
-        let manifestPath = renderDir.appendingPathComponent("art_manifest.json")
+        let inputDir = URL(fileURLWithPath: "/Users/bain/.gemini/antigravity/brain/4c590449-f20c-4ff4-921d-f7e1343a4327/renders-12288")
+        let renderDir = URL(fileURLWithPath: "/Users/bain/.gemini/antigravity/brain/4c590449-f20c-4ff4-921d-f7e1343a4327/renders-12288-252a")
+        let fiveJSONPath = renderDir.appendingPathComponent("five_groupings_preview.json")
+        let liveJSONPath = inputDir.appendingPathComponent("live_machinery_preview_12288.json")
+        let manifestPath = FileManager.default.fileExists(atPath: renderDir.appendingPathComponent("art_manifest.json").path)
+            ? renderDir.appendingPathComponent("art_manifest.json")
+            : inputDir.appendingPathComponent("art_manifest.json")
 
         let payloadData: Data
-        if let diskData = try? Data(contentsOf: liveJSONPath) {
+        if let fiveData = try? Data(contentsOf: fiveJSONPath) {
+            payloadData = fiveData
+        } else if let diskData = try? Data(contentsOf: liveJSONPath) {
             payloadData = diskData
         } else {
             payloadData = Data(Self.embeddedFallbackPreviewJSON.utf8)
@@ -324,14 +527,30 @@ final class GroupingMachinery12288Tests: XCTestCase {
         GroupingMachineryGate12288.setOverrideDefaultsForTesting(isolatedDefaults)
         let ownerAlex = AuthUser(
             id: 364,
-            email: "owner@example.com",
+            email: nil,
             displayName: "Owner Account",
             photoUrl: nil,
             onboardingCompleted: true,
             createdAt: nil
         )
-        GroupingMachineryGate12288.setActiveUser(ownerAlex)
-        GroupingMachineryGate12288.setSwitchEnabled(true, for: ownerAlex)
+        // 252: A — verify pages load and render with the owner switch OFF (public 1.0.7 reader state).
+        GroupingMachineryGate12288.setActiveUser(nil)
+
+        // Also verify all served `feed_item` objects decode directly as `FeedItem` (`GET /api/feed?machinery=1`)
+        // and pass Discover roundup admission & grouping for public readers.
+        if let rootObj = try JSONSerialization.jsonObject(with: payloadData) as? [String: Any],
+           let rawItems = rootObj["items"] as? [[String: Any]] {
+            let feedItems: [FeedItem] = try rawItems.compactMap { dict in
+                guard let fiObj = dict["feed_item"] else { return nil }
+                let fiData = try JSONSerialization.data(withJSONObject: fiObj)
+                return try snakeDecoder.decode(FeedItem.self, from: fiData)
+            }
+            for fi in feedItems {
+                XCTAssertEqual(fi.bundle?.admitsRoundupCard, true, "Bundle for \(String(describing: fi.bundle?.roundupCollectionRef?.slug)) must pass admitsRoundupCard")
+            }
+            let groupedOnDiscover = DiscoverView.groupRelatedItems(feedItems)
+            XCTAssertEqual(groupedOnDiscover.count, feedItems.count, "Every served machinery roundup must survive DiscoverView.groupRelatedItems")
+        }
 
         var iphoneDiversitySummary: [[String: Any]] = []
         let canExportDisk = FileManager.default.fileExists(atPath: renderDir.path)
@@ -405,6 +624,13 @@ final class GroupingMachinery12288Tests: XCTestCase {
                 style: .light,
                 dynamicType: .xxxLarge
             )
+            let pageXXXLargeDarkResult = renderAndMeasureContainerPage(
+                presentation: presentation,
+                displayName: entry.displayName,
+                preloadedImages: preloadedImages,
+                style: .dark,
+                dynamicType: .xxxLarge
+            )
 
             let pageLargeOCR = try recognizeStrings(in: XCTUnwrap(pageLightResult.image.cgImage))
             assertCleanCopyAndNoEllipsis(pageLargeOCR, context: "page(\(entry.slug), .large)")
@@ -424,8 +650,10 @@ final class GroupingMachinery12288Tests: XCTestCase {
             if canExportDisk {
                 try? cardLightImg.pngData()?.write(to: renderDir.appendingPathComponent("12288-card-\(entry.slug)-light-390.png"))
                 try? cardDarkImg.pngData()?.write(to: renderDir.appendingPathComponent("12288-card-\(entry.slug)-dark-390.png"))
-                try? pageLightResult.image.pngData()?.write(to: renderDir.appendingPathComponent("12288-page-\(entry.slug)-light-390.png"))
-                try? pageDarkResult.image.pngData()?.write(to: renderDir.appendingPathComponent("12288-page-\(entry.slug)-dark-390.png"))
+                try? pageLightResult.image.pngData()?.write(to: renderDir.appendingPathComponent("12288-page-\(entry.slug)-default-light-390.png"))
+                try? pageDarkResult.image.pngData()?.write(to: renderDir.appendingPathComponent("12288-page-\(entry.slug)-default-dark-390.png"))
+                try? pageXXXLargeResult.image.pngData()?.write(to: renderDir.appendingPathComponent("12288-page-\(entry.slug)-largest-light-390.png"))
+                try? pageXXXLargeDarkResult.image.pngData()?.write(to: renderDir.appendingPathComponent("12288-page-\(entry.slug)-largest-dark-390.png"))
             }
         }
 
@@ -719,15 +947,26 @@ final class GroupingMachinery12288Tests: XCTestCase {
         let finalSize = CGSize(width: 390, height: intrinsicHeight)
         host.view.frame = CGRect(origin: .zero, size: finalSize)
 
+        let sliceMaxHeight: CGFloat = 1_600
+        let firstViewportHeight = min(finalSize.height, sliceMaxHeight)
+
+        let containerVC = UIViewController()
+        containerVC.overrideUserInterfaceStyle = style
+        containerVC.view.frame = CGRect(x: 0, y: 0, width: 390, height: firstViewportHeight)
+        containerVC.view.clipsToBounds = true
+        containerVC.addChild(host)
+        containerVC.view.addSubview(host.view)
+        host.didMove(toParent: containerVC)
+
         let window: UIWindow
         if let scene = UIApplication.shared.connectedScenes.compactMap({ $0 as? UIWindowScene }).first {
             window = UIWindow(windowScene: scene)
         } else {
-            window = UIWindow(frame: host.view.frame)
+            window = UIWindow(frame: containerVC.view.frame)
         }
-        window.frame = host.view.frame
+        window.frame = containerVC.view.frame
         window.overrideUserInterfaceStyle = style
-        window.rootViewController = host
+        window.rootViewController = containerVC
         window.isHidden = false
         defer {
             window.isHidden = true
@@ -738,13 +977,43 @@ final class GroupingMachinery12288Tests: XCTestCase {
         repeat {
             host.view.setNeedsLayout()
             host.view.layoutIfNeeded()
+            containerVC.view.layoutIfNeeded()
             RunLoop.current.run(until: Date().addingTimeInterval(0.015))
         } while Date() < deadline
 
-        let fmt = UIGraphicsImageRendererFormat()
-        fmt.scale = finalSize.height > 3_600 ? 1.5 : (finalSize.height > 2_400 ? 2.0 : 3.0)
-        let img = UIGraphicsImageRenderer(bounds: host.view.bounds, format: fmt).image { _ in
-            _ = host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true)
+        // Tile in <= 1,600 pt vertical viewports (`<= 4,800 px` at 3x) so CoreAnimation's
+        // 8,192 px Metal backing-texture ceiling never drops tall pages (`> 2,730 pt`).
+        let sliceFmt = UIGraphicsImageRendererFormat()
+        sliceFmt.scale = 2.0
+        sliceFmt.opaque = true
+
+        // Keep viewport height constant across every slice so NavigationStack's layout
+        // geometry never shifts at the final partial slice (`0` seam overlap).
+        let fixedVPRect = CGRect(x: 0, y: 0, width: 390, height: firstViewportHeight)
+        window.frame = fixedVPRect
+        containerVC.view.frame = fixedVPRect
+
+        var slices: [(y: CGFloat, h: CGFloat, image: UIImage)] = []
+        var offsetY: CGFloat = 0
+        while offsetY < finalSize.height - 0.5 {
+            let sliceH = min(firstViewportHeight, finalSize.height - offsetY)
+            containerVC.view.bounds = CGRect(x: 0, y: offsetY, width: 390, height: firstViewportHeight)
+            RunLoop.current.run(until: Date().addingTimeInterval(0.02))
+
+            let sliceImg = UIGraphicsImageRenderer(size: CGSize(width: 390, height: sliceH), format: sliceFmt).image { _ in
+                _ = containerVC.view.drawHierarchy(in: fixedVPRect, afterScreenUpdates: true)
+            }
+            slices.append((y: offsetY, h: sliceH, image: sliceImg))
+            offsetY += sliceH
+        }
+
+        let fullFmt = UIGraphicsImageRendererFormat()
+        fullFmt.scale = 2.0
+        fullFmt.opaque = true
+        let img = UIGraphicsImageRenderer(size: finalSize, format: fullFmt).image { _ in
+            for s in slices {
+                s.image.draw(in: CGRect(x: 0, y: s.y, width: 390, height: s.h))
+            }
         }
         return (img, finalSize.height, collector.rects)
     }
@@ -829,6 +1098,24 @@ final class GroupingMachinery12288Tests: XCTestCase {
         let request = VNRecognizeTextRequest { req, _ in
             let observations = (req.results as? [VNRecognizedTextObservation]) ?? []
             output = observations.compactMap { $0.topCandidates(1).first?.string }
+        }
+        request.recognitionLevel = .accurate
+        request.usesLanguageCorrection = false
+        let handler = VNImageRequestHandler(cgImage: cgImage, options: [:])
+        try handler.perform([request])
+        return output
+    }
+
+    private func recognizeObservationBoxes(in cgImage: CGImage) throws -> [(text: String, minXPx: CGFloat)] {
+        var output: [(String, CGFloat)] = []
+        let w = CGFloat(cgImage.width)
+        let request = VNRecognizeTextRequest { req, _ in
+            let observations = (req.results as? [VNRecognizedTextObservation]) ?? []
+            for obs in observations {
+                if let s = obs.topCandidates(1).first?.string {
+                    output.append((s, obs.boundingBox.minX * w))
+                }
+            }
         }
         request.recognitionLevel = .accurate
         request.usesLanguageCorrection = false

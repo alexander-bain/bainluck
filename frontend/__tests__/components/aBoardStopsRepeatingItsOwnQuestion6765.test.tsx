@@ -337,16 +337,16 @@ describe("#6765 — the movement caption", () => {
 
   it("drops the board name from the caption's subject", () => {
     expect(movementExplanation(leader, KOREA_OPEN)).toBe(
-      "Set 1 O/U 9.5 up 22.0 pts from opening.",
+      "Set 1 O/U 9.5 up 22.0 points from opening.",
     );
   });
 
   it("is unchanged where there is no board name to drop", () => {
     expect(movementExplanation(leader)).toBe(
-      `${KOREA_OPEN} Set 1 O/U 9.5 up 22.0 pts from opening.`,
+      `${KOREA_OPEN} Set 1 O/U 9.5 up 22.0 points from opening.`,
     );
     expect(movementExplanation({ ...leader, name: "Jakub Mensik" }, US_OPEN)).toBe(
-      "Jakub Mensik up 22.0 pts from opening.",
+      "Jakub Mensik up 22.0 points from opening.",
     );
   });
 
@@ -354,7 +354,7 @@ describe("#6765 — the movement caption", () => {
     // `leaderLabel` answers first; a label it resolved to "Yes" carries no board
     // prefix, so the two rules cannot interact whatever the board is called.
     expect(movementExplanation({ ...leader, name: "Yes" }, "Yes or No")).toBe(
-      "Yes up 22.0 pts from opening.",
+      "Yes up 22.0 points from opening.",
     );
   });
 

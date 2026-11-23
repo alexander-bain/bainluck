@@ -66,7 +66,7 @@ export function MoversStrip({ movers }: { movers: GolfMover[] }) {
                     isUp ? "text-green-400" : "text-red-400"
                   }`}
                 >
-                  {isUp ? "▲" : "▼"} {delta} pts
+                  {isUp ? "▲" : "▼"} {delta} {delta === "1" ? "point" : "points"}
                 </span>
               </div>
               <div className="text-sm text-text-primary font-medium truncate">

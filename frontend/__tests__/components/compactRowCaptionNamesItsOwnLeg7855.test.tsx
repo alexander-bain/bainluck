@@ -178,7 +178,7 @@ describe("#7855 — the compact row's caption is about the leg its percentage is
   });
 
   it("#9642 — as served, the ladder row prints its card's rung, and the caption is about it", () => {
-    expect(rowText(render(bundle("ai")), ASTRA)).toBe("GPT Astra 6.1+ released?October 31 up 20 points today20 pts63%");
+    expect(rowText(render(bundle("ai")), ASTRA)).toBe("GPT Astra 6.1+ released?October 31 up 20 points today20 points63%");
   });
 
   it("the row that printed `December 31 · October 31 up 20 points today` says one thing now", () => {
@@ -226,7 +226,7 @@ describe("#7855 — the compact row's caption is about the leg its percentage is
     // would take this row's caption with it. (#8339: the chip read "6 pts" beside
     // "down 6.5 points" until it took the sentence's one-decimal form.)
     expect(rowText(renderRow(member(bundle("middle_east"), JORDAN)), JORDAN)).toBe(
-      "Will Iran target Jordan?October 31 · Odds down 6.5 points6.5 pts67%",
+      "Will Iran target Jordan?October 31 · Odds down 6.5 points6.5 points67%",
     );
   });
 
@@ -251,7 +251,7 @@ describe("#7855 — the compact row's caption is about the leg its percentage is
     expect(outcomes.length).toBeGreaterThan(1);
     jordan.context_summary = `${outcomes[1].name} up 20 points today`;
 
-    expect(rowText(renderRow(jordan), JORDAN)).toBe("Will Iran target Jordan?October 316.5 pts67%");
+    expect(rowText(renderRow(jordan), JORDAN)).toBe("Will Iran target Jordan?October 316.5 points67%");
   });
 
   it("an ordinary English `No` in a caption is not read as a second leg", () => {
@@ -263,7 +263,7 @@ describe("#7855 — the compact row's caption is about the leg its percentage is
     outcomes[1].name = "No";
     jordan.context_summary = "No clear favorite yet";
 
-    expect(rowText(renderRow(jordan), JORDAN)).toBe("Will Iran target Jordan?October 31 · No clear favorite yet6.5 pts67%");
+    expect(rowText(renderRow(jordan), JORDAN)).toBe("Will Iran target Jordan?October 31 · No clear favorite yet6.5 points67%");
   });
 
   describe("the production census", () => {

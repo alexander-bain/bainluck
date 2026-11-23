@@ -1,0 +1,57 @@
+{
+  "slug": "machinery-chess-milestones-and-curiosities",
+  "stage": "public",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_window",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "ODD · CHESS",
+  "name": "World Chess & Grandmaster Races",
+  "category": "entertainment",
+  "tag": "ODD",
+  "section_title": "Titles, Ratings & AI vs. Humans",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "extra_llm_categories": [
+      "chess",
+      "tech"
+    ],
+    "card_rows": 3,
+    "card_section_key": "curiosities",
+    "hide_row_art": true,
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f0/Chess_game_Staunton_No._6.jpg/960px-Chess_game_Staunton_No._6.jpg",
+    "card_image_alt": "Wooden Staunton chess pieces arranged on a tournament board",
+    "card_image_credit": "Wilfredor (CC0 1.0 Public Domain, Wikimedia Commons)",
+    "card_image_author": "Wilfredor",
+    "card_image_license": "CC0 1.0 Public Domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Chess_game_Staunton_No._6.jpg",
+    "sections": [
+      {
+        "key": "curiosities",
+        "title": "Titles, Ratings & AI vs. Humans",
+        "item_noun": "markets",
+        "note": "World Chess Championship, Chess.com awards, FIDE ratings, and AI vs. grandmaster milestones.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch8-chess-milestones-curiosities",
+          "date_ladder_pick": "nearest_open",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 8,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}

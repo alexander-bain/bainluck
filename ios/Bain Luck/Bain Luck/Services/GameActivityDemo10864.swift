@@ -26,6 +26,96 @@ enum GameActivityDemo10864 {
     /// Built through the snapshot's own initializer, which applies every rule a
     /// real reading meets (a final carries no chance).
     static func snapshot(_ mode: String, now: Date = Date()) -> GameActivitySnapshot? {
+        if mode == "tennis250afinal" {
+            // #13000 (Decision 250-A) — finished ATP Challenger tennis match with no score feed:
+            // Final score column omitted (no "–" dashes), FINAL pill + winner tick + Pregame kept.
+            return GameActivitySnapshot(
+                eventID: eventID + 5,
+                homeTeam: "Tristan Boyer",
+                awayTeam: "Genaro Alberto Olivieri",
+                lifecycle: .final,
+                homeScore: nil,
+                awayScore: nil,
+                homeProbability: nil,
+                awayProbability: nil,
+                sport: "tennis_atp",
+                scoreObservedAt: nil,
+                probabilityObservedAt: nil,
+                homeAbbreviation: "BOY",
+                awayAbbreviation: "OLI",
+                homeColorHex: "#1D4ED8",
+                awayColorHex: "#B45309",
+                periodLabel: nil,
+                servedResult: "home",
+                pregameAwayPercent: 44,
+                pregameHomePercent: 56,
+                scoreSourceUnavailable: true)
+        }
+        if mode == "tennis250a" {
+            // #13000 (Decision 250-A) — live ATP Challenger tennis match with no score feed
+            // carrying it: Score column omitted completely, LIVE + Now + Chance time kept.
+            return GameActivitySnapshot(
+                eventID: eventID + 4,
+                homeTeam: "Tristan Boyer",
+                awayTeam: "Genaro Alberto Olivieri",
+                lifecycle: .live,
+                homeScore: nil,
+                awayScore: nil,
+                homeProbability: 0.624,
+                awayProbability: 0.376,
+                sport: "tennis_atp",
+                scoreObservedAt: nil,
+                probabilityObservedAt: now,
+                homeAbbreviation: "BOY",
+                awayAbbreviation: "OLI",
+                homeColorHex: "#1D4ED8",
+                awayColorHex: "#B45309",
+                periodLabel: nil,
+                scoreSourceUnavailable: true)
+        }
+        if mode == "ncaab12999pushed" {
+            // #12999 — decoded directly from the server APNs wire JSON shape
+            // (seconds since 2001) to verify pushed updates draw the exact same headline.
+            let scoreSec = now.addingTimeInterval(-120).timeIntervalSinceReferenceDate
+            let probSec = now.timeIntervalSinceReferenceDate
+            let json = """
+            {"snapshot":{"eventID":\(eventID + 3),"homeTeam":"Florida Gators","awayTeam":"Houston Cougars",\
+            "lifecycle":"live","homeScore":54,"awayScore":58,"homeRenderedPercent":39,"awayRenderedPercent":61,\
+            "homeHeadlineTenths":386,"sport":"basketball_ncaab","homeAbbreviation":"FLA","awayAbbreviation":"HOU",\
+            "homeColorHex":"#0021A5","awayColorHex":"#C8102E","awaySecondaryColorHex":"#960C22",\
+            "periodLabel":"2nd Half","scoreObservedAt":\(scoreSec),"probabilityObservedAt":\(probSec)}}
+            """
+            return (try? JSONDecoder().decode(GameActivityAttributes.ContentState.self, from: Data(json.utf8)))?.snapshot
+        }
+        if mode == "ncaab12999live" || mode == "ncaab12999ht" || mode == "ncaab12999final" {
+            // #12999 — Houston Cougars at Florida Gators (Alex's exact college
+            // basketball game from 2:58 PM Wed Nov 18): schools not mascots,
+            // live (two distinct times), halftime, and final with pregame (209).
+            let isFinal = mode == "ncaab12999final"
+            let isHT = mode == "ncaab12999ht"
+            let scoreTime = isHT ? now : now.addingTimeInterval(-120)
+            return GameActivitySnapshot(
+                eventID: eventID + 2,
+                homeTeam: "Florida Gators",
+                awayTeam: "Houston Cougars",
+                lifecycle: isFinal ? .final : .live,
+                homeScore: isFinal ? 78 : (isHT ? 40 : 54),
+                awayScore: isFinal ? 74 : (isHT ? 37 : 58),
+                homeProbability: isFinal ? nil : (isHT ? 0.632 : 0.386),
+                awayProbability: isFinal ? nil : (isHT ? 0.368 : 0.614),
+                sport: "basketball_ncaab",
+                scoreObservedAt: scoreTime,
+                probabilityObservedAt: isFinal ? nil : now,
+                homeAbbreviation: "FLA",
+                awayAbbreviation: "HOU",
+                homeColorHex: "#0021A5",
+                awayColorHex: "#C8102E",
+                periodLabel: isFinal ? nil : (isHT ? "HT" : "2nd Half"),
+                servedResult: isFinal ? "home" : nil,
+                awaySecondaryColorHex: "#960C22",
+                pregameAwayPercent: isFinal ? 48 : nil,
+                pregameHomePercent: isFinal ? 52 : nil)
+        }
         if mode == "nfl199pre" || mode == "nfl199final" {
             // #199 — the same game before kickoff (the page's `Chance`) and
             // finished (the page's `Final`, winner ticked from the server's verdict).
@@ -80,7 +170,10 @@ enum GameActivityDemo10864 {
         // "pair" starts two games at once, so the island shows one compact and
         // one minimal; "nfl199" starts the #12755 page's game alone.
         let first = mode == "nfl199" || mode == "pair" ? "nfl199"
-            : (mode == "nfl199pre" || mode == "nfl199final") ? mode : "live"
+            : (mode == "nfl199pre" || mode == "nfl199final"
+               || mode == "ncaab12999live" || mode == "ncaab12999ht"
+               || mode == "ncaab12999final" || mode == "ncaab12999pushed"
+               || mode == "tennis250a" || mode == "tennis250afinal") ? mode : "live"
         if mode == "pair", let other = snapshot("live") {
             _ = try? Activity<GameActivityAttributes>.request(
                 attributes: GameActivityAttributes(eventID: eventID),

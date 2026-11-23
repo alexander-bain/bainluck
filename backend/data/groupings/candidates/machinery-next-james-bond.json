@@ -1,0 +1,50 @@
+{
+  "slug": "machinery-next-james-bond",
+  "stage": "public",
+  "look": "faces",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_event",
+    "same_measure",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "ENTERTAINMENT · JAMES BOND",
+  "name": "The Next James Bond Film",
+  "category": "entertainment",
+  "tag": "ENTERTAINMENT",
+  "section_title": "Cast & Theme",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "card_rows": 3,
+    "card_section_key": "bond_castings",
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/30/Tower_Bride_at_dusk_2016-unsplash_%282%29.jpg/960px-Tower_Bride_at_dusk_2016-unsplash_%282%29.jpg",
+    "card_image_alt": "Tower Bridge in London illuminated over the River Thames at twilight",
+    "card_image_credit": "Susan Yin (CC0 1.0 Public Domain, Wikimedia Commons)",
+    "card_image_author": "Susan Yin",
+    "card_image_license": "CC0 1.0 Public Domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Tower_Bride_at_dusk_2016-unsplash_(2).jpg",
+    "sections": [
+      {
+        "key": "bond_castings",
+        "title": "Cast & Theme",
+        "note": "Leading contenders across every casting and theme-song market for the next Bond film.",
+        "atom_query": {
+          "kind": "markets",
+          "title_all_tokens": ["next", "james", "bond", "film"],
+          "shape": "field",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 8,
+          "max_outcomes": 4,
+          "initial_visible_limit": 3
+        }
+      }
+    ]
+  }
+}

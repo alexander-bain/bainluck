@@ -153,3 +153,14 @@ frontend/lib/evals/data/twin-confusion-2026-11-05.json
 frontend/lib/evals/data/sibling-family-exam-2026-11.json
 frontend/lib/evals/data/new-kinds-exam-2026-11.json
 frontend/lib/evals/data/gap-targets.json
+
+# Read by test_mutation_guard.py through the mutation scanner: these are TARGETS
+# of backend/scripts/evals/*_mutations.py harnesses (event_hero_duel_percent,
+# ios_duel_percent_served_pair). Website merges #12911 and #12906 moved lines in
+# them on Tue Nov 17, skipped the backend shards, and master went red on the next
+# server batch. The rot guard derives this set from the scanner's own harvest().
+frontend/components/EventHeroProbabilityPair.tsx
+frontend/components/FeedCard.tsx
+frontend/components/discover/EventCard.tsx
+frontend/lib/eventKeyStats.ts
+frontend/lib/servedDuelPercents.ts

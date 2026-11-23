@@ -6,12 +6,14 @@ import logging
 import os
 import re
 import time
+import unicodedata
+import zlib
 from collections import Counter
 from types import SimpleNamespace
 from contextlib import asynccontextmanager, suppress
 
 logger = logging.getLogger(__name__)
-from copy import deepcopy
+from copy import copy as shallow_copy, deepcopy
 from dataclasses import dataclass, fields as dataclass_fields, replace as dataclass_replace
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -21,7 +23,7 @@ from typing import Annotated, Optional, Sequence
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import select, and_, or_, union, func, case, cast, any_, literal, Date, Integer, String, literal_column, text, true, false, Interval
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload, aliased, load_only
+from sqlalchemy.orm import contains_eager, selectinload, aliased, load_only
 from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.sql.visitors import replacement_traverse
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
@@ -40,6 +42,7 @@ from app.utils.agent_origin import ORIGIN_HEADER, ORIGIN_USER
 from app.utils.start_placeholder import start_is_tbd
 from app.utils.feed_snapshot_fallback import WITHDRAWAL_MARKER_KEY
 from app.utils.scheduled_start import (
+    loaded_price_admission_kickoff,
     loaded_commence_time_source,
     served_start_is_from_schedule,
 )
@@ -47,7 +50,7 @@ from app.utils.scheduled_start import (
 # and safe — `market_label_normalization` imports only `utils.futures_categorization`,
 # so there is no cycle to defer around; `tests/test_startup.py` is the guard.
 from app.utils.market_label_normalization import non_sport_topic_label, rewrite_venue_league_vocabulary
-from app.utils.market_display_name import rewrite_question_colon_display
+from app.utils.market_display_name import futures_reader_name, rewrite_question_colon_display
 # #6993: the four-arm price refusal, asked here so the search surfaces cannot
 # serve a number the detail page refuses. Imported from the route that owns it
 # rather than copied, which is the whole point of the hook — its own docstring
@@ -62,8 +65,11 @@ from app.routes.futures import (
     WITHHELD_PRICE_FIELDS,
     _board_has_a_verdict,
     _fleet_newest_observation,
+    _is_current_2027_super_bowl,
+    _load_current_2027_super_bowl,
     _withheld_price_outcome_ids,
 )
+from app.utils.futures_verified_title import SUPER_BOWL_2027_ALIAS_ID, SUPER_BOWL_2027_BOARD_ID
 from app.utils.feed_reasons import _points as format_movement_points
 from app.utils.game_market_club_names import (
     SEARCH_CARD_FIELDS,
@@ -105,7 +111,7 @@ from app.utils.prematch_reading import (
     opening_consensus_has_frozen,
     prematch_prior_binds,
     prematch_row_to_reading,
-    resolve_prematch_reading,
+    serialize_prematch_odds,
 )
 from app.utils.closed_period_markets import closed_period_markets
 from app.utils.period_window_grade import grade_period_window, window_outcome_label
@@ -124,6 +130,7 @@ from app.utils.event_rails import (
 )
 from app.utils.lifecycle import EVENT_NOT_STARTED, served_event_status
 from app.utils.score_observation import score_observation_fields
+from app.utils.score_source_availability import score_source_unavailable_fields
 from app.utils.event_props_matrix import blend_mean, build_during_player_props
 from app.utils.prop_expectation_actual import build_after_player_props
 from app.utils.event_question_matrix import (
@@ -143,7 +150,12 @@ from app.utils.event_completion import (
     started_without_result,
 )
 from app.utils.current_odds_probability import current_odds_probability
-from app.utils.draw_priced_winner import printable_away, sport_prices_a_draw
+from app.utils.draw_priced_winner import (
+    printable_away,
+    rendered_three_way_percents,
+    resolve_three_way_probabilities,
+    sport_prices_a_draw,
+)
 from app.utils.market_identity import ticker_game_date
 from app.utils.game_market_class import (
     is_game_winner_market,
@@ -161,7 +173,12 @@ from app.utils.hero_probability import resolve_hero
 # `resolve_settled_hero` survives here for the graded-card gate around L12626,
 # which asks the settled question on its own account. The hero cascade itself
 # left with #3903 — see `utils/hero_probability`.
-from app.utils.settled_hero import resolve_settled_hero
+from app.utils.settled_hero import (
+    apply_settled_current_odds,
+    is_finished_status,
+    resolve_settled_hero,
+    settled_current_chance,
+)
 from app.utils.settled_price import priceless_leg_keeps_its_row
 from app.utils.settledness import market_assigned_settled
 from app.utils.venue_settlement import (
@@ -174,9 +191,14 @@ from app.utils.venue_settlement_reader import (
     mark_venue_closed_no_winner,
 )
 from app.utils.standings_shape import (
+    _count_games,
+    _parse_record,
+    league_season_games_ceiling,
     public_standings,
     reconciled_record_and_standings,
+    record_exceeds_season_ceiling,
     record_text,
+    standings_exceeds_season_ceiling,
 )
 from app.utils import (
     moneyline_to_probability,
@@ -190,7 +212,15 @@ from app.utils import (
     should_highlight,
 )
 from app.utils.odds_filtering import filter_stale_bookmaker_snapshots as _filter_stale_bookmaker_snapshots
-from app.utils.odds_math import refuse_incoherent_projections
+from app.utils.odds_math import (
+    refuse_incoherent_projections,
+    sportsbook_handicap_is_pinned,
+)
+from app.utils.recent_line_readings import (
+    PINNED_HANDICAP as _PINNED_HANDICAP_REASON,
+    _loaded_sport_key as _loaded_event_sport_key,
+    withhold_pinned_handicap_projection as _withhold_pinned_handicap_projection,
+)
 from app.utils.projected_final_points import bookmaker_history_provenance
 from app.utils import period_markers as pm_source
 from app.utils.winprob_evidence import (
@@ -282,8 +312,10 @@ from app.utils.proven_duplicates import (
     folded_card_numbers_batch,
     folded_probability_sources_batch,
     ghost_names_canonical,
+    group_latest_snapshots_by_event,
     not_a_proven_duplicate,
 )
+from app.utils.serve_fold_absorbed import fold_list_with_catchall_twins
 
 # Search scope vocabularies (live/048, CERT-786). The event search has FOUR
 # status enumerations — the primary path and the fuzzy-corrected fallback, each
@@ -707,7 +739,7 @@ def _futures_dedup_question_key(market) -> str:
     Split out rather than duplicated so the two cannot drift: the tiered key
     above is exactly this plus `:<tier>`, byte-for-byte what it always was.
     """
-    name = (market.name or "").strip()
+    name = (futures_reader_name(market) or "").strip()
     name = _FUTURES_DEDUP_STRIP.sub("", name).strip()
     name = re.sub(r"\s*[?!]\s*$", "", name)
     name_lower = name.lower()
@@ -856,7 +888,7 @@ def _is_paraphrase_of_a_kept_board(market, kept_boards: list) -> bool:
             continue
         if not _search_boards_list_the_same_field(names, kept_names):
             continue
-        if is_same_question(market.name, kept_name):
+        if is_same_question(futures_reader_name(market), kept_name):
             return True
     return False
 
@@ -1036,7 +1068,7 @@ def _search_same_question_as_a_kept_card(market, withheld, kept: list) -> bool:
         item = {
             "type": "futures",
             "data": {
-                "name": market.name,
+                "name": futures_reader_name(market),
                 "source": market.source,
                 "resolution_date": market.resolution_date,
                 "top_outcomes": _build_search_top_outcomes(market, withheld=withheld),
@@ -1123,7 +1155,7 @@ def _admit_search_future(
     kept_boards.append(
         (
             getattr(market, "source", None),
-            market.name,
+            futures_reader_name(market),
             _search_listed_names(market),
             _search_award_race(market),
             getattr(market, "resolution_date", None),
@@ -11736,8 +11768,10 @@ async def search_events(
         try:
             _fold = fold_twin_events(events)
             if _fold.dropped_ids:
+                _flipped_ids = getattr(_fold, "flipped_loser_ids", None) or ()
                 for _loser, _survivor in _fold.survivor_of.items():
-                    _prematch_absorbed_ids.setdefault(_survivor, []).append(_loser)
+                    if _loser not in _flipped_ids:
+                        _prematch_absorbed_ids.setdefault(_survivor, []).append(_loser)
                 for _survivor_id, _merged in _fold.merged_sources.items():
                     _survivor = next(e for e in _fold.events if e.id == _survivor_id)
                     set_committed_value(_survivor, "win_probability_sources", _merged)
@@ -11915,6 +11949,14 @@ async def search_events(
 
         # Build event lookups for stale bookmaker filtering
         event_info_map = {e.id: e for e in events}
+        # #12938 / ruling 233: A: live games project from current lines only.
+        from app.utils.live_line_clock import (
+            apply_live_line_projection as _apply_live_line_projection,
+            event_state_clock as _event_state_clock,
+        )
+
+        _live_clocks = {e.id: _event_state_clock(e) for e in events}
+        _clock_now = datetime.now(timezone.utc)
 
         for event_id, snaps in snapshots_by_event.items():
             ev = event_info_map.get(event_id)
@@ -11931,7 +11973,11 @@ async def search_events(
             aggregated_odds_map[event_id] = {
                 "snapshots": filtered_snaps,
                 "all_snapshots": all_snaps,
-                "aggregated": aggregate_bookmaker_odds(agg_snaps if agg_snaps else filtered_snaps),
+                "aggregated": _apply_live_line_projection(
+                    aggregate_bookmaker_odds(agg_snaps if agg_snaps else filtered_snaps),
+                    agg_snaps if agg_snaps else filtered_snaps,
+                    now=_clock_now, state_changed_at=_live_clocks.get(event_id),
+                ),
                 "captured_at": latest_time,
             }
         # #12595: a scheduled game's pair comes from recent line readings.
@@ -11966,12 +12012,49 @@ async def search_events(
     # it. Search returns at most `per_page` = 100, so this is one statement.
     folded_map = await folded_card_numbers_batch(db, events)
 
+    # #13131: if a live draw-priced event's sportsbook rows live on a suppressed
+    # twin, read those twin snapshots so list/search show the exact same three
+    # numbers as `/api/events/{id}`. Zero queries when no such twin exists.
+    _search_twin_three_way: dict[int, tuple[float, float]] = {}
+    _search_twin_candidates: list = []
+    _search_twin_ids_by_event: dict[int, list[int]] = {}
+    for _ev in events:
+        if not sport_prices_a_draw(loaded_sport_key(_ev)):
+            continue
+        _f = folded_map.get(_ev.id)
+        _tids = list((_f.absorbed_ids if _f is not None else ()) or ())
+        for _pt in _prematch_absorbed_ids.get(_ev.id) or ():
+            if _pt not in _tids:
+                _tids.append(_pt)
+        if not _tids:
+            continue
+        _agg_existing = (aggregated_odds_map.get(_ev.id) or {}).get("aggregated") or {}
+        if resolve_three_way_probabilities(
+            _agg_existing.get("home_probability"),
+            books_home=_agg_existing.get("home_probability"),
+            books_away=_agg_existing.get("away_probability"),
+            sport_key=loaded_sport_key(_ev),
+        ) is None:
+            _search_twin_candidates.append(_ev)
+            _search_twin_ids_by_event[_ev.id] = _tids
+    if _search_twin_candidates:
+        from app.utils.draw_priced_winner import read_live_three_way_books
+
+        _search_twin_three_way = await read_live_three_way_books(
+            db,
+            _search_twin_candidates,
+            datetime.now(timezone.utc),
+            latest_odds_query=latest_odds_per_bookmaker_query,
+            absorbed_ids_by_event=_search_twin_ids_by_event,
+        )
+
     for event in events:
         _folded = folded_map.get(event.id)
         formatted = _format_event_with_aggregated_odds(
             event, aggregated_odds_map.get(event.id), gei_percentiles, team_lookup,
             folded_sources=_folded.win_probability_sources if _folded is not None else None,
             folded_opening=_folded.opening if _folded is not None else None,
+            three_way_books=_search_twin_three_way.get(event.id),
         )
         # #2920 — the event page's marked in-play pair, from the rows this route
         # already read, so a search row and the page it opens agree.
@@ -12831,6 +12914,9 @@ async def search_events(
             await _recover_search_session(db, _deadline)
             futures_markets_raw = []
             degraded.append("futures")
+    futures_markets_raw = await _route_super_bowl_search(
+        db, futures_markets_raw, q, _deadline
+    )
     _mark("futures")
 
     # #7355: the teams stage runs HERE, between the futures window and its
@@ -13613,16 +13699,28 @@ async def search_events(
     # reaches a candidate shape, so a market with no suspicious book pays no
     # query at all. Browse measured 16 of 200 markets paying one; a search page
     # carries a page of futures, not two hundred.
+    from app.utils.event_awards import grammy_nominee_fields, prefer_grammy_nominee_fields
+
+    nominee_fields = await grammy_nominee_fields(db, (*deduped_futures, *futures_markets))
+    if nominee_fields:
+        deduped_futures = prefer_grammy_nominee_fields(deduped_futures, nominee_fields)
+        futures_markets = prefer_grammy_nominee_fields(futures_markets, nominee_fields)
+
     # #8661: the deduped rows were asked before the filter above; only a
     # promoted headline contender can be new here, and one whose every price is
     # refused leaves the page like any other withdrawn card.
-    for m in futures_markets:
+    for m in (*futures_markets, *nominee_fields.values()):
         if m.id not in _withheld_by_market:
             _withheld_by_market[m.id] = await _search_withheld_price_ids(
                 db, m, _withheld_shed
             )
     if _withheld_shed:
         degraded.append("price_refusal")
+    if nominee_fields:
+        deduped_futures = [
+            m for m in deduped_futures
+            if not _futures_market_prices_all_withheld(m, _withheld_by_market[m.id])
+        ]
     futures_markets = [
         m for m in futures_markets
         if not _futures_market_prices_all_withheld(m, _withheld_by_market[m.id])
@@ -16152,6 +16250,13 @@ async def typeahead_search(
         _ta_headline_ids.discard(None)
         _ta_mark("headline_contenders")
 
+    from app.utils.event_awards import grammy_nominee_fields, prefer_grammy_nominee_fields
+
+    nominee_fields = await grammy_nominee_fields(
+        db, ta_futures_ranked, available=ta_futures_ranked
+    )
+    ta_futures_ranked = prefer_grammy_nominee_fields(ta_futures_ranked, nominee_fields)
+
     # #10165: the search page's #8375/#8664 container withholding, which never
     # reached this loop. Production 2026-10-02 04:45Z, `yankees` at 390px: the
     # dropdown's sixth row read "New York Yankees vs. Tampa Bay Rays — O/U 6.5
@@ -16188,6 +16293,9 @@ async def typeahead_search(
     #: `(market id, kalshi ticker, event id)` for every row that reaches the
     #: dropdown — plain scalars, read while the ORM row is live. #6447 residual.
     _ta_market_facts: list[tuple[int, Optional[str], Optional[int]]] = []
+    ta_futures_ranked = await _route_super_bowl_search(
+        db, ta_futures_ranked, q, _ta_deadline
+    )
     for market in ta_futures_ranked:
         if len(futures_pool) >= 5:
             break
@@ -16273,7 +16381,7 @@ async def typeahead_search(
             # reader meet `Pro Football` first and `NFL` second, for one market.
             # Display only; `_ta_market_facts` above still carries the raw name,
             # so ranking and the club-name repair are unaffected.
-            "text": rewrite_venue_league_vocabulary(market.name),
+            "text": rewrite_venue_league_vocabulary(futures_reader_name(market)),
             "market_id": market.id,
             "market_tier": market.market_tier,
             "market_type_label": label or market.market_type or "Market",
@@ -18798,6 +18906,8 @@ async def list_events(
     limit: int = Query(200, ge=1, le=500, description="Max events to return"),
     offset: int = Query(0, ge=0, description="Pagination offset"),
     db: AsyncSession = Depends(get_db),
+    *,
+    league_page: Annotated[bool, Query(description="Read the league window in reader order")] = False,
 ):
     """
     List upcoming and live events.
@@ -18809,7 +18919,6 @@ async def list_events(
     query = (
         select(Event)
         .join(Sport, Event.sport_id == Sport.id)
-        .options(selectinload(Event.sport))
     )
 
     conditions = []
@@ -18937,10 +19046,29 @@ async def list_events(
     if conditions:
         query = query.where(and_(*conditions))
 
-    query = query.order_by(Event.commence_time).limit(limit).offset(offset)
+    if league_page:
+        # Keep the old 200-row window. Order its IDs before running any odds
+        # and chart enrichment so live and upcoming fixtures reach page one.
+        window = (
+            query.with_only_columns(Event.id)
+            .order_by(Event.commence_time, Event.id)
+            .limit(200)
+            .subquery()
+        )
+        query = (
+            select(Event)
+            .join(window, Event.id == window.c.id)
+            .join(Sport, Event.sport_id == Sport.id)
+            .order_by(live_scheduled_settled_order(now), Event.commence_time, Event.id)
+        )
+        limit = min(limit, 50)
+    else:
+        query = query.order_by(Event.commence_time)
+    query = query.options(contains_eager(Event.sport)).limit(limit).offset(offset)
 
     result = await db.execute(query)
     events = result.scalars().all()
+    raw_page_count = len(events)
 
     # One game, one card — the list half of #4100. `/api/feed` folded twin rows
     # at `ac6eb2c1`; this route did not, so `?sport=baseball_mlb&limit=60`
@@ -18965,8 +19093,8 @@ async def list_events(
     # offset pagination and post-query filtering cannot both be right without a
     # cursor. Folding after the limit keeps `offset` in raw-row space, so no row
     # is ever skipped or repeated; only the page size varies. No caller pays
-    # for this today: `fetchEvents` sends neither `limit` nor `offset`, and
-    # `leagueHorizon.ts` records that the 200 default "is not reached here".
+    # for ordinary league reads. Smaller calls use the raw offset in
+    # `next_offset`, so a fold cannot make the app skip a game.
     # (A twin pair straddling a page boundary survives as one row on each page.
     # Invisible within a page, and it goes away with #2693, not with a cursor.)
     #
@@ -19027,10 +19155,14 @@ async def list_events(
 
     _prematch_absorbed_ids: dict[int, list[int]] = {}
     try:
-        _fold = fold_twin_events(events)
+        _fold = await fold_list_with_catchall_twins(
+            db, events, sport, fold_fn=fold_twin_events
+        )
         if _fold.dropped_ids:
+            _flipped_ids = getattr(_fold, "flipped_loser_ids", None) or ()
             for _loser, _survivor in _fold.survivor_of.items():
-                _prematch_absorbed_ids.setdefault(_survivor, []).append(_loser)
+                if _loser not in _flipped_ids:
+                    _prematch_absorbed_ids.setdefault(_survivor, []).append(_loser)
             for _survivor_id, _merged in _fold.merged_sources.items():
                 _survivor = next(e for e in _fold.events if e.id == _survivor_id)
                 set_committed_value(_survivor, "win_probability_sources", _merged)
@@ -19095,52 +19227,59 @@ async def list_events(
             "events list same-instant refutation failed; serving the page"
         )
 
+    # The page's folds (#3937, #5918) run BEFORE the sportsbook snapshot
+    # lookup so every same-orientation absorbed twin id (`absorbed_ids` from
+    # `duplicate_of:<id>` tags plus `_prematch_absorbed_ids` from runtime
+    # non-flipped twin folding) travels with its canonical event into
+    # `latest_odds_per_bookmaker_query` and `group_latest_snapshots_by_event`
+    # (#13479). Corner-flipped twins are excluded from `owner_by_event_id`,
+    # matching `get_event` (`oriented_series_event_ids`), so unflipped
+    # sportsbook rows on a reversed twin are never blended into the consensus.
+    folded_map = await folded_card_numbers_batch(db, events)
+
     # Get the latest odds snapshots for each event, aggregated across bookmakers
     event_ids = [e.id for e in events]
     aggregated_odds_map = {}
 
     if event_ids:
+        owner_by_event_id: dict[int, int] = {e.id: e.id for e in events}
+        odds_query_ids: list[int] = [e.id for e in events]
+        for e in events:
+            _f = folded_map.get(e.id)
+            _twin_ids = list((_f.absorbed_ids if _f is not None else ()) or ())
+            for _pt in _prematch_absorbed_ids.get(e.id) or ():
+                if _pt not in _twin_ids:
+                    _twin_ids.append(_pt)
+            for _tid in _twin_ids:
+                if _tid not in owner_by_event_id:
+                    owner_by_event_id[_tid] = e.id
+                    odds_query_ids.append(_tid)
+
         # LAT-P107/#1605: the most recent snapshot per (event, bookmaker), via the
         # SHARED helper rather than a window function over the page's whole
         # snapshot history.
-        #
-        # This route carried the exact shape LAT-P013 then LAT-P030 retired from
-        # `/api/events/search` (call site ~line 3110 quotes both plans and the
-        # numbers): `row_number() OVER (PARTITION BY event_id, bookmaker ORDER BY
-        # captured_at DESC)` over every snapshot of every event on the page, then a
-        # join back by id. It reads O(SNAPSHOT DEPTH) to return O(BOOKMAKERS), and
-        # Tier-1 sports poll every 32s, so the depth is the part that grows: one
-        # measured Red Sox event carries 13,522 snapshots across 19 bookmakers.
-        #
-        # On the sibling route that shape was the ENTIRE cost of any query that
-        # returned real team events — 16,516ms of a 21,032ms request on `q=la`,
-        # ~0ms when the page had no events, which is the signature of a cost that
-        # scales with snapshot volume rather than result count. The replacement
-        # measured 6,724ms -> 185ms (36x), 78,800 rows read -> 947, byte-identical
-        # output. That measurement is the SIBLING's; this route's own before/after
-        # is owed in production and pre-registered in the queue report — the shape
-        # is provably the same, the traffic is not.
-        #
-        # Set-identical by construction and proven on real Postgres against the
-        # very shape being deleted here
-        # (`tests/integration/test_search_odds_enrichment_equivalence.py`). The one
-        # behavioural change is that `id DESC` makes the pick deterministic among
-        # equal `captured_at`, where `row_number()` left it arbitrary.
-        #
-        # No migration: `ix_odds_snapshots_bookmaker_closing` already exists.
-        latest_odds_query = latest_odds_per_bookmaker_query(event_ids)
+        latest_odds_query = latest_odds_per_bookmaker_query(odds_query_ids)
 
         latest_odds_result = await db.execute(latest_odds_query)
         all_snapshots = latest_odds_result.scalars().all()
 
-        # Group snapshots by event and aggregate
-        from collections import defaultdict
-        snapshots_by_event = defaultdict(list)
-        for snap in all_snapshots:
-            snapshots_by_event[snap.event_id].append(snap)
+        # Group by canonical event and pick the freshest snapshot per bookmaker
+        # across canonical + same-orientation twins via the same helper
+        # (`latest_snapshot_for_each_bookmaker`) used by `get_event`.
+        snapshots_by_event = group_latest_snapshots_by_event(
+            all_snapshots, owner_by_event_id
+        )
 
         # Build event lookups for stale bookmaker filtering
         event_info_map = {e.id: e for e in events}
+        # #12938 / ruling 233: A: live games project from current lines only.
+        from app.utils.live_line_clock import (
+            apply_live_line_projection as _apply_live_line_projection,
+            event_state_clock as _event_state_clock,
+        )
+
+        _live_clocks = {e.id: _event_state_clock(e) for e in events}
+        _clock_now = datetime.now(timezone.utc)
 
         for event_id, snaps in snapshots_by_event.items():
             ev = event_info_map.get(event_id)
@@ -19157,7 +19296,11 @@ async def list_events(
             aggregated_odds_map[event_id] = {
                 "snapshots": filtered_snaps,
                 "all_snapshots": all_snaps,
-                "aggregated": aggregate_bookmaker_odds(agg_snaps if agg_snaps else filtered_snaps),
+                "aggregated": _apply_live_line_projection(
+                    aggregate_bookmaker_odds(agg_snaps if agg_snaps else filtered_snaps),
+                    agg_snaps if agg_snaps else filtered_snaps,
+                    now=_clock_now, state_changed_at=_live_clocks.get(event_id),
+                ),
                 "captured_at": latest_time,
             }
         # #12595: a scheduled game's pair comes from recent line readings.
@@ -19217,22 +19360,6 @@ async def list_events(
         except Exception:
             # Time-series metrics are a bonus — don't fail the whole endpoint
             pass
-
-    # The page's folds (#3937), batched before the formatting loop rather than
-    # per row inside it — see `folded_card_numbers_batch`. This endpoint returns
-    # up to 500 events, which is `_FOLD_BATCH_ARMS`-chunked into 5 statements
-    # rather than 500.
-    #
-    # #5918 — BOTH numbers, in the lookup that used to fetch one. A card prints
-    # the blend while the fixture is live and the opening line once it is over,
-    # and `folded_probability_sources_batch` only ever carried the first. With
-    # the duplicate-tag predicate now on the query above, a settled card whose
-    # suppressed twin held the only opening would have printed no percentage at
-    # all — #5853's Bundesliga defect, arriving on this surface by way of its
-    # fix. `folded_card_numbers_batch` answers both from the same round trip
-    # (the opening columns ride a row the statement was already returning), so
-    # this costs nothing extra.
-    folded_map = await folded_card_numbers_batch(db, events)
 
     # Format response with aggregated odds.
     #
@@ -19303,10 +19430,14 @@ async def list_events(
     # behind us. Read off the SERVED rows, after the venue pass, and after the
     # `limit`, so the page holds the same rows it always did. Only the order
     # changes; `app/utils/event_list_order.py` says why not in SQL.
-    return {
+    payload: dict[str, object] = {
         "events": in_reader_order(formatted),
         "count": len(events),
     }
+    if league_page:
+        next_offset = offset + raw_page_count
+        payload["next_offset"] = next_offset if raw_page_count == limit and next_offset < 200 else None
+    return payload
 
 
 @router.get("/live")
@@ -20276,8 +20407,12 @@ async def _settled_prematch_odds(
     by_source: dict[str, tuple] = {}
     binds = prematch_prior_binds([event], live_detail=live_detail)
     if binds is not None and absorbed:
+        from app.utils.proven_duplicates import is_corner_flipped_absorbed
+
         cutoff = binds["cutoffs"][0]
         for row in absorbed:
+            if is_corner_flipped_absorbed(row):
+                continue
             binds["ids"].append(row.id)
             binds["cutoffs"].append(cutoff)
     if binds is not None:
@@ -20301,7 +20436,7 @@ async def _settled_prematch_odds(
                 type(exc).__name__,
             )
 
-    reading = resolve_prematch_reading(
+    return serialize_prematch_odds(
         by_source=by_source,
         books_home=(
             float(event.opening_home_probability)
@@ -20315,18 +20450,6 @@ async def _settled_prematch_odds(
         ),
         sport=sport_key or "",
     )
-    if reading is None:
-        return None
-    away_pct, home_pct = rendered_duel_percents(
-        reading["away_probability"], reading["home_probability"]
-    )
-    return {
-        "home_probability": reading["home_probability"],
-        "away_probability": reading["away_probability"],
-        "home_rendered_percent": home_pct,
-        "away_rendered_percent": away_pct,
-        "source": reading["source"],
-    }
 
 
 @router.get("/{event_id}")
@@ -20349,6 +20472,7 @@ async def get_event(
     _cached_resp = None if fresh else _cached_detail_payload(event_id, _now)
     if _cached_resp is not None:
         return _cached_resp
+    request_started_at = datetime.now(timezone.utc)
 
     result = await db.execute(
         select(Event)
@@ -20561,11 +20685,13 @@ async def get_event(
     from app.utils.proven_duplicates import (
         folded_series_event_ids,
         latest_snapshot_for_each_bookmaker,
+        oriented_series_event_ids,
     )
     from app.utils.serve_fold_absorbed import serve_fold_absorbed_rows
 
     absorbed = await serve_fold_absorbed_rows(db, event)
     odds_event_ids = await folded_series_event_ids(db, event_id, absorbed)
+    odds_event_ids = oriented_series_event_ids(odds_event_ids, absorbed)
     # #2920 C1 — the raw per-(event, sportsbook) rows are kept: the marked
     # in-play pair reads only this event's own rows, exactly as its card does.
     _latest_rows = list(
@@ -20661,8 +20787,18 @@ async def get_event(
         # below — that name is BOUND further down this function, so reading it
         # here is an UnboundLocalError, not a stale value (gotcha #7). The
         # helper is a lazy-safe attribute read and emits no IO.
-        _team_for_event(team_lookup, event.home_team_name, loaded_sport_key(event)),
-        _team_for_event(team_lookup, event.away_team_name, loaded_sport_key(event)),
+        _team_for_event(
+            team_lookup,
+            event.home_team_name,
+            loaded_sport_key(event),
+            team_id=getattr(event, "home_team_id", None),
+        ),
+        _team_for_event(
+            team_lookup,
+            event.away_team_name,
+            loaded_sport_key(event),
+            team_id=getattr(event, "away_team_id", None),
+        ),
         event.home_team_name,
         event.away_team_name,
         importance=getattr(event, "llm_importance", None),
@@ -20689,6 +20825,7 @@ async def get_event(
     # rather than re-deriving it is the whole reason that function returns one.
     # `agg_prob` itself is unchanged and every reader of it below is untouched.
     agg_prob, agg_tier = compute_aggregate_probability_tiered(blend_view)
+    _detail_books_three_way: Optional[tuple[float, float]] = None
 
     # #6238: read ONCE for every probability object this route serves, so the
     # hero, the fallback, the opening line and the top-level pair cannot answer
@@ -20700,6 +20837,7 @@ async def get_event(
     # it is today — the failure direction is the status quo, never a withheld
     # number on a sport nobody declared.
     event_sport_key = loaded_sport_key(event)
+    _detail_three_way: Optional[tuple[float, float, float]] = None
 
     if latest_snapshots:
         # latest_snapshots already contains only the most recent per bookmaker
@@ -20739,6 +20877,19 @@ async def get_event(
                     db, [event], {event.id: list(latest_snapshots)}
                 )).get(event.id),
             )
+
+        # #12938 / ruling 233: A: a live game's projected final is built from
+        # the same current lines as Sportsbooks in Now (no clock: unchanged).
+        from app.utils.live_line_clock import (
+            apply_live_line_projection as _apply_live_line_projection,
+            event_state_clock as _event_state_clock,
+        )
+
+        _live_clock = _event_state_clock(event)
+        aggregated = _apply_live_line_projection(
+            aggregated, agg_snapshots,
+            now=datetime.now(timezone.utc), state_changed_at=_live_clock,
+        )
 
         # Hero probability: use multi-source aggregate (matching feed),
         # fall back to bookmaker-only consensus if aggregate unavailable.
@@ -20789,16 +20940,48 @@ async def get_event(
         # declaration is shared with both client halves that already withhold
         # this figure (ux/1301 web, native #5271) and the reasoning lives with
         # it, in `app/utils/draw_priced_winner.py`.
-        hero_away_prob = printable_away(hero_away_prob, hero_home_prob, event_sport_key)
+        # #13131 / #13479: on a three-way (draw-priced) sport, when the
+        # sportsbooks give both home and away summing strictly below 1, serve all
+        # three legs (home, draw, away) adding to 100%. When any non-settled
+        # three-way game has only one leg (no 3-way books — scheduled, live, or
+        # suspended), serve nothing for chance so list and page agree; settled
+        # games stay as they are.
+        _hero_draw_prob: Optional[float] = None
+        _draw_pct: Optional[int] = None
+        if sport_prices_a_draw(event_sport_key):
+            if (
+                aggregated.get("home_probability") is not None
+                and aggregated.get("away_probability") is not None
+            ):
+                _detail_books_three_way = (
+                    aggregated["home_probability"],
+                    aggregated["away_probability"],
+                )
+            _detail_three_way = resolve_three_way_probabilities(
+                hero_home_prob,
+                books_home=aggregated["home_probability"],
+                books_away=aggregated["away_probability"],
+                sport_key=event_sport_key,
+            )
+            if _detail_three_way is not None:
+                hero_home_prob, hero_away_prob, _hero_draw_prob = _detail_three_way
+                _home_pct, _draw_pct, _away_pct = rendered_three_way_percents(
+                    hero_home_prob, _hero_draw_prob, hero_away_prob
+                )
+            elif not is_finished_status(response.get("status")):
+                hero_home_prob = None
+                hero_away_prob = None
+                _away_pct, _home_pct = None, None
+            else:
+                hero_away_prob = printable_away(hero_away_prob, hero_home_prob, event_sport_key)
+                _away_pct, _home_pct = rendered_duel_percents(hero_away_prob, hero_home_prob)
+        else:
+            hero_away_prob = printable_away(hero_away_prob, hero_home_prob, event_sport_key)
+            _away_pct, _home_pct = rendered_duel_percents(hero_away_prob, hero_home_prob)
 
-        # #2085: the pair above is an exact complement BY CONSTRUCTION, so
-        # rounding each side independently prints 101 whenever `home * 100` lands
-        # on a half-percent (34 of 414 measured events, 8.2%). Serve the two whole
-        # percents the page must PRINT alongside the probabilities themselves —
-        # the probabilities do not move, and the underdog absorbs the derived
-        # point so the favourite's own number survives (`rendered_duel_percents`).
-        _away_pct, _home_pct = rendered_duel_percents(hero_away_prob, hero_home_prob)
-
+        aggregated = _withhold_pinned_handicap_projection(
+            aggregated, event_sport_key
+        )
         response["current_odds"] = {
             "captured_at": latest_time.isoformat(),
             "home_probability": hero_home_prob,
@@ -20812,21 +20995,10 @@ async def get_event(
             "bookmaker_count": aggregated["bookmaker_count"],
             # #12595: the pair's own stamp, count and reason (scheduled, in scope).
             **_recent_projection_keys(aggregated),
-            # #1854 (UX-P077, Alex ruling 2026-08-14): `probability_range` USED to
-            # sit here — the sportsbook min/max, served beside a hero that is the
-            # multi-source BLEND since #1829. Measured on production 2026-08-13:
-            # event 15191315 served home_probability 0.2813 with a range of
-            # 0.6117-0.626, and 15196976 served 0.999 with 0.426-0.9901. The hero
-            # was outside its own stated envelope in both, always in the same
-            # direction, because the range never moved off the sportsbook when the
-            # hero did. It was typed on web and iOS and rendered by neither, so it
-            # was a trap for the next person to render it, not a live lie.
-            # REMOVED rather than re-derived: an envelope around the hero would be
-            # a source-divergence display, and the standing ruling is that the
-            # blend IS the product - divergence is a data bug to fix, not a
-            # feature to show, outside a short closed list of comparison surfaces
-            # this payload is not on.
         }
+        if sport_prices_a_draw(event_sport_key):
+            response["current_odds"]["draw_probability"] = _hero_draw_prob
+            response["current_odds"]["draw_rendered_percent"] = _draw_pct
         # #2920 — the in-play pair, marked, by the cards' admission and from
         # this event's OWN rows of the read above (never the folded twins the
         # price table uses), so the page and its card cannot print two finals.
@@ -20886,28 +21058,41 @@ async def get_event(
                     "projected_away_score": float(s.projected_away_score)
                         if s.projected_away_score else None,
                 })
-        # #8231: a book's projected score that crowns its own moneyline underdog is refused.
-        response["bookmaker_odds"] = refuse_incoherent_projections(bookmaker_odds_list)
+        # #8231 / #13112: a book's projected score that crowns its own moneyline
+        # underdog or comes from a pinned handicap (puck/run line) is refused.
+        response["bookmaker_odds"] = refuse_incoherent_projections(
+            bookmaker_odds_list, sport_key=event_sport_key
+        )
 
     # Fallback: if no odds snapshots, use aggregate from alternative sources
     if "current_odds" not in response and agg_prob is not None:
-        # #2085 site 2 — same derive, same 101, same fix as the snapshot path above.
-        # #6238 site 2 for the same reason: this arm serves a page with NO book
-        # rows at all, so the fabricated away is the only away number on it and
-        # nothing else in the payload contradicts it. Withheld here too, or the
-        # defect simply moves to the events the books have gone quiet on.
-        _fb_away_prob = printable_away(
-            round(1.0 - agg_prob, 6), agg_prob, event_sport_key
-        )
-        _fb_away_pct, _fb_home_pct = rendered_duel_percents(_fb_away_prob, agg_prob)
-        response["current_odds"] = {
-            "home_probability": agg_prob,
-            "away_probability": _fb_away_prob,
-            "away_rendered_percent": _fb_away_pct,
-            "home_rendered_percent": _fb_home_pct,
-            "source": "aggregate",
-            "bookmaker_count": 0,
-        }
+        if sport_prices_a_draw(event_sport_key) and not is_finished_status(response.get("status")):
+            # #13131 / #13479: any non-settled draw-priced game with no 3-way
+            # books has only one leg — serve nothing for chance, not an orphan
+            # home chance.
+            response["current_odds"] = {
+                "home_probability": None,
+                "away_probability": None,
+                "draw_probability": None,
+                "away_rendered_percent": None,
+                "home_rendered_percent": None,
+                "draw_rendered_percent": None,
+                "source": "aggregate",
+                "bookmaker_count": 0,
+            }
+        else:
+            _fb_away_prob = printable_away(
+                round(1.0 - agg_prob, 6), agg_prob, event_sport_key
+            )
+            _fb_away_pct, _fb_home_pct = rendered_duel_percents(_fb_away_prob, agg_prob)
+            response["current_odds"] = {
+                "home_probability": agg_prob,
+                "away_probability": _fb_away_prob,
+                "away_rendered_percent": _fb_away_pct,
+                "home_rendered_percent": _fb_home_pct,
+                "source": "aggregate",
+                "bookmaker_count": 0,
+            }
 
     # Include opening odds in event detail response for frontend fallback
     #
@@ -20935,34 +21120,28 @@ async def get_event(
         # fallback. Two pairs in one response can answer this differently
         # because they are two different objects, which is why the predicate
         # asks about the pair in hand and not about the sport alone.
-        response["opening_odds"] = {
+        _open_away_out = printable_away(
+            float(event.opening_away_probability) if event.opening_away_probability else round(1.0 - _opening_home_prob, 4),
+            _opening_home_prob,
+            event_sport_key,
+        )
+        _opening_obj = {
             "home_probability": _opening_home_prob,
-            "away_probability": printable_away(
-                float(event.opening_away_probability) if event.opening_away_probability else round(1.0 - _opening_home_prob, 4),
-                _opening_home_prob,
-                event_sport_key,
-            ),
-            # #5414: the DETAIL formatter served three of the five opening
-            # columns and omitted exactly the two a "PRE-GAME" tile needs, while
-            # the LIST formatter for the same object (`_format_event_summary`,
-            # this file) has always carried them. So the event page had no
-            # pre-game spread or total on its payload at all, and the margin
-            # card's PRE-GAME tile fell back to "whichever quoted rung priced
-            # closest to a coin flip" — right by coincidence on Cubs-Pirates
-            # (opened -1.5, tile read 1.5+), wrong on Zverev-Khachanov (opened
-            # -5.5, tile read 2.5+). Serving them is the backend half of that
-            # fix; the frontend half is ux's.
-            #
-            # `is not None`, NOT the truthiness test the list formatter uses:
-            # a PICK'EM game opens at a spread of exactly 0.0, which is falsy,
-            # and `float(x) if x else None` reports it as "no line". Measured
-            # 2026-09-11 over 90 days: 557 of 7,717 events with an opening
-            # spread (7.2%) opened at 0. The list formatter's version of this
-            # line is corrected to match, below.
+            "away_probability": _open_away_out,
             "spread": float(event.opening_home_spread) if event.opening_home_spread is not None else None,
             "over_under": float(event.opening_over_under) if event.opening_over_under is not None else None,
             "favorite": event.opening_favorite,
         }
+        if sport_prices_a_draw(event_sport_key):
+            _open_3 = resolve_three_way_probabilities(
+                _opening_home_prob,
+                books_home=_opening_home_prob,
+                books_away=_open_away_out,
+                sport_key=event_sport_key,
+            )
+            if _open_3 is not None:
+                _opening_obj["draw_probability"] = _open_3[2]
+        response["opening_odds"] = _opening_obj
 
     # #8315/#12633 — the finished and live headlines share the kickoff prior.
     # Use the served status so a premature stored live claim cannot ask early.
@@ -21037,6 +21216,7 @@ async def get_event(
     # same entry as the hero and its clock, so a client can order two folds
     # without trusting any quote clock. `None` = no claim.
     response["blend_fold_revision"] = blend_fold_revision
+    _effective_hero = _hero
     if _hero is not None:
         response["hero_probability"] = _hero.home_probability
         if _hero.source == "blend":
@@ -21047,29 +21227,37 @@ async def get_event(
             )
             if observed_at is not None:
                 response["hero_probability_observed_at"] = observed_at.isoformat()
-        # ── #6238: THE SAME WITHHOLD, AND IT STOPS AT `settled` ──────────────
-        #
-        # Two of `resolve_hero`'s three arms build the away side as `1 - home`
-        # (the blend arm literally, the opening arm when the stored away is
-        # null), so the top-level pair carries the hero's own copy of the
-        # fabrication — 0.2063 for NEC on 15298553, the same number
-        # `current_odds` served.
-        #
-        # 🔴 THE SETTLED ARM IS EXEMPT, AND NOT BECAUSE OF ITS ARITHMETIC. A
-        # settled hero is 1.0/0.0 — or 0.5/0.5 with `result="draw"`
-        # (`settled_hero`) — and every one of those pairs sums to exactly 1.0,
-        # so the predicate alone would read a RESULT as a fabricated forecast
-        # and delete the losing side of a finished soccer match. "Settled means
-        # settled" outranks this issue: a result is not a price and was never
-        # derived from the home number. The gate is therefore the hero's own
-        # `source` vocabulary, which exists to carry exactly this kind of
-        # distinction, and not a numeric test that cannot tell 0.0 "they lost"
-        # from 0.0 "we made it up".
         _hero_away = _hero.away_probability
         if _hero.source != "settled":
-            _hero_away = printable_away(
-                _hero_away, _hero.home_probability, event_sport_key
-            )
+            if sport_prices_a_draw(event_sport_key):
+                _h3 = _detail_three_way
+                if (
+                    _h3 is None
+                    and _hero.source == "opening"
+                    and event.opening_home_probability is not None
+                    and event.opening_away_probability is not None
+                ):
+                    _h3 = resolve_three_way_probabilities(
+                        _hero.home_probability,
+                        books_home=event.opening_home_probability,
+                        books_away=event.opening_away_probability,
+                        sport_key=event_sport_key,
+                    )
+                if _h3 is not None:
+                    response["hero_probability"] = _h3[0]
+                    _hero_away = _h3[1]
+                    response["hero_probability_draw"] = _h3[2]
+                else:
+                    # #13131 / #13479: non-settled one-leg three-way game -> no orphan chance
+                    # (matches `_format_event_with_aggregated_odds` on list/search).
+                    response["hero_probability"] = None
+                    _hero_away = None
+                    response["hero_probability_draw"] = None
+                    _effective_hero = None
+            else:
+                _hero_away = printable_away(
+                    _hero_away, _hero.home_probability, event_sport_key
+                )
         response["hero_probability_away"] = _hero_away
         response["hero_probability_source"] = _hero.source
         if _hero.settled_result is not None:
@@ -21080,12 +21268,47 @@ async def get_event(
 
             response["hero_sportsbook_count"] = hero_sportsbook_count(blend_view)
 
+    # #13172 Option B — settled means settled: a finished game serves its
+    # resolved result (draw 100 / home 0 / away 0 for three-way draws; empty for
+    # final_unresolved) in current_odds, never the last live price. Non-chance
+    # metadata (spread, over_under, bookmaker_count, captured_at, projections)
+    # and pregame fields (opening_odds, prematch_odds, pregame_projection) stay.
+    if is_finished_status(response.get("status")):
+        if _hero is not None and _hero.source == "settled" and sport_prices_a_draw(event_sport_key):
+            _sc = settled_current_chance(_hero, sport_key=event_sport_key)
+            response["hero_probability"] = _sc.home_probability
+            response["hero_probability_away"] = _sc.away_probability
+            response["hero_probability_draw"] = _sc.draw_probability
+        if isinstance(response.get("current_odds"), dict):
+            response["current_odds"] = apply_settled_current_odds(
+                response["current_odds"],
+                _hero,
+                sport_key=event_sport_key,
+                include_rendered=True,
+            )
+
     from app.utils.source_mark import headline_source_marks
 
+    _detail_mark_three_way = (
+        (
+            response.get("hero_probability"),
+            response.get("hero_probability_away"),
+            response.get("hero_probability_draw"),
+        )
+        if (
+            not is_finished_status(response.get("status"))
+            and response.get("hero_probability") is not None
+            and response.get("hero_probability_away") is not None
+            and response.get("hero_probability_draw") is not None
+        )
+        else None
+    )
     response["source_mark"], response["away_source_mark"] = headline_source_marks(
-        blend_view, _hero, _hero_source_inputs,
+        blend_view, _effective_hero, _hero_source_inputs,
         method=_hero_source_method[0] if _hero_source_method else None,
         away_available=response.get("hero_probability_away") is not None,
+        three_way_probs=_detail_mark_three_way,
+        books_three_way=_detail_books_three_way,
     )
 
     # #5077: this page says LIVE, ticks a 20s refresh, shows no score, and its
@@ -21140,6 +21363,14 @@ async def get_event(
     # Tennis's games do not add up to sets won. Its whole source snapshot is
     # checked separately and maps to the fields the installed headline reads.
     attach_tennis_score(event, response, datetime.now(timezone.utc))
+    response.pop("score_source_unavailable", None)
+    response.update(
+        score_source_unavailable_fields(
+            event,
+            status=response.get("status"),
+            payload=response,
+        )
+    )
     response.update(_state_read_window)
 
     # Q050: cache under the id the caller ASKED FOR as well as the one we
@@ -21150,6 +21381,21 @@ async def get_event(
     # #10090: the entry is marked cached — every later reader of it gets a
     # window read before it asked — and this request's own copy fresh.
     if not _detail_skip_cache_publish.get():
+        if event.status == "live":
+            from app.utils.aggregation import has_dated_price_source
+
+            kickoff = loaded_price_admission_kickoff(event)
+            if (
+                (kickoff is None or kickoff > request_started_at)
+                and has_dated_price_source(folded_sources, now=datetime.now(timezone.utc))
+            ):
+                # Until kickoff can qualify this quote, the next request must
+                # see the row again. Apply the rule to both public cache keys.
+                for key in {requested_event_id, event_id}:
+                    old = _event_detail_cache.get(key)
+                    if old is not None and old[0] <= _now:
+                        del _event_detail_cache[key]
+                return _with_state_read_fresh(response, True)
         _published = _with_state_read_fresh(response, False)
         for _cache_key in {requested_event_id, event_id}:
             if len(_event_detail_cache) >= _EVENT_DETAIL_MAX_SIZE:
@@ -22793,15 +23039,9 @@ def _squeeze_exclusive_field_markets(other_rows: list, markets: list) -> list:
     rule can reach it (#4724's measurement: DATA +4.00 pts, ROUNDING +0.00).
 
     THE RULE. For a market the venue declares one-winner, with every one of its
-    three or more served legs priced and attributed to it alone, whose legs sum
-    past 1.0: divide each by the sum. Nothing else moves.
-
-    * **Only DOWN.** A subset of a one-winner field can never legitimately sum
-      past 1, so dividing by its own sum moves every leg toward the true share
-      and never past it — even when legs are missing, the true divisor is at
-      least this one. A field summing UNDER 1 is left alone: a partial field is
-      honest as it stands, and inflating it would invent weight for legs nobody
-      priced.
+    three or more served legs priced and attributed to it alone, apply the
+    shared field normalization. A scaled row's mark explains the display
+    transformation using the original quote.
     * **`mutually_exclusive` is the structure; a sum is not** (#7641). The flag
       is what `normalize_display_probs` already trusts (#199: Kalshi flags
       make-cut / top-N / player-prop fields False). A Receptions field summing
@@ -22819,14 +23059,6 @@ def _squeeze_exclusive_field_markets(other_rows: list, markets: list) -> list:
     * **Merged rows abstain.** A row carrying several `_market_ids` speaks for
       more than one market; a market seen through one is never squeezed, the
       same caution `_withhold_partial_field_markets` takes.
-
-    WHY NOT `normalize_display_probs`: its squeeze fires only past 105%
-    (`politics._normalize_outcome_probs`), which leaves Race to 14 printing
-    52 + 42 + 10 = 104 and the Zverev–Khachanov ladder at 104 — the exact
-    readings #4724 was filed on. #6583 records the same threshold leaving
-    102/103 on Discover. The guards above are that function's guards; only
-    the threshold differs, and it differs because a reader of a three-row card
-    adds the rows.
 
     Rows are copied, never mutated, so a caller holding the list it passed in
     keeps the raw prices.
@@ -22856,7 +23088,21 @@ def _squeeze_exclusive_field_markets(other_rows: list, markets: list) -> list:
         if market_id in merged or len(rows) < 3:
             continue
         copies = [dict(row) for row in rows]
-        normalize_display_probs(copies)
+        if normalize_display_probs(copies) and len(copies) == len(rows):
+            for row, copy in zip(rows, copies):
+                mark = row.get("source_mark") or {}
+                sources = mark.get("sources", [])
+                raw = float(row["probability"])
+                if (
+                    mark.get("state") == "single"
+                    and len(sources) == 1
+                    and sources[0]["probability"] == round(raw, 6)
+                    and abs(raw - copy["probability"]) >= 1e-8
+                ):
+                    copy["source_mark"] = {
+                        **mark,
+                        "method": "Bain Luck field · scaled with the other outcomes to total 100%",
+                    }
         normalized.update({id(row): copy for row, copy in zip(rows, copies)})
     return [normalized.get(id(row), row) for row in other_rows]
 
@@ -25919,15 +26165,22 @@ def _build_props_script(player_props):
         # classification, so this never re-derives orientation from the label —
         # the two would drift the moment either list of prefixes changed.
         inverted = bool(pp.get("_inverted"))
+        mark = pp.get("source_mark")
+        if hit is not None:
+            evidence = mark.get("settled") if mark else None
+            mark = settled_source_mark(
+                evidence.get("source") if evidence is not None else pp.get("resolution_source"),
+                "Won" if hit else "Lost",
+                evidence.get("at") if evidence is not None else None,
+            )
+        else:
+            mark = source_mark_on_axis(mark, inverted=inverted)
         script.append({
             "key": f"{pp.get('market_name', '')}|{pp.get('outcome_name', '')}",
             "label": label,
             "pregame_mark": _own_axis(pp.get("pregame_mark"), inverted),
             "current": _own_axis(pp.get("over_probability"), inverted),
-            "source_mark": (
-                settled_source_mark(pp.get("resolution_source"), "Won" if hit else "Lost")
-                if hit is not None else source_mark_on_axis(pp.get("source_mark"), inverted=inverted)
-            ),
+            "source_mark": mark,
             "graded_result": graded_result,
             "graded_label": graded_label,
             # #5088 — THE ROW SAYS WHETHER IT IS SETTLED; THE SECTION SAYS WHAT
@@ -27925,9 +28178,12 @@ async def _build_game_markets(
         hit = row.get("hit")
         if hit is not None:
             won = not hit if row.get("_inverted") else hit
-            return settled_source_mark(
-                getattr(event, "score_source", None), "Won" if won else "Lost",
-            )
+            # The prop grader needs both an actual and a threshold to grade
+            # from the box score. A typed hit can also come from the venue.
+            grade_source = row.get("resolution_source")
+            if row.get("actual") is not None and row.get("threshold") is not None:
+                grade_source = getattr(event, "score_source", None)
+            return settled_source_mark(grade_source, "Won" if won else "Lost")
         if _verdict_is_provable(row, row.get("_market_id") in markets_with_a_winner):
             return settled_source_mark(
                 row.get("resolution_source"),
@@ -30020,6 +30276,7 @@ async def _build_related_futures(
     from app.utils.team_linking import compute_relevance_score
     # #10248 D5. Function-local: the module's top-level imports are reserved.
     from app.utils.futures_market_snapshot import reader_change_24h
+    from app.utils.related_futures import dedup_by_merge_group, related_futures_quote_mark
     from app.utils.market_label_normalization import (
         normalize_market_label,
         classify_market_category,
@@ -31148,6 +31405,7 @@ async def _build_related_futures(
             outcome.name, market.name or ""
         )
 
+        probability = float(outcome.current_probability) if outcome.current_probability else None
         entry = {
             "market_id": market.id,
             "market_name": market.name,
@@ -31167,7 +31425,8 @@ async def _build_related_futures(
             # cross-source merge below resolves identity from it rather than
             # from the display string. Carried on the row, not re-queried.
             "external_id": outcome.external_id,
-            "probability": float(outcome.current_probability) if outcome.current_probability else None,
+            "probability": probability,
+            "source_mark": related_futures_quote_mark(market, outcome, probability),
             "american_odds": outcome.current_american_odds,
             # #10248 D5 — `reader_change_24h`. The relevance score above keeps
             # the stored column: it chooses, it does not print.
@@ -31261,8 +31520,6 @@ async def _build_related_futures(
     # list there's at most one entry per merge group per source.
     # Division winners use dynamic keys like "atlantic_division" —
     # match with suffix check.
-    from app.utils.related_futures import dedup_by_merge_group
-
     # #7068 / CERT-3099 — the attribution as it stands BEFORE any merge, where
     # every leg still carries its own market's id. The partial-field test below
     # needs a per-market leg count, and after the two merge passes that count is
@@ -32692,6 +32949,23 @@ def _withhold_undrawable_source_series(
     return withheld
 
 
+_LIVE_EDGE_MIN_AGE_SECONDS = 30.0
+
+
+def _stale_live_edge_timestamp(
+    points: list, live_now: datetime, min_stale_seconds: float = _LIVE_EDGE_MIN_AGE_SECONDS,
+) -> datetime | None:
+    if not points:
+        return None
+    try:
+        last_ts = datetime.fromisoformat(points[-1]["timestamp"])
+    except (TypeError, ValueError, KeyError):
+        return None
+    if last_ts.tzinfo is None:
+        last_ts = last_ts.replace(tzinfo=timezone.utc)
+    return last_ts if (live_now - last_ts).total_seconds() >= min_stale_seconds else None
+
+
 def _extend_win_prob_history_to_live_edge(
     win_prob_history: dict,
     win_prob_sources_meta: dict,
@@ -32699,7 +32973,7 @@ def _extend_win_prob_history_to_live_edge(
     is_live: bool,
     now: datetime,
     speaking_sources: Optional[Sequence[str]],
-    min_stale_seconds: float = 30.0,
+    min_stale_seconds: float = _LIVE_EDGE_MIN_AGE_SECONDS,
 ) -> int:
     """Carry each win-prob series forward to ``now`` on a live game (#920).
 
@@ -32733,14 +33007,9 @@ def _extend_win_prob_history_to_live_edge(
     surface that never asked it. A source absent from it is one the page will not
     price, so its line does not get carried to now.
 
-    ``None`` means *cannot say*, and fails OPEN (every series extends, the
-    pre-#6863 behaviour). The caller passes it for a FOLDED event, whose hero may
-    rest on a reading stored on a sibling row: proving silence there needs a
-    query this endpoint does not buy, and a gate that cannot see the sibling
-    would withhold a line that is perfectly correct. Measured on the live
-    population 2026-09-23 07:33Z — 59 live events with snapshots, 55 unaffected
-    by the gate, 4 withheld and all 4 serving no hero price at all; 1 folded, and
-    its canonical's own bag already carried the chart's source.
+    ``None`` means *cannot say*, and fails open. For a folded source with only
+    pregame history, the route checks for a new observation of that price in
+    the folded sources before it carries the value to now.
     """
     if not is_live:
         return 0
@@ -32750,17 +33019,9 @@ def _extend_win_prob_history_to_live_edge(
     for source_key, pts in win_prob_history.items():
         if speaking is not None and source_key not in speaking:
             continue
-        if not pts:
+        if _stale_live_edge_timestamp(pts, live_now, min_stale_seconds) is None:
             continue
         last = pts[-1]
-        try:
-            last_ts = datetime.fromisoformat(last["timestamp"])
-        except (TypeError, ValueError, KeyError):
-            continue
-        if last_ts.tzinfo is None:
-            last_ts = last_ts.replace(tzinfo=timezone.utc)
-        if (live_now - last_ts).total_seconds() < min_stale_seconds:
-            continue
         pts.append({
             "timestamp": live_now.isoformat(),
             "home_probability": last.get("home_probability"),
@@ -33727,7 +33988,9 @@ async def get_event_odds_history(
     # 🔴 Outside any try/except, for the reason the win-prob block states: a
     # fold that failed inside one would take the whole chart down silently.
     from app.utils.proven_duplicates import (
+        folded_probability_sources_with_revision,
         folded_series_event_ids,
+        oriented_series_event_ids,
         series_row_for_each_source,
     )
 
@@ -33767,6 +34030,8 @@ async def get_event_odds_history(
             membership_complete=absorbed_complete,
         )
 
+    oriented_series_ids = oriented_series_event_ids(series_event_ids, absorbed)
+
     # Get snapshots within time range
     # For completed/closed events, return ALL snapshots (no time window)
     # so users can always see the full probability history.
@@ -33801,7 +34066,7 @@ async def get_event_odds_history(
         snapshots_override = await _snapshots_with_split_budget(
             db,
             select(OddsSnapshot).where(
-                OddsSnapshot.event_id.in_(series_event_ids)
+                OddsSnapshot.event_id.in_(oriented_series_ids)
             ),
             split_at=event.commence_time,
         )
@@ -33829,7 +34094,7 @@ async def get_event_odds_history(
         )
 
         query = select(OddsSnapshot).where(
-            OddsSnapshot.event_id.in_(series_event_ids)
+            OddsSnapshot.event_id.in_(oriented_series_ids)
         )
         if end_cap:
             query = query.where(OddsSnapshot.captured_at <= end_cap)
@@ -33868,7 +34133,7 @@ async def get_event_odds_history(
                 snapshots_override = await _snapshots_with_split_budget(
                     db,
                     select(OddsSnapshot).where(
-                        OddsSnapshot.event_id.in_(series_event_ids)
+                        OddsSnapshot.event_id.in_(oriented_series_ids)
                     ),
                     split_at=event.commence_time,
                 )
@@ -33892,7 +34157,7 @@ async def get_event_odds_history(
         snapshots_override = await _snapshots_with_split_budget(
             db,
             select(OddsSnapshot).where(
-                OddsSnapshot.event_id.in_(series_event_ids)
+                OddsSnapshot.event_id.in_(oriented_series_ids)
             ),
             split_at=cutoff,
             pre_window_extra=or_(
@@ -33930,7 +34195,7 @@ async def get_event_odds_history(
     #
     # Skipped entirely for an untagged event, where the picker is a no-op over
     # one id: the common page pays one `len()`, not a `Counter` over 3,000 rows.
-    if len(series_event_ids) > 1:
+    if len(oriented_series_ids) > 1:
         series_row_by_bookmaker = series_row_for_each_source(
             Counter((s.bookmaker, s.event_id) for s in snapshots), event_id
         )
@@ -33969,12 +34234,16 @@ async def get_event_odds_history(
     # #6771 route half — one vote per sportsbook before anything reads the bucket,
     # so the reversal detector and the average see the same set and neither counts
     # a book twice. See `one_row_per_bookmaker_in_bucket`.
+    _hist_sport_key = _loaded_event_sport_key(event)
     history = []
     for timestamp in sorted(snapshots_by_time.keys()):
         snaps = one_row_per_bookmaker_in_bucket(snapshots_by_time[timestamp])
         reversed_bks = detect_reversed_bookmakers(snaps)
         agg_snaps = [s for s in snaps if s.bookmaker not in reversed_bks] if reversed_bks else snaps
-        aggregated = aggregate_bookmaker_odds(agg_snaps if agg_snaps else snaps)
+        aggregated = _withhold_pinned_handicap_projection(
+            aggregate_bookmaker_odds(agg_snaps if agg_snaps else snaps),
+            _hist_sport_key,
+        )
 
         history.append({
             "timestamp": timestamp.isoformat(),
@@ -34015,8 +34284,8 @@ async def get_event_odds_history(
                 "projected_home_score": float(snap.projected_home_score) if snap.projected_home_score is not None else None,
                 "projected_away_score": float(snap.projected_away_score) if snap.projected_away_score is not None else None,
             }
-            # #8231: the per-book line gets the consensus's refusal.
-            refuse_incoherent_projections([point_data])
+            # #8231 / #13112: the per-book line gets the consensus's refusal.
+            refuse_incoherent_projections([point_data], sport_key=_hist_sport_key)
             # #10461: additive `kind` ("recorded" / "synthetic") + `observed_at`
             # (the snapshot's original capture, never a venue trade clock), so a
             # client can tell a cutoff re-stamp from a new reading. Appended
@@ -34091,12 +34360,12 @@ async def get_event_odds_history(
     try:
         score_result = await db.execute(
             select(ScoreSnapshot)
-            .where(ScoreSnapshot.event_id.in_(series_event_ids))
+            .where(ScoreSnapshot.event_id.in_(oriented_series_ids))
             .order_by(ScoreSnapshot.captured_at)
         )
         score_snapshots = score_result.scalars().all()
 
-        if len(series_event_ids) > 1:
+        if len(oriented_series_ids) > 1:
             score_series_row = series_row_for_each_source(
                 Counter((_SCORE_SERIES_KEY, s.event_id) for s in score_snapshots),
                 event_id,
@@ -34184,7 +34453,7 @@ async def get_event_odds_history(
         )
 
         wp_query = select(WinProbSnapshot).where(
-            WinProbSnapshot.event_id.in_(series_event_ids),
+            WinProbSnapshot.event_id.in_(oriented_series_ids),
         )
         if cutoff is not None:
             wp_query = wp_query.where(WinProbSnapshot.captured_at >= cutoff)
@@ -34609,6 +34878,8 @@ async def get_event_odds_history(
         from app.utils.binary_spread import (
             binary_to_implied_spread,
             binary_to_implied_total,
+            blend_projected_final,
+            projected_final_blend_enabled,
             projected_final_score as calc_projected_score,
             extract_spread_threshold,
             extract_total_threshold,
@@ -34620,6 +34891,7 @@ async def get_event_odds_history(
             select_projected_final,
             total_rung_states_only_the_line,
         )
+        from app.utils.live_line_clock import event_state_clock as _pm_event_state_clock
         from app.models.models import FuturesOddsSnapshot
 
         # Get all futures markets linked to this event
@@ -34737,6 +35009,19 @@ async def get_event_odds_history(
                         event.home_team_name,
                         event.away_team_name,
                     )
+                # #13007 / 233-A: on live games, freshness MUST come from when the
+                # rung's price actually moved (`price_changed_at`, #2024), never
+                # from the unconditional poll touch-stamp (`last_updated`) which
+                # refreshes every 2 min even on frozen pregame O/U ladders.
+                rung_updated_at = (
+                    getattr(outcome, "price_changed_at", None)
+                    if event.status == "live"
+                    else (
+                        getattr(outcome, "price_changed_at", None)
+                        or getattr(outcome, "last_updated", None)
+                        or getattr(market, "updated_at", None)
+                    )
+                )
                 if margin_rung is not None:
                     if source not in spread_contracts_by_source:
                         spread_contracts_by_source[source] = []
@@ -34744,6 +35029,7 @@ async def get_event_odds_history(
                         "threshold": margin_rung["threshold"],
                         "probability": margin_rung["probability"],
                         "name": name,
+                        "updated_at": rung_updated_at,
                     })
                     continue
 
@@ -34754,6 +35040,7 @@ async def get_event_odds_history(
                         "threshold": spread_val,
                         "probability": prob,
                         "name": name,
+                        "updated_at": rung_updated_at,
                     })
                     continue
 
@@ -34776,6 +35063,7 @@ async def get_event_odds_history(
                         "threshold": total_val,
                         "probability": prob,
                         "name": name,
+                        "updated_at": rung_updated_at,
                     })
 
             # #8898: one market pricing the SAME side-less line twice is carrying
@@ -34822,11 +35110,13 @@ async def get_event_odds_history(
         # Derive implied values per source
         implied_spreads = {}
         implied_totals = {}
+        blend_spread_inputs = {}
+        blend_total_inputs = {}
 
         for source, contracts in spread_contracts_by_source.items():
             result = binary_to_implied_spread(contracts)
             if result:
-                implied_spreads[source] = {
+                entry = {
                     "spread": result.spread,
                     # Betting-line sign is NOT the chart's axis; see
                     # `home_margin_from_spread`. Rendered consumers read this.
@@ -34838,11 +35128,18 @@ async def get_event_odds_history(
                         key=lambda x: x["threshold"],
                     ),
                 }
+                implied_spreads[source] = entry
+                blend_spread_inputs[source] = {
+                    **entry,
+                    "pool_recrosses": result.pool_recrosses,
+                    "same_line_contradiction": result.same_line_contradiction,
+                    "updated_at": result.updated_at,
+                }
 
         for source, contracts in total_contracts_by_source.items():
             result = binary_to_implied_total(contracts)
             if result:
-                implied_totals[source] = {
+                entry = {
                     "total": result.total,
                     "confidence": result.confidence,
                     "contracts": sorted(
@@ -34851,6 +35148,13 @@ async def get_event_odds_history(
                         key=lambda x: x["threshold"],
                     ),
                 }
+                implied_totals[source] = entry
+                blend_total_inputs[source] = {
+                    **entry,
+                    "pool_recrosses": result.pool_recrosses,
+                    "same_line_contradiction": result.same_line_contradiction,
+                    "updated_at": result.updated_at,
+                }
 
         # Also include sportsbook spread/total from the odds history
         if history:
@@ -34858,19 +35162,30 @@ async def get_event_odds_history(
             sb_ou = latest.get("over_under")
             sb_home = latest.get("projected_home_score")
             sb_away = latest.get("projected_away_score")
+            sb_updated_at = latest.get("timestamp") or latest.get("captured_at")
             if sb_home is not None and sb_away is not None:
                 sb_spread = sb_away - sb_home  # negative = home favored
-                implied_spreads["sportsbook"] = {
+                sb_sp_entry = {
                     "spread": round(sb_spread, 1),
                     "home_margin": home_margin_from_spread(round(sb_spread, 1)),
                     "confidence": 1.0,
                     "contracts": [],
                 }
+                implied_spreads["sportsbook"] = sb_sp_entry
+                blend_spread_inputs["sportsbook"] = {
+                    **sb_sp_entry,
+                    "updated_at": sb_updated_at,
+                }
             if sb_ou is not None:
-                implied_totals["sportsbook"] = {
+                sb_to_entry = {
                     "total": sb_ou,
                     "confidence": 1.0,
                     "contracts": [],
+                }
+                implied_totals["sportsbook"] = sb_to_entry
+                blend_total_inputs["sportsbook"] = {
+                    **sb_to_entry,
+                    "updated_at": sb_updated_at,
                 }
 
         # Compute projected final score from the best available data — the arm
@@ -34906,20 +35221,116 @@ async def get_event_odds_history(
         # `implied_spreads`/`implied_totals` are deliberately left alone — they are
         # the chart's own rungs, and this is the narrow claim: no PROJECTION of a
         # game that has already been played.
+        # Ruling 233: A (#12938) + Ruling 265: A (#13007): during a live game
+        # with the stored 233: A clock (or when the blend switch is enabled),
+        # replace the history[-1] sportsbook entry with raw per-bookmaker
+        # snapshots filtered by Ruling 233: A (so a stale pre-cutoff snapshot
+        # extended synthetically to `now` never counts as current in either
+        # `select_projected_final` or `blend_projected_final`).
+        _blend_now = datetime.now(timezone.utc)
+        _live_clock = _pm_event_state_clock(event)
+        _is_live_event = event.status == "live"
+        if _is_live_event and (_live_clock is not None or projected_final_blend_enabled()):
+            from app.utils.live_line_clock import current_lines as _pm_current_lines
+
+            if _live_clock is not None:
+                implied_spreads.pop("sportsbook", None)
+                implied_totals.pop("sportsbook", None)
+            blend_spread_inputs.pop("sportsbook", None)
+            blend_total_inputs.pop("sportsbook", None)
+            latest_by_bk: dict[str, Any] = {}
+            for _snap in snapshots:
+                _bk = getattr(_snap, "bookmaker", None)
+                _cap = getattr(_snap, "captured_at", None)
+                if not _bk or _cap is None:
+                    continue
+                _prev = latest_by_bk.get(_bk)
+                if _prev is None or _cap > _prev.captured_at:
+                    latest_by_bk[_bk] = _snap
+            _live_snaps = list(latest_by_bk.values())
+            if _live_clock is not None:
+                _live_snaps = _pm_current_lines(
+                    _live_snaps, now=_blend_now, state_changed_at=_live_clock
+                )
+            if _live_snaps:
+                _rev_bks = detect_reversed_bookmakers(_live_snaps)
+                _agg_live_snaps = (
+                    [s for s in _live_snaps if s.bookmaker not in _rev_bks]
+                    if _rev_bks
+                    else _live_snaps
+                )
+                _live_counted = _agg_live_snaps if _agg_live_snaps else _live_snaps
+                _live_agg = _withhold_pinned_handicap_projection(
+                    aggregate_bookmaker_odds(_live_counted), _hist_sport_key
+                )
+                _live_sb_home = _live_agg.get("projected_home_score")
+                _live_sb_away = _live_agg.get("projected_away_score")
+                _live_sb_ou = _live_agg.get("over_under")
+                _live_oldest_cap = min(
+                    s.captured_at
+                    for s in _live_counted
+                    if getattr(s, "captured_at", None) is not None
+                )
+                if _live_sb_home is not None and _live_sb_away is not None:
+                    _live_spread = round(float(_live_sb_away) - float(_live_sb_home), 1)
+                    _sb_sp_entry = {
+                        "spread": _live_spread,
+                        "home_margin": home_margin_from_spread(_live_spread),
+                        "confidence": 1.0,
+                        "contracts": [],
+                    }
+                    if _live_clock is not None:
+                        implied_spreads["sportsbook"] = _sb_sp_entry
+                    blend_spread_inputs["sportsbook"] = {
+                        **_sb_sp_entry,
+                        "updated_at": _live_oldest_cap.isoformat(),
+                    }
+                if _live_sb_ou is not None:
+                    _sb_to_entry = {
+                        "total": float(_live_sb_ou),
+                        "confidence": 1.0,
+                        "contracts": [],
+                    }
+                    if _live_clock is not None:
+                        implied_totals["sportsbook"] = _sb_to_entry
+                    blend_total_inputs["sportsbook"] = {
+                        **_sb_to_entry,
+                        "updated_at": _live_oldest_cap.isoformat(),
+                    }
+
         projected = None
         event_is_final = event.status in ("completed", "closed")
-        best_pair = (
-            None if event_is_final
-            else select_projected_final(implied_spreads, implied_totals)
-        )
-        if best_pair is not None:
-            best_spread_source, best_total_source, proj = best_pair
-            projected = {
-                "home_score": proj.home_score,
-                "away_score": proj.away_score,
-                "spread_source": best_spread_source,
-                "total_source": best_total_source,
-            }
+        if not event_is_final and projected_final_blend_enabled():
+            blended = blend_projected_final(
+                blend_spread_inputs,
+                blend_total_inputs,
+                is_live=_is_live_event,
+                now=_blend_now,
+                state_changed_at=_live_clock,
+                sport_key=(
+                    getattr(getattr(event, "sport", None), "key", None)
+                    or getattr(event, "sport_key", None)
+                ),
+            )
+            if blended is not None:
+                projected = {
+                    "home_score": blended.projection.home_score,
+                    "away_score": blended.projection.away_score,
+                    "spread_source": blended.spread_source,
+                    "total_source": blended.total_source,
+                    "spread_sources": list(blended.spread_sources),
+                    "total_sources": list(blended.total_sources),
+                }
+        else:
+            best_pair = None if event_is_final else select_projected_final(implied_spreads, implied_totals)
+            if best_pair is not None:
+                best_spread_source, best_total_source, proj = best_pair
+                projected = {
+                    "home_score": proj.home_score,
+                    "away_score": proj.away_score,
+                    "spread_source": best_spread_source,
+                    "total_source": best_total_source,
+                }
 
         pm_spread_data = {
             "implied_spreads": implied_spreads,
@@ -34939,26 +35350,80 @@ async def get_event_odds_history(
     # change (the snapshot dedup only emits a row on a probability change). Placed
     # before aggregate_line (computed from win_prob_history) so it propagates there.
     #
-    # #6863: and only for a source the HERO still counts, asked of the hero's own
-    # function rather than re-derived here — a second opinion about which readings
-    # are live is the drift `_tier1_readings` was extracted to prevent. A folded
-    # event passes None (fail open): its hero can rest on a sibling row's reading,
-    # which `event` alone cannot see, and withholding on a blind spot would delete
-    # a correct line. `series_event_ids` is the canonical alone when untagged.
-    from app.utils.aggregation import effective_source_weights
+    # #6863 / #12824: a pregame tail needs an admitted live observation
+    # of that exact price before it can be carried to now.
+    from app.utils.aggregation import effective_source_weights, source_price_read_time
 
+    # Keep the sportsbook history's existing folded coverage policy separate
+    # from admission of the synthetic venue edge below.
     if len(series_event_ids) > 1:
         _hero_sources = None
     else:
         _hero_sources, _, _ = effective_source_weights(
             event, getattr(event, "status", None)
         )
+    speaking_sources = _hero_sources
+    folded_blend_view = None
+    folded_blend_revision = None
+    withhold_opening_only_pin = False
+    kickoff = event.commence_time
+    if (
+        _is_live_now and kickoff is not None and kickoff <= now
+        and not _commence_time_is_venue_expiration(event)
+    ):
+        live_now = now.replace(microsecond=0)
+        candidates = win_prob_history if _hero_sources is None else _hero_sources
+        pregame_tails = {
+            source: (points[-1]["home_probability"], tail)
+            for source in candidates
+            if (points := win_prob_history.get(source))
+            and (tail := _stale_live_edge_timestamp(points, now, min_stale_seconds=0)) is not None
+            and tail < kickoff and points[-1]["home_probability"] is not None
+        }
+        # A rollup can pin as soon as the game starts. A young tail on its
+        # own cannot extend yet, so it needs no extra fold read.
+        if pregame_tails and (
+            any(
+                (live_now - tail).total_seconds() >= _LIVE_EDGE_MIN_AGE_SECONDS
+                for _, tail in pregame_tails.values()
+            )
+            or history
+            or sum(bool(points) for points in win_prob_history.values()) > 1
+        ):
+            edge_view = event
+            if _hero_sources is None:
+                folded_sources, folded_blend_revision = (
+                    await folded_probability_sources_with_revision(db, event, absorbed)
+                )
+                folded_blend_view = FoldedBlendView(event, folded_sources)
+                edge_view = folded_blend_view
+
+            selected_inputs: list[tuple[str, float]] = []
+            resolve_hero(edge_view, source_inputs=selected_inputs)
+            speaking_sources = [source for source in candidates if source not in pregame_tails]
+            unconfirmed_inputs = 0
+            for source, value in selected_inputs:
+                tail = pregame_tails.get(source)
+                if tail is None or tail[0] != value:
+                    continue
+                observed_at = source_price_read_time(
+                    edge_view.win_probability_sources, source, value, now=now,
+                )
+                if observed_at is not None and observed_at >= kickoff:
+                    speaking_sources.append(source)
+                else:
+                    unconfirmed_inputs += 1
+            # A historical rollup may still be drawable. Its live pin needs
+            # a blend that rests on more than the same unconfirmed openings.
+            withhold_opening_only_pin = bool(selected_inputs) and unconfirmed_inputs == len(
+                selected_inputs
+            )
     _extend_win_prob_history_to_live_edge(
         win_prob_history,
         win_prob_sources_meta,
         is_live=_is_live_now,
         now=now,
-        speaking_sources=_hero_sources,
+        speaking_sources=speaking_sources,
     )
 
     # #4976/#1999: pre-game buckets do not decay — the hero's own gate, asked
@@ -35140,7 +35605,7 @@ async def get_event_odds_history(
     # #9051: the revision vector of the fold the pinned edge's VALUE came from,
     # set beside that value in both arms below and never from a different read.
     blend_edge_fold_revision = None
-    if aggregate_line:
+    if aggregate_line and not withhold_opening_only_pin:
         # THE NUMBER THE HERO IS ACTUALLY SHOWING, when one is being served.
         # `_cached_detail_payload` applies the identical TTL ladder `get_event`
         # applies, so "the detail route would serve this right now" is one
@@ -35152,6 +35617,21 @@ async def get_event_odds_history(
         # an older process-local hero. Recompute value AND revision together;
         # ordinary history requests retain their existing cached-hero parity.
         _served = None if fresh else _cached_detail_payload(event_id, _time.time())
+        admission_kickoff = loaded_price_admission_kickoff(event) if event.status == "live" else None
+        if (
+            _served is not None
+            and _served.get("hero_probability_source") == _PINNABLE_HERO_SOURCE
+            and admission_kickoff is not None
+            and admission_kickoff <= now
+        ):
+            # A newer date for the same price cannot redate a cached input.
+            cached_sources = (_served.get("source_mark") or {}).get("sources", ())
+            if any(
+                observed_at < admission_kickoff
+                for source in cached_sources
+                if (observed_at := _coerce_utc_datetime(source.get("observed_at"))) is not None
+            ):
+                _served = None
         if (
             _served is not None
             and _served.get("hero_probability_source") == _PINNABLE_HERO_SOURCE
@@ -35168,15 +35648,13 @@ async def get_event_odds_history(
             # orientation-checked folded view `get_event` will compute it from
             # on its next miss, which is what keeps the two in step across the
             # boundary rather than only inside it.
-            from app.utils.proven_duplicates import (
-                FoldedBlendView,
-                folded_probability_sources_with_revision,
-            )
-
-            _pin_sources, blend_edge_fold_revision = (
-                await folded_probability_sources_with_revision(db, event, absorbed)
-            )
-            pin_event = FoldedBlendView(event, _pin_sources)
+            if folded_blend_view is None:
+                folded_sources, folded_blend_revision = (
+                    await folded_probability_sources_with_revision(db, event, absorbed)
+                )
+                folded_blend_view = FoldedBlendView(event, folded_sources)
+            pin_event = folded_blend_view
+            blend_edge_fold_revision = folded_blend_revision
             from app.utils.aggregation import newest_source_reading_time
 
             observed_at = newest_source_reading_time(
@@ -35199,7 +35677,7 @@ async def get_event_odds_history(
     # that do not agree). That policy stays here, and only its ANSWER travels:
     # the backend says whether this line's right edge is a "now" claim, the
     # client supplies which number that claim should carry.
-    blend_edge_pinned = _pin_blend_edge(
+    blend_edge_pinned = not withhold_opening_only_pin and _pin_blend_edge(
         aggregate_line,
         pin_event,
         is_live=_is_live_now,
@@ -35733,6 +36211,49 @@ async def get_event_odds_history(
     }
 
 
+_LINE_MOVEMENT_DISAGREEMENT_BASIS = "admitted-source-pair-v2"
+
+
+def _line_movement_disagreement(event: Event) -> Optional[dict[str, float | str]]:
+    """Compare two current inputs admitted by the shared blend rules."""
+    from app.utils.aggregation import effective_source_weights_detailed, parse_source_entry
+
+    source_entries = event.win_probability_sources
+    if not isinstance(source_entries, dict):
+        return None
+    sources, probabilities, weights, floored = effective_source_weights_detailed(event)
+    admitted = {
+        source: probability
+        for source, probability, weight in zip(sources, probabilities, weights)
+        if weight > 0 and source not in floored
+    }
+    sportsbook_prob = admitted.get("betting")
+    if sportsbook_prob is None:
+        return None
+
+    # Snapshot history can contain an opening quote long after the venue stopped
+    # pricing the event. Choose among current inputs, with dated readings first
+    # and a stable venue order when their timestamps tie or are both absent.
+    undated = datetime.min.replace(tzinfo=timezone.utc)
+    venue = max(
+        (source for source in ("kalshi", "polymarket") if source in admitted),
+        key=lambda source: parse_source_entry(source_entries[source])[1] or undated,
+        default=None,
+    )
+    if venue is None:
+        return None
+    venue_prob = admitted[venue]
+    divergence = abs(venue_prob - sportsbook_prob)
+    if divergence >= 0.05:
+        return {
+            "sportsbook_home_prob": round(sportsbook_prob, 4),
+            "prediction_market_home_prob": round(venue_prob, 4),
+            "source": venue,
+            "divergence": round(divergence, 4),
+        }
+    return None
+
+
 @router.get("/{event_id}/line-movement")
 async def get_line_movement_analysis(
     event_id: int,
@@ -35765,6 +36286,7 @@ async def get_line_movement_analysis(
         raise HTTPException(status_code=404, detail="Event not found")
 
     now = datetime.now(timezone.utc)
+    disagreement_data = _line_movement_disagreement(event)
 
     # Check for cached analysis
     cached = await db.execute(
@@ -35784,15 +36306,25 @@ async def get_line_movement_analysis(
             # Extract stored context metadata if available
             stored_movement_data = cached_analysis.movement_data or []
             stored_context = None
+            disagreement_basis = None
             if isinstance(stored_movement_data, dict):
                 stored_context = stored_movement_data.get("context")
+                disagreement_basis = stored_movement_data.get("disagreement_basis")
                 stored_movement_data = stored_movement_data.get("movements", [])
+            disagreement = cached_analysis.disagreement_data
+            # Reuse a comparison only while both admitted inputs still
+            # support it. Movement history and its explanation have their own TTL.
+            if (
+                disagreement_basis != _LINE_MOVEMENT_DISAGREEMENT_BASIS
+                or disagreement != disagreement_data
+            ):
+                disagreement = None
             return {
                 "event_id": event_id,
                 "movements": stored_movement_data,
                 "explanation": cached_analysis.explanation,
-                "disagreement_explanation": cached_analysis.disagreement_explanation,
-                "disagreement_data": cached_analysis.disagreement_data,
+                "disagreement_explanation": cached_analysis.disagreement_explanation if disagreement else None,
+                "disagreement_data": disagreement,
                 "context": stored_context,
                 "cached": True,
                 "created_at": cached_analysis.created_at.isoformat(),
@@ -36013,58 +36545,8 @@ async def get_line_movement_analysis(
         if attribution.surfaced:
             explanation = attribution.primary_cause
 
-    # Check for prediction market disagreement
+    # No synchronous LLM call for the comparison (latency/133).
     disagreement_explanation = None
-    disagreement_data = None
-
-    # Look for prediction market win_prob_snapshots
-    try:
-        from app.models.models import WinProbSnapshot
-        pm_result = await db.execute(
-            select(WinProbSnapshot)
-            .where(
-                WinProbSnapshot.event_id == event_id,
-                WinProbSnapshot.source.in_(["kalshi", "polymarket"]),
-            )
-            .order_by(WinProbSnapshot.captured_at.desc())
-            .limit(2)
-        )
-        pm_snapshots = pm_result.scalars().all()
-
-        if pm_snapshots and opening_home_prob is not None:
-            # Compare latest prediction market price to sportsbook consensus
-            pm_snap = pm_snapshots[0]
-            pm_prob = float(pm_snap.home_probability) if pm_snap.home_probability is not None else None
-            sportsbook_prob = opening_home_prob
-
-            # Use latest aggregated odds if available
-            if aggregated_snapshots:
-                sportsbook_prob = aggregated_snapshots[-1]["home_probability"]
-
-            if pm_prob is not None and sportsbook_prob is not None:
-                divergence = abs(pm_prob - sportsbook_prob)
-                if divergence >= 0.05:  # 5% disagreement threshold
-                    disagreement_data = {
-                        "sportsbook_home_prob": round(sportsbook_prob, 4),
-                        "prediction_market_home_prob": round(pm_prob, 4),
-                        "source": pm_snap.source,
-                        "divergence": round(divergence, 4),
-                    }
-
-                    # NO LLM CALL HERE (latency/133). This used to call the
-                    # SYNCHRONOUS generate_market_disagreement_explanation()
-                    # from inside an async handler — a blocking OpenAI request
-                    # with a 30s client timeout, which parks the whole event
-                    # loop (and so both workers' worth of concurrency on the
-                    # dyno), not just this request. It fired on every cache
-                    # miss: disagreement_data is set on 264/264 rows ever
-                    # written to line_movement_analyses, and
-                    # disagreement_explanation on 0 of those 264. Measured
-                    # payout: zero, for an unbounded block. The numbers below
-                    # are deterministic and are the part clients render;
-                    # disagreement_explanation stays in the response as null.
-    except Exception:
-        pass  # win_prob_snapshots table may not exist or other DB issue
 
     # Cache the analysis
     ttl = None
@@ -36089,6 +36571,7 @@ async def get_line_movement_analysis(
     cache_data = {
         "movements": movements_data,
         "context": context_meta,
+        "disagreement_basis": _LINE_MOVEMENT_DISAGREEMENT_BASIS,
     }
 
     # Upsert cached analysis
@@ -36433,7 +36916,7 @@ def _abbreviation_is_vouched(team, rows) -> bool:
     )
 
 
-def _rows_by_league(rows) -> dict:
+def _rows_by_league(rows, *, stale_only_ids: set | None = None) -> dict:
     """For ONE name key, the best row per LEAGUE — corroborated crests only (#7262).
 
     The name→row map can only ever hold one answer, so a school's four rows
@@ -36503,8 +36986,12 @@ def _rows_by_league(rows) -> dict:
             continue
         identity = _team_league_identity(team)
         incumbent = best.get(identity)
-        if incumbent is None or _same_league_row_preference(team) > _same_league_row_preference(
-            incumbent
+        if incumbent is None or _same_league_row_preference(
+            team,
+            stale_only=bool(stale_only_ids and id(team) in stale_only_ids),
+        ) > _same_league_row_preference(
+            incumbent,
+            stale_only=bool(stale_only_ids and id(incumbent) in stale_only_ids),
         ):
             # Two rows of one league under one key: #7132's total order decides,
             # so this map is no more order-dependent than the lookup beside it.
@@ -36522,11 +37009,21 @@ class TeamNameLookup(dict):
     sport in hand cannot be made worse off by a map it never reads.
     """
 
-    __slots__ = ("by_league",)
+    __slots__ = ("by_league", "by_id", "league_ceilings", "mens_college_basketball")
 
-    def __init__(self, mapping=None, by_league=None):
+    def __init__(
+        self,
+        mapping=None,
+        by_league=None,
+        by_id=None,
+        league_ceilings=None,
+        mens_college_basketball=None,
+    ):
         super().__init__(mapping or {})
         self.by_league = by_league or {}
+        self.by_id = by_id or {}
+        self.league_ceilings = league_ceilings or {}
+        self.mens_college_basketball = mens_college_basketball or {}
 
     def subset(self, names) -> "TeamNameLookup":
         """The rows for `names`, keeping the per-league map with them.
@@ -36540,6 +37037,9 @@ class TeamNameLookup(dict):
         return TeamNameLookup(
             {k: v for k, v in self.items() if k in names},
             {k: v for k, v in self.by_league.items() if k in names},
+            self.by_id,
+            self.league_ceilings,
+            self.mens_college_basketball,
         )
 
     def __eq__(self, other):
@@ -36556,7 +37056,13 @@ class TeamNameLookup(dict):
         base = dict.__eq__(self, other)
         if base is NotImplemented or base is False:
             return base
-        return self.by_league == getattr(other, "by_league", {})
+        return (
+            self.by_league == getattr(other, "by_league", {})
+            and self.by_id == getattr(other, "by_id", {})
+            and self.league_ceilings == getattr(other, "league_ceilings", {})
+            and self.mens_college_basketball
+            == getattr(other, "mens_college_basketball", {})
+        )
 
     def __ne__(self, other):
         result = self.__eq__(other)
@@ -36575,23 +37081,12 @@ def _as_lookup(mapping) -> TeamNameLookup:
     return TeamNameLookup(mapping)
 
 
-def _team_for_event(team_lookup, name: str | None, sport_key: str | None):
-    """The row for `name` that belongs to THIS event's league, else today's answer.
-
-    The whole cross-league ambiguity problem is a question the caller can often
-    answer: "Panthers" is ambiguous on its own and is not ambiguous on an NFL
-    fixture. Where the event's league has a corroborated row under this key, that
-    row is the answer; everywhere else this returns exactly what `.get(name)`
-    returns, including `None`.
-
-    Accepts a plain `dict` (no `by_league`) and degrades to `.get` — but note
-    that every production caller passes a `TeamNameLookup`, so a test that
-    exercises only the dict path is testing the branch nothing takes.
-    """
-    # 🔴 `is None`, NOT falsiness. A `TeamNameLookup` whose every key the
-    # cross-league guard dropped is an EMPTY dict carrying a full `by_league` —
-    # i.e. precisely the population this function exists to answer — and
-    # `if not team_lookup` discards it.
+def _team_for_event_by_name(
+    team_lookup,
+    name: str | None,
+    sport_key: str | None,
+):
+    """Resolve a team row strictly by name (league-aware, #7262 / #5697)."""
     if team_lookup is None or not name:
         return None
     default = team_lookup.get(name)
@@ -36615,6 +37110,170 @@ def _team_for_event(team_lookup, name: str | None, sport_key: str | None):
         # on an FCS card is another league's season too.
         return _crest_only(row)
     return row
+
+
+_WNCAAB_IDENTITY = league_identity("basketball_wncaab")
+_NCAAB_IDENTITY = league_identity("basketball_ncaab")
+
+
+def _mens_college_name_keys(name: str | None) -> tuple[str, ...]:
+    """Normalized lookup keys for men's ↔ women's college basketball borrow (298: A, #13144).
+
+    Strips accents and punctuation, expands non-initial ``st`` to ``state``
+    (``Grambling St Tigers`` ↔ ``Grambling State Tigers``) and initial ``st``
+    to ``saint`` (``St. John's`` ↔ ``Saint John's``) without touching the
+    opposite direction.
+    """
+    if not name or not isinstance(name, str):
+        return ()
+    ascii_text = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("ascii")
+    cleaned = ascii_text.lower().replace("&", " and ")
+    cleaned = re.sub(r"['’`]", "", cleaned)
+    cleaned = re.sub(r"[^a-z0-9]+", " ", cleaned).strip()
+    if not cleaned:
+        return ()
+    tokens = cleaned.split()
+    canonical_tokens = []
+    for idx, tok in enumerate(tokens):
+        if tok == "st":
+            canonical_tokens.append("saint" if idx == 0 else "state")
+        else:
+            canonical_tokens.append(tok)
+    canonical = " ".join(canonical_tokens)
+    if canonical == cleaned:
+        return (cleaned,)
+    return (cleaned, canonical)
+
+
+def _lookup_mens_college_basketball(team_lookup, name: str | None):
+    """Find the school's crested men's basketball row for a WNCAAB team (298: A)."""
+    mens_map = getattr(team_lookup, "mens_college_basketball", None)
+    if not mens_map or not name:
+        return None
+    keys = _mens_college_name_keys(name)
+    for k in keys:
+        hit = mens_map.get(k)
+        if hit is not None:
+            return hit
+    # Secondary pass for women's "Lady <Mascot>" names (e.g. "LSU Lady Tigers" -> "LSU Tigers").
+    for k in keys:
+        tokens = k.split()
+        if "lady" in tokens:
+            stripped = [t for t in tokens if t != "lady"]
+            if len(stripped) >= 2:
+                hit = mens_map.get(" ".join(stripped))
+                if hit is not None:
+                    return hit
+    return None
+
+
+def _borrow_mens_basketball_identity(womens_row, mens_row) -> TeamSnapshot:
+    """Borrow crest, colours and short name from ``mens_row`` onto a crestless
+    ``basketball_wncaab`` row, never taking the men's record or standings (298: A).
+
+    Returns a NEW ``TeamSnapshot`` without mutating either input.
+    """
+    branding = {
+        "logo_url_small": getattr(mens_row, "logo_url_small", None),
+        "logo_url_large": getattr(mens_row, "logo_url_large", None)
+        or getattr(mens_row, "logo_url_small", None),
+        "primary_color": getattr(mens_row, "primary_color", None)
+        or getattr(womens_row, "primary_color", None),
+        "secondary_color": getattr(mens_row, "secondary_color", None)
+        or getattr(womens_row, "secondary_color", None),
+        "abbreviation": getattr(mens_row, "abbreviation", None)
+        or getattr(womens_row, "abbreviation", None),
+    }
+    if isinstance(womens_row, TeamSnapshot):
+        return dataclass_replace(womens_row, **branding)
+    kept = {
+        f.name: getattr(womens_row, f.name, f.default)
+        for f in dataclass_fields(TeamSnapshot)
+        if f.name not in branding
+    }
+    return TeamSnapshot(**kept, **branding)
+
+
+def _team_for_event(
+    team_lookup,
+    name: str | None,
+    sport_key: str | None,
+    *,
+    team_id: int | None = None,
+):
+    """The row for `name` (falling back to linked `team_id`) in THIS event's league.
+
+    The event's own name lookup always runs FIRST so every card that already
+    resolves by name keeps the exact same two-row preference winner (#7132,
+    e.g. Ottawa Senators row 13381 over stale row 56). Only when the name
+    lookup finds nothing does a verified same-league `team_id` (#13144) step in
+    (e.g. "Grambling State Tigers" -> linked row "Grambling St Tigers"), and
+    that fallback still routes through the same per-league two-row preference
+    (via `by_id` pre-resolved against `by_league` and a name-path check on the
+    linked row's own name).
+
+    Under ruling 298: A (#13144), when a `basketball_wncaab` game's own team
+    row has no crest (or is absent), it borrows the crest, colours and short
+    name from the same school's `basketball_ncaab` row — never the men's
+    record or standings.
+
+    Accepts a plain `dict` (no `by_league` / `by_id`) and degrades to `.get` —
+    but note that every production caller passes a `TeamNameLookup`, so a test
+    that exercises only the dict path is testing the branch nothing takes.
+    """
+    # 🔴 `is None`, NOT falsiness. A `TeamNameLookup` whose every key the
+    # cross-league guard dropped is an EMPTY dict carrying a full `by_league` —
+    # i.e. precisely the population this function exists to answer — and
+    # `if not team_lookup` discards it.
+    if team_lookup is None:
+        return None
+    identity = league_identity(sport_key)
+    resolved = _team_for_event_by_name(team_lookup, name, sport_key)
+    if resolved is None and team_id is not None:
+        by_id = getattr(team_lookup, "by_id", None) or {}
+        row_by_id = by_id.get(team_id)
+        if row_by_id is not None and (
+            identity is None
+            or league_identity(getattr(row_by_id, "sport_key", None)) == identity
+        ):
+            # Route the linked row's own name through the same name path so two-row
+            # preference (#7132) still applies even on a hand-built TeamNameLookup.
+            linked_name = getattr(row_by_id, "name", None)
+            preferred = (
+                _team_for_event_by_name(team_lookup, linked_name, sport_key)
+                if linked_name
+                else None
+            )
+            if preferred is not None and (
+                identity is None
+                or league_identity(getattr(preferred, "sport_key", None)) == identity
+            ):
+                resolved = preferred
+            else:
+                resolved = row_by_id
+
+    # Ruling 298: A (#13144) — a women's college basketball game whose own
+    # row has no real crest takes crest, colours and short name from the same
+    # school's men's basketball row, never its record or standings.
+    if identity == _WNCAAB_IDENTITY:
+        own_league = (
+            resolved is not None
+            and league_identity(getattr(resolved, "sport_key", None))
+            == _WNCAAB_IDENTITY
+        )
+        has_own_crest = own_league and _crest_for_corroboration(resolved) is not None
+        if not has_own_crest:
+            mens_row = _lookup_mens_college_basketball(team_lookup, name)
+            if mens_row is None and own_league:
+                mens_row = _lookup_mens_college_basketball(
+                    team_lookup, getattr(resolved, "name", None)
+                )
+            if mens_row is not None:
+                if own_league:
+                    return _borrow_mens_basketball_identity(resolved, mens_row)
+                return _crest_only(mens_row)
+
+    return resolved
 
 
 #: The `TeamSnapshot` fields that describe one LEAGUE's row rather than the
@@ -36708,7 +37367,85 @@ def _standings_vintage(team):
         return (0, 0.0)
 
 
-def _same_league_row_preference(team):
+def _effective_team_record(team) -> str | None:
+    """Best current-season record string carried by ``team`` for cohort sizing."""
+    standings = getattr(team, "standings_data", None)
+    if standings:
+        return record_text(
+            getattr(team, "current_record", None),
+            public_standings(standings),
+            getattr(team, "standings_updated_at", None),
+        )
+    return _parse_record(getattr(team, "current_record", None))
+
+
+def _compute_league_season_ceilings(teams) -> dict:
+    """Map league identity → maximum plausible games played this season (#13229)."""
+    counts_by_league: dict = {}
+    sport_key_by_league: dict = {}
+    for team in teams:
+        sport_key = getattr(team, "sport_key", None)
+        if is_season_variant(sport_key):
+            continue
+        identity = _team_league_identity(team)
+        if sport_key and identity not in sport_key_by_league:
+            sport_key_by_league[identity] = sport_key
+        games = _count_games(_effective_team_record(team))
+        if games is not None:
+            counts_by_league.setdefault(identity, []).append(games)
+
+    ceilings: dict = {}
+    for identity, counts in counts_by_league.items():
+        ceiling = league_season_games_ceiling(
+            counts, sport_key=sport_key_by_league.get(identity)
+        )
+        if ceiling is not None:
+            ceilings[identity] = ceiling
+    return ceilings
+
+
+def _sanitize_stale_season_team(team, ceiling: int | None):
+    """Strip any prior-season record or standings board exceeding ``ceiling`` (#13229).
+
+    Returns ``(row, stale_only)``. Untouched rows are returned by identity.
+    ``stale_only`` is True when stripping leaves the row with neither a record
+    nor a standings board — i.e., its only season claim belonged to an earlier
+    season, so a same-league twin carrying this season's data must beat it.
+    """
+    if ceiling is None:
+        return team, False
+    stale_record = record_exceeds_season_ceiling(
+        getattr(team, "current_record", None), ceiling
+    )
+    stale_standings = standings_exceeds_season_ceiling(
+        public_standings(getattr(team, "standings_data", None)), ceiling
+    )
+    if not stale_record and not stale_standings:
+        return team, False
+
+    updates: dict = {}
+    if stale_record:
+        updates["current_record"] = None
+    if stale_standings:
+        updates["standings_data"] = None
+        updates["standings_updated_at"] = None
+
+    if isinstance(team, TeamSnapshot):
+        sanitized = dataclass_replace(team, **updates)
+    else:
+        sanitized = shallow_copy(team)
+        for field_name, value in updates.items():
+            if hasattr(sanitized, field_name):
+                setattr(sanitized, field_name, value)
+
+    stale_only = (
+        getattr(sanitized, "current_record", None) is None
+        and getattr(sanitized, "standings_data", None) is None
+    )
+    return sanitized, stale_only
+
+
+def _same_league_row_preference(team, *, stale_only: bool = False):
     """Rank two rows of the SAME league that both claim one name key.
 
     #7132. Where two rows for one club collide the old code kept whichever
@@ -36728,7 +37465,13 @@ def _same_league_row_preference(team):
        `baseball_mlb_preseason` twin that carries a crest but no
        `standings_data`, and preferring it silently coin-flipped the standings
        away.
-    2. **The more recently WRITTEN board.** This is the term that settles the
+    2. **Current-season row over prior-season-only row (#13229).** In leagues
+       without `standings_data` (EPL, Bundesliga, Ligue 1), `_standings_vintage`
+       ties at `(0, 0.0)` and the higher-id orphan duplicate carrying last
+       season's 38-match `current_record` (`14545` Tottenham `10-11-17`,
+       `15292` Newcastle `14-7-17`) used to beat the live club row (`146`
+       `3-3-4`, `143` `3-3-4`) on the final id tie-break.
+    3. **The more recently WRITTEN board.** This is the term that settles the
        duplicate-club case, and it is the only column that can: the two rows
        disagree about which SEASON their board describes, and neither the name,
        the id, nor the record's own contents say which is current. Of the six
@@ -36738,7 +37481,7 @@ def _same_league_row_preference(team):
        Ottawa's and the Rangers' are on 12715, 13381 and 8293. Preferring the
        row's own `.name` over another row's alias, or the lower id, picks the
        stale board for three of those six.
-    3. **`_crest_row_preference`**, which is already a TOTAL order (it ends on
+    4. **`_crest_row_preference`**, which is already a TOTAL order (it ends on
        the id). A preference that can tie is still order-dependent on precisely
        the rows it failed to separate.
 
@@ -36748,9 +37491,25 @@ def _same_league_row_preference(team):
     """
     return (
         0 if is_season_variant(getattr(team, "sport_key", None)) else 1,
+        0 if stale_only else 1,
         _standings_vintage(team),
         _crest_row_preference(team),
     )
+
+
+def cached_league_season_ceiling(
+    sport_key: str | None, sport_id: int | None = None
+) -> int | None:
+    """Return the cached current-season games ceiling for a league, if warm (#13229)."""
+    cache = _team_cache
+    if not isinstance(cache, TeamNameLookup) or not cache.league_ceilings:
+        return None
+    identity = league_identity(sport_key)
+    if identity is not None and identity in cache.league_ceilings:
+        return cache.league_ceilings[identity]
+    if sport_id is not None:
+        return cache.league_ceilings.get(("sport_id", sport_id))
+    return None
 
 
 def _dedupe_team_name_lookup(teams) -> dict:
@@ -36794,6 +37553,18 @@ def _dedupe_team_name_lookup(teams) -> dict:
     descending id order. `_same_league_row_preference` decides all of them,
     with #4945's rule as its first term.
     """
+    league_ceilings = _compute_league_season_ceilings(teams)
+    sanitized_teams = []
+    stale_only_ids: set[int] = set()
+    for raw_team in teams:
+        identity = _team_league_identity(raw_team)
+        sanitized, stale_only = _sanitize_stale_season_team(
+            raw_team, league_ceilings.get(identity)
+        )
+        sanitized_teams.append(sanitized)
+        if stale_only:
+            stale_only_ids.add(id(sanitized))
+
     lookup: dict = {}
     key_sport: dict = {}
     ambiguous: set = set()
@@ -36824,7 +37595,11 @@ def _dedupe_team_name_lookup(teams) -> dict:
                 ambiguous.add(key)
                 lookup.pop(key, None)
                 key_sport.pop(key, None)
-        elif _same_league_row_preference(team) > _same_league_row_preference(lookup[key]):
+        elif _same_league_row_preference(
+            team, stale_only=id(team) in stale_only_ids
+        ) > _same_league_row_preference(
+            lookup[key], stale_only=id(lookup[key]) in stale_only_ids
+        ):
             # Same league, two rows: pick one, deterministically. Which row an
             # unordered query yields first is arbitrary, so #4945's
             # parent-league-over-season-variant rule is now the first term of a
@@ -36833,7 +37608,7 @@ def _dedupe_team_name_lookup(teams) -> dict:
             # branch used to settle by arrival order are the #7132 defect.
             lookup[key] = team
 
-    for team in teams:
+    for team in sanitized_teams:
         identity = _team_league_identity(team)
         _register(team.name, team, identity)
         for alt_name in (team.alternate_names or []):
@@ -36841,11 +37616,55 @@ def _dedupe_team_name_lookup(teams) -> dict:
 
     by_league = {}
     for key, rows in rows_by_key.items():
-        per_league = _rows_by_league(rows)
+        per_league = _rows_by_league(rows, stale_only_ids=stale_only_ids)
         if per_league:
             by_league[key] = per_league
 
-    return TeamNameLookup(lookup, by_league)
+    # #13144 + #7132: map each team_id to its league's two-row-preference winner
+    # (for `team.name`), so even after `.subset()` strips `by_league` to the
+    # event's raw spelling, falling back to `team_id` still picks the fresher
+    # standings row (e.g. Ottawa Senators row 13381 over stale row 56).
+    by_id: dict = {}
+    for team in sanitized_teams:
+        tid = getattr(team, "id", None)
+        if tid is None:
+            continue
+        identity = _team_league_identity(team)
+        preferred = (by_league.get(team.name) or {}).get(identity)
+        by_id[tid] = preferred if preferred is not None else team
+
+    # Ruling 298: A (#13144): index crested men's college basketball rows by
+    # normalized name/alias so a women's college game with no crest of its own
+    # borrows the school's crest, colours and short name (never record/standings).
+    mens_cbb: dict = {}
+    mens_cbb_ambiguous: set = set()
+    for team in sanitized_teams:
+        if league_identity(getattr(team, "sport_key", None)) != _NCAAB_IDENTITY:
+            continue
+        if _crest_for_corroboration(team) is None:
+            continue
+        labels = [team.name] + list(team.alternate_names or [])
+        seen_keys: set[str] = set()
+        for label in labels:
+            for key in _mens_college_name_keys(label):
+                if key in seen_keys or key in mens_cbb_ambiguous:
+                    continue
+                seen_keys.add(key)
+                incumbent = mens_cbb.get(key)
+                if incumbent is None:
+                    mens_cbb[key] = team
+                elif _crest_is_shared(incumbent, team):
+                    if _same_league_row_preference(
+                        team, stale_only=id(team) in stale_only_ids
+                    ) > _same_league_row_preference(
+                        incumbent, stale_only=id(incumbent) in stale_only_ids
+                    ):
+                        mens_cbb[key] = team
+                else:
+                    mens_cbb_ambiguous.add(key)
+                    mens_cbb.pop(key, None)
+
+    return TeamNameLookup(lookup, by_league, by_id, league_ceilings, mens_cbb)
 
 
 async def _build_team_lookup(db: AsyncSession, team_names: list[str]) -> dict:
@@ -36872,7 +37691,13 @@ async def _build_team_lookup(db: AsyncSession, team_names: list[str]) -> dict:
     behind the response. Only an empty cache still blocks — a first request in a
     fresh process has no stale value, and shipping a search with no logos to
     save 400 ms is a worse answer, not a faster one.
+
+    #12529: when L1 is cold in a freshly-forked worker, check a compact
+    compressed Redis L2 slot (`_TEAM_LOOKUP_L2_KEY`) carrying the plain
+    `TeamSnapshot` rows + `computed_at` timestamp (inheriting remaining TTL so
+    L1 + L2 never stack past `_TEAM_CACHE_TTL`). Fails open to Postgres.
     """
+    import asyncio
     import time
 
     global _team_cache, _team_cache_time
@@ -36893,6 +37718,16 @@ async def _build_team_lookup(db: AsyncSession, team_names: list[str]) -> dict:
             # plain comprehension here returns a bare dict and silently strips
             # it on the path that serves almost every request.
             return _as_lookup(_team_cache).subset(names_set)
+    else:
+        l2_client = _team_lookup_l2_client()
+        if l2_client is not None:
+            l2_hit = await asyncio.to_thread(_read_team_lookup_l2, l2_client)
+            if l2_hit is not None:
+                full_lookup, computed_at = l2_hit
+                age_s = max(0.0, time.time() - computed_at)
+                _team_cache = full_lookup
+                _team_cache_time = now - age_s
+                return _as_lookup(full_lookup).subset(names_set)
 
     # Load all teams with ESPN data — single simple query
     result = await db.execute(_enriched_teams_stmt())
@@ -36900,9 +37735,163 @@ async def _build_team_lookup(db: AsyncSession, team_names: list[str]) -> dict:
 
     _team_cache = full_lookup
     _team_cache_time = now
+    l2_client = _team_lookup_l2_client()
+    if l2_client is not None:
+        await asyncio.to_thread(
+            _write_team_lookup_l2, l2_client, _last_shaped_team_snapshots, time.time()
+        )
 
     # Return only the subset matching requested names
     return _as_lookup(full_lookup).subset(names_set)
+
+
+_TEAM_LOOKUP_L2_KEY = "bainluck:team_lookup:v1"
+_TEAM_LOOKUP_L2_ENABLED_ENV = "TEAM_LOOKUP_SHARED_CACHE_ENABLED"
+
+
+def _team_lookup_l2_enabled() -> bool:
+    raw = os.environ.get(_TEAM_LOOKUP_L2_ENABLED_ENV, "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _team_lookup_l2_client():
+    """Bounded sync Redis client for shared team-lookup L2, or None (fail-open)."""
+    if not _team_lookup_l2_enabled():
+        return None
+    if not (os.getenv("REDIS_URL") or os.getenv("REDIS_TLS_URL")):
+        return None
+    try:
+        from app.tasks.redis_state import get_redis_client
+
+        return get_redis_client(socket_timeout=0.5, fast_fail=True)
+    except Exception:
+        return None
+
+
+def _encode_standings_updated_at(val: object) -> object:
+    if val is None:
+        return None
+    if isinstance(val, datetime):
+        return ["dt", val.isoformat()]
+    return ["str", str(val)]
+
+
+def _decode_standings_updated_at(val: object) -> object:
+    if val is None:
+        return None
+    if isinstance(val, list) and len(val) == 2:
+        kind, raw = val
+        if kind == "dt" and isinstance(raw, str):
+            return datetime.fromisoformat(raw)
+        if kind == "str" and isinstance(raw, str):
+            return raw
+    return None
+
+
+def _encode_team_snapshots_l2(
+    snapshots: Sequence[TeamSnapshot], computed_at: float
+) -> bytes:
+    rows = [
+        [
+            s.id,
+            s.sport_id,
+            s.sport_key,
+            s.name,
+            s.slug,
+            s.abbreviation,
+            s.primary_color,
+            s.secondary_color,
+            s.logo_url_small,
+            s.logo_url_large,
+            s.current_record,
+            list(s.alternate_names or ()),
+            s.standings_data,
+            _encode_standings_updated_at(s.standings_updated_at),
+            s.season_stats,
+            s.espn_id,
+        ]
+        for s in snapshots
+    ]
+    payload = {"v": 1, "computed_at": float(computed_at), "teams": rows}
+    raw_json = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+    return zlib.compress(raw_json, level=1)
+
+
+def _decode_team_snapshots_l2(
+    raw: bytes | bytearray | str | None, *, now_epoch: float | None = None
+) -> tuple[list[TeamSnapshot], float] | None:
+    if raw is None:
+        return None
+    try:
+        data_bytes = bytes(raw) if isinstance(raw, (bytes, bytearray)) else raw.encode("latin1")
+        parsed = json.loads(zlib.decompress(data_bytes).decode("utf-8"))
+    except Exception:
+        return None
+    if not isinstance(parsed, dict) or parsed.get("v") != 1:
+        return None
+    computed_at = parsed.get("computed_at")
+    if isinstance(computed_at, bool) or not isinstance(computed_at, (int, float)):
+        return None
+    now = time.time() if now_epoch is None else now_epoch
+    age_s = now - float(computed_at)
+    if age_s < 0 or age_s >= _TEAM_CACHE_TTL:
+        return None
+    raw_rows = parsed.get("teams")
+    if not isinstance(raw_rows, list):
+        return None
+    snapshots: list[TeamSnapshot] = []
+    try:
+        for r in raw_rows:
+            if not isinstance(r, list) or len(r) != 16:
+                return None
+            snapshots.append(
+                TeamSnapshot(
+                    id=r[0],
+                    sport_id=r[1],
+                    sport_key=r[2],
+                    name=r[3],
+                    slug=r[4],
+                    abbreviation=r[5],
+                    primary_color=r[6],
+                    secondary_color=r[7],
+                    logo_url_small=r[8],
+                    logo_url_large=r[9],
+                    current_record=r[10],
+                    alternate_names=tuple(r[11] or ()),
+                    standings_data=r[12],
+                    standings_updated_at=_decode_standings_updated_at(r[13]),
+                    season_stats=r[14],
+                    espn_id=r[15],
+                )
+            )
+    except Exception:
+        return None
+    return snapshots, float(computed_at)
+
+
+def _read_team_lookup_l2(client) -> tuple[dict, float] | None:
+    try:
+        raw = client.get(_TEAM_LOOKUP_L2_KEY)
+    except Exception:
+        logger.debug("team_lookup L2 read skipped", exc_info=True)
+        return None
+    decoded = _decode_team_snapshots_l2(raw)
+    if decoded is None:
+        return None
+    snapshots, computed_at = decoded
+    return _dedupe_team_name_lookup(snapshots), computed_at
+
+
+def _write_team_lookup_l2(
+    client, snapshots: Sequence[TeamSnapshot], computed_at: float
+) -> bool:
+    try:
+        blob = _encode_team_snapshots_l2(snapshots, computed_at)
+        client.setex(_TEAM_LOOKUP_L2_KEY, _TEAM_CACHE_TTL, blob)
+        return True
+    except Exception:
+        logger.debug("team_lookup L2 write skipped", exc_info=True)
+        return False
 
 
 def _enriched_teams_stmt():
@@ -36945,6 +37934,14 @@ TEAM_LOOKUP_COLUMNS = (
 )
 
 
+def _extract_team_snapshots(rows) -> list[TeamSnapshot]:
+    """Copy `(Team, sport_key)` ORM pairs into detached `TeamSnapshot` objects."""
+    return [_snapshot_team(t, sport_key=k) for t, k in rows]
+
+
+_last_shaped_team_snapshots: tuple[TeamSnapshot, ...] = ()
+
+
 def _shape_team_lookup(rows) -> dict:
     """`(Team, sport_key)` rows → the name→`TeamSnapshot` lookup the cache holds.
 
@@ -36957,7 +37954,9 @@ def _shape_team_lookup(rows) -> dict:
     `.sport_id` / `.alternate_names` reads happen here, inside the live-session
     window, instead of at some later request's mercy.
     """
-    snapshots = [_snapshot_team(t, sport_key=k) for t, k in rows]
+    global _last_shaped_team_snapshots
+    snapshots = _extract_team_snapshots(rows)
+    _last_shaped_team_snapshots = tuple(snapshots)
     # Cross-league ambiguity guard — see `_dedupe_team_name_lookup`.
     return _dedupe_team_name_lookup(snapshots)
 
@@ -36965,6 +37964,7 @@ def _shape_team_lookup(rows) -> dict:
 async def _rebuild_team_lookup() -> None:
     """Refresh `_team_cache` on its own session. Raises on failure, so the
     caller's handler can log it and leave the previous value in place."""
+    import asyncio
     import time
 
     from app.services.database import async_session_maker
@@ -36977,6 +37977,11 @@ async def _rebuild_team_lookup() -> None:
 
     _team_cache = full_lookup
     _team_cache_time = time.monotonic()
+    l2_client = _team_lookup_l2_client()
+    if l2_client is not None:
+        await asyncio.to_thread(
+            _write_team_lookup_l2, l2_client, _last_shaped_team_snapshots, time.time()
+        )
 
 
 def _compute_standings_context(
@@ -37222,6 +38227,15 @@ def _format_event(
         if probability_sources is not None
         else getattr(event, "win_probability_sources", None)
     )
+    if event.status == "live" and isinstance(_wps, dict) and _wps:
+        from app.utils.aggregation import witnessed_pregame_price_sources
+
+        # The native source disclosure and web models view print these as
+        # current. Historical reads still carry their original evidence.
+        price_view = FoldedBlendView(event, _wps) if probability_sources is not None else event
+        pregame_sources = witnessed_pregame_price_sources(price_view, now=_served_now)
+        if pregame_sources:
+            _wps = {key: entry for key, entry in _wps.items() if key not in pregame_sources}
     response = {
         "id": event.id,
         "external_id": event.external_id,
@@ -37420,8 +38434,18 @@ def _format_event(
     # `is not None`: a lookup whose keys were all dropped is falsy and still
     # carries the per-league map.
     if team_lookup is not None:
-        home_team = _team_for_event(team_lookup, event.home_team_name, event_sport_key)
-        away_team = _team_for_event(team_lookup, event.away_team_name, event_sport_key)
+        home_team = _team_for_event(
+            team_lookup,
+            event.home_team_name,
+            event_sport_key,
+            team_id=getattr(event, "home_team_id", None),
+        )
+        away_team = _team_for_event(
+            team_lookup,
+            event.away_team_name,
+            event_sport_key,
+            team_id=getattr(event, "away_team_id", None),
+        )
         if home_team and (home_team.primary_color or home_team.logo_url_small):
             response["home_team_data"] = _format_team_data(home_team)
         if away_team and (away_team.primary_color or away_team.logo_url_small):
@@ -37549,6 +38573,14 @@ def _format_event(
         logging.warning(f"Error adding EI data for event {event.id}: {e}")
 
     attach_tennis_score(event, response, _served_now)
+    response.pop("score_source_unavailable", None)
+    response.update(
+        score_source_unavailable_fields(
+            event,
+            status=response.get("status"),
+            payload=response,
+        )
+    )
     return response
 
 
@@ -37574,6 +38606,7 @@ def _format_event_with_odds(event: Event) -> dict:
             event.odds_snapshots,
             key=lambda x: x.captured_at
         )
+        _pinned_hcap = sportsbook_handicap_is_pinned(_loaded_event_sport_key(event))
         response["current_odds"] = {
             "bookmaker": latest_odds.bookmaker,
             "captured_at": latest_odds.captured_at.isoformat(),
@@ -37587,11 +38620,35 @@ def _format_event_with_odds(event: Event) -> dict:
                 if latest_odds.home_spread else None,
             "over_under": float(latest_odds.over_under)
                 if latest_odds.over_under else None,
-            "projected_home_score": float(latest_odds.projected_home_score)
-                if latest_odds.projected_home_score else None,
-            "projected_away_score": float(latest_odds.projected_away_score)
-                if latest_odds.projected_away_score else None,
+            "projected_home_score": None if _pinned_hcap else (
+                float(latest_odds.projected_home_score)
+                if latest_odds.projected_home_score else None
+            ),
+            "projected_away_score": None if _pinned_hcap else (
+                float(latest_odds.projected_away_score)
+                if latest_odds.projected_away_score else None
+            ),
+            **(
+                {
+                    "projection_captured_at": None,
+                    "projection_bookmaker_count": 0,
+                    "projection_unavailable": _PINNED_HANDICAP_REASON,
+                }
+                if _pinned_hcap
+                else {}
+            ),
         }
+
+    if is_finished_status(response.get("status")) and isinstance(
+        response.get("current_odds"), dict
+    ):
+        _ev_sport_key = _loaded_event_sport_key(event)
+        response["current_odds"] = apply_settled_current_odds(
+            response["current_odds"],
+            resolve_hero(event),
+            sport_key=_ev_sport_key,
+            include_rendered=True,
+        )
 
     return response
 
@@ -37601,6 +38658,7 @@ def _format_event_with_latest_odds(event: Event, latest_odds: Optional[OddsSnaps
     response = _format_event(event)
 
     if latest_odds:
+        _pinned_hcap = sportsbook_handicap_is_pinned(_loaded_event_sport_key(event))
         response["current_odds"] = {
             "bookmaker": latest_odds.bookmaker,
             "captured_at": latest_odds.captured_at.isoformat(),
@@ -37614,16 +38672,40 @@ def _format_event_with_latest_odds(event: Event, latest_odds: Optional[OddsSnaps
                 if latest_odds.home_spread else None,
             "over_under": float(latest_odds.over_under)
                 if latest_odds.over_under else None,
-            "projected_home_score": float(latest_odds.projected_home_score)
-                if latest_odds.projected_home_score else None,
-            "projected_away_score": float(latest_odds.projected_away_score)
-                if latest_odds.projected_away_score else None,
+            "projected_home_score": None if _pinned_hcap else (
+                float(latest_odds.projected_home_score)
+                if latest_odds.projected_home_score else None
+            ),
+            "projected_away_score": None if _pinned_hcap else (
+                float(latest_odds.projected_away_score)
+                if latest_odds.projected_away_score else None
+            ),
+            **(
+                {
+                    "projection_captured_at": None,
+                    "projection_bookmaker_count": 0,
+                    "projection_unavailable": _PINNED_HANDICAP_REASON,
+                }
+                if _pinned_hcap
+                else {}
+            ),
         }
+
+    if is_finished_status(response.get("status")) and isinstance(
+        response.get("current_odds"), dict
+    ):
+        _ev_sport_key = _loaded_event_sport_key(event)
+        response["current_odds"] = apply_settled_current_odds(
+            response["current_odds"],
+            resolve_hero(event),
+            sport_key=_ev_sport_key,
+            include_rendered=True,
+        )
 
     return response
 
 
-def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], gei_percentiles: dict = None, team_lookup: dict = None, time_series_metrics=None, folded_sources: Optional[dict] = None, folded_opening: Optional[tuple] = None) -> dict:
+def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], gei_percentiles: dict = None, team_lookup: dict = None, time_series_metrics=None, folded_sources: Optional[dict] = None, folded_opening: Optional[tuple] = None, three_way_books: Optional[tuple[float, float]] = None) -> dict:
     """Format event for API response with aggregated odds from multiple bookmakers.
 
     ``folded_sources`` is this event's #3810 fold — its own readings plus any
@@ -37646,7 +38728,9 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
     under-informed, never wrong in the other direction (both folds are strictly
     additive gap-fills).
     """
-    response = _format_event(event, gei_percentiles, team_lookup=team_lookup)
+    response = _format_event(
+        event, gei_percentiles, team_lookup=team_lookup, probability_sources=folded_sources
+    )
 
     # One resolution of the opening pair, read by BOTH sites below. Two
     # resolutions is how a card's printed "Opened X/Y" and the highlight score
@@ -37693,10 +38777,14 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
     # and the per-book table from the sportsbook aggregate (those ARE sportsbook
     # data). compute_aggregate_probability now uses the same weighted median the
     # chart's blend line uses.
+    _hero_view = (
+        FoldedBlendView(event, folded_sources) if folded_sources is not None else event
+    )
     from app.utils.aggregation import (
         compute_aggregate_probability_tiered as _agg_prob_tiered,
     )
-    _blend, _blend_tier = _agg_prob_tiered(event)
+    _blend, _blend_tier = _agg_prob_tiered(_hero_view)
+    _list_three_way: Optional[tuple[float, float, float]] = None
 
     if odds_data and odds_data.get("aggregated"):
         aggregated = odds_data["aggregated"]
@@ -37737,25 +38825,50 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
         _served_home = current_odds_probability(
             _blend, _blend_tier, aggregated["home_probability"], event.status
         )
-        # Derived exactly as `_hero_away` is, from whichever home number is
-        # being served — one claim per ship. Substituting the books' own away
-        # consensus here would be a second, separate change: on a draw-priced
-        # sport it is not the complement, so `printable_away` would start
-        # printing an away figure the surface withholds today.
-        _served_away = (
-            round(1.0 - _served_home, 6)
-            if _served_home is not None
-            else None
-        )
+        _served_draw: Optional[float] = None
+        _list_home_pct: Optional[int] = None
+        _list_draw_pct: Optional[int] = None
+        _list_away_pct: Optional[int] = None
+        if sport_prices_a_draw(_event_sport_key):
+            _bh_list = aggregated["home_probability"]
+            _ba_list = aggregated["away_probability"]
+            if (
+                (_bh_list is None or _ba_list is None)
+                and three_way_books is not None
+            ):
+                _bh_list, _ba_list = three_way_books
+            _list_three_way = resolve_three_way_probabilities(
+                _served_home,
+                books_home=_bh_list,
+                books_away=_ba_list,
+                sport_key=_event_sport_key,
+            )
+            if _list_three_way is not None:
+                _served_home, _served_away, _served_draw = _list_three_way
+                _list_home_pct, _list_draw_pct, _list_away_pct = rendered_three_way_percents(
+                    _served_home, _served_draw, _served_away
+                )
+            else:
+                # #13131: a draw-priced list card must show all three numbers or
+                # none — never one orphan home chance or a two-way complement.
+                _served_home = None
+                _served_away = None
+                _served_draw = None
+        else:
+            _served_away = (
+                round(1.0 - _served_home, 6)
+                if _served_home is not None
+                else None
+            )
+            _served_away = printable_away(_served_away, _served_home, _event_sport_key)
 
-        response["current_odds"] = {
+        aggregated = _withhold_pinned_handicap_projection(
+            aggregated, _event_sport_key
+        )
+        _list_current_odds = {
             "captured_at": captured_at.isoformat() if captured_at else None,
             "home_probability": _served_home,
-            # #6960 site 1. The home leg is NOT the defect and is left exactly
-            # as it is; only the invented slot goes.
-            "away_probability": printable_away(
-                _served_away, _served_home, _event_sport_key
-            ),
+            "away_probability": _served_away,
             "spread": aggregated["home_spread"],
             "over_under": aggregated["over_under"],
             "projected_home_score": aggregated["projected_home_score"],
@@ -37763,9 +38876,13 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
             "bookmaker_count": aggregated["bookmaker_count"],
             # #12595: the pair's own stamp, count and reason (scheduled, in scope).
             **_recent_projection_keys(aggregated),
-            # #1854 (UX-P077): the second hero site. Same removal, same reason as
-            # `get_event` above - this object's `home_probability` is `_blend`.
         }
+        if sport_prices_a_draw(_event_sport_key):
+            _list_current_odds["draw_probability"] = _served_draw
+            _list_current_odds["home_rendered_percent"] = _list_home_pct
+            _list_current_odds["away_rendered_percent"] = _list_away_pct
+            _list_current_odds["draw_rendered_percent"] = _list_draw_pct
+        response["current_odds"] = _list_current_odds
 
         # Include ALL bookmakers in the table (not just filtered ones)
         # so users see every book we ever had odds from
@@ -37808,8 +38925,11 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
                         "projected_away_score": float(s.projected_away_score)
                             if s.projected_away_score else None,
                     })
-            # #8231: a book's projected score that crowns its own moneyline underdog is refused.
-            response["bookmaker_odds"] = refuse_incoherent_projections(bookmaker_odds_list)
+            # #8231 / #13112: a book's projected score that crowns its own moneyline
+            # underdog or comes from a pinned handicap (puck/run line) is refused.
+            response["bookmaker_odds"] = refuse_incoherent_projections(
+                bookmaker_odds_list, sport_key=_event_sport_key
+            )
 
     # #240 Item 1: emit a single, unambiguous hero probability (the blend) so
     # clients bind to ONE number per question instead of a divergent field.
@@ -37826,29 +38946,118 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
     # only half of "one number": `get_event` folds a suppressed twin's readings
     # in and this arm did not, so a twin-paired match could still print two
     # different percentages from one shared function.
+    _hero_inputs: list[tuple[str, float]] = []
+    _hero_method: list[str] = []
     _hero = resolve_hero(
-        FoldedBlendView(event, folded_sources) if folded_sources is not None else event
+        _hero_view, source_inputs=_hero_inputs, source_method=_hero_method,
     )
+    _list_effective_hero = _hero
     if _hero is not None:
         response["hero_probability"] = _hero.home_probability
-        # #6960 site 2 — the field native, My Stuff and share cards bind to.
-        #
-        # THE SETTLED ARM IS EXEMPT, and not because of its arithmetic. A
-        # settled hero is 1.0/0.0, or 0.5/0.5 on a draw, and every one of those
-        # pairs sums to exactly 1.0 — so the predicate alone would read a RESULT
-        # as a fabricated forecast and delete the losing side of a finished
-        # soccer match. "Settled means settled" outranks this issue: a result is
-        # not a price and was never derived from the home number. The gate is
-        # the hero's own `source` vocabulary, exactly as in `get_event`.
         _hero_away_out = _hero.away_probability
         if _hero.source != "settled":
-            _hero_away_out = printable_away(
-                _hero_away_out, _hero.home_probability, _event_sport_key
-            )
+            if sport_prices_a_draw(_event_sport_key):
+                _agg_hero = (odds_data or {}).get("aggregated") or {}
+                _bh_hero = _agg_hero.get("home_probability")
+                _ba_hero = _agg_hero.get("away_probability")
+                if (_bh_hero is None or _ba_hero is None) and three_way_books is not None:
+                    _bh_hero, _ba_hero = three_way_books
+                if (
+                    (_bh_hero is None or _ba_hero is None)
+                    and _hero.source == "opening"
+                    and _open_home is not None
+                    and _open_away is not None
+                ):
+                    _bh_hero, _ba_hero = _open_home, _open_away
+                _lh3 = resolve_three_way_probabilities(
+                    _hero.home_probability,
+                    books_home=_bh_hero,
+                    books_away=_ba_hero,
+                    sport_key=_event_sport_key,
+                )
+                if _lh3 is not None:
+                    response["hero_probability"] = _lh3[0]
+                    _hero_away_out = _lh3[1]
+                    response["hero_probability_draw"] = _lh3[2]
+                    if response.get("current_odds") is None:
+                        _hp3, _dp3, _ap3 = rendered_three_way_percents(
+                            _lh3[0], _lh3[2], _lh3[1]
+                        )
+                        response["current_odds"] = {
+                            "home_probability": _lh3[0],
+                            "away_probability": _lh3[1],
+                            "draw_probability": _lh3[2],
+                            "home_rendered_percent": _hp3,
+                            "away_rendered_percent": _ap3,
+                            "draw_rendered_percent": _dp3,
+                        }
+                else:
+                    # #13131: a draw-priced list card must show all three numbers
+                    # or none — never one orphan home chance.
+                    response["hero_probability"] = None
+                    _hero_away_out = None
+                    response["hero_probability_draw"] = None
+                    _list_effective_hero = None
+            else:
+                _hero_away_out = printable_away(
+                    _hero_away_out, _hero.home_probability, _event_sport_key
+                )
         response["hero_probability_away"] = _hero_away_out
         response["hero_probability_source"] = _hero.source
         if _hero.settled_result is not None:
             response["hero_settled_result"] = _hero.settled_result
+
+    # #13172 Option B — settled means settled at the serving boundary only
+    # (current_home_prob / current_away_prob flowing to compute_highlight stay
+    # untouched so no highlight flag or score shifts).
+    if is_finished_status(response.get("status")):
+        if _hero is not None and _hero.source == "settled" and sport_prices_a_draw(_event_sport_key):
+            _sc = settled_current_chance(_hero, sport_key=_event_sport_key)
+            response["hero_probability"] = _sc.home_probability
+            response["hero_probability_away"] = _sc.away_probability
+            response["hero_probability_draw"] = _sc.draw_probability
+        if isinstance(response.get("current_odds"), dict):
+            response["current_odds"] = apply_settled_current_odds(
+                response["current_odds"],
+                _hero,
+                sport_key=_event_sport_key,
+                include_rendered=True,
+            )
+
+    # #12581: list/search headlines carry the same admitted evidence as detail.
+    # The fold was read in the existing batch; formatting adds no query or clock.
+    from app.utils.source_mark import headline_source_marks
+
+    _list_mark_three_way = (
+        (
+            response.get("hero_probability"),
+            response.get("hero_probability_away"),
+            response.get("hero_probability_draw"),
+        )
+        if (
+            not is_finished_status(response.get("status"))
+            and response.get("hero_probability") is not None
+            and response.get("hero_probability_away") is not None
+            and response.get("hero_probability_draw") is not None
+        )
+        else None
+    )
+    _list_agg_books = (odds_data or {}).get("aggregated") or {}
+    _list_books_three_way = (
+        (_list_agg_books.get("home_probability"), _list_agg_books.get("away_probability"))
+        if (
+            _list_agg_books.get("home_probability") is not None
+            and _list_agg_books.get("away_probability") is not None
+        )
+        else three_way_books
+    )
+    response["source_mark"], response["away_source_mark"] = headline_source_marks(
+        _hero_view, _list_effective_hero, _hero_inputs,
+        method=_hero_method[0] if _hero_method else None,
+        away_available=response.get("hero_probability_away") is not None,
+        three_way_probs=_list_mark_three_way,
+        books_three_way=_list_books_three_way,
+    )
 
     # Compute highlight data (Level 1 + Level 2 if time_series available)
     # #12824 (226: A): an ESPN-only pregame number is never diffed against the
@@ -37921,27 +39130,28 @@ def _format_event_with_aggregated_odds(event: Event, odds_data: Optional[dict], 
     if _open_home and opening_consensus_has_frozen(
         event.commence_time, event.status, datetime.now(timezone.utc)
     ):
-        response["opening_odds"] = {
+        _list_open_away = printable_away(
+            float(_open_away) if _open_away else None,
+            float(_open_home),
+            _event_sport_key,
+        )
+        _list_opening_obj = {
             "home_probability": float(_open_home),
-            # #6960 site 3. This arm never derived `1 - home`, so what it drops
-            # is only a STORED pair that is itself an exact complement. A
-            # de-vigged three-way opening (0.3107 / 0.4216, sum 0.7323) is a
-            # real away price and survives — deleting one we can source is the
-            # mirror-image defect of printing one we cannot.
-            "away_probability": printable_away(
-                float(_open_away) if _open_away else None,
-                float(_open_home),
-                _event_sport_key,
-            ),
-            # #5414: `is not None`, not truthiness. A pick'em game opens at a
-            # spread of exactly 0.0 — falsy — so this reported "no opening line"
-            # for 557 of the 7,717 events with an opening spread (7.2%, measured
-            # 2026-09-11 over 90 days). The card reading this cannot tell a
-            # pick'em from an unpriced game.
+            "away_probability": _list_open_away,
             "spread": float(event.opening_home_spread) if event.opening_home_spread is not None else None,
             "over_under": float(event.opening_over_under) if event.opening_over_under is not None else None,
             "favorite": event.opening_favorite,
         }
+        if sport_prices_a_draw(_event_sport_key):
+            _list_open_3 = resolve_three_way_probabilities(
+                float(_open_home),
+                books_home=float(_open_home),
+                books_away=_list_open_away,
+                sport_key=_event_sport_key,
+            )
+            if _list_open_3 is not None:
+                _list_opening_obj["draw_probability"] = _list_open_3[2]
+        response["opening_odds"] = _list_opening_obj
 
     return response
 
@@ -39222,8 +40432,8 @@ def _build_search_top_outcomes(
     recalled through an OUTCOME name carry that outcome. See
     `_search_query_matched_leg`.
 
-    ``lean=True`` returns the minimal typeahead payload (name / probability /
-    movement only — no id/odds/rank) to keep the dropdown response small.
+    ``lean=True`` returns the typeahead payload (name / probability / movement
+    and source mark, with no id/odds/rank) to keep the dropdown response small.
     Placeholder outcomes are filtered; probabilities are #23-normalized so the
     displayed distribution reads sensibly (e.g. "Lakers 62% · Cavs 18%").
 
@@ -39260,6 +40470,8 @@ def _build_search_top_outcomes(
         reader_change_24h,
     )
 
+    source_market = market
+    source_outcomes = {o.id: o for o in market.outcomes}
     _verified_changed = False
     if verified is not None:
         market = _VerifiedMarket(market, verified.overlay, verified.display_overlay)
@@ -39444,8 +40656,18 @@ def _build_search_top_outcomes(
     # recur. Completed from each rung's own ticker; see
     # `game_market_club_names.repair_field_outcome_name`.
     threshold_label = market_threshold_label(market)  # #9383
+    market_name = getattr(market, "name", None)
     named = [
-        (o, reader_outcome_name(o.external_id, o.name, threshold_label) or o.name)
+        (
+            o,
+            reader_outcome_name(
+                getattr(o, "external_id", None),
+                o.name,
+                threshold_label,
+                market_name=market_name,
+            )
+            or o.name,
+        )
         for o in top
     ]
     # #6195: A `0.0` IS A PRICE, AND THIS IS THE LINE THAT PRINTED IT AS A DASH.
@@ -39520,6 +40742,8 @@ def _build_search_top_outcomes(
             }
             for o, name in named
         ]
+    # Keep identity separately: lean rows have no id and names can repeat.
+    source_by_row = {id(row): source_outcomes[o.id] for (o, _name), row in zip(named, out)}
     # #6993: null the refused price, keyed on presence, exactly as the detail,
     # group, browse and faceted arms do — `WITHHELD_PRICE_FIELDS` is the one
     # place the spellings of "the price" are listed, so `movement` (this
@@ -39645,6 +40869,12 @@ def _build_search_top_outcomes(
     out = _drop_dominant_field_outcomes(
         out, lambda o: o.get("name"), lambda o: o.get("probability")
     )
+    from app.utils.futures_source_mark import futures_card_source_mark
+
+    for row in out:
+        row["source_mark"] = futures_card_source_mark(
+            source_market, source_by_row[id(row)], row, verified=verified,
+        )
     return _leader_pick_order(out)  # #993 shared leader-pick (Other/Field never headlines)
 
 
@@ -41120,6 +42350,71 @@ async def _search_verified_titles(
     return out
 
 
+_SUPER_BOWL_PHRASE = re.compile(r"\bsuper\s*bowl\b", re.IGNORECASE)
+_SUPER_BOWL_TITLE_WORDS = frozenset(
+    {"the", "who", "will", "win", "wins", "winner", "champion", "championship", "nfl", "2027"}
+)
+
+
+def _super_bowl_query_matches(market: FuturesMarket, words: set[str]) -> bool:
+    return not words or any(
+        words <= set(_SEARCH_WORD.findall(name.casefold()))
+        for outcome in market.outcomes
+        for name in (
+            outcome.name or "",
+            *curated_team_aliases("americanfootball_nfl", outcome.name or ""),
+        )
+    )
+
+
+async def _route_super_bowl_search(
+    db: AsyncSession, markets: list, query: str, deadline: float
+) -> list:
+    """Recall the reviewed title board or replace its alternate URL in place."""
+    names_title = _SUPER_BOWL_PHRASE.search(query) is not None
+    has_alias = any(m.id == SUPER_BOWL_2027_ALIAS_ID for m in markets)
+    if not names_title and not has_alias:
+        return markets
+
+    canonical = next(
+        (m for m in markets if _is_current_2027_super_bowl(m)), None
+    )
+    if canonical is None:
+        if time.monotonic() >= deadline:
+            return markets
+        savepoint = await db.begin_nested()
+        try:
+            bound_ms = min(250, max(1, int((deadline - time.monotonic()) * 1000)))
+            await _apply_search_statement_timeout(db, deadline, bound_ms=bound_ms)
+            canonical = await _load_current_2027_super_bowl(db)
+        except Exception as exc:
+            await savepoint.rollback()
+            if not _is_query_timeout(exc):
+                raise
+            logger.warning("2027 Super Bowl search lookup timed out")
+            return markets
+        else:
+            await savepoint.commit()
+            await _apply_search_statement_timeout(db, deadline)
+    if canonical is None:
+        return markets
+
+    words = set(_SEARCH_WORD.findall(_SUPER_BOWL_PHRASE.sub("", query.casefold())))
+    if not has_alias and not _super_bowl_query_matches(canonical, words - _SUPER_BOWL_TITLE_WORDS):
+        return markets
+
+    result = []
+    inserted = False
+    for market in markets:
+        if market.id in {SUPER_BOWL_2027_BOARD_ID, SUPER_BOWL_2027_ALIAS_ID}:
+            if not inserted:
+                result.append(canonical)
+                inserted = True
+        else:
+            result.append(market)
+    return result if inserted else [canonical, *result]
+
+
 def _dedup_verified_title_markets(markets, verified_by_id: dict) -> list:
     """One card for an identity the resolver has proved, preserving rank order."""
     seen = set()
@@ -41219,7 +42514,7 @@ def _format_futures_for_search(
         # still do not. Applied to THIS output only: the dedup, family and
         # eligibility steps upstream read `market.name`.
         "name": rewrite_question_colon_display(rewrite_venue_league_vocabulary(
-            getattr(verified, "canonical_market_name", None) or market.name
+            getattr(verified, "canonical_market_name", None) or futures_reader_name(market)
         )),
         "sport": market.sport.key if market.sport else None,
         # #6444: the FUTURES arm of the same search response Alex photographed.

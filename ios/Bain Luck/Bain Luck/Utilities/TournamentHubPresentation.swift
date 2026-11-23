@@ -62,6 +62,10 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
         /// (notice 34).
         let winnerPrematchText: String?
         let loserPrematchText: String?
+        var winnerPrematchNumber: Double? = nil
+        var winnerPrematchSourceMark: SourceMark? = nil
+        var loserPrematchNumber: Double? = nil
+        var loserPrematchSourceMark: SourceMark? = nil
     }
 
     nonisolated struct BoardRow: Equatable, Sendable, Identifiable {
@@ -434,6 +438,11 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
             home: loser.prematchProbability
         )
 
+        let winnerRendered = priorPercents.first ?? nil
+        let loserRendered = priorPercents.last ?? nil
+        let winnerText = prematchText(winner.prematchProbability, winnerRendered)
+        let loserText = prematchText(loser.prematchProbability, loserRendered)
+
         return ResultRow(
             id: result.id,
             eventId: eventId,
@@ -445,9 +454,21 @@ nonisolated struct TournamentHubPresentation: Equatable, Sendable {
             loserName: loser.displayName,
             score: score,
             completionNote: note,
-            winnerPrematchText: prematchText(winner.prematchProbability, priorPercents.first ?? nil),
-            loserPrematchText: prematchText(loser.prematchProbability, priorPercents.last ?? nil)
+            winnerPrematchText: winnerText,
+            loserPrematchText: loserText,
+            winnerPrematchNumber: winnerText == nil ? nil : alignedPrematchNumber(winner.prematchProbability, winnerRendered),
+            winnerPrematchSourceMark: winnerText == nil ? nil : winner.prematchSourceMark,
+            loserPrematchNumber: loserText == nil ? nil : alignedPrematchNumber(loser.prematchProbability, loserRendered),
+            loserPrematchSourceMark: loserText == nil ? nil : loser.prematchSourceMark
         )
+    }
+
+    private static func alignedPrematchNumber(_ probability: Double?, _ rendered: Int?) -> Double? {
+        guard let probability else { return nil }
+        if let rendered, probability >= 0.01, probability <= 0.99 {
+            return Double(rendered) / 100.0
+        }
+        return probability
     }
 
     /// A prior we do not have prints NOTHING, not a dash.

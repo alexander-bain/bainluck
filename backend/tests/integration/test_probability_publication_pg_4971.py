@@ -8,7 +8,7 @@ double has none of them, so this file runs only against a real PostgreSQL.
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import event as sa_event, select, text, update
@@ -606,7 +606,9 @@ async def test_actual_betting_ingest_records_its_book_population(
             session,
             event,
             {"bookmakers": [{"key": f"book{i}"} for i in range(3)]},
-            datetime.now(timezone.utc),
+            # Pregame: a fake snapshot carries no `captured_at`, and #12938's live
+            # rule never counts an undated line (it has its own tests).
+            datetime.now(timezone.utc) + timedelta(hours=1),
             {},
             update_opening=False,
         )
@@ -646,7 +648,9 @@ async def _ingest(engine, monkeypatch, prices, **kwargs):
             session,
             event,
             {"bookmakers": [{"key": f"book{i}"} for i in range(len(prices))]},
-            datetime.now(timezone.utc),
+            # Pregame: a fake snapshot carries no `captured_at`, and #12938's live
+            # rule never counts an undated line (it has its own tests).
+            datetime.now(timezone.utc) + timedelta(hours=1),
             {},
             update_opening=False,
             **kwargs,

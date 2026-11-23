@@ -6,8 +6,8 @@
 # known-good combo (full backend suite green locally). Re-evaluate before bumping.
 fastapi==0.136.3
 starlette==1.1.0
-uvicorn[standard]>=0.27.0
-python-dotenv>=1.2.2
+uvicorn[standard]==0.54.0
+python-dotenv==1.2.4
 
 # Database
 # #8454 (2026-09-24): SQLAlchemy 2.1.0 (PyPI 20:12Z) stopped installing greenlet,
@@ -15,66 +15,68 @@ python-dotenv>=1.2.2
 # import. `[asyncio]` declares greenlet explicitly (2.0 and 2.1 alike), and `<2.1`
 # keeps a minor release with removals from arriving untested. Widen the bound by
 # testing 2.1, not by deleting it (guard: tests/test_requirements_sqlalchemy_asyncio_8454.py).
-sqlalchemy[asyncio]>=2.0.50,<2.1
-asyncpg>=0.31.0
-psycopg2-binary>=2.9.9
-alembic>=1.13.1
+sqlalchemy[asyncio]==2.0.58
+asyncpg==0.32.0
+psycopg2-binary==2.9.13
+alembic==1.20.1
 
 # HTTP Client (for odds API)
-httpx[http2]>=0.28.1
+httpx[http2]==0.28.1
 
 # Fast JSON decode (#995 attempt-10): stdlib json.loads holds the GIL for the
 # whole parse of a giant Kalshi nested-markets page (~67s observed), freezing the
 # asyncio loop so no wait_for/deadline could fire → poll SIGKILL before create.
 # orjson parses ~5-10x faster (much shorter GIL hold). Used behind an
 # ImportError fallback so a missing wheel degrades to json, never crashes.
-orjson>=3.10.0
+orjson==3.13.0
 
 # Kalshi WebSocket (real-time prices + settlement push)
-websockets>=13.0
-cryptography>=42.0.0
+websockets==17.4
+cryptography==50.0.2
 
 # Background Tasks
 # Keep the reviewed task-binding contract; 5.7 requires a separate upgrade.
 celery==5.6.3
-redis>=5.0.1
+# Pin to production-verified 8.1.0; redis 8.2.0 (PyPI Nov 23) hangs/times out #10090 async Redis tests in CI.
+redis==8.1.0
 
 # Rate Limiting
-limits>=5.0.0
+limits==5.8.0
 
 # Validation
-pydantic>=2.13.4
-pydantic-settings>=2.14.1
+pydantic==2.14.4
+pydantic-settings==2.16.3
 
 # Auth (optional)
-firebase-admin>=6.3.0
-PyJWT>=2.8.0
+firebase-admin==7.8.0
+PyJWT==2.15.1
 
 # Google Sheets API (ground truth enrichment)
-google-api-python-client>=2.100.0
+google-api-python-client==2.202.0
 
 # GA4 Data API (admin analytics)
-google-analytics-data>=0.18.0
+google-analytics-data==0.23.3
 
 # Logging
-python-json-logger>=2.0.0
+python-json-logger==4.2.0
 
 # Utilities
-python-dateutil>=2.8.2
-PyYAML>=6.0  # Horizon Calendar (majors_calendar.yaml, Queue #223)
+python-dateutil==4.0.0
+PyYAML==6.0.3  # Horizon Calendar (majors_calendar.yaml, Queue #223)
+Pillow==12.3.0  # TestFlight screenshot compression & vision resize (#12857, 249-A)
 
 # LLM (for smart categorization, etc.)
-openai>=1.12.0
-anthropic>=0.45.0
+openai==3.55.1
+anthropic==2.11.0
 
 # Error Tracking
-sentry-sdk[fastapi,celery]>=2.0.0
+sentry-sdk[fastapi,celery]==2.75.0
 
 # Development
-pytest>=7.4.4
-pytest-asyncio>=0.23.3
-black>=24.1.0
-ruff>=0.1.13
+pytest==9.2.0
+pytest-asyncio==1.5.0
+black==26.10.1
+ruff==0.17.6
 # Real Postgres parser for the staged-census contract guard (CAL-P164/P165).
 # `test_calibration_staged_census_contract_p164.py` reads the columns the frozen
 # statement actually EMITS out of the rendered SQL, because `AS <name>` occurs all
@@ -87,4 +89,81 @@ ruff>=0.1.13
 # and `named_selects` returning something other than the outer projection would red
 # the whole backend job rather than one test. Pinned to the proven major; widen it
 # by testing it, not by deleting it.
-sqlglot>=30.14.0,<31
+sqlglot==30.33.0
+
+# Full transitive dependency lock (#13491): all remaining 73 packages installed by
+# the 41de6f5c (v6586) Heroku deploy build log, exact-pinned alongside the 33 direct
+# declarations above so every production and CI install resolves the identical 106-library graph.
+amqp==5.4.2
+annotated-doc==0.0.7
+annotated-types==0.8.0
+anyio==4.16.0
+billiard==4.3.2
+cachecontrol==0.15.0
+certifi==2026.11.20
+cffi==2.1.1
+charset-normalizer==3.5.3
+click==8.5.1
+click-didyoumean==0.3.1
+click-plugins==1.1.1.2
+click-repl==0.4.1
+deprecated==1.3.1
+docstring-parser==0.18.0
+google-api-core==2.44.0
+google-auth==2.63.1
+google-auth-httplib2==0.4.4
+google-cloud-core==2.8.0
+google-cloud-firestore==2.34.1
+google-cloud-storage==3.17.1
+google-crc32c==1.9.0
+google-resumable-media==2.11.0
+googleapis-common-protos==1.76.0
+greenlet==3.5.6
+grpcio==1.85.3
+grpcio-status==1.85.3
+h11==0.16.0
+h2==4.4.1
+hpack==4.2.0
+httpcore==1.0.9
+httpcore2==2.16.2
+httplib2==0.32.1
+httptools==0.9.0
+httpx2==2.16.2
+hyperframe==6.1.0
+idna==3.20
+iniconfig==2.3.1
+jiter==0.19.0
+kombu==5.7.0
+Mako==1.4.3
+MarkupSafe==3.0.4
+msgpack==1.2.4
+mypy-extensions==1.2.0
+opentelemetry-api==1.45.2
+packaging==26.3
+pathspec==1.1.1
+platformdirs==4.14.8
+pluggy==1.7.0
+prompt-toolkit==3.0.53
+proto-plus==1.29.0
+protobuf==7.36.2
+pyasn1==0.6.5
+pyasn1-modules==0.4.2
+pycparser==3.12
+pydantic-core==2.50.5
+pygments==2.21.0
+pyparsing==3.3.3
+pytokens==0.4.1
+requests==2.34.2
+sniffio==1.3.1
+truststore==0.10.5
+typing-extensions==4.16.0
+typing-inspection==0.4.5
+tzdata==2026.6
+tzlocal==5.4.5
+uritemplate==4.2.0
+urllib3==2.8.0
+uvloop==0.23.0
+vine==5.1.0
+watchfiles==1.3.0
+wcwidth==0.9.5
+wrapt==2.5.2

@@ -525,9 +525,17 @@ class TestResponseShapeIsUnchanged:
 
         assert first.status_code == 200
         assert second.status_code == 200
+        assert second.headers["X-Feed-Cache"] == "hit"
         assert first.json() == second.json()
-        # Three executes total across TWO page loads: market+snapshots, then
-        # market only. A fourth would mean the cache did not hold.
+        assert mock_db.execute.call_count == 2
+
+        third = await client.get("/api/futures/86832?fresh=true")
+        assert third.status_code == 200
+        assert third.headers["X-Feed-Cache"] == "bypass"
+        assert third.json() == first.json()
+        # Three executes total across the cold build and the fresh bypass:
+        # market+snapshots on first, memory hit on second, market-only on third
+        # because LAT-P127's sources cache still avoids the snapshot query.
         assert mock_db.execute.call_count == 3
 
 

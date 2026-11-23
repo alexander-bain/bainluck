@@ -749,4 +749,59 @@ describe("#10357 round-up card render", () => {
       refusal: "bad_row",
     });
   });
+
+  it("#13189: strip ('next 3 games') cards never truncate opponent or date at 288px desktop width", () => {
+    const { compactStripDateLabel } = require("@/lib/discover/roundupCard");
+    expect(compactStripDateLabel("Sat Nov 21")).toBe("Sat 21");
+    expect(compactStripDateLabel("Sun Nov 22")).toBe("Sun 22");
+    expect(compactStripDateLabel("Tue Nov 24")).toBe("Tue 24");
+    expect(compactStripDateLabel("Today")).toBe("Today");
+
+    const stripContract: FeedRoundupContract = {
+      kicker: "NBA · NEXT 3 GAMES",
+      tag: "NBA",
+      presentation: "strip",
+      order: "sequence",
+      footer: "Boston Celtics win odds across the next 3 scheduled games.",
+      rows: [
+        {
+          event_id: 91001,
+          label: "at Timberwolves · Sat Nov 21",
+          opponent_label: "at Timberwolves",
+          date_label: "Sat Nov 21",
+          probability: 0.61,
+          rendered_percent: 61,
+          observed_at: FRESH,
+        },
+        {
+          event_id: 91002,
+          label: "at Trail Blazers · Sun Nov 22",
+          opponent_label: "at Trail Blazers",
+          date_label: "Sun Nov 22",
+          probability: 0.72,
+          rendered_percent: 72,
+          observed_at: FRESH,
+        },
+        {
+          event_id: 91003,
+          label: "at Warriors · Tue Nov 24",
+          opponent_label: "at Warriors",
+          date_label: "Tue Nov 24",
+          probability: 0.54,
+          rendered_percent: 54,
+          observed_at: FRESH,
+        },
+      ],
+    };
+    const html = render(stripContract, { title: "Boston Celtics: next 3 games" });
+    expect(html).toContain('data-presentation="strip"');
+    expect(html).toContain("at Timberwolves");
+    expect(html).toContain("at Trail Blazers");
+    expect(html).toContain("at Warriors");
+    expect(html).toContain("Sat 21");
+    expect(html).toContain("Sun 22");
+    expect(html).toContain("Tue 24");
+    expect(html).not.toContain("truncate");
+    expect(html).not.toContain("…");
+  });
 });

@@ -665,7 +665,7 @@ class TestBothSurfacesCallIt:
     def test_the_typeahead_futures_row_rewrites_its_text(self):
         src = inspect.getsource(events.typeahead_search)
         assert (
-            '"text": rewrite_venue_league_vocabulary(market.name),' in src
+            '"text": rewrite_venue_league_vocabulary(futures_reader_name(market)),' in src
         ), "the dropdown serializes the raw venue name again"
 
     def test_the_typeahead_no_longer_serializes_the_raw_name(self):

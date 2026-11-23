@@ -39,10 +39,58 @@ VENUE_CLUB_SPELLINGS: dict[str, str] = {
     # Odds API's spelling. Swept all ten NBL clubs on 2026-09-30 against the
     # names Polymarket-born rows carry: the other nine are byte-equal.
     "South East Melbourne Phoenix": "S.E. Melbourne Phoenix",
+    # #13238: Bundesliga exonym — ESPN/Polymarket/Kalshi "FC Cologne" vs Odds API
+    # "1. FC Köln" (production pair 15351899 / 15342140 on 2026-11-20).
+    "FC Cologne": "1. FC Köln",
+    # #13238: EuroLeague multi-word venue spellings vs Odds API club names
+    # (production pairs 15349594 / 15350188, 15348466 / 15350189, and
+    # 15351534 on 2026-11-20).
+    "Besiktas JK": "Beşiktaş J.K.",
+    "KK Partizan Belgrade": "KK Partizan NIS",
+    "BC Olympiakos Piraeus": "Olympiacos B.C.",
+    "FC Bayern München": "Bayern Munich",
+    # #13238: Remaining EuroLeague club spellings (production pairs 15351540 /
+    # 15352078 and 15351920 / 15352631 on 2026-11-23).
+    "Pallacanestro Olimpia Milano": "Olimpia Milano",
+    "Baskonia Vitoria-Gasteiz": "Saski Baskonia",
+    "Anadolu Efes SK": "Anadolu Efes",
+    "Maccabi Tel-Aviv": "Maccabi Tel Aviv",
+    "Hapoel Tel-Aviv": "Hapoel Tel Aviv",
+    "ASVEL Lyon-Villeurbanne": "ASVEL Lyon Villeurbanne",
+    # #13142: Women's college basketball spelling — Polymarket "Little Rock Trojans"
+    # vs Odds API "Arkansas-Little Rock Trojans" (pair 15347844 / 15351848).
+    "Little Rock Trojans": "Arkansas-Little Rock Trojans",
+}
+
+#: Sport-scoped whole-name spellings where one side is a single city or club
+#: word (e.g. EuroLeague "Barcelona" vs "FC Barcelona Bàsquet"). Scoped by
+#: ``sport_key`` so folding EuroLeague rows never alters another sport's club
+#: (such as La Liga "FC Barcelona"). #13238.
+LEAGUE_CLUB_SPELLINGS: dict[str, dict[str, str]] = {
+    "basketball_euroleague": {
+        "FC Barcelona Bàsquet": "Barcelona",
+        "Beşiktaş J.K.": "Besiktas",
+        "Besiktas JK": "Besiktas",
+        "KK Partizan NIS": "Partizan",
+        "KK Partizan Belgrade": "Partizan",
+        "Olympiacos B.C.": "Olympiacos",
+        "BC Olympiakos Piraeus": "Olympiacos",
+        "Fenerbahce SK": "Fenerbahce",
+        "FC Bayern München": "Bayern Munich",
+        "Pallacanestro Olimpia Milano": "Olimpia Milano",
+        "Saski Baskonia": "Baskonia",
+        "Baskonia Vitoria-Gasteiz": "Baskonia",
+        "Anadolu Efes SK": "Anadolu Efes",
+        "Maccabi Tel-Aviv": "Maccabi Tel Aviv",
+        "Hapoel Tel-Aviv": "Hapoel Tel Aviv",
+        "ASVEL Lyon-Villeurbanne": "ASVEL Lyon Villeurbanne",
+    },
 }
 
 
-def venue_spellings_of(stored_name: object) -> frozenset[str]:
+def venue_spellings_of(
+    stored_name: object, *, sport_key: str | None = None
+) -> frozenset[str]:
     """The lower-cased venue spellings of a club stored as ``stored_name``.
 
     For the exact-name resolvers, which compare ``lower()`` strings. Empty when
@@ -51,8 +99,16 @@ def venue_spellings_of(stored_name: object) -> frozenset[str]:
     if not isinstance(stored_name, str) or not stored_name.strip():
         return frozenset()
     ours = stored_name.strip().lower()
-    return frozenset(
+    spellings = {
         venue.lower()
         for venue, stored in VENUE_CLUB_SPELLINGS.items()
         if stored.lower() == ours
-    )
+    }
+    if sport_key:
+        league_map = LEAGUE_CLUB_SPELLINGS.get(sport_key, {})
+        for left, right in league_map.items():
+            if left.lower() == ours:
+                spellings.add(right.lower())
+            elif right.lower() == ours:
+                spellings.add(left.lower())
+    return frozenset(spellings)

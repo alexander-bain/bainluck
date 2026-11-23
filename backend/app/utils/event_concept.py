@@ -1287,10 +1287,10 @@ class GolfEventAdapter:
         # Lazy import — golf.py pulls a large dependency graph; importing at call
         # time keeps this module (and the route) cheap and circular-import safe.
         from fastapi import HTTPException
-        from app.routes.golf import get_golf_tournament
+        from app.routes.golf import get_golf_tournament_cached_payload
 
         try:
-            data = await get_golf_tournament(slug=slug, db=db)
+            data, _ = await get_golf_tournament_cached_payload(slug=slug, db=db)
         except HTTPException as exc:
             if exc.status_code == 404:
                 return None

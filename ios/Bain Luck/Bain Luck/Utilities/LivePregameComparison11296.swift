@@ -92,7 +92,9 @@ enum LivePregameComparison11296 {
         sport: String?,
         commenceTime: String?,
         current: LiveProjectedFinalAdmission2920.Printed?,
-        projection p: PregameProjection?
+        projection p: PregameProjection?,
+        homeChance: Double? = nil,
+        awayChance: Double? = nil
     ) -> Comparison? {
         guard status == "live", let current, let p else { return nil }
 
@@ -126,7 +128,15 @@ enum LivePregameComparison11296 {
         guard vocab.sportsbookSpreadIsAMargin else { return nil }
         guard let roundedHome = Int(exactly: home.rounded()),
               let roundedAway = Int(exactly: away.rounded()) else { return nil }
-        guard roundedHome != roundedAway || vocab.canEndInATie else { return nil }
+        if ProjectedFinalChanceGuard240A.conflicts(
+            projectedHome: Double(roundedHome),
+            projectedAway: Double(roundedAway),
+            homeChance: homeChance,
+            awayChance: awayChance,
+            sportKey: sport
+        ) {
+            return nil
+        }
 
         return Comparison(
             label: format.period == .regulation

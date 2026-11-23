@@ -1091,13 +1091,15 @@ class TestEveryGatePassOrFail:
         )
 
         # 1. At most 2 sibling-family cards in Discover's first 20 seats (indices 0..19).
+        # (#13093: Liga Profesional Argentina relegation pays lesser-soccer penalty
+        # and demotes outside page 1, so the next unpenalized sibling takes seat 2.)
         first_20_siblings = [
             it["data"]["id"] for it in seated[:20] if _is_sibling_family_bundle(it)
         ]
         assert len(first_20_siblings) == 2
         assert first_20_siblings == [
-            "roundup:liga-profesional-relegation-2026",
             "roundup:nhl-playoffs-2026-27",
+            "roundup:gta-vi-album-features",
         ]
 
         # 2. The remaining 3 sibling-family cards seat after the first 20 seats (index >= 20).
@@ -1105,6 +1107,7 @@ class TestEveryGatePassOrFail:
             it["data"]["id"] for it in seated[20:] if _is_sibling_family_bundle(it)
         ]
         assert len(after_20_siblings) == 3
+        assert "roundup:liga-profesional-relegation-2026" in after_20_siblings
 
         # 3. Never two grouped (round-up) cards in a row anywhere in the seated feed.
         grouped_indices = [

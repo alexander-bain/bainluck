@@ -352,6 +352,9 @@ class TestOrderIndependenceAndStatus:
         _wire(mock_db, siblings=[_datagolf_top5()], cross_source=[_kalshi_win()])
         dg_primary = _win_of(await _get(client), "Matt Wallace")
 
+        from app.utils import futures_page_cache as _fpc
+
+        _fpc._reset_for_tests()
         # Same two markets, discovered in the opposite order.
         mock_db.execute.side_effect = [
             _result_scalar_one_or_none(_datagolf_win()),
