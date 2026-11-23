@@ -52,6 +52,7 @@ EPL = "soccer_epl"
 UCL = "soccer_uefa_champs_league"
 UCL_WOMEN = "soccer_uefa_champs_league_women"
 CLUB_FRIENDLIES = "soccer_club_friendlies"
+COPA_DEL_REY = "soccer_spain_copa_del_rey"
 MLS = "soccer_usa_mls"
 NBA = "basketball_nba"
 MLB = "baseball_mlb"
@@ -140,6 +141,7 @@ async def seed_clubs(session):
         (1060, "Internazionale", SERIE_A, "110", []),
         (1061, "Inter Milan", SERIE_A, "110", []),
         (1062, "Real Madrid", CLUB_FRIENDLIES, "86", []),
+        (1063, "Real Madrid", COPA_DEL_REY, "86", []),
     ]
     wrong_leagues = [
         (1090, "Montreal Canadiens", MLS),
@@ -151,8 +153,10 @@ async def seed_clubs(session):
     ]
     sports = sorted({club[2] for club in clubs + wrong_leagues})
     sport_ids = {sport: index for index, sport in enumerate(sports, 1)}
+    sport_names = {CLUB_FRIENDLIES: "CLUB_FRIENDLIES", COPA_DEL_REY: "Copa del Rey"}
     session.add_all(
-        Sport(id=identifier, key=key, name=key) for key, identifier in sport_ids.items()
+        Sport(id=identifier, key=key, name=sport_names.get(key, key))
+        for key, identifier in sport_ids.items()
     )
     await session.flush()
     session.add_all(
@@ -528,7 +532,8 @@ async def test_empty_redis_returns_ranked_clubs_then_rebuild_filters(
     } == {
         (1001, LA_LIGA, "La Liga"),
         (1008, UCL, "UEFA Champions League"),
-        (1062, CLUB_FRIENDLIES, "Club Friendlies"),
+        (1062, CLUB_FRIENDLIES, "Soccer"),
+        (1063, COPA_DEL_REY, "Copa del Rey"),
     }
     assert [(club["id"], club["name"], club["sport_key"]) for club in clubs] == [
         (1001, "Real Madrid", LA_LIGA),
