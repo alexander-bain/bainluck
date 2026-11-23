@@ -1,0 +1,160 @@
+kind	name	selector	aliases
+topic	Academy Awards	oscars	oscars|oscars award|oscrs|best picture|oscar awards|los oscar|academy award
+topic	Grammy Awards	grammys	grammys|grammy|album of the year|song of the year|record of the year
+topic	Awards shows	awards	awards season|awards shows
+topic	AI	ai	artificial intelligence|openai|ai model|ai lab|large language models
+topic	Fed interest rates	economics/fed	fed|fomc|federal reserve|interest rates|rate cuts|intrest rates
+topic	Inflation	economics/inflation	cpi|consumer prices|inflaton
+topic	Recession	economics/recession	economic recession
+topic	Stock market	economics/markets	s&p 500|s p 500|sp500|nasdaq|dow jones|the markets
+topic	Gas prices	economics/energy/gas	gas price|price of gas|gasoline prices
+topic	Tariffs and trade	economics/trade	tariffs|tariff|trade war|trade deal|trade deals
+topic	Economy	economics	economic news|the economy
+topic	Bitcoin and crypto	crypto	crypto|bitcoin|btc|cryptocurrency
+topic	2028 presidential election	politics/presidential	2028 election|2028 presidential race|president in 2028|runs in 2028|2028
+topic	US elections	politics	elections|us election|american elections|midterms
+topic	Congress	politics/congressional	congress|senate control|controls the senate|house control
+topic	Supreme Court	politics/scotus	scotus|us supreme court
+topic	World politics	politics/international	international politics|uk politics|global politics
+topic	Music	entertainment/music	billboard|billboard number ones
+topic	Movies	entertainment/movies	films|movie|rotten tomatoes|rotten tomatoes scores
+topic	Box office	entertainment/movies_tv/box_office	boxoffice|opening weekend gross
+topic	TV shows	entertainment/tv_streaming	tv|television|streaming shows
+topic	Reality TV	entertainment/movies_tv/reality_tv	the bachelor|survivor|bachelorette|love island
+topic	Tech companies	entertainment/tech_culture	tech|big tech|next iphone|technology companies
+topic	Weather	weather	weather forecasts|hottest year
+topic	Climate	weather/climate	climate change|global warming|warming
+topic	Hurricanes	weather/events/hurricane	hurricane|hurricane season|tropical storms
+sport	NBA	basketball_nba	national basketball association
+sport	NFL	americanfootball_nfl	national football league|nfl mvp
+sport	College football	americanfootball_ncaaf	cfb|ncaa football
+sport	Premier League	soccer_epl	epl|english premier league
+sport	La Liga	soccer_spain_la_liga	spanish la liga
+sport	MLS	soccer_usa_mls	major league soccer
+sport	Formula 1	motorsport_f1	f1|formule 1|formula one
+sport	NASCAR	motorsport_nascar	nascar cup series
+sport	Golf	golf	pga tour|golf majors|all four majors
+sport	Tennis	tennis_atp	all four majors|tennis majors
+sport	The Masters	golf_masters_tournament_winner	masters tournament
+sport	Ryder Cup	event:golf:ryder-cup	ryder cup golf
+sport	Super Bowl	americanfootball_nfl_super_bowl_winner	superbowl
+sport	World Series	baseball_mlb_world_series_winner	the world series
+sport	NBA Finals	basketball_nba_championship_winner	nba championship
+sport	Stanley Cup	icehockey_nhl_championship_winner	stanley cup playoffs
+sport	FIFA World Cup	soccer_fifa_world_cup	world cup|men's world cup
+sport	March Madness	basketball_ncaab_championship_winner	ncaa tournament|ncaa march madness
+sport	UFC	mma_mixed_martial_arts	mma|ultimate fighting championship
+sport	Boxing	boxing_boxing	boxing title fights
+sport	Cricket	cricket_test_match	test cricket
+sport	Rugby	rugbyunion_six_nations	six nations|six nations rugby
+city	Boston	boston	boston teams|boston sports|new england sports
+city	New York	new york	new york city|nyc|new york teams
+city	Los Angeles	la	l a|la|la sports|la teams|los angeles sports
+city	Kansas City	kc	kc|k c|kansas city sports
+city	San Francisco Bay Area	bay area	bay area|sf|san francisco|san francisco bay area sports
+city	Las Vegas	las vegas	vegas|las vegas teams
+city	St. Louis	st louis	saint louis|st louis teams
+city	Philadelphia	philly	philly|philadelphia sports
+city	Washington	dc	dc|d c|washington dc|dc teams
+city	Minneapolis-Saint Paul	twin cities	twin cities|minneapolis|saint paul|st paul
+city	Denver	denver	mile high city
+city	Chicago	chicago	chicago sports|chicago teams
+city	Cleveland	cleveland	cleveland teams
+city	Phoenix	phoenix	phoenix sports
+city	Detroit	detroit	detroit sports
+city	Seattle	seattle	seattle sports
+city	Houston	houston	houston sports
+city	Atlanta	atlanta	atlanta teams
+city	Nashville	nashville	nashville teams
+city	Buffalo	buffalo	buffalo teams
+city	Charlotte	charlotte	charlotte teams
+city	Milwaukee	milwaukee	milwaukee teams
+city	London	london	london football clubs|london teams
+city	Vancouver	vancouver	vancouver teams
+school	Brown	Brown Bears	brown university
+school	Duke	Duke Blue Devils	duke university|duke basketball
+school	Ohio State	Ohio State Buckeyes	the ohio state university|osu buckeyes
+school	Michigan	Michigan Wolverines	university of michigan|michigan football
+school	Michigan State	Michigan State Spartans	mich st|msu spartans
+school	Texas	Texas Longhorns	texas football|university of texas
+school	Colorado	Colorado Buffaloes	colorado football|colorado buffaloes
+school	Stanford	Stanford Cardinal	stanford university
+school	Notre Dame	Notre Dame Fighting Irish	notre dame football|fighting irish
+school	Syracuse	Syracuse Orange	syracuse university
+school	Georgia	Georgia Bulldogs	georgia football|georgia bulldogs|dawgs
+school	Minnesota	Minnesota Golden Gophers	gophers|minnesota gophers
+school	North Carolina	North Carolina Tar Heels	unc|carolina|tar heels|tar heels hoops
+school	Texas A&M	Texas A&M Aggies	texas am|texas a and m
+school	Alabama	Alabama Crimson Tide	bama|alabama football|crimson tide
+school	Auburn	Auburn Tigers	auburn basketball
+school	Florida	Florida Gators	florida gators|uf gators
+school	UConn	UConn Huskies	uconn women|connecticut huskies
+school	Louisville	Louisville Cardinals	louisville cardinals|cards
+school	USC	USC Trojans	southern california|usc trojans
+school	South Carolina	South Carolina Gamecocks	usc|gamecocks|south carolina women's basketball
+school	Miami (FL)	Miami Hurricanes	the u|miami hurricanes
+school	Utah	Utah Utes	utah utes|the u
+school	Indiana	Indiana Hoosiers	hoosiers
+school	Washington	Washington Huskies	washington huskies|dawgs
+school	Mississippi State	Mississippi State Bulldogs	mississippi state bulldogs|dawgs
+school	Tennessee	Tennessee Volunteers	vols|tennessee vols
+school	Penn	Penn Quakers	university of pennsylvania|upenn
+school	Penn State	Penn State Nittany Lions	pennsylvania state university|nittany lions
+school	Ole Miss	Ole Miss Rebels	university of mississippi
+school	Boston College	Boston College Eagles	bc|bc eagles
+school	Miami (OH)	Miami (OH) RedHawks	miami of ohio|miami ohio|miami redhawks
+school	Gonzaga	Gonzaga Bulldogs	gonzaga basketball|zags
+school	Wisconsin	Wisconsin Badgers	wisconsin badgers
+school	NC State	NC State Wolfpack	north carolina state|nc state wolfpack
+school	Florida State	Florida State Seminoles	florida state seminoles|fsu
+team	Liverpool	soccer_epl	liverpool fc|liverpool football club
+team	Real Madrid	soccer_spain_la_liga	real madrid cf|madrid
+team	Paris Saint-Germain	soccer_france_ligue_one	psg|paris saint germain
+team	Barcelona	soccer_spain_la_liga	fc barcelona|barca
+team	Spain	soccer_fifa_world_cup	spanish national team|spain men's national football team
+team	Manchester United	soccer_epl	man u|man united|man utd
+team	Tottenham Hotspur	soccer_epl	tottenham|spurs
+team	Arsenal	soccer_epl	arsenal fc|gunners
+team	Rangers FC	soccer_spl	rangers|glasgow rangers
+team	New York Rangers	icehockey_nhl	rangers|ny rangers
+team	Wolverhampton Wanderers	soccer_epl	wolves|wolverhampton
+team	Inter Miami CF	soccer_usa_mls	inter miami
+team	San Diego FC	soccer_usa_mls	sdfc
+team	Las Vegas Aces	basketball_wnba	aces
+team	New York Liberty	basketball_wnba	liberty
+team	Connecticut Sun	basketball_wnba	the sun
+team	Arizona Cardinals	americanfootball_nfl	cards
+team	St. Louis Cardinals	baseball_mlb	cards
+team	Dallas Cowboys	americanfootball_nfl	america's team
+team	New York Yankees	baseball_mlb	bronx bombers
+team	Toronto Blue Jays	baseball_mlb	the jays
+team	Cleveland Cavaliers	basketball_nba	cavs
+team	Minnesota Timberwolves	basketball_nba	wolves
+team	Montreal Canadiens	icehockey_nhl	habs
+team	Pittsburgh Steelers	americanfootball_nfl	pittsburg stelers
+team	Philadelphia Eagles	americanfootball_nfl	philedelphia eagles
+team	Golden State Warriors	basketball_nba	golden st warriors
+team	Cincinnati Bengals	americanfootball_nfl	cincinatti bengals
+team	Green Bay Packers	americanfootball_nfl	green bay
+person	Lionel Messi	Lionel Messi	messi
+person	Taylor Swift	Taylor Swift	taylor swfit
+person	Scottie Scheffler	Scottie Scheffler	scheffler
+person	Rory McIlroy	Rory McIlroy	mcilroy
+person	Caitlin Clark	Caitlin Clark
+person	Shohei Ohtani	Shohei Ohtani	ohtani
+person	Patrick Mahomes	Patrick Mahomes	mahomes
+person	Elon Musk	Elon Musk	musk
+unsupported	Space	No verified interest destination for this subject	spacex|starship|starship launches|space launches|land on the moon
+unsupported	Science	No verified interest destination for the broad subject
+unsupported	Video games	The existing game-specific collections do not represent the subject as a whole	gta 6|gta vi|gaming
+unsupported	Nobel Prizes	No verified awards collection for this subject	nobel prize
+unsupported	Time Person of the Year	No verified interest destination for this award	time s person of the year
+unsupported	Eurovision	No verified stand-alone interest destination for this contest
+unsupported	World conflicts	No verified interest destination separate from World politics	war in ukraine
+unsupported	Medicine and health	No verified interest destination for this subject	fda approvals|weight loss drugs
+unsupported	Celebrity news	No verified interest destination for this subject	celebrity gossip
+unsupported	MotoGP	No verified league key for this competition	moto gp
+unsupported	WWE	No verified league key for this competition	world wrestling entertainment
+unsupported	SEC	Conference is not a league or separately confirmable interest	sec football
+unsupported	Big Ten	Conference is not a league or separately confirmable interest
+unsupported	India national cricket team	No verified team selector in this catalog	india
