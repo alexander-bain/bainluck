@@ -620,4 +620,45 @@ describe("#12288 Slice 6 — Website parity, error states, and non-repeating fir
       }
     }
   });
+
+  it("343: A: renders 3-team contender_spotlight card tiles with team crests and no initials fallback", () => {
+    const spotlightCard: MachineryCardContract = {
+      slug: "machinery-march-madness-2027",
+      form_id: "contender_spotlight",
+      kicker: "SPORTS · COLLEGE BASKETBALL",
+      title: "Houston leads the Dec 7 AP poll #1 team at 54%",
+      subtitle: "Full AP Poll #1 race alongside teams contending for the 2027 Final Four.",
+      footer: "",
+      section_count: 2,
+      destination_href: "/collections/machinery-march-madness-2027",
+      rows: [
+        {
+          outcome_id: 1,
+          name: "Houston",
+          rendered_percent: 54,
+          art: { url: "https://a.espncdn.com/i/teamlogos/ncaa/500/248.png", kind: "team_logo" },
+        },
+        {
+          outcome_id: 2,
+          name: "Duke",
+          rendered_percent: 10,
+          art: { url: "https://a.espncdn.com/i/teamlogos/ncaa/500/150.png", kind: "team_logo" },
+        },
+        {
+          outcome_id: 3,
+          name: "Michigan St.",
+          rendered_percent: 7,
+          art: { url: "https://a.espncdn.com/i/teamlogos/ncaa/500/127.png", kind: "team_logo" },
+        },
+      ],
+    };
+    const html = renderToStaticMarkup(<MachineryDiscoverCard card={spotlightCard} />);
+    const tileMatches = html.match(/data-testid="machinery-spotlight-tile"/g) ?? [];
+    expect(tileMatches).toHaveLength(3);
+    expect(html).toContain("/teamlogos/ncaa/500/248.png");
+    expect(html).toContain("/teamlogos/ncaa/500/150.png");
+    expect(html).toContain("/teamlogos/ncaa/500/127.png");
+    expect(html).toContain("Open all 2 sections");
+    expect(html).not.toContain('data-testid="machinery-avatar-initials"');
+  });
 });

@@ -224,6 +224,76 @@
           "art_subject": "Cale Makar"
         }
       ]
+    },
+    "batch5-march-madness-ap-poll": {
+      "entries": [
+        {
+          "id": 52755955,
+          "short_label": "Dec 7 AP Poll #1 team",
+          "headline_phrase": "{answer} holding the Dec 7 AP #1 spot",
+          "headline_with_phrase": "{answer} holding the Dec 7 AP #1 spot"
+        }
+      ]
+    },
+    "batch5-march-madness-final-four": {
+      "entries": [
+        {
+          "id": 68954772,
+          "short_label": "Duke reaches the 2027 Final Four",
+          "headline_phrase": "Duke reaching the 2027 Final Four",
+          "headline_with_phrase": "Duke reaching the 2027 Final Four",
+          "art_subject": "Duke Blue Devils"
+        },
+        {
+          "id": 68954773,
+          "short_label": "Florida reaches the 2027 Final Four",
+          "headline_phrase": "Florida reaching the 2027 Final Four",
+          "headline_with_phrase": "Florida reaching the 2027 Final Four",
+          "art_subject": "Florida Gators"
+        },
+        {
+          "id": 68954808,
+          "short_label": "UConn reaches the 2027 Final Four",
+          "headline_phrase": "UConn reaching the 2027 Final Four",
+          "headline_with_phrase": "UConn reaching the 2027 Final Four",
+          "art_subject": "UConn Huskies"
+        },
+        {
+          "id": 68954776,
+          "short_label": "Illinois reaches the 2027 Final Four",
+          "headline_phrase": "Illinois reaching the 2027 Final Four",
+          "headline_with_phrase": "Illinois reaching the 2027 Final Four",
+          "art_subject": "Illinois Fighting Illini"
+        },
+        {
+          "id": 68948342,
+          "short_label": "Kansas reaches the 2027 Final Four",
+          "headline_phrase": "Kansas reaching the 2027 Final Four",
+          "headline_with_phrase": "Kansas reaching the 2027 Final Four",
+          "art_subject": "Kansas Jayhawks"
+        },
+        {
+          "id": 68954759,
+          "short_label": "Arkansas reaches the 2027 Final Four",
+          "headline_phrase": "Arkansas reaching the 2027 Final Four",
+          "headline_with_phrase": "Arkansas reaching the 2027 Final Four",
+          "art_subject": "Arkansas Razorbacks"
+        },
+        {
+          "id": 68954775,
+          "short_label": "Houston reaches the 2027 Final Four",
+          "headline_phrase": "Houston reaching the 2027 Final Four",
+          "headline_with_phrase": "Houston reaching the 2027 Final Four",
+          "art_subject": "Houston Cougars"
+        },
+        {
+          "id": 68954760,
+          "short_label": "Arizona reaches the 2027 Final Four",
+          "headline_phrase": "Arizona reaching the 2027 Final Four",
+          "headline_with_phrase": "Arizona reaching the 2027 Final Four",
+          "art_subject": "Arizona Wildcats"
+        }
+      ]
     }
   }
 }

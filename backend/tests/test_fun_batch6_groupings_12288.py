@@ -15,6 +15,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from app.services.paired_metric_register import load_paired_metric_register
 from app.utils.container_machinery import (
     _compute_member_number_parity,
     build_container_machinery_producer,
@@ -70,8 +71,9 @@ def _sample_batch6_markets(*, elon_prob: float = 0.35) -> list[dict]:
         (56867563, "Which movie has 2nd biggest opening weekend in 2026?", "entertainment", [("Spider-Man: Brand New Day", 0.882), ("Avengers: Doomsday", 0.116)]),
         (68365230, '"Avengers: Doomsday" Opening Weekend Box Office', "entertainment", [("400m+", 0.719), ("360m-400m", 0.202)]),
         (68365233, '"Dune: Part Three" Opening Weekend Box Office', "entertainment", [("110m-130m", 0.442), ("130m+", 0.224)]),
-        # 4. The 2027 Golden Globes (10 rows)
-        (70160313, "Golden Globe Winner: Best Actress in a Motion Picture – Musical or Comedy", "entertainment", [("Julianne Moore", 0.770), ("Inde Navarrette", 0.070)]),
+        # 4. The 2027 Golden Globes (Nominated & Wins paired stage + 9 sibling races)
+        (61484904, "Golden Globe Nominations: Best Actress in a Motion Picture – Musical or Comedy", "entertainment", [("Julianne Moore", 0.980), ("Olivia Wilde", 0.960), ("Inde Navarrette", 0.900), ("Olivia Colman", 0.770), ("Meryl Streep", 0.360)]),
+        (70160313, "Golden Globe Winner: Best Actress in a Motion Picture – Musical or Comedy", "entertainment", [("Julianne Moore", 0.780), ("Inde Navarrette", 0.090), ("Olivia Wilde", 0.030), ("Olivia Colman", 0.020), ("Meryl Streep", 0.020)]),
         (70160296, "Golden Globe Winner: Best Actress in a Limited Series", "entertainment", [("Florence Pugh", 0.720), ("Sally Field", 0.065)]),
         (70160294, "Golden Globe Winner: Best Supporting Actress on TV", "entertainment", [("Kate O’Flynn", 0.705), ("Linda Cardellini", 0.120)]),
         (70160314, "Golden Globe Winner: Best Actor in a Motion Picture – Musical or Comedy", "entertainment", [("John Malkovich", 0.658), ("Anthony Ippolito", 0.147)]),
@@ -119,8 +121,12 @@ def test_batch6_candidates_are_public_with_verified_art() -> None:
         rule = defn["rule"]
         assert rule.get("suppress_card_photo") is True
         assert not rule.get("hide_row_art")
-        assert str(rule.get("card_image_url") or "") in verified_urls
-        assert str(rule.get("card_image_license") or "") in {"CC0 1.0 Public Domain", "Public domain"}
+        if slug == "machinery-golden-globes-2027":
+            assert rule["sections"][0]["atom_query"]["kind"] == "paired_stage"
+            assert not rule.get("card_image_url")
+        else:
+            assert str(rule.get("card_image_url") or "") in verified_urls
+            assert str(rule.get("card_image_license") or "") in {"CC0 1.0 Public Domain", "Public domain"}
         assert "trading" not in json.dumps(defn).lower()
 
 
@@ -130,12 +136,17 @@ async def test_batch6_builds_clean_headlines_google_card_split_and_no_elon_lead(
 ) -> None:
     paths_by_slug = {p.stem: p for p in discover_machinery_candidate_paths()}
     markets = _sample_batch6_markets(elon_prob=0.35)
+    paired_sets = load_paired_metric_register().get("sets") or {}
 
     with caplog.at_level(logging.WARNING, logger="app.utils.container_machinery"):
         for slug in BATCH6_SLUGS:
             defn = load_machinery_definition(paths_by_slug[slug])
             producer = build_container_machinery_producer(defn)
-            res = await produce_container_machinery({"markets": markets, "teams": []}, defn, now=NOW)
+            res = await produce_container_machinery(
+                {"markets": markets, "teams": [], "paired_sets": paired_sets},
+                defn,
+                now=NOW,
+            )
             assert hasattr(res, "machinery_card"), (slug, res)
             item = compose_roundup_feed_item(producer, res)
             assert item is not None
@@ -154,6 +165,20 @@ async def test_batch6_builds_clean_headlines_google_card_split_and_no_elon_lead(
                 else TOPIC_ENTERTAINMENT
             )
             assert classify_discover_opening_topic(item) == expected_topic
+
+            if slug == "machinery-golden-globes-2027":
+                assert mc["form_id"] == "paired_stage_bars"
+                assert res.paired_metric_set is not None
+                entries = res.paired_metric_set["entries"]
+                assert len(entries) == 3
+                assert all(
+                    (e.get("art") or {}).get("kind") == "tmdb_headshot"
+                    and (e.get("art") or {}).get("url")
+                    for e in entries
+                )
+                assert container["sections"][0]["visual_block"]["form_id"] == "paired_stage_bars"
+                assert container["sections"][1]["visual_block"]["form_id"] == "benchmark_strip"
+                assert title == "Julianne Moore leads Best Actress (Comedy or Musical) at 77%, with 4 contenders at 75%+ to be nominated"
 
             if slug == "machinery-google-year-in-search-2026":
                 card_mids = {r["market_id"] for r in mc["rows"]}
