@@ -472,6 +472,10 @@ final class DiscoverViewModel: ObservableObject {
     /// of overwriting the current session's feed. Prevents a stale in-flight
     /// response from one identity clobbering another's.
     private var loadGeneration = 0
+    /// 1.0.8 Item 3 — bounded single skew recovery per top-level load so an
+    /// unseated continuation edition mismatch triggers replacement instead of
+    /// collapsing to `hasMore = false` ("You're all caught up" at item 19).
+    private var editionSkewRecoveries = 0
 
     // #9513: price delivery owns no editorial, pagination or impression state.
     private let priceClient: DiscoverPriceCardsProviding?
@@ -861,6 +865,7 @@ final class DiscoverViewModel: ObservableObject {
         // Claim a load identity so a superseded (older) load discards its late
         // response instead of overwriting a newer session's feed (L2-201 / #1472).
         loadGeneration &+= 1
+        if mayReorder { editionSkewRecoveries = 0 }
         let generation = loadGeneration
         defer {
             if generation == loadGeneration, !loading { reconcilePriceSubscriptions() }
@@ -1897,8 +1902,10 @@ final class DiscoverViewModel: ObservableObject {
             // `maxPageScans`. So a transient roll costs one page and recovers by
             // itself, a permanent one ends the scroll honestly at the bound, and
             // neither drops a card into a list it does not belong to.
+            var editionSkewed = false
             if let pageEdition = response.edition, pageEdition != paintedEdition {
                 fresh = []
+                editionSkewed = !renderable.isEmpty
             }
 
             if !fresh.isEmpty {
@@ -1916,6 +1923,15 @@ final class DiscoverViewModel: ObservableObject {
                 items = items + DiscoverPriceRefresh.retainingPrices(Self.interleave(fresh, within: seatedSections), accepted: &acceptedPriceCards, fences: &priceFences)
                 hasMore = response.hasMore
                 error = nil
+                return
+            }
+
+            // 1.0.8 Item 3 — when continuation lands on a different edition than
+            // the painted prefix (`page_base_stale_hit` vs newer page), recover
+            // once via `replaceRetiredEdition` instead of falsely declaring exhaustion.
+            if editionSkewed, editionSkewRecoveries < 1 {
+                editionSkewRecoveries += 1
+                await replaceRetiredEdition(generation: generation)
                 return
             }
 
