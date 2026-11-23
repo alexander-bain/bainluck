@@ -7,6 +7,13 @@ import SwiftUI
 enum ContainerHubGridLayout13417 {
     static let spacing: CGFloat = 16
     static let minimumTwoColumnCardWidth: CGFloat = 340
+    static let maxContentWidth: CGFloat = 900
+    static let contentHorizontalPadding: CGFloat = 18
+
+    nonisolated static func innerContentWidth(containerWidth: CGFloat) -> CGFloat {
+        guard containerWidth.isFinite, containerWidth > 0 else { return 0 }
+        return max(0, min(containerWidth, maxContentWidth) - contentHorizontalPadding * 2)
+    }
 
     nonisolated static func columnCount(
         horizontalSizeClass: UserInterfaceSizeClass?,
@@ -15,7 +22,7 @@ enum ContainerHubGridLayout13417 {
     ) -> Int {
         guard horizontalSizeClass == .regular else { return 1 }
         if dynamicTypeSize.isAccessibilitySize { return 1 }
-        if let availableWidth, availableWidth > 0 {
+        if let availableWidth {
             let perColumnWidth = (availableWidth - spacing) / 2
             if perColumnWidth < minimumTwoColumnCardWidth {
                 return 1
