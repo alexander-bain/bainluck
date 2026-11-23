@@ -1,0 +1,65 @@
+name: Nightly Standing Scores
+
+on:
+  schedule:
+    - cron: "15 9 * * *"
+  workflow_dispatch:
+    inputs:
+      max_games:
+        description: "Maximum live/upcoming games to audit (default 60)"
+        required: false
+        default: "60"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-standing-scores
+  cancel-in-progress: false
+
+jobs:
+  standing-scores:
+    name: Nightly standing scores (#13514)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install runtime dependency
+        run: python3 -m pip install --no-cache-dir httpx
+
+      - name: Run standing scores check
+        id: audit
+        env:
+          BL_AGENT: ci-nightly-standing-scores
+          MAX_GAMES: ${{ github.event.inputs.max_games || '60' }}
+        run: |
+          mkdir -p standing_scores_out
+          RUN_DATE="$(date -u +%Y-%m-%d)"
+          echo "run_date=${RUN_DATE}" >> "$GITHUB_OUTPUT"
+          set +e
+          python3 backend/scripts/nightly_standing_scores.py \
+            --date "${RUN_DATE}" \
+            --max-games "${MAX_GAMES}" \
+            --out-dir standing_scores_out \
+            --fail-on-findings
+          EXIT_CODE=$?
+          set -e
+          echo "exit_code=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
+          cat standing_scores_out/"${RUN_DATE}.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload dated standing scores artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: standing-scores-${{ steps.audit.outputs.run_date || github.run_id }}
+          path: standing_scores_out/
+          retention-days: 90
+
+      - name: Enforce pass status
+        if: steps.audit.outputs.exit_code != '0'
+        run: exit "${{ steps.audit.outputs.exit_code }}"
