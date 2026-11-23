@@ -92,9 +92,10 @@ different match's markets onto the page.
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Any, Optional, Sequence
 
 from sqlalchemy import Boolean, Integer, String, and_, func, literal, or_, select
 from sqlalchemy.ext.compiler import compiles
@@ -529,6 +530,80 @@ def orientation_agrees(
         canonical_away, other_home
     )
     return aligned and not crossed
+
+
+#: The keys a stored venue reading may carry for :func:`_flipped_reading` to turn
+#: it round (#7993 residual). `value` and `observed_value` are the home fighter's
+#: chance; the other three say where and when it was read and hold for either
+#: corner. Measured over every mma/boxing row of the last 120 days on production,
+#: 2026-09-30 17:1xZ: these five are the only keys a `kalshi`, `polymarket` or
+#: `betting` object carries. A key outside this set is a shape nobody has
+#: checked, so the reading is refused rather than guessed at.
+_FLIPPABLE_READING_KEYS = frozenset(
+    {"value", "observed_value", "updated_at", "eligibility", "observed_basis", "price_read"}
+)
+_NON_ORIENTED_SOURCE_KEYS: frozenset[str] = frozenset({"live_state_changed_at"})
+_ORIENTED_READING_KEYS = ("value", "observed_value")
+
+
+def _flipped_chance(raw: Any) -> Optional[float]:
+    """``1 - raw`` for a finite probability, else ``None``."""
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    if not math.isfinite(raw) or not 0.0 <= raw <= 1.0:
+        return None
+    return round(1.0 - float(raw), 10)
+
+
+def _flipped_reading(name: str, reading: Any) -> tuple[bool, Any]:
+    """One stored venue entry read from the OTHER corner. ``(ok, reading)``.
+
+    A bare number or a `value`/`observed_value` pair is the home fighter's
+    chance, so the other corner's is its complement. Both halves of the pair
+    turn together, which keeps `observed_value == value` and so keeps the
+    observation basis bound to the value it dates (`stored_observation_basis`).
+    A `*_count` entry or top-level live clock (`live_state_changed_at`) is
+    non-oriented bookkeeping and is kept as is. Anything else is refused.
+    """
+    if name.endswith("_count") or name in _NON_ORIENTED_SOURCE_KEYS:
+        return True, reading
+    if not isinstance(reading, dict):
+        flipped = _flipped_chance(reading)
+        return (flipped is not None), flipped
+    if not reading.keys() <= _FLIPPABLE_READING_KEYS or "value" not in reading:
+        return False, None
+    out = dict(reading)
+    for key in _ORIENTED_READING_KEYS:
+        if key in reading:
+            flipped = _flipped_chance(reading[key])
+            if flipped is None:
+                return False, None
+            out[key] = flipped
+    if "price_read" in reading:
+        from app.utils.aggregation import stored_price_read
+
+        # #12581: the exact upstream observation follows the same number onto
+        # the other axis. Invalid age evidence cannot make a valid price vanish.
+        read = stored_price_read(reading, reading["value"])
+        out.pop("price_read", None)
+        if read is not None:
+            out["price_read"] = {**read, "value": _flipped_chance(read["value"])}
+    return True, out
+
+
+def flip_probability_sources(sources: Optional[dict]) -> tuple[bool, Optional[dict]]:
+    """Turn a reversed twin's ``win_probability_sources`` dict round, or fail closed."""
+    if not sources:
+        return True, None
+    if not isinstance(sources, dict):
+        return False, None
+    flipped = {}
+    for name, reading in sources.items():
+        ok, turned = _flipped_reading(str(name), reading)
+        if not ok:
+            return False, None
+        flipped[name] = turned
+    return True, flipped
 
 
 def is_corner_flipped_absorbed(row: object) -> bool:
@@ -1026,8 +1101,6 @@ async def _read_fold(db, event, absorbed: Sequence, *, bags: bool):
             one_snapshot = False
             raw_bag, row_rev = absorbed_row.win_probability_sources, None
         if bags and is_corner_flipped_absorbed(absorbed_row) and raw_bag:
-            from app.utils.event_twin_fold import flip_probability_sources
-
             ok, turned = flip_probability_sources(raw_bag)
             raw_bag = turned if ok else None
         oriented.append((row_id, raw_bag, row_rev))
