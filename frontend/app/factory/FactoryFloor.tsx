@@ -1103,7 +1103,7 @@ export default function FactoryFloor(initial: {
                 {selected.check_progress && (
                   <p>{selected.check_progress.done} of {selected.check_progress.total} checks finished.</p>
                 )}
-                {hasFailedCheck(data, selected) && (
+                {hasFailedCheck(selected) && (
                   <p>{testDefinition} A check flagged this change before it could go live.</p>
                 )}
                 {selected.approvals?.bot && <p>Bot approved.</p>}

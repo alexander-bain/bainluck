@@ -55,17 +55,13 @@ export function lessonForFloor(data: FactoryData, now: string) {
   return { word, definition, count: `${count} ${count === 1 ? "change" : "changes"} ${label}` };
 }
 
-export function hasFailedCheck(data: FactoryData, change: Change) {
-  if (change.station !== "Test" || change.merged_at || !onActiveFloor(change)) return false;
-  if (change.checks_failed === true) return true;
-  const revision = Date.parse(change.revision_at ?? change.last_activity);
-  return (data.events ?? []).some(event => event.kind === "check" && event.outcome === "failed" &&
-    event.number === change.number && event.line === change.line &&
-    Date.parse(event.at) >= revision && Date.parse(event.observed_at) <= Date.parse(data.generated_at));
+export function hasFailedCheck(change: Change) {
+  return change.station === "Test" && !change.merged_at &&
+    onActiveFloor(change) && change.checks_failed === true;
 }
 
 export function explainedCheck(data: FactoryData) {
-  const failed = data.changes.find(change => hasFailedCheck(data, change));
+  const failed = data.changes.find(hasFailedCheck);
   if (failed) return `An automatic check flagged #${failed.number} before it could go live.`;
   const release = data.stops?.find(stop => stop.kind === "master" && stop.line === "Server" &&
     stop.station === "Ship" && stop.number);

@@ -240,8 +240,13 @@ def classify(pull, deployments, now, line, uncertain_line):
             checks = list(latest_checks(pull))
             if any(c.get("ci") and c["state"] == "in_progress" for c in checks):
                 change["checks_running"] = True
-            if any(c["state"] == "completed" and c.get("conclusion") in {"failure", "timed_out"}
-                   for c in checks):
+            if any(
+                c.get("ci")
+                and c["name"] != "flaky-canary"
+                and c["state"] == "completed"
+                and c.get("conclusion") in {"failure", "timed_out"}
+                for c in checks
+            ):
                 change["checks_failed"] = True
         change["unsure"] |= unknown
         if unknown:
