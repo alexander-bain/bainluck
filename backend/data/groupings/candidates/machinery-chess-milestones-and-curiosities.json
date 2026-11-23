@@ -1,6 +1,6 @@
 {
   "slug": "machinery-chess-milestones-and-curiosities",
-  "stage": "preview",
+  "stage": "public",
   "look": "bars",
   "membership": "computed-produced",
   "kind": "roundup",
@@ -9,11 +9,11 @@
     "sibling"
   ],
   "level": "member",
-  "kicker": "ODD · CURIOSITIES",
-  "name": "Chess, Milestones & Curiosities",
+  "kicker": "ODD · CHESS",
+  "name": "World Chess & Grandmaster Races",
   "category": "entertainment",
   "tag": "ODD",
-  "section_title": "Wildcard Markets",
+  "section_title": "Titles, Ratings & AI vs. Humans",
   "footer": "",
   "rule": {
     "producer": "container_machinery",
@@ -21,8 +21,7 @@
     "materialize": "read-time",
     "extra_llm_categories": [
       "chess",
-      "tech",
-      "culture"
+      "tech"
     ],
     "card_rows": 3,
     "card_section_key": "curiosities",
@@ -37,12 +36,13 @@
     "sections": [
       {
         "key": "curiosities",
-        "title": "Wildcard Markets",
+        "title": "Titles, Ratings & AI vs. Humans",
         "item_noun": "markets",
-        "note": "World Chess, wedding couture, Rock Hall expansion, psychedelic therapy, and Person of the Year.",
+        "note": "World Chess Championship, Chess.com awards, FIDE ratings, and AI vs. grandmaster milestones.",
         "atom_query": {
           "kind": "markets",
           "fun_sub_tag": "batch8-chess-milestones-curiosities",
+          "date_ladder_pick": "nearest_open",
           "shape": "any",
           "order_by": "lead_prob_desc",
           "min_items": 3,
