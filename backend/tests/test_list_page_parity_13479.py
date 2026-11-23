@@ -32,7 +32,7 @@ from app.routes.events import get_event, list_events
 from app.utils.proven_duplicates import duplicate_tag
 
 
-NOW = datetime(2026, 11, 23, 18, 0, tzinfo=timezone.utc)
+NOW = datetime.now(timezone.utc).replace(microsecond=0)
 COMMENCE = NOW + timedelta(hours=3)
 
 SOCCER_LEAGUE = Sport(
