@@ -58,6 +58,7 @@ from app.utils.event_twin_fold import (
     fold_twin_events,
 )
 from app.utils.kalshi_occurrence_start import loaded_sport_key
+from app.utils.proven_duplicates import not_a_proven_duplicate
 from app.utils.sport_keys import league_identity
 
 logger = logging.getLogger(__name__)
@@ -166,6 +167,7 @@ async def serve_fold_absorbed_rows_with_completeness(db, event) -> tuple[list, b
                         Event.id != event.id,
                         Event.sport_id.in_(sport_ids),
                         _commence_arms(commence),
+                        not_a_proven_duplicate(),
                     )
                 )
                 .order_by(Event.id)
@@ -188,9 +190,11 @@ async def serve_fold_absorbed_rows_with_completeness(db, event) -> tuple[list, b
         loser_id for loser_id, survivor_id in fold.survivor_of.items()
         if survivor_id == event.id
     }
-    return (
-        sorted(
-            (row for row in candidates if row.id in absorbed), key=lambda row: row.id
-        ),
-        len(candidates) < CANDIDATE_CAP,
+    flipped_ids = set(getattr(fold, "flipped_loser_ids", None) or ())
+    rows = sorted(
+        (row for row in candidates if row.id in absorbed), key=lambda row: row.id
     )
+    for row in rows:
+        if row.id in flipped_ids:
+            setattr(row, "_serve_fold_corner_flipped", True)
+    return rows, len(candidates) < CANDIDATE_CAP
