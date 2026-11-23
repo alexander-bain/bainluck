@@ -1842,61 +1842,109 @@ struct MachineryDiscoverCardView: View {
     }
 
     private var eventRowsBody: some View {
+        let rows = Array(card.eventRows.prefix(3))
+        return Group {
+            if dynamicTypeSize >= .xxxLarge {
+                stackedEventRowsList(rows)
+            } else {
+                // #13501 — keep short pro matchups on one compact line when every
+                // row fits unwrapped; fall back uniformly to stacked team rows when
+                // longer names (e.g. "St. Bonaventure" at "Appalachian St") would squeeze.
+                ViewThatFits(in: .horizontal) {
+                    singleLineEventRowsList(rows)
+                    stackedEventRowsList(rows)
+                }
+            }
+        }
+    }
+
+    private func singleLineEventRowsList(_ rows: [MachineryEventVisualItem]) -> some View {
         VStack(alignment: .leading, spacing: 0) {
-            ForEach(Array(card.eventRows.prefix(3).enumerated()), id: \.element.id) { idx, r in
-                Group {
-                    if dynamicTypeSize >= .xxxLarge {
-                        VStack(alignment: .leading, spacing: 4) {
-                            HStack(spacing: 8) {
-                                MachinerySubjectArtView(art: r.awayArt, width: 26, height: 26)
-                                Text("\(r.awayShort) at \(r.homeShort)")
-                                    .font(.system(size: min(rowSize, 22), weight: .semibold))
-                                    .foregroundStyle(primaryInk)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                MachinerySubjectArtView(art: r.homeArt, width: 26, height: 26)
-                            }
-                            HStack(alignment: .firstTextBaseline, spacing: 3) {
-                                Text("\(r.awayPct)%–\(r.homePct)%")
-                                    .font(.system(size: min(rowSize, 22), weight: .bold).monospacedDigit())
-                                    .foregroundStyle(primaryInk)
-                                if let m = SourceMarkButton(r.sourceMark ?? r.awaySourceMark, number: Double(r.homePct) / 100.0, subject: "\(r.awayShort) at \(r.homeShort)", numberSize: min(rowSize, 18), compactRow: true) {
-                                    m
-                                }
+            ForEach(Array(rows.enumerated()), id: \.element.id) { idx, r in
+                HStack(alignment: .center, spacing: 8) {
+                    HStack(spacing: 6) {
+                        MachinerySubjectArtView(art: r.awayArt, width: 26, height: 26)
+                        Text(r.awayShort)
+                            .font(.system(size: min(rowSize, 20), weight: .semibold))
+                            .foregroundStyle(primaryInk)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                        Text("at")
+                            .font(.system(size: min(subSize, 17)))
+                            .foregroundStyle(secondaryInk)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                        MachinerySubjectArtView(art: r.homeArt, width: 26, height: 26)
+                        Text(r.homeShort)
+                            .font(.system(size: min(rowSize, 20), weight: .semibold))
+                            .foregroundStyle(primaryInk)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                    }
+                    .fixedSize(horizontal: true, vertical: false)
+
+                    Spacer(minLength: 8)
+
+                    HStack(alignment: .firstTextBaseline, spacing: 3) {
+                        Text("\(r.awayPct)%–\(r.homePct)%")
+                            .font(.system(size: min(rowSize, 20), weight: .bold).monospacedDigit())
+                            .foregroundStyle(primaryInk)
+                            .lineLimit(1)
+                            .fixedSize(horizontal: true, vertical: false)
+                        if let m = SourceMarkButton(r.sourceMark ?? r.awaySourceMark, number: Double(r.homePct) / 100.0, subject: "\(r.awayShort) at \(r.homeShort)", numberSize: min(rowSize, 18), compactRow: true) {
+                            m
+                        }
+                    }
+                    .fixedSize(horizontal: true, vertical: false)
+                }
+                .padding(.vertical, 8)
+                if idx < rows.count - 1 {
+                    Rectangle().fill(borderColor).frame(height: 1)
+                }
+            }
+        }
+    }
+
+    private func stackedEventRowsList(_ rows: [MachineryEventVisualItem]) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(rows.enumerated()), id: \.element.id) { idx, r in
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(alignment: .center, spacing: 8) {
+                        MachinerySubjectArtView(art: r.awayArt, width: 24, height: 24)
+                        Text(r.awayShort)
+                            .font(.system(size: min(rowSize, 22), weight: .semibold))
+                            .foregroundStyle(primaryInk)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        HStack(alignment: .firstTextBaseline, spacing: 3) {
+                            Text("\(r.awayPct)%")
+                                .font(.system(size: min(rowSize, 22), weight: .bold).monospacedDigit())
+                                .foregroundStyle(primaryInk)
+                                .fixedSize(horizontal: true, vertical: false)
+                            if let m = SourceMarkButton(r.awaySourceMark, number: Double(r.awayPct) / 100.0, subject: r.awayShort, numberSize: min(rowSize, 18), compactRow: true) {
+                                m
                             }
                         }
-                    } else {
-                        HStack(alignment: .center, spacing: 8) {
-                            HStack(spacing: 6) {
-                                MachinerySubjectArtView(art: r.awayArt, width: 26, height: 26)
-                                Text(r.awayShort)
-                                    .font(.system(size: min(rowSize, 20), weight: .semibold))
-                                    .foregroundStyle(primaryInk)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                Text("at")
-                                    .font(.system(size: min(subSize, 17)))
-                                    .foregroundStyle(secondaryInk)
-                                MachinerySubjectArtView(art: r.homeArt, width: 26, height: 26)
-                                Text(r.homeShort)
-                                    .font(.system(size: min(rowSize, 20), weight: .semibold))
-                                    .foregroundStyle(primaryInk)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                            HStack(alignment: .firstTextBaseline, spacing: 3) {
-                                Text("\(r.awayPct)%–\(r.homePct)%")
-                                    .font(.system(size: min(rowSize, 20), weight: .bold).monospacedDigit())
-                                    .foregroundStyle(primaryInk)
-                                    .fixedSize(horizontal: true, vertical: false)
-                                if let m = SourceMarkButton(r.sourceMark ?? r.awaySourceMark, number: Double(r.homePct) / 100.0, subject: "\(r.awayShort) at \(r.homeShort)", numberSize: min(rowSize, 18), compactRow: true) {
-                                    m
-                                }
+                    }
+                    HStack(alignment: .center, spacing: 8) {
+                        MachinerySubjectArtView(art: r.homeArt, width: 24, height: 24)
+                        (Text("at ").foregroundStyle(secondaryInk) + Text(r.homeShort).foregroundStyle(primaryInk))
+                            .font(.system(size: min(rowSize, 22), weight: .semibold))
+                            .fixedSize(horizontal: false, vertical: true)
+                        Spacer(minLength: 8)
+                        HStack(alignment: .firstTextBaseline, spacing: 3) {
+                            Text("\(r.homePct)%")
+                                .font(.system(size: min(rowSize, 22), weight: .bold).monospacedDigit())
+                                .foregroundStyle(primaryInk)
+                                .fixedSize(horizontal: true, vertical: false)
+                            if let m = SourceMarkButton(r.sourceMark, number: Double(r.homePct) / 100.0, subject: r.homeShort, numberSize: min(rowSize, 18), compactRow: true) {
+                                m
                             }
                         }
                     }
                 }
                 .padding(.vertical, 8)
-                if idx < min(3, card.eventRows.count) - 1 {
+                if idx < rows.count - 1 {
                     Rectangle().fill(borderColor).frame(height: 1)
                 }
             }
