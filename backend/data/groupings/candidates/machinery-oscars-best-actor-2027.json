@@ -1,0 +1,62 @@
+{
+  "slug": "machinery-oscars-best-actor-2027",
+  "stage": "preview",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_event",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "ENTERTAINMENT · OSCARS",
+  "name": "Oscars 2027 Best Actor",
+  "category": "entertainment",
+  "tag": "ENTERTAINMENT",
+  "section_title": "Best Actor: Nominated & Wins",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "extra_llm_categories": [
+      "culture"
+    ],
+    "card_rows": 3,
+    "card_section_key": "best_actor_paired",
+    "suppress_card_photo": true,
+    "sections": [
+      {
+        "key": "best_actor_paired",
+        "title": "Best Actor: Nominated & Wins",
+        "item_noun": "contenders",
+        "note": "99th Academy Awards · Nominated % paired beside Wins %.",
+        "atom_query": {
+          "kind": "paired_stage",
+          "ceremony": "oscars-2027",
+          "category_name": "Best Actor",
+          "min_items": 3,
+          "max_items": 6,
+          "initial_visible_limit": 3
+        }
+      },
+      {
+        "key": "other_oscars_races",
+        "title": "Other 2027 Oscars Races",
+        "item_noun": "awards",
+        "note": "Leading contenders across directing, supporting acting, animation, and screenplay.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch7-other-oscars-races",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 4,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}

@@ -1,0 +1,57 @@
+{
+  "slug": "machinery-tech-and-space-movers",
+  "stage": "preview",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "movement",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "TECH · SPACE & AI",
+  "name": "Tech & Space Weekly Movers",
+  "category": "tech",
+  "tag": "TECH",
+  "section_title": "Biggest 7-Day Moves in Tech & Space",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "extra_llm_categories": [
+      "economics"
+    ],
+    "card_rows": 3,
+    "card_section_key": "tech_space_history",
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/10/James_Webb_Primary_Mirror.jpg/960px-James_Webb_Primary_Mirror.jpg",
+    "card_image_alt": "Gold hexagonal mirror segments of the James Webb Space Telescope during cryogenic testing at NASA",
+    "card_image_credit": "NASA/MSFC/David Higginbotham (Public domain, Wikimedia Commons)",
+    "card_image_author": "NASA/MSFC/David Higginbotham",
+    "card_image_license": "Public domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:James_Webb_Primary_Mirror.jpg",
+    "sections": [
+      {
+        "key": "tech_space_history",
+        "title": "Biggest 7-Day Moves in Tech & Space",
+        "fallback_title": "Tech & Space Milestone Odds",
+        "item_noun": "charts",
+        "preserve_note": true,
+        "note": "Pricing on OpenAI's IPO valuation and Millennium Prize milestones shifted sharply over the past week.",
+        "atom_query": {
+          "kind": "market_history",
+          "fun_sub_tag": "batch7-tech-and-space-movers",
+          "shape": "any",
+          "order_by": "movement_desc",
+          "min_items": 1,
+          "max_items": 2,
+          "max_outcomes": 3,
+          "initial_visible_limit": 2,
+          "hours": 168,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}
