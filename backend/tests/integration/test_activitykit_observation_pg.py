@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import timedelta
+import json
 import os
 import pytest
 from sqlalchemy import Integer, column, event, insert, select, table, text, update
@@ -339,18 +340,26 @@ async def canonical_pg():
 
 
 @pytest.mark.parametrize(
-    "sport,status",
+    "sport,status,seed_three_way,expect_percent",
     [
-        ("basketball_nba", "live"),
-        ("soccer_epl", "live"),
-        ("basketball_nba", "completed"),
+        ("basketball_nba", "live", False, 63),
+        ("soccer_epl", "live", True, 63),
+        ("soccer_epl", "live", False, None),
+        ("basketball_nba", "completed", False, None),
+    ],
+    ids=[
+        "basketball_nba-live",
+        "soccer_epl-live-three-way",
+        "soccer_epl-live-one-leg",
+        "basketball_nba-completed",
     ],
 )
 async def test_actual_canonical_route_matches_persisted_projection(
-    canonical_pg, sport, status
+    canonical_pg, sport, status, seed_three_way, expect_percent
 ):
-    from app.models import Event, Sport
+    from app.models import Event, OddsSnapshot, Sport
     from app.routes.events import build_event_detail_uncoalesced
+    from app.utils.activitykit_payload import build_activitykit_update
     from app.utils.activitykit_projection import project_activitykit_snapshot
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -382,6 +391,21 @@ async def test_actual_canonical_route_matches_persisted_projection(
                 },
             )
         )
+        if seed_three_way:
+            # Draw-priced live fixtures need all three outcome probabilities under
+            # #13131/#13246/#13479 before a non-settled hero leg is printed.
+            await conn.execute(
+                insert(OddsSnapshot.__table__).values(
+                    event_id=42,
+                    bookmaker="draftkings",
+                    home_moneyline=-170,
+                    away_moneyline=270,
+                    home_win_probability=0.63,
+                    away_win_probability=0.27,
+                    captured_at=NOW,
+                    reading_count=1,
+                )
+            )
     waiting = asyncio.Event()
     capture_statements = []
     capture_connection = None
@@ -420,12 +444,23 @@ async def test_actual_canonical_route_matches_persisted_projection(
     assert observed.snapshot == project_activitykit_snapshot(detail)
     assert observed.snapshot.score_observed_at == NOW
     assert observed.snapshot.is_terminal == (status == "completed")
-    if status == "live":
-        assert observed.snapshot.home_rendered_percent == 63
+    if expect_percent is not None:
+        assert observed.snapshot.home_rendered_percent == expect_percent
         assert observed.snapshot.probability_observed_at == NOW
     else:
         assert observed.snapshot.home_rendered_percent is None
         assert observed.snapshot.probability_observed_at is None
+    if status == "live":
+        push = build_activitykit_update(observed.snapshot, sent_at=NOW)
+        aps = json.loads(push.body)["aps"]
+        snap_payload = aps["content-state"]["snapshot"]
+        assert snap_payload["homeScore"] == 3
+        if expect_percent is not None:
+            assert snap_payload["homeRenderedPercent"] == expect_percent
+        else:
+            assert "homeRenderedPercent" not in snap_payload
+            assert "probabilityObservedAt" not in snap_payload
+            assert aps["stale-date"] > aps["timestamp"]
     assert await ActivityKitObservationAdapter(engine).replay(42, 1) == observed
 
 
