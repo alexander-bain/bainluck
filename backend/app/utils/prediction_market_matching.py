@@ -3833,6 +3833,35 @@ _COLLEGE_NC_STATE_RE = re.compile(r"^NC\s+St(?:ate|\.)?(?=\s|$)", re.IGNORECASE)
 _COLLEGE_NORTH_CAROLINA_STATE_RE = re.compile(
     r"^North\s+Carolina\s+St(?:ate|\.)?(?=\s|$)", re.IGNORECASE
 )
+_WBB_COWBOYS_RE = re.compile(r"\bCowboys\b", re.IGNORECASE)
+_WBB_COWGIRLS_RE = re.compile(r"\bCowgirls\b", re.IGNORECASE)
+
+
+def wbb_mascot_variants(team: str) -> list[str]:
+    """Swap gendered ``Cowboys`` <-> ``Cowgirls`` mascots for WBB retrieval (#13142).
+
+    Consumed ONLY when the market is identified as women's college basketball so
+    men's ``basketball_ncaab`` Cowboys rows are never retrieved by a women's name.
+    """
+    if not team:
+        return []
+    variants: list[str] = []
+    if _WBB_COWBOYS_RE.search(team):
+        swapped = _WBB_COWBOYS_RE.sub("Cowgirls", team)
+        if swapped != team:
+            variants.append(swapped)
+    if _WBB_COWGIRLS_RE.search(team):
+        swapped = _WBB_COWGIRLS_RE.sub("Cowboys", team)
+        if swapped != team and swapped not in variants:
+            variants.append(swapped)
+    return variants
+
+
+def normalize_wbb_mascot(team: Optional[str]) -> str:
+    """Normalize ``Cowboys`` -> ``Cowgirls`` strictly inside WBB comparison (#13142)."""
+    if not team:
+        return ""
+    return _WBB_COWBOYS_RE.sub("Cowgirls", team)
 _COLLEGE_SAINT_PREFIX_RE = re.compile(
     r"(?:^|\b(?:Mount|Mt\.?|of|the|College|University))\s+St\.?\b",
     re.IGNORECASE,
