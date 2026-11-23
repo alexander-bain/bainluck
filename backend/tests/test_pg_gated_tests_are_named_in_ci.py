@@ -56,14 +56,8 @@ PG_GATE_ENV_RE = re.compile(r"[A-Z][A-Z0-9_]*_DATABASE_URL")
 #: a debt list, not a discretionary opt-out: an entry is a file whose gate does
 #: not run, so nothing about it may be quoted as proof while it sits here.
 #:
-#: ``test_feed_static_tag_filter_pg.py`` — found unnamed by the same sweep that
-#: found the #2637 hole. Wiring it is a feed-lane change (its first CI execution
-#: could legitimately go red, and reding master on another lane's behalf is not
-#: this guard's job), so it is recorded here and handed over rather than
-#: silently fixed or silently ignored.
-KNOWN_UNWIRED = {
-    "test_feed_static_tag_filter_pg.py",
-}
+#: ``test_feed_static_tag_filter_pg.py`` was wired into ``isolated`` under #12612.
+KNOWN_UNWIRED = set()
 
 
 def _pg_gated_files() -> set[str]:
@@ -116,11 +110,12 @@ SKIP_CALL_RE = re.compile(r"pytest\.mark\.skipif\(|pytest\.skip\(")
 #: start-placeholder files were wired with their own step, #12612). Nothing in
 #: these files is evidence while listed.
 KNOWN_UNWIRED_ROOT = {
-    # #12612 first-run PG15 findings (Nov 20): raw seed INSERTs omit NOT NULL columns
-    # (external_id/category/reading_count) AND contract assertions drifted against
-    # later calibration changes (#5401 is_below_writer_bar, Queue #299 proved-exclusivity).
-    "test_calibration_canonical_pg.py",
-    "test_calibration_horizon_honest_263.py",
+    # #12612 (Nov 22): after supplying missing NOT NULL seed columns + Queue #299
+    # proved-exclusivity metadata per Fable's Nov 20 instruction, T-7 returns
+    # final_n=5 (incomplete field 91002 sums to 1.00 <= 1.15 across its two present
+    # snapshots under Queue #263, so is_field_incomplete=False and both surviving
+    # legs publish un-normalized). Held per Fable's hard-stop rule (5 rows posted
+    # on #12612; never change expected 3 -> 5).
     "test_calibration_horizon_population_262.py",
 }
 

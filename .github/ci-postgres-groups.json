@@ -238,6 +238,7 @@
     "#11315 the exact-market grade's roster locks hold a concurrent writer out (real Postgres)",
     "#4437 open markets' outcome copy: maintainer and both routes (real Postgres)",
     "#12288 grouping preview loads every candidate definition on real Postgres",
+    "#12612 feed static tag filter (real Postgres)",
     "#12612 calibration real-Postgres contracts"
   ],
   "shared-suffix": [
