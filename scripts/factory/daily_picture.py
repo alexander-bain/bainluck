@@ -1,6 +1,7 @@
 """One metered picture from a fixed, text-only template."""
 
 import base64
+from collections import Counter
 from datetime import timedelta
 import json
 import os
@@ -10,7 +11,7 @@ import subprocess
 from urllib.request import Request, urlopen
 
 from model import PACIFIC, STATIONS, instant
-from notes import COLLECTOR_DAILY_CALLS, LABELS, MONTHLY_COST_MICROS
+from notes import COLLECTOR_DAILY_CALLS, MONTHLY_COST_MICROS
 from signals import on_floor
 from llm_models import UnsupportedModelError, image_model_for_task
 
@@ -26,6 +27,33 @@ OUTPUT_TOKEN_RESERVE = 4096
 MAX_WEBP_BYTES = 512_000
 ASSET_NAME = re.compile(r"factory-picture-(\d{4}-\d{2}-\d{2})\.webp\Z")
 ASSET_LABEL = re.compile(r"v1\|([0-9TZ:.+\-]+)\|(\d{1,6})\|(\d{1,6})\Z")
+
+ART_DIRECTION = (
+    "Draw a friendly cartoon workshop on cream paper with hand-inked outlines and copper details. "
+    "Use simple shapes, solid colors, bare wood, and unmarked tools and crates. "
+    "Leave the walls, wood and metal as uninterrupted areas of solid color. "
+    "Use no lettering, digits, logos, signatures, watermarks or shapes that imitate writing. "
+    "Keep any figures as simple cartoons."
+)
+CRATE_SCENES = {
+    station: (
+        f"The space {place} is clear of crates.",
+        f"Unmarked wooden cargo rests {place} with space around it.",
+        f"Unmarked wooden cargo fills the space {place}.",
+    )
+    for station, place in zip(STATIONS, (
+        "by the workbench", "beside the brass rollers", "around a bare table",
+        "by the loading ramp", "on the open cart", "beside the open door",
+    ), strict=True)
+}
+LAMP_SCENES = (
+    "Warm copper lamps light the workshop.",
+    "A red lamp glows by the loading ramp.",
+)
+
+
+class PictureRefused(ValueError):
+    """A fixed check name, safe to record without the provider response."""
 
 
 def quote(spec):
@@ -51,39 +79,45 @@ def picture_request(snapshot, spec):
         and instant(change["live_at"]).astimezone(PACIFIC).date().isoformat() == day
     ]
     active = [change for change in changes if on_floor(change)]
-    facts = {
-        "changes_on_the_floor": len({change["number"] for change in active}),
-        "changes_live_today": len({change["number"] for change in live}),
-        "crates_by_station": {
-            LABELS[station]: sum(change["station"] == station for change in active + live)
-            for station in STATIONS
-        },
-        "server_dock_on_hold": any(
-            stop["kind"] == "hold" and stop["line"] == "Server"
-            for stop in snapshot.get("stops", [])
-        ),
-    }
-    prompt = (
-        "Draw one friendly cartoon copper and enamel workshop on cream paper. "
-        "Use hand-inked outlines, simple shapes, stacked wooden crates and warm lamps. "
-        "Show its morning-to-evening work as a single shop-floor scene. Use the facts "
-        "for how busy the benches, checks, inspection, and loading dock look. "
-        "An empty station stays empty. Use no lettering, digits, logos, signatures, "
-        "watermarks or realistic people. All signs and surfaces are blank. "
-        "The caption is set outside the picture. Recorded facts: "
-        + json.dumps(facts, sort_keys=True, ensure_ascii=True)
+    counts = Counter(change["station"] for change in active + live)
+    scene = []
+    for station, (empty, sparse, busy) in CRATE_SCENES.items():
+        count = counts[station]
+        scene.append(empty if not count else (sparse if count < 10 else busy))
+    held = any(
+        stop["kind"] == "hold" and stop["line"] == "Server"
+        for stop in snapshot.get("stops", [])
     )
-    if len(prompt.encode("ascii")) > MAX_PROMPT_BYTES:
-        raise ValueError("The Factory picture prompt exceeds its cost reserve")
+    prompt = "\n".join((ART_DIRECTION, *scene, LAMP_SCENES[int(held)]))
     record = {
         "day": day, "as_of": snapshot["generated_at"],
-        "floor": facts["changes_on_the_floor"], "shipped": facts["changes_live_today"],
+        "floor": len({change["number"] for change in active}),
+        "shipped": len({change["number"] for change in live}),
     }
     return record, {
         "model": spec.model, "prompt": prompt, "n": 1, "size": SIZE,
         "quality": QUALITY, "complexity": "low", "background": "opaque",
         "output_format": "webp", "output_compression": 80,
     }
+
+
+def check_picture_request(payload):
+    prompt = payload.get("prompt")
+    if (
+        not isinstance(prompt, str) or not prompt.isascii()
+        or type(payload.get("n")) is not int or payload["n"] != 1
+    ):
+        raise PictureRefused("unsafe-picture-request")
+    if len(prompt) > MAX_PROMPT_BYTES:
+        raise PictureRefused("prompt-too-large")
+    allowed = ((ART_DIRECTION,), *CRATE_SCENES.values(), LAMP_SCENES)
+    lines = prompt.split("\n")
+    if (
+        not re.fullmatch(r"[A-Za-z .,\n-]+", prompt)
+        or len(lines) != len(allowed)
+        or any(line not in choices for line, choices in zip(lines, allowed, strict=True))
+    ):
+        raise PictureRefused("unsafe-picture-request")
 
 
 def asset_name(record):
@@ -153,10 +187,6 @@ def image_usage(response, spec):
         + tokens["output_image"] * spec.image_output_per_m
     )
     return tokens, spent
-
-
-class PictureRefused(ValueError):
-    """A fixed check name, safe to record without the provider response."""
 
 
 def webp_dimensions(content):
@@ -255,8 +285,9 @@ def metered_picture(snapshot, budget, key, *, sample=False, enabled=DAILY_PICTUR
         return None, {"status": "unpriced", "mode": mode}
     try:
         record, payload = picture_request(snapshot, spec)
-    except ValueError:
-        return None, {"status": "prompt-too-large", "mode": mode}
+        check_picture_request(payload)
+    except PictureRefused as refusal:
+        return None, {"status": str(refusal), "mode": mode}
     receipt = {**quote(spec), "mode": mode}
     reserve = receipt["reserve_micros"]
     if reserve > PICTURE_MAX_MICROS:
