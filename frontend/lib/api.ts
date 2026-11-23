@@ -3043,6 +3043,68 @@ export async function fetchCalibration(): Promise<CalibrationData> {
   return apiFetch<CalibrationData>("/api/calibration");
 }
 
+export interface BlendVsSourceBucket {
+  bucket_idx: number;
+  bucket: string;
+  midpoint: number;
+  n: number;
+  winners: number;
+  avg_prob: number;
+  actual: number;
+  error: number;
+  ci_lower?: number | null;
+  ci_upper?: number | null;
+}
+
+export interface BlendVsSourceMetrics {
+  n_games: number;
+  ece: number | null;
+  gap: number | null;
+  brier: number | null;
+  log_loss: number | null;
+  buckets: BlendVsSourceBucket[];
+}
+
+export interface BlendVsSourcePairwise {
+  source: string;
+  n_games: number;
+  distinct_events: number;
+  blend: BlendVsSourceMetrics;
+  source_metrics: BlendVsSourceMetrics;
+  delta_ece_pp: number | null;
+  delta_brier: number | null;
+  delta_log_loss: number | null;
+}
+
+export interface BlendVsSourceCommonSet {
+  sources: string[];
+  n_games: number;
+  distinct_events: number;
+  blend: BlendVsSourceMetrics;
+  by_source: Record<string, BlendVsSourceMetrics>;
+}
+
+export interface BlendVsSourceHorizonData {
+  n_events: number;
+  per_source_matched: BlendVsSourcePairwise[];
+  common_source_sets: BlendVsSourceCommonSet[];
+}
+
+export interface BlendVsSourcesCalibrationData {
+  schema: string;
+  status: "ready" | "computing";
+  smoothing: "none" | string;
+  generated_at?: string;
+  recording_start?: string;
+  events_scanned?: number;
+  cache_status?: string;
+  horizons: Record<string, BlendVsSourceHorizonData>;
+}
+
+export async function fetchBlendVsSourcesCalibration(): Promise<BlendVsSourcesCalibrationData> {
+  return apiFetch<BlendVsSourcesCalibrationData>("/api/calibration/blend-vs-sources");
+}
+
 /** L2-103 Item 2: a real sample of the outcomes inside one calibration bucket,
  *  so a skeptic can click any point and verify what it's made of. */
 export interface CalibrationExample {

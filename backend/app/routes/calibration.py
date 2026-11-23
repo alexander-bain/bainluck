@@ -2749,3 +2749,51 @@ async def calibration_time_horizon(
         "status": "computing",
         "message": "Results being computed. Check back in 60 seconds.",
     }
+
+
+@router.get("/calibration/blend-vs-sources")
+async def calibration_blend_vs_sources():
+    """Precomputed Blend vs Contributing Sources calibration on identical games (#356a).
+
+    Served strictly from Redis (primary -> last_good -> honest ``computing``
+    payload) with zero Postgres queries on the request path.
+    """
+    import json as _json
+    from app.tasks.redis_state import get_redis_client
+    from app.utils.blend_vs_sources_calibration import (
+        LAST_GOOD_KEY,
+        REDIS_KEY,
+        SCHEMA,
+    )
+
+    headers = {"Cache-Control": "public, max-age=300"}
+    try:
+        rc = get_redis_client()
+        raw = rc.get(REDIS_KEY)
+        if raw:
+            payload = _json.loads(raw)
+            if isinstance(payload, dict):
+                payload.setdefault("schema", SCHEMA)
+                payload.setdefault("smoothing", "none")
+                payload["cache_status"] = "fresh"
+                return JSONResponse(content=payload, headers=headers)
+        last_good = rc.get(LAST_GOOD_KEY)
+        if last_good:
+            payload = _json.loads(last_good)
+            if isinstance(payload, dict):
+                payload.setdefault("schema", SCHEMA)
+                payload.setdefault("smoothing", "none")
+                payload["cache_status"] = "last_good"
+                return JSONResponse(content=payload, headers=headers)
+    except Exception:
+        logger.warning("Failed reading blend-vs-sources calibration from Redis", exc_info=True)
+
+    return JSONResponse(
+        content={
+            "schema": SCHEMA,
+            "status": "computing",
+            "smoothing": "none",
+            "horizons": {},
+        },
+        headers=headers,
+    )
