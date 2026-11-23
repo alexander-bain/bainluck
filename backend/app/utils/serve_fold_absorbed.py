@@ -45,7 +45,7 @@ read the handful that could be this fixture.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, time, timedelta
+from datetime import datetime, time, timedelta, timezone
 from typing import Any
 
 from sqlalchemy import and_, or_, select
@@ -53,6 +53,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models.models import Event, Sport
 from app.utils.event_twin_fold import (
+    _REVERSED_SAME_DAY_ANCHORED_CLAIM_LEAGUES,
     _catchall_sport_prefix,
     cross_board_identity,
     fold_twin_events,
@@ -108,15 +109,21 @@ async def _foldable_sport_ids(db, sport_key: str) -> list[int]:
     return ids
 
 
-def _commence_arms(commence: datetime) -> Any:
+def _commence_arms(commence: datetime, sport_key: str = "") -> Any:
     lo_pad, hi_pad = PAD_BAND
-    midnight = datetime.combine(commence.date(), time(0), tzinfo=commence.tzinfo)
-    return or_(
+    utc_commence = commence.astimezone(timezone.utc) if commence.tzinfo else commence
+    tz = timezone.utc if commence.tzinfo else None
+    day_start = datetime.combine(utc_commence.date(), time(0), tzinfo=tz)
+    arms = [
         Event.commence_time.between(commence - NEAR, commence + NEAR),
         Event.commence_time.between(commence + lo_pad, commence + hi_pad),
         Event.commence_time.between(commence - hi_pad, commence - lo_pad),
-        Event.commence_time == midnight,
-    )
+        Event.commence_time == day_start,
+    ]
+    if sport_key in _REVERSED_SAME_DAY_ANCHORED_CLAIM_LEAGUES:
+        day_end = day_start + timedelta(days=1)
+        arms.append(and_(Event.commence_time >= day_start, Event.commence_time < day_end))
+    return or_(*arms)
 
 
 async def serve_fold_absorbed_rows(db, event) -> list:
@@ -166,7 +173,7 @@ async def serve_fold_absorbed_rows_with_completeness(db, event) -> tuple[list, b
                     and_(
                         Event.id != event.id,
                         Event.sport_id.in_(sport_ids),
-                        _commence_arms(commence),
+                        _commence_arms(commence, sport_key),
                         not_a_proven_duplicate(),
                     )
                 )

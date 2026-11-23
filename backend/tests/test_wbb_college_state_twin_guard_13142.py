@@ -2,29 +2,51 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import asyncio
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
+from sqlalchemy import create_engine, event as sa_event, select
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.orm import Session
 
-from app.tasks import prediction_market_matching as pmm
-from app.utils.aggregation import compute_aggregate_probability
-from app.utils.event_twin_fold import (
+
+@compiles(JSONB, "sqlite")
+def _jsonb_on_sqlite(type_, compiler, **kw):  # pragma: no cover - DDL shim
+    return "JSON"
+
+
+@compiles(ARRAY, "sqlite")
+def _array_on_sqlite(type_, compiler, **kw):  # pragma: no cover - DDL shim
+    return "JSON"
+
+
+from app.models import Event, OddsSnapshot, Sport  # noqa: E402
+from app.models.models import Base  # noqa: E402
+from app.routes import events as events_route  # noqa: E402
+from app.routes.events import get_event, list_events  # noqa: E402
+from app.tasks import prediction_market_matching as pmm  # noqa: E402
+from app.utils.aggregation import compute_aggregate_probability  # noqa: E402
+from app.utils.event_twin_fold import (  # noqa: E402
     _college_squash,
     _squash_for_league,
     fold_twin_events,
     team_name_fold_key,
     twin_fold_key,
 )
-from app.utils.feed_scoring import format_event_data
-from app.utils.hero_probability import resolve_hero
-from app.utils.prediction_market_matching import (
+from app.utils.feed_scoring import format_event_data  # noqa: E402
+from app.utils.hero_probability import resolve_hero  # noqa: E402
+from app.utils.prediction_market_matching import (  # noqa: E402
     MatchupInfo,
     _expand_team_search_terms,
     _fuzzy_team_match,
     normalize_wbb_mascot,
     wbb_mascot_variants,
 )
+from app.utils.serve_fold_absorbed import _commence_arms  # noqa: E402
 
 
 def _make_event(
@@ -883,3 +905,180 @@ class TestWbbMatcherEndToEnd13142:
         )
         assert preferred is not None
         assert preferred["event_id"] == 15352801
+
+
+class _SyncAsAsyncWbb:
+    """Async SQLAlchemy wrapper with savepoint support and UTC-aware timestamps for SQLite."""
+
+    def __init__(self, session: Session):
+        self._session = session
+
+    async def begin_nested(self):
+        nested = self._session.begin_nested()
+
+        class _Tx:
+            async def commit(self):
+                if nested.is_active:
+                    nested.commit()
+
+            async def rollback(self):
+                if nested.is_active:
+                    nested.rollback()
+
+        return _Tx()
+
+    async def execute(self, statement, *args, **kwargs):
+        from sqlalchemy.orm.attributes import set_committed_value
+
+        result = self._session.execute(statement, *args, **kwargs)
+        frozen = result.freeze() if hasattr(result, "freeze") else result
+        for obj in list(self._session.identity_map.values()):
+            for col in ("commence_time", "completed_at", "captured_at", "valid_until"):
+                value = getattr(obj, col, None)
+                if isinstance(value, datetime) and value.tzinfo is None:
+                    set_committed_value(obj, col, value.replace(tzinfo=timezone.utc))
+        return frozen() if hasattr(result, "freeze") else frozen
+
+
+def _restore_sqlite_utc(_session, instance):
+    for attr in ("commence_time", "completed_at", "captured_at", "valid_until"):
+        val = getattr(instance, attr, None)
+        if isinstance(val, datetime) and val.tzinfo is None:
+            setattr(instance, attr, val.replace(tzinfo=timezone.utc))
+
+
+def _portable_odds_query(event_ids):
+    return select(OddsSnapshot).where(OddsSnapshot.event_id.in_(event_ids))
+
+
+class TestWbbSameDayDetailParity13142:
+    def test_commence_arms_widens_to_full_utc_day_only_for_wncaab(self):
+        commence = datetime(2025, 11, 23, 14, 0, tzinfo=timezone.utc)
+        wbb_sql = str(_commence_arms(commence, "basketball_wncaab"))
+        euro_sql = str(_commence_arms(commence, "basketball_euroleague"))
+        assert wbb_sql.count("events.commence_time >=") == 1
+        assert "events.commence_time >=" not in euro_sql
+
+    @pytest.mark.parametrize("state", ["live", "finished"])
+    def test_same_utc_day_two_hour_offset_list_and_detail_agree(self, state: str):
+        """Even >30m apart on one UTC day, WBB game page absorbs & flips twin sources to match list."""
+        eng = create_engine("sqlite://")
+        Base.metadata.create_all(eng)
+        now = datetime.now(timezone.utc).replace(second=0, microsecond=0)
+
+        if state == "live":
+            anchor_commence = (
+                now.replace(hour=0, minute=0)
+                if (now.hour == 0 and now.minute < 30)
+                else now - timedelta(minutes=30)
+            )
+            claim_commence = (
+                anchor_commence + timedelta(hours=2)
+                if anchor_commence.hour < 22
+                else anchor_commence - timedelta(hours=2)
+            )
+            completed_at = None
+            status = "live"
+            scores = (44, 39)
+            src_stamp = now.isoformat()
+        else:
+            yesterday = (now - timedelta(days=1)).date()
+            anchor_commence = datetime(
+                yesterday.year, yesterday.month, yesterday.day, 14, 0, tzinfo=timezone.utc
+            )
+            claim_commence = anchor_commence + timedelta(hours=2)
+            completed_at = anchor_commence + timedelta(hours=3)
+            status = "completed"
+            scores = (72, 64)
+            src_stamp = (anchor_commence - timedelta(hours=1)).isoformat()
+
+        with Session(eng) as s:
+            s.add(Sport(id=10, key="basketball_wncaab", name="WNCAAB", group="Basketball"))
+            s.add(
+                Event(
+                    id=15352902,
+                    sport_id=10,
+                    away_team_name="Kansas St Wildcats",
+                    home_team_name="Missouri Tigers",
+                    commence_time=anchor_commence,
+                    completed_at=completed_at,
+                    status=status,
+                    home_score=scores[0],
+                    away_score=scores[1],
+                    external_id="f27a19d9369dd20d4a858e617ab21bcb",
+                    win_probability_sources={
+                        "stat_model": {"value": 0.0812, "updated_at": src_stamp},
+                    },
+                    win_probability_sources_rev=10,
+                )
+            )
+            s.add(
+                Event(
+                    id=15348085,
+                    sport_id=10,
+                    away_team_name="Missouri Tigers",
+                    home_team_name="Kansas State Wildcats",
+                    commence_time=claim_commence,
+                    completed_at=completed_at,
+                    status=status,
+                    home_score=None,
+                    away_score=None,
+                    external_id=None,
+                    win_probability_sources={
+                        "polymarket": {
+                            "value": 0.96,
+                            "observed_value": 0.96,
+                            "updated_at": src_stamp,
+                        },
+                    },
+                    win_probability_sources_rev=5,
+                )
+            )
+            s.commit()
+
+        events_route._event_detail_cache.clear()
+        with (
+            patch("app.routes.events._load_gei_percentiles", new=AsyncMock(return_value={})),
+            patch("app.routes.events._build_team_lookup", new=AsyncMock(return_value={})),
+            patch("app.routes.events.latest_odds_per_bookmaker_query", new=_portable_odds_query),
+            patch("app.utils.price_evidence.load_price_evidence", new=AsyncMock(return_value="tradeable_book")),
+        ):
+            with Session(eng) as s_list:
+                sa_event.listen(s_list, "loaded_as_persistent", _restore_sqlite_utc)
+                list_payload = asyncio.run(
+                    list_events(
+                        sport="basketball_wncaab",
+                        status=None,
+                        days=7,
+                        limit=200,
+                        offset=0,
+                        db=_SyncAsAsyncWbb(s_list),
+                    )
+                )
+            with Session(eng) as s_detail:
+                sa_event.listen(s_detail, "loaded_as_persistent", _restore_sqlite_utc)
+                detail_payload = asyncio.run(
+                    get_event(15352902, db=_SyncAsAsyncWbb(s_detail), fresh=True)
+                )
+        events_route._event_detail_cache.clear()
+
+        assert len(list_payload["events"]) == 1
+        list_card = list_payload["events"][0]
+        assert list_card["id"] == 15352902
+        assert detail_payload["id"] == 15352902
+
+        list_wps = list_card["win_probability_sources"]
+        detail_wps = detail_payload["win_probability_sources"]
+        assert set(detail_wps) == set(list_wps) == {"stat_model", "polymarket"}
+        assert list_wps["polymarket"]["value"] == pytest.approx(0.04)
+        assert detail_wps["polymarket"]["value"] == pytest.approx(0.04)
+        assert list_wps["stat_model"]["value"] == pytest.approx(0.0812)
+        assert detail_wps["stat_model"]["value"] == pytest.approx(0.0812)
+
+        assert detail_payload["hero_probability"] == pytest.approx(list_card["hero_probability"])
+        assert detail_payload["hero_probability_source"] == list_card["hero_probability_source"]
+        if state == "live":
+            assert detail_payload["hero_probability_source"] == "blend"
+        else:
+            assert detail_payload["hero_probability_source"] == "settled"
+            assert detail_payload["hero_probability"] == pytest.approx(1.0)
