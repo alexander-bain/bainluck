@@ -303,7 +303,14 @@ def build_synthetic_snapshot_for_definition(
                     row_specs.append((mid, title))
 
         prob_band = aq.get("prob_band")
-        high_prob = 0.22 if isinstance(prob_band, Sequence) and len(prob_band) == 2 else 0.78
+        is_single_duel = (
+            int(aq.get("max_items") or 0) == 1 and int(aq.get("max_outcomes") or 0) == 2
+        )
+        high_prob = (
+            0.22
+            if isinstance(prob_band, Sequence) and len(prob_band) == 2
+            else (0.58 if is_single_duel else 0.78)
+        )
         low_prob = 0.08 if isinstance(prob_band, Sequence) and len(prob_band) == 2 else 0.32
         max_lead = aq.get("max_lead_probability")
         if isinstance(max_lead, (int, float)) and not isinstance(max_lead, bool):
@@ -448,11 +455,15 @@ async def _run_live_db_audit(
                     for sec in ((defn.get("rule") or {}).get("sections") or ())
                     if isinstance(sec, Mapping)
                 )
+                if has_hist:
+                    await session.execute(text("SET statement_timeout = '25000ms'"))
                 snapshot = await _load_snapshot_from_db(
                     session if has_hist else skip_session,
                     defn,
                     now,
                 )
+                if has_hist:
+                    await session.execute(text("SET statement_timeout = '8000ms'"))
                 results.append(
                     await audit_public_assembly_for_definition(
                         defn,

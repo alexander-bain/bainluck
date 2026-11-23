@@ -82,10 +82,16 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
     res_future = now_dt + timedelta(days=120)
 
     nfl = Sport(key="americanfootball_nfl", name="NFL", group="American Football", active=True)
+    ncaaf = Sport(key="americanfootball_ncaaf", name="NCAAF", group="American Football", active=True)
     nba = Sport(key="basketball_nba", name="NBA", group="Basketball", active=True)
     ncaab = Sport(key="basketball_ncaab", name="NCAAB", group="Basketball", active=True)
     nhl = Sport(key="icehockey_nhl", name="NHL", group="Ice Hockey", active=True)
-    session.add_all([nfl, nba, ncaab, nhl])
+    epl = Sport(key="soccer_epl", name="EPL", group="Soccer", active=True)
+    la_liga = Sport(key="soccer_spain_la_liga", name="La Liga", group="Soccer", active=True)
+    serie_a = Sport(key="soccer_italy_serie_a", name="Serie A", group="Soccer", active=True)
+    bundesliga = Sport(key="soccer_germany_bundesliga", name="Bundesliga", group="Soccer", active=True)
+    ligue_1 = Sport(key="soccer_france_ligue_one", name="Ligue 1", group="Soccer", active=True)
+    session.add_all([nfl, ncaaf, nba, ncaab, nhl, epl, la_liga, serie_a, bundesliga, ligue_1])
     await session.flush()
 
     bills = Team(
@@ -176,7 +182,205 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
         secondary_color="#FA4616",
         logo_url_small="https://a.espncdn.com/i/teamlogos/ncaa/500/57.png",
     )
-    session.add_all([bills, chiefs, lions, packers, celtics, cavs, thunder, nuggets, houston, duke, florida])
+    kansas = Team(
+        sport_id=ncaab.id,
+        name="Kansas Jayhawks",
+        abbreviation="KU",
+        primary_color="#0051BA",
+        secondary_color="#E8000D",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/ncaa/500/2305.png",
+    )
+    ducks_nhl = Team(
+        sport_id=nhl.id,
+        name="Anaheim Ducks",
+        abbreviation="ANA",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/nhl/500/ana.png",
+    )
+    kraken = Team(
+        sport_id=nhl.id,
+        name="Seattle Kraken",
+        abbreviation="SEA",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/nhl/500/sea.png",
+    )
+    mammoth = Team(
+        sport_id=nhl.id,
+        name="Utah Mammoth",
+        abbreviation="UTA",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/nhl/500/utah.png",
+    )
+    jets = Team(
+        sport_id=nhl.id,
+        name="Winnipeg Jets",
+        abbreviation="WPG",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/nhl/500/wpg.png",
+    )
+    georgia = Team(
+        sport_id=ncaaf.id,
+        name="Georgia Bulldogs",
+        abbreviation="UGA",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/ncaa/500/61.png",
+    )
+    notre_dame = Team(
+        sport_id=ncaaf.id,
+        name="Notre Dame Fighting Irish",
+        abbreviation="ND",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/ncaa/500/87.png",
+    )
+    texas_fb = Team(
+        sport_id=ncaaf.id,
+        name="Texas Longhorns",
+        abbreviation="TEX",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/ncaa/500/251.png",
+    )
+    alabama = Team(
+        sport_id=ncaaf.id,
+        name="Alabama Crimson Tide",
+        abbreviation="ALA",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/ncaa/500/333.png",
+    )
+    oregon = Team(
+        sport_id=ncaaf.id,
+        name="Oregon Ducks",
+        abbreviation="ORE",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/ncaa/500/2483.png",
+    )
+    utah_fb = Team(
+        sport_id=ncaaf.id,
+        name="Utah Utes",
+        abbreviation="UTAH",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/ncaa/500/254.png",
+    )
+    boise = Team(
+        sport_id=ncaaf.id,
+        name="Boise State Broncos",
+        abbreviation="BOIS",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/ncaa/500/68.png",
+    )
+    broncos = Team(
+        sport_id=nfl.id,
+        name="Denver Broncos",
+        abbreviation="DEN",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/nfl/500/den.png",
+    )
+    vikings = Team(
+        sport_id=nfl.id,
+        name="Minnesota Vikings",
+        abbreviation="MIN",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/nfl/500/min.png",
+    )
+    panthers = Team(
+        sport_id=nfl.id,
+        name="Carolina Panthers",
+        abbreviation="CAR",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/nfl/500/car.png",
+    )
+    niners = Team(
+        sport_id=nfl.id,
+        name="San Francisco 49ers",
+        abbreviation="SF",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/nfl/500/sf.png",
+    )
+    arsenal = Team(
+        sport_id=epl.id,
+        name="Arsenal",
+        abbreviation="ARS",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/soccer/500/359.png",
+    )
+    liverpool = Team(
+        sport_id=epl.id,
+        name="Liverpool",
+        abbreviation="LIV",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/soccer/500/364.png",
+    )
+    barcelona = Team(
+        sport_id=la_liga.id,
+        name="Barcelona",
+        abbreviation="BAR",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/soccer/500/83.png",
+    )
+    real_madrid = Team(
+        sport_id=la_liga.id,
+        name="Real Madrid",
+        abbreviation="RMA",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/soccer/500/86.png",
+    )
+    inter_milan = Team(
+        sport_id=serie_a.id,
+        name="Inter Milan",
+        abbreviation="INT",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/soccer/500/110.png",
+    )
+    como = Team(
+        sport_id=serie_a.id,
+        name="Como",
+        abbreviation="COM",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/soccer/500/2572.png",
+    )
+    bayern = Team(
+        sport_id=bundesliga.id,
+        name="Bayern Munich",
+        abbreviation="FCB",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/soccer/500/132.png",
+    )
+    dortmund = Team(
+        sport_id=bundesliga.id,
+        name="Borussia Dortmund",
+        abbreviation="BVB",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/soccer/500/124.png",
+    )
+    psg = Team(
+        sport_id=ligue_1.id,
+        name="Paris Saint-Germain",
+        abbreviation="PSG",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/soccer/500/160.png",
+    )
+    lille = Team(
+        sport_id=ligue_1.id,
+        name="Lille",
+        abbreviation="LIL",
+        logo_url_small="https://a.espncdn.com/i/teamlogos/soccer/500/166.png",
+    )
+    session.add_all(
+        [
+            bills,
+            chiefs,
+            lions,
+            packers,
+            celtics,
+            cavs,
+            thunder,
+            nuggets,
+            houston,
+            duke,
+            florida,
+            kansas,
+            ducks_nhl,
+            kraken,
+            mammoth,
+            jets,
+            georgia,
+            notre_dame,
+            texas_fb,
+            alabama,
+            oregon,
+            utah_fb,
+            boise,
+            broncos,
+            vikings,
+            panthers,
+            niners,
+            arsenal,
+            liverpool,
+            barcelona,
+            real_madrid,
+            inter_milan,
+            como,
+            bayern,
+            dortmund,
+            psg,
+            lille,
+        ]
+    )
     await session.flush()
 
     def _wps(home_prob: float) -> dict:
@@ -281,6 +485,94 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
                 commence_time=now_dt + timedelta(hours=34),
                 status="scheduled",
                 win_probability_sources=_wps(0.69),
+            ),
+            Event(
+                sport_id=nhl.id,
+                external_id="pg-nhl-1",
+                home_team_id=kraken.id,
+                away_team_id=ducks_nhl.id,
+                home_team_name="Seattle Kraken",
+                away_team_name="Anaheim Ducks",
+                commence_time=now_dt + timedelta(hours=10),
+                status="scheduled",
+                win_probability_sources=_wps(0.51),
+            ),
+            Event(
+                sport_id=nhl.id,
+                external_id="pg-nhl-2",
+                home_team_id=jets.id,
+                away_team_id=mammoth.id,
+                home_team_name="Winnipeg Jets",
+                away_team_name="Utah Mammoth",
+                commence_time=now_dt + timedelta(hours=14),
+                status="scheduled",
+                win_probability_sources=_wps(0.49),
+            ),
+            Event(
+                sport_id=nhl.id,
+                external_id="pg-nhl-3",
+                home_team_id=kraken.id,
+                away_team_id=jets.id,
+                home_team_name="Seattle Kraken",
+                away_team_name="Winnipeg Jets",
+                commence_time=now_dt + timedelta(hours=30),
+                status="scheduled",
+                win_probability_sources=_wps(0.62),
+            ),
+            Event(
+                sport_id=nhl.id,
+                external_id="pg-nhl-4",
+                home_team_id=jets.id,
+                away_team_id=ducks_nhl.id,
+                home_team_name="Winnipeg Jets",
+                away_team_name="Anaheim Ducks",
+                commence_time=now_dt + timedelta(hours=36),
+                status="scheduled",
+                win_probability_sources=_wps(0.66),
+            ),
+            Event(
+                sport_id=nhl.id,
+                external_id="pg-nhl-5",
+                home_team_id=kraken.id,
+                away_team_id=mammoth.id,
+                home_team_name="Seattle Kraken",
+                away_team_name="Utah Mammoth",
+                commence_time=now_dt + timedelta(hours=44),
+                status="scheduled",
+                win_probability_sources=_wps(0.68),
+            ),
+            Event(
+                sport_id=ncaab.id,
+                external_id="pg-ncaab-1",
+                home_team_id=houston.id,
+                away_team_id=duke.id,
+                home_team_name="Houston Cougars",
+                away_team_name="Duke Blue Devils",
+                commence_time=now_dt + timedelta(hours=12),
+                status="scheduled",
+                win_probability_sources=_wps(0.54),
+            ),
+            Event(
+                sport_id=ncaab.id,
+                external_id="pg-ncaab-2",
+                home_team_id=kansas.id,
+                away_team_id=florida.id,
+                home_team_name="Kansas Jayhawks",
+                away_team_name="Florida Gators",
+                commence_time=now_dt + timedelta(hours=18),
+                status="scheduled",
+                win_probability_sources=_wps(0.63),
+            ),
+            Event(
+                sport_id=ncaab.id,
+                external_id="pg-ncaab-3",
+                home_team_id=duke.id,
+                away_team_id=florida.id,
+                home_team_name="Duke Blue Devils",
+                away_team_name="Florida Gators",
+                commence_time=now_dt + timedelta(hours=28),
+                status="scheduled",
+                win_probability_sources=_wps(0.71),
             ),
         ]
     )
@@ -741,6 +1033,77 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
             name=name,
             category=cat,
             outcomes=outs,
+        )
+
+    # 14. #12288 Batch 7 preview groupings (8 forms across Oscars, CFB, NFL, NHL, NCAAB, Euro Soccer, Tech & Space, Weather)
+    actor_outcomes = [
+        ("John Malkovich", 0.94, 0.92),
+        ("Andrew Scott", 0.92, 0.90),
+        ("Matt Damon", 0.93, 0.91),
+        ("Anthony Ippolito", 0.54, 0.50),
+        ("Tom Cruise", 0.42, 0.40),
+        ("Ryan Gosling", 0.37, 0.35),
+    ]
+    await _add_market(
+        market_id=5388752,
+        external_id="KXOSCARNOM-BA-27",
+        name="Oscar nominees: Best Actor",
+        category="entertainment",
+        outcomes=actor_outcomes,
+    )
+    await _add_market(
+        market_id=5869749,
+        external_id="KXOSCARWIN-BA-27",
+        name="Oscar Winner: Best Actor",
+        category="entertainment",
+        outcomes=[
+            ("John Malkovich", 0.47, 0.42),
+            ("Andrew Scott", 0.25, 0.22),
+            ("Matt Damon", 0.15, 0.17),
+            ("Anthony Ippolito", 0.06, 0.07),
+            ("Tom Cruise", 0.04, 0.05),
+            ("Ryan Gosling", 0.03, 0.03),
+        ],
+    )
+    for mid, ext, name, cat, sid, hist, outs in (
+        (5869747, "KXB7-OSCAR-DIR", "Oscar Winner: Best Director", "entertainment", None, False, [("Christopher Nolan", 0.61, 0.61), ("Denis Villeneuve", 0.17, 0.17)]),
+        (58492239, "PMB7-OSCAR-ANIM", "Oscars 2027: Best Animated Feature Film Winner", "entertainment", None, False, [("Wildwood", 0.87, 0.87), ("Toy Story 5", 0.07, 0.07)]),
+        (58492240, "PMB7-OSCAR-SUPA", "Oscars 2027: Best Supporting Actress Winner", "entertainment", None, False, [("Anne Hathaway", 0.63, 0.63), ("Amanda Seyfried", 0.21, 0.21)]),
+        (58492236, "PMB7-OSCAR-ORIG", "Oscars 2027: Best Original Screenplay Winner", "entertainment", None, False, [("Wild Horse Nine", 0.61, 0.61), ("Club Kid", 0.13, 0.13)]),
+        (181, "KXB7-CFP", "College Football National Championship Winner", "football", ncaaf.id, False, [("Georgia", 0.35, 0.35), ("Notre Dame", 0.17, 0.17), ("Texas", 0.11, 0.11), ("Alabama", 0.09, 0.09)]),
+        (232, "KXB7-BIG10", "College Football Big Ten Championship Winner", "football", ncaaf.id, False, [("Oregon", 0.50, 0.50), ("Indiana", 0.20, 0.20), ("Iowa", 0.15, 0.15)]),
+        (234, "KXB7-BIG12", "College Football Big 12 Championship Winner", "football", ncaaf.id, False, [("Utah", 0.56, 0.56), ("Texas Tech", 0.38, 0.38), ("BYU", 0.06, 0.06)]),
+        (4121125, "KXB7-PAC12", "College Football Pac-12 Championship Winner", "football", ncaaf.id, False, [("Boise St.", 0.87, 0.87), ("San Diego St.", 0.12, 0.12), ("Fresno St.", 0.01, 0.01)]),
+        (233, "KXB7-SEC", "College Football SEC Championship Winner", "football", ncaaf.id, False, [("Georgia", 0.69, 0.69), ("Texas", 0.26, 0.26), ("Alabama", 0.05, 0.05)]),
+        (53675, "KXB7-AFCW", "AFC West Division Winner", "football", nfl.id, False, [("Denver", 0.55, 0.55), ("Kansas City", 0.43, 0.43), ("Las Vegas", 0.02, 0.02)]),
+        (53673, "KXB7-NFCN", "NFC North Division Winner", "football", nfl.id, False, [("Minnesota", 0.37, 0.37), ("Chicago", 0.31, 0.31), ("Detroit", 0.30, 0.30)]),
+        (53672, "KXB7-NFCS", "NFC South Division Winner", "football", nfl.id, False, [("Carolina", 0.51, 0.51), ("Tampa Bay", 0.27, 0.27), ("Atlanta", 0.11, 0.11)]),
+        (53671, "KXB7-NFCW", "NFC West Division Winner", "football", nfl.id, False, [("San Francisco", 0.87, 0.87), ("Seattle", 0.09, 0.09), ("Los Angeles R", 0.04, 0.04)]),
+        (70732920, "PMB7-EPL", "EPL: 2027 Champion", "soccer", epl.id, False, [("Arsenal", 0.73, 0.73), ("Liverpool", 0.14, 0.14), ("Brighton", 0.06, 0.06)]),
+        (70732921, "PMB7-LALIGA", "LALIGA: 2027 Champion", "soccer", la_liga.id, False, [("Barcelona", 0.67, 0.67), ("Real Madrid", 0.31, 0.31), ("Atlético Madrid", 0.02, 0.02)]),
+        (70732919, "PMB7-SERIEA", "Serie A: 2027 Champion", "soccer", serie_a.id, False, [("Inter Milan", 0.57, 0.57), ("Como", 0.08, 0.08), ("Lazio", 0.06, 0.06)]),
+        (70732968, "PMB7-BUNDES", "Bundesliga: 2027 Champion", "soccer", bundesliga.id, False, [("Bayern Munich", 0.76, 0.76), ("Borussia Dortmund", 0.16, 0.16), ("RB Leipzig", 0.04, 0.04)]),
+        (70732922, "PMB7-LIGUE1", "Ligue 1: 2027 Champion", "soccer", ligue_1.id, False, [("Paris Saint-Germain", 0.90, 0.90), ("Lille", 0.02, 0.02), ("Monaco", 0.02, 0.02)]),
+        (24647105, "PMB7-OAI-IPO", "What will OpenAI's IPO valuation be?", "tech", None, True, [("<$1T", 0.33, 0.18), ("$1.0T–$1.25T", 0.22, 0.25), ("$1.25T–$1.5T", 0.21, 0.33)]),
+        (60607595, "PMB7-OAI-MIL", "OpenAI announces another Millennium Prize solution by...?", "tech", None, True, [("December 31, 2027", 0.58, 0.45), ("December 31, 2026", 0.10, 0.22)]),
+        (109529, "KXB7-SPX26", "How many launches will SpaceX have in 2026?", "tech", None, True, [("Above 140", 0.72, 0.58), ("Above 145", 0.04, 0.15)]),
+        (109358, "KXB7-HOTTEST", "Will 2026 be the hottest year ever?", "weather", None, False, [("Yes", 0.91, 0.91)]),
+        (108220, "KXB7-WARM2C", "Will the world pass 2 degrees Celsius over pre-industrial levels before 2050?", "weather", None, False, [("Yes", 0.69, 0.69)]),
+        (61054994, "PMB7-ELNINO", "Will the 2026–27 El Niño be the strongest on record?", "weather", None, False, [("Yes", 0.58, 0.58)]),
+        (108294, "KXB7-JPQUAKE", "8.0 magnitude earthquake in Japan before 2030?", "weather", None, False, [("Yes", 0.33, 0.33)]),
+        (108222, "KXB7-SUPVOL", "Will a supervolcano erupt before 2050?", "weather", None, False, [("Yes", 0.31, 0.31)]),
+        (114086, "PMB7-CAT4HUR", "Will any Category 4 hurricane make landfall in the US before 2027?", "weather", None, False, [("Yes", 0.04, 0.04)]),
+        (109398, "KXB7-CAQUAKE", "Will there be an 8 magnitude earthquake in California before 2027?", "weather", None, False, [("Yes", 0.03, 0.03)]),
+        (114135, "PMB7-CAT5HUR", "Will any Category 5 hurricane make landfall in the US before 2027?", "weather", None, False, [("Yes", 0.02, 0.02)]),
+    ):
+        await _add_market(
+            market_id=mid,
+            external_id=ext,
+            name=name,
+            category=cat,
+            sport_id=sid,
+            outcomes=outs,
+            with_history=hist,
         )
     await session.commit()
 

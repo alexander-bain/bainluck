@@ -228,6 +228,23 @@ class FactoryRules(unittest.TestCase):
         lines, unsure = lines_for(pull)
         return classify(pull, self.snapshot["deployments"], self.now, lines[0], unsure)
 
+    def test_only_an_observed_failed_check_is_marked_on_a_change_at_checks(self):
+        for name, ci, state, conclusion, expected in (
+            ("tests", True, "completed", "failure", True),
+            ("tests", True, "completed", "timed_out", True),
+            ("tests", True, "in_progress", None, False),
+            ("tests", True, "completed", "success", False),
+            ("Tier-B approval", False, "completed", "failure", False),
+            ("flaky-canary", True, "completed", "failure", False),
+        ):
+            with self.subTest(name=name, state=state, conclusion=conclusion):
+                pull = self.ready()
+                pull["checks"][0].update(name=name, ci=ci, state=state, conclusion=conclusion)
+                self.assertEqual(self.place(pull).get("checks_failed", False), expected)
+        pull["checks"][0].update(name="tests", ci=True)
+        pull["checks_complete"] = False
+        self.assertNotIn("checks_failed", self.place(pull))
+
     def test_only_green_quiet_changes_park_and_activity_brings_them_back(self):
         pull = self.ready()
         quiet = iso(self.now - timedelta(hours=48))

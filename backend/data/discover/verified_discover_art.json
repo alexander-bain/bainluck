@@ -2954,6 +2954,21 @@
       "verified_subject": "Josh Allen, NFL quarterback (ESPN headshot 3918298)",
       "url": "https://a.espncdn.com/i/headshots/nfl/players/full/3918298.png",
       "credit": "ESPN"
+    },
+    {
+      "entity_key": "batch7-tech-and-space-movers",
+      "aliases": [
+        "Tech & Space Weekly Movers",
+        "Tech & Space Milestone Odds"
+      ],
+      "kind": "topic",
+      "presentation": "photo",
+      "verified_subject": "Flight-ready primary mirror segments of NASA's James Webb Space Telescope at Marshall Space Flight Center (NASA Image of the Day)",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/10/James_Webb_Primary_Mirror.jpg/960px-James_Webb_Primary_Mirror.jpg",
+      "credit": "NASA/MSFC/David Higginbotham (Public domain, Wikimedia Commons)",
+      "author": "NASA/MSFC/David Higginbotham",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:James_Webb_Primary_Mirror.jpg"
     }
   ]
 }

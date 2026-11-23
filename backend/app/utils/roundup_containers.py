@@ -884,7 +884,7 @@ def compose_roundup_feed_item(
     collection_ref = {
         "slug": producer.slug,
         "href": effective_href,
-        "name": effective_title,
+        "name": producer.name or effective_title,
         "revision": roundup_revision(rev_ids),
         "collection_count": len(member_ids),
     }
