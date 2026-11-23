@@ -740,28 +740,63 @@ def latest_snapshot_for_each_bookmaker(snapshots, canonical_event_id: int) -> li
     a crossed pair's prices with the two sides swapped: a confident, exactly
     inverted price rather than a missing one. Callers pass
     :func:`folded_series_event_ids`.
-
-    `captured_at` is dereferenced without a guard because the call site already
-    does (`s.captured_at.isoformat()`, and `max(...)` over the same rows); a
-    guard here would only move a crash three lines later while reading as safety.
     """
     chosen: dict[str, object] = {}
     for snap in snapshots:
-        best = chosen.get(snap.bookmaker)
-        if best is None or (
-            snap.captured_at,
-            snap.event_id == canonical_event_id,
-            snap.id,
-        ) > (
-            best.captured_at,
-            best.event_id == canonical_event_id,
-            best.id,
-        ):
-            chosen[snap.bookmaker] = snap
+        bk = getattr(snap, "bookmaker", None)
+        if not bk:
+            continue
+        ts = getattr(snap, "captured_at", None)
+        cand_key = (
+            ts is not None,
+            ts,
+            getattr(snap, "event_id", None) == canonical_event_id,
+            getattr(snap, "id", None) or 0,
+        )
+        best = chosen.get(bk)
+        if best is None:
+            chosen[bk] = snap
+            continue
+        best_ts = getattr(best, "captured_at", None)
+        best_key = (
+            best_ts is not None,
+            best_ts,
+            getattr(best, "event_id", None) == canonical_event_id,
+            getattr(best, "id", None) or 0,
+        )
+        if cand_key > best_key:
+            chosen[bk] = snap
     # Bookmaker-ascending, which is the order the recursive walk already emits
     # for a single event — so an unfolded page's list is unchanged, element for
     # element, rather than merely equivalent as a set.
     return [chosen[book] for book in sorted(chosen)]
+
+
+def group_latest_snapshots_by_event(
+    snapshots,
+    owner_by_event_id: dict[int, int],
+) -> dict[int, list]:
+    """Group snapshots by canonical owner id and pick one freshest row per bookmaker.
+
+    Used by batch callers (events list cards, live three-way book extraction) so
+    both list and event page run :func:`latest_snapshot_for_each_bookmaker`
+    identically. Any snapshot whose ``event_id`` is absent from
+    ``owner_by_event_id`` (for example an excluded corner-flipped twin) is
+    ignored.
+    """
+    grouped: dict[int, list] = {}
+    for snap in snapshots:
+        snap_eid = getattr(snap, "event_id", None)
+        if snap_eid is None:
+            continue
+        owner = owner_by_event_id.get(int(snap_eid))
+        if owner is None:
+            continue
+        grouped.setdefault(owner, []).append(snap)
+    return {
+        owner: latest_snapshot_for_each_bookmaker(owner_snaps, owner)
+        for owner, owner_snaps in grouped.items()
+    }
 
 
 # ── Folding a READING is not folding a SERIES (#3810 Fold A) ─────────────────
