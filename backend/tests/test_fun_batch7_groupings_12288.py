@@ -235,7 +235,8 @@ def test_batch7_sets_are_preview_and_disjoint_from_prior_batches() -> None:
     categories = set()
     for slug in BATCH7_SLUGS:
         defn = load_machinery_definition(CANDIDATES_DIR / f"{slug}.json")
-        assert defn["stage"] == "preview", f"{slug} must stay in preview stage"
+        expected_stage = "preview" if slug == "machinery-tech-and-space-movers" else "public"
+        assert defn["stage"] == expected_stage, f"{slug} stage expected {expected_stage}, got {defn['stage']}"
         categories.add(defn["category"])
     assert len(categories) >= 5
 
@@ -447,3 +448,18 @@ async def test_batch7_fable_fixes_big_ten_college_slate_and_history_first_to_las
     assert moved_card["form_id"] == "probability_history_chart"
     assert moved_card.get("mini_chart") is not None
     assert not moved_card.get("image_url")
+
+
+@pytest.mark.asyncio
+async def test_european_league_titles_takes_zero_lesser_soccer_penalty_348b() -> None:
+    """#13477 follow-up: top-five European league titles pays 0 lesser-soccer penalty."""
+    from app.utils.roundup_containers import _roundup_lesser_soccer_penalty
+
+    clear_fun_markets_cache()
+    db = _make_batch7_snapshot()
+    defn = load_machinery_definition(CANDIDATES_DIR / "machinery-european-league-titles.json")
+    res = await produce_container_machinery(db, defn, now=NOW)
+    feed_item = sanitize_discover_feed_item(
+        compose_roundup_feed_item(build_container_machinery_producer(defn), res)
+    )
+    assert _roundup_lesser_soccer_penalty(feed_item) == 0

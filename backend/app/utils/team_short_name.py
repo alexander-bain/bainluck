@@ -132,6 +132,14 @@ def is_college_sport(sport_key: str | None) -> bool:
     return "ncaa" in key or "college" in key
 
 
+_COMPACT_SCHOOL_LABELS: dict[str, str] = {
+    "appalachian state": "App St",
+    "appalachian st": "App St",
+    "appalachian st.": "App St",
+    "app state": "App St",
+}
+
+
 def school_label(name: str | None, location: str | None = None) -> str | None:
     """A college team's school (194-A), failing safe to the full name.
 
@@ -147,9 +155,10 @@ def school_label(name: str | None, location: str | None = None) -> str | None:
     cleaned = " ".join(name.split())
     loc = " ".join((location or "").split())
     if loc and (cleaned.lower() == loc.lower() or cleaned.lower().startswith(loc.lower() + " ")):
-        return loc
+        return _COMPACT_SCHOOL_LABELS.get(loc.lower(), loc)
     stripped = _COLLEGE_MASCOT_RE.sub("", cleaned).strip()
-    return stripped or cleaned
+    school = stripped or cleaned
+    return _COMPACT_SCHOOL_LABELS.get(school.lower(), school)
 
 
 def compact_team_label(
