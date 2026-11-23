@@ -71,6 +71,12 @@ FEED_RESPONSE_TTL_LIVE_SECONDS = 30
 FEED_RESPONSE_STALE_TTL_LIVE_SECONDS = 60
 FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS = 60
 
+# Decision 346: A (#13443): Discover pages that are live ONLY through a
+# grouping (bundle holding live child games, with no standalone live game card)
+# use a 120s hard ceiling while `prewarm_live_feed_shapes` overruns its 30s
+# slot. Tightens back to 60 when #13445 is done — one-line change here.
+FEED_RESPONSE_STALE_TTL_LIVE_GROUPING_ONLY_SECONDS = 120
+
 # --- #2236: the republish period lives beside the ceiling it must respect ------
 # The ceiling above is a bound on how OLD a served live payload may be. A warmer
 # is the thing that keeps a key from ever reaching it. Those are two halves of
@@ -312,7 +318,11 @@ def live_republish_headroom_s() -> int:
 
 
 # --- LAT-P230 (#3144): the OTHER term the ceiling never counted ---------------
-def live_total_age_headroom_s(oldest_artifact_age_s: float) -> int:
+def live_total_age_headroom_s(
+    oldest_artifact_age_s: float,
+    *,
+    ceiling_seconds: int = FEED_RESPONSE_STALE_TTL_LIVE_SECONDS,
+) -> int:
     """Seconds a live payload may still be CACHED for, given its inputs' age.
 
     The ceiling above bounds how old a served live payload may be. It was written
@@ -346,7 +356,7 @@ def live_total_age_headroom_s(oldest_artifact_age_s: float) -> int:
     seconds of the ceiling, not 59.
     """
     spent = math.ceil(max(0.0, oldest_artifact_age_s))
-    return max(0, FEED_RESPONSE_STALE_TTL_LIVE_SECONDS - spent)
+    return max(0, int(ceiling_seconds) - spent)
 
 
 def nonlive_total_age_headroom_s(strict_artifact_age_s: float) -> int:
@@ -1157,6 +1167,37 @@ def feed_response_cache_ttl(
     )
 
 
+def _item_is_direct_live_card(item: Any) -> bool:
+    """Whether one non-bundle item declares itself live directly."""
+    if not isinstance(item, dict) or item.get("type") == "bundle":
+        return False
+    data = item.get("data")
+    return isinstance(data, dict) and data.get("status") == "live"
+
+
+def _item_is_live_grouping(item: Any) -> bool:
+    """Whether one bundle/grouping item is live or carries a live child game."""
+    if not isinstance(item, dict) or item.get("type") != "bundle":
+        return False
+    data = item.get("data")
+    if not isinstance(data, dict):
+        return False
+    if data.get("status") == "live":
+        return True
+    children = data.get("items")
+    if isinstance(children, list):
+        for child in children:
+            if not isinstance(child, dict):
+                continue
+            cdata = child.get("data")
+            if not isinstance(cdata, dict):
+                continue
+            cstatus = str(cdata.get("status") or "").strip().lower()
+            if cstatus in ("live", "in_progress", "halftime"):
+                return True
+    return False
+
+
 def payload_contains_live_event(payload: Any) -> bool:
     """Whether a built feed payload carries at least one live card (#2216).
 
@@ -1186,27 +1227,35 @@ def payload_contains_live_event(payload: Any) -> bool:
     items = payload.get("items")
     if not isinstance(items, list):
         return False
+    return any(
+        _item_is_direct_live_card(item) or _item_is_live_grouping(item)
+        for item in items
+    )
+
+
+def payload_is_live_only_via_grouping(payload: Any) -> bool:
+    """Whether a payload is live exclusively through grouping/bundle cards (Decision 346: A)."""
+    if not isinstance(payload, dict):
+        return False
+    items = payload.get("items")
+    if not isinstance(items, list):
+        return False
+    has_live_grouping = False
     for item in items:
-        if not isinstance(item, dict):
-            continue
-        data = item.get("data")
-        if not isinstance(data, dict):
-            continue
-        if data.get("status") == "live":
-            return True
-        if item.get("type") == "bundle":
-            children = data.get("items")
-            if isinstance(children, list):
-                for child in children:
-                    if not isinstance(child, dict):
-                        continue
-                    cdata = child.get("data")
-                    if not isinstance(cdata, dict):
-                        continue
-                    cstatus = str(cdata.get("status") or "").strip().lower()
-                    if cstatus in ("live", "in_progress", "halftime"):
-                        return True
-    return False
+        if _item_is_direct_live_card(item):
+            return False
+        if _item_is_live_grouping(item):
+            has_live_grouping = True
+    return has_live_grouping
+
+
+def live_stale_ceiling_seconds(payload: Any) -> int:
+    """Hard age ceiling for a live payload: 120s if live only via grouping, else 60s."""
+    return (
+        FEED_RESPONSE_STALE_TTL_LIVE_GROUPING_ONLY_SECONDS
+        if payload_is_live_only_via_grouping(payload)
+        else FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+    )
 
 
 def feed_response_cache_ttls(
@@ -1216,6 +1265,7 @@ def feed_response_cache_ttls(
     live: bool = False,
     oldest_artifact_age_s: float = 0.0,
     strict_artifact_age_s: float = 0.0,
+    live_stale_ceiling_s: Optional[int] = None,
 ) -> tuple[int, int]:
     """``(fresh_ttl, stale_ttl)`` for one feed response cache entry (#2216).
 
@@ -1243,11 +1293,17 @@ def feed_response_cache_ttls(
     )
     stale = FEED_RESPONSE_STALE_TTL_SECONDS
     if live:
+        ceiling_s = (
+            FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+            if live_stale_ceiling_s is None
+            else int(live_stale_ceiling_s)
+        )
         fresh = min(fresh, FEED_RESPONSE_TTL_LIVE_SECONDS)
-        stale = min(stale, FEED_RESPONSE_STALE_TTL_LIVE_SECONDS)
+        stale = min(stale, ceiling_s)
         # The inputs have already spent part of the ceiling.
         headroom = live_total_age_headroom_s(
-            max(oldest_artifact_age_s, strict_artifact_age_s)
+            max(oldest_artifact_age_s, strict_artifact_age_s),
+            ceiling_seconds=ceiling_s,
         )
         fresh = min(fresh, headroom)
         stale = min(stale, headroom)

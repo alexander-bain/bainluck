@@ -254,6 +254,7 @@ from app.utils.feed_cache import (
     FEED_PREWARM_MACHINERY_BASE_SCOPE_KEY,
     FEED_PREWARM_OPENING_SCOPE_KEY,
     FEED_PREWARM_SCOPE_KEY,
+    FEED_RESPONSE_STALE_TTL_LIVE_GROUPING_ONLY_SECONDS,
     FEED_RESPONSE_STALE_TTL_LIVE_SECONDS,
     FEED_RESPONSE_STALE_TTL_SECONDS,
     FEED_EDITION_FIELD,
@@ -274,8 +275,10 @@ from app.utils.feed_cache import (
     feed_response_cache_ttls,
     strip_live_and_started_items_for_last_good,
     inert_principal_share_enabled,
+    live_stale_ceiling_seconds,
     live_total_age_headroom_s,
     payload_contains_live_event,
+    payload_is_live_only_via_grouping,
     render_feed_page_from_base,
     warm_rail_max_shared_artifact_age_s,
 )
@@ -4220,6 +4223,7 @@ async def get_feed(
             oldest_artifact_age_s=oldest_artifact_age_s,
             # #1480: passed only by the build seam that consumed them.
             strict_artifact_age_s=strict_artifact_age_s,
+            live_stale_ceiling_s=live_stale_ceiling_seconds(payload),
         )
 
     def _payload_built_at(payload):
@@ -4264,7 +4268,7 @@ async def get_feed(
             return False
         if not payload_contains_live_event(payload):
             return False
-        return (time.time() - built_at) >= FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+        return (time.time() - built_at) >= live_stale_ceiling_seconds(payload)
 
     def _live_bounded_last_good(key):
         """Process-local last-good, with the live ceiling applied (#2216).
@@ -4286,9 +4290,12 @@ async def get_feed(
             return None
         lg = _rc.recall_last_good(key)
         if isinstance(lg, dict) and payload_contains_live_event(lg):
-            lg = _rc.recall_last_good(
-                key, max_age_s=FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS
+            _lg_max_age_s = (
+                FEED_RESPONSE_STALE_TTL_LIVE_GROUPING_ONLY_SECONDS
+                if payload_is_live_only_via_grouping(lg)
+                else FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS
             )
+            lg = _rc.recall_last_good(key, max_age_s=_lg_max_age_s)
         return lg
 
     def _identity_anonymous_base_key():
@@ -5529,7 +5536,7 @@ async def get_feed(
                         _pb_age_s,
                         _pic.oldest_consumed_artifact_age_s(_shared_origins),
                     )
-                if _pb_live and _pb_age_s >= FEED_RESPONSE_STALE_TTL_LIVE_SECONDS:
+                if _pb_live and _pb_age_s >= live_stale_ceiling_seconds(_base_page):
                     _base_page = None
             if _base_page is not None:
                 _rc.remember_last_good(
@@ -7050,7 +7057,14 @@ async def get_feed(
         # LIVE ONLY. The ceiling is a live rule (#2216) and stays one: a page of
         # futures built from an hour-old artifact is not wrong, and refusing it
         # would be a correctness fix that broke the product.
-        if _built_live and live_total_age_headroom_s(_consumed_age_s) <= 0:
+        _built_ceiling_s = live_stale_ceiling_seconds(payload)
+        if (
+            _built_live
+            and live_total_age_headroom_s(
+                _consumed_age_s, ceiling_seconds=_built_ceiling_s
+            )
+            <= 0
+        ):
             # #10290: what is served below is NOT the build the capture saw.
             if _capture is not None:
                 _capture.abandon("input_age_ceiling")
@@ -7070,12 +7084,10 @@ async def get_feed(
             # rebuilds" is the property being bought, and a background delete
             # that lands after that request buys nothing. It re-reads before
             # deleting, so a sibling's fresh republication survives.
-            _dropped_artifacts = _pic.drop_entries_older_than(
-                FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
-            )
+            _dropped_artifacts = _pic.drop_entries_older_than(_built_ceiling_s)
             if _dropped_artifacts:
                 await _pic.forget_stale_cross_worker(
-                    _dropped_artifacts, FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+                    _dropped_artifacts, _built_ceiling_s
                 )
             # (b) A prior payload, bounded by the live ceiling. Bounded for a
             # NON-live prior too, deliberately: this request has just proven the
@@ -7410,6 +7422,9 @@ async def get_feed(
                         # CERT-1864: the same reading as the decision above.
                         oldest_artifact_age_s=_consumed_age_s,
                         strict_artifact_age_s=_strict_age_s,
+                        live_stale_ceiling_s=live_stale_ceiling_seconds(
+                            _page_base_body
+                        ),
                     )
                     _page_base_json = dumps_feed_cache(_page_base_body)
                     # #11259: strip live and started event cards BEFORE writing
@@ -7492,6 +7507,9 @@ async def get_feed(
                             live=payload_contains_live_event(_mach_base_body),
                             oldest_artifact_age_s=_consumed_age_s,
                             strict_artifact_age_s=_strict_age_s,
+                            live_stale_ceiling_s=live_stale_ceiling_seconds(
+                                _mach_base_body
+                            ),
                         )
                         _mach_base_json = dumps_feed_cache(_mach_base_body)
                         _mach_base_key = feed_machinery_page_base_key(_page_base_key)
@@ -7571,6 +7589,9 @@ async def get_feed(
                     live=payload_contains_live_event(_fb_page_base_body),
                     oldest_artifact_age_s=_consumed_age_s,
                     strict_artifact_age_s=_strict_age_s,
+                    live_stale_ceiling_s=live_stale_ceiling_seconds(
+                        _fb_page_base_body
+                    ),
                 )
                 _fb_last_good_body = strip_live_and_started_items_for_last_good(
                     _fb_page_base_body, now=_age_origin

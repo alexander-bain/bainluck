@@ -1413,6 +1413,7 @@ async def _prewarm_feed_shape(
         dumps_feed_cache,
         feed_payload_was_built_by_this_request,
         feed_response_cache_ttls,
+        live_stale_ceiling_seconds,
         payload_contains_live_event,
     )
     from app.utils.feed_served_markets import (
@@ -1630,7 +1631,10 @@ async def _prewarm_feed_shape(
     # disagreeing — which is why both now go through one function.
     _slice_live = payload_contains_live_event(payload)
     ttl, stale_ttl = feed_response_cache_ttls(
-        my_teams_only=False, identified=False, live=_slice_live
+        my_teams_only=False,
+        identified=False,
+        live=_slice_live,
+        live_stale_ceiling_s=live_stale_ceiling_seconds(payload),
     )
 
     # --- #3841: MEASURE the age of the inputs, and do not spend it -----------

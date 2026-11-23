@@ -34,10 +34,16 @@ from app.utils.discover_opening_seating import (
     seat_opening,
 )
 from app.utils.feed_cache import (
+    FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS,
     FEED_PAGE_BASE_BUILT_AT_FIELD,
+    FEED_RESPONSE_STALE_TTL_LIVE_GROUPING_ONLY_SECONDS,
     FEED_RESPONSE_STALE_TTL_LIVE_SECONDS,
     FEED_RESPONSE_TTL_LIVE_SECONDS,
+    feed_response_cache_ttls,
+    live_stale_ceiling_seconds,
+    live_total_age_headroom_s,
     payload_contains_live_event,
+    payload_is_live_only_via_grouping,
     strip_live_and_started_items_for_last_good,
 )
 from app.utils.roundup_containers import (
@@ -428,6 +434,7 @@ def test_342b_last_live_game_ending_returns_seat_on_next_read() -> None:
 class _SeededRedis:
     def __init__(self, contents: dict[str, str] | None = None):
         self.contents = dict(contents or {})
+        self.ttls: dict[str, int] = {}
 
     async def mget(self, keys):
         return [await self.get(k) for k in keys]
@@ -437,9 +444,11 @@ class _SeededRedis:
 
     async def setex(self, key, ttl, value):
         self.contents[key] = value
+        self.ttls[key] = int(ttl)
         return True
 
     async def delete(self, key):
+        self.ttls.pop(key, None)
         return 1 if self.contents.pop(key, None) is not None else 0
 
 
@@ -656,30 +665,68 @@ async def test_342b_feed_route_end_to_end_live_then_final_and_aged_page_base(
                 assert sum(1 for it in top10_1 if it.get("type") in ("concept", "event")) == 0
                 assert body1["cache"]["live"] is True
                 assert body1["cache"]["ttl_seconds"] <= FEED_RESPONSE_TTL_LIVE_SECONDS
-                assert body1["cache"]["stale_ttl_seconds"] <= FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+                assert (
+                    body1["cache"]["stale_ttl_seconds"]
+                    <= FEED_RESPONSE_STALE_TTL_LIVE_GROUPING_ONLY_SECONDS
+                )
+                assert body1["cache"]["stale_ttl_seconds"] > FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
 
                 await asyncio.sleep(0)
                 await asyncio.sleep(0)
 
-                # Verify expired (>=60s) live machinery page_base is refused rather than served stale.
-                mach_pb_keys = [k for k in redis.contents if k.startswith("feed:machinery_pagebase:") and not k.endswith((":stale", ":last_good"))]
+                # Decision 346: A boundary check on feed:machinery_pagebase (119s served, 120s refused).
+                mach_pb_keys = [
+                    k
+                    for k in redis.contents
+                    if k.startswith("feed:machinery_pagebase:")
+                    and not k.endswith((":stale", ":last_good"))
+                ]
                 assert mach_pb_keys, f"expected machinery page_base key in {list(redis.contents)}"
                 mach_pb_key = mach_pb_keys[0]
-                stale_base = json.loads(redis.contents[mach_pb_key])
-                stale_base[FEED_PAGE_BASE_BUILT_AT_FIELD] = datetime.now(timezone.utc).timestamp() - 90.0
+                mach_stale_ttl = redis.ttls.get(f"{mach_pb_key}:stale")
+                assert (
+                    mach_stale_ttl is not None
+                    and FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+                    < mach_stale_ttl
+                    <= FEED_RESPONSE_STALE_TTL_LIVE_GROUPING_ONLY_SECONDS
+                )
+                base_template = json.loads(redis.contents[mach_pb_key])
+
+                almost_expired = copy.deepcopy(base_template)
+                almost_expired[FEED_PAGE_BASE_BUILT_AT_FIELD] = (
+                    datetime.now(timezone.utc).timestamp() - 119.0
+                )
                 redis.contents.clear()
-                redis.contents[mach_pb_key] = json.dumps(stale_base)
+                redis.contents[mach_pb_key] = json.dumps(almost_expired)
+                resp_119 = await ac.get("/api/feed?limit=20&event_pct=0.15&machinery=1")
+                assert resp_119.status_code == 200
+                body_119 = resp_119.json()
+                assert body_119["cache"]["status"] == "page_base_hit"
+                assert body_119["cache"]["stale_ttl_seconds"] in (0, 1)
+                assert "roundup:machinery-nfl-week" in [
+                    it["data"]["id"] for it in body_119["items"][:10]
+                ]
+
+                expired_120 = copy.deepcopy(base_template)
+                expired_120[FEED_PAGE_BASE_BUILT_AT_FIELD] = (
+                    datetime.now(timezone.utc).timestamp() - 120.0
+                )
+                redis.contents.clear()
+                redis.contents[mach_pb_key] = json.dumps(expired_120)
                 resp_expired = await ac.get("/api/feed?limit=20&event_pct=0.15&machinery=1")
                 assert resp_expired.status_code == 200
                 body_exp = resp_expired.json()
                 assert body_exp["cache"]["status"] not in ("page_base_hit", "page_base_stale_hit")
-                assert "roundup:machinery-nfl-week" in [it["data"]["id"] for it in body_exp["items"][:10]]
+                assert "roundup:machinery-nfl-week" in [
+                    it["data"]["id"] for it in body_exp["items"][:10]
+                ]
 
                 # Read 1b: Standing live bundle only (no top-level status) still enters seats 1..10
-                # and enforces cache.live == True & <= 30s / <= 60s end-to-end.
+                # and both plain feed:pagebase + response get 120s (119s served, 120s refused).
                 live_state["nfl_live"] = False
                 live_state["closest_live"] = True
                 redis.contents.clear()
+                redis.ttls.clear()
                 rc._reset_last_good_for_tests()
                 _roundup_local_cache.clear()
                 resp1b = await ac.get("/api/feed?limit=20&event_pct=0.15&machinery=1")
@@ -688,7 +735,128 @@ async def test_342b_feed_route_end_to_end_live_then_final_and_aged_page_base(
                 assert "roundup:closest-games-tonight" in [it["data"]["id"] for it in body1b["items"][:10]]
                 assert body1b["cache"]["live"] is True
                 assert body1b["cache"]["ttl_seconds"] <= FEED_RESPONSE_TTL_LIVE_SECONDS
-                assert body1b["cache"]["stale_ttl_seconds"] <= FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+                assert (
+                    FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+                    < body1b["cache"]["stale_ttl_seconds"]
+                    <= FEED_RESPONSE_STALE_TTL_LIVE_GROUPING_ONLY_SECONDS
+                )
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+
+                plain_pb_keys = [
+                    k
+                    for k in redis.contents
+                    if k.startswith("feed_cache:pagebase:")
+                    and not k.endswith((":stale", ":last_good"))
+                ]
+                assert plain_pb_keys, f"expected plain page_base key in {list(redis.contents)}"
+                plain_pb_key = plain_pb_keys[0]
+                plain_stale_ttl = redis.ttls.get(f"{plain_pb_key}:stale")
+                assert (
+                    plain_stale_ttl is not None
+                    and FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+                    < plain_stale_ttl
+                    <= FEED_RESPONSE_STALE_TTL_LIVE_GROUPING_ONLY_SECONDS
+                )
+                plain_template = json.loads(redis.contents[plain_pb_key])
+
+                plain_119 = copy.deepcopy(plain_template)
+                plain_119[FEED_PAGE_BASE_BUILT_AT_FIELD] = (
+                    datetime.now(timezone.utc).timestamp() - 119.0
+                )
+                redis.contents.clear()
+                redis.contents[plain_pb_key] = json.dumps(plain_119)
+                resp_plain_119 = await ac.get("/api/feed?limit=20&event_pct=0.15")
+                assert resp_plain_119.status_code == 200
+                body_plain_119 = resp_plain_119.json()
+                assert body_plain_119["cache"]["status"] == "page_base_hit"
+                assert body_plain_119["cache"]["live"] is True
+                assert "roundup:closest-games-tonight" in [
+                    it["data"]["id"] for it in body_plain_119["items"]
+                ]
+
+                plain_120 = copy.deepcopy(plain_template)
+                plain_120[FEED_PAGE_BASE_BUILT_AT_FIELD] = (
+                    datetime.now(timezone.utc).timestamp() - 120.0
+                )
+                redis.contents.clear()
+                redis.contents[plain_pb_key] = json.dumps(plain_120)
+                resp_plain_120 = await ac.get("/api/feed?limit=20&event_pct=0.15")
+                assert resp_plain_120.status_code == 200
+                assert resp_plain_120.json()["cache"]["status"] not in (
+                    "page_base_hit",
+                    "page_base_stale_hit",
+                )
+
+                # Single live game card (non-bundle event on sports feed) keeps exact 60s rule (59s served, 60s refused).
+                sports_event = {
+                    "type": "event",
+                    "score": 95.0,
+                    "data": {
+                        "id": 9901,
+                        "name": "Bulls @ Heat",
+                        "away_team": "Bulls",
+                        "home_team": "Heat",
+                        "status": "live",
+                        "commence_time": (datetime.now(timezone.utc) - timedelta(minutes=20)).isoformat(),
+                    },
+                }
+                monkeypatch.setattr(
+                    "app.routes.feed._score_events",
+                    AsyncMock(side_effect=lambda *a, **k: [copy.deepcopy(sports_event)]),
+                )
+                redis.contents.clear()
+                redis.ttls.clear()
+                rc._reset_last_good_for_tests()
+                resp_sports = await ac.get("/api/feed?limit=20&mode=sports")
+                assert resp_sports.status_code == 200
+                body_sports = resp_sports.json()
+                assert body_sports["cache"]["live"] is True
+                assert (
+                    55
+                    <= body_sports["cache"]["stale_ttl_seconds"]
+                    <= FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+                )
+                await asyncio.sleep(0)
+                await asyncio.sleep(0)
+
+                sports_pb_keys = [
+                    k
+                    for k in redis.contents
+                    if k.startswith("feed_cache:pagebase:")
+                    and not k.endswith((":stale", ":last_good"))
+                ]
+                assert sports_pb_keys
+                sports_pb_key = sports_pb_keys[0]
+                sports_stale_ttl = redis.ttls.get(f"{sports_pb_key}:stale")
+                assert (
+                    sports_stale_ttl is not None
+                    and 55 <= sports_stale_ttl <= FEED_RESPONSE_STALE_TTL_LIVE_SECONDS
+                )
+                sports_template = json.loads(redis.contents[sports_pb_key])
+
+                sports_59 = copy.deepcopy(sports_template)
+                sports_59[FEED_PAGE_BASE_BUILT_AT_FIELD] = (
+                    datetime.now(timezone.utc).timestamp() - 59.0
+                )
+                redis.contents.clear()
+                redis.contents[sports_pb_key] = json.dumps(sports_59)
+                resp_sports_59 = await ac.get("/api/feed?limit=20&mode=sports")
+                assert resp_sports_59.status_code == 200
+                assert resp_sports_59.json()["cache"]["status"] == "page_base_hit"
+
+                sports_60 = copy.deepcopy(sports_template)
+                sports_60[FEED_PAGE_BASE_BUILT_AT_FIELD] = (
+                    datetime.now(timezone.utc).timestamp() - 60.0
+                )
+                redis.contents.clear()
+                redis.contents[sports_pb_key] = json.dumps(sports_60)
+                resp_sports_60 = await ac.get("/api/feed?limit=20&mode=sports")
+                assert resp_sports_60.status_code == 200
+                assert resp_sports_60.json()["cache"]["status"] not in (
+                    "page_base_hit",
+                    "page_base_stale_hit",
+                )
 
                 # Read 2: Last live game ends between reads -> seat returns to cfp-picture, live=False.
                 live_state["nfl_live"] = False
@@ -744,3 +912,121 @@ def test_strip_live_and_started_items_for_last_good_works_without_now() -> None:
     assert stripped["total"] == 1
     assert [it["data"]["id"] for it in stripped["items"]] == [9104]
     assert payload_contains_live_event(stripped) is False
+
+
+def test_346a_grouping_only_gets_120s_while_single_live_event_keeps_60s(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Decision 346: A: grouping-only live pages use 120s; single live event cards stay at 60s."""
+    from app.utils.roundup_containers import render_machinery_prewarm_bundle
+
+    monkeypatch.setenv("FEED_EDITION_POLICY_DISABLED", "0")
+
+    assert FEED_RESPONSE_STALE_TTL_LIVE_GROUPING_ONLY_SECONDS == 120
+    assert FEED_RESPONSE_STALE_TTL_LIVE_SECONDS == 60
+    assert FEED_LAST_GOOD_MAX_AGE_LIVE_SECONDS == 60
+
+    mach_bundle = {
+        "type": "bundle",
+        "score": 90.0,
+        "data": {"id": "roundup:machinery-nfl-week", "status": "live", "items": []},
+    }
+    standing_bundle = {
+        "type": "bundle",
+        "score": 88.0,
+        "data": {
+            "id": "roundup:closest-games-tonight",
+            "items": [{"type": "event", "data": {"id": 101, "status": "live"}}],
+        },
+    }
+    live_event_card = {
+        "type": "event",
+        "score": 95.0,
+        "data": {"id": 201, "status": "live", "commence_time": "2026-11-22T21:00:00Z"},
+    }
+    live_concept_card = {
+        "type": "concept",
+        "score": 85.0,
+        "data": {"key": "concept:live-game", "status": "live"},
+    }
+    settled_future = {"type": "futures", "score": 80.0, "data": {"id": 301, "status": "active"}}
+
+    grouping_only_payload = {"items": [mach_bundle, standing_bundle, settled_future]}
+    standalone_event_payload = {"items": [live_event_card, settled_future]}
+    mixed_payload = {"items": [mach_bundle, live_event_card, settled_future]}
+    live_concept_payload = {"items": [live_concept_card, settled_future]}
+    non_live_payload = {"items": [settled_future]}
+
+    assert payload_is_live_only_via_grouping(grouping_only_payload) is True
+    assert payload_is_live_only_via_grouping(standalone_event_payload) is False
+    assert payload_is_live_only_via_grouping(mixed_payload) is False
+    assert payload_is_live_only_via_grouping(live_concept_payload) is False
+    assert payload_is_live_only_via_grouping(non_live_payload) is False
+
+    assert live_stale_ceiling_seconds(grouping_only_payload) == 120
+    assert live_stale_ceiling_seconds(standalone_event_payload) == 60
+    assert live_stale_ceiling_seconds(mixed_payload) == 60
+    assert live_stale_ceiling_seconds(live_concept_payload) == 60
+
+    assert feed_response_cache_ttls(
+        live=True,
+        live_stale_ceiling_s=live_stale_ceiling_seconds(grouping_only_payload),
+    ) == (30, 120)
+    assert feed_response_cache_ttls(
+        live=True,
+        live_stale_ceiling_s=live_stale_ceiling_seconds(standalone_event_payload),
+    ) == (30, 60)
+
+    # Boundary arithmetic: 119s served (headroom=1), 120s refused (headroom=0) for grouping-only;
+    # 59s served (headroom=1), 60s refused (headroom=0) for single live event card.
+    assert live_total_age_headroom_s(119.0, ceiling_seconds=120) == 1
+    assert live_total_age_headroom_s(120.0, ceiling_seconds=120) == 0
+    assert live_total_age_headroom_s(59.0, ceiling_seconds=60) == 1
+    assert live_total_age_headroom_s(60.0, ceiling_seconds=60) == 0
+
+    now_ts = 1_800_000_200.0
+    for age, should_publish in ((119.0, True), (120.0, False)):
+        bundle = render_machinery_prewarm_bundle(
+            mach_base={
+                "page_base_body": {
+                    "items": [copy.deepcopy(standing_bundle), copy.deepcopy(settled_future)],
+                    "total": 2,
+                },
+                "page_base_key": "feed:pagebase:test346a",
+                "age_origin": now_ts - age,
+                "opening_seating": False,
+                "limit": 20,
+                "offset": 0,
+                "cache_shape": {"limit": 20, "offset": 0, "event_pct": 0.15, "mode": "discover"},
+            },
+            produced=[],
+            oldest_live_built_at=None,
+            now_ts=now_ts,
+        )
+        if should_publish:
+            assert bundle is not None and bundle["stale_ttl"] == 1
+        else:
+            assert bundle is None
+
+    for age, should_publish in ((59.0, True), (60.0, False)):
+        bundle = render_machinery_prewarm_bundle(
+            mach_base={
+                "page_base_body": {
+                    "items": [copy.deepcopy(live_event_card), copy.deepcopy(settled_future)],
+                    "total": 2,
+                },
+                "page_base_key": "feed:pagebase:test346a_event",
+                "age_origin": now_ts - age,
+                "opening_seating": False,
+                "limit": 20,
+                "offset": 0,
+                "cache_shape": {"limit": 20, "offset": 0, "event_pct": 0.15, "mode": "discover"},
+            },
+            produced=[],
+            oldest_live_built_at=None,
+            now_ts=now_ts,
+        )
+        if should_publish:
+            assert bundle is not None and bundle["stale_ttl"] == 1
+        else:
+            assert bundle is None

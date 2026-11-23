@@ -4496,6 +4496,7 @@ def render_machinery_prewarm_bundle(
         feed_machinery_page_base_key,
         feed_response_cache_key,
         feed_response_cache_ttls,
+        live_stale_ceiling_seconds,
         payload_contains_live_event,
         render_feed_page_from_base,
     )
@@ -4609,6 +4610,7 @@ def render_machinery_prewarm_bundle(
         identified=False,
         live=mach_live,
         oldest_artifact_age_s=mach_input_age_s,
+        live_stale_ceiling_s=live_stale_ceiling_seconds(mach_base_body),
     )
     if mach_live and (m_ttl <= 0 or m_stale_ttl <= 0):
         return None
