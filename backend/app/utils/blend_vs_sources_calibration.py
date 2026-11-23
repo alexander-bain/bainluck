@@ -25,6 +25,8 @@ LAST_GOOD_KEY = "bainluck:calibration:blend_vs_sources:last_good"
 TTL_S = 50 * 3600
 LAST_GOOD_TTL_S = 30 * 86400
 RECORDING_START_ISO = "2026-11-06T05:52:44+00:00"
+HOLDOUT_START_ISO = RECORDING_START_ISO
+HOLDOUT_END_ISO = "2026-12-04T05:52:44+00:00"
 
 FORECAST_SOURCES: tuple[str, ...] = tuple(
     sorted(k for k in SOURCE_WEIGHTS if k != "final_result")
@@ -202,6 +204,7 @@ def build_blend_vs_sources_payload(
     generated_at: str,
     recording_start: str = RECORDING_START_ISO,
     events_scanned: int = 0,
+    scoring_window: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Aggregate matched-game Blend vs Source scores across all grading horizons."""
     known_horizons = {h for h, _ in HORIZONS}
@@ -297,7 +300,7 @@ def build_blend_vs_sources_payload(
             "common_source_sets": _select_common_sets(common_groups),
         }
 
-    return {
+    payload: dict[str, Any] = {
         "schema": SCHEMA,
         "status": "ready",
         "smoothing": "none",
@@ -306,3 +309,6 @@ def build_blend_vs_sources_payload(
         "events_scanned": int(events_scanned),
         "horizons": horizons_payload,
     }
+    if scoring_window is not None:
+        payload["scoring_window"] = dict(scoring_window)
+    return payload

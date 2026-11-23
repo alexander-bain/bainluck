@@ -17,8 +17,11 @@ from app.tasks import HEAVY_TASKS, celery_app
 from app.tasks.precompute_blend_vs_sources import (
     _precompute_blend_vs_sources_calibration,
     collect_blend_vs_sources_observations,
+    window_overlaps_holdout,
 )
 from app.utils.blend_vs_sources_calibration import (
+    HOLDOUT_END_ISO,
+    HOLDOUT_START_ISO,
     LAST_GOOD_KEY,
     RECORDING_START_ISO,
     REDIS_KEY,
@@ -208,7 +211,29 @@ class TestBlendVsSourcesTask:
             "app.tasks.precompute_blend_vs_sources.collect_blend_vs_sources_observations",
             _fake_collect_complete,
         )
-        res = await _precompute_blend_vs_sources_calibration()
+        # Fail-closed guard: during the Nov 6–Dec 4 holdout, default run makes zero DB/Redis calls.
+        engine_called = False
+
+        def _forbid_engine(**kwargs):
+            nonlocal engine_called
+            engine_called = True
+            return _FakeEngine()
+
+        monkeypatch.setattr("app.tasks.base._get_task_engine", _forbid_engine)
+        held = await _precompute_blend_vs_sources_calibration()
+        assert held["status"] == "held"
+        assert held["published"] is False
+        assert held["reason"] == "holdout_window_active"
+        assert held["holdout_start"] == HOLDOUT_START_ISO
+        assert held["holdout_end"] == HOLDOUT_END_ISO
+        assert engine_called is False
+        assert fake_redis.store == {}
+
+        # Explicit holdout release (Decision 360) permits run and records scoring_window.
+        monkeypatch.setattr(
+            "app.tasks.base._get_task_engine", lambda **kwargs: _FakeEngine()
+        )
+        res = await _precompute_blend_vs_sources_calibration(holdout_released=True)
         assert res["status"] == "complete"
         assert res["published"] is True
         assert REDIS_KEY in fake_redis.store
@@ -216,6 +241,7 @@ class TestBlendVsSourcesTask:
         stored = json.loads(fake_redis.store[REDIS_KEY])
         assert stored["smoothing"] == "none"
         assert stored["horizons"]["start"]["n_events"] == 1
+        assert stored["scoring_window"]["holdout_released"] is True
 
         async def _fake_collect_partial(*args, **kwargs):
             return {
@@ -229,11 +255,87 @@ class TestBlendVsSourcesTask:
             "app.tasks.precompute_blend_vs_sources.collect_blend_vs_sources_observations",
             _fake_collect_partial,
         )
-        partial = await _precompute_blend_vs_sources_calibration()
+        partial = await _precompute_blend_vs_sources_calibration(holdout_released=True)
         assert partial["status"] == "partial"
         assert partial["published"] is False
         # Existing last_good stays untouched on deadline truncation.
         assert LAST_GOOD_KEY in fake_redis.store
+
+    @pytest.mark.asyncio
+    async def test_holdout_date_limit_guards_and_exclusion(self, monkeypatch):
+        from app.tasks import precompute_blend_vs_sources as pvs
+
+        _FROZEN_NOW = datetime(2026, 12, 10, 0, 0, tzinfo=timezone.utc)
+
+        class _FrozenDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return _FROZEN_NOW if tz is None else _FROZEN_NOW.astimezone(tz)
+
+        monkeypatch.setattr(pvs, "datetime", _FrozenDateTime)
+        fake_redis = _FakeRedis()
+        monkeypatch.setattr("app.tasks.redis_state.get_redis_client", lambda: fake_redis)
+
+        assert (
+            window_overlaps_holdout(
+                datetime.fromisoformat(RECORDING_START_ISO),
+                _FROZEN_NOW,
+            )
+            is True
+        )
+        assert (
+            window_overlaps_holdout(
+                datetime.fromisoformat(RECORDING_START_ISO),
+                datetime(2026, 11, 6, 5, 0, tzinfo=timezone.utc),
+            )
+            is False
+        )
+        assert (
+            window_overlaps_holdout(
+                datetime.fromisoformat(RECORDING_START_ISO),
+                _FROZEN_NOW,
+                exclude_start=datetime.fromisoformat(HOLDOUT_START_ISO),
+                exclude_end=datetime.fromisoformat(HOLDOUT_END_ISO),
+            )
+            is False
+        )
+
+        # Even if holdout_released stays False, skipping [Nov 6, Dec 4) allows Dec 4+ scoring.
+        captured_kwargs: list[dict] = []
+
+        class _FakeEngine:
+            async def dispose(self):
+                return None
+
+        monkeypatch.setattr(
+            "app.tasks.base._get_task_engine", lambda **kwargs: _FakeEngine()
+        )
+
+        async def _fake_collect_empty(*args, **kwargs):
+            captured_kwargs.append(dict(kwargs))
+            return {
+                "complete": True,
+                "events_scanned": 0,
+                "events_total": 0,
+                "observations": [],
+            }
+
+        monkeypatch.setattr(
+            "app.tasks.precompute_blend_vs_sources.collect_blend_vs_sources_observations",
+            _fake_collect_empty,
+        )
+        out = await _precompute_blend_vs_sources_calibration(
+            exclude_start_iso=HOLDOUT_START_ISO,
+            exclude_end_iso=HOLDOUT_END_ISO,
+            max_commence_time_iso="2026-12-09T00:00:00+00:00",
+        )
+        assert out["status"] == "complete"
+        assert len(captured_kwargs) == 1
+        assert captured_kwargs[0]["max_commence_time"] == datetime(
+            2026, 12, 9, 0, 0, tzinfo=timezone.utc
+        )
+        assert captured_kwargs[0]["exclude_start"] == datetime.fromisoformat(HOLDOUT_START_ISO)
+        assert captured_kwargs[0]["exclude_end"] == datetime.fromisoformat(HOLDOUT_END_ISO)
 
     @pytest.mark.asyncio
     async def test_collect_sets_read_only_and_statement_timeout(self):
@@ -323,6 +425,8 @@ class TestBlendVsSourcesPostgres:
 
         Session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         start_dt = datetime(2026, 11, 12, 20, 0, tzinfo=timezone.utc)
+        excluded_dt = datetime(2026, 11, 14, 20, 0, tzinfo=timezone.utc)
+        post_max_dt = datetime(2026, 11, 18, 20, 0, tzinfo=timezone.utc)
         pre_rec_dt = datetime(2026, 11, 5, 20, 0, tzinfo=timezone.utc)
 
         try:
@@ -338,9 +442,16 @@ class TestBlendVsSourcesPostgres:
                         "INSERT INTO events (id, sport_id, external_id, home_team_name, away_team_name, "
                         "commence_time, status, home_score, away_score) VALUES "
                         "(5001, 1, 'ext-5001', 'Home A', 'Away B', :start_dt, 'completed', 110, 102), "
-                        "(5002, 1, 'ext-5002', 'Home C', 'Away D', :pre_dt, 'completed', 98, 105)"
+                        "(5002, 1, 'ext-5002', 'Home C', 'Away D', :pre_dt, 'completed', 98, 105), "
+                        "(5003, 1, 'ext-5003', 'Home E', 'Away F', :ex_dt, 'completed', 101, 99), "
+                        "(5004, 1, 'ext-5004', 'Home G', 'Away H', :post_dt, 'completed', 112, 108)"
                     ),
-                    {"start_dt": start_dt, "pre_dt": pre_rec_dt},
+                    {
+                        "start_dt": start_dt,
+                        "pre_dt": pre_rec_dt,
+                        "ex_dt": excluded_dt,
+                        "post_dt": post_max_dt,
+                    },
                 )
                 common_cols = (
                     "(event_id, rev, schema_version, recorded_at, txn_started_at, sources, "
@@ -354,6 +465,8 @@ class TestBlendVsSourcesPostgres:
                     (5001, 1, start_dt - timedelta(hours=7), {"betting": 0.55, "espn": 0.60}, 0.57, "h1"),
                     (5001, 2, start_dt - timedelta(minutes=30), {"betting": 0.66, "espn": 0.70}, 0.68, "h2"),
                     (5001, 3, start_dt + timedelta(minutes=5), {"betting": 0.99, "espn": 0.99}, 0.99, "h3"),
+                    (5003, 1, excluded_dt - timedelta(minutes=20), {"betting": 0.52, "espn": 0.50}, 0.51, "h4"),
+                    (5004, 1, post_max_dt - timedelta(minutes=20), {"betting": 0.71, "espn": 0.72}, 0.71, "h5"),
                 ]
                 for eid, rev, rec_at, sources, blend_p, sha in rows:
                     await s.execute(
@@ -378,12 +491,17 @@ class TestBlendVsSourcesPostgres:
             collection = await collect_blend_vs_sources_observations(
                 Session,
                 recording_start=datetime.fromisoformat(RECORDING_START_ISO),
+                max_commence_time=datetime(2026, 11, 16, 0, 0, tzinfo=timezone.utc),
+                exclude_start=datetime(2026, 11, 14, 0, 0, tzinfo=timezone.utc),
+                exclude_end=datetime(2026, 11, 15, 0, 0, tzinfo=timezone.utc),
                 now_utc=datetime(2026, 11, 20, 0, 0, tzinfo=timezone.utc),
                 batch_size=10,
             )
             assert collection["complete"] is True
-            # Event 5002 precedes RECORDING_START_ISO so only event 5001 is scanned.
+            # 5002 precedes recording_start, 5003 falls inside [exclude_start, exclude_end),
+            # 5004 exceeds max_commence_time -> ONLY event 5001 is scanned.
             assert collection["events_scanned"] == 1
+            assert {o["event_id"] for o in collection["observations"]} == {5001}
             by_h = {o["horizon"]: o for o in collection["observations"]}
             assert set(by_h) == {"t_minus_6h", "t_minus_1h", "start"}
             assert by_h["t_minus_6h"]["blend_probability"] == pytest.approx(0.57)
