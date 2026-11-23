@@ -378,11 +378,13 @@ struct LeagueGridView: View {
     }
 
     private func leagueMarketRow(_ market: LeagueMarketItem) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let isAX = dynamicTypeSize.isAccessibilitySize
+        return VStack(alignment: .leading, spacing: 4) {
             Text(market.name)
                 .font(.subheadline)
                 .fontWeight(.medium)
-                .lineLimit(2)
+                .lineLimit(isAX ? nil : 2)
+                .fixedSize(horizontal: false, vertical: true)
 
             if let outcomes = market.topOutcomes, !outcomes.isEmpty {
                 let shown = NumericalMarketScaleOrder228.orderedSlice(
@@ -393,11 +395,12 @@ struct LeagueGridView: View {
                     totalOutcomeCount: market.outcomeCount ?? outcomes.count
                 )?.map(\.element) ?? Array(outcomes.prefix(3))
                 ForEach(Array(shown.enumerated()), id: \.offset) { _, o in
-                    HStack(spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: 4) {
                         Text(o.name)
                             .font(.caption)
                             .foregroundStyle(.secondary)
-                            .lineLimit(1)
+                            .lineLimit(isAX ? nil : 1)
+                            .fixedSize(horizontal: false, vertical: true)
                         Spacer()
                         Text("\(Int(o.prob))%")
                             .font(.caption)
