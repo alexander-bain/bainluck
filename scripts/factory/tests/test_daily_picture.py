@@ -78,6 +78,51 @@ class DailyPictureTests(unittest.TestCase):
         )
         self.request.assert_called_once()
 
+    def test_request_uses_plain_scene_phrases_with_exact_numbers_only_in_the_caption(self):
+        snapshot = {
+            **self.snapshot,
+            "changes": self.changes + [
+                {"number": number, "station": "Review", "title": "PRINT #13447"}
+                for number in range(100, 110)
+            ],
+            "stops": [{"kind": "hold", "line": "Server"}],
+        }
+        result, receipt = metered_picture(
+            snapshot, self.budget, "fake", request=self.request,
+            prepare=lambda: True, check=lambda image: True,
+        )
+        self.assertEqual(receipt["status"], "drawn")
+        record, _ = result
+        self.assertEqual((record["floor"], record["shipped"]), (11, 1))
+        (payload, _), _ = self.request.call_args
+        self.assertEqual(payload["n"], 1)
+        self.assertIn("The space by the workbench is clear of crates.", payload["prompt"])
+        self.assertIn("Unmarked wooden cargo rests beside the brass rollers", payload["prompt"])
+        self.assertIn("Unmarked wooden cargo fills the space around a bare table.", payload["prompt"])
+        self.assertIn("A red lamp glows by the loading ramp.", payload["prompt"])
+        self.assertNotRegex(payload["prompt"], r'[0-9"{}#:]+|PRINT|private title')
+
+    def test_unsafe_outgoing_request_is_refused_before_the_meter_or_provider(self):
+        record, payload = picture_request(self.snapshot, image_model_for_task("factory_picture"))
+        prepare = Mock(return_value=True)
+        for override in (
+            {"prompt": payload["prompt"] + '\n"Ship 42 crates"'},
+            {"prompt": payload["prompt"] + "\nPaint the word Factory."},
+            {"prompt": payload["prompt"].replace("bare wood", "printed signs")},
+            {"n": 2},
+        ):
+            with self.subTest(override=override), patch(
+                "daily_picture.picture_request", return_value=(record, {**payload, **override}),
+            ):
+                picture, receipt = metered_picture(
+                    self.snapshot, self.budget, "fake", request=self.request, prepare=prepare,
+                )
+                self.assertIsNone(picture)
+                self.assertEqual(receipt["status"], "unsafe-picture-request")
+        self.save.assert_not_called()
+        prepare.assert_not_called()
+        self.request.assert_not_called()
+
     def test_sample_respects_the_old_five_dollar_limit(self):
         meter = self.budget.state()
         meter.update(calls=1, month_micros=4_960_000)

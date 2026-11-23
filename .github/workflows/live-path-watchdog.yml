@@ -357,8 +357,8 @@ jobs:
           exit 1
         }
         cat /tmp/onboarding13338.txt
-        grep -qE "[^0-9]15 passed([,[:space:]]|$)" /tmp/onboarding13338.txt || {
-          echo "::error::#13338 onboarding gate did not run all fifteen cases"
+        grep -qE "[^0-9]17 passed([,[:space:]]|$)" /tmp/onboarding13338.txt || {
+          echo "::error::#13338 onboarding gate did not run all seventeen cases"
           exit 1
         }
     - name: "#12519 team-merge dedup keeps distinct names (real Postgres)"

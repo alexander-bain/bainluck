@@ -1,10 +1,12 @@
 """Exercise onboarding team selection and save against isolated Postgres and Redis."""
 
+import asyncio
 import logging
 import os
 import socket
 import uuid
 from datetime import datetime, timezone
+from threading import Event as ThreadEvent
 from time import perf_counter
 from unittest.mock import AsyncMock, patch
 
@@ -22,6 +24,7 @@ from app.models.models import (
 )
 from app.routes import user as user_route
 from app.routes.user import OnboardingRequest, TeamRef, search_teams, submit_onboarding
+from app.services import onboarding_team_aliases as venue_aliases
 from app.services import onboarding_team_membership as membership
 from app.services.database import Base, get_db
 from app.tasks.task_checkpoint import advisory_lock_key
@@ -30,8 +33,9 @@ from httpx import ASGITransport, AsyncClient
 from redis import Redis as SyncRedis
 from redis.asyncio import Redis
 from redis.exceptions import ConnectionError
-from sqlalchemy import delete, event, select, text
+from sqlalchemy import delete, event, func, select, text, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 DB_URL = os.environ.get("SEARCH_TEST_DATABASE_URL")
 REDIS_URL = os.environ.get("ONBOARDING_TEST_REDIS_URL")
@@ -279,8 +283,18 @@ async def rebuild(sessions, writer):
 
 
 @pytest.fixture
-async def warmed_sessions(sessions, cache, writer):
+async def alias_source(sessions):
+    source = venue_aliases._alias_refresh_engine(sessions.kw["bind"])
+    try:
+        yield source
+    finally:
+        await source.dispose()
+
+
+@pytest.fixture
+async def warmed_sessions(sessions, cache, writer, alias_source):
     await rebuild(sessions, writer)
+    await venue_aliases._refresh_aliases(alias_source, sessions.kw["bind"].sync_engine)
     return sessions
 
 
@@ -294,7 +308,18 @@ async def client(sessions):
             await db.execute(text("SET TRANSACTION READ ONLY"))
             yield db
 
+    async def override_write_db():
+        async with sessions.begin() as db:
+            yield db
+
+    async def signed_in_user():
+        async with sessions() as db:
+            return await db.get(User, 1)
+
     application.dependency_overrides[get_db] = override_db
+    application.dependency_overrides[user_route.get_db_rw] = override_write_db
+    application.dependency_overrides[user_route.get_current_user] = signed_in_user
+    application.dependency_overrides[user_route.get_optional_user] = signed_in_user
     async with AsyncClient(
         transport=ASGITransport(app=application), base_url="http://test"
     ) as client:
@@ -614,10 +639,8 @@ async def test_preseason_and_summer_aliases_return_the_saved_parent_club(
             assert rows[0]["sports"] == []
 
 
-async def test_second_keystroke_reuses_venue_aliases_but_keeps_prefix_matches(
-    sessions,
-    cache,
-    client,
+async def test_authenticated_onboarding_search_and_save_during_alias_refresh(
+    sessions, cache, client, writer, alias_source, monkeypatch
 ):
     engine = sessions.kw["bind"].sync_engine
     alias_reads = []
@@ -628,16 +651,158 @@ async def test_second_keystroke_reuses_venue_aliases_but_keeps_prefix_matches(
 
     event.listen(engine, "before_cursor_execute", collect_alias_reads)
     try:
-        for term, expected in (
-            ("Magp", "Newcastle United"),
-            ("Real Madrid", "Real Madrid"),
-        ):
-            response = await client.get("/api/me/teams/search", params={"q": term})
-            assert response.status_code == 200
-            assert response.json()[0]["name"] == expected
-        assert len(alias_reads) == 1
+        await rebuild(sessions, writer)
+        cold = await client.get("/api/me/teams/search", params={"q": "Lakers"})
+        assert cold.status_code == 200
+        assert cold.json()[0]["id"] == 1030
+        cold_alias = await client.get("/api/me/teams/search", params={"q": "Magp"})
+        assert cold_alias.status_code == 200
+        assert cold_alias.json() == []
+        assert alias_reads == []
+
+        await venue_aliases._refresh_aliases(alias_source, engine)
+        async with sessions.begin() as db:
+            await db.execute(
+                update(TeamIdentityMapping)
+                .where(TeamIdentityMapping.source_name == "Magpies")
+                .values(source_name="Toon Army")
+            )
+        alias_reads.clear()
+
+        # Hold the real refresh after its read. Request progress and the save
+        # must complete while the new copy is still being built.
+        started = asyncio.Event()
+        release = ThreadEvent()
+        loop = asyncio.get_running_loop()
+        build = venue_aliases._build_aliases
+
+        def held_build(rows):
+            loop.call_soon_threadsafe(started.set)
+            if not release.wait(timeout=10):
+                raise TimeoutError("test did not release alias projection")
+            return build(rows)
+
+        monkeypatch.setattr(venue_aliases, "_build_aliases", held_build)
+        monkeypatch.setattr(venue_aliases, "_REFRESH_BUDGET_SECONDS", 10)
+        refresh = asyncio.create_task(
+            venue_aliases._refresh_aliases(alias_source, engine)
+        )
+        try:
+            async with asyncio.timeout(5):
+                await started.wait()
+                search = await client.get("/api/me/teams/search", params={"q": "Magp"})
+                assert search.status_code == 200
+                picked = search.json()[0]
+                assert (picked["id"], picked["name"]) == (1024, "Newcastle United")
+
+                saved = await client.post(
+                    "/api/me/onboarding",
+                    json={"follow_teams": [{"team_id": picked["id"]}]},
+                )
+                assert saved.status_code == 200
+                assert saved.json()["onboarding_completed"] is True
+                preferences = await client.get("/api/me/preferences")
+                assert preferences.status_code == 200
+                assert [
+                    (row["team_id"], row["sport_key"], row["relation_type"])
+                    for row in preferences.json()["favorites"]
+                ] == [(1024, EPL, "follow")]
+                assert not refresh.done()
+        finally:
+            release.set()
+            await refresh
+
+        current = await client.get("/api/me/teams/search", params={"q": "Toon"})
+        assert current.status_code == 200
+        assert current.json()[0]["id"] == 1024
+        old = await client.get("/api/me/teams/search", params={"q": "Magp"})
+        assert old.status_code == 200
+        assert old.json() == []
+        assert alias_reads == []
     finally:
         event.remove(engine, "before_cursor_execute", collect_alias_reads)
+
+
+async def test_timed_out_and_empty_alias_refresh_keep_the_last_copy(
+    sessions, alias_source, monkeypatch, caplog
+):
+    engine = sessions.kw["bind"].sync_engine
+    assert isinstance(alias_source.pool, NullPool)
+    assert alias_source.pool is not engine.pool
+    async with alias_source.connect() as reader:
+        assert await reader.scalar(text("SHOW transaction_read_only")) == "on"
+        assert await reader.scalar(text("SHOW statement_timeout")) == "2s"
+        assert await reader.scalar(text("SHOW lock_timeout")) == "250ms"
+
+    await venue_aliases._refresh_aliases(alias_source, engine)
+    async with sessions() as db:
+        before = venue_aliases.onboarding_venue_aliases(db)
+        assert before.prefix("Magp")
+
+    started = asyncio.Event()
+
+    def observe_slow_query(_conn, _cursor, sql, _params, _context, _many):
+        if "pg_sleep" in sql:
+            started.set()
+
+    event.listen(alias_source.sync_engine, "before_cursor_execute", observe_slow_query)
+    try:
+        with monkeypatch.context() as pause:
+            pause.setattr(venue_aliases, "_ALIAS_QUERY", select(func.pg_sleep(30)))
+            refresh = asyncio.create_task(
+                venue_aliases._refresh_aliases(alias_source, engine)
+            )
+            try:
+                async with asyncio.timeout(4):
+                    await started.wait()
+                    assert engine.pool.checkedout() == 0
+                    await refresh
+            finally:
+                if not refresh.done():
+                    refresh.cancel()
+                    await asyncio.gather(refresh, return_exceptions=True)
+        assert "Onboarding venue alias refresh skipped reason=" in caplog.text
+    finally:
+        event.remove(
+            alias_source.sync_engine, "before_cursor_execute", observe_slow_query
+        )
+
+    async with sessions.begin() as db:
+        assert venue_aliases.onboarding_venue_aliases(db) is before
+        await db.execute(delete(TeamIdentityMapping))
+    await venue_aliases._refresh_aliases(alias_source, engine)
+    async with sessions() as db:
+        assert venue_aliases.onboarding_venue_aliases(db) is before
+    assert "Onboarding venue alias refresh skipped reason=empty" in caplog.text
+
+
+async def test_first_alias_failure_retries_and_then_serves_the_copy(
+    sessions, cache, client, monkeypatch
+):
+    engine = sessions.kw["bind"]
+    alias_query = venue_aliases._ALIAS_QUERY
+    waits = []
+    monkeypatch.setattr(venue_aliases, "_ALIAS_QUERY", text("SELECT 1 / 0"))
+
+    async def record_delay(seconds):
+        waits.append(seconds)
+        if len(waits) == 1:
+            assert engine.sync_engine not in venue_aliases._by_bind
+            monkeypatch.setattr(venue_aliases, "_ALIAS_QUERY", alias_query)
+            return
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(venue_aliases, "sleep", record_delay)
+    with pytest.raises(asyncio.CancelledError):
+        await venue_aliases.refresh_onboarding_venue_aliases(engine)
+
+    assert waits == [30, 15 * 60]
+    match = await client.get("/api/me/teams/search", params={"q": "Magp"})
+    assert match.status_code == 200
+    assert (match.json()[0]["id"], match.json()[0]["name"]) == (
+        1024,
+        "Newcastle United",
+    )
 
 
 async def test_rebuild_has_one_owner_and_failed_publish_keeps_previous_snapshot(
