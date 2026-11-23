@@ -3726,6 +3726,101 @@ def _is_preview_producer(producer: RoundupProducer) -> bool:
     return str(getattr(producer, "stage", "public") or "public").strip().lower() == "preview"
 
 
+def _roundup_lesser_soccer_penalty(item: Mapping[str, Any]) -> int:
+    """Return ``MINOR_LEAGUE_PENALTY`` or ``OBSCURE_SOCCER_PENALTY`` for lesser soccer cards (#13093).
+
+    Multi-row soccer round-ups and sibling families carry no individual market
+    score before insertion, so they otherwise inherit their anchor neighbour's
+    high seat on Discover. Matches single-market futures parity in
+    ``app.utils.futures_highlights``: minor-league regex pays ``-15``, any
+    non-top-tier soccer competition pays ``-20``, and top-tier leagues
+    (Champions League, Premier League, La Liga, Bundesliga, Serie A, Ligue 1,
+    Europa League, MLS, World Cup, Liga MX, etc.) pay ``0``.
+    """
+    from app.utils.futures_highlights import (
+        MINOR_LEAGUE_PENALTY,
+        OBSCURE_SOCCER_PENALTY,
+        is_minor_league_market,
+        is_top_tier_soccer_market,
+    )
+
+    if not isinstance(item, Mapping):
+        return 0
+    slug = _roundup_item_slug(item)
+    prod = ROUNDUP_PRODUCERS.get(slug) if slug else None
+    data = item.get("data") if isinstance(item.get("data"), Mapping) else {}
+    roundup = data.get("roundup") if isinstance(data.get("roundup"), Mapping) else {}
+    tag = str(roundup.get("tag") or "").strip().lower()
+    kicker = str(roundup.get("kicker") or "").strip().lower()
+    children = [
+        ch.get("data")
+        for ch in (data.get("items") or ())
+        if isinstance(ch, Mapping) and isinstance(ch.get("data"), Mapping)
+    ]
+    child_cats = [str(ch.get("llm_sport_category") or "").strip().lower() for ch in children]
+    is_soccer = (
+        (prod is not None and str(prod.category or "").strip().lower() == "soccer")
+        or ("soccer" in tag or "soccer" in kicker)
+        or (len(child_cats) > 0 and all(cat == "soccer" for cat in child_cats))
+    )
+    if not is_soccer:
+        return 0
+
+    texts: list[str] = []
+    for raw in (
+        data.get("title"),
+        item.get("headline"),
+        prod.name if prod is not None else None,
+    ):
+        if raw and str(raw).strip():
+            texts.append(str(raw).strip())
+    for ch in children:
+        for key in ("name", "title"):
+            val = ch.get(key)
+            if val and str(val).strip():
+                texts.append(str(val).strip())
+    for row in roundup.get("rows") or ():
+        if isinstance(row, Mapping):
+            for key in ("market_name", "title", "subtitle"):
+                val = row.get(key)
+                if val and str(val).strip():
+                    texts.append(str(val).strip())
+
+    if any(is_minor_league_market(text) for text in texts):
+        return int(MINOR_LEAGUE_PENALTY)
+    if any(is_top_tier_soccer_market(text) for text in texts):
+        return 0
+    return int(OBSCURE_SOCCER_PENALTY)
+
+
+def _penalized_roundup_score(
+    item: Mapping[str, Any],
+    anchor: Optional[Mapping[str, Any]],
+    penalty: int,
+) -> float:
+    base = float(item.get("score") or 0.0)
+    if base <= 0.0 and isinstance(anchor, Mapping):
+        base = float(anchor.get("score") or 0.0)
+    return max(0.0, base + float(penalty))
+
+
+def _score_demoted_seat_index(
+    items: Sequence[Mapping[str, Any]],
+    min_idx: int,
+    penalized_score: float,
+) -> int:
+    """Seat index at/after ``min_idx`` placing a penalized card alongside equal-or-lower scores."""
+    last_higher = max(
+        (
+            i
+            for i in range(max(0, min_idx), len(items))
+            if float(items[i].get("score") or 0.0) > penalized_score
+        ),
+        default=None,
+    )
+    return max(min_idx, (last_higher + 1) if last_higher is not None else min_idx)
+
+
 def _is_preview_roundup_item(item: Mapping[str, Any]) -> bool:
     """Return True when a composed feed item belongs to a ``stage="preview"`` grouping."""
     slug = _roundup_item_slug(item)
@@ -4090,18 +4185,40 @@ def insert_roundup_feed_items(
             else preexisting_target_by_id.get(r_id)
         )
 
-    def _hydrate_card_at_seat(r_item: Mapping[str, Any], target_idx: int) -> dict[str, Any]:
+    def _hydrate_card_at_seat(
+        r_item: Mapping[str, Any],
+        target_idx: int,
+        *,
+        penalty: int = 0,
+        anchor_override: Optional[Mapping[str, Any]] = None,
+    ) -> dict[str, Any]:
         card = copy.deepcopy(dict(r_item))
         if result:
-            anchor = result[target_idx] if target_idx < len(result) else result[-1]
-            if not card.get("score"):
-                card["score"] = float(anchor.get("score", 0.0) or 0.0)
-            if "_rank_score" in anchor and "_rank_score" not in card:
-                card["_rank_score"] = anchor["_rank_score"]
+            anchor = (
+                anchor_override
+                if anchor_override is not None
+                else (result[target_idx] if target_idx < len(result) else result[-1])
+            )
+            if penalty < 0:
+                card["score"] = _penalized_roundup_score(card, anchor, penalty)
+                if "_rank_score" in anchor and "_rank_score" not in card:
+                    card["_rank_score"] = max(
+                        0.0, float(anchor["_rank_score"] or 0.0) + float(penalty)
+                    )
+            else:
+                if not card.get("score"):
+                    card["score"] = float(anchor.get("score", 0.0) or 0.0)
+                if "_rank_score" in anchor and "_rank_score" not in card:
+                    card["_rank_score"] = anchor["_rank_score"]
             if "_sort_time" in anchor and "_sort_time" not in card:
                 card["_sort_time"] = anchor["_sort_time"]
             for child in card.get("data", {}).get("items") or ():
-                if isinstance(child, dict) and not child.get("score"):
+                if isinstance(child, dict) and (penalty < 0 or not child.get("score")):
+                    child["score"] = card["score"]
+        elif penalty < 0:
+            card["score"] = _penalized_roundup_score(card, None, penalty)
+            for child in card.get("data", {}).get("items") or ():
+                if isinstance(child, dict):
                     child["score"] = card["score"]
         return card
 
@@ -4121,6 +4238,18 @@ def insert_roundup_feed_items(
         for r_item in accepted_roundups
         if r_item["data"].get("id") not in opening_takeover_seat_by_id
     ]
+    # Track each post-opening round-up's natural unpenalized turn before
+    # ordering unpenalized round-ups first so any penalized lesser-soccer card
+    # computes its penalized score from its true pre-penalty seat anchor rather
+    # than whichever tail item happens to follow all later round-ups.
+    post_opening_turns = [
+        (idx, r_item, _roundup_lesser_soccer_penalty(r_item))
+        for idx, r_item in enumerate(post_opening_roundups)
+    ]
+    post_opening_ordered = [
+        *[t for t in post_opening_turns if t[2] == 0],
+        *[t for t in post_opening_turns if t[2] < 0],
+    ]
     for r_item in opening_takeovers:
         r_id = r_item["data"].get("id")
         target_idx = min(max(0, opening_takeover_seat_by_id[r_id]), len(result))
@@ -4131,7 +4260,7 @@ def insert_roundup_feed_items(
 
     inserted_count = 0
     max_inserted_idx = -1
-    for r_item in post_opening_roundups:
+    for natural_turn, r_item, lesser_soccer_pen in post_opening_ordered:
         r_id = r_item["data"].get("id")
         is_sibling_card = _is_sibling_family_bundle(r_item)
         floor_idx = _opening_eligible_floor_index(result, seat_floor, now=now)
@@ -4152,15 +4281,31 @@ def insert_roundup_feed_items(
             target_seat = max(target_seat, page_window)
 
         desired_idx = min(max(floor_idx, target_seat), len(result))
-        non_adj_idx = _find_non_adjacent_roundup_seat(
-            result,
-            desired_idx,
-            floor_idx=max(
+        anchor_override: Optional[Mapping[str, Any]] = None
+        if lesser_soccer_pen < 0 and result:
+            anchor_seat = (
+                earliest_post_opening_seat
+                if earliest_post_opening_seat is not None
+                else floor_idx + (2 * natural_turn)
+            )
+            anchor_idx = min(max(floor_idx, anchor_seat), len(result) - 1)
+            anchor_override = result[anchor_idx]
+            pen_score = _penalized_roundup_score(r_item, anchor_override, lesser_soccer_pen)
+            desired_idx = _score_demoted_seat_index(result, floor_idx, pen_score)
+        effective_floor = (
+            max(floor_idx, desired_idx)
+            if lesser_soccer_pen < 0
+            else max(
                 floor_idx,
                 page_window
                 if (is_sibling_card and len(seated_sibling_roundups) >= MAX_SIBLING_FAMILY_IN_TOP_20)
                 else floor_idx,
-            ),
+            )
+        )
+        non_adj_idx = _find_non_adjacent_roundup_seat(
+            result,
+            desired_idx,
+            floor_idx=effective_floor,
             candidate_item=r_item,
             page_window=page_window,
         )
@@ -4174,14 +4319,20 @@ def insert_roundup_feed_items(
         ):
             continue
 
-        card = _hydrate_card_at_seat(r_item, target_idx)
+        card = _hydrate_card_at_seat(
+            r_item,
+            target_idx,
+            penalty=lesser_soccer_pen,
+            anchor_override=anchor_override,
+        )
 
         result.insert(target_idx, card)
-        if target_idx > max_inserted_idx:
+        if lesser_soccer_pen == 0 and target_idx > max_inserted_idx:
             max_inserted_idx = target_idx
         if is_sibling_card and target_idx < page_window:
             seated_sibling_roundups.append(card)
-        inserted_count += 1
+        if lesser_soccer_pen == 0:
+            inserted_count += 1
         changed = True
 
     if not changed:
@@ -5037,18 +5188,40 @@ def _splice_machinery_in_place(
     if not ordered_roundups:
         return raw_items
 
-    def _hydrate_at(r_item: Mapping[str, Any], target_idx: int) -> dict[str, Any]:
+    def _hydrate_at(
+        r_item: Mapping[str, Any],
+        target_idx: int,
+        *,
+        penalty: int = 0,
+        anchor_override: Optional[Mapping[str, Any]] = None,
+    ) -> dict[str, Any]:
         card = copy.deepcopy(dict(r_item))
         if result:
-            anchor = result[target_idx] if target_idx < len(result) else result[-1]
-            if not card.get("score"):
-                card["score"] = float(anchor.get("score", 0.0) or 0.0)
-            if "_rank_score" in anchor and "_rank_score" not in card:
-                card["_rank_score"] = anchor["_rank_score"]
+            anchor = (
+                anchor_override
+                if anchor_override is not None
+                else (result[target_idx] if target_idx < len(result) else result[-1])
+            )
+            if penalty < 0:
+                card["score"] = _penalized_roundup_score(card, anchor, penalty)
+                if "_rank_score" in anchor and "_rank_score" not in card:
+                    card["_rank_score"] = max(
+                        0.0, float(anchor["_rank_score"] or 0.0) + float(penalty)
+                    )
+            else:
+                if not card.get("score"):
+                    card["score"] = float(anchor.get("score", 0.0) or 0.0)
+                if "_rank_score" in anchor and "_rank_score" not in card:
+                    card["_rank_score"] = anchor["_rank_score"]
             if "_sort_time" in anchor and "_sort_time" not in card:
                 card["_sort_time"] = anchor["_sort_time"]
             for child in card.get("data", {}).get("items") or ():
-                if isinstance(child, dict) and not child.get("score"):
+                if isinstance(child, dict) and (penalty < 0 or not child.get("score")):
+                    child["score"] = card["score"]
+        elif penalty < 0:
+            card["score"] = _penalized_roundup_score(card, None, penalty)
+            for child in card.get("data", {}).get("items") or ():
+                if isinstance(child, dict):
                     child["score"] = card["score"]
         return card
 
@@ -5084,12 +5257,16 @@ def _splice_machinery_in_place(
         (
             i
             for i, it in enumerate(result)
-            if _is_roundup_bundle_card(it) and not _is_machinery_roundup_item(it)
+            if _is_roundup_bundle_card(it)
+            and not _is_machinery_roundup_item(it)
+            and _roundup_lesser_soccer_penalty(it) == 0
         ),
         default=-1,
     )
     own_seat_ceiling = max(initial_floor_idx, pre_pass2_standing_last + 2)
     for r_item in ordered_roundups:
+        if _roundup_lesser_soccer_penalty(r_item) < 0:
+            continue
         r_id = r_item["data"].get("id")
         covered_ids = _roundup_covered_market_ids(r_item)
         if not covered_ids:
@@ -5151,8 +5328,8 @@ def _splice_machinery_in_place(
             result.pop(idx)
 
     # Pass 3: Non-replacing machinery groupings seat strictly after the last standing
-    # round-up (never counting already-placed machinery groupings!) with non-adjacent
-    # spacing so zero standing round-ups shift.
+    # round-up (never counting already-placed machinery groupings or score-demoted
+    # lesser-soccer round-ups!) with non-adjacent spacing so zero standing round-ups shift.
     unplaced = [r for r in ordered_roundups if r["data"].get("id") not in placed_rids]
     if unplaced:
         floor_idx = _opening_eligible_floor_index(result, seat_floor, now=now)
@@ -5160,13 +5337,22 @@ def _splice_machinery_in_place(
             (
                 i
                 for i, it in enumerate(result)
-                if _is_roundup_bundle_card(it) and not _is_machinery_roundup_item(it)
+                if _is_roundup_bundle_card(it)
+                and not _is_machinery_roundup_item(it)
+                and _roundup_lesser_soccer_penalty(it) == 0
             ),
             default=-1,
         )
         next_desired = max(floor_idx, last_standing_idx + 2)
         for r_item in unplaced:
+            lesser_soccer_pen = _roundup_lesser_soccer_penalty(r_item)
             desired_idx = min(next_desired, len(result))
+            anchor_override = None
+            if lesser_soccer_pen < 0 and result:
+                anchor_idx = min(desired_idx, len(result) - 1)
+                anchor_override = result[anchor_idx]
+                pen_score = _penalized_roundup_score(r_item, anchor_override, lesser_soccer_pen)
+                desired_idx = _score_demoted_seat_index(result, desired_idx, pen_score)
             non_adj = _find_non_adjacent_roundup_seat(
                 result,
                 desired_idx,
@@ -5175,9 +5361,15 @@ def _splice_machinery_in_place(
                 page_window=page_window,
             )
             target_idx = non_adj if non_adj is not None else len(result)
-            card = _hydrate_at(r_item, target_idx)
+            card = _hydrate_at(
+                r_item,
+                target_idx,
+                penalty=lesser_soccer_pen,
+                anchor_override=anchor_override,
+            )
             result.insert(target_idx, card)
-            next_desired = target_idx + 2
+            if lesser_soccer_pen == 0:
+                next_desired = target_idx + 2
             changed = True
 
     if not changed:
