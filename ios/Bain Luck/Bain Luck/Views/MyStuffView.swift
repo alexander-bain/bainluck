@@ -41,6 +41,15 @@ struct MyStuffView: View {
         _path = State(initialValue: macPlace?.path ?? NavigationPath())
     }
 
+    #if DEBUG
+    init(viewModelForTest: MyStuffViewModel) {
+        self.macPlace = nil
+        _vm = StateObject(wrappedValue: viewModelForTest)
+        _pinContent = StateObject(wrappedValue: SavedPinContentViewModel())
+        _path = State(initialValue: NavigationPath())
+    }
+    #endif
+
     /// Whether the gear that leads to Preferences — and so to Delete Account —
     /// is offered. Being signed in is the whole test.
     ///
@@ -894,9 +903,9 @@ enum MyStuffTeamTextColour {
     /// it is standing in for.
     static let fallbackHex = "#6b7280"
 
-    /// The team's colour when it is readable, otherwise the row's own default.
-    static func probabilityHex(_ primaryColor: String?) -> String {
-        TeamTextContrast.textHexOnCard(primaryColor, fallback: fallbackHex)
+    /// The team's colour when it is readable against the active card surface.
+    static func probabilityHex(_ primaryColor: String?, colorScheme: ColorScheme = .light) -> String {
+        TeamTextContrast.textHexOnSurface(primaryColor, fallback: fallbackHex, colorScheme: colorScheme)
     }
 
     /// #7036, fourth arm — the crest circle beside those same rows, and on the
@@ -916,8 +925,8 @@ enum MyStuffTeamTextColour {
     ///
     /// Same rule and same default as `probabilityHex`, named separately so the
     /// wiring test can anchor on the site rather than on the rule.
-    static func logoTintHex(_ primaryColor: String?) -> String {
-        TeamTextContrast.textHexOnCard(primaryColor, fallback: fallbackHex)
+    static func logoTintHex(_ primaryColor: String?, colorScheme: ColorScheme = .light) -> String {
+        TeamTextContrast.textHexOnSurface(primaryColor, fallback: fallbackHex, colorScheme: colorScheme)
     }
 
     /// #7036, sixth arm — the playoff-journey card's probability CAPSULE.
@@ -957,8 +966,8 @@ enum MyStuffTeamTextColour {
     ///
     /// Falls back to `fallbackHex`, so a floored club's bar is drawn exactly as a
     /// club with no stored colour has always drawn it.
-    static func progressFillHex(_ primaryColor: String?) -> String {
-        TeamTextContrast.textHexOnCard(primaryColor, fallback: fallbackHex)
+    static func progressFillHex(_ primaryColor: String?, colorScheme: ColorScheme = .light) -> String {
+        TeamTextContrast.textHexOnSurface(primaryColor, fallback: fallbackHex, colorScheme: colorScheme)
     }
 
     /// #7036, sixth arm — the journey card's 3pt leading stripe, which is the
@@ -1218,30 +1227,55 @@ private func detectPlayoffJourneys(_ merged: [MergedTeamFuture]) -> (journeys: [
 private struct PlayoffJourneyCard: View {
     private let journey: PlayoffJourney
     private let onStageTap: (Int) -> Void
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorScheme) private var colorScheme
 
     init(journey: PlayoffJourney, onStageTap: @escaping (Int) -> Void) {
         self.journey = journey
         self.onStageTap = onStageTap
     }
 
+    private var isAX: Bool { dynamicTypeSize.isAccessibilitySize }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             // Header: logo + name + PLAYOFFS label
-            HStack(spacing: 8) {
-                TeamLogoView(
-                    url: journey.teamLogo,
-                    teamName: journey.teamName,
-                    color: Color(hex: MyStuffTeamTextColour.logoTintHex(journey.teamColor)),
-                    size: 28
-                )
-                Text(journey.teamName)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .lineLimit(1)
-                Spacer()
-                Text("PLAYOFFS")
-                    .font(.system(size: 10, weight: .medium))
-                    .foregroundStyle(.secondary)
+            if isAX {
+                HStack(alignment: .top, spacing: 8) {
+                    TeamLogoView(
+                        url: journey.teamLogo,
+                        teamName: journey.teamName,
+                        color: Color(hex: MyStuffTeamTextColour.logoTintHex(journey.teamColor, colorScheme: colorScheme)),
+                        size: 28
+                    )
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(journey.teamName)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("PLAYOFFS")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            } else {
+                HStack(spacing: 8) {
+                    TeamLogoView(
+                        url: journey.teamLogo,
+                        teamName: journey.teamName,
+                        color: Color(hex: MyStuffTeamTextColour.logoTintHex(journey.teamColor, colorScheme: colorScheme)),
+                        size: 28
+                    )
+                    Text(journey.teamName)
+                        .font(.subheadline)
+                        .fontWeight(.medium)
+                        .lineLimit(1)
+                    Spacer()
+                    Text("PLAYOFFS")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
             }
 
             // Stage rows
@@ -1252,46 +1286,87 @@ private struct PlayoffJourneyCard: View {
                 Button {
                     onStageTap(stage.merged.primary.marketId)
                 } label: {
-                    HStack(spacing: 6) {
-                        // Status dot
-                        Circle()
-                            .fill(achieved ? Color.green : Color.secondary.opacity(0.3))
-                            .frame(width: 7, height: 7)
-
-                        // Stage label
-                        Text(stage.label)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-
-                        // Probability bar
-                        GeometryReader { geo in
-                            ZStack(alignment: .leading) {
-                                Capsule()
-                                    .fill(Color.secondary.opacity(0.15))
-                                Capsule()
-                                    .fill(achieved
-                                          ? Color.green
-                                          : Color(hex: MyStuffTeamTextColour.progressFillHex(journey.teamColor)).opacity(0.5))
-                                    .frame(width: geo.size.width * min(prob, 1.0))
+                    if isAX {
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                Circle()
+                                    .fill(achieved ? Color.green : Color.secondary.opacity(0.3))
+                                    .frame(width: 7, height: 7)
+                                Text(stage.label)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                Text(achieved ? "done" : formatProbability(prob))
+                                    .font(.system(.caption, design: .monospaced))
+                                    .fontWeight(.medium)
+                                    .foregroundStyle(probTextColor(prob, achieved: achieved))
+                            }
+                            GeometryReader { geo in
+                                ZStack(alignment: .leading) {
+                                    Capsule()
+                                        .fill(Color.secondary.opacity(0.15))
+                                    Capsule()
+                                        .fill(achieved
+                                              ? Color.green
+                                              : Color(hex: MyStuffTeamTextColour.progressFillHex(journey.teamColor, colorScheme: colorScheme)).opacity(0.65))
+                                        .frame(width: geo.size.width * min(prob, 1.0))
+                                }
+                            }
+                            .frame(height: 5)
+                            if stage.merged.sources.count > 1 {
+                                HStack(spacing: 3) {
+                                    ForEach(stage.merged.sources, id: \.source) { s in
+                                        Circle()
+                                            .fill(sourceColors[s.source] ?? .gray)
+                                            .frame(width: 4, height: 4)
+                                    }
+                                }
                             }
                         }
-                        .frame(width: 40, height: 4)
+                        .padding(.vertical, 2)
+                    } else {
+                        HStack(spacing: 6) {
+                            // Status dot
+                            Circle()
+                                .fill(achieved ? Color.green : Color.secondary.opacity(0.3))
+                                .frame(width: 7, height: 7)
 
-                        // Probability value
-                        Text(achieved ? "done" : formatProbability(prob))
-                            .font(.system(.caption, design: .monospaced))
-                            .fontWeight(.medium)
-                            .foregroundStyle(probTextColor(prob, achieved: achieved))
-                            .frame(minWidth: 34, alignment: .trailing)
+                            // Stage label
+                            Text(stage.label)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
 
-                        // Source dots
-                        if stage.merged.sources.count > 1 {
-                            HStack(spacing: 2) {
-                                ForEach(stage.merged.sources, id: \.source) { s in
-                                    Circle()
-                                        .fill(sourceColors[s.source] ?? .gray)
-                                        .frame(width: 4, height: 4)
+                            // Probability bar
+                            GeometryReader { geo in
+                                ZStack(alignment: .leading) {
+                                    Capsule()
+                                        .fill(Color.secondary.opacity(0.15))
+                                    Capsule()
+                                        .fill(achieved
+                                              ? Color.green
+                                              : Color(hex: MyStuffTeamTextColour.progressFillHex(journey.teamColor, colorScheme: colorScheme)).opacity(0.5))
+                                        .frame(width: geo.size.width * min(prob, 1.0))
+                                }
+                            }
+                            .frame(width: 40, height: 4)
+
+                            // Probability value
+                            Text(achieved ? "done" : formatProbability(prob))
+                                .font(.system(.caption, design: .monospaced))
+                                .fontWeight(.medium)
+                                .foregroundStyle(probTextColor(prob, achieved: achieved))
+                                .frame(minWidth: 34, alignment: .trailing)
+
+                            // Source dots
+                            if stage.merged.sources.count > 1 {
+                                HStack(spacing: 2) {
+                                    ForEach(stage.merged.sources, id: \.source) { s in
+                                        Circle()
+                                            .fill(sourceColors[s.source] ?? .gray)
+                                            .frame(width: 4, height: 4)
+                                    }
                                 }
                             }
                         }
@@ -1328,6 +1403,8 @@ private struct TeamFuturesSection: View {
     @Binding private var path: NavigationPath
     private let twoColumns: Bool
     @State private var expanded = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.colorScheme) private var colorScheme
 
     private static let initialShow = 8
 
@@ -1466,75 +1543,144 @@ private struct TeamFuturesSection: View {
         let isMultiSource = merged.sources.count > 1
         let displayProb = isMultiSource ? merged.avgProbability : merged.primary.probability
         let item = merged.primary
+        let isAX = dynamicTypeSize.isAccessibilitySize
+        let probHex = MyStuffTeamTextColour.probabilityHex(item.matchedTeam?.primaryColor, colorScheme: colorScheme)
+        let logoHex = MyStuffTeamTextColour.logoTintHex(item.matchedTeam?.primaryColor, colorScheme: colorScheme)
 
-        return HStack(spacing: 10) {
-            // Team logo
-            TeamLogoView(
-                url: item.matchedTeam?.logoSmall,
-                teamName: item.matchedTeam?.name ?? "",
-                color: Color(hex: MyStuffTeamTextColour.logoTintHex(item.matchedTeam?.primaryColor)),
-                size: 28
-            )
+        return Group {
+            if isAX {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .top, spacing: 10) {
+                        TeamLogoView(
+                            url: item.matchedTeam?.logoSmall,
+                            teamName: item.matchedTeam?.name ?? "",
+                            color: Color(hex: logoHex),
+                            size: 28
+                        )
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(item.outcomeName)
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(cleanMarketName(item.marketName))
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            if isMultiSource {
+                                HStack(spacing: 3) {
+                                    ForEach(merged.sources, id: \.source) { s in
+                                        Circle()
+                                            .fill(sourceColors[s.source] ?? .gray)
+                                            .frame(width: 4, height: 4)
+                                    }
+                                }
+                            }
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
 
-            // Name + market + source dots
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.outcomeName)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
-                    .lineLimit(1)
-                Text(cleanMarketName(item.marketName))
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                if isMultiSource {
-                    HStack(spacing: 3) {
-                        ForEach(merged.sources, id: \.source) { s in
-                            Circle()
-                                .fill(sourceColors[s.source] ?? .gray)
-                                .frame(width: 4, height: 4)
+                    HStack(spacing: 8) {
+                        if let change = merged.bestChange, abs(change) >= 0.001 {
+                            let isUp = change > 0
+                            Text("\(isUp ? "↑" : "↓")\(String(format: "%.1f", abs(change * 100)))%")
+                                .font(.caption2)
+                                .fontWeight(.medium)
+                                .foregroundStyle(isUp ? .green : .red)
+                        }
+                        Spacer(minLength: 0)
+                        if isMultiSource {
+                            Text(displayProb.map { formatProbability($0) } ?? "—")
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .monospacedDigit()
+                                .foregroundStyle(Color(hex: probHex))
+                        } else if let prob = displayProb {
+                            HStack(spacing: 4) {
+                                Text(formatProbability(prob))
+                                    .font(.subheadline)
+                                    .fontWeight(.semibold)
+                                    .monospacedDigit()
+                                    .foregroundStyle(Color(hex: probHex))
+                                if let mark = SourceMarkButton(item.sourceMark, number: prob, subject: item.outcomeName, subtitle: cleanMarketName(item.marketName), numberSize: 15, compactRow: true) {
+                                    mark.buttonStyle(.borderless)
+                                }
+                            }
                         }
                     }
                 }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.vertical, 6)
+                .padding(.horizontal, 4)
+            } else {
+                HStack(spacing: 10) {
+                    // Team logo
+                    TeamLogoView(
+                        url: item.matchedTeam?.logoSmall,
+                        teamName: item.matchedTeam?.name ?? "",
+                        color: Color(hex: logoHex),
+                        size: 28
+                    )
 
-            // 24h change
-            if let change = merged.bestChange, abs(change) >= 0.001 {
-                let isUp = change > 0
-                Text("\(isUp ? "↑" : "↓")\(String(format: "%.1f", abs(change * 100)))%")
-                    .font(.caption2)
-                    .fontWeight(.medium)
-                    .foregroundStyle(isUp ? .green : .red)
-                    .lineLimit(1)
-            }
+                    // Name + market + source dots
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(item.outcomeName)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .lineLimit(1)
+                        Text(cleanMarketName(item.marketName))
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.tail)
+                        if isMultiSource {
+                            HStack(spacing: 3) {
+                                ForEach(merged.sources, id: \.source) { s in
+                                    Circle()
+                                        .fill(sourceColors[s.source] ?? .gray)
+                                        .frame(width: 4, height: 4)
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-            // Probability
-            if isMultiSource {
-                Text(displayProb.map { formatProbability($0) } ?? "—")
-                    .font(.subheadline)
-                    .fontWeight(.semibold)
-                    .monospacedDigit()
-                    .foregroundStyle(Color(hex: MyStuffTeamTextColour.probabilityHex(item.matchedTeam?.primaryColor)))
-                    .lineLimit(1)
-                    .frame(minWidth: 44, alignment: .trailing)
-            } else if let prob = displayProb {
-                HStack(spacing: 4) {
-                    Text(formatProbability(prob))
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .monospacedDigit()
-                        .foregroundStyle(Color(hex: MyStuffTeamTextColour.probabilityHex(item.matchedTeam?.primaryColor)))
-                        .lineLimit(1)
-                    if let mark = SourceMarkButton(item.sourceMark, number: prob, subject: item.outcomeName, subtitle: cleanMarketName(item.marketName), numberSize: 15, compactRow: true) {
-                        mark.buttonStyle(.borderless)
+                    // 24h change
+                    if let change = merged.bestChange, abs(change) >= 0.001 {
+                        let isUp = change > 0
+                        Text("\(isUp ? "↑" : "↓")\(String(format: "%.1f", abs(change * 100)))%")
+                            .font(.caption2)
+                            .fontWeight(.medium)
+                            .foregroundStyle(isUp ? .green : .red)
+                            .lineLimit(1)
+                    }
+
+                    // Probability
+                    if isMultiSource {
+                        Text(displayProb.map { formatProbability($0) } ?? "—")
+                            .font(.subheadline)
+                            .fontWeight(.semibold)
+                            .monospacedDigit()
+                            .foregroundStyle(Color(hex: probHex))
+                            .lineLimit(1)
+                            .frame(minWidth: 44, alignment: .trailing)
+                    } else if let prob = displayProb {
+                        HStack(spacing: 4) {
+                            Text(formatProbability(prob))
+                                .font(.subheadline)
+                                .fontWeight(.semibold)
+                                .monospacedDigit()
+                                .foregroundStyle(Color(hex: probHex))
+                                .lineLimit(1)
+                            if let mark = SourceMarkButton(item.sourceMark, number: prob, subject: item.outcomeName, subtitle: cleanMarketName(item.marketName), numberSize: 15, compactRow: true) {
+                                mark.buttonStyle(.borderless)
+                            }
+                        }
+                        .frame(minWidth: 44, alignment: .trailing)
                     }
                 }
-                .frame(minWidth: 44, alignment: .trailing)
+                .padding(.vertical, 6)
+                .padding(.horizontal, 4)
             }
         }
-        .padding(.vertical, 6)
-        .padding(.horizontal, 4)
     }
 
     private func cleanMarketName(_ name: String) -> String {
