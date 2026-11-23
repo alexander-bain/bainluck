@@ -8,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.tasks import prediction_market_matching as pmm
+from app.utils.aggregation import compute_aggregate_probability
 from app.utils.event_twin_fold import (
     _college_squash,
     _squash_for_league,
@@ -15,6 +16,8 @@ from app.utils.event_twin_fold import (
     team_name_fold_key,
     twin_fold_key,
 )
+from app.utils.feed_scoring import format_event_data
+from app.utils.hero_probability import resolve_hero
 from app.utils.prediction_market_matching import (
     MatchupInfo,
     _expand_team_search_terms,
@@ -33,6 +36,7 @@ def _make_event(
     home: str,
     commence_time: datetime = datetime(2025, 11, 20, 1, 0, tzinfo=timezone.utc),
     status: str = "live",
+    completed_at: datetime | None = None,
     external_id: str | None = None,
     espn_id: str | None = None,
     home_score: int | None = None,
@@ -50,6 +54,7 @@ def _make_event(
         home_team_name=home,
         commence_time=commence_time,
         status=status,
+        completed_at=completed_at,
         external_id=external_id,
         espn_id=espn_id,
         home_score=home_score,
@@ -376,47 +381,324 @@ class TestWbbReversedAnchoredClaim13142:
             == "2026-11-23T00:35:00+00:00"
         )
 
-    def test_reversed_claim_refuses_different_minute_both_anchored_or_other_leagues(self):
-        # 1) Different minute refuses
-        sb = _make_event(
+    def _render_card(self, ev, merged_sources: dict):
+        ev.win_probability_sources = merged_sources
+        source_inputs: list[tuple[str, float]] = []
+        source_method: list[str] = []
+        hero = resolve_hero(
+            ev, source_inputs=source_inputs, source_method=source_method
+        )
+        agg = compute_aggregate_probability(ev)
+        cur_home = agg if agg is not None else (hero.home_probability if hero else None)
+        cur_away = (1.0 - cur_home) if cur_home is not None else None
+        card = format_event_data(
+            event_id=ev.id,
+            external_id=ev.external_id,
+            sport_key="basketball_wncaab",
+            sport_name="WNCAAB",
+            home_team=ev.home_team_name,
+            away_team=ev.away_team_name,
+            commence_time=ev.commence_time,
+            status=ev.status,
+            home_score=ev.home_score,
+            away_score=ev.away_score,
+            current_home_prob=cur_home,
+            current_away_prob=cur_away,
+            opening_home_prob=ev.opening_home_probability,
+            opening_away_prob=ev.opening_away_probability,
+            opening_favorite=None,
+            win_probability_sources=ev.win_probability_sources,
+            prob_source="aggregate" if agg is not None else None,
+            game_clock=None,
+            period=None,
+            broadcast_info=None,
+            highlight_label="Live" if ev.status == "live" else None,
+            raw_ei=None,
+            inline_tags=[],
+            ended_at=ev.completed_at,
+            hero=hero,
+            stored_tags=[],
+            commence_time_source="odds_api",
+        )
+        return hero, source_inputs, source_method, card
+
+    @pytest.mark.parametrize(
+        "pm_kansas_st_prob,expected_home_missouri,expected_blend_home,expected_away_pct,expected_home_pct",
+        [
+            (0.9995, 0.0005, 0.020675, 98, 2),
+            (0.92, 0.08, 0.0803, 92, 8),
+        ],
+    )
+    def test_same_utc_day_29m_offset_live_reversed_pair_folds_to_one_live_card(
+        self,
+        pm_kansas_st_prob,
+        expected_home_missouri,
+        expected_blend_home,
+        expected_away_pct,
+        expected_home_pct,
+    ):
+        """Fable addition 1 (live): 00:59Z anchor + 00:30Z claim collapse to ONE live blend from stat_model + flipped Polymarket."""
+        sportsbook_row = _make_event(
+            15352902,
+            away="Kansas St Wildcats",
+            home="Missouri Tigers",
+            commence_time=datetime(2025, 11, 23, 0, 59, tzinfo=timezone.utc),
+            status="live",
+            external_id="f27a19d9369dd20d4a858e617ab21bcb",
+            home_score=58,
+            away_score=67,
+            sources={
+                "stat_model": {"value": 0.0812},
+                "betting_book_count": {"value": 0.0},
+            },
+        )
+        polymarket_claim = _make_event(
+            15348085,
+            away="Missouri Tigers",
+            home="Kansas State Wildcats",
+            commence_time=datetime(2025, 11, 23, 0, 30, tzinfo=timezone.utc),
+            status="live",
+            external_id=None,
+            home_score=None,
+            away_score=None,
+            sources={
+                "polymarket": {
+                    "value": pm_kansas_st_prob,
+                    "eligibility": {
+                        "v": 1,
+                        "rule": "live_blend.admissible_as_blend_speaker@5031",
+                        "scope": "full_event_winner",
+                        "status": "verified",
+                        "market_id": 70330833,
+                        "semantic_type": "moneyline",
+                        "source_market_id": "1379898",
+                    },
+                    "observed_basis": {"264774901": 1795404456.534397},
+                    "observed_value": pm_kansas_st_prob,
+                }
+            },
+        )
+
+        result = fold_twin_events([sportsbook_row, polymarket_claim])
+        assert result.folded_count == 1
+        assert result.dropped_ids == [15348085]
+        assert [e.id for e in result.events] == [15352902]
+
+        survivor = result.events[0]
+        assert survivor.status == "live"
+        assert survivor.home_score == 58
+        assert survivor.away_score == 67
+
+        hero, source_inputs, source_method, card = self._render_card(
+            survivor, result.merged_sources[15352902]
+        )
+        assert survivor.win_probability_sources["polymarket"]["value"] == pytest.approx(
+            expected_home_missouri
+        )
+        assert survivor.win_probability_sources["polymarket"]["observed_value"] == pytest.approx(
+            expected_home_missouri
+        )
+        assert hero is not None
+        assert hero.source == "blend"
+        assert hero.home_probability == pytest.approx(expected_blend_home)
+        assert hero.away_probability == pytest.approx(1.0 - expected_blend_home)
+        assert len(source_inputs) == 2
+        assert source_inputs[0] == ("stat_model", pytest.approx(0.0812))
+        assert source_inputs[1][0] == "polymarket"
+        assert source_inputs[1][1] == pytest.approx(expected_home_missouri)
+        assert source_method == ["Bain Luck blend · a weighted average of these sources"]
+        assert card["status"] == "live"
+        assert card["hero_probability_source"] == "blend"
+        assert card.get("hero_settled_result") is None
+        assert card["current_odds"]["source"] == "aggregate"
+        assert card["current_odds"]["home_probability"] == pytest.approx(
+            expected_blend_home
+        )
+        assert card["current_odds"]["away_probability"] == pytest.approx(
+            1.0 - expected_blend_home
+        )
+        assert card["current_odds"]["away_rendered_percent"] == expected_away_pct
+        assert card["current_odds"]["home_rendered_percent"] == expected_home_pct
+
+    def test_same_utc_day_29m_offset_finished_anchor_with_live_claim_shows_settled_result(self):
+        """Fable addition 1 (finished): 15352902 final (72-64 Kansas St) absorbs stale live 15348085 and shows settled result."""
+        finished_anchor = _make_event(
+            15352902,
+            away="Kansas St Wildcats",
+            home="Missouri Tigers",
+            commence_time=datetime(2025, 11, 23, 0, 59, tzinfo=timezone.utc),
+            status="completed",
+            completed_at=datetime(2025, 11, 23, 2, 55, tzinfo=timezone.utc),
+            external_id="f27a19d9369dd20d4a858e617ab21bcb",
+            home_score=64,
+            away_score=72,
+            sources={
+                "stat_model": {"value": 0.0812},
+                "betting_book_count": {"value": 0.0},
+            },
+            opening_home_probability=0.4718,
+            opening_away_probability=0.5282,
+        )
+        stale_live_claim = _make_event(
+            15348085,
+            away="Missouri Tigers",
+            home="Kansas State Wildcats",
+            commence_time=datetime(2025, 11, 23, 0, 30, tzinfo=timezone.utc),
+            status="live",
+            external_id=None,
+            home_score=None,
+            away_score=None,
+            sources={
+                "polymarket": {
+                    "value": 0.9995,
+                    "eligibility": {
+                        "v": 1,
+                        "rule": "live_blend.admissible_as_blend_speaker@5031",
+                        "scope": "full_event_winner",
+                        "status": "verified",
+                        "market_id": 70330833,
+                        "semantic_type": "moneyline",
+                        "source_market_id": "1379898",
+                    },
+                    "observed_value": 0.9995,
+                }
+            },
+        )
+
+        result = fold_twin_events([finished_anchor, stale_live_claim])
+        assert result.folded_count == 1
+        assert result.dropped_ids == [15348085]
+        assert [e.id for e in result.events] == [15352902]
+
+        survivor = result.events[0]
+        hero, source_inputs, source_method, card = self._render_card(
+            survivor, result.merged_sources[15352902]
+        )
+        assert survivor.win_probability_sources["polymarket"]["value"] == pytest.approx(
+            0.0005
+        )
+        assert hero is not None
+        assert hero.source == "settled"
+        assert source_inputs == []
+        assert source_method == []
+        assert hero.settled_result == "away"
+        assert hero.home_probability == 0.0
+        assert hero.away_probability == 1.0
+        assert card["status"] == "completed"
+        assert card["hero_probability_source"] == "settled"
+        assert card["hero_settled_result"] == "away"
+        assert card["current_odds"]["home_probability"] == 0.0
+        assert card["current_odds"]["away_probability"] == 1.0
+        assert card["current_odds"]["home_rendered_percent"] == 0
+        assert card["current_odds"]["away_rendered_percent"] == 100
+
+    def test_reversed_claim_fail_closed_refusals(self):
+        # 1) Midnight-UTC straddle (15 min apart across two UTC dates) refuses
+        straddle_anchor = _make_event(
             4001,
             away="Kansas St Wildcats",
             home="Missouri Tigers",
-            commence_time=datetime(2026, 11, 23, 0, 30, tzinfo=timezone.utc),
+            commence_time=datetime(2025, 11, 22, 23, 55, tzinfo=timezone.utc),
             status="scheduled",
             external_id="odds-4001",
             sources={"betting": {"value": 0.47}},
         )
-        diff_min = _make_event(
+        straddle_claim = _make_event(
             4002,
             away="Missouri Tigers",
             home="Kansas State Wildcats",
-            commence_time=datetime(2026, 11, 23, 0, 31, tzinfo=timezone.utc),
+            commence_time=datetime(2025, 11, 23, 0, 10, tzinfo=timezone.utc),
             status="scheduled",
             external_id=None,
             sources={"polymarket": {"value": 0.53}},
         )
-        assert fold_twin_events([sb, diff_min]).folded_count == 0
+        assert fold_twin_events([straddle_anchor, straddle_claim]).folded_count == 0
 
-        # 2) Both anchored refuses
+        # 2) Next UTC calendar day (same clock time 24h later) refuses
+        sb = _make_event(
+            4011,
+            away="Kansas St Wildcats",
+            home="Missouri Tigers",
+            commence_time=datetime(2025, 11, 23, 0, 30, tzinfo=timezone.utc),
+            status="scheduled",
+            external_id="odds-4011",
+            sources={"betting": {"value": 0.47}},
+        )
+        next_day_claim = _make_event(
+            4012,
+            away="Missouri Tigers",
+            home="Kansas State Wildcats",
+            commence_time=datetime(2025, 11, 24, 0, 30, tzinfo=timezone.utc),
+            status="scheduled",
+            external_id=None,
+            sources={"polymarket": {"value": 0.53}},
+        )
+        assert fold_twin_events([sb, next_day_claim]).folded_count == 0
+
+        # 3) Two-anchor same-day ambiguity (doubleheader) refuses rather than picking by clock
+        second_anchor = _make_event(
+            4013,
+            away="Kansas St Wildcats",
+            home="Missouri Tigers",
+            commence_time=datetime(2025, 11, 23, 18, 0, tzinfo=timezone.utc),
+            status="scheduled",
+            external_id="odds-4013",
+            sources={"betting": {"value": 0.45}},
+        )
+        same_day_claim = _make_event(
+            4014,
+            away="Missouri Tigers",
+            home="Kansas State Wildcats",
+            commence_time=datetime(2025, 11, 23, 0, 30, tzinfo=timezone.utc),
+            status="scheduled",
+            external_id=None,
+            sources={"polymarket": {"value": 0.53}},
+        )
+        assert fold_twin_events([sb, second_anchor, same_day_claim]).folded_count == 0
+
+        # 4) Two-claim same-day ambiguity refuses
+        second_claim = _make_event(
+            4015,
+            away="Missouri Tigers",
+            home="Kansas State Wildcats",
+            commence_time=datetime(2025, 11, 23, 5, 0, tzinfo=timezone.utc),
+            status="scheduled",
+            external_id=None,
+            sources={"kalshi": {"value": 0.52}},
+        )
+        assert fold_twin_events([sb, same_day_claim, second_claim]).folded_count == 0
+
+        # 5) Time alone never folds (same minute, different opponent)
+        different_opponent = _make_event(
+            4016,
+            away="Missouri Tigers",
+            home="Oklahoma Sooners",
+            commence_time=datetime(2025, 11, 23, 0, 30, tzinfo=timezone.utc),
+            status="scheduled",
+            external_id=None,
+            sources={"polymarket": {"value": 0.53}},
+        )
+        assert fold_twin_events([sb, different_opponent]).folded_count == 0
+
+        # 6) Both anchored refuses
         both_anchored = _make_event(
             4003,
             away="Missouri Tigers",
             home="Kansas State Wildcats",
-            commence_time=datetime(2026, 11, 23, 0, 30, tzinfo=timezone.utc),
+            commence_time=datetime(2025, 11, 23, 0, 30, tzinfo=timezone.utc),
             status="scheduled",
             external_id="odds-4003",
             sources={"polymarket": {"value": 0.53}},
         )
         assert fold_twin_events([sb, both_anchored]).folded_count == 0
 
-        # 3) Non-allowlisted league (e.g. basketball_ncaab) refuses reversed twins
+        # 7) Non-allowlisted league (e.g. basketball_ncaab) refuses reversed twins
         ncaab_a = _make_event(
             4004,
             sport_key="basketball_ncaab",
             away="Kansas St Wildcats",
             home="Missouri Tigers",
-            commence_time=datetime(2026, 11, 23, 0, 30, tzinfo=timezone.utc),
+            commence_time=datetime(2025, 11, 23, 0, 30, tzinfo=timezone.utc),
             status="scheduled",
             external_id="odds-4004",
             sources={"betting": {"value": 0.47}},
@@ -426,12 +708,37 @@ class TestWbbReversedAnchoredClaim13142:
             sport_key="basketball_ncaab",
             away="Missouri Tigers",
             home="Kansas State Wildcats",
-            commence_time=datetime(2026, 11, 23, 0, 30, tzinfo=timezone.utc),
+            commence_time=datetime(2025, 11, 23, 0, 30, tzinfo=timezone.utc),
             status="scheduled",
             external_id=None,
             sources={"polymarket": {"value": 0.53}},
         )
         assert fold_twin_events([ncaab_a, ncaab_b]).folded_count == 0
+
+        # 8) EuroLeague keeps exact recovered-minute equality (29 min apart same day refuses)
+        euro_anchor = _make_event(
+            4021,
+            sport_key="basketball_euroleague",
+            sport_id=20,
+            away="Real Madrid",
+            home="FC Bayern Munich",
+            commence_time=datetime(2025, 11, 23, 19, 30, tzinfo=timezone.utc),
+            status="scheduled",
+            external_id="odds-4021",
+            sources={"betting": {"value": 0.65}},
+        )
+        euro_claim_diff_min = _make_event(
+            4022,
+            sport_key="basketball_euroleague",
+            sport_id=20,
+            away="FC Bayern Munich",
+            home="Real Madrid",
+            commence_time=datetime(2025, 11, 23, 19, 59, tzinfo=timezone.utc),
+            status="scheduled",
+            external_id=None,
+            sources={"polymarket": {"value": 0.35}},
+        )
+        assert fold_twin_events([euro_anchor, euro_claim_diff_min]).folded_count == 0
 
 
 class TestWbbMatcherEndToEnd13142:

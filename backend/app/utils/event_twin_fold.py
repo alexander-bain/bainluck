@@ -3613,6 +3613,9 @@ def _merge_combat_claim_bouts(
 _REVERSED_ANCHORED_CLAIM_LEAGUES: frozenset[str] = frozenset(
     {"basketball_wncaab", "basketball_euroleague"}
 )
+_REVERSED_SAME_DAY_ANCHORED_CLAIM_LEAGUES: frozenset[str] = frozenset(
+    {"basketball_wncaab"}
+)
 
 
 def _reversed_claim_league(members: list) -> Optional[str]:
@@ -3646,15 +3649,16 @@ def _merge_reversed_anchored_claim_twins(
     corner_flips: Optional[dict] = None,
     reversed_ids: Optional[set[int]] = None,
 ) -> list[list]:
-    """Fold a reversed id-less claim onto its same-minute anchored twin (#13142, #13238).
+    """Fold a reversed id-less claim onto its anchored twin (#13142, #13238).
 
     Narrow fail-closed pass for allowlisted leagues where a venue mints rows
     with Home/Away swapped relative to the schedule-anchored row (e.g. WBB
-    claims and Kalshi ``KXEUROLEAGUEGAME`` after ``recover_kalshi_occurrence_starts``
-    aligns its +3h expiration to the tip-off minute). Requires provenance
-    asymmetry, exact minute equality, exact reversed squashed names, 1-to-1
-    uniqueness, live safety, guaranteed anchor election, and valid complement
-    flipping.
+    claims on the same UTC calendar day and Kalshi ``KXEUROLEAGUEGAME`` after
+    ``recover_kalshi_occurrence_starts`` aligns its +3h expiration to the
+    exact tip-off minute). Requires provenance asymmetry, exact minute equality
+    (or same UTC calendar day for ``basketball_wncaab``), exact reversed
+    squashed names (time alone never folds), strict 1-to-1 uniqueness, live
+    safety, guaranteed anchor election, and valid complement flipping.
     """
     anchors: list[int] = []
     claims: list[int] = []
@@ -3674,14 +3678,22 @@ def _merge_reversed_anchored_claim_twins(
     if not anchors or not claims:
         return clusters
 
-    def is_reversed_twin(claim_members: list, anchor_members: list) -> bool:
+    def is_reversed_twin(
+        claim_members: list, anchor_members: list, sport_key: str
+    ) -> bool:
+        same_day_allowed = sport_key in _REVERSED_SAME_DAY_ANCHORED_CLAIM_LEAGUES
         for claim_row in claim_members:
             c_away, c_home, c_min = identities[id(claim_row)]
             if c_away == c_home:
                 return False
             for anchor_row in anchor_members:
                 a_away, a_home, a_min = identities[id(anchor_row)]
-                if c_min != a_min or c_away != a_home or c_home != a_away:
+                if c_away != a_home or c_home != a_away:
+                    return False
+                if same_day_allowed:
+                    if c_min.date() != a_min.date():
+                        return False
+                elif c_min != a_min:
                     return False
         return True
 
@@ -3692,7 +3704,7 @@ def _merge_reversed_anchored_claim_twins(
             anchor
             for anchor in anchors
             if sports[claim] == sports[anchor]
-            and is_reversed_twin(clusters[claim], clusters[anchor])
+            and is_reversed_twin(clusters[claim], clusters[anchor], sports[claim])
         ]
         if len(matches) != 1:
             continue
