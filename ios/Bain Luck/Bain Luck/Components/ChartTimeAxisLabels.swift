@@ -27,11 +27,14 @@ enum EventChartTypography {
 struct ChartTimeAxisLabels: View {
     @ScaledMetric(relativeTo: .caption2) private var scaledFontSize: CGFloat = 12
     @Environment(\.timeZone) private var timeZone
-    private var fontSize: CGFloat { EventChartTypography.labelSize(scaled: scaledFontSize) }
     let ticks: [Date]
     let plan: OddsChartView.XAxisPlan
     let proxy: ChartProxy
     let plotFrame: CGRect
+    var fontSizeOverride: CGFloat? = nil
+    private var fontSize: CGFloat {
+        fontSizeOverride ?? EventChartTypography.labelSize(scaled: scaledFontSize)
+    }
 
     /// From the plot's bottom edge to a label's vertical centre: the
     /// framework's measured offset at 9pt. Scale it with the visible and
@@ -62,6 +65,7 @@ struct ChartTimeAxisLabels: View {
                 .fixedSize()
                 .position(x: plotFrame.minX + centers[index],
                           y: plotFrame.maxY + Self.labelCenterOffset * fontSize / 9)
+                .allowsHitTesting(false)
                 .accessibilityHidden(true)
         }
     }

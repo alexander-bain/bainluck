@@ -40,6 +40,11 @@ struct MarketBrowserView<Item: Identifiable, Row: View>: View {
     var groupNote: ((String) -> String?)? = nil
     /// What the optional search control says in a guided browser.
     var findLabel: String = "Find"
+    /// Optional underlying item count when callers group rows into segments
+    /// (#10830 ladder grouping) so browse chrome reflects the uncondensed size.
+    var browseItemCount: Int? = nil
+    /// Optional observer invoked whenever the search query text changes.
+    var onQueryChange: ((String) -> Void)? = nil
     @ViewBuilder let row: (Item) -> Row
 
     // `-launch_browse_family` (LaunchRig) lets the camera open a family the
@@ -59,7 +64,7 @@ struct MarketBrowserView<Item: Identifiable, Row: View>: View {
         // and no pills — browse chrome over three rows is noise. A tabbed list
         // (`searchable: false`, the maps) always browses: it shows one at a time.
         let browses = MarketBrowserLogic.browses(
-            itemCount: items.count, pageSize: pageSize, searchable: searchable)
+            itemCount: browseItemCount ?? items.count, pageSize: pageSize, searchable: searchable)
         let active = MarketBrowserLogic.activeGroup(selected: selected, groups: families)
         let searching = browses && searchable && !MarketBrowserLogic.terms(query).isEmpty
         let matches = browses
@@ -108,6 +113,9 @@ struct MarketBrowserView<Item: Identifiable, Row: View>: View {
                 }
                 .onChange(of: shown.map(\.id), initial: true) { _, ids in
                     visibleIDs?.wrappedValue = Set(ids)
+                }
+                .onChange(of: query, initial: true) { _, value in
+                    onQueryChange?(value)
                 }
                 if matches.isEmpty {
                     Text("No matches. Try a player, team, or market name.")
