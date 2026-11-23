@@ -1505,11 +1505,41 @@ def heroku_releases_last_24h(app: str, token: str, now: datetime | None = None) 
     return count
 
 
+def _is_live_succeeded_release(release: dict) -> bool:
+    """Return False when Heroku explicitly marks a release failed, pending, or non-current."""
+    status = release.get("status")
+    current = release.get("current")
+    if status is not None and str(status).lower() != "succeeded":
+        return False
+    if current is False:
+        return False
+    return True
+
+
 def heroku_release_commit(app: str, token: str) -> str | None:
-    """The commit the app's CURRENT release was built from, via the Platform API."""
+    """The commit the app's CURRENT succeeded release was built from, via the Platform API."""
     release = _current_release(app, token)
     if not release:
         return None
+    if not _is_live_succeeded_release(release):
+        recent = (
+            _heroku_get(
+                f"apps/{app}/releases", token, {"Range": "version ..; order=desc, max=10"}
+            )
+            or []
+        )
+        release = next(
+            (
+                item
+                for item in recent
+                if item
+                and item.get("current") is True
+                and (item.get("status") is None or str(item.get("status")).lower() == "succeeded")
+            ),
+            None,
+        )
+        if not release:
+            return None
     slug = release.get("slug") or {}
     slug_id = slug.get("id")
     if not slug_id:
