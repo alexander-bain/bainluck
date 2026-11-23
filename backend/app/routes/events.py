@@ -23,7 +23,7 @@ from typing import Annotated, Optional, Sequence
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import select, and_, or_, union, func, case, cast, any_, literal, Date, Integer, String, literal_column, text, true, false, Interval
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload, aliased, load_only
+from sqlalchemy.orm import contains_eager, selectinload, aliased, load_only
 from sqlalchemy.orm.attributes import set_committed_value
 from sqlalchemy.sql.visitors import replacement_traverse
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
@@ -309,8 +309,10 @@ from app.utils.proven_duplicates import (
     folded_card_numbers_batch,
     folded_probability_sources_batch,
     ghost_names_canonical,
+    group_latest_snapshots_by_event,
     not_a_proven_duplicate,
 )
+from app.utils.serve_fold_absorbed import fold_list_with_catchall_twins
 
 # Search scope vocabularies (live/048, CERT-786). The event search has FOUR
 # status enumerations — the primary path and the fuzzy-corrected fallback, each
@@ -19047,12 +19049,13 @@ async def list_events(
         query = (
             select(Event)
             .join(window, Event.id == window.c.id)
+            .join(Sport, Event.sport_id == Sport.id)
             .order_by(live_scheduled_settled_order(now), Event.commence_time, Event.id)
         )
         limit = min(limit, 50)
     else:
         query = query.order_by(Event.commence_time)
-    query = query.options(selectinload(Event.sport)).limit(limit).offset(offset)
+    query = query.options(contains_eager(Event.sport)).limit(limit).offset(offset)
 
     result = await db.execute(query)
     events = result.scalars().all()
@@ -19143,7 +19146,9 @@ async def list_events(
 
     _prematch_absorbed_ids: dict[int, list[int]] = {}
     try:
-        _fold = fold_twin_events(events)
+        _fold = await fold_list_with_catchall_twins(
+            db, events, sport, fold_fn=fold_twin_events
+        )
         if _fold.dropped_ids:
             _flipped_ids = getattr(_fold, "flipped_loser_ids", None) or ()
             for _loser, _survivor in _fold.survivor_of.items():
@@ -19213,49 +19218,48 @@ async def list_events(
             "events list same-instant refutation failed; serving the page"
         )
 
+    # The page's folds (#3937, #5918) run BEFORE the sportsbook snapshot
+    # lookup so every same-orientation absorbed twin id (`absorbed_ids` from
+    # `duplicate_of:<id>` tags plus `_prematch_absorbed_ids` from runtime
+    # non-flipped twin folding) travels with its canonical event into
+    # `latest_odds_per_bookmaker_query` and `group_latest_snapshots_by_event`
+    # (#13479). Corner-flipped twins are excluded from `owner_by_event_id`,
+    # matching `get_event` (`oriented_series_event_ids`), so unflipped
+    # sportsbook rows on a reversed twin are never blended into the consensus.
+    folded_map = await folded_card_numbers_batch(db, events)
+
     # Get the latest odds snapshots for each event, aggregated across bookmakers
     event_ids = [e.id for e in events]
     aggregated_odds_map = {}
 
     if event_ids:
+        owner_by_event_id: dict[int, int] = {e.id: e.id for e in events}
+        odds_query_ids: list[int] = [e.id for e in events]
+        for e in events:
+            _f = folded_map.get(e.id)
+            _twin_ids = list((_f.absorbed_ids if _f is not None else ()) or ())
+            for _pt in _prematch_absorbed_ids.get(e.id) or ():
+                if _pt not in _twin_ids:
+                    _twin_ids.append(_pt)
+            for _tid in _twin_ids:
+                if _tid not in owner_by_event_id:
+                    owner_by_event_id[_tid] = e.id
+                    odds_query_ids.append(_tid)
+
         # LAT-P107/#1605: the most recent snapshot per (event, bookmaker), via the
         # SHARED helper rather than a window function over the page's whole
         # snapshot history.
-        #
-        # This route carried the exact shape LAT-P013 then LAT-P030 retired from
-        # `/api/events/search` (call site ~line 3110 quotes both plans and the
-        # numbers): `row_number() OVER (PARTITION BY event_id, bookmaker ORDER BY
-        # captured_at DESC)` over every snapshot of every event on the page, then a
-        # join back by id. It reads O(SNAPSHOT DEPTH) to return O(BOOKMAKERS), and
-        # Tier-1 sports poll every 32s, so the depth is the part that grows: one
-        # measured Red Sox event carries 13,522 snapshots across 19 bookmakers.
-        #
-        # On the sibling route that shape was the ENTIRE cost of any query that
-        # returned real team events — 16,516ms of a 21,032ms request on `q=la`,
-        # ~0ms when the page had no events, which is the signature of a cost that
-        # scales with snapshot volume rather than result count. The replacement
-        # measured 6,724ms -> 185ms (36x), 78,800 rows read -> 947, byte-identical
-        # output. That measurement is the SIBLING's; this route's own before/after
-        # is owed in production and pre-registered in the queue report — the shape
-        # is provably the same, the traffic is not.
-        #
-        # Set-identical by construction and proven on real Postgres against the
-        # very shape being deleted here
-        # (`tests/integration/test_search_odds_enrichment_equivalence.py`). The one
-        # behavioural change is that `id DESC` makes the pick deterministic among
-        # equal `captured_at`, where `row_number()` left it arbitrary.
-        #
-        # No migration: `ix_odds_snapshots_bookmaker_closing` already exists.
-        latest_odds_query = latest_odds_per_bookmaker_query(event_ids)
+        latest_odds_query = latest_odds_per_bookmaker_query(odds_query_ids)
 
         latest_odds_result = await db.execute(latest_odds_query)
         all_snapshots = latest_odds_result.scalars().all()
 
-        # Group snapshots by event and aggregate
-        from collections import defaultdict
-        snapshots_by_event = defaultdict(list)
-        for snap in all_snapshots:
-            snapshots_by_event[snap.event_id].append(snap)
+        # Group by canonical event and pick the freshest snapshot per bookmaker
+        # across canonical + same-orientation twins via the same helper
+        # (`latest_snapshot_for_each_bookmaker`) used by `get_event`.
+        snapshots_by_event = group_latest_snapshots_by_event(
+            all_snapshots, owner_by_event_id
+        )
 
         # Build event lookups for stale bookmaker filtering
         event_info_map = {e.id: e for e in events}
@@ -19348,58 +19352,6 @@ async def list_events(
             # Time-series metrics are a bonus — don't fail the whole endpoint
             pass
 
-    # The page's folds (#3937), batched before the formatting loop rather than
-    # per row inside it — see `folded_card_numbers_batch`. This endpoint returns
-    # up to 500 events, which is `_FOLD_BATCH_ARMS`-chunked into 5 statements
-    # rather than 500.
-    #
-    # #5918 — BOTH numbers, in the lookup that used to fetch one. A card prints
-    # the blend while the fixture is live and the opening line once it is over,
-    # and `folded_probability_sources_batch` only ever carried the first. With
-    # the duplicate-tag predicate now on the query above, a settled card whose
-    # suppressed twin held the only opening would have printed no percentage at
-    # all — #5853's Bundesliga defect, arriving on this surface by way of its
-    # fix. `folded_card_numbers_batch` answers both from the same round trip
-    # (the opening columns ride a row the statement was already returning), so
-    # this costs nothing extra.
-    folded_map = await folded_card_numbers_batch(db, events)
-
-    # #13131: if a live draw-priced event's sportsbook rows live on a suppressed
-    # twin, read those twin snapshots so `/api/events` shows the exact same
-    # three numbers as `/api/events/{id}`. Zero queries when no such twin exists.
-    _list_twin_three_way: dict[int, tuple[float, float]] = {}
-    _list_twin_candidates: list = []
-    _list_twin_ids_by_event: dict[int, list[int]] = {}
-    for _ev in events:
-        if not sport_prices_a_draw(loaded_sport_key(_ev)):
-            continue
-        _f = folded_map.get(_ev.id)
-        _tids = list((_f.absorbed_ids if _f is not None else ()) or ())
-        for _pt in _prematch_absorbed_ids.get(_ev.id) or ():
-            if _pt not in _tids:
-                _tids.append(_pt)
-        if not _tids:
-            continue
-        _agg_existing = (aggregated_odds_map.get(_ev.id) or {}).get("aggregated") or {}
-        if resolve_three_way_probabilities(
-            _agg_existing.get("home_probability"),
-            books_home=_agg_existing.get("home_probability"),
-            books_away=_agg_existing.get("away_probability"),
-            sport_key=loaded_sport_key(_ev),
-        ) is None:
-            _list_twin_candidates.append(_ev)
-            _list_twin_ids_by_event[_ev.id] = _tids
-    if _list_twin_candidates:
-        from app.utils.draw_priced_winner import read_live_three_way_books
-
-        _list_twin_three_way = await read_live_three_way_books(
-            db,
-            _list_twin_candidates,
-            datetime.now(timezone.utc),
-            latest_odds_query=latest_odds_per_bookmaker_query,
-            absorbed_ids_by_event=_list_twin_ids_by_event,
-        )
-
     # Format response with aggregated odds.
     #
     # The row's OWN numbers are the default, never a blank: the batch promises
@@ -19418,7 +19370,6 @@ async def list_events(
                     _folded.win_probability_sources if _folded is not None else None
                 ),
                 folded_opening=_folded.opening if _folded is not None else None,
-                three_way_books=_list_twin_three_way.get(e.id),
             )
         )
 

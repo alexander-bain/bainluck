@@ -309,13 +309,13 @@ async def read_live_three_way_books(
     to each live event's suppressed twins (keeping the newest row per
     bookmaker), matching ``get_event``'s twin-folded sportsbook read.
     """
-    from collections import defaultdict
     from datetime import datetime
     from sqlalchemy import select
     from app.models.models import OddsSnapshot
     from app.utils.lifecycle import served_event_status
     from app.utils.odds_filtering import filter_stale_bookmaker_snapshots
     from app.utils.odds_math import aggregate_bookmaker_odds, detect_reversed_bookmakers
+    from app.utils.proven_duplicates import group_latest_snapshots_by_event
 
     live_events: dict[int, Any] = {}
     for e in events:
@@ -370,26 +370,7 @@ async def read_live_three_way_books(
     except Exception:
         return {}
 
-    by_event_book: dict[int, dict[str, Any]] = defaultdict(dict)
-    for snap in snaps:
-        owner = owner_by_id.get(int(snap.event_id))
-        if owner is None:
-            continue
-        bk = getattr(snap, "bookmaker", None)
-        if not bk:
-            continue
-        incumbent = by_event_book[owner].get(bk)
-        if incumbent is None:
-            by_event_book[owner][bk] = snap
-        else:
-            snap_ts = getattr(snap, "captured_at", None)
-            inc_ts = getattr(incumbent, "captured_at", None)
-            if snap_ts is not None and (inc_ts is None or snap_ts > inc_ts):
-                by_event_book[owner][bk] = snap
-
-    by_event: dict[int, list] = {
-        eid: list(book_map.values()) for eid, book_map in by_event_book.items()
-    }
+    by_event = group_latest_snapshots_by_event(snaps, owner_by_id)
 
     out: dict[int, tuple[float, float]] = {}
     for eid, ev_snaps in by_event.items():

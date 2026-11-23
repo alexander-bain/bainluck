@@ -74,10 +74,19 @@ MODULE_CODE = _strip_comments(inspect.getsource(events_route))
 def test_list_events_delegates_to_the_shared_enrichment_query():
     """`GET /api/events`. If this stops calling the helper, the helper's shape
     guards and its real-Postgres equivalence test cover this route no longer —
-    while still being green, because they cover the search route."""
+    while still being green, because they cover the search route.
+
+    Since #13479, the list also passes same-orientation absorbed twin ids
+    alongside canonical event ids (`odds_query_ids`) and collapses snapshots via
+    the shared `group_latest_snapshots_by_event` picker — the same picker used
+    by `get_event` (`latest_snapshot_for_each_bookmaker`).
+    """
     assert (
-        "latest_odds_per_bookmaker_query(event_ids)" in LIST_CODE
+        "latest_odds_per_bookmaker_query(odds_query_ids)" in LIST_CODE
     ), "list_events no longer builds its odds enrichment from the shared helper"
+    assert (
+        "group_latest_snapshots_by_event(" in LIST_CODE
+    ), "list_events no longer picks freshest snapshots through the shared helper"
 
 
 def test_event_detail_delegates_to_the_shared_enrichment_query():
