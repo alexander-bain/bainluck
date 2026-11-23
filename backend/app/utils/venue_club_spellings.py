@@ -54,6 +54,9 @@ VENUE_CLUB_SPELLINGS: dict[str, str] = {
     "Pallacanestro Olimpia Milano": "Olimpia Milano",
     "Baskonia Vitoria-Gasteiz": "Saski Baskonia",
     "Anadolu Efes SK": "Anadolu Efes",
+    "Maccabi Tel-Aviv": "Maccabi Tel Aviv",
+    "Hapoel Tel-Aviv": "Hapoel Tel Aviv",
+    "ASVEL Lyon-Villeurbanne": "ASVEL Lyon Villeurbanne",
     # #13142: Women's college basketball spelling — Polymarket "Little Rock Trojans"
     # vs Odds API "Arkansas-Little Rock Trojans" (pair 15347844 / 15351848).
     "Little Rock Trojans": "Arkansas-Little Rock Trojans",
@@ -78,6 +81,9 @@ LEAGUE_CLUB_SPELLINGS: dict[str, dict[str, str]] = {
         "Saski Baskonia": "Baskonia",
         "Baskonia Vitoria-Gasteiz": "Baskonia",
         "Anadolu Efes SK": "Anadolu Efes",
+        "Maccabi Tel-Aviv": "Maccabi Tel Aviv",
+        "Hapoel Tel-Aviv": "Hapoel Tel Aviv",
+        "ASVEL Lyon-Villeurbanne": "ASVEL Lyon Villeurbanne",
     },
 }
 

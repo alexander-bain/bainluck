@@ -360,14 +360,26 @@ _COLLEGE_SAINT_NEXT: frozenset[str] = frozenset(
 )
 
 
-def _college_squash(name: Optional[str]) -> str:
-    """Squash an NCAA team name with ``St`` -> ``State`` and ``NC State`` expansion."""
+_WBB_LEAGUE_IDENTITY = league_identity("basketball_wncaab")
+
+
+def _college_squash(name: Optional[str], league: Any = None) -> str:
+    """Squash an NCAA team name with ``St`` -> ``State`` and ``NC State`` expansion.
+
+    In women's college basketball (``_WBB_LEAGUE_IDENTITY``), also normalize
+    standalone ``cowboys`` -> ``cowgirls`` so Polymarket's ``Oklahoma State
+    Cowboys`` / ``Wyoming Cowboys`` collapse onto the Odds API's ``Cowgirls``
+    rows strictly inside women's college basketball (#13142).
+    """
     if not name:
         return ""
     cleaned = strip_diacritics(name).lower().replace("'", "").replace("\u2019", "")
     tokens = re.findall(r"[a-z0-9]+", cleaned)
     if not tokens:
         return ""
+    is_wbb = isinstance(league, str) and (
+        league == _WBB_LEAGUE_IDENTITY or league_identity(league) == _WBB_LEAGUE_IDENTITY
+    )
     expanded: list[str] = []
     idx = 0
     while idx < len(tokens):
@@ -388,6 +400,8 @@ def _college_squash(name: Optional[str]) -> str:
             and (idx + 1 >= len(tokens) or tokens[idx + 1] not in _COLLEGE_SAINT_NEXT)
         ):
             expanded.append("state")
+        elif is_wbb and tok == "cowboys":
+            expanded.append("cowgirls")
         else:
             expanded.append(tok)
         idx += 1
@@ -416,7 +430,7 @@ _LEAGUE_SQUASHED: dict[str, dict[str, str]] = {
 
 def _squash_for_league(name: Optional[str], league: Any) -> str:
     if _is_ncaa_college_league(league):
-        return _college_squash(name)
+        return _college_squash(name, league=league)
     base = _squash(name)
     if base and isinstance(league, str):
         league_map = _LEAGUE_SQUASHED.get(league)
@@ -963,6 +977,8 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
     except Exception:  # noqa: BLE001 — gotcha #42; the league-keyed groups stand
         logger.exception("twin fold: catch-all league merge failed; serving groups")
 
+    # #13142 — reversed, id-less WBB claims (Polymarket / Kalshi listing Home
+    # vs Away swapped relative to the Odds API sportsbook row).
     # #13238 — reversed, id-less claims in leagues whose venues reverse
     # Home/Away (e.g. Kalshi `KXEUROLEAGUEGAME`), after the within-league
     # kick-off recovery has aligned the minute and before combat-claim bouts.
@@ -3636,7 +3652,9 @@ def _merge_combat_claim_bouts(
     return list(out.values())
 
 
-_REVERSED_ANCHORED_CLAIM_LEAGUES: frozenset[str] = frozenset({"basketball_euroleague"})
+_REVERSED_ANCHORED_CLAIM_LEAGUES: frozenset[str] = frozenset(
+    {"basketball_wncaab", "basketball_euroleague"}
+)
 
 
 def _reversed_claim_league(members: list) -> Optional[str]:
@@ -3655,14 +3673,15 @@ def _merge_reversed_anchored_claim_twins(
     identities: dict,
     corner_flips: Optional[dict] = None,
 ) -> list[list]:
-    """Fold a reversed id-less claim onto its same-minute anchored twin (#13238).
+    """Fold a reversed id-less claim onto its same-minute anchored twin (#13142, #13238).
 
     Narrow fail-closed pass for allowlisted leagues where a venue mints rows
-    with Away/Home swapped relative to the schedule row (e.g. Kalshi
-    ``KXEUROLEAGUEGAME`` after ``recover_kalshi_occurrence_starts`` aligns its
-    +3h expiration to the tip-off minute). Requires provenance asymmetry,
-    exact minute equality, exact reversed squashed names, 1-to-1 uniqueness,
-    live safety, guaranteed anchor election, and valid complement flipping.
+    with Home/Away swapped relative to the schedule-anchored row (e.g. WBB
+    claims and Kalshi ``KXEUROLEAGUEGAME`` after ``recover_kalshi_occurrence_starts``
+    aligns its +3h expiration to the tip-off minute). Requires provenance
+    asymmetry, exact minute equality, exact reversed squashed names, 1-to-1
+    uniqueness, live safety, guaranteed anchor election, and valid complement
+    flipping.
     """
     anchors: list[int] = []
     claims: list[int] = []

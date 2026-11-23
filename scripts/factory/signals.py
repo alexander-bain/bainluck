@@ -11,7 +11,7 @@ def moment(value):
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def test_file(path):
+def is_test_file(path):
     parts = path.split("/")
     return any(
         p in {"tests", "__tests__", "__snapshots__"} or p.endswith("Tests")
@@ -503,14 +503,22 @@ def stopped_rules(
                 }
             )
     if master.get("tests") == "failing":
-        stops.append(
-            {
-                "kind": "master",
-                "line": None,
-                "station": "Test",
-                "since": master.get("tests_at") or observed_since,
-                "count": len({c["number"] for c in active if c["station"] == "Test"}),
-                "level": "amber",
-            }
-        )
+        stop = {
+            "kind": "master",
+            "line": None,
+            "station": "Test",
+            "since": master.get("tests_at") or observed_since,
+            "count": len({c["number"] for c in active if c["station"] == "Test"}),
+            "level": "amber",
+        }
+        blocked = master.get("blocked_server_release")
+        if blocked and any(
+            c["number"] == blocked and c["line"] == "Server" and c["station"] == "Ship"
+            and c.get("merged_at") for c in active
+        ):
+            stops.insert(0, {
+                **stop, "line": "Server", "station": "Ship", "number": blocked, "count": 1,
+            })
+        else:
+            stops.append(stop)
     return stops

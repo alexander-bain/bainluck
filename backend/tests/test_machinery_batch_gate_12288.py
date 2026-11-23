@@ -16,6 +16,7 @@ from app.utils.machinery_batch_gate import (
     MAX_HEADLINE_LINES_390PX,
     audit_picture_policy_for_definition,
     audit_public_assembly_for_definition,
+    check_machinery_form_rules,
     check_machinery_wording,
     estimate_headline_lines_390px,
 )
@@ -299,12 +300,231 @@ async def test_all_repo_machinery_definitions_pass_batch_gate_on_structural_snap
             snapshot,
             now=NOW,
             require_preview_pass=True,
+            check_tile_pictures=False,
         )
         if not res.ok:
             failures.append(
                 f"{path.stem}: status={res.status} refusal={res.refusal_reasons} "
                 f"wording={res.wording.errors if res.wording else ()} "
                 f"picture={res.picture.errors if res.picture else ()} "
+                f"form={res.form_rules.errors if res.form_rules else ()} "
                 f"parity={res.parity_mismatches}"
             )
     assert not failures, "Machinery batch CI gate failures:\n" + "\n".join(failures)
+
+
+def test_wording_rejects_card_face_venues_jargon_units_and_ellipsis() -> None:
+    """Item 2 wording check: venue names on card face, pts/pp/bps, and '…'/'...'."""
+    bad_card = {
+        "slug": "machinery-long-shots",
+        "title": "Kalshi favorite jumps 10pp…",
+        "subtitle": "Up 25 bps since opening while moving 3 pts against Polymarket",
+        "source": "kalshi",
+        "source_mark": "Polymarket",
+        "rows": [
+            {
+                "name": "DraftKings candidate",
+                "label": "Lead nominee",
+                "answer": "Example",
+                "source": "polymarket",
+                "rendered_percent": "42%…",
+            },
+            {
+                "name": "Runner up",
+                "value": "12...",
+                "delta": "+4 pts",
+            },
+        ],
+    }
+    res = check_machinery_wording(bad_card)
+    assert not res.ok
+    rules = {e.rule for e in res.errors}
+    assert "venue_name_on_card_face" in rules
+    assert "banned_jargon_unit" in rules
+    assert "ellipsis_in_headline_or_number" in rules
+
+    # Source metadata keys alone must not trigger venue_name_on_card_face; normal words must pass.
+    clean_card = {
+        "slug": "machinery-long-shots",
+        "title": "Houston leads the Dec 7 AP #1 race at 54%",
+        "subtitle": "Tracking top scripts, copper shipments, and apple harvest estimates.",
+        "source": "polymarket",
+        "source_mark": "Kalshi",
+        "rows": [
+            {
+                "label": "Scripts reviewed",
+                "answer": "Approved",
+                "rendered_percent": 54,
+                "source": "kalshi",
+            }
+        ],
+    }
+    clean_res = check_machinery_wording(clean_card)
+    assert clean_res.ok, f"Unexpected violations: {clean_res.errors}"
+
+
+def test_form_rules_enforce_duel_threshold_tile_pictures_and_history_chart() -> None:
+    """Item 2 form rules: duel >=20%, spotlight/tile-grid 100% pictured, history >=10pt + sentence."""
+    # 1. duel_bar trailing side under 20% fails; >= 20% passes.
+    weak_duel = {
+        "slug": "test-duel",
+        "form_id": "duel_bar",
+        "title": "Clear favorite dominates",
+        "rows": [
+            {"label": "Leader", "rendered_percent": 82},
+            {"label": "Trailer", "rendered_percent": 18},
+        ],
+    }
+    r_weak = check_machinery_form_rules(card=weak_duel)
+    assert not r_weak.ok
+    assert {e.rule for e in r_weak.errors} == {"form_duel_trailing_under_20"}
+
+    tight_duel = {
+        "slug": "test-duel",
+        "form_id": "duel_bar",
+        "title": "Close two-way contest",
+        "rows": [
+            {"label": "Leader", "rendered_percent": 80},
+            {"label": "Trailer", "rendered_percent": 20},
+        ],
+    }
+    assert check_machinery_form_rules(card=tight_duel).ok
+
+    # 2. contender_spotlight & sibling_fields_grid require real pictures unless scale_ordered.
+    no_pic_art = {"url": None, "kind": "monogram", "initials": "AB"}
+    good_art = {"url": "https://a.espncdn.com/i/teamlogos/ncaa/500/248.png", "kind": "team_logo"}
+    bad_spotlight = {
+        "slug": "test-spot",
+        "form_id": "contender_spotlight",
+        "title": "Three contenders",
+        "rows": [
+            {"name": "A", "art": good_art},
+            {"name": "B", "art": no_pic_art},
+            {"name": "C", "art": good_art},
+        ],
+    }
+    r_spot = check_machinery_form_rules(card=bad_spotlight)
+    assert not r_spot.ok
+    assert {e.rule for e in r_spot.errors} == {"form_spotlight_missing_picture"}
+
+    bad_grid = {
+        "slug": "test-grid",
+        "form_id": "sibling_fields_grid",
+        "title": "Three races",
+        "sibling_fields": [
+            {"title": "Race A", "outcomes": [{"name": "X", "art": good_art}]},
+            {"title": "Race B", "outcomes": [{"name": "Y", "art": no_pic_art}]},
+        ],
+    }
+    r_grid = check_machinery_form_rules(card=bad_grid)
+    assert not r_grid.ok
+    assert {e.rule for e in r_grid.errors} == {"form_tile_grid_missing_picture"}
+
+    # scale_ordered cards remain exempt from picture enforcement.
+    assert check_machinery_form_rules(card={**bad_spotlight, "scale_ordered": True}).ok
+    assert check_machinery_form_rules(
+        card={
+            "slug": "test-spot",
+            "form_id": "contender_spotlight",
+            "title": "Three pictured contenders",
+            "rows": [{"name": c, "art": good_art} for c in ("A", "B", "C")],
+        }
+    ).ok
+
+    # 3. probability_history_chart: >= 10pt window swing & written sentence subhead.
+    container_titles = {
+        "sections": [
+            {
+                "visual_block": {
+                    "form_id": "benchmark_strip",
+                    "items": [
+                        {"title": "Which company leads AI benchmarks?"},
+                        {"title": "Will OpenAI launch GPT-6 in 2026?"},
+                    ],
+                }
+            }
+        ]
+    }
+    small_chart = {
+        "slug": "test-chart",
+        "form_id": "probability_history_chart",
+        "title": "Tight weekly market",
+        "subtitle": "Gemini climbed sharply while OpenAI slipped this week.",
+        "mini_chart": {
+            "series": [{"points": [{"probability": 0.42}, {"probability": 0.49}]}],
+        },
+    }
+    r_small = check_machinery_form_rules(card=small_chart, container=container_titles)
+    assert not r_small.ok
+    assert {e.rule for e in r_small.errors} == {"form_history_chart_under_10_pts"}
+    assert "7 percentage points" in r_small.errors[0].detail
+
+    for bad_sub in (
+        "",
+        "7-day odds movement across Which company leads AI benchmarks and Will OpenAI launch GPT-6",
+        "Which company leads AI benchmarks and Will OpenAI launch GPT-6 in 2026?",
+        "Top tech markets, hardware launches, and more.",
+    ):
+        bad_sub_card = {
+            **small_chart,
+            "subtitle": bad_sub,
+            "mini_chart": {"series": [{"points": [{"probability": 0.35}, {"probability": 0.50}]}]},
+        }
+        r_sub = check_machinery_form_rules(card=bad_sub_card, container=container_titles)
+        assert not r_sub.ok, f"Expected bad subhead rejection for {bad_sub!r}"
+        assert "form_history_chart_bad_subhead" in {e.rule for e in r_sub.errors}
+
+    good_chart = {
+        **small_chart,
+        "subtitle": "Gemini gained 15 points over OpenAI in weekly trading.",
+        "mini_chart": {"series": [{"points": [{"probability": 0.35}, {"probability": 0.50}]}]},
+    }
+    assert check_machinery_form_rules(card=good_chart, container=container_titles).ok
+
+
+def test_machinery_batch_gate_module_has_no_subprocess_or_git_shellout() -> None:
+    """Item 2 architecture check: git shell-outs live under scripts/, never app/utils/."""
+    import ast
+
+    gate_file = Path(__file__).resolve().parents[1] / "app" / "utils" / "machinery_batch_gate.py"
+    tree = ast.parse(gate_file.read_text(encoding="utf-8"))
+    imported_modules: set[str] = set()
+    defined_funcs: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            imported_modules.update(alias.name.split(".")[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            imported_modules.add(node.module.split(".")[0])
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            defined_funcs.add(node.name)
+    assert "subprocess" not in imported_modules
+    assert "discover_changed_machinery_slugs" not in defined_funcs
+
+
+def test_scripts_discover_changed_machinery_slugs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`scripts.check_machinery_batch_pr.discover_changed_machinery_slugs` resolves touched sets."""
+    from types import SimpleNamespace
+
+    cand_path = tmp_path / "backend" / "data" / "groupings" / "candidates" / "machinery-long-shots.json"
+    cand_path.parent.mkdir(parents=True, exist_ok=True)
+    cand_path.write_text(json.dumps(_sample_public_definition()), encoding="utf-8")
+
+    monkeypatch.setattr(
+        check_machinery_batch_pr,
+        "discover_machinery_candidate_paths",
+        lambda: (cand_path,),
+    )
+    monkeypatch.setattr(
+        check_machinery_batch_pr.subprocess,
+        "run",
+        lambda *_a, **_kw: SimpleNamespace(
+            returncode=0,
+            stdout="backend/data/groupings/candidates/machinery-long-shots.json\n",
+        ),
+    )
+    assert check_machinery_batch_pr.discover_changed_machinery_slugs(repo_root=tmp_path) == (
+        "machinery-long-shots",
+    )

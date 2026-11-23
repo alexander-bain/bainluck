@@ -1063,11 +1063,11 @@ def test_large_and_small_drag_endpoints_stay_inside_measured_viewport():
 XCODE_27_2_CURRENT_SHA256 = {
     "LargeTextRecoveryJourneyTests.swift": "267753ce4fd805a4592f9c7f05794a6866d55616919170c64fb13ea82f12a03c",
     "PickerAliasJourneyTests.swift": "3f1f1d4491a5c75a3de6df301190e41b38d81051c639b8039fd6404770b0e230",
-    "PickerCurrentGameJourneyTests.swift": "23b31548ee77d4afa38b4d5327ddae198190639c0e56119b212791806ab1ea95",
+    "PickerCurrentGameJourneyTests.swift": "3ff94018d2176706b004eba31c7733606e7f679c392cd4faf410245e54220781",
     "PickerReturnJourneyTests.swift": "8e23abbce48fc2c47f382fdde2985f414236026caa03987535b91b8524e361bc",
     "PickerSelectedStateJourneyTests.swift": "129ad9836cfe7eee86f8aa024fd09b00e0a8ad2f8c145c19be1d3e7e851073b5",
     "WatchDiagnosticsJourneyTests.swift": "9f6fd014300264b8a817e8b8c42caebc91e15457c1d305ca06018c67c62fdb68",
-    "WidgetTapJourneyTests.swift": "381f9065d39a50ab33ecdfc007826aefe409bf6e2e96dc1671765a803e1bbac5",
+    "WidgetTapJourneyTests.swift": "3d22d65b850dc87dd35c9991f780063f1ca3998f2870d8a1fabc2b8320a2e4b1",
 }
 XCODE_27_2_PREVIOUS_SHA256 = {
     "LargeTextRecoveryJourneyTests.swift": "3b01a4864451d948c659a8236b85f8548138ca646a259739414a72ff3df7658a",
@@ -1320,6 +1320,23 @@ XCODE_27_2_LATER_TRANSFORMS = {
         ('            "Buffalo Bills win probability, 55%"), object: probability)\n        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 15), .completed)\n        try captureComplete(probability, in: app, name: "Other choice loads its own Bills55 reading")\n', '            "Buffalo Bills win probability, 55%"), object: probability)\n        XCTAssertEqual(XCTWaiter.wait(for: [changed], timeout: 45), .completed)\n        try captureComplete(probability, in: app, name: "Other choice loads its own Bills55 reading")\n', 1),
         ('            "Saved reading. Refresh to confirm.", "Offline."), object: state)\n        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 15), .completed)\n        try openPicker(app)\n', '            "Saved reading. Refresh to confirm.", "Offline."), object: state)\n        XCTAssertEqual(XCTWaiter.wait(for: [saved], timeout: 45), .completed)\n        try openPicker(app)\n', 1),
         ('        let settled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label == %@", expected), object: status)\n        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 15), .completed)\n    }\n', '        let settled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label == %@", expected), object: status)\n        XCTAssertEqual(XCTWaiter.wait(for: [settled], timeout: 45), .completed)\n    }\n', 1),
+        ('    private func checkCurrentCardReturnAffordance(large: Bool) throws {\n        let app = try launchCurrentGame(large: large)\n        defer { app.terminate() }\n        try openPicker(app)', '    private func checkCurrentCardReturnAffordance(large: Bool) throws {\n        let app = try launchCurrentGame(large: large)\n        defer { terminateAfterLeavingForeground(app) }\n        try openPicker(app)', 1),
+        ('    private func checkScheduledStartBoundaries(large: Bool) throws {\n        continueAfterFailure = false\n        let app = XCUIApplication()\n        defer { app.terminate() }', '    private func checkScheduledStartBoundaries(large: Bool) throws {\n        continueAfterFailure = false\n        let app = XCUIApplication()\n        defer { terminateAfterLeavingForeground(app) }', 1),
+        ('            capture(app, "Scheduled context boundary - " + scenario + (large ? " - AX" : " - standard"))\n            app.terminate()\n        }\n    }\n\n    @MainActor\n    func testSavedScheduledStartKeepsQualificationAndOriginalAge()', '            capture(app, "Scheduled context boundary - " + scenario + (large ? " - AX" : " - standard"))\n            terminateAfterLeavingForeground(app)\n        }\n    }\n\n    @MainActor\n    func testSavedScheduledStartKeepsQualificationAndOriginalAge()', 1),
+        ('        app.launch()\n        defer { app.terminate() }\n        let state = app.descendants(matching: .any)["watch.game-state"].firstMatch\n        XCTAssertTrue(state.waitForExistence(timeout: 15))\n        XCTAssertTrue(state.label.contains(scenario == "short-live" ? "Live" : "Final"))', '        app.launch()\n        defer { terminateAfterLeavingForeground(app) }\n        let state = app.descendants(matching: .any)["watch.game-state"].firstMatch\n        XCTAssertTrue(state.waitForExistence(timeout: 15))\n        XCTAssertTrue(state.label.contains(scenario == "short-live" ? "Live" : "Final"))', 1),
+        ('    private func checkFinalOutcome(scenario: String, expectedHeader: String,\n                                   awayScore: String?, homeScore: String?, large: Bool,\n                                   saved: Bool = false,\n                                   awayName: String = "Kansas City Chiefs",\n                                   homeName: String = "Buffalo Bills") throws {\n        continueAfterFailure = false\n        let app = XCUIApplication()\n        app.launchEnvironment = ["BAINLUCK_WATCH_UI_TEST": "1", "BAINLUCK_WATCH_UI_SUITE": UUID().uuidString,\n            "BAINLUCK_WATCH_UI_RESET": "1", "BAINLUCK_WATCH_UI_SCORE_LAYOUT": scenario,\n            "BAINLUCK_WATCH_UI_LARGE_TEXT": large ? "1" : "0"]\n        app.launch()\n        defer { app.terminate() }', '    private func checkFinalOutcome(scenario: String, expectedHeader: String,\n                                   awayScore: String?, homeScore: String?, large: Bool,\n                                   saved: Bool = false,\n                                   awayName: String = "Kansas City Chiefs",\n                                   homeName: String = "Buffalo Bills") throws {\n        continueAfterFailure = false\n        let app = XCUIApplication()\n        app.launchEnvironment = ["BAINLUCK_WATCH_UI_TEST": "1", "BAINLUCK_WATCH_UI_SUITE": UUID().uuidString,\n            "BAINLUCK_WATCH_UI_RESET": "1", "BAINLUCK_WATCH_UI_SCORE_LAYOUT": scenario,\n            "BAINLUCK_WATCH_UI_LARGE_TEXT": large ? "1" : "0"]\n        app.launch()\n        defer { terminateAfterLeavingForeground(app) }', 1),
+        ('        let expectedAway = longName ? "Club de Football Long Complete Opponent Name" : "Kansas City Chiefs"\n        let size = large ? "accessibility5" : "standard"\n        let app = XCUIApplication()\n        app.launchEnvironment = ["BAINLUCK_WATCH_UI_TEST": "1", "BAINLUCK_WATCH_UI_SUITE": UUID().uuidString,\n            "BAINLUCK_WATCH_UI_RESET": "1", "BAINLUCK_WATCH_UI_SCORE_LAYOUT": scenario,\n            "BAINLUCK_WATCH_UI_LARGE_TEXT": large ? "1" : "0"]\n        app.launch()\n        defer { app.terminate() }', '        let expectedAway = longName ? "Club de Football Long Complete Opponent Name" : "Kansas City Chiefs"\n        let size = large ? "accessibility5" : "standard"\n        let app = XCUIApplication()\n        app.launchEnvironment = ["BAINLUCK_WATCH_UI_TEST": "1", "BAINLUCK_WATCH_UI_SUITE": UUID().uuidString,\n            "BAINLUCK_WATCH_UI_RESET": "1", "BAINLUCK_WATCH_UI_SCORE_LAYOUT": scenario,\n            "BAINLUCK_WATCH_UI_LARGE_TEXT": large ? "1" : "0"]\n        app.launch()\n        defer { terminateAfterLeavingForeground(app) }', 1),
+        ('    private func checkTeamColorNames(large: Bool) throws {\n        let app = try launchCurrentGame(large: large, scenario: "team-color")\n        defer { app.terminate() }', '    private func checkTeamColorNames(large: Bool) throws {\n        let app = try launchCurrentGame(large: large, scenario: "team-color")\n        defer { terminateAfterLeavingForeground(app) }', 1),
+        ('    private func checkMainScoreColorFallback(scenario: String, large: Bool) throws {\n        let app = try launchCurrentGame(large: large, scenario: scenario)\n        defer { app.terminate() }', '    private func checkMainScoreColorFallback(scenario: String, large: Bool) throws {\n        let app = try launchCurrentGame(large: large, scenario: scenario)\n        defer { terminateAfterLeavingForeground(app) }', 1),
+        ('    private func checkScheduledTime(large: Bool) throws {\n        let app = try launchCurrentGame(large: large, scenario: "scheduled-time")\n        defer { app.terminate() }', '    private func checkScheduledTime(large: Bool) throws {\n        let app = try launchCurrentGame(large: large, scenario: "scheduled-time")\n        defer { terminateAfterLeavingForeground(app) }', 1),
+        ('    func testAlternativeCardSelectionAndCurrentReturnAtAccessibilitySize() throws {\n        executionTimeAllowance = 300\n        let app = try launchCurrentGame(large: true)\n        defer { app.terminate() }\n        try openPicker(app)\n        let other = app.buttons["watch.pick.202"]', '    func testAlternativeCardSelectionAndCurrentReturnAtAccessibilitySize() throws {\n        executionTimeAllowance = 300\n        let app = try launchCurrentGame(large: true)\n        defer { terminateAfterLeavingForeground(app) }\n        try openPicker(app)\n        let other = app.buttons["watch.pick.202"]', 1),
+        ('    func testCurrentGameAndOfflineDetailsAtAccessibilitySize() throws {\n        executionTimeAllowance = 300\n        let app = try launchCurrentGame(large: true)\n        defer { app.terminate() }\n        try openPicker(app)\n        XCTAssertEqual(app.staticTexts["watch.picker-heading"]', '    func testCurrentGameAndOfflineDetailsAtAccessibilitySize() throws {\n        executionTimeAllowance = 300\n        let app = try launchCurrentGame(large: true)\n        defer { terminateAfterLeavingForeground(app) }\n        try openPicker(app)\n        XCTAssertEqual(app.staticTexts["watch.picker-heading"]', 1),
+        ('    func testUnknownCurrentGameDoesNotInventProbabilityOrAgeAtAccessibilitySize() throws {\n        let app = try launchCurrentGame(large: true, scenario: "unknown")\n        defer { app.terminate() }', '    func testUnknownCurrentGameDoesNotInventProbabilityOrAgeAtAccessibilitySize() throws {\n        let app = try launchCurrentGame(large: true, scenario: "unknown")\n        defer { terminateAfterLeavingForeground(app) }', 1),
+        (
+            '    @MainActor\n    private func failure(_ message: String, in app: XCUIApplication) -> NSError {\n        capture(app, message)\n        XCTFail(message)\n        return NSError(domain: "WatchCurrentGameJourney", code: 1,\n                       userInfo: [NSLocalizedDescriptionKey: message])\n    }\n}\n#endif',
+            '    @MainActor\n    private func failure(_ message: String, in app: XCUIApplication) -> NSError {\n        capture(app, message)\n        XCTFail(message)\n        return NSError(domain: "WatchCurrentGameJourney", code: 1,\n                       userInfo: [NSLocalizedDescriptionKey: message])\n    }\n\n    @MainActor\n    private func terminateAfterLeavingForeground(_ app: XCUIApplication) {\n        if app.state == .notRunning { return }\n        // Let any active foreground task cancel cleanly through a normal scene\n        // transition before terminating (avoids #12513 `:0` terminate races without\n        // calling Carousel.activate(), which IOSSHLMainWorkspace can reject, and\n        // without passing `object: app` to XCTNSPredicateExpectation, which\n        // snapshots the accessibility hierarchy every second). Still fails closed\n        // if `app.terminate()` does not stop the app.\n        XCUIDevice.shared.press(.home)\n        func leftForeground(within seconds: TimeInterval) -> Bool {\n            let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in\n                let state = app.state\n                return state == .runningBackground || state == .runningBackgroundSuspended || state == .notRunning\n            }, object: nil)\n            return XCTWaiter.wait(for: [backgrounded], timeout: seconds) == .completed\n        }\n        if !leftForeground(within: 10) && app.state == .runningForeground {\n            XCUIDevice.shared.press(.home)\n            _ = leftForeground(within: 10)\n        }\n        if app.state != .notRunning { app.terminate() }\n        XCTAssertEqual(app.state, .notRunning, "Watch app cleanup must stop the app")\n    }\n}\n#endif',
+            1,
+        ),
     ],
     'PickerSelectedStateJourneyTests.swift': [
         ('        let named = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label CONTAINS %@", team), object: probability)\n        XCTAssertEqual(XCTWaiter.wait(for: [named], timeout: 15), .completed)\n    }\n', '        let named = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND label CONTAINS %@", team), object: probability)\n        XCTAssertEqual(XCTWaiter.wait(for: [named], timeout: 45), .completed)\n    }\n', 1),
@@ -1328,6 +1345,369 @@ XCODE_27_2_LATER_TRANSFORMS = {
         ('        for overlay in dismissedOverlays {\n            try widgetWarmWait(NSPredicate(format: "exists == false"), on: overlay, timeout: 15,\n                               message: "Real host tap did not dismiss the previously observed overlay", app: app)\n', '        for overlay in dismissedOverlays {\n            // 45 s, not 15: right after the tap brings the app forward, one hosted\n            // accessibility snapshot can take 14 s (run 43963455417, widgets: the\n            // first check of the picker\'s Cancel took 14.4 s, the picker was gone\n            // in the failure capture, and the 15 s wait had expired).\n            try widgetWarmWait(NSPredicate(format: "exists == false"), on: overlay, timeout: 45,\n                               message: "Real host tap did not dismiss the previously observed overlay", app: app)\n', 1),
         ('        let reading = host.descendants(matching: .any)["watch.complication.corner.fallback"].firstMatch\n        try freshFaceRequire(reading.waitForExistence(timeout: 15) && reading.isHittable && host.frame.contains(reading.frame),\n                             "Actual configured Exactograph has no fitting explicit launcher", host: host)\n        return reading\n', '        let reading = host.descendants(matching: .any)["watch.complication.corner.fallback"].firstMatch\n        // Run 44397980828 (corner): the launcher appeared after 13 s still drawn as\n        // WidgetKit\'s placeholder (private-use glyphs, no letters). Wait for the real\n        // entry to replace it; the caller still requires the exact label.\n        let drawn = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in\n            reading.exists && reading.label.unicodeScalars.contains { $0.properties.isAlphabetic }\n        }, object: host)\n        let arrivedDrawn = XCTWaiter.wait(for: [drawn], timeout: 45) == .completed\n        try freshFaceRequire(arrivedDrawn && reading.isHittable && host.frame.contains(reading.frame),\n                             "Actual configured Exactograph has no fitting, drawn explicit launcher", host: host)\n        return reading\n', 1),
         ('        let widget = host.otherElements["bottom-left"].firstMatch\n        try freshFaceRequire(host.wait(for: .runningForeground, timeout: 15)\n                             && widget.waitForExistence(timeout: 15) && widget.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Open your selected game in Bain Luck, or choose a game")).firstMatch.exists\n                             && widget.isHittable && host.frame.contains(widget.frame),\n                             "Fresh installed face has no reachable BainLuckWatch launcher", host: host)\n', '        let widget = host.otherElements["bottom-left"].firstMatch\n        let launcher = widget.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Open your selected game in Bain Luck, or choose a game")).firstMatch\n        // Run 44921277743 att1 (widgets): the slot appeared while WidgetKit was still\n        // drawing its redacted placeholder (private-use glyphs). Wait for the real\n        // launcher label to replace it, matching Exactograph\'s 45 s placeholder wait.\n        let drawn = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in\n            widget.exists && launcher.exists\n        }, object: host)\n        let arrivedLauncher = XCTWaiter.wait(for: [drawn], timeout: 45) == .completed\n        try freshFaceRequire(host.wait(for: .runningForeground, timeout: 15)\n                             && widget.waitForExistence(timeout: 15) && arrivedLauncher\n                             && widget.isHittable && host.frame.contains(widget.frame),\n                             "Fresh installed face has no reachable BainLuckWatch launcher", host: host)\n', 1),
+        (
+            """    @MainActor
+    private func activateConfiguredSiriModularFace(in host: XCUIApplication) throws {
+        let library = host.otherElements["Face Library View"].firstMatch
+        let face = host.otherElements["Watch Face"].firstMatch
+        let arrived = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            library.exists || face.exists
+        }, object: host)
+        try freshFaceRequire(XCTWaiter.wait(for: [arrived], timeout: 15) == .completed,
+                             "Configured face did not leave its editor", host: host)
+        if library.exists {
+            let title = host.staticTexts["Switcher Face Title"].firstMatch
+            let previews = host.scrollViews.matching(NSPredicate(
+                format: "label ==[c] %@", "siri modular, Customizable"))
+            let preview = previews.firstMatch
+            try freshFaceRequire(title.waitForExistence(timeout: 15) && title.label == "Siri Modular"
+                                 && preview.waitForExistence(timeout: 15) && previews.count == 1 && preview.isHittable
+                                 && host.frame.contains(CGPoint(x: preview.frame.midX, y: preview.frame.midY)),
+                                 "Face Library has no unambiguous visible Siri Modular preview", host: host)
+            freshFaceCapture(host, name: "Configured Siri Modular preview before activation")
+            // Select the actual named face preview once; crown presses alone
+            // can leave Carousel in its library rather than on the active face.
+            preview.tap()
+        }
+        let activated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            face.exists && !library.exists
+        }, object: host)
+        try freshFaceRequire(XCTWaiter.wait(for: [activated], timeout: 15) == .completed
+                             && face.isHittable && host.wait(for: .runningForeground, timeout: 15),
+                             "Configured Siri Modular face did not become active", host: host)
+        freshFaceCapture(host, name: "Configured Siri Modular active Watch Face")
+    }""",
+            """    @MainActor
+    private func activateConfiguredSiriModularFace(in host: XCUIApplication) throws {
+        let library = host.otherElements["Face Library View"].firstMatch
+        let face = host.otherElements["Watch Face"].firstMatch
+        let arrived = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            library.exists || face.exists
+        }, object: host)
+        // 45 s, not 15: a loaded Carousel accessibility snapshot can take 14.2 s
+        // on the first check (run 44980337067, widgets), expiring a 15 s ceiling
+        // even though Face Library View had already arrived.
+        try freshFaceRequire(XCTWaiter.wait(for: [arrived], timeout: 45) == .completed,
+                             "Configured face did not leave its editor", host: host)
+        if library.exists {
+            let allApps = host.otherElements["All Apps"].firstMatch
+            let title = host.staticTexts["Switcher Face Title"].firstMatch
+            let previews = host.scrollViews.matching(NSPredicate(
+                format: "label ==[c] %@", "siri modular, Customizable"))
+            let preview = previews.firstMatch
+            // Run 44995877947 att1 (widgets): Carousel opened the Home Screen App
+            // Launcher honeycomb ("All Apps") over Face Library View, leaving the
+            // Siri Modular preview !isHittable. Dismiss that host overlay once and
+            // fail closed if Face Library or the active Watch Face never clears.
+            if (allApps.exists || !(preview.waitForExistence(timeout: 15) && preview.isHittable)) && allApps.exists {
+                freshFaceCapture(host, name: "Face Library covered by App Launcher before Home dismiss")
+                XCUIDevice.shared.press(.home)
+                let cleared = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                    !allApps.exists && (face.exists || (library.exists && previews.count == 1 && previews.firstMatch.isHittable))
+                }, object: host)
+                try freshFaceRequire(XCTWaiter.wait(for: [cleared], timeout: 45) == .completed,
+                                     "App Launcher overlay did not clear from Face Library", host: host)
+            }
+            if library.exists {
+                try freshFaceRequire(title.waitForExistence(timeout: 15) && title.label == "Siri Modular"
+                                     && preview.waitForExistence(timeout: 15) && previews.count == 1 && preview.isHittable
+                                     && host.frame.contains(CGPoint(x: preview.frame.midX, y: preview.frame.midY)),
+                                     "Face Library has no unambiguous visible Siri Modular preview", host: host)
+                freshFaceCapture(host, name: "Configured Siri Modular preview before activation")
+                // Select the actual named face preview once; crown presses alone
+                // can leave Carousel in its library rather than on the active face.
+                preview.tap()
+            }
+        }
+        let activated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            face.exists && !library.exists
+        }, object: host)
+        try freshFaceRequire(XCTWaiter.wait(for: [activated], timeout: 45) == .completed
+                             && face.isHittable && host.wait(for: .runningForeground, timeout: 15),
+                             "Configured Siri Modular face did not become active", host: host)
+        freshFaceCapture(host, name: "Configured Siri Modular active Watch Face")
+    }""",
+            1,
+        ),
+        (
+            """    func testColdActualWidgetTapRetainsOfflineReading() throws {
+        executionTimeAllowance = 540
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }""",
+            """    func testColdActualWidgetTapRetainsOfflineReading() throws {
+        executionTimeAllowance = 540
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { terminateAfterLeavingForeground(app) }""",
+            1,
+        ),
+        (
+            """        let baseline = try recordWidgetWarmBaseline(in: app)
+        XCUIDevice.shared.press(.home)
+        let host = XCUIApplication(bundleIdentifier: "com.apple.Carousel")
+        let widget = try mountLauncherOnFreshSiriModularFace(in: host)
+        app.terminate()
+        app.launchEnvironment["BAINLUCK_WATCH_UI_RESET"] = "0"
+        app.launchEnvironment["BAINLUCK_WATCH_UI_OFFLINE"] = "1"
+        app.launchEnvironment["BAINLUCK_WATCH_UI_SEED_URL"] = "1"
+        app.launch()
+        XCTAssertTrue(app.staticTexts["watch.url-fixture-ready"].waitForExistence(timeout: 15))
+        app.terminate()""",
+            """        let baseline = try recordWidgetWarmBaseline(in: app)
+        terminateAfterLeavingForeground(app)
+        let host = XCUIApplication(bundleIdentifier: "com.apple.Carousel")
+        let widget = try mountLauncherOnFreshSiriModularFace(in: host)
+        app.launchEnvironment["BAINLUCK_WATCH_UI_RESET"] = "0"
+        app.launchEnvironment["BAINLUCK_WATCH_UI_OFFLINE"] = "1"
+        app.launchEnvironment["BAINLUCK_WATCH_UI_SEED_URL"] = "1"
+        app.launch()
+        XCTAssertTrue(app.staticTexts["watch.url-fixture-ready"].waitForExistence(timeout: 15))
+        terminateAfterLeavingForeground(app)""",
+            1,
+        ),
+        (
+            """    func testColdActualWidgetTapOffersPickerWithoutSelection() throws {
+        executionTimeAllowance = 540
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }""",
+            """    func testColdActualWidgetTapOffersPickerWithoutSelection() throws {
+        executionTimeAllowance = 540
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { terminateAfterLeavingForeground(app) }""",
+            1,
+        ),
+        (
+            """        XCTAssertTrue(app.buttons["watch.pick.101"].waitForExistence(timeout: 20))
+        XCUIDevice.shared.press(.home)
+        let host = XCUIApplication(bundleIdentifier: "com.apple.Carousel")
+        let widget = try mountLauncherOnFreshSiriModularFace(in: host)
+        app.terminate()
+        app.launchEnvironment["BAINLUCK_WATCH_UI_RESET"] = "0"
+        app.launchEnvironment["BAINLUCK_WATCH_UI_SEED_URL"] = "1"
+        app.launch()
+        XCTAssertTrue(app.staticTexts["watch.url-fixture-ready"].waitForExistence(timeout: 15))
+        app.terminate()""",
+            """        XCTAssertTrue(app.buttons["watch.pick.101"].waitForExistence(timeout: 20))
+        terminateAfterLeavingForeground(app)
+        let host = XCUIApplication(bundleIdentifier: "com.apple.Carousel")
+        let widget = try mountLauncherOnFreshSiriModularFace(in: host)
+        app.launchEnvironment["BAINLUCK_WATCH_UI_RESET"] = "0"
+        app.launchEnvironment["BAINLUCK_WATCH_UI_SEED_URL"] = "1"
+        app.launch()
+        XCTAssertTrue(app.staticTexts["watch.url-fixture-ready"].waitForExistence(timeout: 15))
+        terminateAfterLeavingForeground(app)""",
+            1,
+        ),
+        (
+            """    func testFreshConfiguredFaceIsActiveBeforeActualLauncherTap() throws {
+        executionTimeAllowance = 540
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { app.terminate() }""",
+            """    func testFreshConfiguredFaceIsActiveBeforeActualLauncherTap() throws {
+        executionTimeAllowance = 540
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        defer { terminateAfterLeavingForeground(app) }""",
+            1,
+        ),
+        (
+            """            "BAINLUCK_WATCH_UI_FIXED_OBSERVATION": ISO8601DateFormatter().string(from: originalObservation)
+        ]
+        defer { app.terminate() }""",
+            """            "BAINLUCK_WATCH_UI_FIXED_OBSERVATION": ISO8601DateFormatter().string(from: originalObservation)
+        ]
+        defer { terminateAfterLeavingForeground(app) }""",
+            1,
+        ),
+        (
+            """            "BAINLUCK_WATCH_UI_CIRCULAR_IDENTITY": "1"
+        ]
+        defer { app.terminate() }
+        app.launch()
+        XCTAssertTrue(app.buttons["watch.pick.101"].waitForExistence(timeout: 20))
+        app.buttons["watch.pick.101"].tap()
+        let baseline = try recordWidgetWarmBaseline(in: app)""",
+            """            "BAINLUCK_WATCH_UI_CIRCULAR_IDENTITY": "1"
+        ]
+        defer { terminateAfterLeavingForeground(app) }
+        app.launch()
+        XCTAssertTrue(app.buttons["watch.pick.101"].waitForExistence(timeout: 20))
+        app.buttons["watch.pick.101"].tap()
+        let baseline = try recordWidgetWarmBaseline(in: app)""",
+            1,
+        ),
+        (
+            """    func testActualComplicationHost() throws {
+        executionTimeAllowance = 540
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchEnvironment = [
+            "BAINLUCK_WATCH_UI_TEST": "1",
+            "BAINLUCK_WATCH_UI_SUITE": UUID().uuidString,
+            "BAINLUCK_WATCH_UI_RESET": "1",
+            "BAINLUCK_WATCH_UI_LAUNCH_RECEIPT": "1",
+            "BAINLUCK_WATCH_UI_SHARED_PUBLICATION": "1"
+        ]
+        defer { app.terminate() }""",
+            """    func testActualComplicationHost() throws {
+        executionTimeAllowance = 540
+        continueAfterFailure = false
+        let app = XCUIApplication()
+        app.launchEnvironment = [
+            "BAINLUCK_WATCH_UI_TEST": "1",
+            "BAINLUCK_WATCH_UI_SUITE": UUID().uuidString,
+            "BAINLUCK_WATCH_UI_RESET": "1",
+            "BAINLUCK_WATCH_UI_LAUNCH_RECEIPT": "1",
+            "BAINLUCK_WATCH_UI_SHARED_PUBLICATION": "1"
+        ]
+        defer { terminateAfterLeavingForeground(app) }""",
+            1,
+        ),
+        (
+            """    @MainActor
+    private func freshFaceCapture(_ host: XCUIApplication, name: String) {
+        let screenshot = XCTAttachment(screenshot: host.screenshot())
+        screenshot.name = name
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        let tree = XCTAttachment(string: host.debugDescription)
+        tree.name = name + " hierarchy"
+        tree.lifetime = .keepAlways
+        add(tree)
+    }
+}""",
+            """    @MainActor
+    private func freshFaceCapture(_ host: XCUIApplication, name: String) {
+        let screenshot = XCTAttachment(screenshot: host.screenshot())
+        screenshot.name = name
+        screenshot.lifetime = .keepAlways
+        add(screenshot)
+        let tree = XCTAttachment(string: host.debugDescription)
+        tree.name = name + " hierarchy"
+        tree.lifetime = .keepAlways
+        add(tree)
+    }
+
+    @MainActor
+    private func terminateAfterLeavingForeground(_ app: XCUIApplication) {
+        if app.state == .notRunning { return }
+        func leftForeground(within seconds: TimeInterval) -> Bool {
+            let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                let state = app.state
+                return state == .runningBackground || state == .runningBackgroundSuspended || state == .notRunning
+            }, object: nil)
+            return XCTWaiter.wait(for: [backgrounded], timeout: seconds) == .completed
+        }
+        // Only press Home when the Watch app is foreground so we never toggle
+        // Carousel's App Launcher when terminating an already-backgrounded app.
+        if app.state == .runningForeground {
+            XCUIDevice.shared.press(.home)
+            if !leftForeground(within: 10) && app.state == .runningForeground {
+                XCUIDevice.shared.press(.home)
+                _ = leftForeground(within: 10)
+            }
+        }
+        if app.state != .notRunning { app.terminate() }
+        XCTAssertEqual(app.state, .notRunning, "Watch app cleanup must stop the app")
+    }
+}""",
+            1,
+        ),
+        (
+            """    @MainActor
+    private func requireSiriModularEditor(in host: XCUIApplication, didReenter: inout Bool) throws {
+        let editors = host.otherElements.matching(NSPredicate(format: "identifier BEGINSWITH %@", "ActiveEditMode-"))
+        let namedEditors = host.scrollViews.matching(NSPredicate(format: "label ==[c] %@", "siri modular"))
+        let library = host.otherElements["Face Library View"].firstMatch
+        let arrived = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            editors.count == 1 || library.exists
+        }, object: host)
+        try freshFaceRequire(XCTWaiter.wait(for: [arrived], timeout: 15) == .completed,
+                             "Siri Modular editor or named library did not arrive", host: host)
+        if library.exists {
+            try freshFaceRequire(!didReenter, "Siri Modular editor returned to library more than once", host: host)
+            let title = host.staticTexts["Switcher Face Title"].firstMatch
+            let previews = host.scrollViews.matching(NSPredicate(format: "label ==[c] %@", "siri modular, Customizable"))
+            let preview = previews.firstMatch
+            let edits = host.buttons.matching(identifier: "Edit")
+            let edit = edits.firstMatch
+            try freshFaceRequire(title.exists && title.label == "Siri Modular"
+                                 && previews.count == 1 && preview.isHittable
+                                 && host.frame.contains(CGPoint(x: preview.frame.midX, y: preview.frame.midY))
+                                 && edits.count == 1 && edit.isHittable && host.frame.contains(edit.frame),
+                                 "Editor return has no exact Siri Modular preview and unique visible Edit", host: host)
+            freshFaceCapture(host, name: "Siri Modular editor returned to named library before one Edit")
+            didReenter = true
+            edit.tap()
+            print("WATCH_EDITOR_LIBRARY_REENTRY=1")
+        }
+        let editing = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            editors.count == 1 && namedEditors.count == 1 && !library.exists
+        }, object: host)
+        try freshFaceRequire(XCTWaiter.wait(for: [editing], timeout: 15) == .completed,
+                             "Siri Modular is not in its actual editor before page search", host: host)
+    }""",
+            """    @MainActor
+    private func requireSiriModularEditor(in host: XCUIApplication, didReenter: inout Bool) throws {
+        let editors = host.otherElements.matching(NSPredicate(format: "identifier BEGINSWITH %@", "ActiveEditMode-"))
+        let namedEditors = host.scrollViews.matching(NSPredicate(format: "label ==[c] %@", "siri modular"))
+        let library = host.otherElements["Face Library View"].firstMatch
+        let face = host.otherElements["Watch Face"].firstMatch
+        func reenterFromNamedLibrary() throws {
+            try freshFaceRequire(!didReenter, "Siri Modular editor returned to library more than once", host: host)
+            let title = host.staticTexts["Switcher Face Title"].firstMatch
+            let previews = host.scrollViews.matching(NSPredicate(format: "label ==[c] %@", "siri modular, Customizable"))
+            let preview = previews.firstMatch
+            let edits = host.buttons.matching(identifier: "Edit")
+            let edit = edits.firstMatch
+            try freshFaceRequire(title.exists && title.label == "Siri Modular"
+                                 && previews.count == 1 && preview.isHittable
+                                 && host.frame.contains(CGPoint(x: preview.frame.midX, y: preview.frame.midY))
+                                 && edits.count == 1 && edit.isHittable && host.frame.contains(edit.frame),
+                                 "Editor return has no exact Siri Modular preview and unique visible Edit", host: host)
+            freshFaceCapture(host, name: "Siri Modular editor returned to named library before one Edit")
+            didReenter = true
+            edit.tap()
+            print("WATCH_EDITOR_LIBRARY_REENTRY=1")
+        }
+        let arrived = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            editors.count == 1 || library.exists
+        }, object: host)
+        try freshFaceRequire(XCTWaiter.wait(for: [arrived], timeout: 15) == .completed,
+                             "Siri Modular editor or named library did not arrive", host: host)
+        if library.exists {
+            try reenterFromNamedLibrary()
+        }
+        let editing = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            editors.count == 1 && namedEditors.count == 1 && !library.exists
+        }, object: host)
+        var inEditor = XCTWaiter.wait(for: [editing], timeout: 15) == .completed
+        // Run 45056826927 att2 (widgets): Carousel's transient ActiveEditMode-15
+        // exited straight to the newly added Watch Face before the named editor
+        // scroll view settled. Re-enter once via the Watch Face long press and
+        // require the exact named Siri Modular library preview + Edit button.
+        if !inEditor && !didReenter && editors.count == 0 && (library.exists || face.exists) {
+            if !library.exists && face.exists {
+                freshFaceCapture(host, name: "Siri Modular editor exited to Watch Face before single reentry")
+                host.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.22)).press(forDuration: 2)
+                try freshFaceRequire(library.waitForExistence(timeout: 15),
+                                     "Long press on Watch Face did not open Face Library for Siri Modular reentry", host: host)
+            }
+            try reenterFromNamedLibrary()
+            let reentered = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                editors.count == 1 && namedEditors.count == 1 && !library.exists
+            }, object: host)
+            inEditor = XCTWaiter.wait(for: [reentered], timeout: 15) == .completed
+        }
+        try freshFaceRequire(inEditor,
+                             "Siri Modular is not in its actual editor before page search", host: host)
+    }""",
+            1,
+        ),
     ],
 }
 for _name, _blocks in XCODE_27_2_LATER_TRANSFORMS.items():
@@ -1361,3 +1741,43 @@ def test_xcode27_2_watch_fixes_fail_closed_on_reverted_or_altered_blocks(name):
     previous, current, _ = XCODE_27_2_WATCH_TRANSFORMS[name][0]
     with pytest.raises(AssertionError):
         restore_xcode27_2_watch_fixes(name, raw.replace(current, previous, 1))
+
+
+def test_widgets_3sigs_fail_closed_and_retain_obligations():
+    picker = (SWIFT / "PickerCurrentGameJourneyTests.swift").read_text()
+    assert "com.apple.Carousel" not in picker.split("private func terminateAfterLeavingForeground", 1)[1]
+    for token in (
+        "private func terminateAfterLeavingForeground(_ app: XCUIApplication)",
+        "object: nil",
+        'XCTAssertEqual(app.state, .notRunning, "Watch app cleanup must stop the app")',
+    ):
+        assert token in picker
+        with pytest.raises(AssertionError):
+            restore_xcode27_2_watch_fixes(
+                "PickerCurrentGameJourneyTests.swift",
+                picker.replace(token, "REMOVED", 1),
+            )
+
+    widget = (SWIFT / "WidgetTapJourneyTests.swift").read_text()
+    widget_terminate_helper = widget.split("private func terminateAfterLeavingForeground", 1)[1].split(
+        "/// Carousel retains", 1
+    )[0]
+    assert "com.apple.Carousel" not in widget_terminate_helper
+    for token in (
+        'let allApps = host.otherElements["All Apps"].firstMatch',
+        '"App Launcher overlay did not clear from Face Library"',
+        '"Configured face did not leave its editor"',
+        '"Face Library has no unambiguous visible Siri Modular preview"',
+        "preview.tap()",
+        "private func terminateAfterLeavingForeground(_ app: XCUIApplication)",
+        "object: nil",
+        'XCTAssertEqual(app.state, .notRunning, "Watch app cleanup must stop the app")',
+        '"Long press on Watch Face did not open Face Library for Siri Modular reentry"',
+        '"Editor return has no exact Siri Modular preview and unique visible Edit"',
+    ):
+        assert token in widget
+        with pytest.raises(AssertionError):
+            restore_xcode27_2_watch_fixes(
+                "WidgetTapJourneyTests.swift",
+                widget.replace(token, "REMOVED", 1),
+            )

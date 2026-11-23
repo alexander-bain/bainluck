@@ -19,10 +19,8 @@ from __future__ import annotations
 
 import json
 import re
-import subprocess
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence
 
 from app.utils.container_machinery import (
@@ -30,8 +28,6 @@ from app.utils.container_machinery import (
     _effective_market_volume,
     _market_matches_query,
     build_container_machinery_producer,
-    discover_machinery_candidate_paths,
-    load_machinery_definition,
     produce_container_machinery,
 )
 from app.utils.discover_fun_tags import CURATED_GROUPING_SETS_PATHS
@@ -48,6 +44,8 @@ from app.utils.roundup_containers import (
 )
 
 MAX_HEADLINE_LINES_390PX = 5
+DUEL_BAR_MIN_TRAILING_PCT = 20
+HISTORY_CHART_MIN_SWING_PP = 10
 # Card headline (`text-base font-bold`) inside 390px viewport:
 # 390 - 2*16 (Discover feed horizontal padding) - 2*16 (card p-4) - 2 (border) = 324px.
 DEFAULT_CARD_HEADLINE_WIDTH_PX_390 = 324.0
@@ -56,6 +54,18 @@ BANNED_COPY_WORDS_RE = re.compile(
     r"\b(?:trading|bets?|betting|stale|questions?)\b",
     re.IGNORECASE,
 )
+BANNED_JARGON_UNITS_RE = re.compile(
+    r"(?<![A-Za-z])(?:pts|pp|bps)\b",
+    re.IGNORECASE,
+)
+BANNED_CARD_FACE_VENUES_RE = re.compile(
+    r"\b(?:kalshi|polymarket|predictit|metaculus|manifold(?:\s+markets)?|"
+    r"draftkings|fanduel|betmgm|caesars(?:\s+sportsbook)?|espn\s*bet|bet365|"
+    r"fanatics\s+sportsbook|robinhood|pinnacle|bovada|betonline|mybookie|"
+    r"betrivers|hard\s+rock\s+bet|underdog|prizepicks)\b",
+    re.IGNORECASE,
+)
+ELLIPSIS_RE = re.compile(r"(?:…|\.\.\.)")
 
 _FIRST_PARTY_CONTAINER_ART_RE = re.compile(
     r"^https://api\.bainluck\.com/api/containers/[^/]+/(?:card-art\.jpg|map\.png)$"
@@ -154,8 +164,24 @@ class PicturePolicyResult:
 
 
 @dataclass(frozen=True)
+class FormRulesResult:
+    """Result of checking visual-form gating rules (duel >=20%, tile pictures, history >=10pt/sentence)."""
+
+    slug: str
+    ok: bool
+    errors: tuple[GateViolation, ...] = ()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "slug": self.slug,
+            "ok": self.ok,
+            "errors": [e.to_dict() for e in self.errors],
+        }
+
+
+@dataclass(frozen=True)
 class PublicAssemblyResult:
-    """Full `(a) + (b) + (c)` batch gate result for a single machinery set."""
+    """Full `(a) + (b) + (c) + visual-form` batch gate result for a single machinery set."""
 
     slug: str
     stage: str
@@ -170,6 +196,7 @@ class PublicAssemblyResult:
     parity_mismatches: tuple[dict[str, Any], ...] = ()
     wording: Optional[WordingCheckResult] = None
     picture: Optional[PicturePolicyResult] = None
+    form_rules: Optional[FormRulesResult] = None
     card: Optional[dict[str, Any]] = None
     container: Optional[dict[str, Any]] = None
     feed_item: Optional[dict[str, Any]] = None
@@ -189,6 +216,7 @@ class PublicAssemblyResult:
             "parity_mismatches": list(self.parity_mismatches),
             "wording": self.wording.to_dict() if self.wording else None,
             "picture": self.picture.to_dict() if self.picture else None,
+            "form_rules": self.form_rules.to_dict() if self.form_rules else None,
         }
         if include_payloads:
             out["card"] = self.card
@@ -278,6 +306,8 @@ def _scan_text_violations(
     *,
     location: str,
     check_row_rules: bool = False,
+    check_venue: bool = False,
+    check_ellipsis: bool = False,
 ) -> list[GateViolation]:
     out: list[GateViolation] = []
     val = str(text or "").strip()
@@ -291,6 +321,39 @@ def _scan_text_violations(
                 rule="banned_word",
                 location=location,
                 detail=f"Contains banned copy word {m_banned.group(0)!r}",
+                text=val,
+            )
+        )
+
+    m_jargon = BANNED_JARGON_UNITS_RE.search(val)
+    if m_jargon:
+        out.append(
+            GateViolation(
+                rule="banned_jargon_unit",
+                location=location,
+                detail=f"Contains jargon unit {m_jargon.group(0)!r}",
+                text=val,
+            )
+        )
+
+    if check_venue:
+        m_venue = BANNED_CARD_FACE_VENUES_RE.search(val)
+        if m_venue:
+            out.append(
+                GateViolation(
+                    rule="venue_name_on_card_face",
+                    location=location,
+                    detail=f"Contains venue name {m_venue.group(0)!r} on card face",
+                    text=val,
+                )
+            )
+
+    if check_ellipsis and ELLIPSIS_RE.search(val):
+        out.append(
+            GateViolation(
+                rule="ellipsis_in_headline_or_number",
+                location=location,
+                detail="Contains truncated ellipsis in headline or number cell",
                 text=val,
             )
         )
@@ -406,6 +469,49 @@ def _scan_explicit_pair_violations(
     return out
 
 
+_NUMBER_CELL_KEYS: tuple[str, ...] = (
+    "rendered_percent",
+    "probability",
+    "value",
+    "number",
+    "metric",
+    "delta",
+    "change",
+    "pct",
+    "score",
+    "away_pct",
+    "home_pct",
+    "display_value",
+    "rendered_value",
+    "stage_1_value",
+    "stage_2_value",
+    "stage_1_rendered_percent",
+    "stage_2_rendered_percent",
+    "label",
+    "answer",
+    "answer_label",
+    "name",
+)
+
+
+def _scan_number_cells_for_ellipsis(obj: Mapping[str, Any], *, prefix: str) -> list[GateViolation]:
+    out: list[GateViolation] = []
+    for key in _NUMBER_CELL_KEYS:
+        val = obj.get(key)
+        if val is not None and not isinstance(val, (dict, list, bool)):
+            txt = str(val).strip()
+            if txt and ELLIPSIS_RE.search(txt):
+                out.append(
+                    GateViolation(
+                        rule="ellipsis_in_headline_or_number",
+                        location=f"{prefix}.{key}",
+                        detail=f"Contains truncated ellipsis in number/cell field {key}",
+                        text=txt,
+                    )
+                )
+    return out
+
+
 def check_machinery_wording(
     card: Optional[Mapping[str, Any]] = None,
     *,
@@ -414,7 +520,7 @@ def check_machinery_wording(
     slug: str = "",
     max_headline_lines_390px: int = MAX_HEADLINE_LINES_390PX,
 ) -> WordingCheckResult:
-    """Validate card, container, and definition copy against Item 6(b) rules."""
+    """Validate card, container, and definition copy against Item 6(b) & Item 2 wording rules."""
     resolved_slug = (
         slug
         or str((card or {}).get("slug") or "")
@@ -426,22 +532,29 @@ def check_machinery_wording(
 
     if isinstance(definition, Mapping):
         rule = definition.get("rule") if isinstance(definition.get("rule"), Mapping) else {}
-        def_fields: list[tuple[str, Any]] = [
-            ("definition.name", definition.get("name")),
-            ("definition.kicker", definition.get("kicker")),
-            ("definition.section_title", definition.get("section_title")),
-            ("definition.footer", definition.get("footer")),
+        def_fields: list[tuple[str, Any, bool]] = [
+            ("definition.name", definition.get("name"), True),
+            ("definition.kicker", definition.get("kicker"), False),
+            ("definition.section_title", definition.get("section_title"), True),
+            ("definition.footer", definition.get("footer"), False),
         ]
         for idx, sec in enumerate(rule.get("sections") or ()):
             if isinstance(sec, Mapping):
-                def_fields.append((f"definition.sections[{idx}].title", sec.get("title")))
+                def_fields.append((f"definition.sections[{idx}].title", sec.get("title"), True))
                 def_fields.append(
-                    (f"definition.sections[{idx}].fallback_title", sec.get("fallback_title"))
+                    (f"definition.sections[{idx}].fallback_title", sec.get("fallback_title"), True)
                 )
-                def_fields.append((f"definition.sections[{idx}].note", sec.get("note")))
-        for loc, val in def_fields:
+                def_fields.append((f"definition.sections[{idx}].note", sec.get("note"), False))
+        for loc, val, is_head in def_fields:
             if val:
-                errors.extend(_scan_text_violations(str(val), location=loc, check_row_rules=False))
+                errors.extend(
+                    _scan_text_violations(
+                        str(val),
+                        location=loc,
+                        check_row_rules=False,
+                        check_ellipsis=is_head,
+                    )
+                )
 
     if isinstance(card, Mapping):
         headline = str(card.get("title") or "").strip()
@@ -466,6 +579,8 @@ def check_machinery_wording(
                         str(val),
                         location=f"card.{field_name}",
                         check_row_rules=False,
+                        check_venue=True,
+                        check_ellipsis=(field_name == "title"),
                     )
                 )
         for idx, row in enumerate(card.get("rows") or ()):
@@ -481,6 +596,7 @@ def check_machinery_wording(
                         location=f"card.rows[{idx}]",
                     )
                 )
+            errors.extend(_scan_number_cells_for_ellipsis(row, prefix=f"card.rows[{idx}]"))
             for rk in ("name", "label", "answer", "answer_label", "away_short", "home_short"):
                 rval = row.get(rk)
                 if rval:
@@ -489,6 +605,61 @@ def check_machinery_wording(
                             str(rval),
                             location=f"card.rows[{idx}].{rk}",
                             check_row_rules=True,
+                            check_venue=True,
+                            check_ellipsis=True,
+                        )
+                    )
+        for fidx, sf in enumerate(card.get("sibling_fields") or ()):
+            if not isinstance(sf, Mapping):
+                continue
+            if sf.get("title"):
+                errors.extend(
+                    _scan_text_violations(
+                        str(sf["title"]),
+                        location=f"card.sibling_fields[{fidx}].title",
+                        check_row_rules=False,
+                        check_venue=True,
+                        check_ellipsis=True,
+                    )
+                )
+            for oidx, out in enumerate(sf.get("outcomes") or ()):
+                if isinstance(out, Mapping):
+                    errors.extend(
+                        _scan_number_cells_for_ellipsis(
+                            out, prefix=f"card.sibling_fields[{fidx}].outcomes[{oidx}]"
+                        )
+                    )
+                    if out.get("name"):
+                        errors.extend(
+                            _scan_text_violations(
+                                str(out["name"]),
+                                location=f"card.sibling_fields[{fidx}].outcomes[{oidx}].name",
+                                check_row_rules=False,
+                                check_venue=True,
+                                check_ellipsis=True,
+                            )
+                        )
+        mini_ch = card.get("mini_chart")
+        if isinstance(mini_ch, Mapping):
+            for ck in ("title", "subtitle"):
+                if mini_ch.get(ck):
+                    errors.extend(
+                        _scan_text_violations(
+                            str(mini_ch[ck]),
+                            location=f"card.mini_chart.{ck}",
+                            check_row_rules=False,
+                            check_venue=True,
+                            check_ellipsis=(ck == "title"),
+                        )
+                    )
+            for sidx, ser in enumerate(mini_ch.get("series") or ()):
+                if isinstance(ser, Mapping) and ser.get("name"):
+                    errors.extend(
+                        _scan_text_violations(
+                            str(ser["name"]),
+                            location=f"card.mini_chart.series[{sidx}].name",
+                            check_row_rules=False,
+                            check_venue=True,
                         )
                     )
     else:
@@ -504,8 +675,41 @@ def check_machinery_wording(
                         str(val),
                         location=f"container.{field_name}",
                         check_row_rules=False,
+                        check_venue=(field_name in ("title", "subtitle", "footer")),
+                        check_ellipsis=(field_name == "title"),
                     )
                 )
+        pms = container.get("paired_metric_set")
+        if isinstance(pms, Mapping):
+            for pk in ("kicker", "title", "subtitle", "stage_1_label", "stage_2_label"):
+                if pms.get(pk):
+                    errors.extend(
+                        _scan_text_violations(
+                            str(pms[pk]),
+                            location=f"container.paired_metric_set.{pk}",
+                            check_row_rules=False,
+                            check_venue=True,
+                            check_ellipsis=(pk == "title"),
+                        )
+                    )
+            for eidx, entry in enumerate(pms.get("entries") or ()):
+                if not isinstance(entry, Mapping):
+                    continue
+                errors.extend(
+                    _scan_number_cells_for_ellipsis(
+                        entry, prefix=f"container.paired_metric_set.entries[{eidx}]"
+                    )
+                )
+                for ek in ("subject", "detail"):
+                    if entry.get(ek):
+                        errors.extend(
+                            _scan_text_violations(
+                                str(entry[ek]),
+                                location=f"container.paired_metric_set.entries[{eidx}].{ek}",
+                                check_row_rules=False,
+                                check_venue=True,
+                            )
+                        )
         for ridx, row in enumerate(container.get("rows") or ()):
             if not isinstance(row, Mapping):
                 continue
@@ -517,6 +721,7 @@ def check_machinery_wording(
                         location=f"container.rows[{ridx}]",
                     )
                 )
+            errors.extend(_scan_number_cells_for_ellipsis(row, prefix=f"container.rows[{ridx}]"))
             for rk in ("label", "answer", "name"):
                 if row.get(rk):
                     errors.extend(
@@ -524,6 +729,7 @@ def check_machinery_wording(
                             str(row[rk]),
                             location=f"container.rows[{ridx}].{rk}",
                             check_row_rules=True,
+                            check_ellipsis=True,
                         )
                     )
         for sidx, sec in enumerate(container.get("sections") or ()):
@@ -536,6 +742,7 @@ def check_machinery_wording(
                             str(sec[sk]),
                             location=f"container.sections[{sidx}].{sk}",
                             check_row_rules=False,
+                            check_ellipsis=(sk == "title"),
                         )
                     )
             vb = sec.get("visual_block")
@@ -550,20 +757,31 @@ def check_machinery_wording(
                                     str(item[ik]),
                                     location=f"container.sections[{sidx}].visual_block.items[{iidx}].{ik}",
                                     check_row_rules=True,
+                                    check_ellipsis=(ik == "title"),
                                 )
                             )
                     for oidx, out in enumerate(item.get("outcomes") or ()):
-                        if isinstance(out, Mapping) and out.get("name"):
+                        if isinstance(out, Mapping):
                             errors.extend(
-                                _scan_text_violations(
-                                    str(out["name"]),
-                                    location=(
+                                _scan_number_cells_for_ellipsis(
+                                    out,
+                                    prefix=(
                                         f"container.sections[{sidx}].visual_block.items[{iidx}]"
-                                        f".outcomes[{oidx}].name"
+                                        f".outcomes[{oidx}]"
                                     ),
-                                    check_row_rules=False,
                                 )
                             )
+                            if out.get("name"):
+                                errors.extend(
+                                    _scan_text_violations(
+                                        str(out["name"]),
+                                        location=(
+                                            f"container.sections[{sidx}].visual_block.items[{iidx}]"
+                                            f".outcomes[{oidx}].name"
+                                        ),
+                                        check_row_rules=False,
+                                    )
+                                )
 
     # Deduplicate identical violations while preserving order.
     deduped: list[GateViolation] = []
@@ -746,6 +964,330 @@ def audit_picture_policy_for_definition(
     return PicturePolicyResult(slug=slug, ok=len(errors) == 0, errors=tuple(errors))
 
 
+def _has_real_tile_picture(art: Any) -> bool:
+    if not isinstance(art, Mapping):
+        return False
+    if str(art.get("kind") or "").strip().lower() == "monogram":
+        return False
+    url = str(art.get("url") or "").strip()
+    return (
+        url.startswith("https://")
+        and not is_pexels_url(url)
+        and not is_blocked_pexels_photo(url)
+    )
+
+
+def _side_percent(side: Mapping[str, Any]) -> Optional[float]:
+    rp = side.get("rendered_percent")
+    if isinstance(rp, (int, float)) and not isinstance(rp, bool):
+        return float(rp)
+    prob = side.get("probability")
+    if isinstance(prob, (int, float)) and not isinstance(prob, bool):
+        return float(prob) * 100.0
+    return None
+
+
+def _history_window_swing_pp(chart: Mapping[str, Any]) -> float:
+    series = [s for s in (chart.get("series") or ()) if isinstance(s, Mapping)]
+    point_spans: list[float] = []
+    for s in series:
+        vals: list[float] = []
+        for pt in s.get("points") or ():
+            if not isinstance(pt, Mapping):
+                continue
+            if isinstance(pt.get("pct"), (int, float)) and not isinstance(pt.get("pct"), bool):
+                vals.append(float(pt["pct"]))
+            elif isinstance(pt.get("probability"), (int, float)) and not isinstance(
+                pt.get("probability"), bool
+            ):
+                vals.append(float(pt["probability"]) * 100.0)
+        if len(vals) >= 2:
+            point_spans.append(max(vals) - min(vals))
+    if point_spans:
+        return max(point_spans)
+    raw_swing = chart.get("max_swing_pp")
+    if isinstance(raw_swing, (int, float)) and not isinstance(raw_swing, bool):
+        return float(raw_swing)
+    return 0.0
+
+
+_SENTENCE_FINITE_VERB_RE = re.compile(
+    r"\b(?:is|are|was|were|be|been|has|have|had|moved|slid|rose|fell|jumped|dropped|"
+    r"climbed|surged|rallied|rebounded|narrowed|widened|led|leads|trails|held|"
+    r"holds|gained|lost|shifted|swung|opened|closed|remained|stays|stayed|shows|"
+    r"showed|tracks|tracked|priced|repriced|traded|sits|stand|stands|reaches|reached|hits|"
+    r"hit|beats|beat|wins|won|earns|earned|finished|finishes|pushed|pulled|cooled|"
+    r"dipped|spiked|tumbled|tightened|settled|backed|cut|raised|trimmed)\b",
+    re.IGNORECASE,
+)
+_JOINED_TITLES_TEMPLATE_RE = re.compile(
+    r"(?:^\s*(?:7-day\s+)?odds\s+movement\s+across\b|"
+    r"^\s*a\s+look\s+back\s+at\b.+\bacross\b.+\band\b|"
+    r"\b(?:which|what|who|will|when|whether)\b.+\b(?:and|or)\b\s+(?:which|what|who|will|when|whether)\b|"
+    r",\s*and\s+more\.?\s*$)",
+    re.IGNORECASE,
+)
+
+
+def _check_history_chart_subhead(
+    subtitle: str,
+    *,
+    location: str,
+    candidate_titles: Sequence[str] = (),
+) -> list[GateViolation]:
+    sub = str(subtitle or "").strip()
+    if len(sub) < 12:
+        return [
+            GateViolation(
+                rule="form_history_chart_bad_subhead",
+                location=location,
+                detail="History chart subhead must be a written sentence (missing or too short)",
+                text=sub,
+            )
+        ]
+    if any(sep in sub for sep in ("?", "·", "|", ";", "…", "...", " / ")):
+        return [
+            GateViolation(
+                rule="form_history_chart_bad_subhead",
+                location=location,
+                detail="History chart subhead contains non-sentence separator or question mark",
+                text=sub,
+            )
+        ]
+    if not sub.endswith((".", "!")):
+        return [
+            GateViolation(
+                rule="form_history_chart_bad_subhead",
+                location=location,
+                detail="History chart subhead must end cleanly as a full written sentence",
+                text=sub,
+            )
+        ]
+    if _JOINED_TITLES_TEMPLATE_RE.search(sub):
+        return [
+            GateViolation(
+                rule="form_history_chart_bad_subhead",
+                location=location,
+                detail="History chart subhead joins market titles or topic fragments instead of writing a sentence",
+                text=sub,
+            )
+        ]
+    sub_low = sub.lower()
+    matched_titles = 0
+    for t in candidate_titles:
+        clean_t = str(t or "").strip().rstrip("?").strip().lower()
+        if len(clean_t) >= 8 and clean_t in sub_low:
+            matched_titles += 1
+            if matched_titles >= 2:
+                return [
+                    GateViolation(
+                        rule="form_history_chart_bad_subhead",
+                        location=location,
+                        detail="History chart subhead concatenates market titles from the set",
+                        text=sub,
+                    )
+                ]
+    if not _SENTENCE_FINITE_VERB_RE.search(sub):
+        return [
+            GateViolation(
+                rule="form_history_chart_bad_subhead",
+                location=location,
+                detail="History chart subhead must read as a written sentence with a verb, not a noun list",
+                text=sub,
+            )
+        ]
+    return []
+
+
+def check_machinery_form_rules(
+    *,
+    card: Optional[Mapping[str, Any]] = None,
+    container: Optional[Mapping[str, Any]] = None,
+    slug: str = "",
+    check_tile_pictures: bool = True,
+) -> FormRulesResult:
+    """Enforce visual-form admission rules learned from the 390 px sheet (Item 2)."""
+    resolved_slug = (
+        slug
+        or str((card or {}).get("slug") or "")
+        or str((container or {}).get("slug") or "")
+    )
+    errors: list[GateViolation] = []
+
+    candidate_titles: list[str] = []
+    if isinstance(container, Mapping):
+        for sec in container.get("sections") or ():
+            if not isinstance(sec, Mapping):
+                continue
+            vb = sec.get("visual_block")
+            if isinstance(vb, Mapping):
+                for it in vb.get("items") or ():
+                    if isinstance(it, Mapping):
+                        for tk in ("title", "raw_title"):
+                            if it.get(tk):
+                                candidate_titles.append(str(it[tk]))
+
+    if isinstance(card, Mapping):
+        c_form = str(card.get("form_id") or "").strip()
+        c_scale = bool(card.get("scale_ordered"))
+        c_rows = [r for r in (card.get("rows") or ()) if isinstance(r, Mapping)]
+
+        if c_form == "duel_bar":
+            if len(c_rows) != 2:
+                errors.append(
+                    GateViolation(
+                        rule="form_duel_trailing_under_20",
+                        location="card.rows",
+                        detail=f"duel_bar card must compare 2 sides (got {len(c_rows)})",
+                        text=str(card.get("title") or ""),
+                    )
+                )
+            else:
+                pcts = [p for r in c_rows if (p := _side_percent(r)) is not None]
+                if len(pcts) != 2 or min(pcts) < DUEL_BAR_MIN_TRAILING_PCT:
+                    trailing = min(pcts) if pcts else 0.0
+                    errors.append(
+                        GateViolation(
+                            rule="form_duel_trailing_under_20",
+                            location="card.rows",
+                            detail=(
+                                f"duel_bar trailing side is {trailing:g}% "
+                                f"(requires >= {DUEL_BAR_MIN_TRAILING_PCT}%)"
+                            ),
+                            text=str(card.get("title") or ""),
+                        )
+                    )
+
+        if check_tile_pictures and not c_scale:
+            if c_form == "contender_spotlight":
+                shown = c_rows[:3]
+                if shown:
+                    missing = [
+                        str(r.get("name") or r.get("label") or idx)
+                        for idx, r in enumerate(shown)
+                        if not _has_real_tile_picture(r.get("art"))
+                    ]
+                    if missing:
+                        errors.append(
+                            GateViolation(
+                                rule="form_spotlight_missing_picture",
+                                location="card.rows",
+                                detail=(
+                                    "contender_spotlight card requires a real picture on every tile "
+                                    f"(missing: {', '.join(missing)})"
+                                ),
+                                text=str(card.get("title") or ""),
+                            )
+                        )
+            elif c_form == "sibling_fields_grid":
+                sibs = [s for s in (card.get("sibling_fields") or ()) if isinstance(s, Mapping)]
+                if sibs:
+                    missing = [
+                        str(sf.get("title") or idx)
+                        for idx, sf in enumerate(sibs[:4])
+                        if not (
+                            (sf.get("outcomes") or ())
+                            and isinstance(sf["outcomes"][0], Mapping)
+                            and _has_real_tile_picture(sf["outcomes"][0].get("art"))
+                        )
+                    ]
+                else:
+                    missing = [
+                        str(r.get("name") or r.get("label") or idx)
+                        for idx, r in enumerate(c_rows[:3])
+                        if not _has_real_tile_picture(r.get("art"))
+                    ]
+                if missing:
+                    errors.append(
+                        GateViolation(
+                            rule="form_tile_grid_missing_picture",
+                            location="card.sibling_fields" if sibs else "card.rows",
+                            detail=(
+                                "sibling_fields_grid tile grid requires a real picture on every tile "
+                                f"(missing: {', '.join(missing)})"
+                            ),
+                            text=str(card.get("title") or ""),
+                        )
+                    )
+
+        if c_form == "probability_history_chart":
+            chart = card.get("mini_chart")
+            swing = _history_window_swing_pp(chart) if isinstance(chart, Mapping) else 0.0
+            if swing < HISTORY_CHART_MIN_SWING_PP:
+                errors.append(
+                    GateViolation(
+                        rule="form_history_chart_under_10_pts",
+                        location="card.mini_chart",
+                        detail=(
+                            f"probability_history_chart moved {swing:g} percentage points in window "
+                            f"(requires >= {HISTORY_CHART_MIN_SWING_PP})"
+                        ),
+                        text=str(card.get("title") or ""),
+                    )
+                )
+            errors.extend(
+                _check_history_chart_subhead(
+                    str(card.get("subtitle") or ""),
+                    location="card.subtitle",
+                    candidate_titles=candidate_titles,
+                )
+            )
+
+    if isinstance(container, Mapping):
+        for sidx, sec in enumerate(container.get("sections") or ()):
+            if not isinstance(sec, Mapping):
+                continue
+            vb = sec.get("visual_block")
+            if not isinstance(vb, Mapping):
+                continue
+            s_form = str(vb.get("form_id") or "").strip()
+            items = [it for it in (vb.get("items") or ()) if isinstance(it, Mapping)]
+            if s_form == "duel_bar":
+                for iidx, it in enumerate(items):
+                    outs = [o for o in (it.get("outcomes") or ()) if isinstance(o, Mapping)]
+                    pcts = [p for o in outs[:2] if (p := _side_percent(o)) is not None]
+                    if len(pcts) >= 2 and min(pcts) < DUEL_BAR_MIN_TRAILING_PCT:
+                        errors.append(
+                            GateViolation(
+                                rule="form_duel_trailing_under_20",
+                                location=f"container.sections[{sidx}].visual_block.items[{iidx}]",
+                                detail=(
+                                    f"duel_bar trailing side is {min(pcts):g}% "
+                                    f"(requires >= {DUEL_BAR_MIN_TRAILING_PCT}%)"
+                                ),
+                                text=str(it.get("title") or ""),
+                            )
+                        )
+            elif (
+                check_tile_pictures
+                and s_form == "contender_spotlight"
+                and items
+                and not any(it.get("scale_ordered") for it in items)
+            ):
+                for iidx, it in enumerate(items):
+                    outs = [o for o in (it.get("outcomes") or ()) if isinstance(o, Mapping)]
+                    shown = outs[:3]
+                    missing = [
+                        str(o.get("name") or oidx)
+                        for oidx, o in enumerate(shown)
+                        if not _has_real_tile_picture(o.get("art"))
+                    ]
+                    if missing:
+                        errors.append(
+                            GateViolation(
+                                rule="form_spotlight_missing_picture",
+                                location=f"container.sections[{sidx}].visual_block.items[{iidx}]",
+                                detail=(
+                                    "contender_spotlight section requires a real picture on every tile "
+                                    f"(missing: {', '.join(missing)})"
+                                ),
+                                text=str(it.get("title") or ""),
+                            )
+                        )
+
+    return FormRulesResult(slug=resolved_slug, ok=len(errors) == 0, errors=tuple(errors))
+
+
 def _load_curated_entries_by_sub_tag() -> dict[str, list[dict[str, Any]]]:
     by_sub_tag: dict[str, list[dict[str, Any]]] = {}
     for cp in CURATED_GROUPING_SETS_PATHS:
@@ -758,64 +1300,6 @@ def _load_curated_entries_by_sub_tag() -> dict[str, list[dict[str, Any]]]:
                     dict(e) for e in (spec.get("entries") or ()) if isinstance(e, Mapping)
                 ]
     return by_sub_tag
-
-
-def discover_changed_machinery_slugs(
-    base_ref: str = "origin/master",
-    repo_root: Optional[Path] = None,
-) -> tuple[str, ...]:
-    """Return machinery definition slugs touched by a branch or working tree."""
-    root = repo_root or Path(__file__).resolve().parents[3]
-    all_paths = discover_machinery_candidate_paths()
-    by_slug = {p.stem: p for p in all_paths}
-
-    changed_files: set[str] = set()
-    for cmd in (
-        ["git", "-C", str(root), "diff", "--name-only", f"{base_ref}...HEAD"],
-        ["git", "-C", str(root), "diff", "--name-only"],
-        ["git", "-C", str(root), "diff", "--name-only", "--cached"],
-        ["git", "-C", str(root), "ls-files", "--others", "--exclude-standard"],
-    ):
-        proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        if proc.returncode == 0:
-            changed_files.update(line.strip() for line in proc.stdout.splitlines() if line.strip())
-
-    slugs: list[str] = []
-    seen: set[str] = set()
-    curated_tags_touched: set[str] = set()
-
-    for rel in sorted(changed_files):
-        p = Path(rel)
-        if (
-            "backend/data/groupings/candidates" in rel
-            and p.name.startswith("machinery-")
-            and p.suffix == ".json"
-        ):
-            stem = p.stem
-            if stem in by_slug and stem not in seen:
-                seen.add(stem)
-                slugs.append(stem)
-        elif rel.startswith("backend/data/groupings/batch") and rel.endswith("_curated_sets.json"):
-            cur_path = root / rel
-            if cur_path.exists():
-                doc = json.loads(cur_path.read_text(encoding="utf-8"))
-                curated_tags_touched.update(
-                    str(k).strip().lower() for k in (doc.get("sets") or {})
-                )
-
-    if curated_tags_touched:
-        for stem, path in sorted(by_slug.items()):
-            if stem in seen:
-                continue
-            defn = load_machinery_definition(path)
-            for sec in defn.get("rule", {}).get("sections") or ():
-                sub_tag = str((sec.get("atom_query") or {}).get("fun_sub_tag") or "").strip().lower()
-                if sub_tag and sub_tag in curated_tags_touched:
-                    seen.add(stem)
-                    slugs.append(stem)
-                    break
-
-    return tuple(slugs)
 
 
 def _definition_min_items(definition: Mapping[str, Any]) -> int:
@@ -915,8 +1399,9 @@ async def audit_public_assembly_for_definition(
     *,
     now: Optional[datetime] = None,
     require_preview_pass: bool = False,
+    check_tile_pictures: bool = True,
 ) -> PublicAssemblyResult:
-    """Run public-rule assembly, wording check, and picture policy for one set."""
+    """Run public-rule assembly, wording check, picture policy, and visual-form rules."""
     cur_now = now or datetime.now(timezone.utc)
     slug = str(definition.get("slug") or "")
     stage = str(definition.get("stage") or "public")
@@ -948,6 +1433,7 @@ async def audit_public_assembly_for_definition(
             refusal_reasons=tuple(res.reasons),
             wording=wording_def,
             picture=picture_res,
+            form_rules=FormRulesResult(slug=slug, ok=True),
         )
 
     producer = build_container_machinery_producer(definition)
@@ -977,17 +1463,30 @@ async def audit_public_assembly_for_definition(
         slug=slug,
     )
     picture_res = audit_picture_policy_for_definition(definition, card=card)
+    form_res = check_machinery_form_rules(
+        card=card,
+        container=container_payload,
+        slug=slug,
+        check_tile_pictures=check_tile_pictures,
+    )
 
     ok = (
         wording_res.ok
         and picture_res.ok
+        and form_res.ok
         and len(mismatches) == 0
         and len(surviving_ids) >= min_items
     )
     status = "PASS" if ok else "FAIL_GATE"
     if len(surviving_ids) < min_items:
         status = "FAIL_PUBLIC_SHORTFALL" if stage == "public" else "PREVIEW_SHORTFALL"
-        if stage != "public" and not require_preview_pass and wording_res.ok and picture_res.ok:
+        if (
+            stage != "public"
+            and not require_preview_pass
+            and wording_res.ok
+            and picture_res.ok
+            and form_res.ok
+        ):
             ok = True
 
     return PublicAssemblyResult(
@@ -1003,6 +1502,7 @@ async def audit_public_assembly_for_definition(
         parity_mismatches=mismatches,
         wording=wording_res,
         picture=picture_res,
+        form_rules=form_res,
         card=card,
         container=container_payload,
         feed_item=feed_item,
@@ -1010,16 +1510,22 @@ async def audit_public_assembly_for_definition(
 
 
 __all__ = [
+    "BANNED_CARD_FACE_VENUES_RE",
     "BANNED_COPY_WORDS_RE",
+    "BANNED_JARGON_UNITS_RE",
     "DEFAULT_CARD_HEADLINE_WIDTH_PX_390",
+    "DUEL_BAR_MIN_TRAILING_PCT",
+    "ELLIPSIS_RE",
+    "FormRulesResult",
     "GateViolation",
+    "HISTORY_CHART_MIN_SWING_PP",
     "MAX_HEADLINE_LINES_390PX",
     "PicturePolicyResult",
     "PublicAssemblyResult",
     "WordingCheckResult",
     "audit_picture_policy_for_definition",
     "audit_public_assembly_for_definition",
+    "check_machinery_form_rules",
     "check_machinery_wording",
-    "discover_changed_machinery_slugs",
     "estimate_headline_lines_390px",
 ]

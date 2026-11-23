@@ -167,6 +167,9 @@ _CLUB_NAME_ALIASES: dict[str, str] = {
     "pallacanestro olimpia milano": "olimpia milano",
     "baskonia vitoria-gasteiz": "saski baskonia",
     "anadolu efes sk": "anadolu efes",
+    "maccabi tel-aviv": "maccabi tel aviv",
+    "hapoel tel-aviv": "hapoel tel aviv",
+    "asvel lyon-villeurbanne": "asvel lyon villeurbanne",
     # #13142: Women's college basketball spelling (pair 15347844 / 15351848).
     "little rock trojans": "arkansas-little rock trojans",
 }
@@ -711,10 +714,6 @@ def names_match(name_a: str, name_b: str) -> bool:
     if _NATION_NAME_ALIASES.get(norm_a, norm_a) == _NATION_NAME_ALIASES.get(norm_b, norm_b):
         return True
     if _CLUB_NAME_ALIASES.get(norm_a, norm_a) == _CLUB_NAME_ALIASES.get(norm_b, norm_b):
-        return True
-    if ("-" in norm_a or "-" in norm_b) and (
-        " ".join(norm_a.replace("-", " ").split()) == " ".join(norm_b.replace("-", " ").split())
-    ):
         return True
 
     # 2. Suffix containment at word boundaries

@@ -35,10 +35,12 @@ from collect import (
     publish_asset,
     GitHub,
     main,
+    master_checks,
 )
 from unittest.mock import call, patch, MagicMock
 from notes import ModelBudget, make_notes
 from speech import make_speech
+from signals import stopped_rules
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -135,6 +137,49 @@ class FactoryCollectorTests(unittest.TestCase):
         api.pages.assert_called_once_with("issues/12779/comments?since=2026-11-22T05:05:00Z")
         self.assertEqual(snapshot["crew_posts"], {"F": {"at": post_at, "waiting_on": 13346}})
         self.assertEqual(snapshot["lane_updates"]["F"]["at"], "2026-11-22T06:40:00Z")
+
+    def test_13444_stays_held_while_failed_master_attempt_is_rerun(self):
+        fixture = json.loads((FIXTURES / "master-retry-nov22.json").read_text())
+        api = MagicMock()
+        api.request.side_effect = [fixture["previous_attempt"], fixture["failed_attempt_jobs"]]
+        rerun = fixture["rerun_as_of_capture"]
+        pull = fixture["pull"]
+        master = master_checks(api, [rerun], [fixture["another_commit_passed"]], [pull])
+        self.assertEqual(master, {
+            "tests": "failing", "tests_at": "2026-11-22T23:35:42Z",
+            "blocked_server_release": 13444,
+        })
+        self.assertEqual(api.request.call_args_list, [
+            call("repos/alexander-bain/bainluck/actions/runs/45082983839/attempts/1", timeout=5),
+            call("repos/alexander-bain/bainluck/actions/runs/45082983839/attempts/1/jobs?per_page=100", timeout=5),
+        ])
+        change = {**pull, "line": "Server", "station": "Ship"}
+        at = fixture["captured_at"]
+        stops = stopped_rules([change], [], master, {}, at, instant(at))
+        self.assertEqual(stops, [{
+            "kind": "master", "line": "Server", "station": "Ship", "number": 13444,
+            "since": "2026-11-22T23:35:42Z", "count": 1, "level": "amber",
+        }])
+
+        cleared = fixture["rerun_passed"]
+        api.reset_mock()
+        green = master_checks(api, [cleared], [cleared], [pull])
+        self.assertEqual(green, {"tests": "passing", "tests_at": cleared["updated_at"]})
+        self.assertEqual(stopped_rules([change], [], green, {}, at, instant(cleared["updated_at"])), [])
+        api.request.assert_not_called()
+
+    def test_failed_workflow_without_a_failed_release_gate_does_not_hold_the_server(self):
+        fixture = json.loads((FIXTURES / "master-retry-nov22.json").read_text())
+        failed = fixture["previous_attempt"]
+        jobs = fixture["failed_attempt_jobs"]["jobs"]
+        for without_gate in (
+            [job for job in jobs if job["name"] != "backend-tests (8)"],
+            [job for job in jobs if job["name"] != "deploy"],
+        ):
+            api = MagicMock()
+            api.request.return_value = {"jobs": without_gate}
+            result = master_checks(api, [failed], [failed], [fixture["pull"]])
+            self.assertEqual(result, {"tests": "failing", "tests_at": failed["updated_at"]})
 
 
 class FactoryRules(unittest.TestCase):
