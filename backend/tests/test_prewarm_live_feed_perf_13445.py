@@ -531,3 +531,267 @@ async def test_prewarm_machinery_roundups_main_job_attempts_every_slug_when_earl
     )
     assert outcomes == ["refused", "refused", "refused"]
     assert seen_timeouts == [1000, 1000, 1000]
+
+
+def _make_machinery_blob(age_s: float) -> str:
+    return json.dumps(
+        {
+            "built_at": time.time() - age_s,
+            "ttl_s": 300,
+            "stale_ttl_s": 21600,
+            "feed_item": {"type": "bundle", "data": {"id": "roundup:x", "kind": "roundup"}},
+            "container_payload": {
+                "sections": [
+                    {"members": [{"type": "market", "id": 1, "card": {"id": 1, "status": "open"}}]}
+                ]
+            },
+        }
+    )
+
+
+class _FakeTrickleRedis:
+    """In-memory Redis stub supporting hash reads, mget, get, exists, and setex with TTL tracking."""
+
+    def __init__(self, *, hashes: dict[str, dict[str, str]] | None = None, kv: dict[str, str] | None = None):
+        self.hashes = {k: dict(v) for k, v in (hashes or {}).items()}
+        self.kv = dict(kv or {})
+        self.ttls: dict[str, int] = {}
+
+    def hgetall(self, key: str):
+        return dict(self.hashes.get(key, {}))
+
+    def exists(self, key: str):
+        return 1 if key in self.kv else 0
+
+    def get(self, key: str):
+        return self.kv.get(key)
+
+    def mget(self, keys: list[str]):
+        return [self.kv.get(k) for k in keys]
+
+    def setex(self, key: str, ttl_s: int, value: str):
+        self.kv[key] = value
+        self.ttls[key] = int(ttl_s)
+
+
+def _install_dummy_machinery_producers(slugs: list[str]) -> dict:
+    saved = dict(rc_mod.ROUNDUP_PRODUCERS)
+    rc_mod.ROUNDUP_PRODUCERS.clear()
+    for slug in slugs:
+        rc_mod.ROUNDUP_PRODUCERS[slug] = rc_mod.RoundupProducer(
+            slug=slug,
+            name=slug,
+            kind="roundup",
+            category="other",
+            section_title="Markets",
+            footer="",
+            produce=MagicMock(),
+            membership="computed-produced",
+            relations=("same_subject",),
+            level="member",
+            rule={"producer": "container_machinery"},
+            enabled=lambda: True,
+        )
+    return saved
+
+
+@pytest.mark.asyncio
+async def test_live_machinery_skips_trickle_when_discover_is_live_but_keeps_live_and_missing(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("CONTAINER_MACHINERY_ENABLED", "true")
+    monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+    monkeypatch.setenv("CONTAINER_MACHINERY_SLICE1_ENABLED", "true")
+
+    all_slugs = ["machinery-live-1", "machinery-missing-1", "machinery-due-1", "machinery-due-2"]
+    saved = _install_dummy_machinery_producers(all_slugs)
+    batches: list[tuple[str, ...]] = []
+
+    async def _fake_warm(deadline_s: float = 25.0, *, slugs=None):
+        tup = tuple(slugs or ())
+        batches.append(tup)
+        return {
+            "outcome": "ok",
+            "warmed": len(tup),
+            "slugs": {s: {"outcome": "ok", "elapsed_ms": 15.0, "live": False} for s in tup},
+        }
+
+    try:
+        rc = _FakeTrickleRedis(
+            hashes={
+                rc_mod.MACHINERY_LIVE_SLUGS_KEY: {"machinery-live-1": "1"},
+                pcp.FEED_PREWARM_LIVE_SHAPES_KEY: {"discover": "1", "sports": "1"},
+            },
+            kv={
+                rc_mod._redis_cache_key("machinery-live-1"): _make_machinery_blob(20.0),
+                rc_mod._redis_cache_key("machinery-due-1"): _make_machinery_blob(290.0),
+                rc_mod._redis_cache_key("machinery-due-2"): _make_machinery_blob(250.0),
+            },
+        )
+        assert pcp._PREWARM_MACHINERY_SKIP_TRICKLE_VAR.get() is False
+
+        async def _fake_prewarm_shape(shape, rc_arg, *, deadline_s=20.0):
+            return {"outcome": "ok", "duration_s": 0.1, "items": 20, "live": True, "artifact_age_s": 0.0}
+
+        async def _fake_stand(rc_arg, *, deadline_s=15.0):
+            return {"outcome": "idle", "warmed": 0}
+
+        with (
+            patch("app.tasks.redis_state.get_redis_client", lambda: rc),
+            patch("app.utils.roundup_containers.ensure_optional_roundup_candidates", lambda: None),
+            patch.object(pcp, "_prewarm_machinery_roundups", _fake_warm),
+            patch.object(pcp, "_prewarm_feed_shape", _fake_prewarm_shape),
+            patch.object(pcp, "_prewarm_live_standing_roundups", _fake_stand),
+            patch.object(pcp, "_absent_prewarm_labels", lambda _rc, exclude=None: set()),
+        ):
+            await pcp._prewarm_live_feed_shapes()
+
+        assert pcp._PREWARM_MACHINERY_SKIP_TRICKLE_VAR.get() is False
+        # Discover was in live_labels -> trickle (due-1, due-2) skipped; live & missing still ran.
+        assert batches == [("machinery-live-1",), ("machinery-missing-1",)]
+        report_disc = json.loads(rc.kv[pcp.FEED_LIVE_PREWARM_STATUS_KEY])
+        assert report_disc["machinery"]["trickle_skipped_discover_live"] is True
+
+        # Switch to Sports-only live (Discover not live): trickle resumes cleanly.
+        batches.clear()
+        rc.hashes[pcp.FEED_PREWARM_LIVE_SHAPES_KEY] = {"sports": "1"}
+        with (
+            patch("app.tasks.redis_state.get_redis_client", lambda: rc),
+            patch("app.utils.roundup_containers.ensure_optional_roundup_candidates", lambda: None),
+            patch.object(pcp, "_prewarm_machinery_roundups", _fake_warm),
+            patch.object(pcp, "_prewarm_feed_shape", _fake_prewarm_shape),
+            patch.object(pcp, "_prewarm_live_standing_roundups", _fake_stand),
+            patch.object(pcp, "_absent_prewarm_labels", lambda _rc, exclude=None: set()),
+        ):
+            await pcp._prewarm_live_feed_shapes()
+
+        assert ("machinery-due-1", "machinery-due-2") in batches
+        report_sports = json.loads(rc.kv[pcp.FEED_LIVE_PREWARM_STATUS_KEY])
+        assert report_sports["machinery"]["trickle_skipped_discover_live"] is False
+    finally:
+        rc_mod.ROUNDUP_PRODUCERS.clear()
+        rc_mod.ROUNDUP_PRODUCERS.update(saved)
+
+
+@pytest.mark.asyncio
+async def test_live_machinery_trickle_timeout_sets_cooldown_and_sits_out_next_passes(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("CONTAINER_MACHINERY_ENABLED", "true")
+    monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+    monkeypatch.setenv("CONTAINER_MACHINERY_SLICE1_ENABLED", "true")
+
+    all_slugs = [
+        "machinery-slow",
+        "machinery-due-b",
+        "machinery-due-c",
+        "machinery-due-d",
+    ]
+    saved = _install_dummy_machinery_producers(all_slugs)
+    pass_num = 0
+    seen_due_batches: list[tuple[str, ...]] = []
+
+    async def _fake_warm(deadline_s: float = 25.0, *, slugs=None):
+        tup = tuple(slugs or ())
+        seen_due_batches.append(tup)
+        if pass_num == 1:
+            return {
+                "outcome": "empty",
+                "warmed": 0,
+                "slugs": {
+                    "machinery-slow": {"outcome": "timeout", "elapsed_ms": 4001.0, "live": False},
+                    "machinery-due-b": {"outcome": "skipped_no_time", "elapsed_ms": 0.0, "live": False},
+                },
+            }
+        return {
+            "outcome": "ok",
+            "warmed": len(tup),
+            "slugs": {s: {"outcome": "ok", "elapsed_ms": 120.0, "live": False} for s in tup},
+        }
+
+    try:
+        rc = _FakeTrickleRedis(
+            kv={
+                rc_mod._redis_cache_key("machinery-slow"): _make_machinery_blob(295.0),
+                rc_mod._redis_cache_key("machinery-due-b"): _make_machinery_blob(270.0),
+                rc_mod._redis_cache_key("machinery-due-c"): _make_machinery_blob(250.0),
+                rc_mod._redis_cache_key("machinery-due-d"): _make_machinery_blob(230.0),
+            }
+        )
+
+        with (
+            patch("app.utils.roundup_containers.ensure_optional_roundup_candidates", lambda: None),
+            patch.object(pcp, "_prewarm_machinery_roundups", _fake_warm),
+        ):
+            # Pass 1: machinery-slow is oldest so it runs first, times out, and starves due-b.
+            pass_num = 1
+            res1 = await pcp._prewarm_live_machinery_roundups(rc, deadline_s=20.0)
+            assert res1["absent_slugs"] == ["machinery-slow", "machinery-due-b"]
+            assert res1["trickle_cooldown_recorded"] == ["machinery-slow"]
+
+            slow_ck = f"{pcp.MACHINERY_TRICKLE_COOLDOWN_PREFIX}machinery-slow"
+            due_b_ck = f"{pcp.MACHINERY_TRICKLE_COOLDOWN_PREFIX}machinery-due-b"
+            assert rc.kv.get(slow_ck) == "1"
+            assert rc.ttls.get(slow_ck) == pcp.MACHINERY_TRICKLE_COOLDOWN_TTL_S
+            assert due_b_ck not in rc.kv
+
+            # Pass 2: machinery-slow sits out; due-b and due-c advance without queue-jam.
+            pass_num = 2
+            res2 = await pcp._prewarm_live_machinery_roundups(rc, deadline_s=20.0)
+            assert res2["trickle_cooled_down"] == ["machinery-slow"]
+            assert res2["absent_slugs"] == ["machinery-due-b", "machinery-due-c"]
+
+            # Cooldown only skips trickle (proactive_due): if machinery-slow actually expires
+            # into missing_or_expired, it still runs in missing_or_expired!
+            del rc.kv[rc_mod._redis_cache_key("machinery-slow")]
+            res3 = await pcp._prewarm_live_machinery_roundups(rc, deadline_s=20.0)
+            assert "machinery-slow" in res3["absent_slugs"]
+
+        assert seen_due_batches == [
+            ("machinery-slow", "machinery-due-b"),
+            ("machinery-due-b", "machinery-due-c"),
+            ("machinery-slow",),
+            ("machinery-due-b", "machinery-due-c"),
+        ]
+    finally:
+        rc_mod.ROUNDUP_PRODUCERS.clear()
+        rc_mod.ROUNDUP_PRODUCERS.update(saved)
+
+
+@pytest.mark.asyncio
+async def test_live_machinery_trickle_cooldown_ignores_non_timeout_outcomes(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    monkeypatch.setenv("CONTAINER_MACHINERY_ENABLED", "true")
+    monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+    monkeypatch.setenv("CONTAINER_MACHINERY_SLICE1_ENABLED", "true")
+
+    saved = _install_dummy_machinery_producers(["machinery-err", "machinery-ok"])
+
+    async def _fake_warm(deadline_s: float = 25.0, *, slugs=None):
+        return {
+            "outcome": "ok",
+            "warmed": 1,
+            "slugs": {
+                "machinery-err": {"outcome": "error", "elapsed_ms": 50.0, "live": False},
+                "machinery-ok": {"outcome": "ok", "elapsed_ms": 20.0, "live": False},
+            },
+        }
+
+    try:
+        rc = _FakeTrickleRedis(
+            kv={
+                rc_mod._redis_cache_key("machinery-err"): _make_machinery_blob(250.0),
+                rc_mod._redis_cache_key("machinery-ok"): _make_machinery_blob(240.0),
+            }
+        )
+        with (
+            patch("app.utils.roundup_containers.ensure_optional_roundup_candidates", lambda: None),
+            patch.object(pcp, "_prewarm_machinery_roundups", _fake_warm),
+        ):
+            res = await pcp._prewarm_live_machinery_roundups(rc, deadline_s=20.0)
+        assert res["trickle_cooldown_recorded"] == []
+        assert not any(k.startswith(pcp.MACHINERY_TRICKLE_COOLDOWN_PREFIX) for k in rc.kv)
+    finally:
+        rc_mod.ROUNDUP_PRODUCERS.clear()
+        rc_mod.ROUNDUP_PRODUCERS.update(saved)

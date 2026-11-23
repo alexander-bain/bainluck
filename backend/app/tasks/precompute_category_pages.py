@@ -33,6 +33,16 @@ _PREWARM_MACHINERY_CONCURRENCY_VAR: contextvars.ContextVar[int | None] = (
 _PREWARM_MACHINERY_WALL_BUDGET_VAR: contextvars.ContextVar[bool] = (
     contextvars.ContextVar("_PREWARM_MACHINERY_WALL_BUDGET_VAR", default=False)
 )
+_PREWARM_MACHINERY_SKIP_TRICKLE_VAR: contextvars.ContextVar[bool] = (
+    contextvars.ContextVar("_PREWARM_MACHINERY_SKIP_TRICKLE_VAR", default=False)
+)
+
+#: Redis cooldown for non-live machinery slugs that timed out in the 30s trickle
+#: (#13445 Option 1): sits out ~6 realtime passes (180s > 120s main pass) so a
+#: >4s slug stops re-occupying the head of `proactive_due` every 30s while the
+#: 2-minute main 27-set job still refreshes it without consulting this cooldown.
+MACHINERY_TRICKLE_COOLDOWN_PREFIX = "bainluck:roundup:machinery:trickle_cooldown:"
+MACHINERY_TRICKLE_COOLDOWN_TTL_S = 180
 
 
 def _redis_mget_safe(rc: Any, keys: list[str]) -> list[Any] | None:
@@ -2722,15 +2732,69 @@ def _absent_machinery_slugs(rc, *, registered_slugs: list[str], exclude: set[str
     return absent
 
 
-async def _prewarm_live_machinery_roundups(rc, *, deadline_s: float = 20.0) -> dict:
+def _machinery_trickle_cooled_down_slugs(rc: Any, slugs: list[str]) -> set[str]:
+    """Return machinery slugs currently cooling down after a trickle timeout (#13445)."""
+    if rc is None or not slugs:
+        return set()
+    keys = [f"{MACHINERY_TRICKLE_COOLDOWN_PREFIX}{slug}" for slug in slugs]
+    vals = _redis_mget_safe(rc, keys)
+    if vals is not None:
+        return {
+            slug
+            for slug, val in zip(slugs, vals)
+            if isinstance(val, (bytes, bytearray, str, int, float)) and bool(val)
+        }
+    if not callable(getattr(type(rc), "get", None)):
+        return set()
+    cooled: set[str] = set()
+    for slug, key in zip(slugs, keys):
+        try:
+            raw = rc.get(key)
+        except Exception:
+            logger.debug("machinery trickle cooldown read failed for %s", slug, exc_info=True)
+            continue
+        if isinstance(raw, (bytes, bytearray, str, int, float)) and bool(raw):
+            cooled.add(slug)
+    return cooled
+
+
+def _record_machinery_trickle_cooldowns(rc: Any, slugs_outcomes: Any) -> list[str]:
+    """Cool down slugs that timed out in the 30s trickle so the queue never jams (#13445)."""
+    if rc is None or not isinstance(slugs_outcomes, dict):
+        return []
+    timed_out = sorted(
+        slug
+        for slug, info in slugs_outcomes.items()
+        if isinstance(info, dict) and info.get("outcome") == "timeout"
+    )
+    if not timed_out:
+        return []
+    if not callable(getattr(rc, "setex", None)):
+        return []
+    entries = [
+        (f"{MACHINERY_TRICKLE_COOLDOWN_PREFIX}{slug}", MACHINERY_TRICKLE_COOLDOWN_TTL_S, "1")
+        for slug in timed_out
+    ]
+    try:
+        _redis_setex_batch(rc, entries)
+    except Exception:
+        logger.debug("machinery trickle cooldown write failed for %s", timed_out, exc_info=True)
+        return []
+    return timed_out
+
+
+async def _prewarm_live_machinery_roundups(
+    rc, *, deadline_s: float = 20.0, skip_trickle: bool | None = None
+) -> dict:
     """Republish live (60s TTL) and absent machinery groupings on the 30s realtime rail.
 
     - Live machinery groupings (or slates with a game starting within 3 minutes)
       are rebuilt FIRST so a 60s live entry always outlasts the 30s wait for the
       next refresh (~29s headroom) and never disappears from Discover during games.
     - Missing/expired keys rebuild SECOND; still-valid-stale non-live keys due at
-      >= 70% soft TTL trickle at most 2 oldest slugs per 30s pass (#13445) so
-      non-live groupings never launch a 170s DB-pool storm during live games.
+      >= 70% soft TTL trickle at most 2 oldest slugs per 30s pass (#13445) when
+      Discover is NOT among the live shapes and cooled-down timeout slugs sit out
+      next passes so non-live groupings never starve 5-shape live passes or jam.
     - Returns immediately with zero Redis/DB calls when the machinery switch is off.
     """
     import time as _time
@@ -2746,6 +2810,11 @@ async def _prewarm_live_machinery_roundups(rc, *, deadline_s: float = 20.0) -> d
     if not container_machinery_enabled() or not containers_read_enabled():
         return {"outcome": "disabled", "warmed": 0}
 
+    effective_skip_trickle = (
+        _PREWARM_MACHINERY_SKIP_TRICKLE_VAR.get()
+        if skip_trickle is None
+        else bool(skip_trickle)
+    )
     ensure_optional_roundup_candidates()
     registered = sorted(
         p.slug
@@ -2759,7 +2828,13 @@ async def _prewarm_live_machinery_roundups(rc, *, deadline_s: float = 20.0) -> d
     missing_or_expired, proactive_due = _partition_absent_machinery_slugs(
         rc, registered_slugs=registered, exclude=set(live_slugs)
     )
-    due_batch = proactive_due[:2]
+    if effective_skip_trickle:
+        cooled_down_slugs: list[str] = []
+        due_batch: list[str] = []
+    else:
+        cooled_down_set = _machinery_trickle_cooled_down_slugs(rc, proactive_due)
+        cooled_down_slugs = [s for s in proactive_due if s in cooled_down_set]
+        due_batch = [s for s in proactive_due if s not in cooled_down_set][:2]
     absent_slugs = [*missing_or_expired, *due_batch]
     if not live_slugs and not absent_slugs:
         return {
@@ -2767,6 +2842,9 @@ async def _prewarm_live_machinery_roundups(rc, *, deadline_s: float = 20.0) -> d
             "warmed": 0,
             "live_slugs": [],
             "absent_slugs": [],
+            "trickle_skipped_discover_live": effective_skip_trickle,
+            "trickle_cooled_down": cooled_down_slugs,
+            "trickle_cooldown_recorded": [],
             "slugs": {},
         }
 
@@ -2794,17 +2872,29 @@ async def _prewarm_live_machinery_roundups(rc, *, deadline_s: float = 20.0) -> d
         combined_slugs.update(res_missing.get("slugs") or {})
         warmed += int(res_missing.get("warmed") or 0)
 
+    cooldown_recorded: list[str] = []
     remaining_s = deadline_s - (_time.monotonic() - started)
     if due_batch and remaining_s >= 1.5:
         res_due = await _run_batch(1, min(remaining_s, 4.0), due_batch)
-        combined_slugs.update(res_due.get("slugs") or {})
+        due_slugs_res = res_due.get("slugs") or {}
+        combined_slugs.update(due_slugs_res)
         warmed += int(res_due.get("warmed") or 0)
+        cooldown_recorded = _record_machinery_trickle_cooldowns(rc, due_slugs_res)
+        if cooldown_recorded:
+            logger.info(
+                "Machinery trickle cooldown armed for %s (%ds) after timeout (#13445)",
+                cooldown_recorded,
+                MACHINERY_TRICKLE_COOLDOWN_TTL_S,
+            )
 
     return {
         "outcome": "ok" if warmed else "empty",
         "warmed": warmed,
         "live_slugs": live_slugs,
         "absent_slugs": absent_slugs,
+        "trickle_skipped_discover_live": effective_skip_trickle,
+        "trickle_cooled_down": cooled_down_slugs,
+        "trickle_cooldown_recorded": cooldown_recorded,
         "wall_ms": round((_time.monotonic() - started) * 1000.0, 1),
         "total_db_ms": round(
             sum(float(v.get("elapsed_ms") or 0.0) for v in combined_slugs.values()), 1
@@ -3309,16 +3399,22 @@ async def _prewarm_live_feed_shapes():
     standing_live_result: dict = {"outcome": "idle", "warmed": 0}
     pending_mach_bases: dict[str, dict] = {}
 
+    discover_live = bool(live_labels & {"discover", "discover_native"})
+
     async def _run_machinery_live() -> None:
         nonlocal machinery_live_result, standing_live_result
-        machinery_live_result, standing_live_result = await asyncio.gather(
-            _prewarm_live_machinery_roundups(
-                rc, deadline_s=min(20.0, float(FEED_LIVE_REPUBLISH_BUDGET_S))
-            ),
-            _prewarm_live_standing_roundups(
-                rc, deadline_s=min(15.0, float(FEED_LIVE_REPUBLISH_BUDGET_S))
-            ),
-        )
+        skip_tok = _PREWARM_MACHINERY_SKIP_TRICKLE_VAR.set(discover_live)
+        try:
+            machinery_live_result, standing_live_result = await asyncio.gather(
+                _prewarm_live_machinery_roundups(
+                    rc, deadline_s=min(20.0, float(FEED_LIVE_REPUBLISH_BUDGET_S))
+                ),
+                _prewarm_live_standing_roundups(
+                    rc, deadline_s=min(15.0, float(FEED_LIVE_REPUBLISH_BUDGET_S))
+                ),
+            )
+        finally:
+            _PREWARM_MACHINERY_SKIP_TRICKLE_VAR.reset(skip_tok)
 
     mach_snap_cache: dict[Any, Any] = {}
     pending_token = _PREWARM_PENDING_MACH_BASES_VAR.set(pending_mach_bases)
