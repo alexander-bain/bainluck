@@ -978,8 +978,11 @@ def fold_twin_events(events: Iterable[Any]) -> FoldResult:
         logger.exception("twin fold: catch-all league merge failed; serving groups")
 
     # #13142 — reversed, id-less WBB claims (Polymarket / Kalshi listing Home
-    # vs Away swapped relative to the Odds API sportsbook row), after the
-    # within-league passes and before combat-claim bouts.
+    # vs Away swapped relative to the Odds API sportsbook row).
+    # #13238 — reversed, id-less claims in leagues whose venues reverse
+    # Home/Away (e.g. Kalshi `KXEUROLEAGUEGAME`), after the within-league
+    # kick-off recovery has aligned the minute and before combat-claim bouts.
+    # Only whole clusters unioned; numbers turned through `corner_flips`.
     corner_flips: dict[int, "_CornerFlip"] = {}
     try:
         league_flips: dict[int, "_CornerFlip"] = {}
@@ -3649,7 +3652,9 @@ def _merge_combat_claim_bouts(
     return list(out.values())
 
 
-_REVERSED_ANCHORED_CLAIM_LEAGUES: frozenset[str] = frozenset({"basketball_wncaab"})
+_REVERSED_ANCHORED_CLAIM_LEAGUES: frozenset[str] = frozenset(
+    {"basketball_wncaab", "basketball_euroleague"}
+)
 
 
 def _reversed_claim_league(members: list) -> Optional[str]:
@@ -3668,13 +3673,15 @@ def _merge_reversed_anchored_claim_twins(
     identities: dict,
     corner_flips: Optional[dict] = None,
 ) -> list[list]:
-    """Fold a reversed id-less claim onto its same-minute anchored twin (#13142).
+    """Fold a reversed id-less claim onto its same-minute anchored twin (#13142, #13238).
 
-    Narrow fail-closed pass for allowlisted leagues where an id-less claim
-    carries Home/Away swapped relative to the schedule-anchored row. Requires
-    provenance asymmetry, exact minute equality, exact reversed squashed
-    names, 1-to-1 uniqueness, live safety, guaranteed anchor election, and
-    valid complement flipping.
+    Narrow fail-closed pass for allowlisted leagues where a venue mints rows
+    with Home/Away swapped relative to the schedule-anchored row (e.g. WBB
+    claims and Kalshi ``KXEUROLEAGUEGAME`` after ``recover_kalshi_occurrence_starts``
+    aligns its +3h expiration to the tip-off minute). Requires provenance
+    asymmetry, exact minute equality, exact reversed squashed names, 1-to-1
+    uniqueness, live safety, guaranteed anchor election, and valid complement
+    flipping.
     """
     anchors: list[int] = []
     claims: list[int] = []
