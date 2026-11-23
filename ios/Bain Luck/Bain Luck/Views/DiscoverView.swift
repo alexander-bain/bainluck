@@ -1468,7 +1468,7 @@ struct DiscoverView: View {
                 }
             }
         }
-        .id(gi.id)
+        .modifier(ConditionalScrollAnchorModifier(anchorId: isGuessSlot ? gi.id : nil))
         .onDisappear { vm.setPriceCardsVisible(owner: gi.id, cards: [], visible: false) }
         .onChange(of: DiscoverPriceRefresh.leaves(gi.priceCards).map(\.id)) { _, _ in
             vm.updateVisiblePriceCards(owner: gi.id, cards: gi.priceCards)
@@ -2609,40 +2609,44 @@ struct DiscoverView: View {
                 let blocks = Self.sectionBlocks(
                     cardCount: pageGrouped.count,
                     continuationStart: groupedPresentation.continuationStart)
-                ScrollViewReader { proxy in
-                    VStack(spacing: 0) {
-                        ForEach(blocks, id: \.range.lowerBound) { block in
-                            let range = block.range
-                            if block.isContinuation {
-                                continuationHeading(leads: range.lowerBound == 0)
-                            }
-                            HStack(alignment: .top, spacing: DiscoverMasonry.spacing) {
-                                ForEach(Array(DiscoverMasonry.columns(
-                                    cardCount: range.count, columnCount: columnCount
-                                ).enumerated()), id: \.offset) { _, indices in
-                                    LazyVStack(spacing: DiscoverMasonry.spacing) {
-                                        ForEach(indices.map { $0 + range.lowerBound }, id: \.self) { idx in
-                                            discoverCard(
-                                                idx: idx,
-                                                gi: pageGrouped[idx],
-                                                pageGrouped: pageGrouped,
-                                                totalCount: grouped.count,
-                                                proxy: proxy
-                                            )
-                                        }
-                                    }
-                                    .frame(maxWidth: .infinity)
+                VStack(spacing: 0) {
+                    ForEach(blocks, id: \.range.lowerBound) { block in
+                        let range = block.range
+                        if block.isContinuation {
+                            continuationHeading(leads: range.lowerBound == 0)
+                        }
+                        if columnCount <= 1 {
+                            LazyVStack(spacing: DiscoverMasonry.spacing) {
+                                ForEach(range, id: \.self) { idx in
+                                    discoverCard(
+                                        idx: idx,
+                                        gi: pageGrouped[idx],
+                                        pageGrouped: pageGrouped,
+                                        totalCount: grouped.count,
+                                        proxy: feedProxy
+                                    )
                                 }
+                            }
+                            .frame(maxWidth: .infinity)
+                        } else {
+                            LazyMasonryColumns(
+                                range: range,
+                                columnCount: columnCount,
+                                spacing: DiscoverMasonry.spacing,
+                                horizontalAlignment: .center,
+                                cardAlignment: .center
+                            ) { idx in
+                                discoverCard(
+                                    idx: idx,
+                                    gi: pageGrouped[idx],
+                                    pageGrouped: pageGrouped,
+                                    totalCount: grouped.count,
+                                    proxy: feedProxy
+                                )
                             }
                         }
                     }
                 }
-                // The card area's own width, which is what decides the column
-                // count. Read from a `.background` so it cannot influence the
-                // layout it measures, and taken BEFORE `.padding(.horizontal)`
-                // so it is the width the cards actually get. There is no
-                // feedback loop: this width comes from the enclosing column, not
-                // from the cards, so `columnCount` never changes it.
                 .background(
                     GeometryReader { geo in
                         Color.clear
@@ -4876,6 +4880,19 @@ struct MovementBadge: View {
             .padding(.vertical, 2)
             .background((up ? Color.green : Color.red).opacity(0.15))
             .clipShape(Capsule())
+        }
+    }
+}
+
+private struct ConditionalScrollAnchorModifier: ViewModifier {
+    let anchorId: String?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let anchorId {
+            content.id(anchorId)
+        } else {
+            content
         }
     }
 }

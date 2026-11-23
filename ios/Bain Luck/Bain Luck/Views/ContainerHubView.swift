@@ -337,20 +337,16 @@ struct ContainerHubView: View {
                 card(item)
             }
         } else {
-            let columns = DiscoverMasonry.columns(cardCount: items.count, columnCount: columnCount)
-            HStack(alignment: .top, spacing: spacing) {
-                ForEach(Array(columns.enumerated()), id: \.offset) { _, indices in
-                    let columnItems = indices.map { items[$0] }
-                    LazyVStack(alignment: .leading, spacing: spacing) {
-                        ForEach(columnItems) { item in
-                            card(item)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-                    .scrollTargetLayout()
-                    .frame(maxWidth: .infinity, alignment: .top)
-                }
+            LazyMasonryColumns(
+                range: 0..<items.count,
+                columnCount: columnCount,
+                spacing: spacing,
+                horizontalAlignment: .leading,
+                cardAlignment: .leading
+            ) { idx in
+                card(items[idx])
             }
+            .scrollTargetLayout()
         }
     }
 
