@@ -2312,7 +2312,10 @@ def _hydrate_market_visual_item(
         elif lead_ans_clean.startswith(">$"):
             lead_ans_for_phrase = f"above {lead_ans_clean[1:].strip()}"
         else:
-            lead_ans_for_phrase = _abbreviate_month_names(lead_ans_clean)
+            if lead_ans_clean.strip().lower() in _MONTH_FULL_MAP:
+                lead_ans_for_phrase = _expand_month_token(lead_ans_clean)
+            else:
+                lead_ans_for_phrase = _abbreviate_month_names(lead_ans_clean)
         _THE_COUNTRIES = frozenset(
             {
                 "united states",
