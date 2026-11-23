@@ -3786,11 +3786,17 @@ def _roundup_lesser_soccer_penalty(item: Mapping[str, Any]) -> int:
                 if val and str(val).strip():
                     texts.append(str(val).strip())
 
-    if any(is_minor_league_market(text) for text in texts):
-        return int(MINOR_LEAGUE_PENALTY)
-    if any(is_top_tier_soccer_market(text) for text in texts):
-        return 0
-    return int(OBSCURE_SOCCER_PENALTY)
+    def _grade_text(text: str) -> int:
+        if is_minor_league_market(text):
+            return int(MINOR_LEAGUE_PENALTY)
+        if is_top_tier_soccer_market(text):
+            return 0
+        return int(OBSCURE_SOCCER_PENALTY)
+
+    return max(
+        (_grade_text(text) for text in texts),
+        default=int(OBSCURE_SOCCER_PENALTY),
+    )
 
 
 def _penalized_roundup_score(

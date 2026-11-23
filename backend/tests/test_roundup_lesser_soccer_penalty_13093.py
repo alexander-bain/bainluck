@@ -109,16 +109,45 @@ def test_roundup_lesser_soccer_penalty_matches_futures_highlights_constants() ->
     )
     assert _roundup_lesser_soccer_penalty(eredivisie) == MINOR_LEAGUE_PENALTY == -15
 
-    # Top-tier soccer leagues stay unpenalized (e.g. Champions League, Premier League)
-    top_tier = _roundup_card(
+    # Top-tier soccer leagues stay unpenalized (e.g. Batch 7 European League Titles)
+    euro_titles = _roundup_card(
         "machinery-european-league-titles",
-        "European Soccer League Title Races",
+        "Arsenal leads European league title races",
+        kicker="SPORTS · EUROPEAN SOCCER",
         child_names=[
-            "English Premier League: 2026-27 Winner",
-            "UEFA Champions League: 2027 Champion",
+            "EPL: 2027 Champion",
+            "LALIGA: 2027 Champion",
+            "Serie A: 2027 Champion",
+            "Bundesliga: 2027 Champion",
+            "Ligue 1: 2027 Champion",
         ],
     )
-    assert _roundup_lesser_soccer_penalty(top_tier) == 0
+    assert _roundup_lesser_soccer_penalty(euro_titles) == 0
+
+    # Mixed card: one minor-league row (Eredivisie) + top-tier rows -> mildest grade (0) wins
+    mixed_top_and_minor = _roundup_card(
+        "european-domestic-titles",
+        "European Title Races",
+        kicker="SPORTS · SOCCER",
+        child_names=[
+            "Eredivisie 2026-27 Champion: Ajax",
+            "EPL: 2027 Champion",
+            "Serie A: 2027 Champion",
+        ],
+    )
+    assert _roundup_lesser_soccer_penalty(mixed_top_and_minor) == 0
+
+    # Mixed minor-league + generic soccer row -> mildest grade (-15) beats obscure (-20)
+    mixed_minor_and_obscure = _roundup_card(
+        "continental-title-races",
+        "Continental Title Watch",
+        kicker="SPORTS · SOCCER",
+        child_names=[
+            "Next Benfica Manager",
+            "Eredivisie 2026-27 Champion: Ajax",
+        ],
+    )
+    assert _roundup_lesser_soccer_penalty(mixed_minor_and_obscure) == MINOR_LEAGUE_PENALTY == -15
 
     # Batch 8 preview soccer card contains MLS/Europa League/Premier League/World Cup -> 0 penalty
     batch8_soccer = _roundup_card(
