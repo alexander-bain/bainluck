@@ -8034,8 +8034,19 @@ def _publish_feed_item(item: dict) -> None:
     # to clients — which is exactly how `_quality_ladder_or_bucket`
     # (#1958) leaked the moment it was added. The prefix rule cannot
     # fall behind, because it has nothing to keep up with.
-    for private_key in [k for k in item if k.startswith("_")]:
-        item.pop(private_key, None)
+    def _strip_private_keys(mapping: dict) -> None:
+        for private_key in [k for k in mapping if k.startswith("_")]:
+            mapping.pop(private_key, None)
+
+    _strip_private_keys(item)
+    if isinstance(data, dict):
+        _strip_private_keys(data)
+        for child in data.get("items") or ():
+            if isinstance(child, dict):
+                _strip_private_keys(child)
+                cdata = child.get("data")
+                if isinstance(cdata, dict):
+                    _strip_private_keys(cdata)
 
 
 #: #5105 — whether ``GET /api/feed`` serves the seated Discover opening (Alex,
