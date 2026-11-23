@@ -12,17 +12,45 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from pydantic import BaseModel
-from sqlalchemy import select, delete, and_, or_, case, cast, func, Row, String, Select
+from sqlalchemy import (
+    Integer,
+    Select,
+    String,
+    and_,
+    bindparam,
+    case,
+    cast,
+    delete,
+    false,
+    func,
+    or_,
+    select,
+    tuple_,
+    union,
+)
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only, selectinload
 
 from app.dependencies.auth import get_current_user, get_optional_user
 from app.models.models import (
-    User, UserPin, UserFavorite, UserPreference, Team, Sport, RetiredTeamRedirect,
-    FuturesMarket, FuturesOutcome, TeamIdentityMapping,
+    User,
+    UserPin,
+    UserFavorite,
+    UserPreference,
+    Team,
+    Sport,
+    RetiredTeamRedirect,
+    FuturesMarket,
+    FuturesOutcome,
+    TeamIdentityMapping,
 )
 from app.services.database import get_db, get_db_rw
-from app.services.onboarding_team_membership import club_filters, onboarding_team_members
+from app.services.onboarding_team_aliases import VenueAliases, onboarding_venue_aliases
+from app.services.onboarding_team_membership import (
+    club_filters,
+    onboarding_team_members,
+)
 from app.utils.futures_source_mark import futures_outcome_source_mark
 from app.utils.series_card_labels import market_threshold_label, reader_outcome_name
 from app.utils.market_team_sport import (
@@ -33,6 +61,7 @@ from app.utils.market_team_sport import (
     sport_key_llm_category as _sport_key_llm_category,
 )
 from app.utils.name_normalization import names_match as _names_match
+from app.utils.sport_keys import is_season_variant
 from app.utils.team_linking import given_name_before_city
 
 logger = logging.getLogger(__name__)
@@ -707,6 +736,9 @@ _TEAM_SEARCH_SPORT_LABELS = {
     "icehockey_ncaa": "NCAA Hockey",
     "baseball_ncaa": "NCAA Baseball",
 }
+_TEAM_SEARCH_PRO_LEAGUES = frozenset(
+    key for key in _TEAM_SEARCH_TIER if "_ncaa" not in key
+) | {"soccer_france_ligue_one"}
 _TEAM_SEARCH_COLUMNS = load_only(
     Team.id,
     Team.sport_id,
@@ -719,7 +751,22 @@ _TEAM_SEARCH_COLUMNS = load_only(
 )
 
 
-def _onboarding_name_candidates(words: list[str]) -> Select[tuple[Team, str]]:
+def _onboarding_venue_pairs(pairs: set[tuple[int, int]]):
+    if not pairs:
+        return false()
+    team_ids, sport_ids = zip(*sorted(pairs))
+    return tuple_(Team.id, Team.sport_id).in_(
+        select(
+            func.unnest(bindparam(None, list(team_ids), type_=ARRAY(Integer))),
+            func.unnest(bindparam(None, list(sport_ids), type_=ARRAY(Integer))),
+        )
+    )
+
+
+def _onboarding_name_candidates(
+    words: list[str],
+    venue_aliases: VenueAliases,
+) -> Select[tuple[Team, str]]:
     # Tokens contain only letters and digits. Anchor at the start of a word
     # so Real cannot match Montreal and Los cannot match Carlos.
     aliases_json = cast(Team.alternate_names, String)
@@ -729,25 +776,41 @@ def _onboarding_name_candidates(words: list[str]) -> Select[tuple[Team, str]]:
         RetiredTeamRedirect.canonical_team_id == Team.id,
         RetiredTeamRedirect.sport_id == Team.sport_id,
     )
-    venue = select(TeamIdentityMapping.id).where(
-        TeamIdentityMapping.team_id == Team.id,
-        TeamIdentityMapping.sport_key == Sport.key,
-        TeamIdentityMapping.source == "odds_api",
-    )
 
-    def provider_alias_match(pattern: str):
-        return (
-            retired.where(
-                RetiredTeamRedirect.retired_name.regexp_match(pattern)
-            ).exists(),
-            venue.where(TeamIdentityMapping.source_name.regexp_match(pattern)).exists(),
-        )
+    def retired_alias_match(pattern: str):
+        return retired.where(
+            RetiredTeamRedirect.retired_name.regexp_match(pattern)
+        ).exists()
+
+    venue_prefix = {
+        word: _onboarding_venue_pairs(venue_aliases.prefix(word))
+        for word in dict.fromkeys(words)
+    }
+    # Every result needs this term. The name arm can use ix_teams_name_trgm
+    # separately from the saved location, abbreviation and JSON aliases.
+    anchor = max(words, key=len)
+    substring = f"%{anchor}%"
+    possible_ids = union(
+        select(Team.id).where(Team.name.ilike(substring)),
+        select(Team.id).where(
+            or_(
+                Team.abbreviation.ilike(substring),
+                Team.location.ilike(substring),
+                aliases_json.ilike(substring),
+            )
+        ),
+        select(RetiredTeamRedirect.canonical_team_id).where(
+            RetiredTeamRedirect.retired_name.ilike(substring)
+        ),
+        select(Team.id).where(venue_prefix[anchor]),
+    ).cte("possible_onboarding_team_ids")
 
     word_start = r"(?i)(?:^|\W|_)"
     matches = [
         or_(
             *(field.regexp_match(word_start + word) for field in search_fields),
-            *provider_alias_match(word_start + word),
+            retired_alias_match(word_start + word),
+            venue_prefix[word],
         )
         for word in dict.fromkeys(words)
     ]
@@ -761,7 +824,8 @@ def _onboarding_name_candidates(words: list[str]) -> Select[tuple[Team, str]]:
             or_(
                 Team.abbreviation.regexp_match(exact),
                 aliases.regexp_match(rf'(?i)"{alias_phrase}"'),
-                *provider_alias_match(exact),
+                retired_alias_match(exact),
+                _onboarding_venue_pairs(venue_aliases.exact(words)),
             ),
             1,
         ),
@@ -771,32 +835,109 @@ def _onboarding_name_candidates(words: list[str]) -> Select[tuple[Team, str]]:
     )
     has_espn_id = func.nullif(Team.espn_id, "").is_not(None)
     tier = case(_TEAM_SEARCH_TIER, value=Sport.key, else_=5)
+    order = [
+        relevance,
+        has_espn_id.desc(),
+        func.length(Team.name),
+        tier,
+        Team.name,
+        Team.id,
+    ]
+    if len(words) == 1:
+        full_word = Team.name.regexp_match(word_start + words[0] + r"(?:$|\W|_)")
+        pro_club = and_(
+            Sport.key.in_(_TEAM_SEARCH_PRO_LEAGUES), or_(full_word, relevance <= 1)
+        )
+        order.insert(0, pro_club.desc().nulls_last())
     return (
         select(Team, Sport.key)
         .options(_TEAM_SEARCH_COLUMNS)
+        .join(possible_ids, possible_ids.c.id == Team.id)
         .join(Sport, Team.sport_id == Sport.id)
-        .where(*matches, *club_filters())
-        .order_by(
-            relevance,
-            has_espn_id.desc(),
-            func.length(Team.name),
-            tier,
-            Team.name,
-            Team.id,
-        )
+        .where(*matches, *club_filters(include_mlb_preseason=True))
+        .order_by(*order)
         .limit(60)
     )
 
 
+async def _fold_onboarding_season_clubs(
+    db: AsyncSession,
+    clubs: list[tuple[Team, str]],
+) -> list[tuple[Team, str]]:
+    parents = {
+        key: key.removesuffix("_preseason").removesuffix("_summer_league")
+        for _, key in clubs
+        if is_season_variant(key)
+    }
+    if not parents:
+        return clubs
+
+    variants = [team for team, key in clubs if key in parents]
+    espn_ids = {team.espn_id for team in variants if team.espn_id}
+    names = {team.name for team in variants}
+    # Search the parent leagues in one read. Literal ILIKE can use the name
+    # index even when the preseason copy differs in case.
+    name_matches = []
+    for name in sorted(names):
+        escaped = name.replace("|", "||").replace("%", "|%").replace("_", "|_")
+        name_matches.append(Team.name.ilike(escaped, escape="|"))
+    parent_rows = (
+        await db.execute(
+            select(Team, Sport.key)
+            .options(_TEAM_SEARCH_COLUMNS)
+            .join(Sport, Team.sport_id == Sport.id)
+            .where(
+                Sport.key.in_(sorted(set(parents.values()))),
+                or_(Team.espn_id.in_(sorted(espn_ids)), *name_matches),
+                *club_filters(),
+            )
+        )
+    ).all()
+
+    folded = []
+    for team, sport_key in clubs:
+        if sport_key not in parents:
+            folded.append((team, sport_key))
+            continue
+        parent_key = parents[sport_key]
+        league_clubs = [parent for parent, key in parent_rows if key == parent_key]
+        matching_ids = [
+            parent
+            for parent in league_clubs
+            if team.espn_id and parent.espn_id == team.espn_id
+        ]
+        matching_names = [
+            parent
+            for parent in league_clubs
+            if parent.name.casefold() == team.name.casefold()
+            and not (parent.espn_id and team.espn_id and parent.espn_id != team.espn_id)
+        ]
+        # Equivalent ESPN rows still go through the membership winner below.
+        if matching_ids:
+            folded.append((min(matching_ids, key=lambda club: club.id), parent_key))
+        elif (
+            matching_names
+            and len({parent.espn_id for parent in matching_names if parent.espn_id})
+            <= 1
+        ):
+            preferred = min(
+                matching_names, key=lambda club: (not club.espn_id, club.id)
+            )
+            folded.append((preferred, parent_key))
+        elif sport_key != "baseball_mlb_preseason":
+            folded.append((team, sport_key))
+    return folded
+
+
 async def _verified_onboarding_clubs(
     db: AsyncSession,
-    rows: list[Row[tuple[Team, str]]],
+    rows: list[tuple[Team, str]],
 ) -> list[tuple[Team, str]]:
     eligible = await onboarding_team_members(
         [(team.sport_id, team.id) for team, _ in rows]
     )
     if eligible is None:
-        return [(team, sport_key) for team, sport_key in rows]
+        return rows
 
     by_id = {team.id: team for team, _ in rows}
     other_ids = set(eligible.values()) - by_id.keys()
@@ -838,10 +979,14 @@ async def search_teams(
     if len(words) > 12 or sum(map(len, words)) < 2:
         return []
 
-    rows = (await db.execute(_onboarding_name_candidates(words))).all()
+    venue_aliases = await onboarding_venue_aliases(db)
+    rows = (await db.execute(_onboarding_name_candidates(words, venue_aliases))).all()
     if not rows:
         return []
-    clubs = await _verified_onboarding_clubs(db, rows)
+    folded = await _fold_onboarding_season_clubs(
+        db, [(team, key) for team, key in rows]
+    )
+    clubs = await _verified_onboarding_clubs(db, folded) if folded else []
 
     # ESPN uses a shared soccer club key across competitions. Require the
     # full name to agree too. All other rows keep their stored team identity.

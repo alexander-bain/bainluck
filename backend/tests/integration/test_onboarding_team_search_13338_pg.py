@@ -30,7 +30,7 @@ from httpx import ASGITransport, AsyncClient
 from redis import Redis as SyncRedis
 from redis.asyncio import Redis
 from redis.exceptions import ConnectionError
-from sqlalchemy import delete, select, text
+from sqlalchemy import delete, event, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 DB_URL = os.environ.get("SEARCH_TEST_DATABASE_URL")
@@ -525,6 +525,119 @@ async def test_snapshot_evicted_during_request_returns_ranked_clubs(
     assert response.status_code == 200
     assert response.json()[0]["id"] == 1040
     assert {row["id"] for row in response.json()} == {1040, 1093, 1095}
+
+
+async def test_primary_league_clubs_win_nickname_search_with_an_empty_snapshot(
+    sessions,
+    cache,
+    client,
+):
+    async with sessions.begin() as db:
+        other = await db.scalar(select(Sport.id).where(Sport.key == OTHER))
+        ncaa = Sport(id=501, key="baseball_ncaa", name="NCAA Baseball")
+        db.add(ncaa)
+        await db.flush()
+        db.add_all(
+            [
+                Team(
+                    id=6081,
+                    sport_id=ncaa.id,
+                    name="ROOSEVELT Lakers",
+                    espn_id="ncaa-lakers",
+                    alternate_names=["Lakers"],
+                ),
+                Team(id=6082, sport_id=other, name="Tottenham"),
+            ]
+        )
+
+    assert not await cache.exists(membership._KEY)
+    for term, first in (
+        ("Lakers", "Los Angeles Lakers"),
+        ("Tottenham", "Tottenham Hotspur"),
+    ):
+        response = await client.get("/api/me/teams/search", params={"q": term})
+        assert response.status_code == 200
+        assert response.json()[0]["name"] == first
+
+
+async def test_preseason_and_summer_aliases_return_the_saved_parent_club(
+    sessions,
+    cache,
+    client,
+    writer,
+):
+    async with sessions.begin() as db:
+        db.add_all(
+            [
+                Sport(id=501, key="basketball_nba_summer_league", name="Summer League"),
+                Sport(id=502, key="baseball_mlb_preseason", name="Spring Training"),
+                Sport(
+                    id=503, key="americanfootball_nfl_preseason", name="NFL Preseason"
+                ),
+            ]
+        )
+        await db.flush()
+        db.add_all(
+            [
+                Team(
+                    id=6091,
+                    sport_id=501,
+                    name="LA Lakers Summer",
+                    espn_id="13",
+                    alternate_names=["South Bay Summer"],
+                ),
+                Team(
+                    id=6092,
+                    sport_id=502,
+                    name="NEW YORK YANKEES",
+                    alternate_names=["Yankees Spring"],
+                ),
+                Team(id=6093, sport_id=503, name="Kansas City Chiefs", espn_id="12"),
+            ]
+        )
+
+    for state in ("missing", "present"):
+        if state == "present":
+            await rebuild(sessions, writer)
+        for query, team_id, sport_key in (
+            ("Lakers", 1030, NBA),
+            ("South Bay Summer", 1030, NBA),
+            ("Yankees Spring", 1021, MLB),
+            ("Kansas City Chiefs", 1054, NFL),
+        ):
+            response = await client.get("/api/me/teams/search", params={"q": query})
+            assert response.status_code == 200
+            rows = response.json()
+            assert [(row["id"], row["sport_key"]) for row in rows] == [
+                (team_id, sport_key)
+            ]
+            assert rows[0]["sports"] == []
+
+
+async def test_second_keystroke_reuses_venue_aliases_but_keeps_prefix_matches(
+    sessions,
+    cache,
+    client,
+):
+    engine = sessions.kw["bind"].sync_engine
+    alias_reads = []
+
+    def collect_alias_reads(_conn, _cursor, sql, _params, _context, _many):
+        if "team_identity_mapping" in sql:
+            alias_reads.append(sql)
+
+    event.listen(engine, "before_cursor_execute", collect_alias_reads)
+    try:
+        for term, expected in (
+            ("Magp", "Newcastle United"),
+            ("Real Madrid", "Real Madrid"),
+        ):
+            response = await client.get("/api/me/teams/search", params={"q": term})
+            assert response.status_code == 200
+            assert response.json()[0]["name"] == expected
+        assert len(alias_reads) == 1
+    finally:
+        event.remove(engine, "before_cursor_execute", collect_alias_reads)
 
 
 async def test_rebuild_has_one_owner_and_failed_publish_keeps_previous_snapshot(

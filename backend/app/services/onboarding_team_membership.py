@@ -46,11 +46,16 @@ EXCLUDED_LEAGUES = (
 )
 
 
-def club_filters():
+def club_filters(*, include_mlb_preseason: bool = False):
+    excluded_leagues = EXCLUDED_LEAGUES
+    if include_mlb_preseason:
+        excluded_leagues = tuple(
+            key for key in EXCLUDED_LEAGUES if key != "baseball_mlb_preseason"
+        )
     return (
         ~Team.name.regexp_match(MARKET_TEAM_SUFFIX),
         ~Sport.key.regexp_match(INDIVIDUAL_SPORT_KEY),
-        Sport.key.notin_(EXCLUDED_LEAGUES),
+        Sport.key.notin_(excluded_leagues),
     )
 
 
