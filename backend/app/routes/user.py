@@ -60,7 +60,6 @@ from app.utils.market_team_sport import (
     market_event_slug as _market_event_slug,
     sport_key_llm_category as _sport_key_llm_category,
 )
-from app.utils.name_normalization import names_match as _names_match
 from app.utils.sport_keys import is_season_variant
 from app.utils.team_linking import given_name_before_city
 
@@ -848,7 +847,20 @@ def _onboarding_name_candidates(
         pro_club = and_(
             Sport.key.in_(_TEAM_SEARCH_PRO_LEAGUES), or_(full_word, relevance <= 1)
         )
-        order.insert(0, pro_club.desc().nulls_last())
+        # A top-league nickname prefix is more useful than a prefix in the
+        # first word of another club's name. Keep exact matches ahead of it.
+        location_length = func.length(Team.location)
+        after_location = and_(
+            func.left(func.lower(Team.name), location_length + 1)
+            == func.lower(Team.location) + " ",
+            func.substr(Team.name, location_length + 2).regexp_match(rf"(?i)^{words[0]}"),
+        )
+        last_word = Team.name.regexp_match(word_start + words[0] + r"[^\W_]*\s*$")
+        nickname_prefix = and_(tier == 1, or_(after_location, last_word))
+        order[:0] = [
+            pro_club.desc().nulls_last(),
+            case((relevance <= 1, 0), (nickname_prefix, 1), else_=2),
+        ]
     return (
         select(Team, Sport.key)
         .options(_TEAM_SEARCH_COLUMNS)
@@ -1044,54 +1056,45 @@ async def teams_by_location(
 
     Example: q="Boston" returns Celtics, Red Sox, Bruins, Patriots (via "New England" alias).
     """
-    if len(q) < 2:
+    q_lower = q.strip().lower()
+    if len(q_lower) < 2:
         return []
 
-    # Expand query with metro aliases
-    terms = _expand_location_query(q)
-
-    # Build OR conditions for all expanded terms — search name, location,
-    # abbreviation, and alternate_names for maximum recall.
     from app.models.models import Sport
-    conditions = []
-    for term in terms:
-        pattern = f"%{term}%"
-        conditions.append(Team.location.ilike(pattern))
-        conditions.append(Team.name.ilike(pattern))
-        conditions.append(Team.abbreviation.ilike(pattern))
-        conditions.append(cast(Team.alternate_names, String).ilike(pattern))
 
-    # Relevance ordering: location match > name match > others
-    q_lower = q.lower().strip()
+    terms = _expand_location_query(q_lower)
+    # Locations can be partially typed. A club name can also identify its
+    # home metro, but a city in the middle of a name does not establish it.
+    location_match = or_(*(
+        Team.location.istartswith(term, autoescape=True) for term in terms
+    ))
+    branded_match = or_(
+        func.lower(Team.name).in_(terms),
+        *(Team.name.istartswith(term + " ", autoescape=True) for term in terms),
+    )
     relevance = case(
-        (Team.location.ilike(q_lower), 0),          # Exact location match
-        (Team.location.ilike(f"%{q_lower}%"), 1),    # Location contains
-        (Team.name.ilike(f"%{q_lower}%"), 2),        # Name contains
+        (func.lower(Team.location) == q_lower, 0),
+        (Team.location.istartswith(q_lower, autoescape=True), 1),
+        (Team.name.istartswith(q_lower + " ", autoescape=True), 2),
         else_=3,
     )
 
     result = await db.execute(
         select(Team, Sport.key.label("sport_key"))
         .join(Sport, Team.sport_id == Sport.id)
-        .where(or_(*conditions))
-        .order_by(relevance, Team.name)
+        .where(or_(location_match, branded_match))
+        .order_by(relevance, Team.name, Team.id)
         .limit(50)
     )
-    rows = result.all()
 
-    # Deduplicate by team ID and fuzzy name match
-    # (catches "Stanford" vs "Stanford Cardinal" as separate Team records)
-    seen: set[int] = set()
-    seen_names: list[str] = []
+    # Clubs in different leagues can share a city and still be distinct.
+    seen: set[tuple[str, str]] = set()
     results: list[TeamSearchResult] = []
-    for team, sport_key in rows:
-        if team.id in seen:
+    for team, sport_key in result.all():
+        key = (sport_key, " ".join(team.name.casefold().split()))
+        if key in seen:
             continue
-        # Skip if a fuzzy-matching team name already in results
-        if any(_names_match(team.name, sn) for sn in seen_names):
-            continue
-        seen.add(team.id)
-        seen_names.append(team.name)
+        seen.add(key)
         results.append(
             TeamSearchResult(
                 id=team.id,

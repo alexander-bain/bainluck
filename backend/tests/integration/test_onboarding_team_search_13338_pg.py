@@ -354,6 +354,64 @@ async def test_issue_and_additional_onboarding_queries_return_real_clubs(
         assert await search_teams("Benjamin Torrealba", db) == []
 
 
+async def test_boston_onboarding_and_real_madrid_use_the_reader_routes(client, sessions, cache, writer):
+    clubs = (
+        (1210, "Boston Bruins", "icehockey_nhl", "Boston"),
+        (1211, "Boston Bruins", "icehockey_nhl", "Boston"),
+        (1212, "Boston Red Sox", MLB, "Boston"),
+        (1213, "Boston College Eagles", "baseball_ncaa", "Boston College"),
+        (1214, "Boston Univ. Terriers", "basketball_wncaab", "Boston University"),
+        (1215, "CA Boston River", "soccer_conmebol_copa_sudamericana", None),
+        (1216, "New England Patriots", NFL, "New England"),
+        (1217, "New England Revolution", MLS, "New England Revolution"),
+        (1218, "Celtic", "soccer_spl", None),
+        (1219, "Celta Vigo", LA_LIGA, "Celta Vigo"),
+    )
+    async with sessions.begin() as db:
+        leagues = dict((await db.execute(select(Sport.key, Sport.id))).all())
+        for key in sorted({league for _, _, league, _ in clubs} - leagues.keys()):
+            leagues[key] = max(leagues.values()) + 1
+            db.add(Sport(id=leagues[key], key=key, name=key))
+        await db.flush()
+        await db.execute(update(Team).where(Team.id == 1053).values(location="Boston"))
+        db.add_all(
+            Team(id=tid, name=name, sport_id=leagues[league], location=location)
+            for tid, name, league, location in clubs
+        )
+        await db.flush()
+        db.add_all(
+            Event(
+                sport_id=leagues[league], home_team_id=tid, home_team_name=name,
+                away_team_name="Other side", commence_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+            )
+            for tid, name, league, _ in clubs
+        )
+    await rebuild(sessions, writer)
+
+    search_url = "/api/me/teams/search"
+    for query, expected in (
+        ("celt", (1053, "Boston Celtics")),
+        ("Celtic", (1218, "Celtic")),
+        ("Real Madrid", (1001, "Real Madrid")),
+    ):
+        response = await client.get(search_url, params={"q": query})
+        assert response.status_code == 200, response.text
+        first = response.json()[0]
+        assert (first["id"], first["name"]) == expected, query
+
+    response = await client.get("/api/me/teams/by-location", params={"q": "Boston"})
+    assert response.status_code == 200, response.text
+    assert [(team["id"], team["name"]) for team in response.json()] == [
+        (1210, "Boston Bruins"),
+        (1053, "Boston Celtics"),
+        (1212, "Boston Red Sox"),
+        (1213, "Boston College Eagles"),
+        (1214, "Boston Univ. Terriers"),
+        (1216, "New England Patriots"),
+        (1217, "New England Revolution"),
+    ]
+
+
 async def test_prefixes_keep_other_clubs_separate_and_group_confirmed_spurs_variants(
     warmed_sessions,
 ):
