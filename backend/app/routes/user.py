@@ -979,7 +979,7 @@ async def search_teams(
     if len(words) > 12 or sum(map(len, words)) < 2:
         return []
 
-    venue_aliases = await onboarding_venue_aliases(db)
+    venue_aliases = onboarding_venue_aliases(db)
     rows = (await db.execute(_onboarding_name_candidates(words, venue_aliases))).all()
     if not rows:
         return []
