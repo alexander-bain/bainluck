@@ -293,6 +293,31 @@ class TestWhenNoPartnerSettlesTheSameRace:
         assert {"Jon Ossoff", "Alexandria Ocasio-Cortez"} <= names
 
 
+def test_13089_the_election_call_and_inauguration_keep_distinct_prices():
+    from app.routes.events import _admit_search_future
+    from app.utils.market_display_name import futures_reader_name
+
+    election = _poly_general()
+    inauguration = _market(
+        "2028 U.S. Presidential Election winner?",
+        [_outcome(n, p, 230 + i) for i, (n, p) in enumerate(_GENERAL_LEGS)],
+        source="kalshi", market_id=108326, external_id="KXPRESPERSON-28",
+    )
+    response, outcome_keys = _build_presidential([inauguration, election], now=_NOW)
+    assert response["poly_market_id"] == election.id
+    assert response["kalshi_market_id"] is None
+    assert not response["has_dual_source"]
+    assert set(outcome_keys).isdisjoint(o.id for o in inauguration.outcomes)
+    assert any(
+        row["market_id"] == inauguration.id and row["q"] == futures_reader_name(inauguration)
+        for row in response["side_markets"]
+    )
+    election.market_tier = inauguration.market_tier = 1
+    seen, sources, boards = set(), {}, []
+    assert _admit_search_future(election, seen, sources, boards)
+    assert _admit_search_future(inauguration, seen, sources, boards)
+
+
 class TestBehaviourThatMustNotChange:
     def test_a_poly_only_theme_still_headlines_from_polymarket(self):
         """With no Kalshi market the poly headline sets the contest, as before."""
