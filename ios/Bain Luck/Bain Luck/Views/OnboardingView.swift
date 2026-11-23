@@ -5,6 +5,14 @@ struct OnboardingView: View {
     @EnvironmentObject private var authManager: AuthManager
     @StateObject private var vm = OnboardingViewModel()
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+
+    /// #13504 — grow chip minimum width on regular-width canvases (iPad/Mac)
+    /// so `.adaptive` never splits the row into narrow columns that truncate
+    /// full team names ("Los Angele…", "Kansas Cit…").
+    static func selectedChipMinimumWidth(regularWidth: Bool) -> CGFloat {
+        regularWidth ? 240 : 140
+    }
 
     var body: some View {
         NavigationStack {
@@ -404,7 +412,8 @@ struct OnboardingView: View {
     }
 
     private func selectedChipsList(teams: [SelectedTeam], onRemove: @escaping (SelectedTeam) -> Void, isRival: Bool = false) -> some View {
-        LazyVGrid(columns: [GridItem(.adaptive(minimum: 140), spacing: 10)], spacing: 10) {
+        let minWidth = Self.selectedChipMinimumWidth(regularWidth: horizontalSizeClass == .regular)
+        return LazyVGrid(columns: [GridItem(.adaptive(minimum: minWidth), spacing: 10)], spacing: 10) {
             ForEach(teams) { team in
                 HStack(spacing: 8) {
                     TeamLogoView(
