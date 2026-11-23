@@ -459,7 +459,7 @@ struct EventQuestionMatrixSection10238: View {
 
         VStack(alignment: .leading, spacing: 8) {
             if !typeSize.isAccessibilitySize, chartPoints.count >= 2 {
-                ladderChart(chartPoints)
+                ladderChart(chartPoints, xAxisLabel: group.xAxisUnitLabel)
             }
             if shownRungs.isEmpty && hasQuery {
                 Text("No matching lines.")
@@ -518,55 +518,64 @@ struct EventQuestionMatrixSection10238: View {
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private func ladderChart(_ points: [EventQuestionMatrixLadderGroup10830.ChartPoint]) -> some View {
+    private func ladderChart(_ points: [EventQuestionMatrixLadderGroup10830.ChartPoint], xAxisLabel: String? = nil) -> some View {
         let lower = points.first?.bound ?? 0
         let rawUpper = points.last?.bound ?? lower
         let upper = rawUpper > lower ? rawUpper : lower + 1
-        return Chart(points) { pt in
-            AreaMark(
-                x: .value("Threshold", pt.bound),
-                yStart: .value("Baseline", 0.0),
-                yEnd: .value("Probability", pt.probability * 100.0)
-            )
-            .foregroundStyle(Color.accentColor.opacity(0.12))
-            .interpolationMethod(.linear)
+        return VStack(spacing: 2) {
+            Chart(points) { pt in
+                AreaMark(
+                    x: .value("Threshold", pt.bound),
+                    yStart: .value("Baseline", 0.0),
+                    yEnd: .value("Probability", pt.probability * 100.0)
+                )
+                .foregroundStyle(Color.accentColor.opacity(0.12))
+                .interpolationMethod(.linear)
 
-            LineMark(
-                x: .value("Threshold", pt.bound),
-                y: .value("Probability", pt.probability * 100.0)
-            )
-            .foregroundStyle(Color.accentColor)
-            .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
-            .interpolationMethod(.linear)
+                LineMark(
+                    x: .value("Threshold", pt.bound),
+                    y: .value("Probability", pt.probability * 100.0)
+                )
+                .foregroundStyle(Color.accentColor)
+                .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                .interpolationMethod(.linear)
 
-            PointMark(
-                x: .value("Threshold", pt.bound),
-                y: .value("Probability", pt.probability * 100.0)
-            )
-            .symbolSize(16)
-            .foregroundStyle(Color.accentColor)
-        }
-        .chartYScale(domain: 0...100)
-        .chartXScale(domain: lower...upper)
-        .chartYAxis {
-            AxisMarks(values: [0, 50, 100]) { val in
-                AxisGridLine(stroke: StrokeStyle(lineWidth: 0.3))
-                AxisValueLabel {
-                    if let pct = val.as(Int.self) {
-                        Text("\(pct)%")
-                            .font(.caption2.monospacedDigit())
-                            .foregroundStyle(.secondary)
+                PointMark(
+                    x: .value("Threshold", pt.bound),
+                    y: .value("Probability", pt.probability * 100.0)
+                )
+                .symbolSize(16)
+                .foregroundStyle(Color.accentColor)
+            }
+            .chartYScale(domain: 0...100)
+            .chartXScale(domain: lower...upper)
+            .chartYAxis {
+                AxisMarks(values: [0, 50, 100]) { val in
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.3))
+                    AxisValueLabel {
+                        if let pct = val.as(Int.self) {
+                            Text("\(pct)%")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
                     }
                 }
             }
-        }
-        .chartXAxis {
-            AxisMarks(values: .automatic(desiredCount: 4)) { _ in
-                AxisValueLabel()
-                    .font(.caption2.monospacedDigit())
+            .chartXAxis {
+                AxisMarks(values: .automatic(desiredCount: 4)) { _ in
+                    AxisValueLabel()
+                        .font(.caption2.monospacedDigit())
+                }
+            }
+            .frame(height: 88)
+
+            if let xAxisLabel, !xAxisLabel.isEmpty {
+                Text(xAxisLabel)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
         }
-        .frame(height: 88)
         .accessibilityHidden(true)
     }
 

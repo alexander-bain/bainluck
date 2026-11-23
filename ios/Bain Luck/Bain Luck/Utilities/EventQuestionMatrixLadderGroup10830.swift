@@ -64,6 +64,15 @@ enum EventQuestionMatrixLadderGroup10830 {
             EventQuestionMatrixSection10238.family(representativeRow)
         }
 
+        var xAxisUnitLabel: String? {
+            let unit = representativeRow.quantity?.plural?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            guard !unit.isEmpty else { return nil }
+            if family == "Totals" || representativeRow.subject?.side == "game" {
+                return "Total \(unit)"
+            }
+            return unit.prefix(1).uppercased() + unit.dropFirst()
+        }
+
         var searchText: String {
             rungs.map { EventQuestionMatrixSection10238.searchText($0.row) }.joined(separator: " ")
         }

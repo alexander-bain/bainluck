@@ -299,6 +299,9 @@ final class CompactTotalsLadder10830Tests: XCTestCase {
             let ocr = try ocrStrings(in: image).joined(separator: " | ")
             XCTAssertTrue(ocr.contains("Game odds"), "Missing section title in \(variant.name): \(ocr)")
             XCTAssertTrue(ocr.contains("Totals"), "Missing Totals family pill in \(variant.name): \(ocr)")
+            if variant.textSize == .large {
+                XCTAssertTrue(ocr.contains("Total points"), "Missing Totals X-axis unit in \(variant.name): \(ocr)")
+            }
             XCTAssertTrue(ocr.contains("24+ points"), "Missing first rung in \(variant.name): \(ocr)")
             XCTAssertTrue(ocr.contains("12 of 38 lines"), "Missing rung count status in \(variant.name): \(ocr)")
             XCTAssertFalse(ocr.contains("…") || ocr.contains("..."), "Unexpected ellipsis truncation in \(variant.name): \(ocr)")

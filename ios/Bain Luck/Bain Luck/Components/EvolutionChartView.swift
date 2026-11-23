@@ -2013,17 +2013,27 @@ struct EvolutionChartView: View {
             plotHeight: height - plotBottomInset
         )
 
+        let labels = names.map { name in
+            let current = servedOutcomes.first { $0.name == name }
+            return Self.currentEndLabel192A(name: name, outcome: current)
+        }
+        let sharedLabelFontSize = CardTeamNameSizing.sharedSingleLineFontSize(
+            names: labels,
+            baseSize: 10.5,
+            weight: .bold,
+            availableWidth: 100,
+            minimumScale: 0.68
+        )
+
         return ZStack(alignment: .topLeading) {
             ForEach(Array(names.enumerated()), id: \.element) { idx, name in
                 let styleIdx = displayedNames.firstIndex(of: name) ?? idx
                 let color = colorForOutcome(name: name, index: styleIdx)
-                let current = servedOutcomes.first { $0.name == name }
-                let label = Self.currentEndLabel192A(name: name, outcome: current)
-                Text(label)
-                    .font(.system(size: 10.5, weight: .bold).monospacedDigit())
+                Text(labels[idx])
+                    .font(.system(size: sharedLabelFontSize, weight: .bold).monospacedDigit())
                     .foregroundStyle(color)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.68)
+                    .minimumScaleFactor(0.9)
                     .allowsTightening(true)
                     .frame(width: 102, alignment: .leading)
                     .position(x: 52, y: yPositions[idx])

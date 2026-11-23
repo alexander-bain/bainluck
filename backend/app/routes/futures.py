@@ -4770,22 +4770,6 @@ async def _withheld_price_outcome_ids(
     return ids
 
 
-@router.get("/cross-source-timeline")
-async def get_cross_source_timeline_route(
-    canonical_key: str = Query(..., description="Canonical market key"),
-    top: int = Query(10, ge=1, le=50, description="Number of top outcomes to show"),
-    hours: int = Query(168, ge=1, le=8760, description="Hours of history"),
-    db: AsyncSession = Depends(get_db),
-):
-    """Register static ``/cross-source-timeline`` ahead of ``/{market_id}`` (#13426)."""
-    return await get_cross_source_timeline(
-        canonical_key=canonical_key,
-        top=top,
-        hours=hours,
-        db=db,
-    )
-
-
 @router.get("/{market_id}")
 async def get_futures_market_cached(
     market_id: int,
@@ -8269,6 +8253,7 @@ async def get_probability_timeline(
     )
 
 
+@router.get("/cross-source-timeline")
 async def get_cross_source_timeline(
     canonical_key: str = Query(..., description="Canonical market key"),
     top: int = Query(10, ge=1, le=50, description="Number of top outcomes to show"),
