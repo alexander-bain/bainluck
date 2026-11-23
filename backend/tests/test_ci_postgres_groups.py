@@ -27,6 +27,8 @@ TAIL_PROVISIONER = "#10703 shared tail — provision pg_trgm on the fresh databa
 # below is read without it.
 RETRY_PLUGIN = "#55-A shared tail — provision the pinned retry-once plugin"
 MIDDLE_PROVISIONER = "#10717 shared middle — provision pg_trgm on the fresh database"
+SECOND_MIDDLE_PROVISIONER = MIDDLE_PROVISIONER.replace("shared middle ", "shared middle 2 ")
+SECOND_MIDDLE_BOUNDARY = "#6073 the re-date declines a row that moved under it (real Postgres)"
 MIDDLE_FIRST_GATE = "#8466 a Polymarket leg resolves on its own date, and a re-ingest repairs it (real Postgres)"
 TAIL_FIRST_GATE = "#2927 container assembly writes and re-writes (real Postgres)"
 OFFLOADED_FIRST = "#10024 'dodgers world series' reaches the World Series board, not No results (real Postgres)"
@@ -37,7 +39,8 @@ def _offloaded_suffix(worker):
     """The one reviewed reset boundary, never an arbitrary regrouping exception."""
     chain = [s for s in worker["steps"] if s.get("if") in (
         "matrix.group == 'shared'", "matrix.group == 'shared-middle'",
-        "matrix.group == 'shared-tail'", "matrix.group == 'shared-suffix'",
+        "matrix.group == 'shared-middle-2'", "matrix.group == 'shared-tail'",
+        "matrix.group == 'shared-suffix'",
     )]
     names = [s["name"] for s in chain]
     first, last = names.index(OFFLOADED_FIRST), names.index(OFFLOADED_LAST)
@@ -82,14 +85,14 @@ def _validate_fresh_tail(worker, fixture_source):
     assert [step["name"] for step in tail[:2]] == [TAIL_PROVISIONER, TAIL_FIRST_GATE]
     original_shared = [
         step["name"] for step in worker["steps"]
-        if step.get("if") in ("matrix.group == 'shared'", "matrix.group == 'shared-middle'", "matrix.group == 'shared-tail'")
-        and step.get("name") not in (TAIL_PROVISIONER, MIDDLE_PROVISIONER, RETRY_PLUGIN)
+        if step.get("if") in ("matrix.group == 'shared'", "matrix.group == 'shared-middle'", "matrix.group == 'shared-middle-2'", "matrix.group == 'shared-tail'")
+        and step.get("name") not in (TAIL_PROVISIONER, MIDDLE_PROVISIONER, SECOND_MIDDLE_PROVISIONER, RETRY_PLUGIN)
         and step.get("name") not in offloaded
     ]
     prefix = [
         step["name"] for step in worker["steps"]
-        if step.get("if") in ("matrix.group == 'shared'", "matrix.group == 'shared-middle'")
-        and step.get("name") != MIDDLE_PROVISIONER
+        if step.get("if") in ("matrix.group == 'shared'", "matrix.group == 'shared-middle'", "matrix.group == 'shared-middle-2'")
+        and step.get("name") not in (MIDDLE_PROVISIONER, SECOND_MIDDLE_PROVISIONER)
         and step.get("name") not in offloaded
     ]
     boundary = original_shared.index(TAIL_FIRST_GATE)
@@ -332,7 +335,7 @@ def test_common_setup_services_and_intentional_scope_skip():
     # #10708: skipped on a pure-ios/ PR too; native-backend-readers covers it.
     assert worker["if"] == "needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true'"
     assert worker["strategy"]["fail-fast"] is False
-    assert worker["strategy"]["matrix"]["group"] == ["shared", "shared-middle", "shared-tail", "isolated", "shared-suffix"]
+    assert worker["strategy"]["matrix"]["group"] == ["shared", "shared-middle", "shared-middle-2", "shared-tail", "isolated", "shared-suffix", "shared-tail-2"]
     assert worker["services"]["postgres"]["image"] == "postgres:15"
     assert worker["services"]["postgres"]["env"]["POSTGRES_DB"] == "bl_searchtest"
     assert worker["services"]["redis"]["ports"] == ["56379:6379"]
@@ -440,9 +443,13 @@ def test_required_aggregate_runs_after_failure_and_deploy_still_depends_on_it():
     jobs, _ = _inputs()
     aggregate = jobs["search-recall"]
     assert "strategy" not in aggregate and "name" not in aggregate
-    assert aggregate["needs"] == ["change-scope", "database-integration"]
+    assert aggregate["needs"] == ["change-scope", "database-integration", "backend-tests"]
     assert aggregate["if"] == "${{ !cancelled() && !contains(github.event.pull_request.labels.*.name, 'eval-candidate') && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' }}"
-    assert "search-recall" in jobs["deploy"]["needs"]
+    # Fable, Wed Nov 18: deploy depends on every integration group directly (a matrix
+    # need is met only when all groups succeed) and no longer waits on search-recall's runner.
+    assert "database-integration" in jobs["deploy"]["needs"]
+    assert "search-recall" not in jobs["deploy"]["needs"]
+    assert "needs.database-integration.result == 'success'" in jobs["deploy"]["if"]
     assert "continue-on-error" not in aggregate
     assert "continue-on-error" not in jobs["database-integration"]
     step = aggregate["steps"][0]
@@ -469,10 +476,10 @@ def test_actual_aggregate_command_only_accepts_completed_success(scope_result, i
 def _validate_fresh_middle(worker, fixture_source):
     offloaded = _offloaded_suffix(worker)
     chain = [s for s in worker["steps"]
-             if s.get("if") in ("matrix.group == 'shared'", "matrix.group == 'shared-middle'")
-             and s.get("name") != MIDDLE_PROVISIONER and s.get("name") not in offloaded]
+             if s.get("if") in ("matrix.group == 'shared'", "matrix.group == 'shared-middle'", "matrix.group == 'shared-middle-2'")
+             and s.get("name") not in (MIDDLE_PROVISIONER, SECOND_MIDDLE_PROVISIONER) and s.get("name") not in offloaded]
     prefix = [s["name"] for s in worker["steps"] if s.get("if") == "matrix.group == 'shared'" and s.get("name") not in offloaded]
-    middle = [s for s in worker["steps"] if s.get("if") == "matrix.group == 'shared-middle'"]
+    middle = [s for s in worker["steps"] if s.get("if") in ("matrix.group == 'shared-middle'", "matrix.group == 'shared-middle-2'") and s.get("name") != SECOND_MIDDLE_PROVISIONER]
     boundary = next(i for i, s in enumerate(chain) if s["name"] == MIDDLE_FIRST_GATE)
     assert prefix == [s["name"] for s in chain[:boundary]]
     assert [s["name"] for s in middle[:2]] == [MIDDLE_PROVISIONER, MIDDLE_FIRST_GATE]
@@ -590,3 +597,162 @@ def test_receipt_values_are_environment_data_never_interpolated_shell():
             "REUSE_HEAD": "${{ needs.change-scope.outputs.reuse_head }}",
             "REUSE_BASE": "${{ needs.change-scope.outputs.reuse_base }}",
         }
+
+
+# Fable, Wed Nov 18: shared-tail took 20-24 minutes, 3-6 more than any backend shard,
+# so it splits in two at a full schema reset. Everything from #4586 on runs on its own
+# runner, in the same order, after the same pg_trgm provisioning and 55-A plugin.
+SECOND_TAIL_BOUNDARY = "#4586 restore compare-and-swap (real Postgres)"
+SECOND_TAIL_PLUGIN = RETRY_PLUGIN.replace("shared tail ", "shared tail 2 ")
+SECOND_TAIL_PROVISIONER = TAIL_PROVISIONER.replace("shared tail ", "shared tail 2 ")
+SECOND_TAIL_UPLOAD = "#12252 shared tail 2 — upload this attempt's 55-A retries for the flake sentinel"
+
+
+def _second_tail_fixture_source():
+    return (ROOT / "backend/tests/integration/test_restore_4586_manifest_cas_pg.py").read_text()
+
+
+def _validate_second_tail(worker, fixture_source):
+    steps = worker["steps"]
+    names = [s.get("name") for s in steps]
+    first = [s for s in steps if s.get("if") == "matrix.group == 'shared-tail'"]
+    second = [s for s in steps if s.get("if") == "matrix.group == 'shared-tail-2'"]
+    assert [s["name"] for s in second[:3]] == [SECOND_TAIL_PLUGIN, SECOND_TAIL_PROVISIONER, SECOND_TAIL_BOUNDARY]
+    assert second[-1]["name"] == SECOND_TAIL_UPLOAD
+    # The same plugin bytes and the same provisioner as the first tail runner.
+    assert second[0]["run"] == next(s for s in first if s["name"] == RETRY_PLUGIN)["run"]
+    assert second[1]["run"] == next(s for s in first if s["name"] == TAIL_PROVISIONER)["run"]
+    _validate_tail_provisioner(second[1])
+    # One chain cut in two: every test step of the second runner comes after every test step
+    # of the first, in the original file order, so neither runner's order changed.
+    setup = {RETRY_PLUGIN, TAIL_PROVISIONER, SECOND_TAIL_PLUGIN, SECOND_TAIL_PROVISIONER, SECOND_TAIL_UPLOAD,
+             "#12252 shared tail — upload this attempt's 55-A retries for the flake sentinel"}
+
+    def tests(group_steps):
+        return [names.index(s["name"]) for s in group_steps if s["name"] not in setup]
+    a, b = tests(first), tests(second)
+    assert a and b and max(a) < min(b)
+    assert names[min(b)] == SECOND_TAIL_BOUNDARY
+    # Nothing between the two halves belongs to the tail chain at all.
+    between = [s for s in steps[max(a) + 1:min(b)] if "shared-tail" in str(s.get("if"))]
+    assert [s["name"] for s in between] == [SECOND_TAIL_PLUGIN, SECOND_TAIL_PROVISIONER]
+    assert "tests/integration/test_restore_4586_manifest_cas_pg.py" in second[2]["run"]
+    # The boundary file starts each test from the full registered schema: it registers every
+    # model, drops the two backup tables that are not in Base.metadata, then drop_all and
+    # create_all (no table subset) before the test gets the engine.
+    tree = ast.parse(fixture_source)
+    fixture = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == "pg_engine")
+    register = next(n.lineno for n in ast.walk(fixture) if isinstance(n, ast.Import)
+                    and any(a.name == "app.models.models" for a in n.names))
+    resets = {ast.unparse(n.args[0]): n for n in ast.walk(fixture) if isinstance(n, ast.Call)
+              and ast.unparse(n.func).endswith("run_sync") and n.args}
+    drop, create = resets["Base.metadata.drop_all"], resets["Base.metadata.create_all"]
+    assert not drop.keywords and not create.keywords and len(drop.args) == len(create.args) == 1
+    yielded = next(n.lineno for n in ast.walk(fixture) if isinstance(n, ast.Yield))
+    assert register < drop.lineno < create.lineno < yielded
+    engine = next(n for n in ast.walk(fixture) if isinstance(n, ast.Call)
+                  and ast.unparse(n.func) == "create_async_engine")
+    assert ast.unparse(engine.args[0]) == "DB_URL"
+    assert 'os.environ.get("SEARCH_TEST_DATABASE_URL")' in fixture_source
+
+
+def test_the_second_tail_runner_starts_at_a_full_reset_and_keeps_the_chain_order():
+    jobs, _ = _inputs()
+    _validate_second_tail(jobs["database-integration"], _second_tail_fixture_source())
+
+
+@pytest.mark.parametrize("mutation", ["early_step_moved", "late_step_back", "no_provisioner", "no_plugin",
+                                     "different_plugin", "missing_reset", "limited_create", "reset_after_yield",
+                                     "missing_registration", "boundary_moved"])
+def test_the_second_tail_boundary_refuses_unsafe_assignment_or_fixture(mutation):
+    jobs, _ = _inputs()
+    worker = jobs["database-integration"]
+    source = _second_tail_fixture_source()
+    steps = worker["steps"]
+    by = {s.get("name"): s for s in steps}
+    if mutation == "early_step_moved":    # a step before the reset joins the second runner
+        by["#4482 a task's query budget survives the pool (real Postgres)"]["if"] = "matrix.group == 'shared-tail-2'"
+    elif mutation == "late_step_back":    # a step after the reset stays on the first runner
+        by["#678 account deletion actually deletes (real Postgres)"]["if"] = "matrix.group == 'shared-tail'"
+    elif mutation == "no_provisioner":
+        worker["steps"] = [s for s in steps if s.get("name") != SECOND_TAIL_PROVISIONER]
+    elif mutation == "no_plugin":
+        worker["steps"] = [s for s in steps if s.get("name") != SECOND_TAIL_PLUGIN]
+    elif mutation == "different_plugin":
+        by[SECOND_TAIL_PLUGIN]["run"] = by[SECOND_TAIL_PLUGIN]["run"].replace("16.7", "16.8")
+    elif mutation == "missing_reset":
+        source = source.replace("await conn.run_sync(Base.metadata.drop_all)", "pass")
+    elif mutation == "limited_create":
+        source = source.replace("conn.run_sync(Base.metadata.create_all)",
+                                "conn.run_sync(Base.metadata.create_all, tables=[])")
+    elif mutation == "reset_after_yield":
+        source = source.replace("    yield engine\n", "    yield engine\n    async with engine.begin() as conn:\n"
+                                "        await conn.run_sync(Base.metadata.drop_all)\n", 1)
+        source = source.replace("        await conn.run_sync(Base.metadata.drop_all)\n        await conn.run_sync"
+                                "(Base.metadata.create_all)\n", "        await conn.run_sync(Base.metadata.create_all)\n", 1)
+    elif mutation == "missing_registration":
+        source = source.replace("import app.models.models", "import os")
+    else:                                  # the second runner starts one step later
+        by[SECOND_TAIL_BOUNDARY]["if"] = "matrix.group == 'shared-tail'"
+    with pytest.raises((AssertionError, KeyError, StopIteration, ValueError)):
+        _validate_second_tail(worker, source)
+
+
+def _second_middle_fixture_source():
+    return (ROOT / "backend/tests/integration/test_polymarket_redate_atomicity_6073_pg.py").read_text()
+
+
+def _validate_second_middle(worker, fixture_source):
+    steps = worker["steps"]
+    names = [s.get("name") for s in steps]
+    first = [s for s in steps if s.get("if") == "matrix.group == 'shared-middle'"]
+    second = [s for s in steps if s.get("if") == "matrix.group == 'shared-middle-2'"]
+    assert [s["name"] for s in second[:2]] == [SECOND_MIDDLE_PROVISIONER, SECOND_MIDDLE_BOUNDARY]
+    assert second[0]["run"] == next(s for s in first if s["name"] == MIDDLE_PROVISIONER)["run"]
+    _validate_tail_provisioner(second[0])
+    setup = {MIDDLE_PROVISIONER, SECOND_MIDDLE_PROVISIONER}
+    a = [names.index(s["name"]) for s in first if s["name"] not in setup]
+    b = [names.index(s["name"]) for s in second if s["name"] not in setup]
+    assert a and b and max(a) < min(b)
+    assert names[min(b)] == SECOND_MIDDLE_BOUNDARY
+    between = [s for s in steps[max(a) + 1:min(b)] if "shared-middle" in str(s.get("if"))]
+    assert [s["name"] for s in between] == [SECOND_MIDDLE_PROVISIONER]
+    assert "tests/integration/test_polymarket_redate_atomicity_6073_pg.py" in second[1]["run"]
+    tree = ast.parse(fixture_source)
+    fixture = next(n for n in tree.body if isinstance(n, ast.AsyncFunctionDef) and n.name == "pg_engine")
+    register = next(n.lineno for n in ast.walk(fixture) if isinstance(n, ast.Import)
+                    and any(a.name == "app.models.models" for a in n.names))
+    resets = {ast.unparse(n.args[0]): n for n in ast.walk(fixture) if isinstance(n, ast.Call)
+              and ast.unparse(n.func).endswith("run_sync") and n.args}
+    drop, create = resets["Base.metadata.drop_all"], resets["Base.metadata.create_all"]
+    assert not drop.keywords and not create.keywords and len(drop.args) == len(create.args) == 1
+    yielded = next(n.lineno for n in ast.walk(fixture) if isinstance(n, ast.Yield))
+    assert register < drop.lineno < create.lineno < yielded
+    engine = next(n for n in ast.walk(fixture) if isinstance(n, ast.Call)
+                  and ast.unparse(n.func) == "create_async_engine")
+    assert ast.unparse(engine.args[0]) == "DB_URL"
+    assert 'os.environ.get("SEARCH_TEST_DATABASE_URL")' in fixture_source
+
+
+def test_the_second_middle_runner_starts_at_a_full_reset_and_keeps_the_chain_order():
+    jobs, _ = _inputs()
+    _validate_second_middle(jobs["database-integration"], _second_middle_fixture_source())
+
+
+@pytest.mark.parametrize("mutation", ["early_step_moved", "no_provisioner", "missing_reset", "boundary_moved"])
+def test_the_second_middle_boundary_refuses_unsafe_assignment_or_fixture(mutation):
+    jobs, _ = _inputs()
+    worker = jobs["database-integration"]
+    source = _second_middle_fixture_source()
+    steps = worker["steps"]
+    by = {s.get("name"): s for s in steps}
+    if mutation == "early_step_moved":
+        by["#5789 the #5621 repair cannot select a real game (real Postgres)"]["if"] = "matrix.group == 'shared-middle-2'"
+    elif mutation == "no_provisioner":
+        worker["steps"] = [s for s in steps if s.get("name") != SECOND_MIDDLE_PROVISIONER]
+    elif mutation == "missing_reset":
+        source = source.replace("await conn.run_sync(Base.metadata.drop_all)", "pass")
+    else:
+        by[SECOND_MIDDLE_BOUNDARY]["if"] = "matrix.group == 'shared-middle'"
+    with pytest.raises((AssertionError, KeyError, StopIteration, ValueError)):
+        _validate_second_middle(worker, source)

@@ -154,6 +154,36 @@ async def api_health_check():
     status = "ok" if (db_ok and redis_ok) else "degraded"
     code = 200 if (db_ok or redis_ok) else 503
 
+    roundup_reads_10m = None
+    try:
+        from app.utils.roundup_containers import get_roundup_read_failure_stats_10m
+
+        roundup_reads_10m = get_roundup_read_failure_stats_10m()
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).debug(
+            "api_health_check: roundup_reads_10m unavailable", exc_info=True
+        )
+        roundup_reads_10m = None
+
+    discover_publication_reads = None
+    try:
+        from app.utils.feed_collections import get_fingerprint_cache_status
+        from app.utils.theme_collection_ref import get_published_themes_cache_status
+
+        discover_publication_reads = {
+            "collections_fingerprint": get_fingerprint_cache_status(),
+            "published_themes": get_published_themes_cache_status(),
+        }
+    except Exception:
+        import logging
+
+        logging.getLogger(__name__).debug(
+            "api_health_check: discover_publication_reads unavailable", exc_info=True
+        )
+        discover_publication_reads = None
+
     from fastapi.responses import JSONResponse
     return JSONResponse(
         status_code=code,
@@ -169,6 +199,11 @@ async def api_health_check():
                 "error": redis_error,
                 "elapsed_ms": redis_elapsed_ms,
             },
+            # #13146: rolling 10-minute count of failed Discover round-up reads
+            # on this web process (pure in-memory, 0 I/O), split into kept vs
+            # last-resort drops so any lane can watch one number on /api/health.
+            "roundup_reads_10m": roundup_reads_10m,
+            "discover_publication_reads": discover_publication_reads,
             "commit": GIT_COMMIT,
             "uptime_seconds": int(time.time() - _PROCESS_START),
             "dyno": DYNO,

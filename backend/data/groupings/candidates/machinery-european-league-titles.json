@@ -1,0 +1,45 @@
+{
+  "slug": "machinery-european-league-titles",
+  "stage": "public",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_window",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "SPORTS · EUROPEAN SOCCER",
+  "name": "European League Titles",
+  "category": "soccer",
+  "tag": "SOCCER",
+  "section_title": "Domestic Title Favorites",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "card_rows": 3,
+    "card_section_key": "european_league_titles",
+    "suppress_card_photo": true,
+    "sections": [
+      {
+        "key": "european_league_titles",
+        "title": "Domestic Title Favorites",
+        "item_noun": "leagues",
+        "note": "Title favorites across the Premier League, La Liga, Serie A, Bundesliga, and Ligue 1.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch7-european-league-titles",
+          "shape": "field",
+          "order_by": "lead_prob_desc",
+          "min_items": 4,
+          "max_items": 5,
+          "max_outcomes": 3,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}

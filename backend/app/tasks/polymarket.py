@@ -34,6 +34,7 @@ from app.utils.content_understanding import (  # CU-1 clause (2), #5273
 from app.utils.price_change_stamp import price_changed_at_value  # #2024
 from app.utils.polymarket_evidence import PMEvidence  # #1870
 from app.utils.polymarket_quote import current_polymarket_quote, quoted_price_change
+from app.utils.polymarket_settlement_scan import venue_terminal_leg_result
 from app.utils.settled_price import (  # #5246 / #7767
     SETTLED_NO_PRICE,
     SETTLED_YES_PRICE,
@@ -6099,6 +6100,24 @@ def _parent_placeholder_legs(event, priced: list[dict]) -> list[dict]:
     return legs
 
 
+def polymarket_field_leg_resolved_no(event, market) -> bool:
+    """A resolved No in a still-open exclusive field belongs to settlement."""
+    if (
+        not event.neg_risk
+        or getattr(event, "closed", False) is True
+        or len(event.markets) <= 1
+        or getattr(market, "closed", False) is not True
+    ):
+        return False
+    return venue_terminal_leg_result(
+        {
+            "closed": market.closed,
+            "umaResolutionStatus": getattr(market, "uma_resolution_status", None),
+            "outcomePrices": market.outcome_prices,
+        }
+    ) is False
+
+
 def _unpriced_leg_external_ids(event) -> list[str]:
     """Condition ids the venue SERVED this pass but quotes no price for (#4000).
 
@@ -6146,7 +6165,7 @@ def _unpriced_leg_external_ids(event) -> list[str]:
 
     unpriced: list[str] = []
     for market in event.markets:
-        if not market.condition_id:
+        if not market.condition_id or polymarket_field_leg_resolved_no(event, market):
             continue
         if _resolve_market_probability(market) is not None:
             continue  # the venue is quoting; nothing to withdraw
@@ -6403,6 +6422,9 @@ def _parent_outcome_data(event) -> list[dict]:
 
     if event.neg_risk and len(event.markets) > 1:
         for market in event.markets:
+            # #13127: closed No legs can still return their pre-settlement trade.
+            if polymarket_field_leg_resolved_no(event, market):
+                continue
             prob = _resolve_market_probability(market)
             if prob is None or prob <= 0:
                 continue

@@ -1073,6 +1073,7 @@ def needs_unbacked_majority_evidence(
     yes_ask: Optional[float],
     *,
     in_exclusive_field: bool,
+    multi_selection_award: bool = False,
     volume_24h: Optional[int] = None,
     volume_24h_at: Optional[datetime] = None,
     last_seen_at: Optional[datetime] = None,
@@ -1086,14 +1087,14 @@ def needs_unbacked_majority_evidence(
     sole thing the full predicate adds, so this is stated as a delegation rather
     than a second copy of the rule.
 
-    All three volume arguments default to ``None`` — which
-    :func:`venue_reports_no_recent_trading` reads as "do not withhold" — so a
-    caller that has not been taught to pass them screens NOTHING IN rather than
-    screening everything in on an absent reading.
+    The rookie-award screen also sends stamped zero-volume rows to the
+    snapshot lookup when their volume is older than the displayed price.
+    The snapshot can then distinguish an unpriced reading from a reported
+    trade. Missing volume still screens nothing in.
     """
     if (source or "").strip().lower() != KALSHI_BOOKMAKER:
         return False
-    if not in_exclusive_field:
+    if not (in_exclusive_field or multi_selection_award):
         return False
     if row_carries_a_verdict(resolution_source):
         return False
@@ -1112,6 +1113,13 @@ def needs_unbacked_majority_evidence(
     # THE CLAIM ITSELF, and the only term that is not shared with the sibling arm.
     if float(probability) <= UNBID_CLAIM_CEILING:
         return False
+    if (
+        multi_selection_award
+        and volume_24h == VOLUME_MEANS_UNTRADED
+        and volume_24h_at is not None
+        and last_seen_at is not None
+    ):
+        return True
     return venue_reports_no_recent_trading(volume_24h, volume_24h_at, last_seen_at)
 
 
@@ -1125,6 +1133,7 @@ def price_is_an_unbacked_majority(
     *,
     has_trade_evidence: bool,
     in_exclusive_field: bool,
+    multi_selection_award: bool = False,
     volume_24h: Optional[int] = None,
     volume_24h_at: Optional[datetime] = None,
     last_seen_at: Optional[datetime] = None,
@@ -1214,6 +1223,13 @@ def price_is_an_unbacked_majority(
     (gotcha #144 / ruling 103), so an invented price becomes a forecast we are
     graded on. The leg keeps its name and loses its number.
 
+    Multi-selection basketball awards also withhold the unbid majority when
+    the newest stored Kalshi snapshot exists with no last price (#13017).
+    The stamped zero-volume reading may predate the price row in this case:
+    it is historical context, and the snapshot provides no trade to support
+    the current claim. A reported positive trade still requires row-current
+    zero volume. A missing snapshot leaves the price alone.
+
     SCOPED TO OPEN MARKETS BY ITS CALL SITE and to ungraded rows here: a settled
     board is a RESULT, and settled means settled.
     """
@@ -1224,6 +1240,7 @@ def price_is_an_unbacked_majority(
         yes_bid,
         yes_ask,
         in_exclusive_field=in_exclusive_field,
+        multi_selection_award=multi_selection_award,
         volume_24h=volume_24h,
         volume_24h_at=volume_24h_at,
         last_seen_at=last_seen_at,
@@ -1232,11 +1249,13 @@ def price_is_an_unbacked_majority(
     if not has_trade_evidence:
         return False
     if last_price is None:
-        return False
+        return multi_selection_award and volume_24h == VOLUME_MEANS_UNTRADED
     # A trade is what rule 2's exemption is protecting, so this arm only fires
     # where there IS one. A zero is "never traded" — already #6846's arm — and a
     # leg with no trade at all never reached the exemption in the first place.
-    return float(last_price) > 0
+    return float(last_price) > 0 and venue_reports_no_recent_trading(
+        volume_24h, volume_24h_at, last_seen_at
+    )
 
 
 def leg_has_no_live_support(

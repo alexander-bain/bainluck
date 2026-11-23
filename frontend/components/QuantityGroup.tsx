@@ -222,7 +222,7 @@ export default function QuantityGroup({
   // "18 pts" exactly — would print "▲0 pts" for every move under half a point
   // that the gate admits.
   const movementBadgeText = (movement: number | null | undefined): string =>
-    `${(movement ?? 0) > 0 ? "▲" : "▼"}${formatMovementPoints(movement)} pts`;
+    `${(movement ?? 0) > 0 ? "▲" : "▼"}${formatMovementPoints(movement)} points`;
   // #2437 — a rung that STATES a verdict never advertises a live move (#6488's
   // rule: a settled market never reads like an ongoing question). The slot is
   // measured over ungraded rungs only, and the badge below is gated the same way.

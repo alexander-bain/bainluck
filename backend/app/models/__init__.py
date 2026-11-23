@@ -33,6 +33,7 @@ from app.models.models import (
     SettlementCapture,
     EventProviderAnchor,
     MarketMatchReceipt,
+    RetiredTeamRedirect,
 )
 
 from app.models.activitykit import ActivityKitRegistration
@@ -50,6 +51,7 @@ __all__ = [
     "SettlementCapture",
     "EventProviderAnchor",
     "MarketMatchReceipt",
+    "RetiredTeamRedirect",
     "Team",
     "Event",
     "OddsSnapshot",

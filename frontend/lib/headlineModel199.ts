@@ -82,6 +82,7 @@ export interface HeadlineModel199 {
   rows: HeadlineCompetitorRow199[];
   bottomBar: HeadlineBottomBar199 | null;
   livePregameSummary: HeadlineLivePregameSummary199 | null;
+  scoreUnavailableNotice?: string | null;
   colors: {
     away: string;
     home: string;

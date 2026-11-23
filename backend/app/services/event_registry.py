@@ -608,10 +608,22 @@ async def find_or_create_event(
             if not identity.claim.schedule_derived:
                 tags.append(_TAG_UNANCHORED)
 
+            from app.utils.event_team_linking import resolve_team_ids_for_new_event
+
+            home_team_id, away_team_id = await resolve_team_ids_for_new_event(
+                session,
+                sport_id=sport_id,
+                home_team_name=identity.home_team_name,
+                away_team_name=identity.away_team_name,
+                source=f"event_registry:{identity.claim.source}",
+            )
+
             event = Event(
                 sport_id=sport_id,
                 home_team_name=identity.home_team_name,
                 away_team_name=identity.away_team_name,
+                home_team_id=home_team_id,
+                away_team_id=away_team_id,
                 commence_time=identity.commence_time,
                 commence_time_source=identity.commence_time_source or identity.claim.source,
                 status=status,

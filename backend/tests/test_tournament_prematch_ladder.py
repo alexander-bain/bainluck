@@ -62,6 +62,9 @@ def test_kalshi_wins_even_when_polymarket_is_written_first():
 
     assert resolved["source"] == "kalshi"
     assert round(resolved["probabilities"][PAIR[0]], 3) == 0.55
+    assert resolved["marks"][PAIR[0]]["sources"][0]["key"] == "kalshi"
+    assert resolved["marks"][PAIR[0]]["sources"][0]["probability"] == 0.55
+    assert "method" not in resolved["marks"][PAIR[0]]
 
 
 def test_polymarket_is_used_when_kalshi_prices_incoherently():

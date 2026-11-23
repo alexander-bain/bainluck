@@ -258,7 +258,11 @@ export default function EventCard({
   // event page reads too before kickoff, so the card's projected final and the
   // hero's are one pair. #2920: rounded and tie-gated in `cardProjectedFinal`,
   // the way the hero rounds and gates it.
-  const projectedScore = cardProjectedFinal(odds, event.sport);
+  const legacyChance = {
+    home: event.hero_probability ?? odds?.home_probability ?? null,
+    away: event.hero_probability_away ?? odds?.away_probability ?? null,
+  };
+  const projectedScore = cardProjectedFinal(odds, event.sport, legacyChance);
 
   // UX-P166 — the live footer's "Opened 62/38" prints both sides of one question
   // in fixed positions, which makes it a duel. Rounding the two independently
@@ -647,10 +651,16 @@ export default function EventCard({
   // never shown live: on a search row it can be the pregame reading.
   const liveProjectedScore =
     isLive && !isFinished && !isSuspended
-      ? liveCardProjectedFinal(odds, event.sport, event.commence_time, {
-          home: event.home_score,
-          away: event.away_score,
-        })
+      ? liveCardProjectedFinal(
+          odds,
+          event.sport,
+          event.commence_time,
+          {
+            home: event.home_score,
+            away: event.away_score,
+          },
+          legacyChance,
+        )
       : null;
   const bandScore = showProjectedFinal ? projectedScore : liveProjectedScore;
   // #11296 — and on a final, the sportsbooks' last pair before the scheduled

@@ -195,11 +195,19 @@ async def test_snapshot_path_withholds_the_fabricated_away_on_soccer():
         "key's presence must be able to tell 'withheld' from 'this payload "
         "shape is older than the field'"
     )
-    assert odds["away_probability"] is None, (
-        f"served {odds['away_probability']} — the books in this same payload "
-        f"price the away side at {JUVENTUS_BOOKS_AWAY}"
+    assert odds["away_probability"] == pytest.approx(JUVENTUS_BOOKS_AWAY, abs=1e-4), (
+        "#13131: when books carry a real three-way away price, serve it rather than "
+        f"the fabricated complement ({JUVENTUS_FABRICATED_AWAY}) or None"
     )
-    assert odds["away_rendered_percent"] is None
+    assert odds["draw_probability"] == pytest.approx(
+        1.0 - JUVENTUS_HOME - JUVENTUS_BOOKS_AWAY, abs=1e-4
+    )
+    assert (
+        odds["home_rendered_percent"]
+        + odds["draw_rendered_percent"]
+        + odds["away_rendered_percent"]
+        == 100
+    )
 
 
 @pytest.mark.asyncio
@@ -254,15 +262,21 @@ async def test_a_two_way_sport_keeps_its_away_number_and_its_hundred():
 
 @pytest.mark.asyncio
 async def test_the_no_snapshot_fallback_withholds_too():
-    """The arm with no book rows at all, so nothing else contradicts the lie."""
+    """#13131 / #13479: no-snapshot one-leg soccer withholds all three chance legs."""
     payload = await _payload(
         _event(sport_key=SOCCER, home_prob=JUVENTUS_HOME, event_id=6238005)
     )
     odds = payload["current_odds"]
     assert odds.get("source") == "aggregate", f"not the fallback branch: {odds}"
+    assert odds["home_probability"] is None
     assert odds["away_probability"] is None
+    assert odds["draw_probability"] is None
+    assert odds["home_rendered_percent"] is None
     assert odds["away_rendered_percent"] is None
-    assert odds["home_probability"] == pytest.approx(JUVENTUS_HOME)
+    assert odds["draw_rendered_percent"] is None
+    assert payload["hero_probability"] is None
+    assert payload["hero_probability_away"] is None
+    assert payload["hero_probability_draw"] is None
 
 
 @pytest.mark.asyncio
@@ -337,16 +351,19 @@ async def test_a_two_way_opening_pair_is_untouched():
 
 @pytest.mark.asyncio
 async def test_the_hero_away_is_withheld_on_a_live_soccer_match():
+    """#13131: with real three-way books, the hero serves all three legs (never
+    the fabricated complement); without three-way books, all three are withheld."""
     payload = await _payload(
         _event(sport_key=SOCCER, home_prob=JUVENTUS_HOME, event_id=6238011),
         snapshots=[_snapshot(JUVENTUS_HOME, JUVENTUS_BOOKS_AWAY)],
     )
     assert payload["hero_probability_source"] == "blend"
     assert payload["hero_probability"] == pytest.approx(JUVENTUS_HOME)
-    assert payload["hero_probability_away"] is None, (
-        "the hero carries its own copy of the same derivation "
-        f"({JUVENTUS_FABRICATED_AWAY} on the production specimen)"
+    assert payload["hero_probability_away"] == pytest.approx(JUVENTUS_BOOKS_AWAY, abs=1e-4)
+    assert payload["hero_probability_draw"] == pytest.approx(
+        1.0 - JUVENTUS_HOME - JUVENTUS_BOOKS_AWAY, abs=1e-4
     )
+    assert payload["hero_probability_away"] != pytest.approx(JUVENTUS_FABRICATED_AWAY, abs=1e-2)
 
 
 @pytest.mark.asyncio
@@ -381,8 +398,8 @@ async def test_a_settled_soccer_result_keeps_the_losing_side():
 
 @pytest.mark.asyncio
 async def test_a_settled_soccer_draw_keeps_both_halves():
-    """The case this issue is ABOUT, once it is over: 2-2 resolves 0.5/0.5 with
-    `result="draw"`, which is the one shape that tells a reader nobody won."""
+    """#13172 Option B: on a draw-priced sport (soccer), a settled 2-2 draw
+    resolves to draw=1.0 (100%), home=0.0 (0%), away=0.0 (0%) — never 50/50."""
     payload = await _payload(
         _event(
             sport_key=SOCCER,
@@ -395,9 +412,16 @@ async def test_a_settled_soccer_draw_keeps_both_halves():
         )
     )
     assert payload["hero_probability_source"] == "settled"
-    assert payload["hero_probability"] == pytest.approx(0.5)
-    assert payload["hero_probability_away"] == pytest.approx(0.5)
+    assert payload["hero_probability"] == pytest.approx(0.0)
+    assert payload["hero_probability_away"] == pytest.approx(0.0)
+    assert payload["hero_probability_draw"] == pytest.approx(1.0)
     assert payload["hero_settled_result"] == "draw"
+    assert payload["current_odds"]["home_probability"] == pytest.approx(0.0)
+    assert payload["current_odds"]["away_probability"] == pytest.approx(0.0)
+    assert payload["current_odds"]["draw_probability"] == pytest.approx(1.0)
+    assert payload["current_odds"]["home_rendered_percent"] == 0
+    assert payload["current_odds"]["away_rendered_percent"] == 0
+    assert payload["current_odds"]["draw_rendered_percent"] == 100
 
 
 # ── The rule itself ─────────────────────────────────────────────────────────

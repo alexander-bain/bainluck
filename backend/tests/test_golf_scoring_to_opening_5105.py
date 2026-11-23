@@ -87,7 +87,10 @@ def test_produced_tournament_seats_without_rewriting(
     assert card["headline"] == headline
     assert card["data"]["is_marquee"] is marquee
     assert card["data"]["is_major"] is source["is_major"]
-    assert card["data"]["golfers"] == source["golfers"]
+    assert card["data"]["golfers"] == [
+        {**golfer, "source_mark": {"state": "none", "sources": [], "reason": "source_evidence_incomplete"}}
+        for golfer in source["golfers"]
+    ]
     assert provenance == {"golf": "fresh"}
     assert source == original_source
 

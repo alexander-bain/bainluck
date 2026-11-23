@@ -220,6 +220,7 @@ enum DiscoverSingleGameCard190C {
         let showScheduledProjectedColumn: Bool = isScheduled && showsInlinePregame && scheduledProjection != nil
 
         let hasScore = (isLive || isFinished || isSuspended)
+            && event.scoreSourceUnavailable != true
             && (event.awayScore != nil || event.homeScore != nil)
 
         // Current reading (only when `canStillBeGraded` is true — #6010).

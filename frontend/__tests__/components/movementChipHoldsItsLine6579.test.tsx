@@ -48,7 +48,7 @@ describe("#6579 — the movement chip is the item that does NOT yield", () => {
   });
 
   test("the badge still says what it said — this is a container fix only", () => {
-    expect(html).toContain("7 pts");
+    expect(html).toContain("7 points");
     expect(html).toContain('aria-label="Down 7 points in the last 24h"');
   });
 

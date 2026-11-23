@@ -79,6 +79,14 @@ const EXEMPTIONS: Record<string, Exemption> = {
       return fs.existsSync(sibling) && fileHasAllHooks(fs.readFileSync(sibling, "utf8"));
     },
   },
+  "collections/[slug]/page.tsx": {
+    reason: "Server component (#13103); delegates all three hooks to CollectionPageClient.tsx.",
+    validate: (src, absPath) => {
+      if (!/CollectionPageClient/.test(src)) return false;
+      const sibling = path.join(path.dirname(absPath), "CollectionPageClient.tsx");
+      return fs.existsSync(sibling) && fileHasAllHooks(fs.readFileSync(sibling, "utf8"));
+    },
+  },
 };
 
 function findPageFiles(dir: string): string[] {

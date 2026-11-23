@@ -45,19 +45,30 @@ read the handful that could be this fixture.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, time, timedelta
-from typing import Any
+from datetime import datetime, time, timedelta, timezone
+from typing import Any, Sequence
 
-from sqlalchemy import and_, or_, select
-from sqlalchemy.orm import selectinload
+from sqlalchemy import String, and_, cast, or_, select
+from sqlalchemy.orm import contains_eager, selectinload
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.models.models import Event, Sport
+from app.utils.event_completion import RETIRED_STATUSES
 from app.utils.event_twin_fold import (
+    _REVERSED_SAME_DAY_ANCHORED_CLAIM_LEAGUES,
+    CROSS_BOARD_TWIN_KEYS,
+    FoldResult,
     _catchall_sport_prefix,
+    _group_is_id_anchored,
     cross_board_identity,
     fold_twin_events,
 )
 from app.utils.kalshi_occurrence_start import loaded_sport_key
+from app.utils.proven_duplicates import (
+    flip_probability_sources,
+    merge_probability_sources,
+    not_a_proven_duplicate,
+)
 from app.utils.sport_keys import league_identity
 
 logger = logging.getLogger(__name__)
@@ -78,13 +89,13 @@ def _sport_prefix(key: str) -> str:
     return _catchall_sport_prefix(key) or key.split("_", 1)[0]
 
 
-async def _foldable_sport_ids(db, sport_key: str) -> list[int]:
-    """Sport rows the fold could pair a row of ``sport_key`` with.
+async def _partition_foldable_sport_ids(db, sport_key: str) -> tuple[list[int], list[int]]:
+    """Return ``(foldable_sport_ids, own_league_sport_ids)`` for ``sport_key``.
 
-    The same league (season variants included, via `league_identity`), plus the
-    sport's `*_other` catch-all; a catch-all row itself can meet any league of
-    its sport (`_merge_catchall_leagues`). Plus the other board of a game listed
-    on two (`cross_board_identity`, #5774). The `sports` table is small.
+    ``foldable_sport_ids`` covers the same league (season variants via
+    ``league_identity``), its ``*_other`` catch-all, and cross-board siblings
+    (#5774). ``own_league_sport_ids`` keeps only exact same-league ids (never
+    ``*_other``) for same-UTC-day reversed claims (#13142).
     """
     prefix = _sport_prefix(sport_key)
     own_identity = league_identity(sport_key)
@@ -93,6 +104,7 @@ async def _foldable_sport_ids(db, sport_key: str) -> list[int]:
         await db.execute(select(Sport.id, Sport.key).where(Sport.key.like(f"{prefix}%")))
     ).all()
     ids = []
+    own_league_ids = []
     for sport_id, key in rows:
         if not key or _sport_prefix(key) != prefix:
             continue
@@ -104,18 +116,154 @@ async def _foldable_sport_ids(db, sport_key: str) -> list[int]:
             or cross_board_identity(sport_key) == league_identity(key)
         ):
             ids.append(sport_id)
+            # Standalone catch-all claims are refused by `_reversed_claim_league`,
+            # so excluded here to avoid loading hundreds of `basketball_other` rows.
+            if (
+                not own_is_catchall
+                and _catchall_sport_prefix(key) is None
+                and league_identity(key) == own_identity
+            ):
+                own_league_ids.append(sport_id)
+    return ids, own_league_ids
+
+
+async def _foldable_sport_ids(db, sport_key: str) -> list[int]:
+    """Sport rows the fold could pair a row of ``sport_key`` with.
+
+    The same league (season variants included, via `league_identity`), plus the
+    sport's `*_other` catch-all; a catch-all row itself can meet any league of
+    its sport (`_merge_catchall_leagues`). Plus the other board of a game listed
+    on two (`cross_board_identity`, #5774). The `sports` table is small.
+    """
+    ids, _own_league_ids = await _partition_foldable_sport_ids(db, sport_key)
     return ids
 
 
+def _utc_day_bounds(commence: datetime) -> tuple[datetime, datetime]:
+    """Return UTC ``[day_start, next_day_start)`` matching ``commence`` tz awareness."""
+    utc_commence = commence.astimezone(timezone.utc) if commence.tzinfo else commence
+    tz = timezone.utc if commence.tzinfo else None
+    day_start = datetime.combine(utc_commence.date(), time(0), tzinfo=tz)
+    return day_start, day_start + timedelta(days=1)
+
+
 def _commence_arms(commence: datetime) -> Any:
+    """Near-time commence windows for serve-time candidate selection."""
     lo_pad, hi_pad = PAD_BAND
-    midnight = datetime.combine(commence.date(), time(0), tzinfo=commence.tzinfo)
+    day_start, _day_end = _utc_day_bounds(commence)
     return or_(
         Event.commence_time.between(commence - NEAR, commence + NEAR),
         Event.commence_time.between(commence + lo_pad, commence + hi_pad),
         Event.commence_time.between(commence - hi_pad, commence - lo_pad),
-        Event.commence_time == midnight,
+        Event.commence_time == day_start,
     )
+
+
+def _same_day_idless_claim_predicate(commence: datetime) -> Any:
+    """Select id-less own-league claim rows on ``commence``'s UTC calendar day (#13142)."""
+    day_start, day_end = _utc_day_bounds(commence)
+    return and_(
+        Event.commence_time >= day_start,
+        Event.commence_time < day_end,
+        Event.espn_id.is_(None),
+        Event.external_id.is_(None),
+        Event.statpal_fixture_id.is_(None),
+    )
+
+
+def _has_priced_signal_predicate() -> Any:
+    """Select rows carrying at least one probability source or opening line."""
+    return or_(
+        and_(
+            Event.win_probability_sources.isnot(None),
+            cast(Event.win_probability_sources, String) != "{}",
+            cast(Event.win_probability_sources, String) != "null",
+        ),
+        Event.opening_home_probability.isnot(None),
+        Event.opening_away_probability.isnot(None),
+    )
+
+
+def _extra_foldable_sport_keys(sport_key: str) -> list[str]:
+    """Pure-Python sibling/catch-all keys foldable into ``sport_key`` on list rails."""
+    keys: list[str] = []
+    catchall = f"{_sport_prefix(sport_key)}_other"
+    if catchall != sport_key:
+        keys.append(catchall)
+    own_id = league_identity(sport_key)
+    cb_target = cross_board_identity(sport_key)
+    for src_key, tgt_key in CROSS_BOARD_TWIN_KEYS.items():
+        if (src_key == sport_key or league_identity(src_key) == own_id) and tgt_key != sport_key and tgt_key not in keys:
+            keys.append(tgt_key)
+        if (
+            tgt_key == sport_key
+            or league_identity(tgt_key) == own_id
+            or (cb_target and league_identity(src_key) == cb_target)
+        ) and src_key != sport_key and src_key not in keys:
+            keys.append(src_key)
+    return keys
+
+
+def _coalesced_list_time_predicate(commence_times: list[datetime]) -> Any:
+    """Coalesce page ``[ct - PAD_BAND[1], ct + PAD_BAND[1]]`` arms + UTC midnights."""
+    aware = any(ct.tzinfo is not None for ct in commence_times)
+    norm = [
+        (ct if ct.tzinfo is not None else ct.replace(tzinfo=timezone.utc))
+        if aware
+        else ct
+        for ct in commence_times
+    ]
+    ivs = sorted((ct - PAD_BAND[1], ct + PAD_BAND[1]) for ct in norm)
+    merged: list[list[datetime]] = []
+    for lo, hi in ivs:
+        if not merged or lo > merged[-1][1]:
+            merged.append([lo, hi])
+        elif hi > merged[-1][1]:
+            merged[-1][1] = hi
+    if len(merged) > 12:
+        merged = [[min(norm) - PAD_BAND[1], max(norm) + PAD_BAND[1]]]
+    midnights = sorted({_utc_day_bounds(ct)[0] for ct in norm})
+    clauses: list[Any] = [Event.commence_time.between(lo, hi) for lo, hi in merged]
+    if midnights:
+        clauses.append(Event.commence_time.in_(midnights))
+    return or_(*clauses)
+
+
+async def _read_candidates(
+    db,
+    exclude_ids: int | Sequence[int],
+    sport_ids: list[int] | None,
+    time_predicate: Any,
+    *,
+    sport_keys: Sequence[str] | None = None,
+    extra_filters: Sequence[Any] = (),
+    limit: int = CANDIDATE_CAP,
+    order_by_id: bool = True,
+) -> list:
+    """Read up to ``limit`` untagged twin candidates matching ``time_predicate``."""
+    predicates: list[Any] = [time_predicate, not_a_proven_duplicate()]
+    if sport_keys is not None:
+        predicates.append(Sport.key.in_(list(sport_keys)))
+    elif sport_ids is not None:
+        predicates.append(Event.sport_id.in_(sport_ids))
+    if isinstance(exclude_ids, int):
+        predicates.append(Event.id != exclude_ids)
+    elif exclude_ids:
+        predicates.append(Event.id.notin_(list(exclude_ids)))
+    predicates.extend(extra_filters)
+
+    stmt = select(Event)
+    if sport_keys is not None:
+        stmt = stmt.join(Sport, Event.sport_id == Sport.id).options(
+            contains_eager(Event.sport)
+        )
+    else:
+        stmt = stmt.options(selectinload(Event.sport))
+    stmt = stmt.where(and_(*predicates))
+    if order_by_id:
+        stmt = stmt.order_by(Event.id)
+    stmt = stmt.limit(limit)
+    return list((await db.execute(stmt)).scalars().all())
 
 
 async def serve_fold_absorbed_rows(db, event) -> list:
@@ -132,7 +280,7 @@ async def serve_fold_absorbed_rows_with_completeness(db, event) -> tuple[list, b
     """``(rows, complete)``: the absorbed rows, and whether the fold ran whole.
 
     ``complete`` is False when the fold raised (the rows are then ``[]``, as
-    they always were) or the candidate read hit `CANDIDATE_CAP`, so a row past
+    they always were) or a candidate read hit `CANDIDATE_CAP`, so a row past
     the cap could be missing. A caller that CERTIFIES its membership
     (#10090 `history_fold_revision`) must not certify either; every other
     caller reads only the rows.
@@ -141,10 +289,11 @@ async def serve_fold_absorbed_rows_with_completeness(db, event) -> tuple[list, b
     a row whose sport is not in memory cannot be keyed by league and folds
     nothing, which is today's page.
 
-    The candidate read is not wrapped: it is two indexed statements, and a
-    failure there is the database failing (the reasoning `folded_event_ids`
-    gives, gotcha #53). The fold itself is pure and is wrapped — gotcha #42: a
-    fold that cannot run leaves the page exactly as it was.
+    The candidate read is not wrapped: it is two (or three for anchored
+    same-day-allowlisted pages) indexed statements, and a failure there is the
+    database failing (the reasoning `folded_event_ids` gives, gotcha #53). The
+    fold itself is pure and is wrapped — gotcha #42: a fold that cannot run
+    leaves the page exactly as it was.
     """
     sport_key = loaded_sport_key(event)
     commence = getattr(event, "commence_time", None)
@@ -153,30 +302,34 @@ async def serve_fold_absorbed_rows_with_completeness(db, event) -> tuple[list, b
     if not event.home_team_name or not event.away_team_name:
         return [], True
 
-    sport_ids = await _foldable_sport_ids(db, sport_key)
+    sport_ids, own_league_sport_ids = await _partition_foldable_sport_ids(db, sport_key)
     if not sport_ids:
         return [], True
-    candidates = list(
-        (
-            await db.execute(
-                select(Event)
-                .options(selectinload(Event.sport))
-                .where(
-                    and_(
-                        Event.id != event.id,
-                        Event.sport_id.in_(sport_ids),
-                        _commence_arms(commence),
-                    )
-                )
-                .order_by(Event.id)
-                .limit(CANDIDATE_CAP)
-            )
-        )
-        .scalars()
-        .all()
+    near_candidates = await _read_candidates(
+        db, event.id, sport_ids, _commence_arms(commence)
     )
-    if not candidates:
+    same_day_claims: list = []
+    if (
+        sport_key in _REVERSED_SAME_DAY_ANCHORED_CLAIM_LEAGUES
+        and own_league_sport_ids
+        and _group_is_id_anchored([event])
+    ):
+        same_day_claims = await _read_candidates(
+            db,
+            event.id,
+            own_league_sport_ids,
+            _same_day_idless_claim_predicate(commence),
+        )
+    if not near_candidates and not same_day_claims:
         return [], True
+
+    if same_day_claims:
+        seen_ids = {row.id for row in near_candidates}
+        candidates = list(near_candidates) + [
+            row for row in same_day_claims if row.id not in seen_ids
+        ]
+    else:
+        candidates = near_candidates
 
     try:
         fold = fold_twin_events([event, *candidates])
@@ -188,9 +341,188 @@ async def serve_fold_absorbed_rows_with_completeness(db, event) -> tuple[list, b
         loser_id for loser_id, survivor_id in fold.survivor_of.items()
         if survivor_id == event.id
     }
-    return (
-        sorted(
-            (row for row in candidates if row.id in absorbed), key=lambda row: row.id
-        ),
-        len(candidates) < CANDIDATE_CAP,
+    flipped_ids = set(getattr(fold, "flipped_loser_ids", None) or ())
+    rows = sorted(
+        (row for row in candidates if row.id in absorbed), key=lambda row: row.id
     )
+    for row in rows:
+        if row.id in flipped_ids:
+            setattr(row, "_serve_fold_corner_flipped", True)
+    complete = (
+        len(near_candidates) < CANDIDATE_CAP
+        and len(same_day_claims) < CANDIDATE_CAP
+    )
+    return rows, complete
+
+
+def _keep_page_survivor(
+    page_events: list[Any],
+    page_ids: set[int],
+    inner: FoldResult,
+    *,
+    fold_fn=fold_twin_events,
+) -> FoldResult:
+    """Project an augmented ``fold_twin_events`` result back onto ``page_events``.
+
+    Guarantees two invariants required on single-sport list endpoints:
+    1. Only rows already present in ``page_events`` survive in ``events`` (an
+       unmatched or elected ``*_other`` row can NEVER leak onto a league list or
+       drop a league row that matched it).
+    2. Original list ordering of ``page_events`` is preserved, and orientation
+       gates (``flipped_loser_ids`` + ``flip_probability_sources``) stay intact
+       when a twin is absorbed in either direction.
+    """
+    orig_index = {id(e): i for i, e in enumerate(page_events)}
+    page_by_id = {int(e.id): e for e in page_events if getattr(e, "id", None) is not None}
+    losers_by_surv: dict[int, list[int]] = {}
+    for lid, sid in inner.survivor_of.items():
+        losers_by_surv.setdefault(sid, []).append(lid)
+
+    kept_events: list[Any] = []
+    merged_sources: dict[int, dict] = {}
+    merged_opening: dict[int, tuple] = {}
+    survivor_of: dict[int, int] = {}
+    dropped_ids: list[int] = []
+    flipped_loser_ids: set[int] = set()
+
+    for surv in inner.events:
+        sid = getattr(surv, "id", None)
+        if sid in page_ids:
+            kept_events.append(surv)
+            if sid in inner.merged_sources:
+                merged_sources[sid] = inner.merged_sources[sid]
+            if sid in inner.merged_opening:
+                merged_opening[sid] = inner.merged_opening[sid]
+            for lid in losers_by_surv.get(sid, ()):
+                survivor_of[lid] = sid
+                dropped_ids.append(lid)
+                if lid in inner.flipped_loser_ids:
+                    flipped_loser_ids.add(lid)
+            continue
+
+        # An extra candidate (e.g., `*_other` row) outscored its page twin in
+        # `_elect`. Retain the page row so the single-sport list never swaps in
+        # a catch-all row, while still absorbing the twin's sources & IDs.
+        cluster_losers = losers_by_surv.get(sid, ())
+        page_losers = [lid for lid in cluster_losers if lid in page_ids]
+        if not page_losers:
+            continue
+        if len(page_losers) == 1:
+            kept_ev = page_by_id[page_losers[0]]
+        else:
+            kept_ev = fold_fn([page_by_id[pid] for pid in page_losers]).events[0]
+        kept_events.append(kept_ev)
+
+        surv_is_flipped_vs_kept = kept_ev.id in inner.flipped_loser_ids
+        raw_surv_sources = (
+            inner.merged_sources.get(sid)
+            if sid in inner.merged_sources
+            else getattr(surv, "win_probability_sources", None)
+        )
+        if raw_surv_sources:
+            if surv_is_flipped_vs_kept:
+                ok, oriented_bag = flip_probability_sources(raw_surv_sources)
+                oriented_bag = oriented_bag if ok else None
+            else:
+                oriented_bag = raw_surv_sources
+            if oriented_bag:
+                kept_own = getattr(kept_ev, "win_probability_sources", None)
+                combined = merge_probability_sources(
+                    kept_own,
+                    [(sid, oriented_bag)],
+                    event_status=getattr(kept_ev, "status", None),
+                )
+                if combined != dict(kept_own or {}):
+                    merged_sources[kept_ev.id] = combined
+
+        if (
+            not surv_is_flipped_vs_kept
+            and getattr(kept_ev, "opening_home_probability", None) is None
+            and getattr(kept_ev, "opening_away_probability", None) is None
+        ):
+            opening_pair = inner.merged_opening.get(sid) or (
+                getattr(surv, "opening_home_probability", None),
+                getattr(surv, "opening_away_probability", None),
+            )
+            if opening_pair[0] is not None and opening_pair[1] is not None:
+                if hasattr(kept_ev, "_sa_instance_state"):
+                    set_committed_value(kept_ev, "opening_home_probability", opening_pair[0])
+                    set_committed_value(kept_ev, "opening_away_probability", opening_pair[1])
+                else:
+                    kept_ev.opening_home_probability = opening_pair[0]
+                    kept_ev.opening_away_probability = opening_pair[1]
+                merged_opening[kept_ev.id] = (opening_pair[0], opening_pair[1])
+
+        other_ids = [sid, *[lid for lid in cluster_losers if lid != kept_ev.id]]
+        for other_id in other_ids:
+            survivor_of[other_id] = kept_ev.id
+            dropped_ids.append(other_id)
+            if (other_id in inner.flipped_loser_ids) != surv_is_flipped_vs_kept:
+                flipped_loser_ids.add(other_id)
+
+    kept_events.sort(key=lambda e: orig_index.get(id(e), 0))
+    return FoldResult(
+        events=kept_events,
+        merged_sources=merged_sources,
+        dropped_ids=dropped_ids,
+        survivor_of=survivor_of,
+        merged_opening=merged_opening,
+        flipped_loser_ids=flipped_loser_ids,
+    )
+
+
+async def fold_list_with_catchall_twins(
+    db: Any,
+    events: list[Any],
+    sport_key: str | None,
+    *,
+    fold_fn=fold_twin_events,
+) -> FoldResult:
+    """Fold ``events`` plus any unlinked catch-all / sibling twins on single-sport lists.
+
+    Matches :func:`serve_fold_absorbed_rows` for list endpoints: on a scoped
+    league query (e.g. ``?sport=soccer_efl_champ``), an untagged venue twin in
+    ``soccer_other`` or a cross-board sibling was excluded by the `Sport.key`
+    filter and therefore missed by in-page ``fold_twin_events``. Reads only the
+    catch-all / cross-board sport IDs inside the page's commence-time envelope
+    and folds them cleanly into ``events``.
+
+    Runs zero extra DB queries when ``sport_key`` is omitted, is already a
+    ``*_other`` catch-all key, or has no foldable sibling sport rows.
+    """
+    if not events or not sport_key or sport_key.endswith("_other"):
+        return fold_fn(events)
+
+    extra_keys = _extra_foldable_sport_keys(sport_key)
+    if not extra_keys:
+        return fold_fn(events)
+
+    commence_times = [
+        ct for e in events if isinstance((ct := getattr(e, "commence_time", None)), datetime)
+    ]
+    if not commence_times:
+        return fold_fn(events)
+
+    time_pred = _coalesced_list_time_predicate(commence_times)
+    page_ids = {int(e.id) for e in events if getattr(e, "id", None) is not None}
+    rows = await _read_candidates(
+        db,
+        sorted(page_ids),
+        None,
+        time_pred,
+        sport_keys=extra_keys,
+        extra_filters=(
+            Event.status.notin_(list(RETIRED_STATUSES)),
+            _has_priced_signal_predicate(),
+        ),
+        limit=CANDIDATE_CAP * 3,
+        order_by_id=False,
+    )
+    extra_candidates = [
+        r for r in rows if getattr(r, "id", None) is not None and int(r.id) not in page_ids
+    ]
+    if not extra_candidates:
+        return fold_fn(events)
+
+    inner = fold_fn(list(events) + extra_candidates)
+    return _keep_page_survivor(events, page_ids, inner, fold_fn=fold_fn)

@@ -19,6 +19,12 @@ on:
   schedule:
     - cron: "23 5 * * 1"  # Mondays 05:23 UTC
 
+# #13027 (251: A): cancel superseded PR and branch CodeQL runs so stacked
+# pushes stop burning parallel Ubuntu runners while the latest head runs intact.
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('codeql-pr-{0}', github.event.pull_request.number) || format('codeql-{0}', github.ref) }}
+  cancel-in-progress: true
+
 jobs:
   analyze:
     name: Analyze (${{ matrix.language }})

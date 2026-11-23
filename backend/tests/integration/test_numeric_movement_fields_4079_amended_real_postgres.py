@@ -539,12 +539,14 @@ async def _client():
 def _forget_process_caches():
     from app.routes import events as _ev
     from app.utils import candidate_base as _cb
+    from app.utils import futures_page_cache as _fpc
     from app.utils import request_cache as _rc
     from app.utils.principal_independent_cache import clear_shared_builds
 
     _rc._reset_last_good_for_tests()
     _rc._reset_inflight_for_tests()
     _cb._reset_l0_for_tests()
+    _fpc._reset_for_tests()
     clear_shared_builds()
     _ev._team_cache = {}
     _ev._team_cache_time = 0

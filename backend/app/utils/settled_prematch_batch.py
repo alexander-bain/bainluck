@@ -30,13 +30,12 @@ from typing import Any, Callable, Iterable, Mapping, Optional
 
 from sqlalchemy import text
 
-from app.utils.graded_card import rendered_duel_percents
 from app.utils.kalshi_occurrence_start import loaded_sport_key
 from app.utils.prematch_reading import (
     fetch_prematch_prior_rows,
     prematch_prior_binds,
     prematch_row_to_reading,
-    resolve_prematch_reading,
+    serialize_prematch_odds,
 )
 
 logger = logging.getLogger(__name__)
@@ -51,6 +50,7 @@ async def settled_prematch_odds_by_event(
     status_of: Optional[Callable[[Any], str]] = None,
     absorbed_ids: Optional[Mapping[int, Iterable[int]]] = None,
     timeout_ms: Optional[int] = None,
+    defer_missing_cache_writes: bool = False,
 ) -> dict[int, dict]:
     """``{event_id: prematch_odds}`` for every settled row the ladder answers.
 
@@ -63,6 +63,8 @@ async def settled_prematch_odds_by_event(
     kickoff, own source first and then twins in id order, as on detail.
     ``timeout_ms`` bounds the optional read without leaking SET LOCAL into
     later stages. Zero skips the venue read and retains the books fallback.
+    ``defer_missing_cache_writes`` lets an HTTP reader leave confirmed-empty
+    Redis fills to its event loop after the query has answered.
     ``surface`` only names the caller in the log lines.
 
     Rows that are not settled, or that the ladder cannot answer, are absent —
@@ -92,7 +94,9 @@ async def settled_prematch_odds_by_event(
             try:
                 if timeout_ms is not None:
                     await db.execute(text(f"SET LOCAL statement_timeout = '{int(timeout_ms)}ms'"))
-                for row in await fetch_prematch_prior_rows(db, binds):
+                for row in await fetch_prematch_prior_rows(
+                    db, binds, defer_missing_cache_writes=defer_missing_cache_writes,
+                ):
                     by_event.setdefault(row.event_id, {}).setdefault(
                         row.source, prematch_row_to_reading(row)
                     )
@@ -128,27 +132,17 @@ async def settled_prematch_odds_by_event(
             for source_id in source_ids[e.id]:
                 for source, row in by_event.get(source_id, {}).items():
                     by_source.setdefault(source, row)
-            reading = resolve_prematch_reading(
+            reading = serialize_prematch_odds(
                 by_source=by_source,
                 books_home=float(open_home) if open_home else None,
                 books_away=float(open_away) if open_away else None,
                 sport=loaded_sport_key(e) or "",
             )
-            if reading is None:
-                continue
-            away_pct, home_pct = rendered_duel_percents(
-                reading["away_probability"], reading["home_probability"]
-            )
         except Exception:  # noqa: BLE001 — gotcha #42: one row, never the page
             logger.exception("%s: event %s pre-match reading failed", surface, e.id)
             continue
-        served[int(e.id)] = {
-            "home_probability": reading["home_probability"],
-            "away_probability": reading["away_probability"],
-            "home_rendered_percent": home_pct,
-            "away_rendered_percent": away_pct,
-            "source": reading["source"],
-        }
+        if reading is not None:
+            served[int(e.id)] = reading
     return served
 
 

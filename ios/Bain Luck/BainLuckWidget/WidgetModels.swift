@@ -68,7 +68,7 @@ struct BainLuckWidgetEntry: TimelineEntry {
             discoverItems: [
                 WidgetDiscoverItem(
                     id: 100,
-                    name: "2026 NBA Champion",
+                    name: "NBA Champion",
                     category: "NBA",
                     leader: "Celtics",
                     probability: 32,

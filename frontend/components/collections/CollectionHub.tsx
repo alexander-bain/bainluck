@@ -12,6 +12,9 @@ import MachinerySectionRenderer, {
   isMachinerySlice1Enabled,
 } from "./MachinerySectionRenderer";
 import { fetchPairedMetricsByCeremony } from "@/lib/api";
+import { APP_STORE_URL } from "@/lib/brandCopy";
+import { AsOfStamp } from "@/components/AsOfStamp";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import type { PairedMetricSet } from "@/lib/discover/visualForms";
 import type { FeedFuturesData, FeedItem } from "@/lib/types";
 import { useDiscoverPriceStream } from "@/hooks/useDiscoverPriceStream";
@@ -40,11 +43,13 @@ function PricedMemberShell({ owner, item, report, children }: {
   return <div ref={ref}>{children}</div>;
 }
 
-export default function CollectionHub({ slug }: { slug: string }) {
+export default function CollectionHub({ slug, initialHub = null }: { slug: string; initialHub?: Hub | null }) {
   const atlasEnabled = useAtlasPageOptIn();
-  const [hub, setHub] = useState<Hub | null>(() => acceptedCollection(slug));
+  const seededHub = initialHub?.slug === slug ? initialHub : acceptedCollection(slug);
+  const [hub, setHub] = useState<Hub | null>(() => seededHub);
   const [error, setError] = useState<string | null>(null);
-  const [fetching, setFetching] = useState(true);
+  const [fetching, setFetching] = useState(() => !(initialHub?.slug === slug && initialHub.state === "published"));
+  const [isAndroid, setIsAndroid] = useState(false);
   const [navigationRead, setNavigationRead] = useState(0);
   const [paging, setPaging] = useState(false);
   const [pageError, setPageError] = useState<string | null>(null);
@@ -55,6 +60,13 @@ export default function CollectionHub({ slug }: { slug: string }) {
   const restoredMember = useRef<string | null>(null);
   const userMoved = useRef(false);
   const pendingRestore = useRef<{ memberKey: string; offset: number } | null>(null);
+  const consumedInitialHub = useRef<Hub | null>(null);
+
+  useEffect(() => {
+    if (typeof navigator !== "undefined" && /android/i.test(navigator.userAgent)) {
+      setIsAndroid(true);
+    }
+  }, []);
 
   const load = useCallback(async () => {
     request.current?.abort();
@@ -88,8 +100,23 @@ export default function CollectionHub({ slug }: { slug: string }) {
 
   useEffect(() => {
     restoredRevision.current = null; restoredMember.current = null; userMoved.current = false; pendingRestore.current = null;
-    setHub(acceptedCollection(slug)); setError(null); setPageError(null); setPaging(false);
-    void load();
+    setError(null); setPageError(null); setPaging(false);
+    const hasFreshServerHub =
+      initialHub !== null &&
+      initialHub.slug === slug &&
+      initialHub.state === "published" &&
+      consumedInitialHub.current !== initialHub;
+    if (hasFreshServerHub) {
+      consumedInitialHub.current = initialHub;
+      const settled = settleCollectionRead(slug, { hub: initialHub });
+      latest.current = settled.hub?.slug === slug ? settled.hub : null;
+      setHub(settled.hub);
+      setFetching(false);
+      setNavigationRead((value) => value + 1);
+    } else {
+      setHub(acceptedCollection(slug));
+      void load();
+    }
     const freshRead = () => { if (document.visibilityState !== "hidden") void load(); };
     window.addEventListener("focus", freshRead);
     window.addEventListener("pageshow", freshRead);
@@ -97,11 +124,19 @@ export default function CollectionHub({ slug }: { slug: string }) {
       request.current?.abort(); request.current = null; pageRequest.current?.abort(); pageRequest.current = null;
       window.removeEventListener("focus", freshRead); window.removeEventListener("pageshow", freshRead);
     };
-  }, [load]);
+  }, [initialHub, load, slug]);
 
   // Never draw another slug's hub, even for the frame before the reset effect.
   const shown = hub?.slug === slug ? hub : null;
   latest.current = shown;
+
+  // Keep the browser tab title aligned with the loaded collection when SSR timed out
+  // and rendered the generic "Collection" fallback title.
+  useEffect(() => {
+    if (shown?.title) {
+      document.title = `${shown.title} | Bain Luck`;
+    }
+  }, [shown?.title]);
 
   // #12577: Oscars collection surfaces paired Nominated % + Wins % category cards with posters
   const isOscarsHub = slug === "oscars-2027" || slug === "oscars" || slug === "the-oscars";
@@ -288,25 +323,36 @@ export default function CollectionHub({ slug }: { slug: string }) {
     </>;
   };
 
+  const isMachinerySlug = slug.startsWith("machinery-");
+  const machineryReadIncomplete =
+    isMachinerySlug &&
+    Boolean(
+      shown &&
+        (shown.state !== "published" ||
+          Boolean(shown.note) ||
+          shown.sections.length === 0),
+    );
+
+  const headerSubline = (() => {
+    const candidate = shown?.subtitle ?? shown?.edition ?? null;
+    if (!candidate) return null;
+    if (shown?.dek && candidate.trim().toLowerCase() === shown.dek.trim().toLowerCase()) return null;
+    return candidate;
+  })();
+
   return <div className={`mx-auto w-full space-y-6${slug === "midterms-2026" ? "" : " max-w-4xl"}`} data-collection-hub={slug}>
-    <div className="flex items-center justify-between gap-4">
-      <div className="flex items-center gap-3">
-        {shown?.parent && (
-          <>
-            <Link href={shown.parent.href} data-collection-parent={shown.parent.slug} className="text-sm font-medium text-text-primary hover:underline">Back to {shown.parent.name}</Link>
-            <span aria-hidden className="text-text-muted">·</span>
-          </>
-        )}
-        <Link href="/discover" className="text-sm text-text-secondary hover:text-text-primary">Back to Discover</Link>
-      </div>
-      <button type="button" disabled={fetching} onClick={() => void load()} className="text-sm text-accent-brand hover:underline disabled:text-text-muted">{fetching && shown ? "Updating…" : "Refresh"}</button>
-    </div>
-    <header className="space-y-2">
-      <p className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Collection</p>
-      <h1 id="collection-title" className="text-2xl font-bold text-text-primary">{shown?.title ?? "Collection"}</h1>
-      {(shown?.subtitle ?? shown?.edition) && <p className="text-sm text-text-secondary">{shown?.subtitle ?? shown?.edition}</p>}
-      {/* #11040: the family's one-line page note. */}
+    <header className="space-y-2" data-collection-header>
+      {shown?.parent && (
+        <Link href={shown.parent.href} data-collection-parent={shown.parent.slug} className="inline-flex items-center gap-1 text-sm font-medium text-text-secondary hover:text-text-primary hover:underline">
+          <span aria-hidden>←</span>
+          <span>{shown.parent.name}</span>
+        </Link>
+      )}
+      <h1 id="collection-title" className="text-2xl font-bold tracking-tight text-text-primary">{shown?.title ?? "Collection"}</h1>
+      {/* #11040 / #13103: the set's one-line reason sits directly under the title. */}
       {shown?.dek && <p data-collection-dek className="text-sm text-text-secondary">{shown.dek}</p>}
+      {headerSubline && <p data-collection-subline className="text-xs text-text-muted">{headerSubline}</p>}
+      {fetching && shown && <p role="status" className="text-xs text-text-muted">Updating…</p>}
       {/* #12233: zero-number model commentary with set-read figures labelled with when true and linked to source */}
       {shown?.caption && (
         <div data-collection-caption className="rounded-card border border-surface-border bg-surface-card p-3.5 space-y-2">
@@ -333,22 +379,22 @@ export default function CollectionHub({ slug }: { slug: string }) {
       )}
     </header>
     {fetching && !shown && !error && <p role="status" className="py-8 text-text-secondary">Loading collection…</p>}
-    {error && shown && <div role="status" className="sticky top-16 z-40 flex items-center justify-between gap-3 rounded-card border border-surface-border bg-surface-card px-4 py-2 text-sm shadow-sm">
+    {error && shown && !machineryReadIncomplete && <div role="status" className="sticky top-16 z-40 flex items-center justify-between gap-3 rounded-card border border-surface-border bg-surface-card px-4 py-2 text-sm shadow-sm">
       <p className="text-text-secondary">{error}</p>
       <button type="button" disabled={fetching} onClick={() => void load()} className="shrink-0 text-accent-brand hover:underline disabled:text-text-muted">Try again</button>
     </div>}
-    {error && !shown && <div role="status" className="rounded-card border border-surface-border bg-surface-card p-5 space-y-3">
-      <p className="text-text-secondary">{error}</p>
+    {((error && !shown) || (!fetching && machineryReadIncomplete)) && <div role="alert" data-testid="machinery-collection-error" className="rounded-card border border-surface-border bg-surface-card p-5 space-y-3">
+      <p className="text-text-secondary">{error || "Couldn't load this collection. Please try again."}</p>
       <button type="button" onClick={() => void load()} className="text-accent-brand hover:underline">Try again</button>
     </div>}
-    {shown?.state === "published" && isNflWeekCollectionSlug(slug) && <CollectionWeekNavigation key={slug} slug={slug} read={navigationRead} onSettle={settleWeekNavigation} onNavigate={() => {
+    {!machineryReadIncomplete && shown?.state === "published" && isNflWeekCollectionSlug(slug) && <CollectionWeekNavigation key={slug} slug={slug} read={navigationRead} onSettle={settleWeekNavigation} onNavigate={() => {
       const member = shown.members.find((member) => (document.getElementById(collectionMemberDomId(member.key))?.getBoundingClientRect().bottom ?? 0) > 0);
       if (member) remember(member.key);
     }} />}
-    {shown?.note && <p role="status" className="text-sm text-text-secondary">{shown.note}</p>}
-    {shown?.theme && !shown.theme.inventoryComplete && <p className="text-sm text-text-secondary">This list may not include every market yet.</p>}
-    {shown?.children.map((child) => <Link key={child.key} id={collectionMemberDomId(child.key)} data-collection-child={child.key.replace(/^container:/, "")} href={child.href} onClick={() => remember(child.key)} className="flex justify-between gap-4 rounded-card border border-surface-border bg-surface-card p-4 font-semibold text-text-primary hover:bg-surface-elevated">{child.name}<span aria-hidden>›</span></Link>)}
-    {activePairedSets.length > 0 && (
+    {!machineryReadIncomplete && shown?.note && <p role="status" className="text-sm text-text-secondary">{shown.note}</p>}
+    {!machineryReadIncomplete && shown?.theme && !shown.theme.inventoryComplete && <p className="text-sm text-text-secondary">This list may not include every market yet.</p>}
+    {!machineryReadIncomplete && shown?.children.map((child) => <Link key={child.key} id={collectionMemberDomId(child.key)} data-collection-child={child.key.replace(/^container:/, "")} href={child.href} onClick={() => remember(child.key)} className="flex justify-between gap-4 rounded-card border border-surface-border bg-surface-card p-4 font-semibold text-text-primary hover:bg-surface-elevated">{child.name}<span aria-hidden>›</span></Link>)}
+    {!machineryReadIncomplete && activePairedSets.length > 0 && (
       <section data-testid="collection-paired-award-categories" className="space-y-4">
         {isOscarsHub && (
           <div className="space-y-0.5">
@@ -370,23 +416,31 @@ export default function CollectionHub({ slug }: { slug: string }) {
     )}
     {/* #10985: a hub served as one unclassified list (every provider event) has no
         section to name, so "More" would follow nothing; the page title names it. */}
-    <div data-collection-sections className={shown?.slug === "midterms-2026" ? "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 items-start" : "space-y-6"}>
+    {!machineryReadIncomplete && <div data-collection-sections className={shown?.slug === "midterms-2026" ? "grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6 items-start" : "space-y-6"}>
     {(shown?.slug === "midterms-2026"
       ? [shown.sections.slice(0, 2), ...shown.sections.slice(2).map(section => [section])]
       : [shown?.sections ?? []]).map((group, groupIndex) => <div key={group[0]?.key ?? groupIndex} className={shown?.slug === "midterms-2026" && groupIndex === 0 ? "grid grid-cols-1 md:col-span-2 md:grid-cols-2 xl:col-span-1 xl:grid-cols-1 gap-6 items-start" : "space-y-6 min-w-0"}>
-    {group.map((section) => {
+    {group.map((section, sectionIndex) => {
       const visibleSectionMembers = pairedCoveredMarketIds.size > 0
         ? section.members.filter((m) => !(m.type === "market" && pairedCoveredMarketIds.has(m.id)))
         : section.members;
       if (visibleSectionMembers.length === 0 && section.layout !== "party") return null;
       const lone = shown?.sections.length === 1 && section.cls === "unclassified";
       const midterms = shown?.slug === "midterms-2026";
-      return <section key={section.key} className="min-w-0 space-y-3" aria-labelledby={lone ? "collection-title" : `section-${section.key}`}>
-      {!lone && <div className="space-y-1">
+      const repeatsPageHeadline =
+        groupIndex === 0 &&
+        sectionIndex === 0 &&
+        Boolean(shown?.title) &&
+        section.title.trim().toLowerCase() === (shown?.title ?? "").trim().toLowerCase();
+      return <section key={section.key} className="min-w-0 space-y-3" aria-labelledby={lone || repeatsPageHeadline ? "collection-title" : `section-${section.key}`}>
+      {!lone && !repeatsPageHeadline && <div className="space-y-1">
         <h2 id={`section-${section.key}`} className="text-lg font-semibold text-text-primary">{section.title}</h2>
         {/* #11040: one plain sentence saying how this section's markets settle. */}
         {section.note && <p data-section-note={section.cls} className="text-sm text-text-secondary">{section.note}</p>}
       </div>}
+      {!lone && repeatsPageHeadline && section.note && (
+        <p data-section-note={section.cls} className="text-sm text-text-secondary">{section.note}</p>
+      )}
       {allowMachineryBlocks && section.visualBlock ? (
         <MachinerySectionRenderer visualBlock={section.visualBlock} members={visibleSectionMembers} />
       ) : section.layout === "party" && control(108620) && control(108621) ? (
@@ -417,15 +471,86 @@ export default function CollectionHub({ slug }: { slug: string }) {
     </section>;
     })}
     </div>)}
-    </div>
+    </div>}
     {shown?.relatedSummary && shown.relatedSummary.count > 0 && <p data-related-market-summary className="text-sm text-text-secondary">
       {shown.relatedSummary.count.toLocaleString()} more linked markets
       {shown.relatedSummary.unclassifiedCount > 0 && <> · {shown.relatedSummary.unclassifiedCount.toLocaleString()} uncategorized</>}
     </p>}
-    {shown?.theme && shown.members.length > 0 && <div className="flex flex-col items-center gap-2 pb-6" data-collection-pager={shown.revision ?? ""}>
+    {shown?.theme && shown.members.length > 0 && <div className="flex flex-col items-center gap-2 pb-2" data-collection-pager={shown.revision ?? ""}>
       <p className="text-sm text-text-secondary">{shown.members.length} of {Math.max(shown.theme.totalCount, shown.members.length)} markets</p>
       {shown.theme.nextCursor && <button type="button" disabled={paging} onClick={() => void loadMore()} className="rounded-card border border-surface-border bg-surface-card px-4 py-2 text-sm font-semibold text-text-primary hover:bg-surface-elevated disabled:text-text-muted">{paging ? "Loading…" : "Load more"}</button>}
       {pageError && <p role="status" className="text-sm text-text-secondary">{pageError}</p>}
     </div>}
+    {!machineryReadIncomplete && shown?.moreSets && shown.moreSets.length > 0 && (
+      <section data-collection-more-sets aria-labelledby="collection-more-sets-heading" className="space-y-3">
+        <h2 id="collection-more-sets-heading" className="text-base font-semibold text-text-primary">
+          More sets worth a look
+        </h2>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          {shown.moreSets.map((set) => (
+              <Link
+                key={set.slug}
+                href={set.href}
+                data-collection-more-set={set.slug}
+                className="flex flex-col justify-between gap-2.5 rounded-card border border-surface-border bg-surface-card p-4 hover:bg-surface-elevated transition-colors"
+              >
+                <div className="space-y-1">
+                  <p className="text-sm font-semibold text-text-primary leading-snug">{set.name}</p>
+                  {set.dek && (
+                    <p className="text-xs text-text-secondary leading-relaxed">{set.dek}</p>
+                  )}
+                </div>
+                <div className="flex flex-wrap items-baseline justify-between gap-2 pt-2 border-t border-surface-border/60 text-xs">
+                  {set.leadLabel && set.leadProbability != null ? (
+                    <span className="text-text-secondary">
+                      <span className="font-medium text-text-primary">{set.leadLabel}</span>{" "}
+                      <span className="font-mono font-semibold text-accent-brand">
+                        {formatProbabilityPercent(set.leadProbability, { rendered: set.leadRenderedPercent })}
+                      </span>
+                      <AsOfStamp
+                        iso={set.asOf}
+                        prefix=" · "
+                        className="text-text-muted whitespace-nowrap"
+                      />
+                    </span>
+                  ) : (
+                    <span className="text-text-muted">Live probabilities</span>
+                  )}
+                  <span className="text-text-muted whitespace-nowrap">
+                    {set.memberCount} {set.memberCount === 1 ? "market" : "markets"}{" "}
+                    <span aria-hidden>›</span>
+                  </span>
+                </div>
+              </Link>
+          ))}
+        </div>
+      </section>
+    )}
+    <footer data-collection-landing-footer className="rounded-card border border-surface-border bg-surface-card p-4 sm:p-5 space-y-3">
+      <div className="space-y-1">
+        <p className="text-sm font-semibold text-text-primary">Explore more live probabilities on Bain Luck</p>
+        <p className="text-xs text-text-secondary">Follow games, sports, and world events — free, with no sign-in needed.</p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2.5">
+        {!isAndroid && (
+          <a
+            href={APP_STORE_URL}
+            target="_blank"
+            rel="noopener noreferrer"
+            data-collection-app-cta
+            className="inline-flex items-center justify-center rounded-lg bg-accent-brand px-3.5 py-2 text-xs font-semibold text-white hover:opacity-90"
+          >
+            Get the iPhone App
+          </a>
+        )}
+        <Link
+          href="/discover"
+          data-collection-discover-cta
+          className="inline-flex items-center justify-center rounded-lg border border-surface-border bg-surface-elevated px-3.5 py-2 text-xs font-semibold text-text-primary hover:bg-surface-base"
+        >
+          Explore Discover
+        </Link>
+      </div>
+    </footer>
   </div>;
 }

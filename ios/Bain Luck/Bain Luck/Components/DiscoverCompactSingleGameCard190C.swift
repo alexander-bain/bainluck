@@ -214,6 +214,36 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
         }
     }
 
+    @ViewBuilder
+    private var cardSourceMarkButton: some View {
+        let pricesDraw = DrawPricedWinner.sportPricesADraw(event.sport)
+        let currentAwayWithheld = pricesDraw && !CompactGameCard12616.hasExplicitThreeWayCurrent(event)
+        let prematchAwayWithheld = pricesDraw && !CompactGameCard12616.hasExplicitThreeWayPrematch(event)
+        let canGrade = EventState.canStillBeGraded(
+            event.status,
+            commenceTime: event.commenceTime?.asDate
+        )
+        if let resolved = EventCardView.resolvedCardSourceMarkPresentation(
+            event: event,
+            canStillBeGraded: canGrade,
+            currentAwayIsWithheld: currentAwayWithheld,
+            prematch: prematch,
+            prematchAwayIsWithheld: prematchAwayWithheld
+        ),
+        let button = SourceMarkButton(
+            resolved.mark,
+            number: resolved.number,
+            renderedPercent: resolved.renderedPercent,
+            subject: resolved.subject,
+            isPregame: resolved.isPregame,
+            numberSize: 15,
+            compactRow: true,
+            showsTenths: resolved.showsTenths
+        ) {
+            button.buttonStyle(.borderless)
+        }
+    }
+
     private var leagueAndStatusInlineView: some View {
         HStack(spacing: 5) {
             Text(model.leagueName)
@@ -224,6 +254,8 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
 
             statusBadgeView(leadingDot: true)
                 .fixedSize(horizontal: true, vertical: false)
+
+            cardSourceMarkButton
         }
     }
 
@@ -232,10 +264,14 @@ struct DiscoverCompactSingleGameCard190CView<ProjectionLines: View, FooterRow: V
             leagueAndStatusInlineView
 
             VStack(alignment: .leading, spacing: 4) {
-                Text(model.leagueName)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(DS.textSecondaryReadable)
-                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 5) {
+                    Text(model.leagueName)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    cardSourceMarkButton
+                }
 
                 statusBadgeView(leadingDot: false)
             }

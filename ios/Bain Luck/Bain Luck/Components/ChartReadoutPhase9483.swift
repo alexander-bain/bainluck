@@ -62,11 +62,14 @@ struct ChartReadoutContext9483 {
     /// (its terminal reading is where a finished line ends); a checkpoint
     /// mount's resting endpoint stands in for it when one is mounted.
     static func chart(playStart: Date?, gameFinished: Bool, readoutPoints: [ChartDataPoint],
-                      checkpoints: PublicationCheckpointMount4974?) -> ChartReadoutContext9483 {
-        guard gameFinished else { return ChartReadoutContext9483(playStart: playStart, terminal: nil) }
+                      checkpoints: PublicationCheckpointMount4974?,
+                      timeZone: TimeZone = .autoupdatingCurrent) -> ChartReadoutContext9483 {
+        guard gameFinished else {
+            return ChartReadoutContext9483(playStart: playStart, terminal: nil, timeZone: timeZone)
+        }
         let terminal: Date? = checkpoints != nil
             ? checkpoints?.resting?.date
             : readoutPoints.map(\.date).max()
-        return ChartReadoutContext9483(playStart: playStart, terminal: terminal)
+        return ChartReadoutContext9483(playStart: playStart, terminal: terminal, timeZone: timeZone)
     }
 }

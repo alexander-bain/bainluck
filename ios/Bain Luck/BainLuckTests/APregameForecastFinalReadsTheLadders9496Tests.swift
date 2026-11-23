@@ -75,20 +75,21 @@ final class APregameForecastFinalReadsTheLadders9496Tests: XCTestCase {
 
     // MARK: - The specimen and its control
 
-    /// `3.2 – 3.0` rounds to `3-3`: a baseball final that cannot happen.
-    func testTheSpecimenStaysSilentBecauseBaseballCannotEndLevel() {
-        XCTAssertNil(text("baseball_mlb", ladder: (3.2, 3.0)),
-                     "the hero prints a level baseball final (#8156)")
-        // Control: the same page with a pair the sport can produce prints it,
-        // so the nil above is the tie gate and not a dead ladder arm.
+    /// Ruling 240: A (#12992): `3.2 – 3.0` rounds to `3-3` and prints (`#8156` removed).
+    func testTheSpecimenPrintsLevelPairUnder240A() {
+        XCTAssertEqual(text("baseball_mlb", ladder: (3.2, 3.0)), "Proj. 3-3",
+                       "240: A — level rounded baseball pair prints")
         XCTAssertEqual(text("baseball_mlb", ladder: (4.1, 2.9)), "Proj. 3-4")
     }
 
-    /// The run line stays withheld (#8617); only the ladders speak for baseball.
+    /// The run line (#8617) and puck line (#13007) stay withheld; only the ladders speak for baseball and hockey.
     func testTheRunLineIsStillNotAProjection() {
         XCTAssertNil(text("baseball_mlb", books: (4.5, 3.0)))
         XCTAssertEqual(text("baseball_mlb", books: (4.5, 3.0), ladder: (4.1, 2.9)), "Proj. 3-4",
                        "a run-line pair displaced the ladders' forecast")
+        XCTAssertNil(text("icehockey_nhl", books: (4.5, 3.0)))
+        XCTAssertEqual(text("icehockey_nhl", books: (4.5, 3.0), ladder: (4.1, 2.9)), "Proj. 3-4",
+                       "a puck-line pair displaced the ladders' forecast")
     }
 
     // MARK: - Web's precedence
@@ -108,11 +109,13 @@ final class APregameForecastFinalReadsTheLadders9496Tests: XCTestCase {
     func testTheLaddersArePregameOnly() {
         XCTAssertNil(text("baseball_mlb", status: "live", start: Self.underway,
                           ladder: (4.1, 2.9), hasScore: true))
+        XCTAssertNil(text("icehockey_nhl", status: "live", start: Self.underway,
+                          ladder: (4.1, 2.9), hasScore: true))
         XCTAssertNil(text("baseball_mlb", status: "scheduled", start: Self.underway,
                           ladder: (4.1, 2.9), hasScore: true),
                      "a start time already passed is underway whatever the status says")
-        XCTAssertEqual(text("icehockey_nhl", status: "live", start: Self.underway,
-                            books: (4.5, 3.0), hasScore: true), "Proj. 3-5")
+        XCTAssertEqual(text("basketball_nba", status: "live", start: Self.underway,
+                            books: (104.5, 98.0), hasScore: true), "Proj. 98-105")
     }
 
     func testAFinishedGameIsNeverProjected() {
@@ -127,15 +130,13 @@ final class APregameForecastFinalReadsTheLadders9496Tests: XCTestCase {
         XCTAssertNil(text("mma_mixed_martial_arts", ladder: (2.4, 1.1)))
     }
 
-    // MARK: - #8156 on whichever pair is chosen
+    // MARK: - Ruling 240: A (#12992) on whichever pair is chosen
 
-    func testALevelFinalIsWithheldOnlyWhereTheSportCannotTie() {
-        XCTAssertNil(text("basketball_nba", books: (110.2, 109.8)))
-        XCTAssertNil(text("icehockey_nhl", books: (3.1, 2.8)))
-        XCTAssertEqual(text("americanfootball_nfl", books: (24.2, 23.9)), "Proj. 24-24",
-                       "an NFL tie is a legal result")
-        XCTAssertEqual(text("soccer_epl", books: (1.2, 1.3)), "Proj. 1-1",
-                       "a league draw is a legal result")
+    func testALevelFinalPrintsInEverySportUnder240A() {
+        XCTAssertEqual(text("basketball_nba", books: (110.2, 109.8)), "Proj. 110-110")
+        XCTAssertEqual(text("icehockey_nhl", ladder: (3.1, 2.8)), "Proj. 3-3")
+        XCTAssertEqual(text("americanfootball_nfl", books: (24.2, 23.9)), "Proj. 24-24")
+        XCTAssertEqual(text("soccer_epl", books: (1.2, 1.3)), "Proj. 1-1")
     }
 
     /// Web asks the RAW halves to be positive, so a low soccer half prints `0`.

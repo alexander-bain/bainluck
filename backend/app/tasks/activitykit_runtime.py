@@ -12,6 +12,9 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.services.activitykit_apns import ActivityKitAPNsTransport
+from app.services.activitykit_fast_score_refresh import (
+    refresh_active_live_activity_scores,
+)
 from app.services.activitykit_observation import ActivityKitObservationAdapter
 from app.services.activitykit_runtime import RuntimePolicy
 from app.services.activitykit_runtime_caller import run_serialized_page
@@ -108,6 +111,15 @@ async def run_activitykit_runtime():
                 tuple(timedelta(seconds=n) for n in (30, 60, 120))
             ),
         )
+        fast_refresh_enabled = (
+            os.environ.get("ACTIVITYKIT_FAST_SCORE_REFRESH_ENABLED", "true").lower()
+            != "false"
+        )
+        score_refresher = (
+            (lambda event_ids: refresh_active_live_activity_scores(sessions, event_ids))
+            if fast_refresh_enabled
+            else None
+        )
         result = await run_serialized_page(
             engine,
             sessions,
@@ -116,6 +128,7 @@ async def run_activitykit_runtime():
             transport,
             config.provider_token,
             policy=RuntimePolicy(enabled=True),
+            score_refresher=score_refresher,
         )
     except Exception:
         # Never pass credential-bearing exception strings to Celery/Sentry.

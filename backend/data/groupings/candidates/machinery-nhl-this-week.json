@@ -1,0 +1,59 @@
+{
+  "slug": "machinery-nhl-this-week",
+  "stage": "public",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_event",
+    "same_window"
+  ],
+  "level": "member",
+  "kicker": "SPORTS · NHL SLATE",
+  "name": "NHL Close Matchups",
+  "category": "hockey",
+  "tag": "NHL",
+  "section_title": "Closest NHL Matchups",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "card_rows": 3,
+    "card_section_key": "closest_games",
+    "suppress_card_photo": true,
+    "sections": [
+      {
+        "key": "closest_games",
+        "title": "Coin-Flip Matchups",
+        "item_noun": "games",
+        "note": "NHL games on this slate priced closest to a 50–50 toss-up.",
+        "atom_query": {
+          "kind": "events",
+          "sport_key": "icehockey_nhl",
+          "window_days_ahead": 7,
+          "probability_band": [0.34, 0.66],
+          "order_by": "closeness_to_50",
+          "min_items": 2,
+          "max_items": 4,
+          "initial_visible_limit": 3
+        }
+      },
+      {
+        "key": "nhl_schedule",
+        "title": "Upcoming Matchups",
+        "item_noun": "games",
+        "note": "Win probabilities across upcoming NHL games in puck-drop order.",
+        "atom_query": {
+          "kind": "events",
+          "sport_key": "icehockey_nhl",
+          "window_days_ahead": 7,
+          "order_by": "kickoff_asc",
+          "min_items": 3,
+          "max_items": 8,
+          "initial_visible_limit": 3
+        }
+      }
+    ]
+  }
+}

@@ -395,6 +395,9 @@ export async function fetchEvents(params?: {
   status?: string;
   days?: number;
   past_days?: number;
+  limit?: number;
+  offset?: number;
+  league_page?: boolean;
 }): Promise<EventsResponse> {
   const searchParams = new URLSearchParams();
 
@@ -402,6 +405,9 @@ export async function fetchEvents(params?: {
   if (params?.status) searchParams.set("status", params.status);
   if (params?.days) searchParams.set("days", params.days.toString());
   if (params?.past_days !== undefined) searchParams.set("past_days", params.past_days.toString());
+  if (params?.limit !== undefined) searchParams.set("limit", params.limit.toString());
+  if (params?.offset) searchParams.set("offset", params.offset.toString());
+  if (params?.league_page) searchParams.set("league_page", "true");
 
   const query = searchParams.toString();
   return apiFetch<EventsResponse>(`/api/events${query ? `?${query}` : ""}`);
@@ -596,6 +602,8 @@ export interface TypeaheadSuggestion {
   venue_settled_result?: string | null;
   // #5811 @see Event.venue_closed_no_winner
   venue_closed_no_winner?: boolean;
+  // #13000 (250: A) @see Event.score_source_unavailable
+  score_source_unavailable?: boolean;
   // #9208: ESPN's word for a called-off match ("Canceled" / "Postponed"),
   // served only on a `suspended` row. Read through authorityStoppageLabel —
   // never printed raw.
@@ -761,6 +769,7 @@ export interface TeamGameBrief {
   away_team: string;
   home_score: number | null;
   away_score: number | null;
+  score_source_unavailable?: boolean;
   // live/056 — was a fifth inline copy of the status union, and it was the copy
   // that had never heard of `suspended`. `EventStatus`' own docstring exists
   // because three payloads carried three copies; this one was outside that
@@ -1019,7 +1028,17 @@ export async function fetchFuturesMarket(
   const qs = params.toString();
   const detail = await apiFetch<FuturesMarketDetailResponse>(`/api/futures/${id}${qs ? `?${qs}` : ""}`,
     options?.fresh ? { cache: "no-store", maxRetries: 0, signal: options.signal } : undefined);
-  return verified ? sanitizeVerifiedTitleDetail(detail) : detail;
+  // Out rows carry a terminal value for installed apps. The web uses their
+  // grade for display and excludes that value from current-price calculations.
+  const visibleDetail = detail.outcomes?.some((outcome) => outcome.is_out === true)
+    ? {
+        ...detail,
+        outcomes: detail.outcomes.map((outcome) =>
+          outcome.is_out === true ? { ...outcome, probability: null } : outcome,
+        ),
+      }
+    : detail;
+  return verified ? sanitizeVerifiedTitleDetail(visibleDetail) : visibleDetail;
 }
 
 /**
@@ -1560,6 +1579,22 @@ export async function fetchFeed(
   if (params?.category) searchParams.set("category", params.category);
   if (params?.edition) searchParams.set("edition", params.edition);
 
+  // #12095 — the Discover deck's own shape (no mode, filter or narrowing)
+  // names the slate its events carry; any other feed CLEARS it, so a swipe on
+  // a category page never carries the Discover slate.
+  const isDiscoverDeck =
+    !params?.mode && !params?.category && !params?.sport && !params?.tags?.length &&
+    !params?.my_teams_only && params?.include_futures !== false && params?.include_events !== false;
+
+  // #12288 / Ruling 252: A — website opts in via `machinery=1` only when the
+  // public website switch is on; older iOS (1.0.6) omits it and receives none.
+  if (
+    isDiscoverDeck &&
+    process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1 === "true"
+  ) {
+    searchParams.set("machinery", "1");
+  }
+
   const query = searchParams.toString();
   // A suppressed request must NOT read-through-mint a session id; only the
   // session-scoped path calls the minting getter.
@@ -1572,12 +1607,6 @@ export async function fetchFeed(
   const headers = sessionId ? { "x-session-id": sessionId } : undefined;
 
   const endpoint = `/api/feed${query ? `?${query}` : ""}`;
-  // #12095 — the Discover deck's own shape (no mode, filter or narrowing)
-  // names the slate its events carry; any other feed CLEARS it, so a swipe on
-  // a category page never carries the Discover slate.
-  const isDiscoverDeck =
-    !params?.mode && !params?.category && !params?.sport && !params?.tags?.length &&
-    !params?.my_teams_only && params?.include_futures !== false && params?.include_events !== false;
 
   // L2-189: measure client time-to-response and emit bounded, non-PII latency
   // telemetry from the exposed feed headers. All best-effort — never affects
@@ -2160,6 +2189,8 @@ export interface LeagueGameBrief {
   venue_settled_result?: string | null;
   // #5811 @see Event.venue_closed_no_winner
   venue_closed_no_winner?: boolean;
+  // #13000 (250: A) @see Event.score_source_unavailable
+  score_source_unavailable?: boolean;
   // ── #8515 ── the provider's doubleheader flag + game number, same names as
   // `TeamGameBrief` and `Event`. @see Event.doubleheader
   doubleheader?: boolean | null;

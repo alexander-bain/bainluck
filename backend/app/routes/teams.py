@@ -5,6 +5,8 @@ import re
 import time
 from datetime import datetime, timedelta, timezone
 
+from app.utils.event_completion import served_commence_time
+from app.utils.score_source_availability import score_source_unavailable_fields
 from app.utils.event_rails import (
     commence_time_was_never_a_kickoff,
     live_first_order,
@@ -12,7 +14,7 @@ from app.utils.event_rails import (
     upcoming_rail_condition,
 )
 from app.utils.event_twin_fold import fold_twin_events, team_name_fold_key
-from app.utils.aggregation import compute_aggregate_probability
+from app.utils.aggregation import compute_aggregate_probability_tiered
 from app.utils.draw_priced_winner import sport_prices_a_draw
 from app.utils.game_state import authority_stoppage_label
 from app.utils.lifecycle import served_event_status
@@ -22,21 +24,34 @@ from app.utils.market_team_sport import (
     market_event_slug,
     sport_key_llm_category,
 )
+from app.utils.prematch_reading import BOOKS_SOURCE
 from app.utils.start_placeholder import start_is_tbd
 from app.utils.settled_prematch_batch import settled_prematch_odds_by_event
 from app.utils.season_variant_team import (
     choose_parent_league_row,
     wants_parent_league_row,
 )
+from app.utils.source_mark import (
+    blended_source_marks,
+    no_source_mark,
+    quote_source_mark,
+)
 from app.utils.sport_keys import (
     league_family_identity,
     same_sport_same_gender,
     sport_display_name,
 )
-from app.utils.standings_shape import public_standings
+from app.utils.standings_shape import (
+    _board_record,
+    public_standings,
+    record_exceeds_season_ceiling,
+    record_leads_fresh_board,
+    standings_exceeds_season_ceiling,
+)
+from app.utils.source_mark import quote_source_mark, settled_source_mark
 
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy import select, or_, and_, func
+from sqlalchemy import select, or_, and_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import set_committed_value
@@ -245,6 +260,19 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
         select(Team).options(selectinload(Team.sport)).where(team_filter)
     )
     team = result.scalars().first()
+    if not team:
+        # #13229 / 314-B: follow retired_team_redirects first so a folded team's
+        # old numeric id (/api/teams/14545) or retired slug (/api/teams/tottenham)
+        # resolves transparently to the surviving canonical club instead of 404ing.
+        from app.utils.team_redirects import resolve_retired_team_by_identifier
+
+        retired_canonical_id = await resolve_retired_team_by_identifier(
+            db, identifier
+        )
+        if retired_canonical_id is not None:
+            team = (await db.execute(
+                select(Team).options(selectinload(Team.sport)).where(Team.id == retired_canonical_id)
+            )).scalars().first()
     if not team:
         # #1204: legacy-slug redirect. A slug retired by a team-identity merge is
         # registered in team_identity_mapping (source='legacy_slug') pointing at the
@@ -539,6 +567,7 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
     upcoming_events, recent_events = await _folded_briefs(
         db, team, upcoming_rows, recent_rows, club_ids=club_ids, club_names=club_names
     )
+    upcoming_events = _order_upcoming_team_briefs(upcoming_events)
     _mark("events")
 
     # #1197 / #1239: the team page is Priority #3 and must NEVER hard-500 on a
@@ -770,30 +799,56 @@ def _record_for_declared_season(team: Team, now: datetime | None = None) -> str 
     return record
 
 
-def _format_team(team: Team, now: datetime | None = None) -> dict:
+def _format_team(
+    team: Team,
+    now: datetime | None = None,
+    *,
+    season_games_ceiling: int | None = None,
+) -> dict:
     sport = team.sport
+    sport_key = sport.key if sport else None
+    if season_games_ceiling is None:
+        from app.routes.events import cached_league_season_ceiling
+
+        season_games_ceiling = cached_league_season_ceiling(
+            sport_key, getattr(team, "sport_id", None)
+        )
+    standings = public_standings(team.standings_data)
+    if standings_exceeds_season_ceiling(standings, season_games_ceiling):
+        standings = None
+    record = _record_for_declared_season(team, now)
+    if record is not None and (
+        record_exceeds_season_ceiling(record, season_games_ceiling)
+        or record_leads_fresh_board(
+            record,
+            standings,
+            getattr(team, "standings_updated_at", None),
+            now,
+        )
+    ):
+        record = _board_record(standings) if standings else None
     return {
         "id": team.id,
         "slug": team.slug,
         "name": team.name,
         "abbreviation": team.abbreviation,
-        "sport_key": sport.key if sport else None,
+        "sport_key": sport_key,
         # #6444: a team in an uncurated league used to have its own machine key
         # read back to it as a league name — `/api/teams/alabama-state-hornets`
         # served `sport_name: "basketball_other"`. The helper rejects exactly one
         # value, the key itself, so the 162 branded rows pass through untouched.
-        "sport_name": sport_display_name(sport.key, sport.name) if sport else None,
+        "sport_name": sport_display_name(sport_key, sport.name) if sport else None,
         "location": team.location,
         "primary_color": team.primary_color,
         "secondary_color": team.secondary_color,
         "logo_small": team.logo_url_small,
         "logo_large": team.logo_url_large,
-        # #6266: withheld out of season — see `_record_for_declared_season`.
-        "record": _record_for_declared_season(team, now),
+        # #6266 / #13229: withheld out of season or when prior-season games exceed league ceiling.
+        "record": record,
         # `public_standings` drops write-dead keys (#4811): a pre-#4732
         # `conf_rank` is a division place wearing a conference label, and this
         # is the payload the team-page hero reads.
-        "standings": public_standings(team.standings_data),
+        "standings": standings,
         "season_stats": team.season_stats,
         "roster": team.roster_players,
     }
@@ -868,6 +923,27 @@ async def _folded_briefs(
     ]
 
 
+def _order_upcoming_team_briefs(briefs: list[dict]) -> list[dict]:
+    """Keep live cards in SQL `live_first_order`, sort non-live by served start (#13000)."""
+    live = [g for g in briefs if g.get("status") == "live"]
+    scheduled = [g for g in briefs if g.get("status") != "live"]
+
+    def _start_ts(card: dict) -> float:
+        raw = card.get("commence_time")
+        if not isinstance(raw, str) or not raw:
+            return float("inf")
+        try:
+            dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt.timestamp()
+        except ValueError:
+            return float("inf")
+
+    scheduled.sort(key=_start_ts)
+    return live + scheduled
+
+
 def _format_event_brief(
     event: Event, team: Team, club_ids=None, club_names=None, prematch=None
 ) -> dict:
@@ -908,9 +984,51 @@ def _format_event_brief(
     # one row, it empties the whole rail (gotcha #42).
     now = datetime.now(timezone.utc)
     status = served_event_status(event.status, event.commence_time, now)
+    sport_key = sport.key if sport else None
     wp = None
-    if isinstance(event.win_probability_sources, (dict, type(None))):
-        wp = compute_aggregate_probability(event)
+    draw_prob = None
+    away_unavailable = not is_home and sport_prices_a_draw(sport_key)
+    current_mark = no_source_mark(
+        "away_unavailable" if away_unavailable else "no_probability"
+    )
+    from app.utils.hero_probability import resolve_hero
+    from app.utils.settled_hero import is_finished_status, settled_current_chance
+    from app.utils.source_mark import headline_source_marks
+
+    if is_finished_status(status):
+        # #13172 Option B — finished games serve their settled result (team-relative
+        # 1.0 win / 0.0 loss, 0.0 with draw_probability=1.0 on a draw-priced draw)
+        # and None when final_unresolved, never the last live price.
+        _hero = resolve_hero(event) if isinstance(event.win_probability_sources, (dict, type(None))) else None
+        if _hero is None:
+            from app.utils.hero_probability import HeroReading
+            from app.utils.settled_hero import resolve_settled_hero
+
+            _settled = resolve_settled_hero(
+                status=getattr(event, "status", None),
+                home_score=getattr(event, "home_score", None),
+                away_score=getattr(event, "away_score", None),
+                completed_at=getattr(event, "completed_at", None),
+            )
+            if _settled is not None:
+                _hero = HeroReading(
+                    home_probability=_settled.home_probability,
+                    away_probability=_settled.away_probability,
+                    source=_settled.source,
+                    settled_result=_settled.result,
+                )
+        _sc = settled_current_chance(_hero, sport_key=sport_key)
+        if _sc.resolved:
+            wp = _sc.home_probability if is_home else _sc.away_probability
+            draw_prob = _sc.draw_probability
+        home_mark, away_mark = headline_source_marks(event, _hero, [])
+        current_mark = home_mark if is_home else away_mark
+    elif isinstance(event.win_probability_sources, (dict, type(None))):
+        source_inputs = []
+        source_method = []
+        wp, _ = compute_aggregate_probability_tiered(
+            event, source_inputs=source_inputs, source_method=source_method
+        )
         # The blend states the HOME side's probability; this brief is
         # team-relative ("we had them at 72%"), so on a two-way sport an away
         # row is the complement.
@@ -921,13 +1039,18 @@ def _format_event_brief(
         # Newcastle at 18% and Arsenal's own price was 59%. This comment used to
         # call every sport two-way normalised (measured 2026-09-11); #1011 made
         # soccer three-way five days later.
-        if not is_home:
-            if sport_prices_a_draw(sport.key if sport else None):
-                # #12824: the stored opening away leg is historical, not
-                # a current quote. The shared blend has no admitted away leg;
-                # neither that opening nor 1 - home may fill it.
-                wp = None
-            elif wp is not None:
+        if away_unavailable:
+            # #12824: the shared blend has no admitted current away leg.
+            wp = None
+        elif wp is not None:
+            home_mark, away_mark = blended_source_marks(
+                event,
+                source_inputs,
+                method=source_method[0] if source_method else None,
+                away_available=not is_home,
+            )
+            current_mark = home_mark if is_home else away_mark
+            if not is_home:
                 wp = 1.0 - wp
 
     # L2-174 Item 3e — the recents expectation grammar ("we had them at 72%",
@@ -936,6 +1059,8 @@ def _format_event_brief(
     # gates silently on the missing field. The team-relative OPENING probability is
     # exactly "what we had them at" before the game; completed_at dates the result.
     pre = event.opening_home_probability if is_home else event.opening_away_probability
+    pregame_input = pre
+    pregame_source = BOOKS_SOURCE
 
     # #10589 — but on a SETTLED row the page beside it prints a different
     # number. Since #8315 the game page's "Pre-match 44% – 56%" is the ladder
@@ -955,16 +1080,43 @@ def _format_event_brief(
         pct = prematch["home_rendered_percent" if is_home else "away_rendered_percent"]
         if pct is not None:
             pre = pct / 100
+            pregame_source = prematch.get("source")
+            pregame_input = prematch.get(
+                "home_probability" if is_home else "away_probability"
+            )
+    pregame_mark = (
+        quote_source_mark(
+            [
+                {
+                    "key": (
+                        "betting" if pregame_source == BOOKS_SOURCE else pregame_source
+                    ),
+                    "probability": pregame_input,
+                }
+            ]
+        )
+        if pre is not None
+        else no_source_mark("no_probability")
+    )
 
+    _served_start = served_commence_time(
+        status,
+        event.commence_time,
+        getattr(event, "win_probability_sources", None),
+        now,
+    )
     return {
         "id": event.id,
         "home_team": event.home_team_name,
         "away_team": event.away_team_name,
         "home_score": event.home_score,
         "away_score": event.away_score,
+        **score_source_unavailable_fields(
+            event, sport_key=sport.key if sport else None, status=status
+        ),
         # #1779 family: never render live before the row's own start time.
         "status": status,
-        "commence_time": event.commence_time.isoformat() if event.commence_time else None,
+        "commence_time": _served_start.isoformat() if _served_start else None,
         # #8841: a placeholder start the venue has not announced yet.
         "start_is_tbd": start_is_tbd(
             getattr(event, "event_tags", None), event.commence_time, event.status
@@ -973,7 +1125,14 @@ def _format_event_brief(
         "is_home": is_home,
         "opponent": opponent,
         "win_probability": round(wp, 3) if wp is not None else None,
+        **(
+            {"draw_probability": round(draw_prob, 3)}
+            if draw_prob is not None
+            else {}
+        ),
+        "source_mark": current_mark,
         "pregame_win_probability": round(float(pre), 3) if pre is not None else None,
+        "pregame_source_mark": pregame_mark,
         "completed_at": event.completed_at.isoformat() if event.completed_at else None,
         # #9208 — ESPN's word for a game called off ("Canceled", "Postponed"),
         # on a suspended row only. Orioles @ Yankees 15319530 read "Canceled"
@@ -1396,12 +1555,20 @@ async def _get_championship_path(
             )
             avg_prob = 1.0
 
+        source_mark = quote_source_mark(
+            (
+                {"key": getattr(market, "source", None), "probability": probability}
+                for probability, _, market in deduped
+            ),
+            method=f"Bain Luck blend · average of {len(deduped)} prices before rounding",
+        )
         path.append({
             "tier": tier,
             "label": _championship_tier_label(tier, team_sport_key, best_market.name),
             "market_name": best_market.name,
             "market_id": best_market.id,
             "probability": round(avg_prob, 4),
+            "source_mark": source_mark,
             "rank": best_outcome.rank,
             "movement": float(best_outcome.probability_change_24h) if best_outcome.probability_change_24h else None,
             # Season this number describes (Queue #242 Item 1). Every market that
@@ -1539,6 +1706,9 @@ def _stamp_grid_states(
                     break
         if state:
             step["state"] = state
+            step["source_mark"] = settled_source_mark(
+                None, "Won" if state == "won" else "Eliminated"
+            )
 
     for item in futures_items:
         state = _by_market(item.get("market_id"))

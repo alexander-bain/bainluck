@@ -165,6 +165,47 @@ class TestYardstickPairSelection:
             == "Gavin Newsom announces a 2028 run: as likely as snow in DC by Nov 30"
         )
         assert container["member_count"] == 2
+        for row, member in zip(members.rows, members.members, strict=True):
+            assert row["market_id"] == member["id"]
+            yes, no = member["card"]["top_outcomes"]
+            assert row["source_mark"] == yes["source_mark"]
+            for outcome in (yes, no):
+                source, = outcome["source_mark"]["sources"]
+                assert source["key"] == "polymarket"
+                assert source["probability"] == outcome["probability"]
+                assert source["observed_at"] is None
+
+    @pytest.mark.parametrize("no_state", ["direct", "absent", "retracted"])
+    def test_mark_uses_each_members_own_price_and_source(self, no_state):
+        anchor = _make_binary_market(113012, "US recession by end of 2026?", 0.06, category="economy")
+        # The old card defaults to Polymarket. That default cannot name a source input.
+        del anchor["source"]
+        target = _make_binary_market(
+            113200, "Will the Iranian regime fall before 2027?", 0.04,
+            source="kalshi", category="geopolitics",
+        )
+        if no_state == "absent":
+            target["outcomes"].pop()
+        elif no_state == "retracted":
+            target["outcomes"][1].update(probability=None, resolution_source="ungradeable_result")
+        pair = select_yardstick_pair(
+            [anchor, target], anchor_spec="kalshi:113012", candidate_specs=["kalshi:113200"],
+            now=NOW_NOV_4,
+        )
+        assert isinstance(pair, RoundupMembers)
+        target_row, anchor_row = pair.rows
+        yes, no = pair.members[0]["card"]["top_outcomes"]
+        assert target_row["source_mark"] == yes["source_mark"]
+        assert yes["source_mark"]["sources"][0]["key"] == "kalshi"
+        assert yes["source_mark"]["sources"][0]["probability"] == 0.04
+        assert anchor_row["source_mark"]["reason"] == "source_evidence_incomplete"
+        if no_state == "retracted":
+            assert no["source_mark"]["reason"] == "result_unknown"
+        else:
+            source, = no["source_mark"]["sources"]
+            assert source["key"] == "kalshi"
+            assert source["probability"] == (0.96 if no_state == "direct" else 0.04)
+            assert ("method" in no["source_mark"]) == (no_state == "absent")
 
     @pytest.mark.asyncio
     async def test_for_scale_snow_in_buffalo_live_nov_4_prices_pairs_hegseth_against_buffalo_snow(

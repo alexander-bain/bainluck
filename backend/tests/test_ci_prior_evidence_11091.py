@@ -91,7 +91,7 @@ def fixture():
     jobs.extend(
         [
             {**success(name), "conclusion": "skipped", "steps": []}
-            for name in ("deploy", "release-required", "flaky-canary")
+            for name in ("deploy", "release-required", "flaky-canary", "post-deploy-smoke-dry-run")
         ]
     )
     checks = [
@@ -425,7 +425,7 @@ def test_uncertain_partial_or_refused_evidence_never_reuses(mutation):
         decide(api)
 
 
-def test_projection_matches_yaml_all_eight_shards_and_five_db_groups():
+def test_projection_matches_yaml_all_eight_shards_and_six_db_groups():
     projection = evidence.membership(TEXT)
     assert {v[1] for v in projection.values() if v[0] == "backend-tests"} == {
         str(i) for i in JOBS["backend-tests"]["strategy"]["matrix"]["shard"]
@@ -435,7 +435,7 @@ def test_projection_matches_yaml_all_eight_shards_and_five_db_groups():
     )
     for name, (_, _, _, block) in projection.items():
         assert block
-    assert len(projection) == 21  # #10708: + native-backend-readers
+    assert len(projection) == 31  # 16 shards + 7 db groups + 8 singleton jobs
 
 
 @pytest.mark.parametrize("mutation", ["short", "changed_total", "duplicate"])
@@ -548,7 +548,7 @@ def test_unknown_db_condition_is_not_silently_excluded_from_coverage():
 
 
 @pytest.mark.parametrize(
-    "identity", [f"backend-tests-{i}" for i in range(1, 9)] + ["golden-baseline-floor"]
+    "identity", [f"backend-tests-{i}" for i in range(1, 17)] + ["golden-baseline-floor"]
 )
 def test_each_history_reader_must_observe_the_recorded_master_A_not_later_B(identity):
     api = fixture()

@@ -267,7 +267,8 @@ nonisolated struct GolfTournamentPresentation: Equatable, Sendable {
                     movement24h: golfer.movement24h,
                     renderedPercent: golfer.renderedPercent,
                     openingProbability: golfer.openingProbability,
-                    isWinner: (golfer.isWinner == true) || (golfer.won == true) ? true : golfer.isWinner
+                    isWinner: (golfer.isWinner == true) || (golfer.won == true) ? true : golfer.isWinner,
+                    sourceMark: golfer.sourceMark
                 )
             }
     }
@@ -281,6 +282,7 @@ nonisolated struct GolfTournamentFieldRow: Equatable, Identifiable, Sendable {
     var renderedPercent: Int? = nil
     var openingProbability: Double? = nil
     var isWinner: Bool? = nil
+    var sourceMark: SourceMark? = nil
 
     var probabilityLabel: String {
         renderedPercent.map { formatProbability(probability, renderedPercent: $0) } ?? String(format: "%.1f%%", probability * 100)

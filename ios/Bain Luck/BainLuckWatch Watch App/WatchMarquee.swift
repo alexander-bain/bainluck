@@ -47,7 +47,9 @@ struct WatchTopStory: Identifiable {
 struct WatchTeamGame: Identifiable {
     let id: Int
     let matchup: String
-    let split: WatchProbSplit
+    let split: WatchProbSplit?
+    let resultText: String?
+    let scoreline: String?
     let live: Bool
     let clock: String?
     let startText: String?
@@ -87,7 +89,7 @@ enum WatchMarquee {
     /// missing its probability). Pure so `marquee(from:)` can scan for the first
     /// item that qualifies.
     static func story(from item: WatchFeedItem, now: Date = Date()) -> WatchTopStory? {
-        if let e = item.event, let home = e.currentOdds?.homeProbability {
+        if let e = item.event, !e.isSettled, let home = e.currentHomeProbability {
             return eventStory(item, e, homeProb: home)
         }
         // L2-225: a settled market carries a normal-looking price and no badge, so
@@ -130,10 +132,16 @@ enum WatchMarquee {
             bigLabel: homeLeads ? homeAbbr : awayAbbr,
             bigNumber: max(homePct, awayPct),
             headline: item.headline,
-            split: WatchProbSplit(
-                leftAbbr: awayAbbr, leftPct: awayPct, leftColor: e.awayTeamData?.primaryColor,
-                rightAbbr: homeAbbr, rightPct: homePct, rightColor: e.homeTeamData?.primaryColor
-            )
+            split: eventSplit(e, homePct: homePct, awayAbbr: awayAbbr, homeAbbr: homeAbbr)
+        )
+    }
+
+    private static func eventSplit(
+        _ event: WatchFeedEvent, homePct: Int, awayAbbr: String, homeAbbr: String
+    ) -> WatchProbSplit {
+        WatchProbSplit(
+            leftAbbr: awayAbbr, leftPct: 100 - homePct, leftColor: event.awayTeamData?.primaryColor,
+            rightAbbr: homeAbbr, rightPct: homePct, rightColor: event.homeTeamData?.primaryColor
         )
     }
 
@@ -141,29 +149,34 @@ enum WatchMarquee {
 
     static func teamGames(from items: [WatchFeedItem]) -> [WatchTeamGame] {
         items.compactMap { item -> WatchTeamGame? in
-            guard let e = item.event, let home = e.currentOdds?.homeProbability else { return nil }
-            let homePct = pct(home)
-            let awayPct = 100 - homePct
+            guard let e = item.event else { return nil }
             let homeAbbr = e.homeAbbrev()
             let awayAbbr = e.awayAbbrev()
+            if e.isSettled {
+                return WatchTeamGame(
+                    id: e.id,
+                    matchup: "\(awayAbbr) @ \(homeAbbr)",
+                    split: nil,
+                    resultText: e.scoreline.map { "FINAL · \($0)" } ?? "FINAL",
+                    scoreline: nil,
+                    live: false,
+                    clock: nil,
+                    startText: nil
+                )
+            }
+            guard e.currentOdds?.homeProbability != nil else { return nil }
+            let split = e.currentHomeProbability.map {
+                eventSplit(e, homePct: pct($0), awayAbbr: awayAbbr, homeAbbr: homeAbbr)
+            }
             return WatchTeamGame(
                 id: e.id,
                 matchup: "\(awayAbbr) @ \(homeAbbr)",
-                split: WatchProbSplit(
-                    leftAbbr: awayAbbr, leftPct: awayPct, leftColor: e.awayTeamData?.primaryColor,
-                    rightAbbr: homeAbbr, rightPct: homePct, rightColor: e.homeTeamData?.primaryColor
-                ),
+                split: split,
+                resultText: nil,
+                scoreline: split == nil ? e.scoreline : nil,
                 live: e.isLive,
                 clock: e.clockText,
-                // L2-225: a FINISHED game must not advertise a start time. `live` is
-                // false once a game settles, so the old expression fell straight
-                // through to `startText(commenceTime)` and rendered a completed game
-                // with a forward-looking "Tmrw 7:30 PM"-shaped line next to a
-                // probability split. Suppress it; the row stays, honestly quiet.
-                // (Whether a settled team game should instead show FINAL + score is a
-                // product call — `WatchTeamGame` carries no result field — routed to
-                // Fable rather than invented here.)
-                startText: (e.isLive || e.isSettled) ? nil : startText(e.commenceTime)
+                startText: e.isLive ? nil : startText(e.commenceTime)
             )
         }
     }

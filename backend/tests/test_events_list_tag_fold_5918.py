@@ -204,13 +204,15 @@ def _the_production_pair(
     return canonical, suppressed
 
 
-def _engine(*events):
+def _engine(*events, snapshots=()):
     eng = create_engine("sqlite://")
     Base.metadata.create_all(eng)
     with Session(eng) as s:
         s.add(Sport(id=S_LA_LIGA, key=SPORT_KEY, name="La Liga", group="Soccer"))
         for e in events:
             s.add(e)
+        for snap in snapshots:
+            s.add(snap)
         s.commit()
     return eng
 
@@ -244,14 +246,23 @@ def _portable_odds_query(event_ids):
     return select(OddsSnapshot).where(OddsSnapshot.event_id.in_(event_ids))
 
 
-def _payload(*events, **params):
+def _restore_sqlite_utc(_session, instance):
+    for attr in ("commence_time", "completed_at", "captured_at", "valid_until"):
+        val = getattr(instance, attr, None)
+        if isinstance(val, datetime) and val.tzinfo is None:
+            setattr(instance, attr, val.replace(tzinfo=timezone.utc))
+
+
+def _payload(*events, snapshots=(), **params):
     """The served `GET /api/events` body, through the real route.
 
     `_load_gei_percentiles` and `_build_team_lookup` are page furniture — colour
     swatches and percentile bands — and are patched out so a failure here is
     always about which rows were served and what numbers they carry.
     """
-    eng = _engine(*events)
+    from sqlalchemy import event as sa_event
+
+    eng = _engine(*events, snapshots=snapshots)
     call = {"sport": SPORT_KEY, "status": None, "days": 7, "limit": 200, "offset": 0}
     call.update(params)
     with (
@@ -265,6 +276,7 @@ def _payload(*events, **params):
         ),
         Session(eng) as s,
     ):
+        sa_event.listen(s, "loaded_as_persistent", _restore_sqlite_utc)
         return asyncio.run(list_events(db=_Session(s), **call))
 
 
@@ -335,9 +347,24 @@ class TestTheSurvivingCardKeepsWhatTheHiddenRowHeld:
         source `settled`), which is the same number folded or not, so the
         obvious version of this test asserts nothing.
         """
-        card = _by_id(_payload(*_the_production_pair(canonical_status="suspended")))[
-            CANONICAL
-        ]
+        # #13131: draw-priced soccer lists require all three numbers (home,
+        # draw, away) or none; attach a live three-way book on the canonical
+        # row so the suspended La Liga fixture carries a real draw while its
+        # hero blend still proves the suppressed twin's Kalshi/Polymarket
+        # readings reached the card.
+        three_way_snap = OddsSnapshot(
+            event_id=CANONICAL,
+            bookmaker="fanduel",
+            home_win_probability=0.62,
+            away_win_probability=0.18,
+            captured_at=datetime.now(timezone.utc),
+        )
+        card = _by_id(
+            _payload(
+                *_the_production_pair(canonical_status="suspended"),
+                snapshots=(three_way_snap,),
+            )
+        )[CANONICAL]
 
         assert card["hero_probability_source"] != "settled", (
             "the specimen settled, so the hero no longer reads the blend and "

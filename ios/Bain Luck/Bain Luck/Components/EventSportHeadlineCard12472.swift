@@ -152,13 +152,61 @@ struct EventSportHeadlineCard12472: View {
         )
     }
 
+    static func resolvedHeadlineSourceMark(
+        model: EventSportHeadlines12472.Model
+    ) -> (mark: SourceMark, number: Double?, renderedPercent: Int?, subject: String?, isPregame: Bool, showsTenths: Bool)? {
+        guard let mark = model.sourceMark, mark.draws else { return nil }
+        let subject = model.home.shortName
+        if mark.state == .settled {
+            return (mark, nil, nil, subject, false, false)
+        }
+        let homeRow = model.rows.first(where: { $0.role == .home })
+        let homeProb = homeRow?.rawProbability
+        let isAfter = model.kind.phase == .after || EventState.isFinished(model.eventStatus)
+        if isAfter {
+            guard let pregameProb = homeProb else { return nil }
+            let printedPregame: String? = {
+                guard let homeRow,
+                      let colIndex = model.columns.firstIndex(where: { $0.role == .pregame }),
+                      colIndex < homeRow.cells.count else {
+                    return nil
+                }
+                return homeRow.cells[colIndex]
+            }()
+            return (mark, pregameProb, SourceMarkSheet.parsedWholePercent(from: printedPregame), subject, true, false)
+        }
+        let printedCell: String? = {
+            guard let homeRow else { return model.home.winChanceText }
+            if let colIndex = model.columns.firstIndex(where: { $0.role == .now || $0.role == .chance }),
+               colIndex < homeRow.cells.count {
+                return homeRow.cells[colIndex]
+            }
+            return model.home.winChanceText
+        }()
+        let showsTenths = printedCell?.contains(".") == true
+        let alignedProb = showsTenths
+            ? EventCardView.alignNumberToPrintedTenths(homeProb, printedText: printedCell)
+            : homeProb
+        let renderedPct = showsTenths ? nil : SourceMarkSheet.parsedWholePercent(from: printedCell)
+        return (mark, alignedProb, renderedPct, subject, false, showsTenths)
+    }
+
+    private var resolvedHeadlineSourceMark: SourceMarkButton? {
+        guard let resolved = Self.resolvedHeadlineSourceMark(model: model) else { return nil }
+        return SourceMarkButton(
+            resolved.mark,
+            number: resolved.number,
+            renderedPercent: resolved.renderedPercent,
+            subject: resolved.subject,
+            isPregame: resolved.isPregame,
+            numberSize: 20,
+            showsTenths: resolved.showsTenths
+        )
+    }
+
     private var hasTrailingControls: Bool {
         if showsActiveEkgControl { return true }
-        return SourceMarkButton(
-            model.sourceMark,
-            number: model.home.rawProbability,
-            numberSize: 20
-        ) != nil
+        return resolvedHeadlineSourceMark != nil
     }
 
     private static func livePregameMetaText(
@@ -200,6 +248,9 @@ struct EventSportHeadlineCard12472: View {
                     }
                     if let pregameSummary = model.livePregameSummary {
                         cardStackBoundary12278 { livePregameSummaryRow(pregameSummary) }
+                    }
+                    if let scoreUnavailableNotice = model.scoreUnavailableNotice {
+                        cardStackBoundary12278 { scoreUnavailableNoticeRow(scoreUnavailableNotice) }
                     }
                 }
                 .padding(.horizontal, 14)
@@ -326,11 +377,7 @@ struct EventSportHeadlineCard12472: View {
                     .buttonStyle(.plain)
                 }
             }
-            if let markButton = SourceMarkButton(
-                model.sourceMark,
-                number: model.home.rawProbability,
-                numberSize: 20
-            ) {
+            if let markButton = resolvedHeadlineSourceMark {
                 markButton
                     .padding(.vertical, -10)
             }
@@ -375,7 +422,7 @@ struct EventSportHeadlineCard12472: View {
                     }
                 }
             )
-            .frame(idealWidth: 280, maxWidth: 300)
+            .frame(minWidth: 320, idealWidth: 340, maxWidth: 358)
             #if os(iOS)
             .presentationCompactAdaptation(.popover)
             #endif
@@ -405,15 +452,18 @@ struct EventSportHeadlineCard12472: View {
         HStack(alignment: .firstTextBaseline, spacing: columnSpacing) {
             Spacer(minLength: 4)
             ForEach(Array(model.columns.enumerated()), id: \.offset) { idx, col in
-                Text(col.header)
-                    .font(HeadlineStyleTable199.headers(.page, scaledSize: effectiveHeaderSize))
-                    .foregroundStyle(HeadlineStyleTable199.quietInk)
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.45)
-                    .allowsTightening(true)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(width: resolvedColumnWidth(for: col, at: idx), alignment: .trailing)
-                    .padding(.leading, extraLeadingGap(at: idx))
+                let colWidth = resolvedColumnWidth(for: col, at: idx)
+                if colWidth > 0 {
+                    Text(col.header)
+                        .font(HeadlineStyleTable199.headers(.page, scaledSize: effectiveHeaderSize))
+                        .foregroundStyle(HeadlineStyleTable199.quietInk)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.45)
+                        .allowsTightening(true)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(width: colWidth, alignment: .trailing)
+                        .padding(.leading, extraLeadingGap(at: idx))
+                }
             }
         }
         .accessibilityHidden(true)
@@ -521,16 +571,19 @@ struct EventSportHeadlineCard12472: View {
         tint: Color
     ) -> some View {
         ForEach(Array(model.columns.enumerated()), id: \.offset) { idx, col in
-            let cellText = idx < row.cells.count ? row.cells[idx] : ""
-            cellView(
-                text: cellText,
-                column: col,
-                columnIndex: idx,
-                row: row,
-                tint: tint
-            )
-            .frame(width: resolvedColumnWidth(for: col, at: idx), alignment: .trailing)
-            .padding(.leading, extraLeadingGap(at: idx))
+            let colWidth = resolvedColumnWidth(for: col, at: idx)
+            if colWidth > 0 {
+                let cellText = idx < row.cells.count ? row.cells[idx] : ""
+                cellView(
+                    text: cellText,
+                    column: col,
+                    columnIndex: idx,
+                    row: row,
+                    tint: tint
+                )
+                .frame(width: colWidth, alignment: .trailing)
+                .padding(.leading, extraLeadingGap(at: idx))
+            }
         }
     }
 
@@ -686,6 +739,16 @@ struct EventSportHeadlineCard12472: View {
                 Color.clear.preference(key: LivePregameSummaryHeightPreferenceKey199.self, value: geo.size.height)
             }
         )
+    }
+
+    private func scoreUnavailableNoticeRow(_ text: String) -> some View {
+        let cappedNoticeSize = min(baseQuietSize, stacksRowsVertically ? 20 : 14)
+        return Text(text)
+            .font(HeadlineStyleTable199.quietText(.page, monospacedDigits: false, scaledSize: cappedNoticeSize))
+            .foregroundStyle(HeadlineStyleTable199.quietInk)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("headline-12472-no-live-score-notice")
     }
 
     // MARK: - Segmented Bottom Bar

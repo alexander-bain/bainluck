@@ -228,7 +228,12 @@ def _cache_shape_params() -> set[str]:
 #: key. Widening it is how the drift guard below gets quietly disabled, so a new
 #: member needs the same argument these two have — "it is not a build input" —
 #: and not merely "the guard went red".
-_NOT_BUILD_INPUTS = {"offset", "edition"}
+#:
+#: ``machinery`` (Ruling 252: A / #12288) is not a base build input: the base is
+#: always the single prewarmed 1.0.6-safe Discover list, and ``machinery=1``
+#: splices cached machinery groupings onto that shared base in memory without
+#: minting a second base build or adding any prewarm cost.
+_NOT_BUILD_INPUTS = {"offset", "edition", "machinery"}
 
 
 def test_the_base_key_covers_every_build_input_the_response_key_covers():
@@ -269,6 +274,13 @@ def test_edition_is_not_a_parameter_at_all_either():
     base keyed per edition would build a fresh list for every pinned reader and
     turn the page base from a load saver into a load multiplier."""
     assert "edition" not in inspect.signature(feed_page_base_cache_key).parameters
+
+
+def test_machinery_is_not_a_parameter_at_all_either():
+    """Ruling 252: A (#12288): one prewarmed 1.0.6-safe base serves both older
+    apps (no machinery cards) and website/1.0.7+ (cached machinery cards
+    spliced post-base), so ``machinery`` must never mint a second base key."""
+    assert "machinery" not in inspect.signature(feed_page_base_cache_key).parameters
 
 
 def test_no_principal_can_be_keyed_into_a_base():

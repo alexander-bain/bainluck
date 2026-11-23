@@ -22,7 +22,7 @@ describe("FuturesHero — Hero C ambient history", () => {
     );
     expect(html).toContain("68");
     expect(html).toContain("text-[64px]"); // hero numeral bumped to 64px
-    expect(html).toContain("↑ 11.0 pts");
+    expect(html).toContain("↑ 11.0 points");
     expect(html).toContain("bg-accent-live/15"); // tinted up pill
     expect(html).toContain("<svg"); // ambient layer present
     expect(html).toContain("Aggregated from");
@@ -32,7 +32,7 @@ describe("FuturesHero — Hero C ambient history", () => {
     const html = renderToStaticMarkup(
       <FuturesHero name="M" probability={0.4} movement={-6} sparklinePoints={UP_CURVE} />,
     );
-    expect(html).toContain("↓ 6.0 pts");
+    expect(html).toContain("↓ 6.0 points");
     expect(html).toContain("bg-accent-danger/15");
   });
 

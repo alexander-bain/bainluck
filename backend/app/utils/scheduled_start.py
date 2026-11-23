@@ -28,7 +28,19 @@ started (the status and the clock answer that). A client needs all three.
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Optional
+
+from app.utils.event_completion import (
+    KALSHI_TICKER_TIME_COMMENCE_SOURCE,
+    POLYMARKET_VENUE_COMMENCE_SOURCE,
+)
+from app.utils.start_placeholder import (
+    espn_start_placeholder_tag,
+    espn_start_placeholder_tags,
+    start_placeholder_tag,
+    start_placeholder_tags,
+)
 
 #: The ``events.commence_time_source`` values written by a sports schedule
 #: provider: ESPN's scoreboard (``tasks/espn_sync.py``, ``utils/espn_helpers.py``,
@@ -85,13 +97,37 @@ def loaded_commence_time_source(row: Any) -> Optional[str]:
 
     Anything not loaded reads as None, which serves "not from a schedule".
     """
+    return _loaded_event_value(row, "commence_time_source")
+
+
+def _loaded_event_value(row: Any, name: str) -> Any:
     for _ in range(_MAX_VIEW_DEPTH):
         state = getattr(row, "__dict__", None)
         if not isinstance(state, dict):
             return None
-        if "commence_time_source" in state:
-            return state["commence_time_source"]
+        if name in state:
+            return state[name]
         row = state.get("_event")
         if row is None:
             return None
     return None
+
+
+def loaded_price_admission_kickoff(row: Any) -> Optional[datetime]:
+    """Return a proven kickoff that can date a live game's stored quote."""
+    source = loaded_commence_time_source(row)
+    if not (
+        start_is_from_schedule(source)
+        or source in (POLYMARKET_VENUE_COMMENCE_SOURCE, KALSHI_TICKER_TIME_COMMENCE_SOURCE)
+    ):
+        return None
+    start = _loaded_event_value(row, "commence_time")
+    if not isinstance(start, datetime):
+        return None
+    tags = _loaded_event_value(row, "event_tags")
+    if (
+        start_placeholder_tag(start) in start_placeholder_tags(tags)
+        or espn_start_placeholder_tag(start) in espn_start_placeholder_tags(tags)
+    ):
+        return None
+    return start if start.tzinfo else start.replace(tzinfo=timezone.utc)

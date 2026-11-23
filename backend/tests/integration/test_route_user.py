@@ -361,6 +361,7 @@ async def test_team_search_too_short(client):
 @pytest.mark.asyncio
 async def test_team_search_returns_list(client, mock_db):
     """Team search should return list of team results."""
+    mock_db.get_bind = MagicMock(return_value=MagicMock())
     resp = await client.get("/api/me/teams/search?q=celtics")
 
     assert resp.status_code == 200

@@ -614,6 +614,28 @@ final class SavedItemWidget10875Tests: XCTestCase {
         }
         XCTAssertFalse(block.contains("SavedWidgetPublisher10875"), "the app-only publisher leaked into the widget target")
     }
+
+    func testLockScreenRemovedMessageFitsWholeWithoutEditWidgetTail13065() throws {
+        let named = SavedWidgetMessage10875(.removed(title: "Buffalo Bills vs Minnesota Vikings"))
+        XCTAssertEqual(named.title, "Buffalo Bills vs Minnesota Vikings")
+        XCTAssertEqual(named.lockScreenDetail, "No longer saved")
+        XCTAssertEqual(named.detail, "No longer saved. Edit the widget to choose another.")
+
+        let unnamed = SavedWidgetMessage10875(.removed(title: nil))
+        XCTAssertEqual(unnamed.title, "No longer saved")
+        XCTAssertEqual(unnamed.lockScreenDetail, "Edit to choose")
+
+        // Every empty-state Lock Screen detail stays concise so accessoryRectangular never clips with "…".
+        for content: SavedWidgetContent10875 in [.notConfigured, .openApp, .otherAccount, .removed(title: "Buffalo Bills vs Minnesota Vikings"), .removed(title: nil), .gone, .unreachable] {
+            let msg = SavedWidgetMessage10875(content)
+            XCTAssertFalse(msg.lockScreenDetail.isEmpty)
+            XCTAssertLessThanOrEqual(msg.lockScreenDetail.count, 16, "Lock Screen detail too long for accessoryRectangular: \(msg.lockScreenDetail)")
+        }
+
+        let widgetView = try source("BainLuckWidget/SavedItemWidget10875.swift")
+        XCTAssertTrue(widgetView.contains("Text(message.lockScreenDetail)"),
+                      "accessoryRectangular must render message.lockScreenDetail, not the full Home Screen detail")
+    }
 }
 
 private extension Data {

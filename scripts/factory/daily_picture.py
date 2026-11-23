@@ -1,0 +1,347 @@
+"""One metered picture from a fixed, text-only template."""
+
+import base64
+from collections import Counter
+from datetime import timedelta
+import json
+import os
+import re
+import shutil
+import subprocess
+from urllib.request import Request, urlopen
+
+from model import PACIFIC, STATIONS, instant
+from notes import COLLECTOR_DAILY_CALLS, MONTHLY_COST_MICROS
+from signals import on_floor
+from llm_models import UnsupportedModelError, image_model_for_task
+
+DAILY_PICTURE_ENABLED = True
+MEASUREMENT_MONTH_MICROS = 5_000_000
+PICTURE_MAX_MICROS = 500_000
+SIZE = "1024x1024"
+QUALITY = "medium"
+MAX_PROMPT_BYTES = 2048
+# The provider calculator gives the fixed-resolution output estimate. Reserve
+# over four times its 823 tokens, plus the entire ASCII byte count of the prompt.
+OUTPUT_TOKEN_RESERVE = 4096
+MAX_WEBP_BYTES = 512_000
+ASSET_NAME = re.compile(r"factory-picture-(\d{4}-\d{2}-\d{2})\.webp\Z")
+ASSET_LABEL = re.compile(r"v1\|([0-9TZ:.+\-]+)\|(\d{1,6})\|(\d{1,6})\Z")
+
+ART_DIRECTION = (
+    "Draw a friendly cartoon workshop on cream paper with hand-inked outlines and copper details. "
+    "Use simple shapes, solid colors, bare wood, and unmarked tools and crates. "
+    "Leave the walls, wood and metal as uninterrupted areas of solid color. "
+    "Use no lettering, digits, logos, signatures, watermarks or shapes that imitate writing. "
+    "Keep any figures as simple cartoons."
+)
+CRATE_SCENES = {
+    station: (
+        f"The space {place} is clear of crates.",
+        f"Unmarked wooden cargo rests {place} with space around it.",
+        f"Unmarked wooden cargo fills the space {place}.",
+    )
+    for station, place in zip(STATIONS, (
+        "by the workbench", "beside the brass rollers", "around a bare table",
+        "by the loading ramp", "on the open cart", "beside the open door",
+    ), strict=True)
+}
+LAMP_SCENES = (
+    "Warm copper lamps light the workshop.",
+    "A red lamp glows by the loading ramp.",
+)
+
+
+class PictureRefused(ValueError):
+    """A fixed check name, safe to record without the provider response."""
+
+
+def quote(spec):
+    return {
+        "tool": spec.model,
+        "size": SIZE,
+        "quality": QUALITY,
+        "reserve_micros": (
+            MAX_PROMPT_BYTES * spec.text_input_per_m
+            + OUTPUT_TOKEN_RESERVE * spec.image_output_per_m
+        ),
+        "rates": spec.price_url,
+    }
+
+
+def picture_request(snapshot, spec):
+    through = instant(snapshot["generated_at"])
+    day = through.astimezone(PACIFIC).date().isoformat()
+    changes = snapshot["changes"]
+    live = [
+        change for change in changes if change["station"] == "Live"
+        and change.get("live_at")
+        and instant(change["live_at"]).astimezone(PACIFIC).date().isoformat() == day
+    ]
+    active = [change for change in changes if on_floor(change)]
+    counts = Counter(change["station"] for change in active + live)
+    scene = []
+    for station, (empty, sparse, busy) in CRATE_SCENES.items():
+        count = counts[station]
+        scene.append(empty if not count else (sparse if count < 10 else busy))
+    held = any(
+        stop["kind"] == "hold" and stop["line"] == "Server"
+        for stop in snapshot.get("stops", [])
+    )
+    prompt = "\n".join((ART_DIRECTION, *scene, LAMP_SCENES[int(held)]))
+    record = {
+        "day": day, "as_of": snapshot["generated_at"],
+        "floor": len({change["number"] for change in active}),
+        "shipped": len({change["number"] for change in live}),
+    }
+    return record, {
+        "model": spec.model, "prompt": prompt, "n": 1, "size": SIZE,
+        "quality": QUALITY, "complexity": "low", "background": "opaque",
+        "output_format": "webp", "output_compression": 80,
+    }
+
+
+def check_picture_request(payload):
+    prompt = payload.get("prompt")
+    if (
+        not isinstance(prompt, str) or not prompt.isascii()
+        or type(payload.get("n")) is not int or payload["n"] != 1
+    ):
+        raise PictureRefused("unsafe-picture-request")
+    if len(prompt) > MAX_PROMPT_BYTES:
+        raise PictureRefused("prompt-too-large")
+    allowed = ((ART_DIRECTION,), *CRATE_SCENES.values(), LAMP_SCENES)
+    lines = prompt.split("\n")
+    if (
+        not re.fullmatch(r"[A-Za-z .,\n-]+", prompt)
+        or len(lines) != len(allowed)
+        or any(line not in choices for line, choices in zip(lines, allowed, strict=True))
+    ):
+        raise PictureRefused("unsafe-picture-request")
+
+
+def asset_name(record):
+    return f"factory-picture-{record['day']}.webp"
+
+
+def asset_label(record):
+    return f"v1|{record['as_of']}|{record['floor']}|{record['shipped']}"
+
+
+def gallery(assets, now):
+    today = now.astimezone(PACIFIC).date()
+    records = {}
+    for asset in assets:
+        name = ASSET_NAME.fullmatch(asset.get("name") or "")
+        label = ASSET_LABEL.fullmatch(asset.get("label") or "")
+        if not name or not label or asset.get("state") != "uploaded":
+            continue
+        try:
+            at = instant(label[1])
+            day = at.astimezone(PACIFIC).date()
+        except (ValueError, TypeError):
+            continue
+        if day > today or at > now or day.isoformat() != name[1]:
+            continue
+        records[name[1]] = {
+            "day": name[1], "as_of": label[1], "floor": int(label[2]), "shipped": int(label[3]),
+        }
+    recent = [records[day] for day in sorted(records, reverse=True)]
+    return [
+        record for record in recent
+        if instant(record["as_of"]).astimezone(PACIFIC).date() >= today - timedelta(days=6)
+    ] or recent[:1]
+
+
+def request_image(payload, key):
+    request = Request(
+        "https://api.openai.com/v1/images/generations",
+        data=json.dumps(payload).encode(),
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    with urlopen(request, timeout=50) as reply:
+        body = reply.read(2_000_000)
+        return json.loads(body), reply.headers.get("x-request-id")
+
+
+def image_usage(response, spec):
+    usage = response["usage"]
+    inputs = usage["input_tokens_details"]
+    image = usage["output_tokens"]
+    if "output_tokens_details" in usage:
+        details = usage["output_tokens_details"]
+        if details.get("text_tokens", 0) or details["image_tokens"] != image:
+            raise ValueError("Unpriced Factory picture output")
+    tokens = {
+        "input_text": inputs["text_tokens"], "input_image": inputs["image_tokens"],
+        "output_image": image,
+    }
+    if (any(type(value) is not int or value < 0 for value in tokens.values())
+        or tokens["input_text"] + tokens["input_image"] != usage["input_tokens"]
+        or image == 0):
+        raise ValueError("Incomplete Factory picture usage")
+    spent = (
+        tokens["input_text"] * spec.text_input_per_m
+        + tokens["input_image"] * spec.image_input_per_m
+        + tokens["output_image"] * spec.image_output_per_m
+    )
+    return tokens, spent
+
+
+def webp_dimensions(content):
+    if (
+        len(content) < 20
+        or content[:4] != b"RIFF"
+        or content[8:12] != b"WEBP"
+        or int.from_bytes(content[4:8], "little") != len(content) - 8
+    ):
+        return None
+    offset = 12
+    canvas = image = None
+    while offset < len(content):
+        if offset + 8 > len(content):
+            return None
+        kind = content[offset:offset + 4]
+        length = int.from_bytes(content[offset + 4:offset + 8], "little")
+        start = offset + 8
+        offset = start + length + (length & 1)
+        if offset > len(content):
+            return None
+        chunk = memoryview(content)[start:start + length]
+        if kind == b"VP8X":
+            if start != 20 or length != 10 or chunk[0] & 2:  # Animated WebP.
+                return None
+            canvas = tuple(1 + int.from_bytes(chunk[i:i + 3], "little") for i in (4, 7))
+        elif kind == b"VP8 ":
+            if image or length <= 10 or chunk[0] & 1 or chunk[3:6] != b"\x9d\x01\x2a":
+                return None
+            image = tuple(int.from_bytes(chunk[i:i + 2], "little") & 0x3FFF for i in (6, 8))
+        elif kind == b"VP8L":
+            if image or length <= 5 or chunk[0] != 0x2F or chunk[4] >> 5:
+                return None
+            bits = int.from_bytes(chunk[1:5], "little")
+            image = (1 + (bits & 0x3FFF), 1 + ((bits >> 14) & 0x3FFF))
+    return image if image and all(image) and canvas in (None, image) else None
+
+
+def picture_bytes(response):
+    images = response.get("data") if isinstance(response, dict) else None
+    if not isinstance(images, list) or len(images) != 1:
+        raise PictureRefused("picture-count-invalid")
+    try:
+        content = base64.b64decode(images[0]["b64_json"], validate=True)
+    except (KeyError, TypeError, ValueError):
+        raise PictureRefused("image-data-invalid") from None
+    if len(content) > MAX_WEBP_BYTES:
+        raise PictureRefused("image-too-large")
+    size = webp_dimensions(content)
+    if size is None:
+        raise PictureRefused("not-a-webp-image")
+    if f"{size[0]}x{size[1]}" != SIZE:
+        raise PictureRefused("wrong-image-size")
+    return content
+
+
+def prepare_text_check():
+    if not shutil.which("tesseract") and os.environ.get("GITHUB_ACTIONS") == "true":
+        # Install only on an eligible evening. The subprocess needs no secrets.
+        subprocess.run(
+            ["sudo", "-n", "apt-get", "-qq", "install", "-y",
+             "--no-install-recommends", "tesseract-ocr"],
+            env={"PATH": os.defpath, "DEBIAN_FRONTEND": "noninteractive"},
+            capture_output=True, timeout=40, check=True,
+        )
+    return bool(shutil.which("tesseract"))
+
+
+def no_lettering(content):
+    result = subprocess.run(
+        [shutil.which("tesseract") or "tesseract", "stdin", "stdout", "--psm", "11"],
+        input=content, capture_output=True, timeout=10, check=True, env={"PATH": os.defpath},
+    )
+    return not re.search(rb"[A-Za-z0-9]", result.stdout)
+
+
+def metered_picture(snapshot, budget, key, *, sample=False, enabled=DAILY_PICTURE_ENABLED,
+                    request=request_image, prepare=prepare_text_check, check=no_lettering):
+    if not sample and not enabled:
+        return None, {"status": "off"}
+    now = budget.now
+    meter = budget.state()
+    local = now.astimezone(PACIFIC)
+    mode = "sample" if sample else "daily"
+    if (not key or not meter or not budget.save or not snapshot
+        or not timedelta(0) <= now - instant(snapshot["generated_at"]) <= timedelta(minutes=15)):
+        return None, {"status": "input-unavailable", "mode": mode}
+    if sample and (enabled or meter.get("picture_sample")):
+        return None, {"status": "sample-unavailable", "mode": mode}
+    if not sample and (local.hour < 18 or meter.get("picture_day") == local.date().isoformat()):
+        return None, {"status": "outside-daily-turn"}
+
+    try:
+        spec = image_model_for_task("factory_picture")
+    except UnsupportedModelError:
+        return None, {"status": "unpriced", "mode": mode}
+    try:
+        record, payload = picture_request(snapshot, spec)
+        check_picture_request(payload)
+    except PictureRefused as refusal:
+        return None, {"status": str(refusal), "mode": mode}
+    receipt = {**quote(spec), "mode": mode}
+    reserve = receipt["reserve_micros"]
+    if reserve > PICTURE_MAX_MICROS:
+        return None, {**receipt, "status": "over-picture-budget"}
+    if sample and meter["month_micros"] + reserve > MEASUREMENT_MONTH_MICROS:
+        return None, {**receipt, "status": "over-measurement-budget"}
+    if meter["calls"] >= COLLECTOR_DAILY_CALLS or meter["month_micros"] + reserve > MONTHLY_COST_MICROS:
+        return None, {**receipt, "status": "no-reservation"}
+    try:
+        if not sample and not prepare():
+            return None, {**receipt, "status": "text-check-unavailable"}
+    except (OSError, subprocess.SubprocessError):
+        return None, {**receipt, "status": "text-check-unavailable"}
+    reservation = budget.reserve(
+        reserve, picture=mode, month_limit=MEASUREMENT_MONTH_MICROS if sample else None,
+    )
+    if not reservation:
+        return None, {**receipt, "status": "no-reservation"}
+    receipt["month_before_micros"] = reservation[0]["month_micros"]
+    try:
+        response, request_id = request(payload, key)
+    except Exception:
+        # The reservation survives when a paid request's outcome is unknown.
+        return None, {**receipt, "status": "request-failed", **budget.stats()}
+    try:
+        tokens, spent = image_usage(response, spec)
+    except (KeyError, TypeError, ValueError):
+        return None, {**receipt, "status": "usage-unavailable", **budget.stats()}
+    receipt.update(tokens=tokens, used_micros=spent)
+    if request_id and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", request_id):
+        receipt["request_id"] = request_id
+    try:
+        budget.settle(reservation, spent)
+    except Exception:
+        return None, {**receipt, "status": "reservation-retained", **budget.stats()}
+    receipt.update(budget.stats())
+    receipt["tokens_in"] = tokens["input_text"] + tokens["input_image"]
+    receipt["tokens_out"] = tokens["output_image"]
+    if spent > reserve:
+        return None, {**receipt, "status": "price-over-reservation"}
+    try:
+        content = picture_bytes(response)
+    except PictureRefused as refusal:
+        return None, {**receipt, "status": str(refusal)}
+    if sample:
+        return (record, content), {**receipt, "status": "measured"}
+    try:
+        has_no_lettering = check(content)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None, {**receipt, "status": "lettering-check-failed"}
+    if not has_no_lettering:
+        return None, {**receipt, "status": "lettering-found"}
+    return (record, content), {**receipt, "status": "drawn"}
+
+
+if __name__ == "__main__":
+    print(json.dumps(quote(image_model_for_task("factory_picture"))))

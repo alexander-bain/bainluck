@@ -259,18 +259,35 @@ async def test_nothing_published_keeps_the_key_and_reads_nothing_per_build(
 async def test_an_unreadable_publication_state_is_never_cached_and_never_links(
     client, deck, redis, monkeypatch
 ):
+    """#13350: unreadable theme publication keeps the cache on under an isolated key
+    and withholds unverified links until the publication read recovers."""
     monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
+    monkeypatch.setenv("CONTAINER_DISCOVERY_ENABLED", "false")
     monkeypatch.setattr(tcr, "read_published_themes", AsyncMock(return_value=None))
     read_rows = AsyncMock()
     monkeypatch.setattr(tcr, "read_candidate_rows", read_rows)
     fake, scheduled = redis
-    for _ in range(2):
-        response = await client.get("/api/feed?limit=10")
-        assert response.headers["x-feed-cache"] == "disabled"
-        assert "collection_ref" not in _theme(response.json())
-        await _drain(scheduled)
+
+    first = await client.get("/api/feed?limit=10")
+    assert first.headers["x-feed-cache"] == "miss"
+    assert "collection_ref" not in _theme(first.json())
+    await _drain(scheduled)
+
+    second = await client.get("/api/feed?limit=10")
+    assert second.headers["x-feed-cache"] != "disabled"
+    assert second.headers["x-feed-cache"] != "miss"
+    assert "collection_ref" not in _theme(second.json())
     read_rows.assert_not_awaited()
-    assert not any(k.startswith("feed_cache:") for k in fake.store)
+    assert any(k.startswith("feed_cache:") for k in fake.store)
+
+    # Recovery to a real PublishedThemes switches away from the `unverified` key.
+    monkeypatch.setattr(
+        tcr,
+        "read_published_themes",
+        AsyncMock(return_value=tcr.PublishedThemes((tcr.PublishedTheme(AI_CID, "ai", 18),))),
+    )
+    recovered = await client.get("/api/feed?limit=10")
+    assert recovered.headers["x-feed-cache"] == "miss"
 
 
 def _theme_sql_on(session_mock) -> list:
@@ -320,9 +337,8 @@ async def test_a_stalled_collection_read_serves_the_whole_feed_without_the_link(
 async def test_a_stalled_publication_read_serves_uncached_inside_the_budget(
     client, deck, redis, monkeypatch, mock_db
 ):
-    """P1 #1: the publication read sits before the cache gate. Stalled, it
-    returns could-not-tell at its budget; the page is served whole, uncached and
-    without links, and the request's session is untouched."""
+    """P1 #1 + #13350: stalled publication read aborts at budget without touching
+    the request's session, emits no links, and keeps the Discover cache ON."""
     monkeypatch.setenv("CONTAINERS_READ_ENABLED", "true")
     monkeypatch.setenv("CONTAINER_DISCOVERY_ENABLED", "false")
     monkeypatch.setattr(tcr, "THEME_REF_CLEANUP_STEP_SECONDS", 0.05)
@@ -334,7 +350,7 @@ async def test_a_stalled_publication_read_serves_uncached_inside_the_budget(
     fake, scheduled = redis
     response, elapsed = await _timed_get(client, "/api/feed?limit=10")
     assert response.status_code == 200
-    assert response.headers["x-feed-cache"] == "disabled"
+    assert response.headers["x-feed-cache"] == "miss"
     assert elapsed < tcr.THEME_PUBLICATION_READ_BUDGET_SECONDS + 2.0, elapsed
     body = response.json()
     assert "collection_ref" not in _theme(body)
@@ -347,5 +363,11 @@ async def test_a_stalled_publication_read_serves_uncached_inside_the_budget(
         await asyncio.gather(*list(tcr._abandoned_reads), return_exceptions=True)
         await asyncio.sleep(0)
     assert side.released == ["rollback", "invalidate"]
-    assert not any(k.startswith("feed_cache:") for k in fake.store)
+    assert any(k.startswith("feed_cache:") for k in fake.store)
+
+    # Next request during backoff hits the saved copy immediately without disabled.
+    second = await client.get("/api/feed?limit=10")
+    assert second.status_code == 200
+    assert second.headers["x-feed-cache"] != "disabled"
+    assert second.headers["x-feed-cache"] != "miss"
     tcr._reset_published_cache_for_tests()

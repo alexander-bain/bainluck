@@ -299,12 +299,13 @@ final class LivePregameComparison11296Tests: XCTestCase {
         XCTAssertNil(resolve(current: current(), projection: p), "an infinite half")
     }
 
-    func testALevelPairPrintsOnlyWhereTheSportCanEndLevel() throws {
+    func testALevelPairPrintsInEverySportUnder240A() throws {
         let nflLevel = try baseline([("projected_home_score", "20.6"), ("projected_away_score", "20.6")])
-        XCTAssertNotNil(resolve(current: current(), projection: nflLevel), "the NFL can end level, as the final line allows")
+        XCTAssertNotNil(resolve(current: current(), projection: nflLevel), "the NFL prints a level baseline")
         let nba = try baseline([("projected_home_score", "110.6"), ("projected_away_score", "110.6")])
-        XCTAssertNil(resolve(sport: "basketball_nba", current: current(home: 112.5, away: 101.0), projection: nba),
-                     "basketball cannot end level")
+        let nbaResolved = resolve(sport: "basketball_nba", current: current(home: 112.5, away: 101.0), projection: nba)
+        XCTAssertEqual(nbaResolved?.away, 111)
+        XCTAssertEqual(nbaResolved?.home, 111)
     }
 
     // MARK: - The page path

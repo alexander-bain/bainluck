@@ -286,11 +286,7 @@ def test_the_echo_check_tolerates_a_missing_name():
 
 
 def test_control_serialize_outcomes_shape_is_unchanged():
-    """Control: passes on BOTH sides of this change, by design.
-
-    Imports no new symbol, so it holds on the parent commit too — it exists to
-    prove the suite is actually running rather than erroring out wholesale.
-    """
+    """Pin the complete outcome shape, including the refusal for missing source evidence."""
     from app.routes.league_futures import _serialize_outcomes
 
     class _O:
@@ -316,4 +312,9 @@ def test_control_serialize_outcomes_shape_is_unchanged():
         "team_id": None,
         "settled": False,
         "is_winner": False,
+        "source_mark": {
+            "state": "none",
+            "sources": [],
+            "reason": "source_evidence_incomplete",
+        },
     }]

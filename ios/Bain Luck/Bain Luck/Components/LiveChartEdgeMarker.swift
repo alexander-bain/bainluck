@@ -18,14 +18,17 @@ import Charts
 nonisolated struct LiveEdgeReading: Equatable {
     let homeProbability: Double
     let homeLabel: String
+    var awayLabel: String? = nil
     var source: String? = "blend"
 
     static func current(in event: EventDetail) -> LiveEdgeReading? {
         guard EventPriceStreaming.isEligible(event.status),
               event.heroProbabilitySource != OpeningLineHero.openingSource,
-              let probability = event.currentOdds?.homeProbability,
-              let label = LivePriceActivity.displayedLabels(in: event).home else { return nil }
+              let probability = event.currentOdds?.homeProbability else { return nil }
+        let labels = LivePriceActivity.displayedLabels(in: event)
+        guard let label = labels.home else { return nil }
         return LiveEdgeReading(homeProbability: probability, homeLabel: label,
+                               awayLabel: labels.away,
                                source: event.heroProbabilitySource)
     }
 }
@@ -61,6 +64,25 @@ enum LiveChartEdgeMarkerPlan {
     static let glideDuration: TimeInterval = 0.35
     static let dotDiameter: CGFloat = 8
     static let labelGap: CGFloat = 6
+
+    /// #11548 — On a two-outcome tug-of-war axis (`.homeAndAway`), y-axis ticks below 50%
+    /// print the away team's probability (`100 - p`). Name the away side and its served
+    /// label there so the endpoint label matches the gridline beside it instead of printing
+    /// e.g. `STAN 27%` next to the `73%` line. A `.homeOnly` axis always prints home.
+    static func endpointLabel(
+        homeShort: String,
+        awayShort: String,
+        reading: LiveEdgeReading,
+        sides: ChartProbabilityAxis9483.Sides,
+        fallbackAwayLabel: String? = nil
+    ) -> String {
+        if sides == .homeAndAway,
+           reading.homeProbability < 0.5,
+           let away = reading.awayLabel ?? fallbackAwayLabel {
+            return "\(awayShort) \(away)"
+        }
+        return "\(homeShort) \(reading.homeLabel)"
+    }
 
     /// The hero's accepted value and the line's newest vertex are one number.
     /// Anything else — a history point the push has not reached, a REST reading

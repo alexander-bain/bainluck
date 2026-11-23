@@ -1,0 +1,55 @@
+{
+  "slug": "machinery-music-and-grammys-2026",
+  "stage": "public",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_window",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "ENTERTAINMENT · MUSIC",
+  "name": "Grammys & Chart Leaders",
+  "category": "entertainment",
+  "tag": "ENTERTAINMENT",
+  "section_title": "Grammys, Streams & Vinyl",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "extra_llm_categories": [
+      "culture"
+    ],
+    "card_rows": 3,
+    "card_section_key": "music_grammys",
+    "hide_row_art": true,
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bb/Concert_crowd_%28Unsplash%29.jpg/960px-Concert_crowd_%28Unsplash%29.jpg",
+    "card_image_alt": "Concert crowd silhouetted beneath warm stage lights",
+    "card_image_credit": "Hannah Rodrigo (CC0 1.0 Public Domain, Wikimedia Commons)",
+    "card_image_author": "Hannah Rodrigo",
+    "card_image_license": "CC0 1.0 Public Domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Concert_crowd_(Unsplash).jpg",
+    "sections": [
+      {
+        "key": "music_grammys",
+        "title": "Grammys, Streams & Vinyl",
+        "item_noun": "markets",
+        "note": "Grammy favorites alongside Billboard, streaming, and vinyl year-end leaders.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch8-music-and-grammys-2026",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 10,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}

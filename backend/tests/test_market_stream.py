@@ -92,14 +92,20 @@ async def test_many_markets_use_the_same_hub_and_final_invalidates_before_unsubs
 
 
 @pytest.mark.parametrize(
-    "bad", ["not json", frame(2), frame(1, age=60), frame(1, age=-60)]
+    "build_bad",
+    [
+        pytest.param(lambda: "not json", id="not_json"),
+        pytest.param(lambda: frame(2), id="wrong_identity"),
+        pytest.param(lambda: frame(1, age=60), id="stale"),
+        pytest.param(lambda: frame(1, age=-60), id="future"),
+    ],
 )
 async def test_wrong_identity_stale_and_malformed_frames_cannot_reach_reader(
-    monkeypatch, bad
+    monkeypatch, build_bad
 ):
     hub, stream = await opened(monkeypatch, ids=(1,))
     try:
-        hub.subscriptions["live:market:1"].offer(bad)
+        hub.subscriptions["live:market:1"].offer(build_bad())
         valid = frame(1)
         hub.subscriptions["live:market:1"].offer(valid)
         message = await asyncio.wait_for(anext(stream), 1)

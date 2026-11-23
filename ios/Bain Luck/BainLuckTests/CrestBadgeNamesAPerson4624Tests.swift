@@ -243,13 +243,28 @@ final class CrestBadgeNamesAPerson4624Tests: XCTestCase {
         // than as the hero having dropped its sport.
         XCTAssertFalse(source.isEmpty, "EventDetailView.swift is not where this test thinks it is")
         let circles = source.components(separatedBy: "TeamLogoView(").dropFirst()
-        // #9483 — a third call: the NFL paired headline's side crest, drawn
-        // once per side from one helper, which passes the sport like the two.
-        XCTAssertEqual(circles.count, 3, "the hero's circle count moved; re-read this guard")
+        // #12771 — the legacy hero's two circles retired into the unified
+        // `EventSportHeadlineCard12472`, leaving one `TeamLogoView` in `EventDetailView`
+        // and one in `EventSportHeadlineCard12472`, both passing `sportKey:`.
+        XCTAssertEqual(circles.count, 1, "the hero's circle count moved; re-read this guard")
         for (index, circle) in circles.enumerated() {
             let call = circle.prefix(while: { $0 != ")" })
             XCTAssertTrue(call.contains("sportKey: event.sport"),
                           "hero circle \(index) draws a badge without telling it the sport")
+        }
+        let headlineSource = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("Bain Luck/Components/EventSportHeadlineCard12472.swift"),
+            encoding: .utf8
+        )
+        let headlineCircles = headlineSource.components(separatedBy: "TeamLogoView(").dropFirst()
+        XCTAssertEqual(headlineCircles.count, 1, "the unified headline's circle count moved; re-read this guard")
+        for (index, circle) in headlineCircles.enumerated() {
+            let call = circle.prefix(while: { $0 != ")" })
+            XCTAssertTrue(call.contains("sportKey: model.sportKey"),
+                          "unified headline circle \(index) draws a badge without telling it the sport")
         }
     }
 

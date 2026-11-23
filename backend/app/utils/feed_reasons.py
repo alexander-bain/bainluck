@@ -533,24 +533,21 @@ def humanize_binary_outcome_name(
     outcome_name: str,
     market_name: str | None,
 ) -> str:
-    """Replace generic 'Yes'/'No' outcome names with a meaningful label.
+    """Normalize binary 'Yes'/'No' outcome names for feed card display.
 
-    Kalshi binary markets have outcomes literally named 'Yes' and 'No'.
-    For questions like 'Will Anthropic IPO first?', showing '69% Yes' is
-    meaningless — the user needs to see 'Anthropic' or at least the gist
-    of the question.
+    #13270 — Never manufacture 'Not <subject>' or 'Not: <label>' from a binary
+    market's title. For a yes-or-no market, the row must carry the venue's own
+    'Yes' / 'No' outcome under the market's own title:
+      - Negative/exit titles ('Will Warsh be out as Fed Chair by June 30, 2027?')
+        used to emit 'Not Warsh 93%' when 93% is the chance he is NOT out,
+        inverting the meaning beside the title.
+      - Keeping both sides canonical ('Yes' and 'No') preserves pair symmetry for
+        `frontend/lib/discover/heroOutcome.ts` (which flips the hero on canonical
+        ('No', 'Yes') pairs) and avoids stranding a bare 'No' beside a synthetic
+        subject label.
 
-    Rules:
-    1. If outcome_name is not 'Yes' or 'No', return it unchanged.
-    2. Try to extract the subject from 'Will <subject> <verb> ...?' patterns.
-    3. Fall back to a shortened version of the market name (strip year
-       suffixes and question marks) so the card still reads naturally.
-    4. If that fallback does not fit in `_MAX_LABEL_CHARS` for BOTH sides of
-       the pair, return the bare side word instead of cutting it down — a
-       label that has to be chopped is the question echoed back, and the card
-       already prints the question directly below it (#3491).
-
-    Only used for feed card display — never mutates the underlying data.
+    Non-binary outcome names still pass through `display_outcome_name` (#4151)
+    so venue slugs resolve cleanly. Never mutates underlying data.
     """
     # #4151 — a venue slug is not "Yes"/"No", so it used to fall straight
     # through this function and be SPOKEN in the sentence: `claude-fable-5.1-max
@@ -566,116 +563,8 @@ def humanize_binary_outcome_name(
     if not outcome_name or outcome_name.strip().lower() not in {"yes", "no"}:
         return outcome_name
 
-    if not market_name:
-        return outcome_name
-
     is_yes = outcome_name.strip().lower() == "yes"
-
-    # --- Strategy 1: Extract subject from "Will <subject> <verb>...?" ---
-    m = re.match(
-        r"^Will\s+(.+?)\s+"
-        r"(?:IPO|be |win |reach |hit |make |get |have |lose |beat |sign |step |"
-        r"qualify|advance|clinch|resign|announce|release|launch|drop|pass|"
-        r"exceed|fall |go |become |receive |host |return |default|remain |stay )",
-        market_name,
-        re.IGNORECASE,
-    )
-    if m:
-        subject = m.group(1).strip()
-        # Skip overly generic subjects
-        first_word = subject.split()[0].lower() if subject else ""
-        if first_word not in _GENERIC_SUBJECTS and len(subject) <= 40:
-            if not is_yes:
-                return f"Not {subject}"
-            return subject
-
-    # --- Strategy 2: Shorten the market name into a label ---
-    label = _TRAILING_QM_RE.sub("", market_name)
-    label = _TRAILING_NOISE_RE.sub("", label)
-    # Strip leading "Will " for brevity
-    label = re.sub(r"^Will\s+", "", label, flags=re.IGNORECASE).strip()
-
-    # #3517 — LENGTH WAS A PROXY FOR REDUNDANCY, AND THIS IS WHERE THE TWO COME
-    # APART. #3491 (below) refuses a label that does not FIT, on the reasoning
-    # that a chopped label is the question echoed back. A label that fits is
-    # echoed back just the same; it is only shorter. Found on the live feed
-    # 2026-09-08 20:25Z, `GET /api/feed?limit=30`, two cards on page one:
-    #
-    #   'China x Philippines military clash moved up 37.5 points from opening
-    #    in China x Philippines military clash before 2027?'
-    #   'China invade Taiwan by end of 2026 (4%) leads
-    #    Will China invade Taiwan by end of 2026?'
-    #
-    # The same words twice in one sentence, and the same words again as the
-    # hero above the title. Neither label is chopped: 33 and 34 characters.
-    #
-    # 🔴 THIS TEST IS TRUE FOR EVERY LABEL STRATEGY 2 CAN BUILD, and that is not
-    # a reason to drop it for a bare `return`. Strategy 2 constructs its label by
-    # DELETING A SUFFIX from the question — a trailing `?`, a date clause, a
-    # leading auxiliary — so its output is always a prefix of what the card
-    # prints directly below it, and the branch has no way to add information.
-    # Stating the property instead of assuming it means that if the label
-    # construction ever grows a step that genuinely rewrites the question rather
-    # than trimming it, that label ships, and this file does not have to be
-    # re-derived to find out why it may.
-    #
-    # The gate stays PAIR-WIDE for the reason #3491 gives below: `label` is the
-    # single string both sides are built from, so both sides collapse together
-    # and `("No", "Yes")` stays the canonical pair the web hero recognises.
-    if _restates_market_question(label, market_name):
-        return "Yes" if is_yes else "No"
-
-    neg_label = f"Not: {label}"
-
-    # #3491 — A LABEL THAT DOES NOT FIT IS NOT A LABEL, IT IS THE QUESTION
-    # ECHOED BACK. Strategy 2 used to force a fit by cutting at 40 characters,
-    # but the card prints `data.name` DIRECTLY BELOW this label, so the cut
-    # string was never a summary of the question — it was the question again,
-    # chopped mid-word, one line above itself:
-    #
-    #   40%
-    #   Canadian Team to Win the Stanley Cup®...     <- this label
-    #   Canadian Team to Win the Stanley Cup® Before the 2030-31 Season
-    #
-    # Measured on production 2026-09-06 over every 11th open `container_member`
-    # market (n=977): the Yes label was a chopped echo for 41.1% of them and the
-    # No label for 48.2%. Strategy 1's extractions are untouched — `Will
-    # Anthropic IPO first?` still labels its sides `Anthropic` / `Not Anthropic`.
-    #
-    # This extends UX-P239's ruling to its affirmative mirror. That ruling
-    # (see `_negates_market_question` below) already holds that once a label
-    # merely restates the question, "the bare side word is the ONLY honest
-    # subject" — and `_answering_side_label` already prints exactly that in the
-    # copy. It was never applied to the outcome NAMES, which is the string the
-    # card hero renders, so `context_summary` read `No leads at 75%` while the
-    # hero above it still read `No: SpaceX (SPCX) finish week of Sept...`.
-    #
-    # 🔴 THE TEST IS PAIR-WIDE, NOT PER-SIDE, and a per-side cap would be wrong
-    # in two ways. Both are about the two sides being rendered ADJACENTLY:
-    #   1. Labelling one side as a phrase and the other as a bare word is
-    #      incoherent in the outcome rows — `the Boston Red Sox win 100 or more`
-    #      sitting above `No`.
-    #   2. `frontend/lib/discover/heroOutcome.ts` (UX-P238) flips a card's hero
-    #      off a No-side leader only when it can see the pair as a negation. It
-    #      recognises the canonical `("No", "Yes")` pair explicitly, and
-    #      otherwise needs its `NEGATION_PREFIX` to match — a regex whose
-    #      trailing `\s+` is load-bearing ("Norway", "No. 1 seed") and which a
-    #      BARE "No" therefore cannot match. Collapsing one side only would
-    #      strand `("No", "<38-char affirmative>")`: not canonical, not
-    #      prefix-matchable, so the hero would silently stop flipping and the
-    #      card would print the negation of its own question as its headline —
-    #      the exact defect UX-P238 exists to prevent. 11.0% of Strategy-2
-    #      markets sit in that 36-40 char band, so this is not hypothetical.
-    # Gating both sides on the LONGER of the two keeps the pair canonical.
-    if len(neg_label) > _MAX_LABEL_CHARS:
-        return "Yes" if is_yes else "No"
-
-    if not is_yes:
-        # Preserve side semantics. Returning the bare topic makes "No" cards
-        # read like the positive side for binary markets such as Top 5/Top 10.
-        return neg_label
-
-    return label
+    return "Yes" if is_yes else "No"
 
 
 def humanize_outcome_names_for_feed(

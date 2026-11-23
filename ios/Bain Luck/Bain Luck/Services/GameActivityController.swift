@@ -69,6 +69,7 @@ struct GameActivityRecord {
     @Published private(set) var isEnabled = false
     private let service: any GameActivityServing
     private let isForeground: () -> Bool
+    private let hasPushUpdates: () -> Bool
     private let now: () -> Date
     private var activationObserver: AnyCancellable?
     private var pendingSnapshot: (snapshot: GameActivitySnapshot, generation: Int)?
@@ -85,13 +86,16 @@ struct GameActivityRecord {
 
     convenience init() {
         self.init(service: SystemGameActivityService(),
-                  isForeground: { UIApplication.shared.applicationState == .active })
+                  isForeground: { UIApplication.shared.applicationState == .active },
+                  hasPushUpdates: { GameActivityRegistrationCoordinator.shared.canRequestPushToken })
     }
     init(service: any GameActivityServing, isForeground: @escaping () -> Bool,
+         hasPushUpdates: @escaping () -> Bool = { false },
          now: @escaping () -> Date = Date.init,
          notificationCenter: NotificationCenter = .default) {
         self.service = service
         self.isForeground = isForeground
+        self.hasPushUpdates = hasPushUpdates
         self.now = now
         reconcile()
         // A hidden SwiftUI Group has no child lifecycle callbacks. Observe app
@@ -139,9 +143,13 @@ struct GameActivityRecord {
 
     /// Invalidate synchronously, before a view's asynchronous teardown can race
     /// with a queued update. A later appearance must acquire a new generation.
+    /// When server push updates are active for this signed-in session (#10542 / #12999),
+    /// leaving the app does not immediately force the activity stale; the observation
+    /// staleDate (score clock + 6 min) stays in force while pushes run.
     func endViewing(eventID: Int) {
         guard viewingEventID == eventID else { return }
         let generation = invalidateViewing(eventID: eventID)
+        guard !hasPushUpdates() else { return }
         Task { await self.applyStale(eventID: eventID, generation: generation) }
     }
 

@@ -226,24 +226,37 @@ async def test_one_publication_state_is_served_from_cache_and_a_withdrawal_misse
 async def test_an_unreadable_fingerprint_is_never_served_from_cache(
     client, monkeypatch, enabled, unseated, card, ordinary_deck, redis
 ):
-    """``None`` = could not tell. The page is built fresh every time — the
-    pre-#10003 behaviour, so a failed read costs speed, never truth."""
+    """#13350: ``None`` = could not verify on cold start. Keep caching under an
+    isolated key (never ``disabled``) and rebuild once the read recovers."""
     fake, scheduled = redis
+    state = {"fp": None}
     monkeypatch.setattr(
-        consumer, "feed_collections_cache_fingerprint", AsyncMock(return_value=None)
+        consumer,
+        "feed_collections_cache_fingerprint",
+        AsyncMock(side_effect=lambda db, *, max_age_seconds: state["fp"]),
     )
     read = AsyncMock(return_value=SimpleNamespace(collections=[card]))
     monkeypatch.setattr(producer, "discover_collections", read)
 
-    for _ in range(2):
-        response = await client.get("/api/feed?limit=10")
-        assert response.status_code == 200
-        assert response.headers["x-feed-cache"] == "disabled"
-        assert len(_collections(response.json())) == 1
-        await _drain(scheduled)
+    first = await client.get("/api/feed?limit=10")
+    assert first.status_code == 200
+    assert first.headers["x-feed-cache"] == "miss"
+    assert len(_collections(first.json())) == 1
+    await _drain(scheduled)
+
+    second = await client.get("/api/feed?limit=10")
+    assert second.status_code == 200
+    assert second.headers["x-feed-cache"] != "disabled"
+    assert second.headers["x-feed-cache"] != "miss"
+    assert len(_collections(second.json())) == 1
+    assert read.await_count == 1
+    assert any(key.startswith("feed_cache:") for key in fake.store), fake.store
+
+    state["fp"] = "published-rev-1"
+    recovered = await client.get("/api/feed?limit=10")
+    assert recovered.status_code == 200
+    assert recovered.headers["x-feed-cache"] == "miss"
     assert read.await_count == 2
-    assert not any(key.startswith("feed_cache:") for key in fake.reads), fake.reads
-    assert not any(key.startswith("feed_cache:") for key in fake.store), fake.store
 
 
 async def test_the_sports_events_backfill_keeps_its_cache_and_skips_publication(
@@ -320,23 +333,36 @@ async def test_seated_a_supported_collection_reuses_one_publication_and_a_withdr
 async def test_seated_an_unreadable_fingerprint_builds_fresh_and_caches_nothing(
     client, monkeypatch, enabled, seated, scheduled_card, ordinary_deck, redis
 ):
+    """#13350: seated opening keeps its cache active even when fingerprint returns None."""
     fake, scheduled = redis
+    state = {"fp": None}
     monkeypatch.setattr(
-        consumer, "feed_collections_cache_fingerprint", AsyncMock(return_value=None)
+        consumer,
+        "feed_collections_cache_fingerprint",
+        AsyncMock(side_effect=lambda db, *, max_age_seconds: state["fp"]),
     )
     read = AsyncMock(return_value=SimpleNamespace(collections=[scheduled_card]))
     monkeypatch.setattr(producer, "discover_collections", read)
 
-    for _ in range(2):
-        response = await client.get("/api/feed?limit=10")
-        assert response.status_code == 200
-        assert response.headers["x-feed-cache"] == "disabled"
-        assert len(_collections(response.json())) == 1
-        await _drain(scheduled)
+    first = await client.get("/api/feed?limit=10")
+    assert first.status_code == 200
+    assert first.headers["x-feed-cache"] == "miss"
+    assert len(_collections(first.json())) == 1
+    await _drain(scheduled)
+
+    second = await client.get("/api/feed?limit=10")
+    assert second.status_code == 200
+    assert second.headers["x-feed-cache"] != "disabled"
+    assert second.headers["x-feed-cache"] != "miss"
+    assert len(_collections(second.json())) == 1
+    assert read.await_count == 1
+    assert any(key.startswith("feed_cache:") for key in fake.store), fake.store
+
+    state["fp"] = "published-rev-1"
+    recovered = await client.get("/api/feed?limit=10")
+    assert recovered.status_code == 200
+    assert recovered.headers["x-feed-cache"] == "miss"
     assert read.await_count == 2
-    assert [usable for _, usable in seated] == [True, True], "built fresh, seated"
-    assert not any(key.startswith("feed_cache:") for key in fake.reads), fake.reads
-    assert not any(key.startswith("feed_cache:") for key in fake.store), fake.store
 
 
 async def test_seated_a_hub_naming_a_live_game_seats_both_outside_the_opening(
@@ -403,3 +429,55 @@ async def test_seated_a_hub_naming_a_live_game_seats_both_outside_the_opening(
     assert _collections(recovered.json()) == []
     assert ("event", 502) not in opening_ids(recovered.json())
     assert read.await_count == 2
+
+
+async def test_discover_keeps_serving_saved_copy_when_fingerprint_fails_later(
+    client, monkeypatch, enabled, unseated, card, ordinary_deck, redis
+):
+    """#13350: once Discover warms a saved copy, a worker restart + DB failure on
+    subsequent fingerprint reads keeps serving the exact saved Redis copy via LKG."""
+    from contextlib import asynccontextmanager
+
+    fake, scheduled = redis
+    monkeypatch.setenv("FEED_FINGERPRINT_REDIS_LKG_ENABLED", "1")
+    read = AsyncMock(return_value=SimpleNamespace(collections=[card]))
+    monkeypatch.setattr(producer, "discover_collections", read)
+
+    class _DynamicSession:
+        def __init__(self):
+            self.fail = False
+
+        @asynccontextmanager
+        async def begin_nested(self):
+            yield
+
+        async def execute(self, *_args, **_kwargs):
+            if self.fail:
+                raise RuntimeError("transient connection timeout")
+            res = AsyncMock()
+            res.scalar = lambda: "7:34"
+            return res
+
+    session = _DynamicSession()
+    real_fp = consumer.feed_collections_cache_fingerprint
+
+    async def _fp(_db, *, max_age_seconds=0.0):
+        return await real_fp(session, max_age_seconds=max_age_seconds)
+
+    monkeypatch.setattr(consumer, "feed_collections_cache_fingerprint", _fp)
+
+    first = await client.get("/api/feed?limit=10")
+    assert first.status_code == 200
+    assert first.headers["x-feed-cache"] == "miss"
+    assert len(_collections(first.json())) == 1
+    await _drain(scheduled)
+
+    # Worker process restarts (empty process cache) while DB starts failing.
+    consumer._reset_fingerprint_cache_for_tests()
+    session.fail = True
+
+    second = await client.get("/api/feed?limit=10")
+    assert second.status_code == 200
+    assert second.headers["x-feed-cache"] == "hit"
+    assert second.json()["items"] == first.json()["items"]
+    assert read.await_count == 1

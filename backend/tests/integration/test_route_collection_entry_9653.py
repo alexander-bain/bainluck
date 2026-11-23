@@ -11,7 +11,7 @@ import pytest
 
 from app.services import container_discovery as producer
 from app.utils import request_cache as cache
-from app.utils.feed_cache import FEED_RESPONSE_CACHE_PREFIX
+from app.utils.feed_cache import FEED_RESPONSE_CACHE_PREFIX, feed_response_cache_key
 
 
 @pytest.fixture
@@ -154,18 +154,22 @@ def ordinary_deck(monkeypatch):
 
 
 class Redis:
-    def __init__(self):
+    def __init__(self, *, fallback_body: str | None = None):
         self.keys = []
+        self.store: dict[str, str] = {}
+        self._fallback_body = fallback_body
 
     async def mget(self, keys):
         return [await self.get(key) for key in keys]
 
     async def get(self, key):
         self.keys.append(key)
-        # A previous public page must not substitute for a fresh publication.
-        return json.dumps({"items": [], "total": 0, "has_more": False})
+        if key in self.store:
+            return self.store[key]
+        return self._fallback_body
 
-    async def setex(self, *args):
+    async def setex(self, key, ttl, value):
+        self.store[key] = value
         return True
 
 
@@ -173,9 +177,37 @@ class Redis:
 async def test_discover_paginate_full_deck_and_recheck_revocation(
     client, monkeypatch, enabled, card, ordinary_deck
 ):
+    from app.utils import feed_collections
+    from app.utils.discover_fun_tags import is_discover_fun_admission_enabled
+
+    state = {"fp": "fp-published-rev1"}
+    monkeypatch.setattr(
+        feed_collections,
+        "feed_collections_cache_fingerprint",
+        AsyncMock(side_effect=lambda *a, **k: state["fp"]),
+    )
     read = AsyncMock(return_value=SimpleNamespace(collections=[card]))
     monkeypatch.setattr(producer, "discover_collections", read)
     redis = Redis()
+    # Seed ordinary (collections=None) response keys with a stale empty page to
+    # prove a previous flag-off page never substitutes for a collection deck.
+    ordinary_keys = {
+        feed_response_cache_key(
+            limit=10,
+            offset=off,
+            include_events=True,
+            include_futures=True,
+            event_pct=0.15,
+            mode="discover",
+            opening_seating=False,
+            collections=None,
+            machinery=False,
+            fun_admission=is_discover_fun_admission_enabled(),
+        )
+        for off in (0, 10, 20)
+    }
+    for ok_key in ordinary_keys:
+        redis.store[ok_key] = json.dumps({"items": [], "total": 0, "has_more": False})
     monkeypatch.setattr(cache, "get_shared_async_redis", AsyncMock(return_value=redis))
     pages = []
     editions = []
@@ -197,17 +229,12 @@ async def test_discover_paginate_full_deck_and_recheck_revocation(
     collection = next(item for item in pages if item["type"] == "collection")
     assert collection["data"] == card
     assert not any(key.startswith("_") for item in pages for key in item)
-    # Principal-independent scoring artifacts are still usable; public page
-    # responses, stale mirrors and page bases must not be read. #10003: this
-    # session double cannot answer the publication fingerprint, and a
-    # collection-bearing page with no fingerprint is never served from cache.
-    # (Discover shape — `include_futures=false` no longer offers collections.)
     assert redis.keys
-    assert not any(key.startswith(FEED_RESPONSE_CACHE_PREFIX) for key in redis.keys), (
-        redis.keys
-    )
+    response_keys = {k for k in redis.keys if k.startswith(FEED_RESPONSE_CACHE_PREFIX)}
+    assert response_keys and response_keys.isdisjoint(ordinary_keys), redis.keys
     assert list(read.await_args.kwargs["event_ids"]) == list(range(501, 521))
 
+    state["fp"] = "fp-withdrawn-rev2"
     read.return_value = SimpleNamespace(collections=[])
     withdrawn = await client.get("/api/feed?limit=10")
     assert withdrawn.json()["total"] == 25
@@ -315,7 +342,7 @@ async def test_flag_off_preserves_cached_ordinary_response(
     client, monkeypatch, ordinary_deck
 ):
     monkeypatch.setenv("CONTAINER_DISCOVERY_ENABLED", "false")
-    redis = Redis()
+    redis = Redis(fallback_body=json.dumps({"items": [], "total": 0, "has_more": False}))
     monkeypatch.setattr(cache, "get_shared_async_redis", AsyncMock(return_value=redis))
     read = AsyncMock()
     monkeypatch.setattr(producer, "discover_collections", read)

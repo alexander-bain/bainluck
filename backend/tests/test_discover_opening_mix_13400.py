@@ -1,0 +1,998 @@
+"""Tests for Decisions 329: A & 333: A (#13400) — Discover opening-ten 9:1 + topic-mix + Seat 10 PWM."""
+
+from __future__ import annotations
+
+from collections import Counter
+from datetime import datetime, timedelta, timezone
+from unittest.mock import AsyncMock
+
+import pytest
+
+from app.utils.discover_opening_mix import (
+    PACIFIC_TZ,
+    PWM_SUBTOPIC_MONEY,
+    PWM_SUBTOPIC_POLITICS_WORLD,
+    TOPIC_ENTERTAINMENT,
+    TOPIC_ODD,
+    TOPIC_PWM,
+    TOPIC_SPORTS,
+    TOPIC_TECH_BUSINESS,
+    apply_discover_opening_mix,
+    classify_discover_opening_topic,
+    classify_discover_pwm_subtopic,
+    discover_opening_pwm_kind_for_date,
+    is_same_deadline_roundup,
+)
+from app.utils.discover_opening_seating import (
+    COMPLIANT,
+    OPENING_SEATS,
+    seat_opening,
+)
+from app.utils.roundup_containers import (
+    ROUNDUP_PRODUCERS,
+    RoundupMembers,
+    RoundupProducer,
+    _is_grouped_feed_card,
+    _is_roundup_bundle_card,
+    add_roundup_feed_items,
+    compose_roundup_feed_item,
+    render_machinery_prewarm_bundle,
+)
+
+NOW = datetime(2026, 11, 22, 2, 0, tzinfo=timezone.utc)
+
+
+def _single(
+    mid: int,
+    name: str,
+    *,
+    category: str,
+    score: float = 80.0,
+) -> dict:
+    return {
+        "type": "futures",
+        "score": score,
+        "reason": name,
+        "headline": name,
+        "data": {
+            "id": mid,
+            "name": name,
+            "status": "open",
+            "category": category,
+            "llm_sport_category": category,
+            "top_outcomes": [{"id": mid * 10, "name": "Yes", "probability": 0.5}],
+        },
+    }
+
+
+def _roundup(
+    slug: str,
+    title: str,
+    *,
+    kicker: str,
+    category: str,
+    member_ids: list[int],
+    score: float = 0.0,
+    live_child: bool = False,
+    status: str | None = None,
+    relations: list[str] | None = None,
+) -> dict:
+    children: list[dict] = []
+    for mid in member_ids:
+        if live_child:
+            children.append(
+                {
+                    "type": "event",
+                    "score": 80.0,
+                    "data": {
+                        "id": mid,
+                        "status": "live",
+                        "commence_time": (NOW - timedelta(minutes=30)).isoformat(),
+                        "is_major": False,
+                        "is_marquee": False,
+                        "event_tags": [],
+                    },
+                }
+            )
+        else:
+            children.append(
+                {
+                    "type": "futures",
+                    "score": 80.0,
+                    "data": {"id": mid, "name": f"Member {mid}", "status": "open"},
+                }
+            )
+    data: dict = {
+        "id": f"roundup:{slug}",
+        "title": title,
+        "kind": "roundup",
+        "story_key": f"roundup:{slug}",
+        "category": category,
+        "item_count": len(member_ids),
+        "member_ids": list(member_ids),
+        "items": children,
+        "collection_ref": {
+            "slug": slug,
+            "href": f"/collections/{slug}",
+            "name": title,
+            "revision": "1",
+            "collection_count": len(member_ids),
+        },
+        "roundup": {
+            "kicker": kicker,
+            "tag": category.upper(),
+            "footer": "",
+            "rows": [{"market_id": mid, "label": f"Row {mid}", "probability": 0.5} for mid in member_ids],
+            "relations": relations or ["same_subject"],
+            "level": "member",
+        },
+    }
+    if status is not None:
+        data["status"] = status
+    return {
+        "type": "bundle",
+        "score": score,
+        "reason": kicker,
+        "headline": title,
+        "data": data,
+    }
+
+
+def _theme(theme_key: str, name: str, member_ids: list[int], *, score: float = 86.0) -> dict:
+    return {
+        "type": "bundle",
+        "score": score,
+        "reason": name,
+        "headline": name,
+        "data": {
+            "id": f"theme:{theme_key}:{'-'.join(str(m) for m in member_ids)}",
+            "title": name,
+            "name": name,
+            "kind": "theme",
+            "story_key": theme_key,
+            "items": [
+                {"type": "futures", "score": score, "data": {"id": mid, "name": f"M{mid}", "status": "open"}}
+                for mid in member_ids
+            ],
+        },
+    }
+
+
+def _concept(cid: str, name: str, *, live: bool = False, score: float = 99.0) -> dict:
+    return {
+        "type": "concept",
+        "score": score,
+        "reason": name,
+        "headline": name,
+        "data": {
+            "id": cid,
+            "key": cid,
+            "slug": cid,
+            "name": name,
+            "status": "live" if live else "upcoming",
+            "start_date": (NOW - timedelta(hours=1) if live else NOW + timedelta(days=5)).isoformat(),
+            "is_major": True,
+            "event_tags": [],
+        },
+    }
+
+
+def _live_event(eid: int, name: str, *, score: float = 99.0) -> dict:
+    return {
+        "type": "event",
+        "score": score,
+        "reason": name,
+        "headline": name,
+        "data": {
+            "id": eid,
+            "name": name,
+            "status": "live",
+            "commence_time": (NOW - timedelta(minutes=20)).isoformat(),
+            "is_major": False,
+            "is_marquee": False,
+            "event_tags": [],
+        },
+    }
+
+
+def _representative_deck() -> list[dict]:
+    """Mirror production Discover shape before 329: A: PWM-heavy 5:5 top 10, richer groups below."""
+    return [
+        # Seats 1-10 initially dominated by conflict/macro and singles
+        _theme("story:middle_east_conflict", "Middle East", [1001, 1002], score=98.0),
+        _roundup("machinery-elon-musk-side-quests", "Musk Side Quests", kicker="ODD · SIDE QUESTS", category="entertainment", member_ids=[2001, 2002], score=87.0, relations=["same_subject", "sibling"]),
+        _roundup("machinery-who-gets-engaged", "Celebrity Engagements", kicker="ENTERTAINMENT · COUPLES", category="entertainment", member_ids=[2003, 2004], score=87.0, relations=["same_window", "sibling"]),
+        _theme("story:macro_rates", "Fed & Rates", [1003, 1004], score=90.0),
+        _single(3001, "Will Russia and Ukraine reach ceasefire?", category="geopolitics", score=98.0),
+        _single(3002, "Will China invade Taiwan?", category="geopolitics", score=92.0),
+        _single(3003, "Will Boston Bruins advance to Round 2?", category="hockey", score=63.0),
+        _single(3004, "Next Prime Minister of Spain?", category="politics", score=63.0),
+        _roundup("machinery-2026-summed-up", "2026 Summed Up", kicker="CULTURE · 2026", category="entertainment", member_ids=[2005, 2006], score=85.0, relations=["same_window", "sibling"]),
+        _single(3005, "NFL Super Bowl Winner", category="football", score=95.0),
+        # Seats 11+ carry rich groups, concepts, live events, and standing roundups
+        _roundup("roundup-cfp-picture", "College Football Playoff picture", kicker="SPORTS · CFB", category="football", member_ids=[2007, 2008], score=64.0),
+        _single(3006, "Premier League Winner", category="soccer", score=70.0),
+        _roundup("machinery-long-shots", "Long Shots", kicker="ODD · LONG SHOTS", category="entertainment", member_ids=[2009, 2010], score=63.0, relations=["same_measure", "sibling"]),
+        _single(3007, "Oscar Best Director", category="entertainment", score=72.0),
+        _roundup("machinery-white-christmas", "White Christmas", kicker="WEATHER · CHRISTMAS", category="weather", member_ids=[2011, 2012], score=80.0),
+        _single(3008, "OpenAI IPO Valuation", category="tech", score=74.0),
+        _theme("story:ai", "AI", [2013, 2014], score=86.0),
+        _single(3009, "NBA Finals Winner", category="basketball", score=76.0),
+        _roundup("machinery-next-james-bond", "Next James Bond", kicker="ENTERTAINMENT · JAMES BOND", category="entertainment", member_ids=[2015, 2016], score=82.0),
+        _single(3010, "UFC Lightweight Champion", category="mma", score=60.0),
+        _roundup("by-november-30", "Deadlines by Nov 30", kicker="TECH · DEADLINES", category="tech", member_ids=[2017, 2018], score=65.0),
+        _single(3011, "Taylor Swift Album Sales", category="culture", score=55.0),
+        _roundup("machinery-nba-night", "NBA Tonight", kicker="NBA · THIS SLATE", category="basketball", member_ids=[2019, 2020], score=99.0, live_child=True, status="live"),
+        _concept("concept:world-cup-2026", "FIFA World Cup 2026", live=False, score=99.0),
+        _live_event(4001, "Live Ordinary Game", score=99.0),
+        _roundup("golf-this-week", "Golf This Week", kicker="GOLF · THIS WEEK", category="golf", member_ids=[2021, 2022], score=50.0),
+        _single(3012, "Extra single 1", category="sports", score=45.0),
+        _roundup("nhl-playoffs-2026-27", "NHL Playoffs", kicker="NHL · PLAYOFFS", category="hockey", member_ids=[2023, 2024], score=44.0),
+        _single(3013, "Extra single 2", category="entertainment", score=43.0),
+    ]
+
+
+def test_representative_deck_hits_9_to_1_and_topic_mix_and_passes_seat_opening() -> None:
+    deck = _representative_deck()
+    mixed = apply_discover_opening_mix(deck, now=NOW)
+    seating = seat_opening(mixed, now=NOW)
+    assert seating.status == COMPLIANT, seating.detail
+
+    top10 = seating.items[:10]
+    assert sum(1 for c in top10 if _is_grouped_feed_card(c)) == 9
+    assert sum(1 for c in top10 if c.get("type") == "futures") == 1
+    assert sum(1 for c in top10 if c.get("type") in ("concept", "event")) == 0
+
+    topics = Counter(classify_discover_opening_topic(c) for c in top10)
+    assert topics[TOPIC_ODD] == 3
+    assert 2 <= topics[TOPIC_ENTERTAINMENT] <= 3
+    assert topics[TOPIC_SPORTS] == 2
+    assert 1 <= topics[TOPIC_TECH_BUSINESS] <= 2
+    assert topics[TOPIC_ENTERTAINMENT] + topics[TOPIC_TECH_BUSINESS] == 4
+    assert topics[TOPIC_PWM] == 1
+    assert classify_discover_opening_topic(top10[0]) != TOPIC_PWM
+    # Decision 333: A — Seat 10 holds the grouped PWM card matching the Pacific date.
+    assert _is_grouped_feed_card(top10[9])
+    assert classify_discover_opening_topic(top10[9]) == TOPIC_PWM
+    assert classify_discover_pwm_subtopic(top10[9]) == discover_opening_pwm_kind_for_date(NOW)
+    assert "roundup:by-november-30" not in {(c.get("data") or {}).get("id") for c in top10}
+
+    # Single selected is the 95-pt non-conflict NFL Super Bowl Winner, never Russia/Ukraine (98)
+    singles = [c for c in top10 if c.get("type") == "futures"]
+    assert len(singles) == 1
+    assert singles[0]["data"]["id"] == 3005
+
+    # Decision 123-A: no two round-up cards adjacent from seat 11 onward
+    for idx in range(OPENING_SEATS + 1, len(seating.items)):
+        assert not (
+            _is_roundup_bundle_card(seating.items[idx - 1])
+            and _is_roundup_bundle_card(seating.items[idx])
+        ), f"Adjacent round-up at seat {idx + 1}"
+
+    # Strict idempotency
+    mixed_twice = apply_discover_opening_mix(mixed, now=NOW)
+    assert [
+        (c.get("type"), (c.get("data") or {}).get("id")) for c in mixed_twice
+    ] == [(c.get("type"), (c.get("data") or {}).get("id")) for c in mixed]
+
+
+def test_concept_cards_and_live_games_never_enter_first_ten() -> None:
+    second_live = _roundup(
+        "machinery-nfl-week",
+        "NFL Week",
+        kicker="NFL · THIS SLATE",
+        category="football",
+        member_ids=[2098],
+        score=50.0,
+        live_child=True,
+        status="live",
+    )
+    deck = [
+        _concept("concept:nba-finals", "NBA Finals Hub", live=False, score=99.0),
+        _live_event(5001, "Live NBA Game", score=99.0),
+        *_representative_deck(),
+        second_live,
+    ]
+    mixed = apply_discover_opening_mix(deck, now=NOW)
+    seating = seat_opening(mixed, now=NOW)
+    assert seating.status == COMPLIANT, seating.detail
+    top10_ids = {(c.get("data") or {}).get("id") for c in seating.items[:10]}
+    assert "concept:nba-finals" not in top10_ids
+    assert "concept:world-cup-2026" not in top10_ids
+    assert 5001 not in top10_ids
+    assert 4001 not in top10_ids
+    # Decision 342: B — the sports grouping holding the most live games wins one
+    # sports seat (machinery-nba-night holds 2 > machinery-nfl-week's 1); any second
+    # live grouping stays out of seats 1..10 and loses its live-sports marker.
+    assert "roundup:machinery-nba-night" in top10_ids
+    assert "roundup:machinery-nfl-week" not in top10_ids
+    assert second_live["data"].get("opening_mix_live_sports_seat") is None
+
+
+def test_single_falls_back_to_conflict_only_when_no_other_single_qualifies() -> None:
+    # Build a deck where every single futures card is a conflict/PWM market.
+    deck = [
+        _roundup("machinery-elon-musk-side-quests", "Musk", kicker="ODD · SIDE QUESTS", category="entertainment", member_ids=[1, 2], score=87.0),
+        _roundup("machinery-long-shots", "Long Shots", kicker="ODD · LONG SHOTS", category="entertainment", member_ids=[3, 4], score=86.0),
+        _roundup("machinery-white-christmas", "White Christmas", kicker="WEATHER · CHRISTMAS", category="weather", member_ids=[5, 6], score=85.0),
+        _roundup("machinery-who-gets-engaged", "Engaged", kicker="ENTERTAINMENT · COUPLES", category="entertainment", member_ids=[7, 8], score=84.0),
+        _roundup("machinery-2026-summed-up", "2026", kicker="CULTURE · 2026", category="entertainment", member_ids=[9, 10], score=83.0),
+        _roundup("machinery-next-james-bond", "Bond", kicker="ENTERTAINMENT · JAMES BOND", category="entertainment", member_ids=[11, 12], score=82.0),
+        _roundup("roundup-cfp-picture", "CFP", kicker="SPORTS · CFB", category="football", member_ids=[13, 14], score=81.0),
+        _theme("story:ai", "AI", [15, 16], score=80.0),
+        _roundup("machinery-space-race", "Space Race", kicker="TECH · SPACE", category="tech", member_ids=[17, 18], score=79.0),
+        _single(999, "Will Russia and Ukraine reach ceasefire?", category="geopolitics", score=98.0),
+        _single(998, "Extra conflict market", category="politics", score=70.0),
+        _theme("story:middle_east_conflict", "Middle East", [19, 20], score=95.0),
+    ]
+    mixed = apply_discover_opening_mix(deck, now=NOW)
+    top10 = mixed[:10]
+    singles = [c for c in top10 if c.get("type") == "futures"]
+    assert len(singles) == 1
+    assert singles[0]["data"]["id"] == 999
+    assert sum(1 for c in top10 if classify_discover_opening_topic(c) == TOPIC_PWM) <= 1
+
+
+def test_sparse_no_grouped_deck_returns_unchanged() -> None:
+    singles_only = [_single(100 + i, f"Market {i}", category="sports", score=90 - i) for i in range(15)]
+    out = apply_discover_opening_mix(singles_only, now=NOW)
+    assert out is singles_only
+
+
+@pytest.mark.asyncio
+async def test_add_roundup_and_prewarm_bundle_apply_opening_mix(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both runtime `add_roundup_feed_items(..., apply_opening_mix=True)` and prewarm
+    `render_machinery_prewarm_bundle` emit the 329: A opening mix."""
+    saved = dict(ROUNDUP_PRODUCERS)
+    try:
+        ROUNDUP_PRODUCERS.clear()
+
+        async def _prod_odd(db, *, now=None):
+            return RoundupMembers(
+                members=[{"type": "market", "id": 8101, "destination": "/futures/8101", "card": {"id": 8101, "name": "Mars"}}],
+                rows=[{"market_id": 8101, "outcome_id": 1, "label": "Mars", "probability": 0.4}],
+                title="Musk Side Quests",
+                kicker="ODD · SIDE QUESTS",
+                destination_href="/collections/machinery-elon-musk-side-quests",
+            )
+
+        prod = RoundupProducer(
+            slug="machinery-elon-musk-side-quests",
+            name="Musk Side Quests",
+            kind="roundup",
+            category="entertainment",
+            section_title="Side Quests",
+            footer="",
+            produce=_prod_odd,
+            membership="computed-produced",
+            relations=("same_subject",),
+            level="member",
+            rule={"producer": "container_machinery"},
+            enabled=lambda: True,
+        )
+        ROUNDUP_PRODUCERS[prod.slug] = prod
+        monkeypatch.setattr(
+            "app.utils.roundup_containers.ensure_optional_roundup_candidates",
+            lambda: None,
+        )
+        monkeypatch.setattr(
+            "app.utils.roundup_containers.evaluate_roundup_producer",
+            AsyncMock(return_value=(compose_roundup_feed_item(prod, await _prod_odd(None)), {"slug": prod.slug})),
+        )
+
+        base = _representative_deck()
+        mixed_runtime = await add_roundup_feed_items(
+            None,
+            list(base),
+            include_machinery=True,
+            machinery_only=True,
+            apply_opening_mix=True,
+            now=NOW,
+        )
+        assert _is_grouped_feed_card(mixed_runtime[0])
+        assert (mixed_runtime[0]["data"].get("collection_ref") or {}).get("slug") == "machinery-elon-musk-side-quests"
+        assert seat_opening(mixed_runtime, now=NOW).status == COMPLIANT
+
+        fi = compose_roundup_feed_item(prod, await _prod_odd(None))
+        assert fi is not None
+        bundle = render_machinery_prewarm_bundle(
+            mach_base={
+                "page_base_body": {"items": base, "total": len(base)},
+                "page_base_key": "feed:pagebase:v1:test",
+                "age_origin": NOW.timestamp(),
+                "opening_seating": True,
+                "limit": 20,
+                "offset": 0,
+                "cache_shape": {"limit": 20, "offset": 0, "event_pct": 0.15, "mode": "discover"},
+            },
+            produced=[fi],
+            oldest_live_built_at=None,
+            now_ts=NOW.timestamp(),
+        )
+        assert bundle is not None
+        import json
+
+        page_items = json.loads(bundle["page_json"])["items"]
+        assert sum(1 for c in page_items[:10] if _is_grouped_feed_card(c)) == 9
+        assert sum(1 for c in page_items[:10] if c.get("type") == "futures") == 1
+        assert classify_discover_opening_topic(page_items[0]) != TOPIC_PWM
+        assert classify_discover_pwm_subtopic(page_items[9]) == discover_opening_pwm_kind_for_date(NOW)
+    finally:
+        ROUNDUP_PRODUCERS.clear()
+        ROUNDUP_PRODUCERS.update(saved)
+
+
+def _two_day_pwm_deck(*, include_politics: bool = True, include_money: bool = True) -> list[dict]:
+    """Deck with rich non-PWM groups plus configurable politics/world vs money groups."""
+    cards: list[dict] = []
+    if include_politics:
+        cards.append(_theme("story:middle_east_conflict", "Middle East", [1001, 1002], score=98.0))
+        cards.append(
+            _roundup(
+                "machinery-2028-presidential",
+                "2028 Race",
+                kicker="POLITICS · 2028 RACE",
+                category="politics",
+                member_ids=[1005, 1006],
+                score=96.0,
+            )
+        )
+    if include_money:
+        cards.append(_theme("story:macro_rates", "Fed & Rates", [1003, 1004], score=90.0))
+        cards.append(
+            _roundup(
+                "for-scale-us-recession-2026",
+                "A Russia-Ukraine ceasefire by Nov 30: as likely as a US recession by end of 2026",
+                kicker="FOR SCALE",
+                category="cross-topic",
+                member_ids=[1007, 1008],
+                score=86.0,
+            )
+        )
+    cards.extend(
+        [
+            _roundup("machinery-elon-musk-side-quests", "Musk Side Quests", kicker="ODD · SIDE QUESTS", category="entertainment", member_ids=[2001, 2002], score=87.0, relations=["same_subject", "sibling"]),
+            _roundup("machinery-who-gets-engaged", "Celebrity Engagements", kicker="ENTERTAINMENT · COUPLES", category="entertainment", member_ids=[2003, 2004], score=87.0, relations=["same_window", "sibling"]),
+            _roundup("machinery-2026-summed-up", "2026 Summed Up", kicker="CULTURE · 2026", category="entertainment", member_ids=[2005, 2006], score=85.0, relations=["same_window", "sibling"]),
+            _single(3005, "NFL Super Bowl Winner", category="football", score=95.0),
+            _roundup("roundup-cfp-picture", "College Football Playoff picture", kicker="SPORTS · CFB", category="football", member_ids=[2007, 2008], score=64.0),
+            _roundup("machinery-long-shots", "Long Shots", kicker="ODD · LONG SHOTS", category="entertainment", member_ids=[2009, 2010], score=63.0, relations=["same_measure", "sibling"]),
+            _roundup("machinery-white-christmas", "White Christmas", kicker="WEATHER · CHRISTMAS", category="weather", member_ids=[2011, 2012], score=80.0),
+            _theme("story:ai", "AI", [2013, 2014], score=86.0),
+            _roundup("machinery-next-james-bond", "Next James Bond", kicker="ENTERTAINMENT · JAMES BOND", category="entertainment", member_ids=[2015, 2016], score=82.0),
+            _roundup("machinery-space-race", "Space Race", kicker="TECH · SPACE", category="tech", member_ids=[2017, 2018], score=65.0),
+            _single(3008, "OpenAI IPO Valuation", category="tech", score=74.0),
+            _single(3012, "NBA Finals Winner", category="basketball", score=60.0),
+            _roundup("by-december-31", "By December 31", kicker="SAME DEADLINE", category="cross-topic", member_ids=[2019, 2020], score=83.0),
+            _single(3001, "Will Russia and Ukraine reach ceasefire?", category="geopolitics", score=98.0),
+        ]
+    )
+    return cards
+
+
+def test_seat10_alternates_by_pacific_date_across_midnight() -> None:
+    day_a = datetime(2026, 11, 21, 23, 55, tzinfo=PACIFIC_TZ)
+    day_b = datetime(2026, 11, 22, 0, 5, tzinfo=PACIFIC_TZ)
+    kind_a = discover_opening_pwm_kind_for_date(day_a)
+    kind_b = discover_opening_pwm_kind_for_date(day_b)
+    assert {kind_a, kind_b} == {PWM_SUBTOPIC_POLITICS_WORLD, PWM_SUBTOPIC_MONEY}
+
+    politics_day = day_a if kind_a == PWM_SUBTOPIC_POLITICS_WORLD else day_b
+    money_day = day_b if politics_day == day_a else day_a
+
+    out_pol = apply_discover_opening_mix(_two_day_pwm_deck(), now=politics_day)
+    out_mon = apply_discover_opening_mix(_two_day_pwm_deck(), now=money_day)
+
+    for out, expected_kind, expected_id_prefix in (
+        (out_pol, PWM_SUBTOPIC_POLITICS_WORLD, "theme:story:middle_east_conflict:"),
+        (out_mon, PWM_SUBTOPIC_MONEY, "theme:story:macro_rates:"),
+    ):
+        top10 = out[:10]
+        assert sum(1 for c in top10 if _is_grouped_feed_card(c)) == 9
+        assert sum(1 for c in top10 if c.get("type") == "futures") == 1
+        assert sum(1 for c in top10 if classify_discover_opening_topic(c) == TOPIC_PWM) == 1
+        assert classify_discover_opening_topic(top10[0]) != TOPIC_PWM
+        assert _is_grouped_feed_card(top10[9])
+        assert classify_discover_pwm_subtopic(top10[9]) == expected_kind
+        assert str(top10[9]["data"]["id"]).startswith(expected_id_prefix)
+        assert [c["data"]["id"] for c in out[10:]]  # remainder non-empty
+        for i in range(11, len(out)):
+            assert not (_is_roundup_bundle_card(out[i - 1]) and _is_roundup_bundle_card(out[i]))
+
+
+def test_seat10_falls_back_to_other_pwm_kind_when_todays_kind_is_absent() -> None:
+    politics_day = next(
+        datetime(2026, 11, d, 12, 0, tzinfo=PACIFIC_TZ)
+        for d in range(20, 25)
+        if discover_opening_pwm_kind_for_date(datetime(2026, 11, d, 12, 0, tzinfo=PACIFIC_TZ))
+        == PWM_SUBTOPIC_POLITICS_WORLD
+    )
+    money_day = politics_day + timedelta(days=1)
+
+    only_money = apply_discover_opening_mix(
+        _two_day_pwm_deck(include_politics=False, include_money=True), now=politics_day
+    )
+    assert classify_discover_pwm_subtopic(only_money[9]) == PWM_SUBTOPIC_MONEY
+    assert sum(1 for c in only_money[:10] if _is_grouped_feed_card(c)) == 9
+
+    only_politics = apply_discover_opening_mix(
+        _two_day_pwm_deck(include_politics=True, include_money=False), now=money_day
+    )
+    assert classify_discover_pwm_subtopic(only_politics[9]) == PWM_SUBTOPIC_POLITICS_WORLD
+    assert sum(1 for c in only_politics[:10] if _is_grouped_feed_card(c)) == 9
+
+
+def test_seat10_falls_back_to_ordinary_mix_when_neither_pwm_kind_exists() -> None:
+    deck = _two_day_pwm_deck(include_politics=False, include_money=False)
+    # Remove any non-grouped conflict impact; by-december-31 is still in deck and must NOT fill Seat 10.
+    out = apply_discover_opening_mix(deck, now=NOW)
+    top10 = out[:10]
+    topics = Counter(classify_discover_opening_topic(c) for c in top10)
+    assert sum(1 for c in top10 if _is_grouped_feed_card(c)) == 9
+    assert sum(1 for c in top10 if c.get("type") == "futures") == 1
+    assert topics[TOPIC_PWM] == 0
+    assert topics[TOPIC_ODD] == 3
+    assert topics[TOPIC_ENTERTAINMENT] == 3
+    assert topics[TOPIC_SPORTS] == 2
+    assert topics[TOPIC_TECH_BUSINESS] == 2
+
+
+def test_seat10_flex_slot_follows_feed_ranking_between_entertainment_and_tech() -> None:
+    # Build two decks with identical candidates, flipping relative order of ent#3 vs tech#2.
+    ent_3 = _roundup("machinery-next-james-bond", "Bond", kicker="ENTERTAINMENT · JAMES BOND", category="entertainment", member_ids=[2015, 2016], score=82.0)
+    tech_2 = _roundup("machinery-space-race", "Space Race", kicker="TECH · SPACE", category="tech", member_ids=[2017, 2018], score=65.0)
+    core = [
+        _theme("story:middle_east_conflict", "Middle East", [1001, 1002], score=98.0),
+        _roundup("machinery-elon-musk-side-quests", "Musk", kicker="ODD · SIDE QUESTS", category="entertainment", member_ids=[2001, 2002], score=87.0),
+        _roundup("machinery-long-shots", "Long Shots", kicker="ODD · LONG SHOTS", category="entertainment", member_ids=[2009, 2010], score=86.0),
+        _roundup("machinery-white-christmas", "White Christmas", kicker="WEATHER · CHRISTMAS", category="weather", member_ids=[2011, 2012], score=85.0),
+        _roundup("machinery-who-gets-engaged", "Engaged", kicker="ENTERTAINMENT · COUPLES", category="entertainment", member_ids=[2003, 2004], score=84.0),
+        _roundup("machinery-2026-summed-up", "2026", kicker="CULTURE · 2026", category="entertainment", member_ids=[2005, 2006], score=83.0),
+        _roundup("roundup-cfp-picture", "CFP", kicker="SPORTS · CFB", category="football", member_ids=[2007, 2008], score=82.0),
+        _roundup("machinery-ai-and-big-tech-race", "AI Race", kicker="TECH · AI", category="tech", member_ids=[2021, 2022], score=81.0),
+        _single(3005, "NFL Super Bowl Winner", category="football", score=95.0),
+        _single(3012, "NBA Finals Winner", category="basketball", score=60.0),
+    ]
+
+    ent_first = apply_discover_opening_mix([*core, ent_3, tech_2], now=NOW)[:10]
+    tech_first = apply_discover_opening_mix([*core, tech_2, ent_3], now=NOW)[:10]
+
+    t_ent = Counter(classify_discover_opening_topic(c) for c in ent_first)
+    t_tech = Counter(classify_discover_opening_topic(c) for c in tech_first)
+    assert (t_ent[TOPIC_ENTERTAINMENT], t_ent[TOPIC_TECH_BUSINESS]) == (3, 1)
+    assert (t_tech[TOPIC_ENTERTAINMENT], t_tech[TOPIC_TECH_BUSINESS]) == (2, 2)
+
+
+def test_pwm_subtopic_split_and_non_pwm_guards() -> None:
+    me = _theme("story:middle_east_conflict", "Middle East", [1, 2])
+    race28 = _roundup("machinery-2028-presidential", "2028", kicker="POLITICS · 2028 RACE", category="politics", member_ids=[3, 4])
+    announce = _roundup("who-announces-before-2027", "Who announces", kicker="2028", category="politics", member_ids=[5, 6])
+    fed_theme = _theme("story:macro_rates", "Fed & Rates", [7, 8])
+    fed_ru = _roundup("machinery-fed-and-macro", "Fed & Macro", kicker="ECONOMICS · FEDERAL RESERVE", category="economics", member_ids=[9, 10])
+    rec = _roundup("for-scale-us-recession-2026", "A Russia-Ukraine ceasefire by Nov 30: as likely as a US recession by end of 2026", kicker="FOR SCALE", category="cross-topic", member_ids=[11, 12])
+    dec31 = _roundup("by-december-31", "By December 31", kicker="SAME DEADLINE", category="cross-topic", member_ids=[13, 14])
+    ufc = _theme("story:ufc_events", "UFC", [15, 16])
+
+    assert classify_discover_pwm_subtopic(me) == PWM_SUBTOPIC_POLITICS_WORLD
+    assert classify_discover_pwm_subtopic(race28) == PWM_SUBTOPIC_POLITICS_WORLD
+    assert classify_discover_pwm_subtopic(announce) == PWM_SUBTOPIC_POLITICS_WORLD
+    assert classify_discover_pwm_subtopic(fed_theme) == PWM_SUBTOPIC_MONEY
+    assert classify_discover_pwm_subtopic(fed_ru) == PWM_SUBTOPIC_MONEY
+    assert classify_discover_pwm_subtopic(rec) == PWM_SUBTOPIC_MONEY
+    assert classify_discover_opening_topic(dec31) == TOPIC_PWM
+    assert classify_discover_pwm_subtopic(dec31) is None
+    assert classify_discover_opening_topic(ufc) == TOPIC_SPORTS
+    assert classify_discover_pwm_subtopic(ufc) is None
+
+
+def test_333a_preserves_all_cards_and_is_idempotent_both_days() -> None:
+    day1 = datetime(2026, 11, 21, 12, 0, tzinfo=PACIFIC_TZ)
+    day2 = day1 + timedelta(days=1)
+    for dt in (day1, day2):
+        deck = _two_day_pwm_deck()
+        in_ids = sorted(str((c.get("data") or {}).get("id")) for c in deck)
+        out1 = apply_discover_opening_mix(deck, now=dt)
+        out2 = apply_discover_opening_mix(out1, now=dt)
+        out_ids = sorted(str((c.get("data") or {}).get("id")) for c in out1)
+        assert len(out1) == len(deck)
+        assert out_ids == in_ids
+        assert [
+            (c.get("type"), (c.get("data") or {}).get("id")) for c in out2
+        ] == [(c.get("type"), (c.get("data") or {}).get("id")) for c in out1]
+
+
+def test_every_same_deadline_roundup_stays_out_of_seats_1_to_9_whatever_date() -> None:
+    custom_rule_card = _roundup(
+        "same-day-custom-slug",
+        "Markets settling same day",
+        kicker="OTHER",
+        category="tech",
+        member_ids=[4101, 4102],
+        score=99.0,
+    )
+    custom_rule_card["data"]["rule"] = {"producer": "same_deadline_board"}
+
+    relation_card = _roundup(
+        "closing-together-slate",
+        "Fed rate cut and Iran ceasefire settled together",
+        kicker="ROUND-UP",
+        category="tech",
+        member_ids=[4103, 4104],
+        score=99.0,
+        relations=["same_window", "by_when"],
+    )
+
+    same_deadline_cards = [
+        _roundup("by-november-30", "By November 30", kicker="TECH · DEADLINES", category="tech", member_ids=[4001, 4002], score=99.0),
+        _roundup("by-december-31", "By December 31", kicker="SAME DEADLINE", category="cross-topic", member_ids=[4003, 4004], score=99.0),
+        _roundup("by-january-31", "By January 31", kicker="SAME DEADLINE", category="tech", member_ids=[4005, 4006], score=99.0),
+        _roundup("roundup-by-march-15", "By March 15", kicker="CROSS-TOPIC", category="business", member_ids=[4007, 4008], score=99.0),
+        _roundup("machinery-by-june-30-2027", "By June 30", kicker="AI · DEADLINES", category="ai", member_ids=[4009, 4010], score=99.0),
+        _roundup("custom-deadline-kicker", "Same day deadlines", kicker="SAME DEADLINE", category="tech", member_ids=[4011, 4012], score=99.0),
+        custom_rule_card,
+        relation_card,
+    ]
+    non_deadline_tech = _roundup("machinery-space-race", "Space Race", kicker="TECH · SPACE", category="tech", member_ids=[4201, 4202], score=81.0)
+    announce = _roundup("who-announces-before-2027", "2028 announcements", kicker="2028", category="politics", member_ids=[4203, 4204], score=80.0)
+
+    for c in same_deadline_cards:
+        assert is_same_deadline_roundup(c) is True
+        assert classify_discover_opening_topic(c) == TOPIC_PWM
+        assert classify_discover_pwm_subtopic(c) is None
+
+    assert is_same_deadline_roundup(non_deadline_tech) is False
+    assert classify_discover_opening_topic(non_deadline_tech) == TOPIC_TECH_BUSINESS
+    assert is_same_deadline_roundup(announce) is False
+
+    # Even when every same-deadline card sits at the top of the input deck, and even
+    # when NO ordinary PWM card is present in the deck, none enter seats 1..10.
+    deadline_ids = {c["data"]["id"] for c in same_deadline_cards}
+    extra_separators = [
+        _single(7000 + idx, f"Ordinary sports futures {idx}", category="sports", score=50.0 - idx)
+        for idx in range(10)
+    ]
+    deck = [
+        *same_deadline_cards,
+        *_two_day_pwm_deck(include_politics=False, include_money=False),
+        non_deadline_tech,
+        *extra_separators,
+    ]
+    for day in (
+        datetime(2026, 11, 22, 12, 0, tzinfo=PACIFIC_TZ),
+        datetime(2026, 11, 23, 12, 0, tzinfo=PACIFIC_TZ),
+    ):
+        out = apply_discover_opening_mix(deck, now=day)
+        top10_ids = {(c.get("data") or {}).get("id") for c in out[:10]}
+        assert top10_ids.isdisjoint(deadline_ids)
+        assert len(out) == len(deck)
+        assert sorted(str((c.get("data") or {}).get("id")) for c in out) == sorted(
+            str((c.get("data") or {}).get("id")) for c in deck
+        )
+        for i in range(11, len(out)):
+            assert not (_is_roundup_bundle_card(out[i - 1]) and _is_roundup_bundle_card(out[i]))
+
+    # Tiny-deck fallback (<10 non-same-deadline grouped candidates, singles fill before same-deadline)
+    tiny_deck = [
+        _roundup("by-november-30", "By November 30", kicker="SAME DEADLINE", category="tech", member_ids=[5001, 5002], score=99.0),
+        _roundup("by-february-14", "By February 14", kicker="SAME DEADLINE", category="cross-topic", member_ids=[5003, 5004], score=98.0),
+        _roundup("machinery-elon-musk-side-quests", "Musk", kicker="ODD · SIDE QUESTS", category="entertainment", member_ids=[5005, 5006], score=87.0),
+        *[_single(6000 + i, f"Sports futures {i}", category="sports", score=80 - i) for i in range(10)],
+    ]
+    tiny_out = apply_discover_opening_mix(tiny_deck, now=NOW)
+    assert {c["data"]["id"] for c in tiny_out[:9]}.isdisjoint({"roundup:by-november-30", "roundup:by-february-14"})
+    assert len(tiny_out) == len(tiny_deck)
+
+
+def test_336a_batch5_sets_classify_and_seat_in_opening_mix() -> None:
+    """Decision 336: A — Batch 5 sets sit in explicit opening-mix topic lists, not fallbacks."""
+    mm = _roundup("machinery-march-madness-2027", "March Madness 2027", kicker="CARD", category="other", member_ids=[8101, 8102], score=88.0)
+    nhl = _roundup("machinery-nhl-100-point-club", "NHL 100-Point Club", kicker="CARD", category="other", member_ids=[8103, 8104], score=87.0)
+    ai = _roundup("machinery-ai-model-leaderboard-2026", "The 2026 AI Model Leaderboard", kicker="CARD", category="other", member_ids=[8105, 8106], score=86.0)
+    tech = _roundup("machinery-big-tech-deals-hardware", "Big Tech Deals & Hardware", kicker="CARD", category="other", member_ids=[8107, 8108], score=85.0)
+
+    # Neutral kicker/category confirms explicit membership in _SPORTS_SLUGS / _TECH_BUSINESS_SLUGS.
+    assert classify_discover_opening_topic(mm) == TOPIC_SPORTS
+    assert classify_discover_opening_topic(nhl) == TOPIC_SPORTS
+    assert classify_discover_opening_topic(ai) == TOPIC_TECH_BUSINESS
+    assert classify_discover_opening_topic(tech) == TOPIC_TECH_BUSINESS
+
+    # With Batch 5 sports + tech_business leading those buckets, the opening 10 seats pick
+    # both sports sets and both tech/business sets cleanly alongside odd, entertainment, PWM, and a single.
+    deck = [
+        _roundup("machinery-elon-musk-side-quests", "Musk", kicker="ODD", category="entertainment", member_ids=[8201, 8202], score=95.0),
+        _roundup("machinery-long-shots", "Long shots", kicker="ODD", category="entertainment", member_ids=[8203, 8204], score=94.0),
+        _roundup("machinery-2026-summed-up", "2026 Summed Up", kicker="ENTERTAINMENT", category="entertainment", member_ids=[8205, 8206], score=93.0),
+        _roundup("machinery-who-gets-engaged", "Engaged", kicker="ENTERTAINMENT", category="entertainment", member_ids=[8207, 8208], score=92.0),
+        _roundup("machinery-next-james-bond", "Bond", kicker="ENTERTAINMENT", category="entertainment", member_ids=[8209, 8210], score=60.0),
+        mm,
+        nhl,
+        ai,
+        tech,
+        _roundup("machinery-2028-presidential", "2028 Race", kicker="POLITICS", category="politics", member_ids=[8211, 8212], score=91.0),
+        _single(8301, "Standout Oscar market", category="entertainment", score=89.0),
+        _single(8302, "Secondary golf market", category="golf", score=50.0),
+    ]
+    out = apply_discover_opening_mix(deck, now=NOW)
+    top10_ids = {(c.get("data") or {}).get("id") for c in out[:10]}
+    for slug in (
+        "machinery-march-madness-2027",
+        "machinery-nhl-100-point-club",
+        "machinery-ai-model-leaderboard-2026",
+        "machinery-big-tech-deals-hardware",
+    ):
+        assert f"roundup:{slug}" in top10_ids, f"{slug} missing from opening 10: {top10_ids}"
+    counts = Counter(classify_discover_opening_topic(c) for c in out[:10])
+    assert counts[TOPIC_SPORTS] == 2
+    assert counts[TOPIC_TECH_BUSINESS] == 2
+    assert counts[TOPIC_PWM] <= 1
+
+
+def _live_sports_bundle(
+    slug: str,
+    title: str,
+    games: list[dict],
+    *,
+    score: float = 82.0,
+) -> dict:
+    children = [
+        {
+            "type": "event",
+            "score": float(g.get("score", 80.0)),
+            "data": {
+                "id": g["id"],
+                "sport": g["sport"],
+                "status": "live",
+                "commence_time": g["commence_time"],
+                **({"_event_tags": list(g["_event_tags"])} if "_event_tags" in g else {}),
+                **({"event_tags": list(g["event_tags"])} if "event_tags" in g else {}),
+            },
+        }
+        for g in games
+    ]
+    return {
+        "type": "bundle",
+        "score": score,
+        "reason": title,
+        "headline": title,
+        "data": {
+            "id": f"roundup:{slug}",
+            "title": title,
+            "kind": "roundup",
+            "story_key": f"roundup:{slug}",
+            "category": "sports",
+            "item_count": len(children),
+            "member_ids": [g["id"] for g in games],
+            "items": children,
+            "collection_ref": {
+                "slug": slug,
+                "href": f"/collections/{slug}",
+                "name": title,
+                "revision": "rev",
+                "collection_count": len(children),
+            },
+            "roundup": {"kicker": "SPORTS", "tag": "SPORTS", "footer": "", "rows": []},
+        },
+    }
+
+
+def _mix_filler_deck(extra: list[dict]) -> list[dict]:
+    return [
+        _roundup("machinery-elon-musk-side-quests", "Musk", kicker="ODD", category="entertainment", member_ids=[9001, 9002], score=95.0),
+        _roundup("machinery-long-shots", "Long shots", kicker="ODD", category="entertainment", member_ids=[9003, 9004], score=94.0),
+        _roundup("machinery-google-year-in-search-2026", "Search", kicker="ODD", category="entertainment", member_ids=[9005, 9006], score=93.0),
+        _roundup("machinery-2026-summed-up", "2026", kicker="ENTERTAINMENT", category="entertainment", member_ids=[9007, 9008], score=92.0),
+        _roundup("machinery-next-james-bond", "Bond", kicker="ENTERTAINMENT", category="entertainment", member_ids=[9009, 9010], score=91.0),
+        _roundup("machinery-ai-model-leaderboard-2026", "AI", kicker="TECH", category="tech", member_ids=[9011, 9012], score=90.0),
+        _roundup("machinery-big-tech-deals-hardware", "Big Tech", kicker="TECH", category="tech", member_ids=[9013, 9014], score=89.0),
+        _roundup("machinery-2028-presidential", "2028", kicker="POLITICS", category="politics", member_ids=[9015, 9016], score=88.0),
+        _single(9101, "Standout Oscar market", category="entertainment", score=86.0),
+        *extra,
+        _roundup("cfp-picture", "CFP", kicker="SPORTS", category="sports", member_ids=[9201, 9202], score=70.0),
+    ]
+
+
+class TestLiveSportsGroupTieBreak:
+    def test_replay_1_tonight_snf_national_nfl_beats_four_ordinary_nba(self) -> None:
+        """Replay 1: 1 live national SNF NFL game beats 4 ordinary live NBA games."""
+        snf_now = datetime(2026, 11, 23, 2, 0, tzinfo=timezone.utc)
+        live_ts = (snf_now - timedelta(minutes=30)).isoformat()
+        nba_four = _live_sports_bundle(
+            "machinery-nba-night",
+            "Suns at Pelicans headlines the Nov 22-23 slate",
+            score=96.0,
+            games=[
+                {"id": 9501 + i, "sport": "basketball_nba", "commence_time": live_ts, "_event_tags": ["sport:basketball", "tier:1", "timing:primetime"]}
+                for i in range(4)
+            ],
+        )
+        nfl_snf = _live_sports_bundle(
+            "machinery-nfl-week",
+            "Vikings at 49ers headlines the Sunday slate",
+            score=84.0,
+            games=[
+                {
+                    "id": 14639207,
+                    "sport": "americanfootball_nfl",
+                    "commence_time": live_ts,
+                    "_event_tags": ["sport:football", "tier:1", "timing:national_tv", "audience:national_interest"],
+                }
+            ],
+        )
+        out = apply_discover_opening_mix(_mix_filler_deck([nba_four, nfl_snf]), now=snf_now)
+        top10_ids = {(c.get("data") or {}).get("id") for c in out[:10]}
+        assert "roundup:machinery-nfl-week" in top10_ids
+        assert "roundup:machinery-nba-night" not in top10_ids
+
+    def test_replay_2_ordinary_night_most_live_games_and_rank_tiebreak(self) -> None:
+        """Replay 2: With only ordinary live games, most live games wins; equal counts break on rank."""
+        ordinary_now = datetime(2026, 11, 24, 2, 0, tzinfo=timezone.utc)
+        live_ts = (ordinary_now - timedelta(minutes=25)).isoformat()
+        one_ordinary_nfl = _live_sports_bundle(
+            "machinery-nfl-week",
+            "1 ordinary live NFL game",
+            score=95.0,
+            games=[{"id": 9601, "sport": "americanfootball_nfl", "commence_time": live_ts, "_event_tags": ["tier:1", "timing:primetime"]}],
+        )
+        four_ordinary_nba = _live_sports_bundle(
+            "machinery-nba-night",
+            "4 ordinary live NBA games",
+            score=80.0,
+            games=[
+                {"id": 9610 + i, "sport": "basketball_nba", "commence_time": live_ts, "_event_tags": ["tier:1", "timing:primetime"]}
+                for i in range(4)
+            ],
+        )
+        out = apply_discover_opening_mix(_mix_filler_deck([one_ordinary_nfl, four_ordinary_nba]), now=ordinary_now)
+        top10_ids = {(c.get("data") or {}).get("id") for c in out[:10]}
+        assert "roundup:machinery-nba-night" in top10_ids
+        assert "roundup:machinery-nfl-week" not in top10_ids
+
+        # Equal live counts with only ordinary games preserve deck rank
+        higher_rank_nhl = _live_sports_bundle(
+            "machinery-nhl-night",
+            "1 ordinary live NHL game (higher deck rank)",
+            score=92.0,
+            games=[{"id": 9620, "sport": "icehockey_nhl", "commence_time": live_ts, "_event_tags": ["tier:1", "timing:national_tv"]}],
+        )
+        lower_rank_nba = _live_sports_bundle(
+            "machinery-nba-night",
+            "1 ordinary live NBA game (lower deck rank)",
+            score=88.0,
+            games=[{"id": 9621, "sport": "basketball_nba", "commence_time": live_ts, "_event_tags": ["tier:1", "timing:primetime"]}],
+        )
+        tie_out = apply_discover_opening_mix(_mix_filler_deck([higher_rank_nhl, lower_rank_nba]), now=ordinary_now)
+        tie_ids = {(c.get("data") or {}).get("id") for c in tie_out[:10]}
+        assert "roundup:machinery-nhl-night" in tie_ids
+        assert "roundup:machinery-nba-night" not in tie_ids
+
+    def test_replay_3_playoff_beats_national_regular_season_and_controls(self) -> None:
+        """Replay 3: Playoff tier-1/2 (or marquee pin) beats national regular-season; minor-league playoff does not."""
+        nov_now = datetime(2026, 11, 23, 2, 0, tzinfo=timezone.utc)
+        live_ts = (nov_now - timedelta(minutes=30)).isoformat()
+        national_nfl = _live_sports_bundle(
+            "machinery-nfl-week",
+            "National regular-season NFL slate",
+            score=95.0,
+            games=[
+                {
+                    "id": 9701 + i,
+                    "sport": "americanfootball_nfl",
+                    "commence_time": live_ts,
+                    "_event_tags": ["tier:1", "timing:national_tv", "audience:national_interest"],
+                }
+                for i in range(4)
+            ],
+        )
+        playoff_nba = _live_sports_bundle(
+            "machinery-nba-night",
+            "NBA Playoff Game",
+            score=80.0,
+            games=[
+                {
+                    "id": 9710,
+                    "sport": "basketball_nba",
+                    "commence_time": live_ts,
+                    "_event_tags": ["tier:1", "importance:playoff"],
+                }
+            ],
+        )
+        out = apply_discover_opening_mix(_mix_filler_deck([national_nfl, playoff_nba]), now=nov_now)
+        top10_ids = {(c.get("data") or {}).get("id") for c in out[:10]}
+        assert "roundup:machinery-nba-night" in top10_ids
+        assert "roundup:machinery-nfl-week" not in top10_ids
+
+        # Minor-league playoff (no tier:1 / tier:2) must NOT outrank national tier:1 regular season
+        minor_playoff = _live_sports_bundle(
+            "machinery-nba-night",
+            "Minor league playoff",
+            score=95.0,
+            games=[
+                {
+                    "id": 9720,
+                    "sport": "soccer_germany_bundesliga2",
+                    "commence_time": live_ts,
+                    "_event_tags": ["tier:3", "importance:playoff"],
+                }
+            ],
+        )
+        out_minor = apply_discover_opening_mix(_mix_filler_deck([minor_playoff, national_nfl]), now=nov_now)
+        minor_ids = {(c.get("data") or {}).get("id") for c in out_minor[:10]}
+        assert "roundup:machinery-nfl-week" in minor_ids
+        assert "roundup:machinery-nba-night" not in minor_ids
+
+    def test_publish_feed_item_strips_private_event_tags_from_bundle_children(self) -> None:
+        """Condition (2): _event_tags stays strictly server-side and is stripped at publish."""
+        from app.routes.feed import _publish_feed_item
+
+        card = _live_sports_bundle(
+            "machinery-nfl-week",
+            "SNF",
+            games=[
+                {
+                    "id": 14639207,
+                    "sport": "americanfootball_nfl",
+                    "commence_time": NOW.isoformat(),
+                    "_event_tags": ["tier:1", "timing:national_tv", "audience:national_interest"],
+                }
+            ],
+        )
+        card["_internal"] = True
+        card["data"]["_internal_data"] = True
+        card["data"]["items"][0]["_internal_child"] = True
+
+        _publish_feed_item(card)
+
+        assert not any(k.startswith("_") for k in card)
+        assert not any(k.startswith("_") for k in card["data"])
+        child = card["data"]["items"][0]
+        assert not any(k.startswith("_") for k in child)
+        assert not any(k.startswith("_") for k in child["data"])
+        assert child["data"]["id"] == 14639207
+        assert child["data"]["sport"] == "americanfootball_nfl"
+
+    def test_computed_event_tags_and_marquee_pin_tier(self) -> None:
+        """container_machinery copies stored + computed event_tags into private _event_tags,
+        and a calendar marquee pin promotes a live child into Tier 2."""
+        from types import SimpleNamespace
+        from app.utils.container_machinery import _computed_event_tags
+        from app.utils.majors_calendar import fixture_marquee_pinned
+
+        snf_now = datetime(2026, 11, 23, 2, 0, tzinfo=timezone.utc)
+        ev = SimpleNamespace(
+            status="live",
+            commence_time=snf_now - timedelta(minutes=30),
+            llm_importance=None,
+            llm_gender="men",
+            llm_level="pro",
+            llm_league="NFL",
+            raw_ei=0.85,
+            broadcast_info="NBC",
+            event_tags=["audience:national_interest"],
+        )
+        tags = _computed_event_tags(ev, "americanfootball_nfl")
+        assert "tier:1" in tags
+        assert "timing:national_tv" in tags
+        assert "audience:national_interest" in tags
+
+        # Season-calendar marquee pin on a regular-season game reaches Tier 2
+        from unittest.mock import patch
+
+        with patch("app.utils.discover_opening_mix.fixture_marquee_pinned", return_value=True) as pin_mock:
+            pinned = _live_sports_bundle(
+                "machinery-cfb-week",
+                "Marquee pinned CFB game",
+                score=78.0,
+                games=[{"id": 9801, "sport": "americanfootball_ncaaf", "commence_time": (snf_now - timedelta(minutes=30)).isoformat(), "_event_tags": ["tier:2"]}],
+            )
+            national_nfl = _live_sports_bundle(
+                "machinery-nfl-week",
+                "National regular-season NFL",
+                score=95.0,
+                games=[{"id": 9802, "sport": "americanfootball_nfl", "commence_time": (snf_now - timedelta(minutes=30)).isoformat(), "_event_tags": ["tier:1", "timing:national_tv", "audience:national_interest"]}],
+            )
+            pin_mock.side_effect = lambda sk, _dt, _now: sk == "americanfootball_ncaaf"
+            out = apply_discover_opening_mix(_mix_filler_deck([national_nfl, pinned]), now=snf_now)
+            assert "roundup:machinery-cfb-week" in {(c.get("data") or {}).get("id") for c in out[:10]}
+            assert fixture_marquee_pinned is not None

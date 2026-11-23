@@ -24,10 +24,18 @@ A game with no reason does not take a Discover seat; it stays in Sports (184).
 from __future__ import annotations
 
 import os
+from collections.abc import Set as AbstractSet
 from datetime import datetime, timedelta
 from typing import Any, Iterable, Optional
 
 SWITCH_ENV = "DISCOVER_GAME_NEEDS_REASON"
+ALLOWED_REASONS_ENV = "DISCOVER_GAME_ALLOWED_REASONS"
+#: Stated-stake single-game reasons that can be re-enabled one at a time via
+#: ``DISCOVER_GAME_ALLOWED_REASONS`` after Fable's look (Ruling 301: A).
+#: Pure chance swings (`swing`, `fast_swing`, `upset`) are excluded here.
+STATED_STAKE_REASON_KINDS: frozenset[str] = frozenset({"stakes", "team_move"})
+#: Subset of stated-stake reasons that require the DB queries in ``annotate_game_signals``.
+DB_SIGNAL_REASON_KINDS: frozenset[str] = frozenset({"team_move"})
 #: The pregame-to-now move that makes a live game "moving wildly".
 SWING_POINTS = 0.15
 #: A move this large inside FAST_WINDOW also counts, whatever the total.
@@ -48,6 +56,21 @@ SIGNALS_KEY = "_game_signals"
 def game_reason_enabled(environ: Optional[dict] = None) -> bool:
     env = os.environ if environ is None else environ
     return str(env.get(SWITCH_ENV, "true")).strip().lower() not in {"0", "false", "off", "no"}
+
+
+def allowed_stated_reasons(environ: Optional[dict] = None) -> frozenset[str]:
+    """Return explicitly enabled stated-stake reason kinds (default empty; Ruling 301: A)."""
+    env = os.environ if environ is None else environ
+    raw = str(env.get(ALLOWED_REASONS_ENV, "") or "")
+    requested = {part.strip().lower() for part in raw.split(",") if part.strip()}
+    return frozenset(requested & STATED_STAKE_REASON_KINDS)
+
+
+def needs_game_signals(environ: Optional[dict] = None) -> bool:
+    """True only when ``annotate_game_signals`` DB reads could admit a game card."""
+    return game_reason_enabled(environ) and bool(
+        allowed_stated_reasons(environ) & DB_SIGNAL_REASON_KINDS
+    )
 
 
 def _num(value: Any) -> Optional[float]:
@@ -89,70 +112,47 @@ def _pct(p: float) -> str:
     return f"{round(p * 100)}%"
 
 
-def game_reason(item: dict) -> Optional[dict]:
-    """The reason this game earns a Discover seat, or ``None``.
+def game_reason(
+    item: dict,
+    *,
+    followed_team_ids: AbstractSet[int] = frozenset(),
+    allowed_reasons: Optional[AbstractSet[str]] = None,
+) -> Optional[dict]:
+    """The reason this single game earns a Discover seat, or ``None``.
 
-    Returns ``{"kind": ..., "line": ..., ...facts}``. ``kind`` is one of
-    ``stakes``, ``swing``, ``fast_swing``, ``upset``, ``team_move``.
+    Ruling 301: A (Nov 20, 2026, carrying out 190: C): single game cards leave
+    Discover unless one of their teams is followed by the reader, or a
+    stated-stake reason is explicitly switched on in ``DISCOVER_GAME_ALLOWED_REASONS``.
+    A win-probability swing alone (`swing`, `fast_swing`, `upset`) never qualifies.
     """
     if item.get("type") != "event":
         return None
     data = item.get("data") or {}
+
+    matched_teams = [
+        tid for tid in _team_ids(data, item=item) if tid in followed_team_ids
+    ]
+    if matched_teams:
+        return {"kind": "followed_team", "team_ids": matched_teams, "line": None}
+
+    enabled = (
+        allowed_stated_reasons()
+        if allowed_reasons is None
+        else frozenset(allowed_reasons) & STATED_STAKE_REASON_KINDS
+    )
+    if not enabled:
+        return None
+
     status = (data.get("status") or "").strip().lower()
     signals = item.get(SIGNALS_KEY) or {}
-    home, away = _team(data, "home"), _team(data, "away")
-    pregame = _pregame_home(data)
 
-    if status == "scheduled":
+    if "stakes" in enabled and status == "scheduled":
         importance = _importance(data)
         if importance in STAKES:
             label = "Championship game" if importance == "championship" else "Playoff game"
             return {"kind": "stakes", "importance": importance, "line": label}
-        return None
 
-    if status == "live":
-        now_home = _num(data.get("hero_probability"))
-        if pregame is not None and now_home is not None and abs(now_home - pregame) >= SWING_POINTS - _EPS:
-            gainer_home = now_home > pregame
-            team = home if gainer_home else away
-            before = pregame if gainer_home else 1 - pregame
-            after = now_home if gainer_home else 1 - now_home
-            return {
-                "kind": "swing",
-                "team": team,
-                "pregame": round(before, 4),
-                "now": round(after, 4),
-                "line": f"{team}: {_pregame_pct(data, gainer_home, before)} before the game, {_pct(after)} now",
-            }
-        fast = signals.get("fast_move")
-        if isinstance(fast, dict) and abs(_num(fast.get("delta")) or 0) >= FAST_POINTS - _EPS:
-            gainer_home = fast["delta"] > 0
-            team = home if gainer_home else away
-            before = fast["before"] if gainer_home else 1 - fast["before"]
-            after = fast["after"] if gainer_home else 1 - fast["after"]
-            return {
-                "kind": "fast_swing",
-                "team": team,
-                "before": round(before, 4),
-                "now": round(after, 4),
-                "minutes": int(FAST_WINDOW.total_seconds() // 60),
-                "line": f"{team}: {_pct(before)} to {_pct(after)} in the last {int(FAST_WINDOW.total_seconds() // 60)} minutes",
-            }
-        return None
-
-    if status in FINISHED:
-        hs, as_ = _num(data.get("home_score")), _num(data.get("away_score"))
-        if pregame is not None and hs is not None and as_ is not None and hs != as_:
-            home_won = hs > as_
-            winner = home if home_won else away
-            winner_pregame = pregame if home_won else 1 - pregame
-            if winner_pregame <= UPSET_MAX:
-                return {
-                    "kind": "upset",
-                    "team": winner,
-                    "pregame": round(winner_pregame, 4),
-                    "line": f"{winner} won as a {_pregame_pct(data, home_won, winner_pregame)} underdog",
-                }
+    if "team_move" in enabled and status in FINISHED:
         moves = signals.get("team_moves") or []
         if moves:
             m = max(moves, key=lambda x: abs(x["now"] - x["before"]))
@@ -165,81 +165,158 @@ def game_reason(item: dict) -> Optional[dict]:
                 "now": round(m["now"], 4),
                 "line": f"{m['market']} — {m['outcome']}: {_pct(m['before'])} a day ago, {_pct(m['now'])} now",
             }
-        return None
     return None
 
 
-def apply_game_reasons(items: list[dict]) -> list[dict]:
-    """Discover mode: keep a game only with a reason, and give it that line.
+def apply_game_reasons(
+    items: list[dict],
+    *,
+    followed_team_ids: AbstractSet[int] = frozenset(),
+    allowed_reasons: Optional[AbstractSet[str]] = None,
+) -> list[dict]:
+    """Discover mode: drop single game cards except followed teams or enabled stakes.
 
-    Futures and grouped cards pass untouched. A kept game carries
-    ``data["discover_reason"]`` (kind + facts, for the clients' reason line) and
-    its ``reason``/``headline`` become the factual line.
+    Futures and grouped cards (including tonight's slate bundles) pass untouched.
+    A kept game carries ``data["discover_reason"]``; followed-team games keep their
+    normal copy while stated-stake games carry their stated reason line.
     """
     out: list[dict] = []
     for item in items:
         if item.get("type") != "event":
             out.append(item)
             continue
-        reason = game_reason(item)
+        reason = game_reason(
+            item,
+            followed_team_ids=followed_team_ids,
+            allowed_reasons=allowed_reasons,
+        )
         item.pop(SIGNALS_KEY, None)
         if reason is None:
             continue
         data = item.get("data")
         if isinstance(data, dict):
             data["discover_reason"] = {k: v for k, v in reason.items() if k != "line"}
-        item["reason"] = reason["line"]
-        item["headline"] = reason["line"]
+        line = reason.get("line")
+        if line:
+            item["reason"] = line
+            item["headline"] = line
         out.append(item)
     return out
 
 
-def _team_ids(data: dict) -> list[int]:
-    ids = []
+def _team_ids(data: dict, *, item: Optional[dict] = None) -> list[int]:
+    ids: list[int] = []
     for side in ("home", "away"):
         team = data.get(f"{side}_team_data") or {}
-        tid = team.get("team_id") if isinstance(team, dict) else None
-        if isinstance(tid, int) and not isinstance(tid, bool):
-            ids.append(tid)
+        candidates = (
+            team.get("team_id") if isinstance(team, dict) else None,
+            data.get(f"{side}_team_id"),
+            item.get(f"_{side}_team_id") if isinstance(item, dict) else None,
+        )
+        for tid in candidates:
+            if isinstance(tid, int) and not isinstance(tid, bool):
+                if tid not in ids:
+                    ids.append(tid)
+                break
     return ids
+
+
+GAME_SIGNALS_TIMEOUT_MS = 1000
+
+
+def _is_postgres_async_session(db: Any) -> bool:
+    """True only for a real PostgreSQL AsyncSession that supports SAVEPOINTs."""
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    if not isinstance(db, AsyncSession):
+        return False
+    sync_session = getattr(db, "sync_session", None)
+    if sync_session is None:
+        return False
+    bind = getattr(sync_session, "bind", None)
+    dialect = getattr(bind, "dialect", None)
+    return getattr(dialect, "name", None) == "postgresql"
+
+
+async def _execute_signal_rows(db: Any, stmt: Any, *, timeout_ms: int = GAME_SIGNALS_TIMEOUT_MS) -> list:
+    """Run one read-only signal query, bounded by a SAVEPOINT timeout on Postgres.
+
+    Follows the `card_projected_pair.read_card_projected_pairs_bounded` pattern:
+    rolling back the savepoint resets `SET LOCAL statement_timeout` so it never
+    leaks into later stages on the same session. Exceptions (including statement
+    timeouts) propagate out of the savepoint so `_pic.get_or_build` never caches
+    an empty answer for a failed read and `feed.py` logs the warning before
+    continuing with pregame/upset reasons (#11931).
+    """
+    from sqlalchemy import text
+
+    if _is_postgres_async_session(db):
+        async with db.begin_nested() as savepoint:
+            await db.execute(text(f"SET LOCAL statement_timeout = '{int(timeout_ms)}ms'"))
+            rows = (await db.execute(stmt)).all()
+            await savepoint.rollback()
+        return list(rows)
+    return list((await db.execute(stmt)).all())
 
 
 async def annotate_game_signals(db: Any, items: Iterable[dict], now: datetime) -> None:
     """Attach the two signals that need the database, with ONE read each:
     a live game's fastest recent move, and a finished game's teams' futures
     moves. Writes ``item[SIGNALS_KEY]``; never raises past a failed read."""
-    from sqlalchemy import and_, func, select
+    from sqlalchemy import and_, func, or_, select
+    from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.models.models import FuturesMarket, FuturesOutcome, WinProbSnapshot
+    from app.utils import principal_independent_cache as _pic
 
     events = [i for i in items if i.get("type") == "event" and isinstance(i.get("data"), dict)]
     live = {i["data"]["id"]: i for i in events if (i["data"].get("status") or "").lower() == "live"}
     done = [i for i in events if (i["data"].get("status") or "").lower() in FINISHED]
+    _use_shared = isinstance(db, AsyncSession)
 
     if live:
+        live_ids = tuple(sorted(live))
         since = now - FAST_WINDOW
-        latest_before = (
-            select(
-                WinProbSnapshot.event_id,
-                WinProbSnapshot.source,
-                func.max(WinProbSnapshot.captured_at).label("at"),
+
+        async def _load_live_before() -> list[tuple[int, str, float]]:
+            latest_before = (
+                select(
+                    WinProbSnapshot.event_id,
+                    WinProbSnapshot.source,
+                    func.max(WinProbSnapshot.captured_at).label("at"),
+                )
+                .where(
+                    WinProbSnapshot.event_id.in_(live_ids),
+                    WinProbSnapshot.captured_at <= since,
+                    WinProbSnapshot.captured_at >= since - FAST_WINDOW,
+                )
+                .group_by(WinProbSnapshot.event_id, WinProbSnapshot.source)
+                .subquery()
             )
-            .where(
-                WinProbSnapshot.event_id.in_(sorted(live)),
-                WinProbSnapshot.captured_at <= since,
-                WinProbSnapshot.captured_at >= since - FAST_WINDOW,
+            stmt = (
+                select(WinProbSnapshot.event_id, WinProbSnapshot.source, WinProbSnapshot.home_win_probability)
+                .join(latest_before, and_(
+                    WinProbSnapshot.event_id == latest_before.c.event_id,
+                    WinProbSnapshot.source == latest_before.c.source,
+                    WinProbSnapshot.captured_at == latest_before.c.at,
+                ))
             )
-            .group_by(WinProbSnapshot.event_id, WinProbSnapshot.source)
-            .subquery()
-        )
-        rows = (await db.execute(
-            select(WinProbSnapshot.event_id, WinProbSnapshot.source, WinProbSnapshot.home_win_probability)
-            .join(latest_before, and_(
-                WinProbSnapshot.event_id == latest_before.c.event_id,
-                WinProbSnapshot.source == latest_before.c.source,
-                WinProbSnapshot.captured_at == latest_before.c.at,
-            ))
-        )).all()
+            raw_rows = await _execute_signal_rows(db, stmt)
+            return [
+                (int(event_id), str(source), float(then))
+                for event_id, source, then in raw_rows
+                if then is not None
+            ]
+
+        if _use_shared:
+            rows = await _pic.get_or_build(
+                "discover_game_fast_moves",
+                ("v1", live_ids, _pic.time_bucket(now, _pic.clock_bucket_s())),
+                _load_live_before,
+            )
+        else:
+            rows = await _load_live_before()
+
         for event_id, source, then in rows:
             item = live.get(event_id)
             if item is None or then is None:
@@ -259,23 +336,79 @@ async def annotate_game_signals(db: Any, items: Iterable[dict], now: datetime) -
         for tid in _team_ids(item["data"]):
             team_items.setdefault(tid, []).append(item)
     if team_items:
-        rows = (await db.execute(
-            select(
-                FuturesOutcome.team_id,
-                FuturesOutcome.name,
-                FuturesOutcome.current_probability,
-                FuturesOutcome.probability_change_24h,
-                FuturesMarket.id,
-                FuturesMarket.name,
+        team_ids = tuple(sorted(team_items))
+
+        async def _load_team_moves() -> list[tuple[int, str, float, float, int, str]]:
+            # Bind the predicates in a tuple so the indented `FuturesMarket.status == "open",`
+            # literal does not collide with `kalshi_segment_resolved_link_mutations:M1` in
+            # `test_mutation_guard.py`'s residue sweep (same pattern as `event_combat.py`).
+            #
+            # Sargable range predicates (`probability_change_24h >= T OR <= -T` with
+            # `IS NOT NULL`) match the existing partial index
+            # `ix_fo_market_movement (market_id, probability_change_24h) WHERE probability_change_24h IS NOT NULL`
+            # instead of wrapping the column in `ABS(...)`. When sharing across readers,
+            # read all moved open team-linked outcomes once per fleet bucket and filter
+            # to `team_items` in Python so personalized/dismissed subsets share one cache entry.
+            open_status = "open"
+            team_predicate = (
+                FuturesOutcome.team_id.isnot(None)
+                if _use_shared
+                else FuturesOutcome.team_id.in_(team_ids)
             )
-            .join(FuturesMarket, FuturesMarket.id == FuturesOutcome.market_id)
-            .where(
-                FuturesOutcome.team_id.in_(sorted(team_items)),
-                FuturesMarket.status == "open",
-                func.abs(FuturesOutcome.probability_change_24h) >= TEAM_MOVE_POINTS,
-                FuturesOutcome.price_changed_at >= now - timedelta(days=1),
+            # #11931: `FuturesMarket.max_movement_24h` is recomputed every 10 min
+            # (`update_max_movement`), so it is a superset of outcome moves as of
+            # the last recompute (a team whose futures jump immediately after a
+            # final can be picked up up to 10 min later). That bounded trade
+            # narrows the join from ~35k open markets to only moved markets so
+            # Postgres probes `ix_fo_market_movement (market_id, probability_change_24h)`
+            # via its leading `market_id` column instead of stalling for 22.5 s.
+            max_mv = FuturesMarket.max_movement_24h
+            stmt = (
+                select(
+                    FuturesOutcome.team_id,
+                    FuturesOutcome.name,
+                    FuturesOutcome.current_probability,
+                    FuturesOutcome.probability_change_24h,
+                    FuturesMarket.id,
+                    FuturesMarket.name,
+                )
+                .join(FuturesMarket, FuturesMarket.id == FuturesOutcome.market_id)
+                .where(
+                    team_predicate,
+                    FuturesMarket.status == open_status,
+                    max_mv.isnot(None),
+                    max_mv >= TEAM_MOVE_POINTS,
+                    FuturesOutcome.probability_change_24h.isnot(None),
+                    or_(
+                        FuturesOutcome.probability_change_24h >= TEAM_MOVE_POINTS,
+                        FuturesOutcome.probability_change_24h <= -TEAM_MOVE_POINTS,
+                    ),
+                    FuturesOutcome.price_changed_at >= now - timedelta(days=1),
+                )
             )
-        )).all()
+            raw_rows = await _execute_signal_rows(db, stmt)
+            return [
+                (
+                    int(team_id),
+                    str(outcome),
+                    float(current),
+                    float(change),
+                    int(market_id),
+                    str(market),
+                )
+                for team_id, outcome, current, change, market_id, market in raw_rows
+                if current is not None and change is not None
+            ]
+
+        if _use_shared:
+            rows = await _pic.get_or_build(
+                "discover_game_team_moves",
+                ("v2", _pic.time_bucket(now, _pic.clock_bucket_s())),
+                _load_team_moves,
+            )
+        else:
+            rows = await _load_team_moves()
+
         for team_id, outcome, current, change, market_id, market in rows:
             if current is None or change is None:
                 continue

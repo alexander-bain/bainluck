@@ -99,6 +99,8 @@ def format_issue_body(
     category: str | None,
     app_state: dict | None,
     has_screenshot: bool,
+    *,
+    screenshot_summary: str | None = None,
 ) -> str:
     desc = description or "(no description)"
     severity = compute_severity(description)
@@ -115,7 +117,7 @@ def format_issue_body(
     user_id = state.get("user_id", "")
     user_display = user_name if user_name and user_name != "anonymous" else (f"user {user_id}" if user_id else "anonymous")
 
-    admin_url = f"{FRONTEND_URL}/admin/bug-reports"
+    admin_url = f"{FRONTEND_URL}/admin/bug-reports?id={report_id}"
 
     lines = [
         "## Bug Report",
@@ -142,9 +144,17 @@ def format_issue_body(
         head = "\n".join(str(crash_log).splitlines()[:60]).replace("`", "'")
         lines += ["<details><summary>Crash log (first 60 lines)</summary>", "", "```", head, "```", "</details>", ""]
 
+    cleaned_summary = (screenshot_summary or "").strip()
+    if cleaned_summary:
+        lines.append("### Screenshot description")
+        lines.append("*Written by a model from the screenshot (the image itself stays private in Admin).*")
+        lines.append("")
+        lines.append(cleaned_summary)
+        lines.append("")
+
     if has_screenshot:
         lines.append("### Screenshot")
-        lines.append(f"[View screenshot + full app state →]({admin_url})")
+        lines.append(f"[View screenshot + full app state (report #{report_id}) →]({admin_url})")
         lines.append("")
 
     lines.append("---")
@@ -361,6 +371,20 @@ def create_github_issue(title: str, body: str, labels: list[str]) -> tuple[int, 
     return data["number"], data["node_id"]
 
 
+def _graphql_error_messages(data: object) -> str:
+    """Format GitHub GraphQL ``errors`` payload cleanly when present."""
+    if not isinstance(data, dict):
+        return ""
+    errors = data.get("errors")
+    if not errors:
+        return ""
+    msgs = [
+        str(err.get("message") or err) if isinstance(err, dict) else str(err)
+        for err in errors
+    ]
+    return "; ".join(msgs)
+
+
 def add_to_project_board(issue_node_id: str) -> None:
     query = """
     mutation($projectId: ID!, $contentId: ID!) {
@@ -383,9 +407,35 @@ def add_to_project_board(issue_node_id: str) -> None:
     )
     resp.raise_for_status()
     data = resp.json()
-    item_id = data.get("data", {}).get("addProjectV2ItemById", {}).get("item", {}).get("id")
+    if not isinstance(data, dict):
+        logger.warning(
+            "Unexpected GraphQL payload adding %s to project %s: %r",
+            issue_node_id, PROJECT_ID, data,
+        )
+        return
 
-    if item_id and STATUS_FIELD_ID and INBOX_OPTION_ID:
+    # GitHub GraphQL returns HTTP 200 with ``data: null`` or ``addProjectV2ItemById: null``
+    # plus ``errors: [...]`` when the token lacks project scope or PROJECT_ID is invalid.
+    err_msg = _graphql_error_messages(data)
+    data_obj = data.get("data") if isinstance(data.get("data"), dict) else {}
+    add_obj = data_obj.get("addProjectV2ItemById") if isinstance(data_obj.get("addProjectV2ItemById"), dict) else {}
+    item_obj = add_obj.get("item") if isinstance(add_obj.get("item"), dict) else {}
+    item_id = item_obj.get("id")
+
+    if err_msg:
+        logger.warning(
+            "GitHub GraphQL error adding %s to project %s: %s",
+            issue_node_id, PROJECT_ID, err_msg,
+        )
+    if not item_id:
+        if not err_msg:
+            logger.warning(
+                "GitHub GraphQL returned no project item id adding %s to project %s",
+                issue_node_id, PROJECT_ID,
+            )
+        return
+
+    if STATUS_FIELD_ID and INBOX_OPTION_ID:
         _set_project_status(item_id)
 
 
@@ -420,3 +470,13 @@ def _set_project_status(item_id: str) -> None:
         timeout=30,
     )
     resp.raise_for_status()
+    try:
+        data = resp.json()
+    except ValueError:
+        return
+    err_msg = _graphql_error_messages(data)
+    if err_msg:
+        logger.warning(
+            "GitHub GraphQL error setting status on item %s in project %s: %s",
+            item_id, PROJECT_ID, err_msg,
+        )

@@ -406,54 +406,96 @@ struct SavedMarketLook12466: View {
     let barFill: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(model.reading.subject)
-                .font((family == .systemMedium ? Font.subheadline : .caption).weight(.semibold))
-                .lineLimit(2)
-                .minimumScaleFactor(0.8)
+        // #13161: wrap market headline and leading outcome name cleanly without "…"
+        // across both default and .xxxLarge Dynamic Type in systemSmall and systemMedium.
+        ViewThatFits(in: .vertical) {
+            marketCard(subjectSize: nil, outcomeSize: HeadlineStyleTable199.nameBaseSize(.widget),
+                       valueSize: family == .systemMedium ? 32 : 28, barHeight: 7, footerSize: nil, spacing: 4)
+            marketCard(subjectSize: family == .systemMedium ? 16 : 12.5, outcomeSize: family == .systemMedium ? 14 : 12.5,
+                       valueSize: family == .systemMedium ? 30 : 26, barHeight: 6, footerSize: 10.5, spacing: 3)
+            marketCard(subjectSize: family == .systemMedium ? 15 : 11.5, outcomeSize: family == .systemMedium ? 13 : 12,
+                       valueSize: family == .systemMedium ? 28 : 24, barHeight: 6, footerSize: 10, spacing: 3)
+            marketCard(subjectSize: 10.5, outcomeSize: 10.5,
+                       valueSize: family == .systemMedium ? 24 : 20, barHeight: 5, footerSize: 9.5, spacing: 2)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+    }
+
+    private func marketCard(
+        subjectSize: CGFloat?,
+        outcomeSize: CGFloat,
+        valueSize: CGFloat,
+        barHeight: CGFloat,
+        footerSize: CGFloat?,
+        spacing: CGFloat
+    ) -> some View {
+        VStack(alignment: .leading, spacing: spacing) {
+            subjectView(size: subjectSize)
             Spacer(minLength: 0)
             if let headline = model.reading.headline {
-                // Beside the number where the outcome's name fits whole there,
-                // otherwise on its own line above it: never "San Francis…".
+                // Beside the number where the outcome's name fits whole on one line,
+                // otherwise wrapped whole above it: never "Choosin' Texas - Ella La…".
                 ViewThatFits(in: .horizontal) {
                     HStack(alignment: .lastTextBaseline) {
-                        outcomeName(headline.label)
+                        outcomeName(headline.label, size: outcomeSize, singleLine: true)
                         Spacer(minLength: 4)
-                        value(headline)
+                        value(headline, size: valueSize)
                     }
                     VStack(alignment: .leading, spacing: 0) {
-                        outcomeName(headline.label).minimumScaleFactor(0.7)
-                        value(headline)
+                        outcomeName(headline.label, size: outcomeSize, singleLine: false)
+                        value(headline, size: valueSize)
                     }
                 }
             }
             if let shares = model.reading.shares {
-                SavedChanceBar12466(shares: shares, awayColor: barTrack, homeColor: barFill, height: 7, track: barTrack)
+                SavedChanceBar12466(shares: shares, awayColor: barTrack, homeColor: barFill,
+                                    height: barHeight, track: barTrack)
             }
-            Text(model.footer)
-                .font(.caption2)
-                .opacity(inkOnFill ? 0.8 : 0.6)
-                .lineLimit(1)
-                .minimumScaleFactor(0.7)
-                .padding(.trailing, model.entry.isRefreshable12305 ? 24 : 0)
+            footerView(size: footerSize)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder private func subjectView(size: CGFloat?) -> some View {
+        let base = Text(model.reading.subject)
+            .lineLimit(nil)
+            .fixedSize(horizontal: false, vertical: true)
+        if let size {
+            base.font(HeadlineStyleTable199.names(.widget, scaledSize: size))
+        } else {
+            base.font((family == .systemMedium ? Font.subheadline : .caption).weight(.semibold))
+        }
+    }
+
+    @ViewBuilder private func footerView(size: CGFloat?) -> some View {
+        let base = Text(model.footer)
+            .opacity(inkOnFill ? 0.8 : 0.6)
+            .lineLimit(1)
+            .minimumScaleFactor(0.7)
+            .padding(.trailing, model.entry.isRefreshable12305 ? 24 : 0)
+        if let size {
+            base.font(HeadlineStyleTable199.quietText(.widget, scaledSize: size))
+        } else {
+            base.font(.caption2)
+        }
     }
 }
 
 extension SavedMarketLook12466 {
-    func outcomeName(_ name: String) -> some View {
+    func outcomeName(_ name: String, size: CGFloat, singleLine: Bool) -> some View {
         Text(name)
-            .font(HeadlineStyleTable199.names(.widget, scaledSize: HeadlineStyleTable199.nameBaseSize(.widget)))
-            .lineLimit(1)
+            .font(HeadlineStyleTable199.names(.widget, scaledSize: size))
+            .lineLimit(singleLine ? 1 : nil)
+            .fixedSize(horizontal: singleLine, vertical: true)
             .opacity(0.85)
     }
 
-    func value(_ headline: SavedWidgetReading10875.Row) -> some View {
+    func value(_ headline: SavedWidgetReading10875.Row, size: CGFloat) -> some View {
         Text(headline.verdict ?? headline.figure ?? "—")
-            .font(HeadlineStyleTable199.now(.widget, scaledSize: family == .systemMedium ? 32 : 28))
+            .font(HeadlineStyleTable199.now(.widget, scaledSize: size))
             .lineLimit(1)
             .minimumScaleFactor(0.5)
+            .fixedSize(horizontal: true, vertical: false)
     }
 }
 
@@ -462,10 +504,19 @@ extension SavedMarketLook12466 {
 #if os(iOS)
 /// The rectangle: the matchup, a bar between the two chances, and the clock.
 /// A result keeps today's fitted drawing (`SavedRectangular10875`).
+/// Saved markets wrap both headline and leading outcome cleanly without "…" (#13160).
 struct SavedLockRectangle12466: View {
     let model: SavedLookModel12466
 
     var body: some View {
+        if model.isGame {
+            gameBody
+        } else {
+            marketBody
+        }
+    }
+
+    private var gameBody: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(model.reading.shortSubject)
                 .font(.headline)
@@ -473,16 +524,16 @@ struct SavedLockRectangle12466: View {
                 .widgetAccentable()
             if let shares = model.reading.shares {
                 HStack(spacing: 5) {
-                    if model.isGame, model.away.figure != nil {
+                    if model.away.figure != nil {
                         Text(model.away.figure ?? "").font(.caption.weight(.semibold).monospacedDigit())
                     } else if let headline = model.reading.headline {
-                        Text(model.isGame ? headline.shortLabel : headline.label)
+                        Text(headline.shortLabel)
                             .font(.caption.weight(.semibold))
                             .lineLimit(1)
                     }
                     SavedChanceBar12466(shares: shares, awayColor: .primary.opacity(0.35), homeColor: .primary,
                                         height: 6, track: .primary.opacity(0.25), leadsHome: model.headlineIsHome)
-                    Text((model.isGame ? model.home.figure : model.reading.headline?.figure) ?? "—")
+                    Text(model.home.figure ?? "—")
                         .font(.caption.weight(.semibold).monospacedDigit())
                 }
             }
@@ -490,6 +541,52 @@ struct SavedLockRectangle12466: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var marketBody: some View {
+        ViewThatFits(in: .vertical) {
+            marketLockTier(subjectSize: 11.5, outcomeSize: 10.5, figureSize: 11.5, footerSize: 9.5, spacing: 1.5)
+            marketLockTier(subjectSize: 10, outcomeSize: 9.5, figureSize: 10.5, footerSize: 8.5, spacing: 1)
+            marketLockTier(subjectSize: 9, outcomeSize: 8.5, figureSize: 9.5, footerSize: 8, spacing: 0.5)
+            marketLockTier(subjectSize: 8, outcomeSize: 8, figureSize: 9, footerSize: 7.5, spacing: 0.5)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func marketLockTier(
+        subjectSize: CGFloat,
+        outcomeSize: CGFloat,
+        figureSize: CGFloat,
+        footerSize: CGFloat,
+        spacing: CGFloat
+    ) -> some View {
+        VStack(alignment: .leading, spacing: spacing) {
+            Text(model.reading.shortSubject)
+                .font(HeadlineStyleTable199.names(.widget, scaledSize: subjectSize))
+                .lineLimit(nil)
+                .fixedSize(horizontal: false, vertical: true)
+                .widgetAccentable()
+            if let headline = model.reading.headline {
+                HStack(alignment: .firstTextBaseline, spacing: 4) {
+                    Text(headline.label)
+                        .font(HeadlineStyleTable199.names(.widget, scaledSize: outcomeSize))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 2)
+                    Text(headline.verdict ?? headline.figure ?? "—")
+                        .font(HeadlineStyleTable199.secondNumbers(.widget, prominent: true, scaledSize: figureSize))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+            }
+            Text(model.footer)
+                .font(HeadlineStyleTable199.quietText(.widget, scaledSize: footerSize))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -501,7 +598,8 @@ struct SavedLockCircle12466: View {
     let model: SavedLookModel12466
 
     var body: some View {
-        if let share = model.headlineShare, let headline = model.reading.headline, let figure = headline.figure {
+        if let headline = SavedLockScreenFit10875.ringHeadline(model.reading),
+           let share = model.headlineShare, let figure = headline.figure {
             Gauge(value: min(max(share, 0), 1)) {
                 Text(model.isGame ? headline.shortLabel : "")
             } currentValueLabel: {

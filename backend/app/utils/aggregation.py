@@ -44,6 +44,7 @@ from app.utils.probability_eligibility import (
     EligibilityRecord,
     is_refused,
 )
+from app.utils.scheduled_start import loaded_price_admission_kickoff
 from app.utils.source_divergence import (
     SourceDivergence,
     assess_divergence,
@@ -280,6 +281,8 @@ def stamp_source_reading(
     eligibility: Optional[EligibilityRecord] = None,
     observed_basis: Optional[dict] = None,
     price_read_at: Optional[datetime] = None,
+    away_value: Optional[float] = None,
+    draw_value: Optional[float] = None,
 ) -> dict:
     """Write one source into ``win_probability_sources`` WITH its write time.
 
@@ -348,6 +351,20 @@ def stamp_source_reading(
     entry.pop(PRICE_READ_KEY, None)
     if read is not None:
         entry[PRICE_READ_KEY] = read
+    # #13269: bind a venue's own away & draw prices to THIS reading's home
+    # value and timestamp; clear them whenever absent so a newer home reading
+    # never inherits an older away/draw figure.
+    three_way_pair = valid_three_way_side_values(away_value, draw_value)
+    if three_way_pair is not None:
+        entry[AWAY_VALUE_KEY] = three_way_pair[0]
+        entry[DRAW_VALUE_KEY] = three_way_pair[1]
+        entry[THREE_WAY_HOME_VALUE_KEY] = value
+        entry[THREE_WAY_AT_KEY] = stamp.isoformat()
+    else:
+        entry.pop(AWAY_VALUE_KEY, None)
+        entry.pop(DRAW_VALUE_KEY, None)
+        entry.pop(THREE_WAY_HOME_VALUE_KEY, None)
+        entry.pop(THREE_WAY_AT_KEY, None)
     updated[source] = entry
     return updated
 
@@ -441,6 +458,69 @@ OBSERVED_VALUE_KEY = "observed_value"
 # Explicit upstream-read provenance, independent of ordering/publication clocks.
 # This additive JSONB member needs no schema change and never affects pricing.
 PRICE_READ_KEY = "price_read"
+
+# #13269: per-source own away & draw prices on three-way (draw-priced) matches,
+# stored atomically from the same reading and timestamp as `value` (home).
+# Cleared whenever a subsequent write carries no three-way partition, and
+# validated on read against `value` and `updated_at` so a newer home price can
+# never be paired with an older away or draw figure.
+AWAY_VALUE_KEY = "away_value"
+DRAW_VALUE_KEY = "draw_value"
+THREE_WAY_HOME_VALUE_KEY = "three_way_home_value"
+THREE_WAY_AT_KEY = "three_way_at"
+
+
+def valid_three_way_side_values(
+    away_value: Any, draw_value: Any
+) -> Optional[tuple[float, float]]:
+    """Return ``(away, draw)`` floats only when both are valid finite probabilities."""
+    if not _finite_number(away_value) or not _finite_number(draw_value):
+        return None
+    away = float(away_value)
+    draw = float(draw_value)
+    if not (0.0 <= away <= 1.0) or not (0.0 <= draw <= 1.0):
+        return None
+    return away, draw
+
+
+def extract_source_three_way_side(
+    sources: Optional[dict],
+    source: str,
+    selected_home_value: float,
+    side: str,
+) -> Optional[float]:
+    """Return ``source``'s own away or draw probability bound to ``selected_home_value``.
+
+    Fail-closed (#13269 / 196-A): returns ``None`` unless ``away_value`` and
+    ``draw_value`` are both present, ``three_way_home_value`` matches BOTH the
+    entry's current ``value`` and ``selected_home_value``, and (when both
+    clocks are present) ``three_way_at`` matches ``updated_at``.
+    """
+    if side not in ("away", "draw") or not isinstance(sources, dict):
+        return None
+    entry = sources.get(source)
+    if not isinstance(entry, dict):
+        return None
+    pair = valid_three_way_side_values(
+        entry.get(AWAY_VALUE_KEY), entry.get(DRAW_VALUE_KEY)
+    )
+    if pair is None:
+        return None
+    anchor_home = entry.get(THREE_WAY_HOME_VALUE_KEY)
+    entry_home = entry.get("value")
+    if not _finite_number(anchor_home) or not _finite_number(entry_home):
+        return None
+    if (
+        abs(float(anchor_home) - float(entry_home)) > 1e-4
+        or abs(float(anchor_home) - float(selected_home_value)) > 1e-4
+    ):
+        return None
+    three_way_at = entry.get(THREE_WAY_AT_KEY)
+    updated_at = entry.get("updated_at")
+    if three_way_at is not None and updated_at is not None and three_way_at != updated_at:
+        return None
+    away, draw = pair
+    return round(away if side == "away" else draw, 6)
 
 
 def make_price_read(
@@ -1442,7 +1522,8 @@ _EXCLUDE_WHEN_COMPLETED = {"kalshi", "polymarket"}
 
 
 def _tier1_readings(
-    event, event_status: Optional[str] = None
+    event, event_status: Optional[str] = None, *, now: Optional[datetime] = None,
+    pregame_refusals: Optional[set[str]] = None,
 ) -> tuple[dict[str, float], dict[str, datetime]]:
     """The ``win_probability_sources`` entries tier 1 will actually use.
 
@@ -1467,6 +1548,11 @@ def _tier1_readings(
     is_finished = status in ("completed", "closed")
 
     wps = getattr(event, "win_probability_sources", None) or {}
+    kickoff = loaded_price_admission_kickoff(event) if status == "live" else None
+    if kickoff is not None:
+        now = now if now is not None else datetime.now(timezone.utc)
+        if kickoff > now:
+            kickoff = None
     prob_readings: dict[str, float] = {}
     stamps: dict[str, datetime] = {}
     for k, v in wps.items():
@@ -1479,10 +1565,36 @@ def _tier1_readings(
         value, updated_at = parse_source_entry(v)
         if value is None:
             continue
+        if kickoff is not None and k != "final_result":
+            # A publication can restamp a quote. Compare only the observation
+            # bound to this exact price so an undated socket quote keeps its policy.
+            read_at = source_price_read_time(wps, k, value, now=now)
+            if read_at is not None and read_at < kickoff:
+                if pregame_refusals is not None:
+                    pregame_refusals.add(k)
+                continue
         prob_readings[k] = value
         if updated_at is not None:
             stamps[k] = updated_at
     return prob_readings, stamps
+
+
+def witnessed_pregame_price_sources(event, *, now: datetime) -> set[str]:
+    """Sources whose exact price live admission refused as pregame."""
+    refusals: set[str] = set()
+    _tier1_readings(event, now=now, pregame_refusals=refusals)
+    return refusals
+
+
+def has_dated_price_source(sources: dict, *, now: datetime) -> bool:
+    """Does a stored quote carry a price-bound clock before kickoff filtering?"""
+    for source, entry in sources.items():
+        if source == "final_result" or source not in SOURCE_WEIGHTS or is_refused(entry):
+            continue
+        price, _ = parse_source_entry(entry)
+        if price is not None and source_price_read_time(sources, source, price, now=now) is not None:
+            return True
+    return False
 
 
 def pregame_blend_rests_on_espn_alone(event, event_status: Optional[str] = None) -> bool:

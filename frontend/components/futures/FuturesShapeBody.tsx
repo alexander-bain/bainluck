@@ -837,7 +837,9 @@ export default function FuturesShapeBody({
                   )}
                 </div>
                 <div className="mt-0.5 pl-4 text-xs tabular-nums">
-                  {rowVerdict === "won" ? (
+                  {row.is_out === true ? (
+                    <span className="text-text-secondary">Out</span>
+                  ) : rowVerdict === "won" ? (
                     <span className="font-semibold text-accent-live">
                       {ATLAS_STATE_COPY.wonWithCheck}
                     </span>
@@ -982,16 +984,15 @@ export default function FuturesShapeBody({
                         {rowLabel}
                       </span>
                       <strong className="shrink-0 font-semibold tabular-nums">
-                        {rowVerdict === "won"
-                          ? ATLAS_STATE_COPY.wonWithCheck
-                          : rowVerdict === "lost"
-                            ? ATLAS_STATE_COPY.lostWithCross
-                            : rowRecorded == null
-                              ? ATLAS_STATE_COPY.noRecentPrice
-                              : formatServerChance(
-                                  rowRecorded,
-                                  rowRendered?.current,
-                                )}
+                        {row.is_out === true
+                          ? "Out"
+                          : rowVerdict === "won"
+                            ? ATLAS_STATE_COPY.wonWithCheck
+                            : rowVerdict === "lost"
+                              ? ATLAS_STATE_COPY.lostWithCross
+                              : rowRecorded == null
+                                ? ATLAS_STATE_COPY.noRecentPrice
+                                : formatServerChance(rowRecorded, rowRendered?.current)}
                       </strong>
                     </button>
                   );

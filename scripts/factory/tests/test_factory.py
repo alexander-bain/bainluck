@@ -10,6 +10,8 @@ import unittest
 import io
 import tempfile
 from contextlib import redirect_stdout
+from http.client import IncompleteRead
+from urllib.error import HTTPError
 
 ROOT = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(ROOT / "scripts/factory"))
@@ -20,10 +22,11 @@ from model import (
     classify,
     instant,
     iso,
-    line_for,
+    lines_for,
     public_title,
 )
 from collect import (
+    collect,
     is_review_bot,
     safe_comment,
     floor_changed,
@@ -32,10 +35,151 @@ from collect import (
     publish_asset,
     GitHub,
     main,
+    master_checks,
 )
-from unittest.mock import patch, MagicMock
+from unittest.mock import call, patch, MagicMock
+from notes import ModelBudget, make_notes
+from speech import make_speech
+from signals import stopped_rules
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+class GitHubRequestTests(unittest.TestCase):
+    def test_history_query_retries_a_transient_504_and_counts_both_calls(self):
+        api = GitHub(token="fake")
+        error = HTTPError("https://api.github.com/graphql", 504, "Gateway Timeout", {}, None)
+        response = MagicMock()
+        response.__enter__.return_value.headers = {
+            "X-RateLimit-Remaining": "98", "X-RateLimit-Resource": "graphql",
+        }
+        response.__enter__.return_value.read.return_value = b'{"data": {"history": []}}'
+        with patch("collect.urllib.request.urlopen", side_effect=[error, response]), patch("collect.time.sleep") as delay:
+            result = api.request("graphql", {"query": "query { repository { id } }"})
+        self.assertEqual(result, {"data": {"history": []}})
+        self.assertEqual(api.api_calls, 2)
+        self.assertEqual(api.api_calls_by_resource["graphql"], 2)
+        self.assertEqual(api.rates["graphql"], 98)
+        delay.assert_called_once_with(20)
+
+    def test_incomplete_history_body_and_invalid_json_wait_for_a_third_read(self):
+        api = GitHub(token="fake")
+        response = MagicMock()
+        reply = response.__enter__.return_value
+        reply.headers = {}
+        reply.read.side_effect = [
+            IncompleteRead(b'{"data":', 20),
+            b'{"data":',
+            b'{"data":{"history":[]}}',
+        ]
+        with patch("collect.urllib.request.urlopen", return_value=response), patch("collect.time.sleep") as delay:
+            data = api.request("graphql", {"query": "query { repository { id } }"})
+        self.assertEqual(data, {"data": {"history": []}})
+        self.assertEqual(api.api_calls_by_resource["graphql"], 3)
+        self.assertEqual(delay.call_args_list, [call(20), call(20)])
+
+    def test_stops_after_three_read_failures_and_never_retries_a_write(self):
+        error = HTTPError("https://api.github.com/example", 502, "Bad Gateway", {}, None)
+        for method, attempts in [("GET", 3), ("PATCH", 1), ("POST", 1)]:
+            with self.subTest(method=method):
+                api = GitHub(token="fake", read_only=False)
+                with patch("collect.urllib.request.urlopen", side_effect=error) as send, patch("collect.time.sleep") as delay:
+                    with self.assertRaises(HTTPError):
+                        api.request("example", method=method)
+                self.assertEqual(send.call_count, attempts)
+                self.assertEqual(api.api_calls, attempts)
+                self.assertEqual(delay.call_args_list, [call(20)] * (attempts - 1))
+
+    def test_missing_asset_remains_a_single_read(self):
+        error = HTTPError("https://api.github.com/example", 404, "Not Found", {}, None)
+        api = GitHub(token="fake")
+        with patch("collect.urllib.request.urlopen", side_effect=error) as send, patch("collect.time.sleep") as delay:
+            with self.assertRaises(HTTPError):
+                api.request("example")
+        send.assert_called_once()
+        delay.assert_not_called()
+
+    def test_public_snapshot_reads_retry_transport_errors(self):
+        api = GitHub(token="fake")
+        data = {"generated_at": "2026-11-22T15:55:32Z"}
+        with patch("collect.read_public", side_effect=[IncompleteRead(b'{"data"'), TimeoutError(), data]), patch(
+            "collect.time.sleep"
+        ) as delay:
+            self.assertEqual(api.public_json("https://example.invalid/factory.json"), data)
+        self.assertEqual(api.public_reads, 3)
+        self.assertEqual(delay.call_args_list, [call(20), call(20)])
+
+
+class FactoryCollectorTests(unittest.TestCase):
+    def test_collects_recent_now_posts_across_pacific_midnight(self):
+        now = instant("2026-11-22T08:05:00Z")
+        post_at = "2026-11-22T07:59:00Z"
+        api = MagicMock()
+        api.public_json.return_value = {"status": "ok", "commit": "server"}
+        api.pages.return_value = [
+            {"body": "Builder F: Waiting on #13346.", "created_at": post_at, "author_association": "OWNER"},
+            {"body": "Builder F now: retaking the iPad screenshots from build 5852",
+             "created_at": "2026-11-22T06:40:00Z", "author_association": "MEMBER"},
+        ]
+        api.request.side_effect = lambda endpoint: {"workflow_runs": []} if "/actions/" in endpoint else []
+        receipts = [
+            {"line": "Website", "commit": "web", "at": iso(now)},
+            {"line": "Apps", "commit": "apps", "at": iso(now)},
+        ]
+        git_output = {"rev-parse": "server", "show": iso(now), "rev-list": "web\napps\nserver"}
+        with (
+            patch("collect.datetime") as clock,
+            patch("collect.history_signals", return_value=(receipts, {}, [], None)),
+            patch("collect.git", side_effect=lambda command, *args: git_output[command]),
+        ):
+            clock.now.return_value = now
+            snapshot = collect(api, open_summaries=[])
+        api.pages.assert_called_once_with("issues/12779/comments?since=2026-11-22T05:05:00Z")
+        self.assertEqual(snapshot["crew_posts"], {"F": {"at": post_at, "waiting_on": 13346}})
+        self.assertEqual(snapshot["lane_updates"]["F"]["at"], "2026-11-22T06:40:00Z")
+
+    def test_13444_stays_held_while_failed_master_attempt_is_rerun(self):
+        fixture = json.loads((FIXTURES / "master-retry-nov22.json").read_text())
+        api = MagicMock()
+        api.request.side_effect = [fixture["previous_attempt"], fixture["failed_attempt_jobs"]]
+        rerun = fixture["rerun_as_of_capture"]
+        pull = fixture["pull"]
+        master = master_checks(api, [rerun], [fixture["another_commit_passed"]], [pull])
+        self.assertEqual(master, {
+            "tests": "failing", "tests_at": "2026-11-22T23:35:42Z",
+            "blocked_server_release": 13444,
+        })
+        self.assertEqual(api.request.call_args_list, [
+            call("repos/alexander-bain/bainluck/actions/runs/45082983839/attempts/1", timeout=5),
+            call("repos/alexander-bain/bainluck/actions/runs/45082983839/attempts/1/jobs?per_page=100", timeout=5),
+        ])
+        change = {**pull, "line": "Server", "station": "Ship"}
+        at = fixture["captured_at"]
+        stops = stopped_rules([change], [], master, {}, at, instant(at))
+        self.assertEqual(stops, [{
+            "kind": "master", "line": "Server", "station": "Ship", "number": 13444,
+            "since": "2026-11-22T23:35:42Z", "count": 1, "level": "amber",
+        }])
+
+        cleared = fixture["rerun_passed"]
+        api.reset_mock()
+        green = master_checks(api, [cleared], [cleared], [pull])
+        self.assertEqual(green, {"tests": "passing", "tests_at": cleared["updated_at"]})
+        self.assertEqual(stopped_rules([change], [], green, {}, at, instant(cleared["updated_at"])), [])
+        api.request.assert_not_called()
+
+    def test_failed_workflow_without_a_failed_release_gate_does_not_hold_the_server(self):
+        fixture = json.loads((FIXTURES / "master-retry-nov22.json").read_text())
+        failed = fixture["previous_attempt"]
+        jobs = fixture["failed_attempt_jobs"]["jobs"]
+        for without_gate in (
+            [job for job in jobs if job["name"] != "backend-tests (8)"],
+            [job for job in jobs if job["name"] != "deploy"],
+        ):
+            api = MagicMock()
+            api.request.return_value = {"jobs": without_gate}
+            result = master_checks(api, [failed], [failed], [fixture["pull"]])
+            self.assertEqual(result, {"tests": "failing", "tests_at": failed["updated_at"]})
 
 
 class FactoryRules(unittest.TestCase):
@@ -81,7 +225,140 @@ class FactoryRules(unittest.TestCase):
         return pull
 
     def place(self, pull):
-        return classify(pull, self.snapshot["deployments"], self.now)
+        lines, unsure = lines_for(pull)
+        return classify(pull, self.snapshot["deployments"], self.now, lines[0], unsure)
+
+    def test_only_an_observed_failed_check_is_marked_on_a_change_at_checks(self):
+        for name, ci, state, conclusion, expected in (
+            ("tests", True, "completed", "failure", True),
+            ("tests", True, "completed", "timed_out", True),
+            ("tests", True, "in_progress", None, False),
+            ("tests", True, "completed", "success", False),
+            ("Tier-B approval", False, "completed", "failure", False),
+            ("flaky-canary", True, "completed", "failure", False),
+        ):
+            with self.subTest(name=name, state=state, conclusion=conclusion):
+                pull = self.ready()
+                pull["checks"][0].update(name=name, ci=ci, state=state, conclusion=conclusion)
+                self.assertEqual(self.place(pull).get("checks_failed", False), expected)
+        pull["checks"][0].update(name="tests", ci=True)
+        pull["checks_complete"] = False
+        self.assertNotIn("checks_failed", self.place(pull))
+
+    def test_only_green_quiet_changes_park_and_activity_brings_them_back(self):
+        pull = self.ready()
+        quiet = iso(self.now - timedelta(hours=48))
+        pull.update(updated_at=quiet, comments=[])
+        pull["reviews"][0]["submitted_at"] = quiet
+        self.assertTrue(self.place(pull)["parked"])
+        pull["updated_at"] = iso(self.now - timedelta(hours=47))
+        self.assertFalse(self.place(pull).get("parked", False))
+        pull["checks"][0].update(state="in_progress", ci=True)
+        self.assertTrue(self.place(pull)["checks_running"])
+        pull["checks"][0]["ci"] = False
+        self.assertFalse(self.place(pull).get("checks_running", False))
+
+    def test_a_numbered_merge_announcement_puts_only_the_ready_crate_on_the_truck(self):
+        pull = self.ready()
+        post = {
+            "kind": "merging",
+            "line": "Website",
+            "numbers": [pull["number"]],
+            "at": iso(self.now),
+        }
+        sample = {**self.snapshot, "pulls": [pull], "master": {}}
+        previous = build(sample)
+        current = build({**sample, "commands": [post]}, previous)
+        self.assertEqual(current["changes"][0]["station"], "Ship")
+        self.assertIsNone(current["changes"][0]["merged_at"])
+        self.assertEqual(
+            current["transitions"][0]["observed_at"], sample["captured_at"]
+        )
+        rerouted = build({**sample, "commands": [{**post, "line": "Apps"}]})
+        self.assertEqual(
+            [(c["line"], c["station"]) for c in rerouted["changes"]], [("Apps", "Ship")]
+        )
+
+    def test_builder_f_posts_app_build_without_claiming_unverified_delivery(self):
+        from signals import commands_from
+
+        pull = self.ready()
+        pull.update(
+            state="closed",
+            merged_at=iso(self.now - timedelta(minutes=5)),
+            merge_commit_sha="proof",
+            files=["ios/Bain Luck/Home.swift"],
+        )
+        post = {
+            "body": f'Builder F (6:40 PM PT): live: #{pull["number"]} (apps) — TestFlight build 5801',
+            "author_association": "OWNER",
+            "created_at": iso(self.now),
+        }
+        commands = commands_from([post])
+        self.assertEqual(
+            [(c["line"], c.get("build")) for c in commands], [("Apps", 5801)]
+        )
+        signed = {
+            **post,
+            "body": f'live — Builder F, #{pull["number"]} (apps) is in TestFlight 1.0.7 (5801).',
+        }
+        self.assertEqual(commands_from([signed]), commands)
+        sample = {
+            **self.snapshot,
+            "pulls": [pull],
+            "commands": commands,
+            "deployments": [],
+        }
+        ship = build(sample)["changes"][0]
+        self.assertEqual((ship["station"], ship["testflight_build"]), ("Ship", 5801))
+        self.assertNotIn("live_posted_at", ship)
+        sample["deployments"] = [
+            {
+                "line": "Apps",
+                "at": iso(self.now),
+                "kind": "reported",
+                "contains": ["proof"],
+            }
+        ]
+        arrived = build(sample)["changes"][0]
+        self.assertEqual(
+            (arrived["station"], arrived["live_post_observed_at"]),
+            ("Live", iso(self.now)),
+        )
+
+    def test_fables_real_changes_verdict_sends_12765_back_to_write(self):
+        fixture = json.loads((FIXTURES / "now-nov18-holds.json").read_text())
+        pull = self.ready()
+        earlier = {
+            "created_at": "2026-11-16T19:54:53Z",
+            "association": "OWNER",
+            "fable_accept": True,
+        }
+        pull.update(
+            number=12765, comments=[earlier, safe_comment(fixture["fable_changes"])]
+        )
+        placed = self.place(pull)
+        self.assertEqual((placed["station"], placed["sent_back"]), ("Write", True))
+        pull["comments"].append({**earlier, "created_at": "2026-11-19T01:00:00Z"})
+        self.assertEqual(self.place(pull)["station"], "Merge line")
+
+    def test_dependabot_12211_does_not_raise_an_inspection_wait(self):
+        pull = self.ready()
+        pull.update(
+            number=12211,
+            branch="dependabot/github_actions/actions/github-script-9",
+            reviews=[],
+            comments=[],
+            created_at=iso(self.now - timedelta(days=4)),
+            updated_at=iso(self.now - timedelta(hours=30)),
+        )
+        pull["checks"][0]["finished_at"] = iso(self.now - timedelta(hours=30))
+        actual = build({**self.snapshot, "pulls": [pull], "master": {}})
+        self.assertTrue(actual["changes"][0]["bot_update"])
+        self.assertEqual(actual["changes"][0]["station"], "Review")
+        self.assertFalse(
+            any(stop["kind"] == "review-waiting" for stop in actual["stops"])
+        )
 
     def test_saved_real_github_responses_place_at_least_twelve_changes(self):
         self.assertGreaterEqual(len(self.expected["placements"]), 12)
@@ -89,10 +366,10 @@ class FactoryRules(unittest.TestCase):
             {v[0] for v in self.expected["placements"].values()},
             {"Write", "Test", "Review", "Merge line", "Ship", "Live"},
         )
-        results = {c["number"]: c for c in build(self.snapshot)["changes"]}
+        results = {(c["number"], c["line"]): c for c in build(self.snapshot)["changes"]}
         for number, expected in self.expected["placements"].items():
             with self.subTest(change=number):
-                result = results[int(number)]
+                result = results[int(number), expected[1]]
                 self.assertEqual(
                     [result["station"], result["line"], result["unsure"]], expected
                 )
@@ -104,7 +381,10 @@ class FactoryRules(unittest.TestCase):
         receipts = [
             r for r in self.snapshot["deployments"] if instant(r["at"]) <= moment
         ]
-        self.assertEqual(classify(pull, receipts, moment)["station"], "Ship")
+        line, unsure = lines_for(pull)
+        self.assertEqual(
+            classify(pull, receipts, moment, line[0], unsure)["station"], "Ship"
+        )
         self.assertEqual(self.place(pull)["station"], "Live")
 
     def test_draft_precedes_all_other_gates(self):
@@ -171,7 +451,7 @@ class FactoryRules(unittest.TestCase):
             fable_needed=True,
             commits=[
                 {"parents": 1, "at": "2026-11-17T10:00:00Z"},
-                {"parents": 2, "at": "2026-11-17T12:00:00Z"},
+                {"parents": 2, "merge_from_master": True, "at": "2026-11-17T12:00:00Z"},
             ],
         )
         pull["comments"] = [
@@ -193,16 +473,17 @@ class FactoryRules(unittest.TestCase):
 
     def test_file_routing_and_unknown_file_list(self):
         pull = self.ready()
-        for paths, line in [
-            (["ios/Bain Luck/View.swift"], "Apps"),
-            (["frontend/app/a.tsx"], "Website"),
-            (["frontend/a.tsx", "ios/a.swift"], "Server"),
-            (["scripts/a.py"], "Server"),
+        for paths, lines in [
+            (["ios/Bain Luck/View.swift"], ("Apps",)),
+            (["frontend/app/a.tsx"], ("Website",)),
+            (["frontend/a.tsx", "ios/a.swift"], ("Website", "Apps")),
+            (["backend/a.py", "frontend/a.tsx", "docs/a.md"], ("Server", "Website")),
+            (["scripts/a.py"], ("Server",)),
         ]:
             pull["files"] = paths
-            self.assertEqual(line_for(pull), (line, False))
+            self.assertEqual(lines_for(pull), (lines, False))
         pull["files_complete"] = False
-        self.assertEqual(line_for(pull), ("Server", True))
+        self.assertEqual(lines_for(pull), (("Server",), True))
         self.assertEqual(self.place(pull)["station"], "Review")
 
     def test_side_track_uses_latest_activity_and_keeps_original_station(self):
@@ -290,13 +571,14 @@ class FactoryRules(unittest.TestCase):
             "schedule:",
             "push:",
             "workflow_dispatch:",
+            "workflow_run:",
         ):
             self.assertIn(event, workflow)
         self.assertIn('cron: "*/5 * * * *"', workflow)
         self.assertIn("cancel-in-progress: false", workflow)
         self.assertNotRegex(
             workflow,
-            r"(?m)^  (pull_request(?:_review)?|workflow_run|issue_comment|status):",
+            r"(?m)^  (pull_request(?:_review)?|issue_comment|status):",
         )
         self.assertEqual(
             re.findall(r"^  ([\w-]+):", workflow.split("jobs:\n")[1], re.M),
@@ -306,10 +588,10 @@ class FactoryRules(unittest.TestCase):
         self.assertNotIn("pull_request.head", workflow)
         self.assertIn("github.ref == 'refs/heads/master'", workflow)
         self.assertIn("ref: master", workflow)
-        test_workflow = (ROOT / ".github/workflows/factory-tests.yml").read_text()
-        self.assertIn("scripts/factory/**", test_workflow)
-        self.assertNotIn("write", test_workflow)
-        self.assertNotIn("--publish", test_workflow)
+        self.assertIn("workflows: [CI]", workflow)
+        self.assertIn("types: [completed]", workflow)
+        self.assertIn("timeout-minutes: 5", workflow)
+        self.assertFalse((ROOT / ".github/workflows/factory-tests.yml").exists())
         collector = (ROOT / "scripts/factory/collect.py").read_text()
         for verb in ('"push"', '"commit"', '"update-ref"'):
             self.assertNotIn('["git", ' + verb, collector)
@@ -317,7 +599,14 @@ class FactoryRules(unittest.TestCase):
             if path.name != "factory.yml":
                 self.assertNotRegex(path.read_text(), r"(?m)^  release:")
         self.assertIn("GITHUB_TOKEN: ${{ github.token }}", workflow)
-        self.assertNotIn("secrets.", workflow)
+        self.assertEqual(
+            re.findall(r"secrets\.([A-Z0-9_]+)", workflow), ["OPENAI_API_KEY"]
+        )
+        publisher = workflow.split(
+            "- name: Collect, compare and publish a changed floor"
+        )[1]
+        self.assertIn("OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}", publisher)
+        self.assertIn("LLM_MODEL_FACTORY_NOTES:", publisher)
 
     def test_explicit_no_look_description_clears_the_fable_gate(self):
         pull = self.ready()
@@ -328,6 +617,36 @@ class FactoryRules(unittest.TestCase):
             commits_complete=False,
         )
         self.assertEqual(self.place(pull)["station"], "Merge line")
+
+    def test_accepted_change_stays_cleared_after_tests_and_master_sync(self):
+        pull = self.ready()
+        reviewed = pull["head_sha"]
+        pull.update(head_sha="new-head", fable_needed=True)
+        pull["commits"] = [
+            {"sha": reviewed, "parents": 1, "at": "2026-11-17T10:00:00Z"},
+            {
+                "sha": "tests",
+                "parents": 1,
+                "test_only": True,
+                "at": "2026-11-17T12:00:00Z",
+            },
+            {
+                "sha": "new-head",
+                "parents": 2,
+                "merge_from_master": True,
+                "at": "2026-11-17T13:00:00Z",
+            },
+        ]
+        pull["comments"] = [
+            {
+                "fable_accept": True,
+                "association": "OWNER",
+                "created_at": "2026-11-17T11:00:00Z",
+            }
+        ]
+        self.assertEqual(self.place(pull)["station"], "Merge line")
+        pull["commits"][1]["test_only"] = False
+        self.assertEqual(self.place(pull)["station"], "Review")
 
     def test_trusted_no_look_comment_is_bound_to_the_last_non_merge_commit(self):
         pull = self.ready()
@@ -380,23 +699,45 @@ class FactoryRules(unittest.TestCase):
         self.assertTrue(floor_changed({}, current))
 
     def test_unchanged_floor_skips_both_uploads_and_still_prints_metrics(self):
-        previous = {"generated_at": "2026-11-18T01:00:00Z", "changes": [], "jams": []}
-        current = {**previous, "generated_at": "2026-11-18T01:05:00Z"}
+        queue = {"machines": 40, "unavailable": True}
+        previous = {
+            "generated_at": "2026-11-18T01:00:00Z",
+            "changes": [],
+            "jams": [],
+            "events": [],
+            "signals": {"checks_queue": queue},
+        }
+        budget = ModelBudget("", None, now=instant(previous["generated_at"]))
+        previous["notes"], _ = make_notes(previous, [], {}, budget, None)
+        previous["speech"], _ = make_speech(previous, {}, budget, None)
+        previous["model_usage"] = {"day": budget.state()["day"], "calls": 0}
+        from crew import add_crew_week
+
+        crew_week = add_crew_week(previous, [])
+        current = {**deepcopy(previous), "generated_at": "2026-11-18T01:05:00Z"}
         api = MagicMock()
         api.pages.return_value = []
         api.metrics.return_value = {"github_api_calls": 3}
         output = io.StringIO()
-        with tempfile.TemporaryDirectory() as directory, redirect_stdout(output), patch(
+        with tempfile.TemporaryDirectory() as directory, redirect_stdout(
+            output
+        ), patch.dict("os.environ", {"OPENAI_API_KEY": ""}), patch(
             "sys.argv",
             ["collect.py", "--publish", "--output", f"{directory}/factory.json"],
-        ), patch("collect.authorize_publication"), patch(
+        ), patch(
+            "collect.authorize_publication"
+        ), patch(
             "collect.GitHub", return_value=api
         ), patch(
-            "collect.read_published", return_value=({"id": 1}, previous, {})
+            "collect.read_published", return_value=({"id": 1}, previous, {"crew_week": crew_week})
         ), patch(
             "collect.collect", return_value={"pulls": []}
         ), patch(
             "collect.build", return_value=current
+        ), patch(
+            "collect.machine_queue", return_value=queue
+        ), patch(
+            "collect.ModelBudget", return_value=budget
         ), patch(
             "collect.publish_asset"
         ) as publish:
@@ -404,6 +745,7 @@ class FactoryRules(unittest.TestCase):
             publish.assert_not_called()
         self.assertIn('"published": false', output.getvalue())
         self.assertIn("FACTORY_METRICS", output.getvalue())
+        self.assertIn("FACTORY_NOTES", output.getvalue())
 
     def test_branch_or_pull_request_publication_is_refused(self):
         with patch.dict(

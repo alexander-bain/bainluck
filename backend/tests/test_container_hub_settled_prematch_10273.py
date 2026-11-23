@@ -21,11 +21,13 @@ Pinned here, on the served hub payload:
 
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 from datetime import timedelta
 from types import SimpleNamespace
 
 import pytest
 
+from app.routes.containers import get_container
 from app.routes.events import _settled_prematch_odds
 from app.utils.prematch_reading import prematch_prior_sql
 
@@ -116,13 +118,22 @@ def _cards(payload):
     return {m["id"]: m["card"] for s in payload["sections"] for m in s["members"]}
 
 
-async def test_the_specimen_hub_card_prints_the_pages_pre_match_number():
+@pytest.mark.parametrize("compact", [False, True])
+async def test_the_specimen_hub_card_prints_the_pages_pre_match_number(compact, monkeypatch):
+    @asynccontextmanager
+    async def references():
+        yield _Session()
+
+    monkeypatch.setattr("app.services.database.async_session_maker", references)
     game = _final(SPECIMEN, "Cleveland Browns", "Pittsburgh Steelers",
                   open_home=0.4072, open_away=0.5928)
     rows = [_row(SPECIMEN, "kalshi", 0.405, 0.595)]
     session = _PrematchHubSession(_week4(game), events=[game], rows=rows)
 
-    card = _cards(await _get(session, "nfl-2026-week-4"))[SPECIMEN]
+    payload = await get_container(
+        slug="nfl-2026-week-4", include_children=True, compact=compact, db=session,
+    )
+    card = _cards(payload)[SPECIMEN]
 
     # The card the reader saw: opening 59 — still served, for released readers.
     assert round(card["opening_odds"]["away_probability"] * 100) == 59
@@ -130,6 +141,12 @@ async def test_the_specimen_hub_card_prints_the_pages_pre_match_number():
     assert card["prematch_odds"]["away_rendered_percent"] == 60
     assert card["prematch_odds"]["home_rendered_percent"] == 40
     assert card["prematch_odds"]["source"] == "kalshi"
+    assert len(session.prematch_binds) == 1
+    assert card["prematch_odds"]["source_mark"]["sources"][0]["probability"] == 0.405
+    assert card["prematch_odds"]["away_source_mark"]["sources"][0] == {
+        "key": "kalshi", "name": "Kalshi", "probability": 0.595,
+        "observed_at": None, "reason": "observation_unknown",
+    }
 
 
 @pytest.mark.parametrize(

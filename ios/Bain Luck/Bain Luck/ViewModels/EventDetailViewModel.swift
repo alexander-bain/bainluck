@@ -778,8 +778,7 @@ final class EventDetailViewModel: ObservableObject {
         let afterLabels = LivePriceActivity.wholeLabels(in: current)
         // #10090 C2 — the hero printed the displayed preview, when one showed,
         // not `prior`: 70% → 66% slides down even after a committed 50%.
-        let beforePrinted = LivePriceActivity.displayedLabels(
-            in: BlendPreview.overlay(prior, blendPreview, now: previewNow()))
+        let beforePrinted = LivePriceActivity.displayedLabels(in: headline(prior))
         let afterPrinted = LivePriceActivity.displayedLabels(in: current)
         priceActivity = LivePriceActivity(
             sequence: (priceActivity?.sequence ?? 0) + 1,
@@ -1506,7 +1505,8 @@ final class EventDetailViewModel: ObservableObject {
     /// incompatible fold or non-blend hero, a changed status or an expired preview.
     @MainActor
     func headline(_ event: EventDetail) -> EventDetail {
-        BlendPreview.overlay(event, blendPreview, now: previewNow())
+        if LiveEventPriceReconciliation.hasDrawChance(event.currentOdds) { return event }
+        return BlendPreview.overlay(event, blendPreview, now: previewNow())
     }
 
     /// Whether `headline(event)` prints a preview: the published state through
@@ -1515,7 +1515,8 @@ final class EventDetailViewModel: ObservableObject {
     /// prints nothing.
     @MainActor
     func displaysPreview(_ event: EventDetail) -> Bool {
-        BlendPreview.displayed(blendPreview, held: event, now: previewNow()) != nil
+        if LiveEventPriceReconciliation.hasDrawChance(event.currentOdds) { return false }
+        return BlendPreview.displayed(blendPreview, held: event, now: previewNow()) != nil
     }
 
     /// The clock of the probability `headline(event)` prints: the preview's
@@ -1523,8 +1524,11 @@ final class EventDetailViewModel: ObservableObject {
     /// one. Source-age warnings keep reading the committed clocks.
     @MainActor
     func displayedProbabilityObservedAt(_ event: EventDetail) -> Date? {
-        BlendPreview.displayedObservedAt(blendPreview, held: event, now: previewNow(),
-                                         committed: event.heroProbabilityObservedAt?.asDate)
+        if LiveEventPriceReconciliation.hasDrawChance(event.currentOdds) {
+            return event.heroProbabilityObservedAt?.asDate
+        }
+        return BlendPreview.displayedObservedAt(blendPreview, held: event, now: previewNow(),
+                                                committed: event.heroProbabilityObservedAt?.asDate)
     }
 
     /// #10090 decision J — the stream's `confirmed_at`, when it is about the
@@ -1554,7 +1558,7 @@ final class EventDetailViewModel: ObservableObject {
     @MainActor
     func confirmedAtCoveringShown(_ event: EventDetail) -> Date? {
         guard let streamConfirmedAt, connectReconcileSeen, !owesNewerPrice else { return nil }
-        if BlendPreview.displayed(blendPreview, held: event, now: previewNow()) != nil {
+        if displaysPreview(event) {
             let shown = LivePriceActivity.displayedLabels(in: headline(event))
             let committed = LivePriceActivity.displayedLabels(in: event)
             guard shown.home != nil, shown.home == committed.home, shown.away == committed.away else { return nil }
@@ -2025,7 +2029,11 @@ final class EventDetailViewModel: ObservableObject {
                 latestAcceptedPriceDate.map { stamp <= $0 } ?? false
             } ?? false
         }
-        if !priceIsNotNewer, let p = frame.p, p.isFinite, (0...1).contains(p), var odds = current.currentOdds {
+        // #13509: a game with a draw chance cannot derive away = 1 - p from a
+        // single-scalar live price; keep the three served numbers until the next
+        // full read.
+        let keepsThreeWayServedNumbers = LiveEventPriceReconciliation.hasDrawChance(current.currentOdds)
+        if !priceIsNotNewer, !keepsThreeWayServedNumbers, let p = frame.p, p.isFinite, (0...1).contains(p), var odds = current.currentOdds {
             // A clockless unversioned frame remains handled as before, but
             // cannot prove a newer receipt for freshness or motion.
             acceptedNewPrice = foldOrder == .newer || (foldOrder == nil && stamped != nil)
@@ -2084,7 +2092,7 @@ final class EventDetailViewModel: ObservableObject {
         // The venue reading rides along (#836/#837/#920): on a single-source page
         // the backend blends nothing, and that venue's own line is the one the
         // chart draws — so it is the one that has to keep up with the hero.
-        if !priceIsNotNewer, let p = frame.p, let stamped {
+        if !priceIsNotNewer, !keepsThreeWayServedNumbers, let p = frame.p, let stamped {
             let edge = liveBlend.last?.date
             let basis = LiveTimingSeam.basis(revision: frame.rev?.revision, clock: frame.updatedAt)
             liveBlend = LiveBlendBuffer.appending(

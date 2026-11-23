@@ -145,6 +145,7 @@ struct GolfTournamentView: View {
                     // for the eye to land on.
                     Text(venue)
                         .font(.headline)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
 
@@ -176,11 +177,23 @@ struct GolfTournamentView: View {
                     fieldRow(row)
                 }
                 ForEach(presentation.overflowOutcomes) { outcome in
-                    HStack {
+                    let outcomePriceText = outcome.renderedPercent.map { formatProbability(outcome.probability, renderedPercent: $0) } ?? String(format: "%.1f%%", outcome.probability * 100)
+                    HStack(spacing: 4) {
                         Text(outcome.name)
                         Spacer()
-                        Text(outcome.renderedPercent.map { formatProbability(outcome.probability, renderedPercent: $0) } ?? String(format: "%.1f%%", outcome.probability * 100))
+                        Text(outcomePriceText)
                             .monospacedDigit()
+                        if let mark = SourceMarkButton(
+                            outcome.sourceMark,
+                            number: outcome.sourceMark?.state == .settled ? nil : outcome.probability,
+                            renderedPercent: outcome.sourceMark?.state == .settled ? nil : outcome.renderedPercent,
+                            subject: outcome.name,
+                            numberSize: 15,
+                            compactRow: true,
+                            showsTenths: outcomePriceText.contains(".")
+                        ) {
+                            mark
+                        }
                     }
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
@@ -231,11 +244,25 @@ struct GolfTournamentView: View {
 
             Spacer()
 
-            Text(row.probabilityLabel)
-                .font(.subheadline)
-                .fontWeight(.semibold)
-                .monospacedDigit()
-                .foregroundStyle(row.position == 1 ? .blue : .secondary)
+            HStack(spacing: 4) {
+                Text(row.probabilityLabel)
+                    .font(.subheadline)
+                    .fontWeight(.semibold)
+                    .monospacedDigit()
+                    .foregroundStyle(row.position == 1 ? .blue : .secondary)
+
+                if let mark = SourceMarkButton(
+                    row.sourceMark,
+                    number: (row.isWinner == true || row.sourceMark?.state == .settled) ? nil : row.probability,
+                    renderedPercent: (row.isWinner == true || row.sourceMark?.state == .settled) ? nil : row.renderedPercent,
+                    subject: row.name,
+                    numberSize: 15,
+                    compactRow: true,
+                    showsTenths: row.probabilityLabel.contains(".")
+                ) {
+                    mark
+                }
+            }
         }
     }
 

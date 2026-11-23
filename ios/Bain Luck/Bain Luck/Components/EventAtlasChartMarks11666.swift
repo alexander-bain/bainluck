@@ -26,7 +26,7 @@ nonisolated enum EventAtlasSettledResult11666: String, Equatable, Sendable {
 /// - Solid (`●`) = Recorded reading
 /// - Connector (`—`) = Change
 /// - `✓ Won` / `✗ Lost` = Result as a word (never a synthetic 100% point)
-/// - Any real reading tappable/scrubbable for its exact time in PT
+/// - Any real reading tappable/scrubbable for its exact time in the chart's timezone (#12628)
 nonisolated struct EventAtlasChartMarkKeyModel11666: Equatable, Sendable {
     let showsOpening: Bool
     let openingLabel: String
@@ -91,37 +91,49 @@ nonisolated enum EventAtlasChartMarks11666 {
         return max(1, Int(ceil(Double(pointCount) / 28.0)))
     }
 
-    private static let exactTimestampFormatterPT: DateFormatter = {
+    private static let pacificTimeZone = TimeZone(identifier: "America/Los_Angeles") ?? .current
+
+    /// Concise timezone suffix for chart scrub/tap readouts (#12628):
+    /// keeps `"PT"` for `America/Los_Angeles` and uses the zone's active abbreviation
+    /// (e.g. `"EST"` / `"EDT"` in `America/New_York`, `"GMT"` / `"BST"` in `Europe/London`)
+    /// so x-axis ticks and tapped-reading readouts always share one clock.
+    static func timeZoneShortLabel(for date: Date, in timeZone: TimeZone) -> String {
+        if timeZone.identifier == "America/Los_Angeles" {
+            return "PT"
+        }
+        let abbr = timeZone.abbreviation(for: date) ?? timeZone.identifier
+        if abbr == "GMT+0" || abbr == "GMT-0" {
+            return "GMT"
+        }
+        return abbr
+    }
+
+    /// Formats a date with exact seconds in `timeZone` (defaults to the reader's local timezone, `#12628`).
+    static func formatExactTimestamp(_ date: Date, timeZone: TimeZone = .autoupdatingCurrent) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(identifier: "America/Los_Angeles") ?? .current
+        formatter.timeZone = timeZone
         formatter.dateFormat = "MMM d, h:mm:ss a"
-        return formatter
-    }()
+        return "\(formatter.string(from: date)) \(timeZoneShortLabel(for: date, in: timeZone))"
+    }
 
-    private static let minuteTimestampFormatterPT: DateFormatter = {
+    /// Formats a date to the minute without seconds in `timeZone` (defaults to the reader's local timezone, `#12628`).
+    static func formatMinuteTimestamp(_ date: Date, timeZone: TimeZone = .autoupdatingCurrent) -> String {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "en_US_POSIX")
-        formatter.timeZone = TimeZone(identifier: "America/Los_Angeles") ?? .current
+        formatter.timeZone = timeZone
         formatter.dateFormat = "MMM d, h:mm a"
-        return formatter
-    }()
+        return "\(formatter.string(from: date)) \(timeZoneShortLabel(for: date, in: timeZone))"
+    }
 
-    private static let exactTimestampLock = NSLock()
-
-    /// Formats a date as an exact PT timestamp with seconds (e.g. `"Nov 6, 4:15:30 PM PT"`),
-    /// matching web `formatAtlasTimestampPT(ts, { includeSeconds: true })`.
+    /// Formats a date as an exact PT timestamp with seconds (e.g. `"Nov 6, 4:15:30 PM PT"`).
     static func formatExactTimestampPT(_ date: Date) -> String {
-        exactTimestampLock.lock()
-        defer { exactTimestampLock.unlock() }
-        return "\(exactTimestampFormatterPT.string(from: date)) PT"
+        formatExactTimestamp(date, timeZone: pacificTimeZone)
     }
 
     /// Formats a date as a minute-precision PT timestamp without seconds (e.g. `"Nov 6, 4:15 PM PT"`).
     static func formatMinuteTimestampPT(_ date: Date) -> String {
-        exactTimestampLock.lock()
-        defer { exactTimestampLock.unlock() }
-        return "\(minuteTimestampFormatterPT.string(from: date)) PT"
+        formatMinuteTimestamp(date, timeZone: pacificTimeZone)
     }
 
     /// Maximum scrub-to-observation snap distance when a series spans at least two points.
@@ -241,7 +253,8 @@ nonisolated enum EventAtlasChartMarks11666 {
         selectedDate: Date?,
         outcomeName: String,
         includesOpening: Bool,
-        openingLabel: String = "Pregame"
+        openingLabel: String = "Pregame",
+        timeZone: TimeZone = .autoupdatingCurrent
     ) -> EventAtlasSelectedReadingModel11666? {
         let resolvedRows = rows.contains(where: \.isSelected)
             ? rows
@@ -252,7 +265,7 @@ nonisolated enum EventAtlasChartMarks11666 {
             outcomeName: outcomeName,
             badgeText: effectiveOpening ? openingLabel : "Recorded",
             probabilityText: formatProbability(row.probability),
-            timestampTextPT: formatExactTimestampPT(row.date),
+            timestampTextPT: formatExactTimestamp(row.date, timeZone: timeZone),
             isOpening: effectiveOpening
         )
     }
@@ -379,6 +392,7 @@ struct EventAtlasChartHeaderView11666: View {
 /// so the chart keeps a single title row with the All / Since Start control.
 private struct EventAtlasSelectedReadingSlot11666: View {
     @ObservedObject var selection: OddsChartSelection
+    @Environment(\.timeZone) private var timeZone
     let baseRows: [EventAtlasObservationRow11666]
     let checkpoints: PublicationCheckpointMount4974?
     let outcomeName: String
@@ -403,7 +417,7 @@ private struct EventAtlasSelectedReadingSlot11666: View {
                     outcomeName: outcomeName,
                     badgeText: "Recorded",
                     probabilityText: formatProbability(cp.vertex.p),
-                    timestampTextPT: EventAtlasChartMarks11666.formatExactTimestampPT(cp.date),
+                    timestampTextPT: EventAtlasChartMarks11666.formatExactTimestamp(cp.date, timeZone: timeZone),
                     isOpening: false
                 ))
             case .legacy(let pt):
@@ -413,7 +427,7 @@ private struct EventAtlasSelectedReadingSlot11666: View {
                     outcomeName: outcomeName,
                     badgeText: effectiveOpening ? openingLabel : "Recorded",
                     probabilityText: formatProbability(pt.probability),
-                    timestampTextPT: EventAtlasChartMarks11666.formatExactTimestampPT(pt.date),
+                    timestampTextPT: EventAtlasChartMarks11666.formatExactTimestamp(pt.date, timeZone: timeZone),
                     isOpening: effectiveOpening
                 ))
             }
@@ -426,7 +440,8 @@ private struct EventAtlasSelectedReadingSlot11666: View {
             selectedDate: selection.date,
             outcomeName: outcomeName,
             includesOpening: includesOpening,
-            openingLabel: openingLabel
+            openingLabel: openingLabel,
+            timeZone: timeZone
         ) {
             return .reading(selectedModel)
         }

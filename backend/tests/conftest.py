@@ -1,9 +1,12 @@
 """Shared test fixtures for the Bain Luck backend test suite."""
 
+import datetime as dt
 import gc
 import json
 import os
 import sys
+from pathlib import Path
+from typing import Optional
 
 import pytest
 
@@ -43,15 +46,76 @@ def pytest_runtest_logreport(report):
                 fh.write(report.nodeid + "\n")
 
 
+TIMING_QUARANTINE_FILE = Path(__file__).resolve().parent / "timing_quarantine.json"
+MAX_TIMING_QUARANTINE_DAYS = 7
+
+
+def _parse_iso_date(value: object) -> Optional[dt.date]:
+    if not isinstance(value, str) or len(value) != 10:
+        return None
+    try:
+        return dt.date.fromisoformat(value)
+    except ValueError:
+        return None
+
+
+def timing_quarantined_tests(
+    path: Optional[Path] = None, today: Optional[dt.date] = None
+) -> frozenset[str]:
+    """Ruling 241: A — timing tests moved off blocking shards by a tests-only PR
+    (``backend/tests/timing_quarantine.json``) with an issue and at most 7 days
+    to repair or delete. Expired or malformed entries are ignored so every test
+    returns to blocking once its window ends."""
+    target = TIMING_QUARANTINE_FILE if path is None else path
+    if not target.exists():
+        return frozenset()
+    try:
+        raw = json.loads(target.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return frozenset()
+    if not isinstance(raw, list):
+        return frozenset()
+    ref_day = dt.date.today() if today is None else today
+    active: set[str] = set()
+    for entry in raw:
+        if not isinstance(entry, dict):
+            continue
+        nodeid = entry.get("nodeid")
+        issue = entry.get("issue")
+        added = _parse_iso_date(entry.get("added"))
+        expires = _parse_iso_date(entry.get("expires"))
+        reason = entry.get("reason")
+        if (
+            not isinstance(nodeid, str)
+            or "::" not in nodeid
+            or not isinstance(issue, int)
+            or isinstance(issue, bool)
+            or issue <= 0
+            or added is None
+            or expires is None
+            or not isinstance(reason, str)
+            or not reason.strip()
+        ):
+            continue
+        span = (expires - added).days
+        if 0 <= span <= MAX_TIMING_QUARANTINE_DAYS and ref_day <= expires:
+            active.add(nodeid)
+    return frozenset(active)
+
+
 def quarantined_tests() -> frozenset[str]:
-    """#12252 item 2: test ids with an open `Flaky: <id>` issue, handed in by CI's
-    change-scope as JSON. Anything unreadable is an empty set — the safe side, where
-    every test still blocks."""
+    """#12252 item 2 + ruling 241: A: test ids with an open `Flaky: <id>` issue
+    (handed in by CI's change-scope as JSON) plus active entries in
+    `backend/tests/timing_quarantine.json`. Anything unreadable is an empty set
+    — the safe side, where every test still blocks."""
+    env_ids: set[str] = set()
     try:
         ids = json.loads(os.environ.get("CI_QUARANTINE") or "[]")
+        if isinstance(ids, list):
+            env_ids = {i for i in ids if isinstance(i, str)}
     except ValueError:
-        return frozenset()
-    return frozenset(i for i in ids if isinstance(i, str)) if isinstance(ids, list) else frozenset()
+        env_ids = set()
+    return frozenset(env_ids) | timing_quarantined_tests()
 
 
 _QUARANTINED = quarantined_tests()
@@ -251,6 +315,27 @@ def _prematch_reading_cache_process_tier_only(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _pregame_projection_cache_process_tier_only(monkeypatch):
+    """#11931: the settled pregame projection cache's Redis tier is OFF in tests
+    unless a test installs a fake client and turns it on."""
+    monkeypatch.setenv("PREGAME_PROJECTION_CACHE_SHARED_ENABLED", "0")
+
+
+@pytest.fixture(autouse=True)
+def _feed_fingerprint_redis_lkg_off_unless_a_test_sets_it(monkeypatch):
+    """#13350: Redis LKG fallback for Discover fingerprints is OFF in tests
+    unless a test installs a fake Redis client and enables it."""
+    monkeypatch.setenv("FEED_FINGERPRINT_REDIS_LKG_ENABLED", "0")
+
+
+@pytest.fixture(autouse=True)
+def _golf_tournament_cache_redis_and_warm_off_unless_set(monkeypatch):
+    """#13436: isolate golf tournament Redis cache and background warming in tests."""
+    monkeypatch.setenv("GOLF_TOURNAMENT_CACHE_REDIS_ENABLED", "0")
+    monkeypatch.setenv("GOLF_TOURNAMENT_CACHE_WARM_ENABLED", "0")
+
+
+@pytest.fixture(autouse=True)
 def _sentinel_red_comment_cadence_off_unless_a_test_sets_it(monkeypatch):
     """#12276: the sentinel rail's "Still RED" cadence keeps its last comment in
     Redis. Off in tests unless a test turns it on with a fake client — a
@@ -340,9 +425,15 @@ def _reset_loaded_request_caches(retained=None):
             ),
         ),
         ("app.utils.candidate_base", ("_reset_l0_for_tests",)),
+        ("app.utils.feed_collections", ("_reset_fingerprint_cache_for_tests",)),
+        ("app.utils.theme_collection_ref", ("_reset_published_cache_for_tests",)),
         ("app.utils.principal_independent_cache", ("clear_shared_builds",)),
         ("app.utils.event_history_cache", ("_reset_for_tests",)),
+        ("app.utils.futures_page_cache", ("_reset_for_tests",)),
+        ("app.utils.golf_tournament_cache", ("_reset_for_tests",)),
+        ("app.utils.roundup_containers", ("_reset_roundup_swr_state_for_tests",)),
         ("app.utils.prematch_reading", ("_reset_prematch_cache_for_tests",)),
+        ("app.utils.pregame_projection", ("clear_pregame_projection_cache",)),
         ("app.routes.calibration", ()),
     )
     found = {}

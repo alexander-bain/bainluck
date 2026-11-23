@@ -172,7 +172,8 @@ def test_the_specimen_serves_the_kalshi_39_not_the_books_40():
 
     served = asyncio.run(_settled_prematch_odds(db, event, "baseball_mlb"))
 
-    assert served == {
+    mark_keys = ("source_mark", "away_source_mark")
+    assert {key: value for key, value in served.items() if key not in mark_keys} == {
         "home_probability": 0.61,
         "away_probability": 0.39,
         "home_rendered_percent": 61,
@@ -185,6 +186,8 @@ def test_the_specimen_serves_the_kalshi_39_not_the_books_40():
         {"ids": [EVENT_ID], "cutoffs": [KICKOFF], "sources": ["kalshi", "polymarket"]}
     ]
     assert db.savepoint_log == ["commit"]
+    assert served["source_mark"]["sources"][0]["probability"] == 0.61
+    assert served["away_source_mark"]["sources"][0]["probability"] == 0.39
 
 
 # ── One ladder: the page's object IS the card's object ───────────────────────
@@ -349,11 +352,21 @@ def test_live_detail_serves_the_same_kickoff_prior_as_the_finished_page(route, m
 
     assert live["status"] == "live"
     assert db.prematch_reads == 1
-    assert live["prematch_odds"] == {
+    prior = live["prematch_odds"]
+    mark_keys = ("source_mark", "away_source_mark")
+    assert {key: value for key, value in prior.items() if key not in mark_keys} == {
         "home_probability": 0.575, "away_probability": 0.425,
         "home_rendered_percent": 58, "away_rendered_percent": 42,
         "source": "kalshi",
     }
+    for field, probability in (("source_mark", 0.575), ("away_source_mark", 0.425)):
+        assert prior[field] == {
+            "state": "single",
+            "sources": [{
+                "key": "kalshi", "name": "Kalshi", "probability": probability,
+                "observed_at": None, "reason": "observation_unknown",
+            }],
+        }
     assert live["opening_odds"]["home_probability"] == pytest.approx(0.5765)
     event.status = "completed"
     finished, _ = route(event, [row])

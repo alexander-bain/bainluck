@@ -24,6 +24,7 @@ Authority's 2026-10-02T16:20Z readback (#9387 comment 5956494541):
 from __future__ import annotations
 
 import copy
+import json
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -452,6 +453,203 @@ def by_name(payload, name, key="outcomes"):
 NEW_DETAIL_KEYS = {"representation", "question_identity", "contributing_sources"}
 NEW_OUTCOME_KEYS = {"contributing_sources", "observed_at", "aggregation_rule"}
 VERIFIED = "verified_title"
+
+
+async def test_current_title_field_serves_same_rows_to_detail_chart_and_paired_card_11995(
+    monkeypatch, tmp_path,
+):
+    from app.routes import paired_metrics
+    from app.services import paired_metric_register
+
+    names = ("Buffalo Bills", "Los Angeles Rams", "San Francisco 49ers")
+    qualifier = _market(
+        71000000, "kalshi", "KXPLAYOFF-27", "Playoff qualifiers",
+        [_outcome(110 + index, name, 0.82, KALSHI_AT) for index, name in enumerate(names)],
+        me=False,
+    )
+    registry = tmp_path / "sets.json"
+    registry.write_text(json.dumps({"sets": {"title": {
+        "stage_1_market": {"id": qualifier.id}, "stage_2_market": {"id": ODDS_ID},
+        "entries": [{"subject": name, "stage_1_outcome": name, "stage_2_outcome": name}
+                    for name in names],
+    }}}))
+    monkeypatch.setattr(paired_metrics, "find_paired_set_id_for_market", lambda market_id: "title")
+    monkeypatch.setattr(paired_metric_register, "PAIRED_METRIC_REGISTER_PATH", registry)
+    markets = trio(extra=(qualifier,))
+
+    board, _ = await detail(ODDS_ID, markets, VERIFIED)
+    chart, _ = await timeline(ODDS_ID, markets, VERIFIED)
+    with _at():
+        pair = (await paired_metrics.get_paired_metric_by_market(ODDS_ID, db=_DB(markets)))["set"]
+        set_page = (await paired_metrics.list_paired_metrics(
+            ceremony=None, set_id="title", db=_DB(markets),
+        ))["sets"][0]
+    assert pair == set_page
+
+    for name in names:
+        page = by_name(board, name)
+        chart_row = next(row for row in chart["outcomes"] if row["id"] == page["id"])
+        card_row = next(row for row in pair["entries"] if row["subject"] == name)
+        assert page["rendered_percent"] == chart_row["rendered_percent"] == card_row["stage_2_rendered_percent"]
+        assert page["probability"] == chart_row["current_probability"] == card_row["stage_2_probability"]
+        assert card_row["stage_1_probability"] == 0.82
+
+
+@pytest.mark.parametrize("representation", ["source", VERIFIED])
+async def test_independent_kalshi_field_marks_only_the_one_cent_no_bid_ask(representation):
+    prices = (0.52, 0.42, 0.01, 0.01, 0.01)
+    rows = [
+        _outcome(210 + index, f"Film {index}", price, KALSHI_AT)
+        for index, price in enumerate(prices)
+    ]
+    rows[2].current_yes_bid, rows[2].current_yes_ask = 0, 0.01
+    rows[3].current_yes_bid, rows[3].current_yes_ask = 0.01, 0.01
+    market = _market(71000002, "kalshi", "KXOSCARPIC-27", "Award winner", rows)
+    market.market_type = "field"
+
+    page, _ = await detail(market.id, [market], representation)
+    served = {row["id"]: row for row in page["outcomes"]}
+    assert page["outcome_prices_are_independent"]
+    assert [served[row.id]["probability"] for row in rows[:2]] == list(prices[:2])
+    assert 0 < served[rows[2].id]["probability"] < 0.01
+    assert served[rows[2].id]["source_mark"]["sources"][0]["probability"] == 0.01
+    assert served[rows[3].id]["probability"] == served[rows[4].id]["probability"] == 0.01
+    assert rows[2].current_probability == 0.01
+    assert served[rows[2].id]["rendered_percent"] == 0
+    assert all(served[rows[index].id].get("rendered_percent") is None for index in (0, 1, 3, 4))
+
+
+@pytest.mark.parametrize("prices,independent", [
+    ((0.52, 0.31, 0.27), False),
+    ((0.52, 0.31, None), True),
+    ((0.52, 0.31, 0.15, 0.01, 0.01), True),
+])
+async def test_incomplete_field_labels_its_individual_markets_11995(prices, independent):
+    market = _market(71000001, "kalshi", "KXWIN-27", "Award winner", [
+        _outcome(200 + index, f"Nominee {index}", price, KALSHI_AT)
+        for index, price in enumerate(prices)
+    ])
+    market.market_type = "field"
+
+    board, _ = await detail(market.id, [market], "source")
+
+    assert board.get("outcome_prices_are_independent", False) is independent
+    if independent:
+        assert [row["probability"] for row in board["outcomes"]] == list(prices)
+    else:
+        assert sum(row["rendered_percent"] for row in board["outcomes"]) == 100
+
+
+class TestReviewedSuperBowlAlias12530:
+    async def test_alias_names_canonical_page_and_keeps_its_source_ids(self):
+        source, _ = await detail(PM_ID, trio(), "source")
+        alias, _ = await detail(PM_ID, trio(), VERIFIED)
+        canonical, _ = await detail(ODDS_ID, trio(), VERIFIED)
+
+        assert "canonical_market_id" not in source
+        assert alias["id"] == PM_ID
+        assert alias["canonical_market_id"] == canonical["id"] == ODDS_ID
+        assert {row["id"] for row in alias["outcomes"]} == {
+            row["id"] for row in source["outcomes"]
+        }
+
+    async def test_2027_url_does_not_redirect_to_a_rolled_sportsbook_board(self):
+        markets = trio()
+        anchor = dict(markets[0].market_metadata["odds_api_current_event"])
+        anchor["commence_time"] = "2028-02-13T23:30:00+00:00"
+        markets[0].market_metadata = {"odds_api_current_event": anchor}
+        alias, _ = await detail(PM_ID, markets, VERIFIED)
+        assert "canonical_market_id" not in alias
+
+    async def test_title_plus_team_recalls_canonical_board_on_an_empty_search(self, monkeypatch):
+        import time
+        from unittest.mock import AsyncMock
+        from app.routes import events
+
+        canonical = trio()[0]
+        canonical.outcomes.append(_outcome(9001, "New England Patriots", 0.02, POLLED))
+        db = AsyncMock()
+        load = AsyncMock(return_value=canonical)
+        monkeypatch.setattr(events, "_load_current_2027_super_bowl", load)
+        deadline = time.monotonic() + 10
+        for name in ("superbowl patriots", "Bills Super Bowl", "Super Bowl winner"):
+            assert await events._route_super_bowl_search(db, [], name, deadline) == [canonical]
+        assert await events._route_super_bowl_search(db, [], "super bowl MVP", deadline) == []
+        assert await events._route_super_bowl_search(db, [], "super bowl 2028", deadline) == []
+        seen = load.await_count
+        assert await events._route_super_bowl_search(db, [], "buffalo bills", deadline) == []
+        assert load.await_count == seen
+
+    async def test_team_search_replaces_the_alias_once_at_its_original_rank(self):
+        import time
+        from app.routes.events import _route_super_bowl_search
+
+        by_id = {market.id: market for market in trio()}
+        canonical, kalshi, alias = (by_id[mid] for mid in (ODDS_ID, KALSHI_ID, PM_ID))
+        with _at():
+            rows = await _route_super_bowl_search(
+                None, [kalshi, alias, canonical], "Bills", time.monotonic() + 10
+            )
+        assert rows == [kalshi, canonical]
+
+
+class TestVerifiedTitleGameDate12530:
+    @pytest.mark.parametrize("mid", [ODDS_ID, KALSHI_ID, PM_ID])
+    async def test_detail_and_search_share_the_proved_game_date(self, mid):
+        from app.routes.events import _format_futures_for_search
+
+        markets = trio()
+        stored_dates = [m.resolution_date for m in markets]
+        source_before, _ = await detail(mid, markets, "source")
+        payload, _ = await detail(mid, markets, VERIFIED)
+        requested = next(m for m in markets if m.id == mid)
+        with _at():
+            verdict = await futures_routes._compose_verified_title(_DB(markets), requested)
+            card = _format_futures_for_search(requested, set(), verified=verdict)
+
+        # The same earliest corroborated game instant used by membership;
+        # neither Polymarket's no-winner cutoff nor Kalshi's tail expiration.
+        game_at = "2027-02-14T23:30:00+00:00"
+        assert payload["representation"] == VERIFIED
+        assert payload["resolution_date"] == card["resolution_date"] == game_at
+        assert [m.resolution_date for m in markets] == stored_dates
+        source_after, _ = await detail(mid, markets, "source")
+        assert source_after == source_before
+
+    @pytest.mark.parametrize("mid", [ODDS_ID, KALSHI_ID, PM_ID])
+    async def test_conflicting_game_dates_keep_each_source_date(self, mid):
+        markets = trio(kalshi=kalshi_market(
+            resolution_date=datetime(2027, 2, 7, 23, 30, tzinfo=timezone.utc),
+        ))
+        source, _ = await detail(mid, markets, "source")
+        payload, _ = await detail(mid, markets, VERIFIED)
+        assert payload["representation"] == "source"
+        assert payload["representation_fallback"] == "edition_instant_conflict"
+        assert payload["resolution_date"] == source["resolution_date"]
+
+    @pytest.mark.parametrize("mid", [KALSHI_ID, PM_ID])
+    async def test_kalshi_dates_the_field_when_sportsbooks_are_absent(self, mid):
+        markets = [m for m in trio() if m.id != ODDS_ID]
+        payload, _ = await detail(mid, markets, VERIFIED)
+        assert payload["representation"] == VERIFIED
+        assert payload["resolution_date"] == "2027-02-14T23:30:00+00:00"
+
+    async def test_cached_peer_keeps_the_date_of_its_verified_snapshot(self, monkeypatch):
+        markets = trio()
+        db = _DB(markets)
+        monkeypatch.setenv("VERIFIED_TITLE_CACHE_SECONDS", "60")
+        futures_routes._VERIFIED_TITLE_CACHE.clear()
+        try:
+            with _at():
+                first = await futures_routes._resolve_verified_title(db, markets[0])
+                reads = list(db.kinds)
+                markets[1].resolution_date = datetime(2028, 2, 13, tzinfo=timezone.utc)
+                peer = await futures_routes._resolve_verified_title(db, markets[1])
+            assert db.kinds == reads
+            assert first.canonical_card_fields["resolution_date"] == "2027-02-14T23:30:00+00:00"
+            assert peer.canonical_card_fields["resolution_date"] == first.canonical_card_fields["resolution_date"]
+        finally:
+            futures_routes._VERIFIED_TITLE_CACHE.clear()
 
 
 def _why(payload):

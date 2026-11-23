@@ -3,11 +3,12 @@ Bain Luck API
 Main FastAPI application entry point.
 """
 
+import asyncio
 import logging
 import os
 import time
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 import sentry_sdk
@@ -88,14 +89,24 @@ async def lifespan(app: FastAPI):
         await get_shared_async_redis()
     except Exception:  # pragma: no cover - never block startup on Redis
         logger.debug("shared async redis warm-up skipped", exc_info=True)
-    yield
-    # Shutdown
-    try:
-        from app.utils.request_cache import close_shared_async_redis
+    from app.services.database import engine
+    from app.services.onboarding_team_aliases import refresh_onboarding_venue_aliases
 
-        await close_shared_async_redis()
-    except Exception:  # pragma: no cover - shutdown best-effort
-        logger.debug("shared async redis close skipped", exc_info=True)
+    alias_refresh = asyncio.create_task(
+        refresh_onboarding_venue_aliases(engine), name="onboarding-venue-aliases"
+    )
+    try:
+        yield
+    finally:
+        alias_refresh.cancel()
+        with suppress(asyncio.CancelledError):
+            await alias_refresh
+        try:
+            from app.utils.request_cache import close_shared_async_redis
+
+            await close_shared_async_redis()
+        except Exception:  # pragma: no cover - shutdown best-effort
+            logger.debug("shared async redis close skipped", exc_info=True)
 
 
 app = FastAPI(
@@ -207,6 +218,7 @@ app.add_middleware(LatencyMiddleware)
 # two-principal contract tests share one decision. Re-exported here for any
 # caller/test that imports it from app.main.
 from app.utils.http_cache_policy import CACHE_RULES, apply_cache_policy  # noqa: E402,F401
+from app.utils.latency_stats import sanitize_user_agent  # noqa: E402
 
 
 @app.middleware("http")
@@ -219,9 +231,25 @@ async def request_timing(request: Request, call_next):
     response.headers["X-Request-ID"] = request_id
     response.headers["X-Response-Time"] = f"{duration_ms:.0f}ms"
     if duration_ms > 1000 and "/admin" not in request.url.path:
-        logger.warning("SLOW %s %s [%s] %dms", request.method, request.url.path, request_id, duration_ms)
+        ua = sanitize_user_agent(request.headers.get("user-agent")) or "-"
+        logger.warning(
+            "SLOW %s %s [%s] %dms ua=%s",
+            request.method,
+            request.url.path,
+            request_id,
+            duration_ms,
+            ua,
+        )
     elif duration_ms > 500 and "/admin" not in request.url.path:
-        logger.info("MODERATE %s %s [%s] %dms", request.method, request.url.path, request_id, duration_ms)
+        ua = sanitize_user_agent(request.headers.get("user-agent")) or "-"
+        logger.info(
+            "MODERATE %s %s [%s] %dms ua=%s",
+            request.method,
+            request.url.path,
+            request_id,
+            duration_ms,
+            ua,
+        )
 
     # Authentication and identity ALWAYS win over latency caching. Protected /
     # personalized / identity-bearing responses become private+no-store; route

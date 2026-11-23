@@ -1,0 +1,557 @@
+{
+  "slate_id": "nfl-playoffs-look-sheet-2026-11",
+  "surface": "grouping",
+  "generated_at": "2026-11-11T22:30:00Z",
+  "model": "nfl-playoffs-super-bowl-look-sheet-v1",
+  "question": "Which NFL Playoffs & Super Bowl container sections (and the 'too many props' curation layout) should become the licensed container grammar?",
+  "items": [
+    {
+      "position": 1,
+      "item_key": "nfl-section-1-playoffs-to-super-bowl-paired-bars",
+      "title": "Section 1 · Make the Playoffs % beside Win the Super Bowl % (Top 6 + Expander for All 12 Clubs in the Hunt)",
+      "source": "kalshi",
+      "category": "football",
+      "template_key": "paired_bars_top6_expandable:nfl_2026_27_playoffs_super_bowl",
+      "member_count": 12,
+      "kind_verdict": "serve",
+      "refusal_reasons": [],
+      "trust_pass": true,
+      "proposed_kind": "paired_bars_top6_expandable",
+      "as_of": "2026-11-11T22:20:00Z",
+      "as_of_label": "as of 2026-11-11",
+      "proposed_card": {
+        "kicker": "SECTION 1 · PAIRED_BARS_TOP6_EXPANDABLE",
+        "tag": "SUPER BOWL LXI",
+        "title": "Make the Playoffs % beside Win the Super Bowl %",
+        "subtitle": "All 12 NFL clubs at 4%+ Super Bowl chance · Top 6 shown first · Resolves Feb 14, 2027",
+        "rows": [
+          {
+            "label": "San Francisco 49ers (98% playoffs)",
+            "value": "13%",
+            "market_id": 86832,
+            "probability": 0.1283,
+            "rendered_percent": 13
+          },
+          {
+            "label": "Buffalo Bills (98% playoffs)",
+            "value": "13%",
+            "market_id": 86832,
+            "probability": 0.1265,
+            "rendered_percent": 13
+          },
+          {
+            "label": "Jacksonville Jaguars (96% playoffs)",
+            "value": "10%",
+            "market_id": 86832,
+            "probability": 0.1,
+            "rendered_percent": 10
+          },
+          {
+            "label": "Chicago Bears (88% playoffs)",
+            "value": "9%",
+            "market_id": 86832,
+            "probability": 0.0918,
+            "rendered_percent": 9
+          },
+          {
+            "label": "Kansas City Chiefs (93% playoffs)",
+            "value": "7%",
+            "market_id": 86832,
+            "probability": 0.0719,
+            "rendered_percent": 7
+          },
+          {
+            "label": "Cincinnati Bengals (93% playoffs)",
+            "value": "6%",
+            "market_id": 86832,
+            "probability": 0.0615,
+            "rendered_percent": 6
+          }
+        ],
+        "count_line": "12 NFL clubs paired in register · Top 6 visible + full-width expander for all 12",
+        "footer": "Playoff berth and Super Bowl winner are paired by club and kept separate.",
+        "relations": [
+          "paired_stage_propositions"
+        ],
+        "level": "proposed",
+        "as_of_label": "as of 2026-11-11",
+        "proposed_kind": "paired_bars_top6_expandable",
+        "selection_type": "top_n"
+      },
+      "best_single": {
+        "id": 86832,
+        "name": "NFL Super Bowl Winner — San Francisco 49ers",
+        "subject": "San Francisco 49ers",
+        "source": "odds_api",
+        "category": "football",
+        "yes_probability": 0.1283,
+        "rendered_percent": 13,
+        "resolution_date": "2027-02-14T23:30:00Z",
+        "rule_quote": "Resolves Feb 14, 2027 when Super Bowl LXI concludes."
+      }
+    },
+    {
+      "position": 2,
+      "item_key": "nfl-section-2-afc-nfc-conference-paths",
+      "title": "Section 2 · AFC & NFC Conference Championship Conversion Funnels (Reach Conference Final % → Win Conference %)",
+      "source": "kalshi",
+      "category": "football",
+      "template_key": "step_conversion_path_conference:nfl_2026_27_afc_nfc",
+      "member_count": 10,
+      "kind_verdict": "serve",
+      "refusal_reasons": [],
+      "trust_pass": true,
+      "proposed_kind": "step_conversion_path_conference",
+      "as_of": "2026-11-11T22:20:00Z",
+      "as_of_label": "as of 2026-11-11",
+      "proposed_card": {
+        "kicker": "SECTION 2 · STEP_CONVERSION_PATH_CONFERENCE",
+        "tag": "AFC & NFC PATHS",
+        "title": "Who gets through the AFC & NFC brackets?",
+        "subtitle": "Outer reach bar = Reach Conference Championship Game % · Inner fill = Win Conference %",
+        "rows": [
+          {
+            "label": "San Francisco 49ers (45% reach NFC Final)",
+            "value": "28%",
+            "market_id": 31615,
+            "probability": 0.275,
+            "rendered_percent": 28
+          },
+          {
+            "label": "Buffalo Bills (49% reach AFC Final)",
+            "value": "25%",
+            "market_id": 31616,
+            "probability": 0.245,
+            "rendered_percent": 25
+          },
+          {
+            "label": "Jacksonville Jaguars (36% reach AFC Final)",
+            "value": "21%",
+            "market_id": 31616,
+            "probability": 0.21,
+            "rendered_percent": 21
+          },
+          {
+            "label": "Chicago Bears (34% reach NFC Final)",
+            "value": "18%",
+            "market_id": 31615,
+            "probability": 0.18,
+            "rendered_percent": 18
+          },
+          {
+            "label": "Kansas City Chiefs (19% reach AFC Final)",
+            "value": "13%",
+            "market_id": 31616,
+            "probability": 0.13,
+            "rendered_percent": 13
+          }
+        ],
+        "count_line": "5 AFC contenders + 5 NFC contenders paired across conference rounds",
+        "footer": "Reach Conference Final % and Win Conference % are paired by club and kept separate.",
+        "relations": [
+          "paired_stage_propositions"
+        ],
+        "level": "proposed",
+        "as_of_label": "as of 2026-11-11",
+        "proposed_kind": "step_conversion_path_conference",
+        "selection_type": "top_n"
+      },
+      "best_single": {
+        "id": 31615,
+        "name": "NFC Championship Winner — San Francisco 49ers",
+        "subject": "San Francisco 49ers",
+        "source": "kalshi",
+        "category": "football",
+        "yes_probability": 0.275,
+        "rendered_percent": 28,
+        "resolution_date": "2027-01-31T23:59:00Z",
+        "rule_quote": "Resolves Yes if San Francisco wins the 2026-27 NFC Championship Game."
+      }
+    },
+    {
+      "position": 3,
+      "item_key": "nfl-section-3-division-races-by-shape",
+      "title": "Section 3 · Division Races Chosen by Distribution Shape (4-Way Scrambles vs 2-Team Duels vs 90% Locks)",
+      "source": "polymarket",
+      "category": "football",
+      "template_key": "shape_driven_division_contrast:nfl_2026_27_divisions",
+      "member_count": 7,
+      "kind_verdict": "serve",
+      "refusal_reasons": [],
+      "trust_pass": true,
+      "proposed_kind": "shape_driven_division_contrast",
+      "as_of": "2026-11-11T22:20:00Z",
+      "as_of_label": "as of 2026-11-11",
+      "proposed_card": {
+        "kicker": "SECTION 3 · SHAPE_DRIVEN_DIVISION_CONTRAST",
+        "tag": "NFL DIVISIONS",
+        "title": "The shape of the division race picks the visual form",
+        "subtitle": "4-Way Grids (NFC North & South) · 2-Horse Tug Bars (AFC West, NFC East, AFC North) · 90% Lock Chips (AFC South & East)",
+        "rows": [
+          {
+            "label": "NFC North 4-Way Race (Bears 38% · Lions 27% · Vikings 25% · Packers 13%)",
+            "value": "38%",
+            "market_id": 2279147,
+            "probability": 0.38,
+            "rendered_percent": 38
+          },
+          {
+            "label": "NFC South 4-Way Race (Buccaneers 39% · Panthers 26% · Saints 20% · Falcons 17%)",
+            "value": "39%",
+            "market_id": 2279151,
+            "probability": 0.388,
+            "rendered_percent": 39
+          },
+          {
+            "label": "AFC West 2-Horse Duel (Broncos 57% vs Chiefs 42%)",
+            "value": "57%",
+            "market_id": 2248392,
+            "probability": 0.565,
+            "rendered_percent": 57
+          },
+          {
+            "label": "AFC North 2-Horse Duel (Bengals 64% vs Steelers 31%)",
+            "value": "64%",
+            "market_id": 53677,
+            "probability": 0.635,
+            "rendered_percent": 64
+          },
+          {
+            "label": "AFC South & East Locks (Jaguars 90% · Bills 89%)",
+            "value": "90%",
+            "market_id": 53676,
+            "probability": 0.9,
+            "rendered_percent": 90
+          }
+        ],
+        "count_line": "7 NFL division boards grouped into 3 visual forms by leader share",
+        "footer": "Distribution shape rule (#12523): <45% leader = 4-up scramble grid; 45-80% = 2-team duel bar; >=85% = compact lock chip.",
+        "relations": [
+          "same_window",
+          "shape_driven_contrast"
+        ],
+        "level": "proposed",
+        "as_of_label": "as of 2026-11-11",
+        "proposed_kind": "shape_driven_division_contrast",
+        "selection_type": "top_n"
+      },
+      "best_single": {
+        "id": 2279147,
+        "name": "NFL: NFC North Champion — Chicago Bears",
+        "subject": "Chicago Bears",
+        "source": "polymarket",
+        "category": "football",
+        "yes_probability": 0.38,
+        "rendered_percent": 38,
+        "resolution_date": "2027-01-11T00:00:00Z",
+        "rule_quote": "Resolves to the team that wins the 2026-27 NFC North division title."
+      }
+    },
+    {
+      "position": 4,
+      "item_key": "nfl-section-4-mvp-and-awards-spotlight",
+      "title": "Section 4 · NFL MVP & Offensive Player of the Year Spotlight (Circular Player Headshots + Finalist % beside Win %)",
+      "source": "kalshi",
+      "category": "football",
+      "template_key": "podium_and_headshot_tiles:nfl_2026_27_mvp_opoy",
+      "member_count": 11,
+      "kind_verdict": "serve",
+      "refusal_reasons": [],
+      "trust_pass": true,
+      "proposed_kind": "podium_and_headshot_tiles",
+      "as_of": "2026-11-11T22:20:00Z",
+      "as_of_label": "as of 2026-11-11",
+      "proposed_card": {
+        "kicker": "SECTION 4 · PODIUM_AND_HEADSHOT_TILES",
+        "tag": "NFL HONORS",
+        "title": "NFL MVP & Offensive Player of the Year",
+        "subtitle": "Circular ESPN player headshots pair AP Finalist % beside Winner %",
+        "rows": [
+          {
+            "label": "Joe Burrow · CIN QB (80% finalist)",
+            "value": "32%",
+            "market_id": 40532,
+            "probability": 0.3155,
+            "rendered_percent": 32
+          },
+          {
+            "label": "Josh Allen · BUF QB (71% finalist)",
+            "value": "22%",
+            "market_id": 40532,
+            "probability": 0.2184,
+            "rendered_percent": 22
+          },
+          {
+            "label": "Brock Purdy · SF QB (56% finalist)",
+            "value": "16%",
+            "market_id": 40532,
+            "probability": 0.1602,
+            "rendered_percent": 16
+          },
+          {
+            "label": "Jordan Love · GB QB (70% finalist)",
+            "value": "13%",
+            "market_id": 40532,
+            "probability": 0.1311,
+            "rendered_percent": 13
+          },
+          {
+            "label": "Jahmyr Gibbs · DET RB (Offensive Player of the Year)",
+            "value": "30%",
+            "market_id": 53662,
+            "probability": 0.3006,
+            "rendered_percent": 30
+          }
+        ],
+        "count_line": "7 NFL MVP contenders + 4 Offensive Player of the Year leaders with verified ESPN headshots",
+        "footer": "AP Finalist % and Trophy Winner % are paired by player and kept separate.",
+        "relations": [
+          "paired_stage_propositions"
+        ],
+        "level": "proposed",
+        "as_of_label": "as of 2026-11-11",
+        "proposed_kind": "podium_and_headshot_tiles",
+        "selection_type": "top_n"
+      },
+      "best_single": {
+        "id": 40532,
+        "name": "NFL MVP Winner — Joe Burrow",
+        "subject": "Joe Burrow",
+        "source": "kalshi",
+        "category": "football",
+        "yes_probability": 0.3155,
+        "rendered_percent": 32,
+        "resolution_date": "2027-02-12T00:00:00Z",
+        "rule_quote": "Resolves Yes if Joe Burrow is named 2026-27 AP NFL Most Valuable Player."
+      }
+    },
+    {
+      "position": 5,
+      "item_key": "nfl-section-5-games-that-move-the-picture",
+      "title": "Section 5 · This Week's Games That Move the Playoff Picture Most (Win % + Playoff Stakes)",
+      "source": "kalshi",
+      "category": "football",
+      "template_key": "matchup_swing_cards:nfl_week_10_11",
+      "member_count": 4,
+      "kind_verdict": "serve",
+      "refusal_reasons": [],
+      "trust_pass": true,
+      "proposed_kind": "matchup_swing_cards",
+      "as_of": "2026-11-11T22:20:00Z",
+      "as_of_label": "as of 2026-11-11",
+      "proposed_card": {
+        "kicker": "SECTION 5 · MATCHUP_SWING_CARDS",
+        "tag": "THIS WEEK'S SLATE",
+        "title": "Games this week that move the playoff picture most",
+        "subtitle": "Game win probability paired with each club's playoff berth %",
+        "rows": [
+          {
+            "label": "Steelers (6-2, 74% playoffs) at Bengals (6-2, 93% playoffs)",
+            "value": "64%",
+            "market_id": 14780578,
+            "probability": 0.635,
+            "rendered_percent": 64
+          },
+          {
+            "label": "Vikings (6-2, 70% playoffs) at Packers (6-3, 65% playoffs)",
+            "value": "61%",
+            "market_id": 14969886,
+            "probability": 0.605,
+            "rendered_percent": 61
+          },
+          {
+            "label": "49ers (7-1, 98% playoffs) at Cowboys (4-5, 30% playoffs)",
+            "value": "66%",
+            "market_id": 14969889,
+            "probability": 0.655,
+            "rendered_percent": 66
+          },
+          {
+            "label": "Patriots (5-4, 59% playoffs) at Lions (6-2, 77% playoffs)",
+            "value": "59%",
+            "market_id": 14639206,
+            "probability": 0.585,
+            "rendered_percent": 59
+          }
+        ],
+        "count_line": "4 high-leverage Week 10/11 matchups linked to division and wild-card standings",
+        "footer": "Each card links the live game win probability to the two clubs' season playoff chances.",
+        "relations": [
+          "same_window"
+        ],
+        "level": "proposed",
+        "as_of_label": "as of 2026-11-11",
+        "proposed_kind": "matchup_swing_cards",
+        "selection_type": "top_n"
+      },
+      "best_single": {
+        "id": 14780578,
+        "name": "Pittsburgh Steelers at Cincinnati Bengals — Bengals Win",
+        "subject": "Cincinnati Bengals",
+        "source": "kalshi",
+        "category": "football",
+        "yes_probability": 0.635,
+        "rendered_percent": 64,
+        "resolution_date": "2026-11-16T01:20:00Z",
+        "rule_quote": "Full-game win probability paired with season playoff chances."
+      }
+    },
+    {
+      "position": 6,
+      "item_key": "nfl-section-6-too-many-props-steelers-bengals",
+      "title": "Section 6 · The 'Too Many Props' Section on a Real Full NFL Prop Board (Steelers at Bengals — 681 Live Markets)",
+      "source": "kalshi",
+      "category": "football",
+      "template_key": "curated_prop_board_with_drawer:event_14780578",
+      "member_count": 681,
+      "kind_verdict": "serve",
+      "refusal_reasons": [],
+      "trust_pass": true,
+      "proposed_kind": "curated_prop_board_with_drawer",
+      "as_of": "2026-11-11T22:22:00Z",
+      "as_of_label": "as of 2026-11-11",
+      "proposed_card": {
+        "kicker": "SECTION 6 · CURATED_PROP_BOARD_WITH_DRAWER",
+        "tag": "681 GAME MARKETS",
+        "title": "Pittsburgh Steelers at Cincinnati Bengals · Prop Board",
+        "subtitle": "Turns 394 player props + 287 game/special lines into a 3-lens first screen (The Script · 50/50 Coin-Flips · First TD) + 1 category Milestone Ladder drawer",
+        "rows": [
+          {
+            "label": "Joe Burrow · 2+ Passing TDs (67%) · 275+ Passing Yds (57%)",
+            "value": "67%",
+            "market_id": 69976778,
+            "probability": 0.67,
+            "rendered_percent": 67
+          },
+          {
+            "label": "Ja'Marr Chase · 1+ Touchdown (53%) · 90+ Receiving Yds (50%)",
+            "value": "53%",
+            "market_id": 69976768,
+            "probability": 0.525,
+            "rendered_percent": 53
+          },
+          {
+            "label": "Aaron Rodgers · 1+ Passing TD (82%) · 225+ Passing Yds (56%)",
+            "value": "82%",
+            "market_id": 69976778,
+            "probability": 0.815,
+            "rendered_percent": 82
+          },
+          {
+            "label": "Jaylen Warren · 60+ Rushing Yds (56%) · 3+ Receptions (53%)",
+            "value": "56%",
+            "market_id": 69976810,
+            "probability": 0.555,
+            "rendered_percent": 56
+          },
+          {
+            "label": "Spread Coin-Flip: Steelers +3.5 (52%) vs Bengals -3.5 (49%)",
+            "value": "52%",
+            "market_id": 69140742,
+            "probability": 0.515,
+            "rendered_percent": 52
+          }
+        ],
+        "count_line": "11 curated numbers on the first screen · 670 remaining prop lines organized into 5 category Milestone Ladders behind 1 toggle",
+        "footer": "Large-set rule (#12609): curate The Script (>=50%), 50/50 Coin-Flips, and First TD up front; collapse alternate yardage thresholds into one Milestone Ladder per player behind a toggle.",
+        "relations": [
+          "same_event",
+          "curated_prop_board"
+        ],
+        "level": "proposed",
+        "as_of_label": "as of 2026-11-11",
+        "proposed_kind": "curated_prop_board_with_drawer",
+        "selection_type": "top_n"
+      },
+      "best_single": {
+        "id": 69976768,
+        "name": "Pittsburgh vs Cincinnati: Touchdowns — Ja'Marr Chase 1+",
+        "subject": "Ja'Marr Chase",
+        "source": "kalshi",
+        "category": "football",
+        "yes_probability": 0.525,
+        "rendered_percent": 53,
+        "resolution_date": "2026-11-16T04:30:00Z",
+        "rule_quote": "Resolves Yes if Ja'Marr Chase scores at least 1 touchdown in Pittsburgh at Cincinnati."
+      }
+    },
+    {
+      "position": 7,
+      "item_key": "nfl-container-full-rhythm-preview",
+      "title": "Full Container Rhythm · How All 6 Sections Compose into One Self-Building 390 px NFL Playoffs & Super Bowl Container",
+      "source": "kalshi",
+      "category": "football",
+      "template_key": "self_building_season_container:nfl_2026_27",
+      "member_count": 6,
+      "kind_verdict": "serve",
+      "refusal_reasons": [],
+      "trust_pass": true,
+      "proposed_kind": "self_building_season_container",
+      "as_of": "2026-11-11T22:22:00Z",
+      "as_of_label": "as of 2026-11-11",
+      "proposed_card": {
+        "kicker": "FULL CONTAINER · SELF_BUILDING_SEASON_CONTAINER",
+        "tag": "SUPER BOWL LXI HUB",
+        "title": "NFL Playoffs & Super Bowl LXI Hub · Resolves Feb 14, 2027",
+        "subtitle": "6 non-repeating section forms + automatic stage transition from Regular Season → Bracket → Super Bowl Week",
+        "rows": [
+          {
+            "label": "1. Playoffs → Super Bowl Dual Bars (49ers 98%/13% · Bills 98%/13%)",
+            "value": "13%",
+            "market_id": 86832,
+            "probability": 0.1283,
+            "rendered_percent": 13
+          },
+          {
+            "label": "2. AFC & NFC Conversion Funnels (49ers 45%→28% · Bills 49%→25%)",
+            "value": "28%",
+            "market_id": 31615,
+            "probability": 0.275,
+            "rendered_percent": 28
+          },
+          {
+            "label": "3. Division Races by Shape (NFC North 4-way · AFC North duel · AFC South lock)",
+            "value": "38%",
+            "market_id": 2279147,
+            "probability": 0.38,
+            "rendered_percent": 38
+          },
+          {
+            "label": "4. MVP & OPOY Headshot Spotlight (Burrow 32% MVP · Gibbs 30% OPOY)",
+            "value": "32%",
+            "market_id": 40532,
+            "probability": 0.3155,
+            "rendered_percent": 32
+          },
+          {
+            "label": "5. Swing Games + 6. Curated 681-Market Prop Board (Steelers at Bengals)",
+            "value": "64%",
+            "market_id": 14780578,
+            "probability": 0.635,
+            "rendered_percent": 64
+          }
+        ],
+        "count_line": "6 sections in 1 container · adjacent sections never repeat a visual form",
+        "footer": "Selector rule (#12609): transitions automatically from 'Race to Get In' to 'The Bracket' to 'Super Bowl LXI Week' as stages settle.",
+        "relations": [
+          "container_rhythm"
+        ],
+        "level": "proposed",
+        "as_of_label": "as of 2026-11-11",
+        "proposed_kind": "self_building_season_container",
+        "selection_type": "top_n"
+      },
+      "best_single": {
+        "id": 86832,
+        "name": "NFL Super Bowl Winner — San Francisco 49ers",
+        "subject": "San Francisco 49ers",
+        "source": "odds_api",
+        "category": "football",
+        "yes_probability": 0.1283,
+        "rendered_percent": 13,
+        "resolution_date": "2027-02-14T23:30:00Z",
+        "rule_quote": "Resolves Feb 14, 2027 when Super Bowl LXI concludes."
+      }
+    }
+  ]
+}

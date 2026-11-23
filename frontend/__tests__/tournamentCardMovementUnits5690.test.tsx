@@ -107,7 +107,7 @@ function lbPlayer(name: string, win_prob: number, win_prob_change: number | null
 
 /** The magnitude and sign the leader caption prints, e.g. "+28.2" from "+28.2 pts today". */
 function captionMove(markup: string): string {
-  const m = /([-+]\d+\.\d+) pts today/.exec(decode(markup));
+  const m = /([-+]\d+\.\d+) points today/.exec(decode(markup));
   if (!m) throw new Error(`card printed no "<n> pts today" caption: ${markup.slice(0, 400)}`);
   return m[1];
 }
@@ -164,20 +164,20 @@ describe("#5690 — the two arms must agree on the unit", () => {
 
   test("a null change draws no caption rather than a zero", () => {
     const markup = renderWithLeaderboard(76.5, null);
-    expect(decode(markup)).not.toMatch(/pts today/);
+    expect(decode(markup)).not.toMatch(/points today/);
   });
 
   test("a change that rounds to nothing draws no caption", () => {
     // `isRenderedMove` on the normalised value: 0.004 points is 0.00004 as a
     // fraction, which prints "0.0" and must stay silent (#5652's class).
     const markup = renderWithLeaderboard(76.5, 0.004);
-    expect(decode(markup)).not.toMatch(/pts today/);
+    expect(decode(markup)).not.toMatch(/points today/);
   });
 
   test("the card still DRAWS the caption for a real move — not a guard satisfied by silence", () => {
     // gotcha #43's other direction: every assertion above about absence is also
     // satisfied by a card that stopped printing the line at all.
-    expect(decode(renderWithLeaderboard(76.5, 28.2))).toMatch(/pts today/);
+    expect(decode(renderWithLeaderboard(76.5, 28.2))).toMatch(/points today/);
   });
 });
 
@@ -210,7 +210,7 @@ describe("#5713 — the leader line keeps its score and hole, not just its capti
     // one of the three parts fails here, which is what the caption-only arms could
     // not do.
     expect(decode(renderWithLeaderboard(76.5, 28.2))).toMatch(
-      /Leader\s*·\s*-16\s*·\s*H15[\s\S]{0,80}\+28\.2 pts today/,
+      /Leader\s*·\s*-16\s*·\s*H15[\s\S]{0,80}\+28\.2 points today/,
     );
   });
 
@@ -229,7 +229,7 @@ describe("#5713 — the leader line keeps its score and hole, not just its capti
     // The caption is absent here, so a guard written only around the caption has
     // nothing to say about this row at all — yet the score must still print.
     const markup = decode(renderWithLeaderboard(76.5, null));
-    expect(markup).not.toMatch(/pts today/);
+    expect(markup).not.toMatch(/points today/);
     expect(markup).toMatch(/-16/);
     expect(markup).toMatch(/H15/);
   });
@@ -251,7 +251,7 @@ describe("#5713 — the leader line keeps its score and hole, not just its capti
     );
     expect(decode(markup)).not.toMatch(/-16/);
     expect(decode(markup)).not.toMatch(/H15/);
-    expect(decode(markup)).toMatch(/\+28\.2 pts today/);
+    expect(decode(markup)).toMatch(/\+28\.2 points today/);
   });
 });
 

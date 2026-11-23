@@ -20,8 +20,22 @@ struct WatchMatchupLookSheet217: View {
     private var tinted: Bool { env["BAINLUCK_WATCH_MATCHUP_MODE_217"] == "tinted" }
 
     private var slot: CGSize {
-        // The slot this screen's face would give the big rectangular complication.
-        WKInterfaceDeviceScreen.width >= 200 ? CGSize(width: 199, height: 84.5) : CGSize(width: 171.5, height: 73)
+        switch stage {
+        case "after-105-41":
+            return CGSize(width: 171.5, height: 73)
+        case "after-105-45":
+            return CGSize(width: 185, height: 79)
+        case "after-105-46":
+            return CGSize(width: 193, height: 82)
+        default:
+            break
+        }
+        // The slot this screen's face would give the big rectangular complication:
+        // 41 mm = 171.5×73 pt, 45 mm = 185×79 pt, 49 mm = 199×84.5 pt.
+        let w = WKInterfaceDeviceScreen.width
+        if w >= 200 { return CGSize(width: 199, height: 84.5) }
+        if w >= 190 { return CGSize(width: 185, height: 79) }
+        return CGSize(width: 171.5, height: 73)
     }
 
     var body: some View {
@@ -38,7 +52,10 @@ struct WatchMatchupLookSheet217: View {
     }
 
     @ViewBuilder private var tile: some View {
-        if let reading = Self.reading(stage, logos: env["BAINLUCK_WATCH_MATCHUP_LOGOS_217"]) {
+        if let snapshot = Self.fallbackSnapshot(stage) {
+            WatchSavedComplicationContent(snapshot: snapshot)
+                .environment(\.widgetRenderingMode, tinted ? .accented : .fullColor)
+        } else if let reading = Self.reading(stage, logos: env["BAINLUCK_WATCH_MATCHUP_LOGOS_217"]) {
             if tinted {
                 WatchMatchupComplication217(reading: reading)
                     .environment(\.widgetRenderingMode, .accented)
@@ -48,6 +65,49 @@ struct WatchMatchupLookSheet217: View {
                 WatchMatchupComplication217(reading: reading)
                     .environment(\.widgetRenderingMode, .fullColor)
             }
+        }
+    }
+
+    /// DEBUG-only fallback snapshots for #13144 (teams missing server short names).
+    static func fallbackSnapshot(_ stage: String, now: Date = Date()) -> WatchComplicationSnapshot? {
+        let observed = now.addingTimeInterval(-30)
+        switch stage {
+        case "fallback-longest":
+            // Longest missing-short-name pair on Thu Nov 19 Sports list (56 chars + score = 64 chars).
+            let reading = WatchRectangularReading(
+                version: 1, eventID: 15351579, kind: .liveForecast,
+                homeName: "Wake Forest Demon Deacons", awayName: "Appalachian St Mountaineers",
+                home: nil, away: nil,
+                homePercent: 64, homeScore: 71, awayScore: 68, commenceTime: nil,
+                stateLabel: "Live", observedAt: observed, scoreObservedAt: observed)
+            return WatchComplicationSnapshot(
+                eventID: 15351579, title: "Wake Forest Demon Deacons win", detail: "64% · Live",
+                observedAt: observed, savedAt: now, rectangularReading: reading)
+        case "fallback-live":
+            // Longest live neither-short-name pair on Thu Nov 19 Sports list (50 chars + score).
+            let reading = WatchRectangularReading(
+                version: 1, eventID: 15347849, kind: .liveForecast,
+                homeName: "Cal State Fullerton Titans", awayName: "Weber State Wildcats",
+                home: nil, away: nil,
+                homePercent: 68, homeScore: 54, awayScore: 49, commenceTime: nil,
+                stateLabel: "Live", observedAt: observed, scoreObservedAt: observed)
+            return WatchComplicationSnapshot(
+                eventID: 15347849, title: "Cal State Fullerton Titans win", detail: "68% · Live",
+                observedAt: observed, savedAt: now, rectangularReading: reading)
+        case "fallback-sac-stan":
+            // Alex's reported #13144 game: Sacramento St (no short name) at Stanford (STAN).
+            let stan = WatchCompactTeamIdentity(teamID: 24, abbreviation: "STAN")
+            let reading = WatchRectangularReading(
+                version: 1, eventID: 15351032, kind: .liveForecast,
+                homeName: "Stanford Cardinal", awayName: "Sacramento St Hornets",
+                home: stan, away: nil,
+                homePercent: 71, homeScore: 51, awayScore: 42, commenceTime: nil,
+                stateLabel: "Live", observedAt: observed, scoreObservedAt: observed)
+            return WatchComplicationSnapshot(
+                eventID: 15351032, title: "Stanford Cardinal win", detail: "71% · Live",
+                observedAt: observed, savedAt: now, rectangularReading: reading)
+        default:
+            return nil
         }
     }
 
@@ -109,6 +169,38 @@ struct WatchMatchupLookSheet217: View {
             snapshot = WatchComplicationSnapshot(eventID: 21703, title: "\(teams[4]!.name) won", detail: "Final · 35–10",
                                                  observedAt: observed, savedAt: now, rectangularReading: reading,
                                                  matchup: facts(away: 1, home: 4, pregameHome: 58))
+        case "matchup-special":
+            // #13144: "&" (TA&M) and "-" (M-OH) short names now qualify for the Matchup look.
+            let tam = WatchCompactTeamIdentity(teamID: 245, abbreviation: "TA&M")
+            let moh = WatchCompactTeamIdentity(teamID: 193, abbreviation: "M-OH")
+            let reading = WatchRectangularReading(
+                version: 1, eventID: 21704, kind: .liveForecast,
+                homeName: "Texas A&M Aggies", awayName: "Miami (OH) RedHawks", home: tam, away: moh,
+                homePercent: 78, homeScore: 62, awayScore: 49, commenceTime: nil,
+                stateLabel: "Live", observedAt: observed, scoreObservedAt: observed)
+            snapshot = WatchComplicationSnapshot(
+                eventID: 21704, title: "Texas A&M Aggies win", detail: "78% · Live",
+                observedAt: observed, savedAt: now, rectangularReading: reading,
+                matchup: WatchMatchupFacts217(
+                    homePrimary: "#500000", homeSecondary: "#ffffff",
+                    awayPrimary: "#c41230", awaySecondary: "#ffffff",
+                    clock: "2H 8:14"))
+        case "after-105-41", "after-105-45", "after-105-46":
+            // #13386: 3-digit NBA final (TOR 105–102 DET, TOR pregame · Final) across 41/45/46 mm slots.
+            let tor = WatchCompactTeamIdentity(teamID: 28, abbreviation: "TOR")
+            let det = WatchCompactTeamIdentity(teamID: 8, abbreviation: "DET")
+            let reading = WatchRectangularReading(
+                version: 1, eventID: 21705, kind: .finalResult,
+                homeName: "Detroit Pistons", awayName: "Toronto Raptors", home: det, away: tor,
+                homePercent: nil, homeScore: 102, awayScore: 105, commenceTime: nil,
+                stateLabel: "Final", observedAt: observed, scoreObservedAt: observed)
+            snapshot = WatchComplicationSnapshot(
+                eventID: 21705, title: "Toronto Raptors won", detail: "Final · 105–102",
+                observedAt: observed, savedAt: now, rectangularReading: reading,
+                matchup: WatchMatchupFacts217(
+                    homePrimary: "#c8102e", homeSecondary: "#1d42ba",
+                    awayPrimary: "#ce1141", awaySecondary: "#000000",
+                    pregameHomePercent: 71, pregameAwayPercent: 29))
         default:
             return nil
         }

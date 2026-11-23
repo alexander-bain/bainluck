@@ -827,10 +827,15 @@ def test_the_cache_key_and_the_cache_gate_carry_the_published_themes():
     gate = src[:at]
     assert (
         "_collections_key = compose_collections_fingerprint(\n"
-        "            _collections_fingerprint, _published_themes\n"
+        "            _effective_collections_fp,\n"
+        "            _published_themes,\n"
+        "            theme_unavailable=(_theme_refs_enabled and _published_themes is None),\n"
         "        )"
     ) in gate
-    assert "(not _theme_refs_enabled or _published_themes is not None)" in gate
+    # #13350: an unreadable publication state must keep the feed cache enabled
+    # under an isolated `unverified` key instead of gating it to disabled.
+    assert "_published_themes is not None)" not in gate
+    assert "_collections_fingerprint is not None)" not in gate
 
 
 def test_the_route_hands_neither_read_its_own_session_and_bounds_the_publication_read():

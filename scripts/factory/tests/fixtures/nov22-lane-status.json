@@ -1,0 +1,57 @@
+{
+  "observed_at": "2026-11-22T19:55:00Z",
+  "now_posts": {
+    "good": {
+      "created_at": "2026-11-22T19:43:35Z",
+      "author_association": "OWNER",
+      "body": "Builder F now: retaking the iPad screenshots from build 5852"
+    },
+    "link": {
+      "created_at": "2026-11-22T19:44:00Z",
+      "author_association": "COLLABORATOR",
+      "body": "Builder C now: checking the screenshots https://example.invalid/sheet"
+    },
+    "long": {
+      "created_at": "2026-11-22T19:45:00Z",
+      "author_association": "MEMBER",
+      "body": "Builder F now: reviewing every screenshot on the iPad and making a new capture for each missing orientation"
+    },
+    "outside": {
+      "created_at": "2026-11-22T19:46:00Z",
+      "author_association": "NONE",
+      "body": "Builder F now: publishing the screenshots"
+    }
+  },
+  "pulls": [
+    {
+      "number": 13423,
+      "title": "fix(ios): use served timeline abbreviations on futures contender badges (#13386)",
+      "branch": "builder-c/13386-served-badge-abbr",
+      "files": ["ios/Bain Luck/Bain Luck/Components/EvolutionChartView.swift"],
+      "files_complete": true,
+      "state": "closed",
+      "created_at": "2026-11-22T14:07:27Z",
+      "updated_at": "2026-11-22T14:59:24Z",
+      "merged_at": "2026-11-22T14:59:22Z",
+      "merge_commit_sha": "b248129f307821ba63de83ecf9315e916b98b177"
+    },
+    {
+      "number": 13427,
+      "title": "fix(ios): lay set page cards out in two columns on iPad (#13417)",
+      "branch": "builder-c/13417-ipad-set-columns",
+      "files": ["ios/Bain Luck/Bain Luck/Views/ContainerHubView.swift"],
+      "files_complete": true,
+      "state": "closed",
+      "created_at": "2026-11-22T14:23:24Z",
+      "updated_at": "2026-11-22T15:18:18Z",
+      "merged_at": "2026-11-22T15:18:15Z",
+      "merge_commit_sha": "8abcd1cea9fbb3d33f58938180fcf1e6d8a134ae"
+    }
+  ],
+  "deployments": [
+    {"line": "Apps", "at": "2026-11-22T15:11:23Z", "kind": "reported",
+     "contains": ["b248129f307821ba63de83ecf9315e916b98b177"]},
+    {"line": "Apps", "at": "2026-11-22T15:29:43Z", "kind": "reported",
+     "contains": ["b248129f307821ba63de83ecf9315e916b98b177", "8abcd1cea9fbb3d33f58938180fcf1e6d8a134ae"]}
+  ]
+}

@@ -1,0 +1,62 @@
+{
+  "slug": "machinery-cfp-national-championship",
+  "stage": "public",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_event",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "SPORTS · COLLEGE FOOTBALL",
+  "name": "College Football National Championship",
+  "category": "football",
+  "tag": "COLLEGE FOOTBALL",
+  "section_title": "National Championship Contenders",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "card_rows": 3,
+    "card_section_key": "cfp_champion",
+    "suppress_card_photo": true,
+    "sections": [
+      {
+        "key": "cfp_champion",
+        "title": "National Championship Contenders",
+        "item_noun": "teams",
+        "note": "Leading programs to win the 2027 College Football Playoff national title.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch7-cfp-champion",
+          "shape": "field",
+          "order_by": "lead_prob_desc",
+          "min_items": 1,
+          "max_items": 1,
+          "max_outcomes": 4,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      },
+      {
+        "key": "cfp_conferences",
+        "title": "Conference Championship Races",
+        "item_noun": "conferences",
+        "note": "Leading contenders across the Big Ten, Big 12, Pac-12, and SEC title races.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch7-cfp-conferences",
+          "shape": "field",
+          "order_by": "closeness_to_50",
+          "min_items": 3,
+          "max_items": 4,
+          "max_outcomes": 3,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}

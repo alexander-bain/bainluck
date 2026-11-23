@@ -1,7 +1,7 @@
 """#8761: real row writes reach SSE only once PostgreSQL keeps their snapshot."""
 
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -15,6 +15,7 @@ from app.utils.nonvenue_live_push import (
     publish_committed_nonvenue_frames,
     write_nonvenue_probability,
 )
+from app.utils.source_mark import headline_source_marks
 from tests.integration.test_live_blend_concurrent_stamp_pg import (
     _seed_event,
     _stored,
@@ -356,7 +357,9 @@ async def test_actual_betting_ingest_publishes_its_committed_consensus(
             session,
             event,
             {"bookmakers": [{"key": str(i)} for i in range(3)]},
-            datetime.now(timezone.utc),
+            # Pregame: a fake snapshot carries no `captured_at`, and #12938's live
+            # rule never counts an undated line (it has its own tests).
+            datetime.now(timezone.utc) + timedelta(hours=1),
             {},
             update_opening=False,
         )
@@ -567,3 +570,24 @@ async def test_entry_extra_lands_inside_the_entry_and_survives_the_next_stamp(pg
         await session.commit()
     stored = await _stored(pg_engine, event_id)
     assert "espn" not in stored and stored["kalshi"]["value"] == 0.7
+
+
+async def test_same_espn_price_serves_the_second_predictor_read(pg_engine, sink):
+    event_id = await _seed_event(pg_engine)
+    first = datetime.now(timezone.utc) - timedelta(minutes=20)
+    second = first + timedelta(minutes=15)
+    async with async_sessionmaker(pg_engine, expire_on_commit=False)() as session:
+        event = await session.get(Event, event_id)
+        for read_at in (first, second, None):
+            await write_nonvenue_probability(
+                session, event, "espn", 0.1415, price_read_at=read_at,
+            )
+            await session.commit()
+            stored = await _stored(pg_engine, event_id)
+            home, away = headline_source_marks(
+                SimpleNamespace(win_probability_sources=stored),
+                SimpleNamespace(source="blend"), [("espn", 0.1415)],
+            )
+            expected = read_at.isoformat().replace("+00:00", "Z") if read_at else None
+            assert home["sources"][0]["observed_at"] == expected
+            assert away["sources"][0]["observed_at"] == expected

@@ -92,9 +92,11 @@ different match's markets onto the page.
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass
-from typing import Sequence
+from datetime import datetime, timedelta, timezone
+from typing import Any, Optional, Sequence
 
 from sqlalchemy import Boolean, Integer, String, and_, func, literal, or_, select
 from sqlalchemy.ext.compiler import compiles
@@ -531,6 +533,100 @@ def orientation_agrees(
     return aligned and not crossed
 
 
+#: The keys a stored venue reading may carry for :func:`_flipped_reading` to turn
+#: it round (#7993 residual). `value` and `observed_value` are the home fighter's
+#: chance; the other three say where and when it was read and hold for either
+#: corner. Measured over every mma/boxing row of the last 120 days on production,
+#: 2026-09-30 17:1xZ: these five are the only keys a `kalshi`, `polymarket` or
+#: `betting` object carries. A key outside this set is a shape nobody has
+#: checked, so the reading is refused rather than guessed at.
+_FLIPPABLE_READING_KEYS = frozenset(
+    {"value", "observed_value", "updated_at", "eligibility", "observed_basis", "price_read"}
+)
+_NON_ORIENTED_SOURCE_KEYS: frozenset[str] = frozenset({"live_state_changed_at"})
+_ORIENTED_READING_KEYS = ("value", "observed_value")
+
+
+def _flipped_chance(raw: Any) -> Optional[float]:
+    """``1 - raw`` for a finite probability, else ``None``."""
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    if not math.isfinite(raw) or not 0.0 <= raw <= 1.0:
+        return None
+    return round(1.0 - float(raw), 10)
+
+
+def _flipped_reading(name: str, reading: Any) -> tuple[bool, Any]:
+    """One stored venue entry read from the OTHER corner. ``(ok, reading)``.
+
+    A bare number or a `value`/`observed_value` pair is the home fighter's
+    chance, so the other corner's is its complement. Both halves of the pair
+    turn together, which keeps `observed_value == value` and so keeps the
+    observation basis bound to the value it dates (`stored_observation_basis`).
+    A `*_count` entry or top-level live clock (`live_state_changed_at`) is
+    non-oriented bookkeeping and is kept as is. Anything else is refused.
+    """
+    if name.endswith("_count") or name in _NON_ORIENTED_SOURCE_KEYS:
+        return True, reading
+    if not isinstance(reading, dict):
+        flipped = _flipped_chance(reading)
+        return (flipped is not None), flipped
+    if not reading.keys() <= _FLIPPABLE_READING_KEYS or "value" not in reading:
+        return False, None
+    out = dict(reading)
+    for key in _ORIENTED_READING_KEYS:
+        if key in reading:
+            flipped = _flipped_chance(reading[key])
+            if flipped is None:
+                return False, None
+            out[key] = flipped
+    if "price_read" in reading:
+        from app.utils.aggregation import stored_price_read
+
+        # #12581: the exact upstream observation follows the same number onto
+        # the other axis. Invalid age evidence cannot make a valid price vanish.
+        read = stored_price_read(reading, reading["value"])
+        out.pop("price_read", None)
+        if read is not None:
+            out["price_read"] = {**read, "value": _flipped_chance(read["value"])}
+    return True, out
+
+
+def flip_probability_sources(sources: Optional[dict]) -> tuple[bool, Optional[dict]]:
+    """Turn a reversed twin's ``win_probability_sources`` dict round, or fail closed."""
+    if not sources:
+        return True, None
+    if not isinstance(sources, dict):
+        return False, None
+    flipped = {}
+    for name, reading in sources.items():
+        ok, turned = _flipped_reading(str(name), reading)
+        if not ok:
+            return False, None
+        flipped[name] = turned
+    return True, flipped
+
+
+def is_corner_flipped_absorbed(row: object) -> bool:
+    """True when serve-time fold absorbed ``row`` with Home/Away reversed."""
+    return bool(getattr(row, "_serve_fold_corner_flipped", False))
+
+
+def oriented_series_event_ids(
+    series_event_ids: Sequence[int], absorbed: Sequence = ()
+) -> list[int]:
+    """Filter corner-flipped absorbed ids out of oriented snapshot lookups."""
+    flipped_ids = {
+        row.id
+        for row in absorbed
+        if is_corner_flipped_absorbed(row)
+        and getattr(row, "id", None) is not None
+    }
+    if not flipped_ids:
+        return list(series_event_ids)
+    return [eid for eid in series_event_ids if eid not in flipped_ids]
+
+
 async def folded_series_event_ids(
     db, canonical_event_id: int, absorbed: Sequence = ()
 ) -> list[int]:
@@ -645,28 +741,63 @@ def latest_snapshot_for_each_bookmaker(snapshots, canonical_event_id: int) -> li
     a crossed pair's prices with the two sides swapped: a confident, exactly
     inverted price rather than a missing one. Callers pass
     :func:`folded_series_event_ids`.
-
-    `captured_at` is dereferenced without a guard because the call site already
-    does (`s.captured_at.isoformat()`, and `max(...)` over the same rows); a
-    guard here would only move a crash three lines later while reading as safety.
     """
     chosen: dict[str, object] = {}
     for snap in snapshots:
-        best = chosen.get(snap.bookmaker)
-        if best is None or (
-            snap.captured_at,
-            snap.event_id == canonical_event_id,
-            snap.id,
-        ) > (
-            best.captured_at,
-            best.event_id == canonical_event_id,
-            best.id,
-        ):
-            chosen[snap.bookmaker] = snap
+        bk = getattr(snap, "bookmaker", None)
+        if not bk:
+            continue
+        ts = getattr(snap, "captured_at", None)
+        cand_key = (
+            ts is not None,
+            ts,
+            getattr(snap, "event_id", None) == canonical_event_id,
+            getattr(snap, "id", None) or 0,
+        )
+        best = chosen.get(bk)
+        if best is None:
+            chosen[bk] = snap
+            continue
+        best_ts = getattr(best, "captured_at", None)
+        best_key = (
+            best_ts is not None,
+            best_ts,
+            getattr(best, "event_id", None) == canonical_event_id,
+            getattr(best, "id", None) or 0,
+        )
+        if cand_key > best_key:
+            chosen[bk] = snap
     # Bookmaker-ascending, which is the order the recursive walk already emits
     # for a single event — so an unfolded page's list is unchanged, element for
     # element, rather than merely equivalent as a set.
     return [chosen[book] for book in sorted(chosen)]
+
+
+def group_latest_snapshots_by_event(
+    snapshots,
+    owner_by_event_id: dict[int, int],
+) -> dict[int, list]:
+    """Group snapshots by canonical owner id and pick one freshest row per bookmaker.
+
+    Used by batch callers (events list cards, live three-way book extraction) so
+    both list and event page run :func:`latest_snapshot_for_each_bookmaker`
+    identically. Any snapshot whose ``event_id`` is absent from
+    ``owner_by_event_id`` (for example an excluded corner-flipped twin) is
+    ignored.
+    """
+    grouped: dict[int, list] = {}
+    for snap in snapshots:
+        snap_eid = getattr(snap, "event_id", None)
+        if snap_eid is None:
+            continue
+        owner = owner_by_event_id.get(int(snap_eid))
+        if owner is None:
+            continue
+        grouped.setdefault(owner, []).append(snap)
+    return {
+        owner: latest_snapshot_for_each_bookmaker(owner_snaps, owner)
+        for owner, owner_snaps in grouped.items()
+    }
 
 
 # ── Folding a READING is not folding a SERIES (#3810 Fold A) ─────────────────
@@ -690,9 +821,102 @@ def latest_snapshot_for_each_bookmaker(snapshots, canonical_event_id: int) -> li
 # two-bar hero and date it from the wrong set. They are one ship.
 
 
+STALE_BETTING_OVERRIDE_AGE = timedelta(hours=72)
+
+
+def _aware_source_timestamp(entry: Any) -> Optional[datetime]:
+    """Parse an aware ``updated_at`` datetime from a source entry, or ``None``."""
+    if not isinstance(entry, dict):
+        return None
+    raw = entry.get("updated_at")
+    if isinstance(raw, datetime):
+        return raw if raw.tzinfo is not None else None
+    if isinstance(raw, str):
+        text = raw.strip()
+        if not text:
+            return None
+        if text.endswith("Z"):
+            text = text[:-1] + "+00:00"
+        try:
+            parsed = datetime.fromisoformat(text)
+        except ValueError:
+            return None
+        return parsed if parsed.tzinfo is not None else None
+    return None
+
+
+def _positive_book_count(raw: Any) -> Optional[int]:
+    if isinstance(raw, bool) or not isinstance(raw, int) or raw <= 0:
+        return None
+    return raw
+
+
+def sync_twin_betting_book_count(
+    merged: dict, twin_sources: Optional[dict]
+) -> None:
+    """Keep ``betting_book_count`` aligned with the twin supplying ``betting`` (#13496)."""
+    count = _positive_book_count(
+        twin_sources.get("betting_book_count")
+        if isinstance(twin_sources, dict)
+        else None
+    )
+    if count is not None:
+        merged["betting_book_count"] = count
+    else:
+        merged.pop("betting_book_count", None)
+
+
+def apply_scheduled_stale_betting_override(
+    merged: dict,
+    sorted_folded_rows: Sequence[tuple[int, dict | None]],
+    *,
+    event_status: Optional[str] = None,
+    now: Optional[datetime] = None,
+) -> Optional[int]:
+    """Replace a scheduled >72h ``betting`` reading with a fresher twin's (#13496)."""
+    if event_status != "scheduled":
+        return None
+    from app.utils.aggregation import parse_source_entry
+
+    cur_val, _ = parse_source_entry(merged.get("betting"))
+    cur_ts = _aware_source_timestamp(merged.get("betting"))
+    if cur_val is None or cur_ts is None:
+        return None
+    ref_now = now if now is not None else datetime.now(timezone.utc)
+    if ref_now - cur_ts <= STALE_BETTING_OVERRIDE_AGE:
+        return None
+
+    best_twin_id: Optional[int] = None
+    best_twin_sources: Optional[dict] = None
+    best_entry: Any = None
+    best_ts = cur_ts
+    for twin_id, twin_sources in sorted_folded_rows:
+        if not isinstance(twin_sources, dict):
+            continue
+        entry = twin_sources.get("betting")
+        cand_val, _ = parse_source_entry(entry)
+        cand_ts = _aware_source_timestamp(entry)
+        if cand_val is None or cand_ts is None:
+            continue
+        if cand_ts > best_ts:
+            best_ts = cand_ts
+            best_twin_id = twin_id
+            best_twin_sources = twin_sources
+            best_entry = entry
+
+    if best_entry is None or best_twin_id is None:
+        return None
+    merged["betting"] = best_entry
+    sync_twin_betting_book_count(merged, best_twin_sources)
+    return best_twin_id
+
+
 def merge_probability_sources(
     canonical_sources: dict | None,
     folded_rows: list[tuple[int, dict | None]],
+    *,
+    event_status: Optional[str] = None,
+    now: Optional[datetime] = None,
 ) -> dict:
     """The canonical's own readings, plus any source only its folded twins hold.
 
@@ -704,6 +928,13 @@ def merge_probability_sources(
     source the canonical does not hold at all, which keeps this strictly
     ADDITIVE — no page that renders a correct number today can have that number
     replaced by this fold, only joined by a venue that was already ours.
+
+    Exception (#13496): on a ``scheduled`` event whose canonical ``betting``
+    reading carries an aware ``updated_at`` older than 72 hours, the freshest
+    newer ``betting`` reading held by a folded twin supersedes it (alongside
+    that twin's ``betting_book_count``), and any twin supplying ``betting``
+    also supplies its ``betting_book_count`` so ``hero_sportsbook_count``
+    and the attribution mark match the books behind the number.
 
     Only keys in ``SOURCE_WEIGHTS`` are folded. This column is a shared JSONB
     bag: it also carries ``statpal_plays`` and ``statpal_injuries`` as ARRAYS
@@ -720,23 +951,32 @@ def merge_probability_sources(
     and its age stamp do not depend on the order the database returned rows in.
     """
     merged, _owners = merge_probability_sources_with_owners(
-        0, canonical_sources, folded_rows,
+        0,
+        canonical_sources,
+        folded_rows,
+        event_status=event_status,
+        now=now,
     )
     return merged
 
 
 def merge_probability_sources_with_owners(
-    canonical_id: int, canonical_sources: dict | None,
+    canonical_id: int,
+    canonical_sources: dict | None,
     folded_rows: list[tuple[int, dict | None]],
+    *,
+    event_status: Optional[str] = None,
+    now: Optional[datetime] = None,
 ) -> tuple[dict, dict[str, int]]:
-    """The same gap-fill, retaining which row supplies each weighted source."""
+    """The same gap-fill (and stale scheduled ``betting`` supersede), retaining owners."""
     from app.utils.aggregation import SOURCE_WEIGHTS, parse_source_entry
 
     merged = dict(canonical_sources or {})
     held = {k for k, v in merged.items() if parse_source_entry(v)[0] is not None}
     owners = {key: canonical_id for key in held if key in SOURCE_WEIGHTS}
+    sorted_rows = sorted(folded_rows, key=lambda row: row[0])
 
-    for twin_id, twin_sources in sorted(folded_rows, key=lambda row: row[0]):
+    for twin_id, twin_sources in sorted_rows:
         for key, entry in (twin_sources or {}).items():
             if key in held or key not in SOURCE_WEIGHTS:
                 continue
@@ -745,6 +985,17 @@ def merge_probability_sources_with_owners(
             merged[key] = entry
             held.add(key)
             owners[key] = twin_id
+            if key == "betting":
+                sync_twin_betting_book_count(merged, twin_sources)
+
+    override_owner = apply_scheduled_stale_betting_override(
+        merged,
+        sorted_rows,
+        event_status=event_status,
+        now=now,
+    )
+    if override_owner is not None:
+        owners["betting"] = override_owner
     return merged, owners
 
 
@@ -925,8 +1176,10 @@ async def folded_probability_state(db, event, absorbed: Sequence = ()):
         db, event, absorbed, bags=True,
     )
     merged, owners = merge_probability_sources_with_owners(
-        event.id, canonical_sources,
+        event.id,
+        canonical_sources,
         [(twin_id, sources) for twin_id, sources, _ in oriented],
+        event_status=getattr(event, "status", None),
     )
     return merged, owners, revision
 
@@ -999,13 +1252,16 @@ async def _read_fold(db, event, absorbed: Sequence, *, bags: bool):
     for row_id in sorted(absorbed_by_id):
         if row_id in seen:
             continue
+        absorbed_row = absorbed_by_id[row_id]
         if row_id in read:
-            oriented.append((row_id, read[row_id][2], read[row_id][3]))
+            raw_bag, row_rev = read[row_id][2], read[row_id][3]
         else:
             one_snapshot = False
-            oriented.append(
-                (row_id, absorbed_by_id[row_id].win_probability_sources, None)
-            )
+            raw_bag, row_rev = absorbed_row.win_probability_sources, None
+        if bags and is_corner_flipped_absorbed(absorbed_row) and raw_bag:
+            ok, turned = flip_probability_sources(raw_bag)
+            raw_bag = turned if ok else None
+        oriented.append((row_id, raw_bag, row_rev))
 
     revision = (
         fold_revision_vector(
@@ -1158,6 +1414,7 @@ async def folded_probability_sources_batch(db, events) -> dict[int, dict]:
                 (twin_id, sources)
                 for twin_id, sources, _h, _a in folded.get(canonical_id, [])
             ],
+            event_status=getattr(event, "status", None),
         )
         for canonical_id, event in canonicals.items()
     }
@@ -1206,6 +1463,7 @@ async def folded_card_numbers_batch(db, events) -> dict[int, FoldedCardNumbers]:
                     (twin_id, sources)
                     for twin_id, sources, _h, _a in folded.get(canonical_id, [])
                 ],
+                event_status=getattr(event, "status", None),
             ),
             opening=merge_opening_line(
                 event.opening_home_probability,

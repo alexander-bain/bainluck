@@ -318,6 +318,7 @@ async def _record_slow_event(
     response,
     rss_mb: Optional[float] = None,
     split: Optional[dict] = None,
+    user_agent: Optional[str] = None,
 ) -> None:
     """Append one tail observation to the bounded slow-event ring (#1459).
 
@@ -345,6 +346,7 @@ async def _record_slow_event(
             stages=stages,
             rss_mb=rss_mb,
             split=split,
+            user_agent=user_agent,
         )
         pipe = r.pipeline(transaction=False)
         # LPUSH + LTRIM(0, MAX-1) keeps the ring newest-first and capped, so a
@@ -443,15 +445,18 @@ class LatencyMiddleware(BaseHTTPMiddleware):
         if observed_ms > 5000:
             try:
                 import resource
+                from app.utils.latency_stats import sanitize_user_agent
+
                 rss_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024 * 1024)
+                ua = sanitize_user_agent(request.headers.get("user-agent")) or "-"
                 # Both terms, always: the headline number is what the reader
                 # waited, and `wall` beside it says how much of that the
                 # handler owned. One number cannot carry both claims, and a
                 # line that silently changed meaning would mislead every
                 # reader of the older ones.
                 logger.warning(
-                    "Slow request: %s %.0fms wall=%.0fms RSS=%.0fMB",
-                    path[:60], observed_ms, duration_ms, rss_mb,
+                    "Slow request: %s %.0fms wall=%.0fms RSS=%.0fMB ua=%s",
+                    path[:60], observed_ms, duration_ms, rss_mb, ua,
                 )
             except Exception:
                 pass
@@ -470,7 +475,8 @@ class LatencyMiddleware(BaseHTTPMiddleware):
         # consumer of the ring changes under it; `edge_ms` rides the split.
         if observed_ms >= SLOW_EVENT_MS:
             await _record_slow_event(
-                normalized, duration_ms, _cache_bucket(response), response, rss_mb, split
+                normalized, duration_ms, _cache_bucket(response), response, rss_mb, split,
+                user_agent=request.headers.get("user-agent"),
             )
 
         # Sampling: per-endpoint 1-in-N, with an always-sample allowlist (#1500).

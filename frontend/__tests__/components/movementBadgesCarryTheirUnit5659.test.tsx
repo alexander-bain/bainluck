@@ -80,8 +80,8 @@ describe("#5659 the detector itself", () => {
     expect(BARE_BADGE.test("Above 98 ▲45.0 89%")).toBe(true);
     expect(BARE_BADGE.test("▼12.0")).toBe(true);
     expect(BARE_BADGE.test("↑ 9.7")).toBe(true);
-    expect(BARE_BADGE.test("Above 98 ▲45.0 pts 89%")).toBe(false);
-    expect(BARE_BADGE.test("▼12.0 pts")).toBe(false);
+    expect(BARE_BADGE.test("Above 98 ▲45.0 points 89%")).toBe(false);
+    expect(BARE_BADGE.test("▼12.0 points")).toBe(false);
     expect(BARE_BADGE.test("↑ 9.7 points")).toBe(false);
   });
 });
@@ -104,17 +104,17 @@ describe("#5659 surface one — QuantityGroup ladder rungs", () => {
   );
   const text = visibleText(html);
 
-  test("the production specimen's rung reads '▲45.0 pts', not a bare '▲45.0'", () => {
-    expect(text).toContain("▲45.0 pts");
+  test("the production specimen's rung reads '▲45.0 points', not a bare '▲45.0'", () => {
+    expect(text).toContain("▲45.0 points");
     expect(BARE_BADGE.test(text)).toBe(false);
   });
 
   test("every moving rung on the card carries the unit — not just the first", () => {
     // A partial fix that moved one rung and left its neighbours is the exact
     // shape this family keeps producing.
-    expect(text).toContain("▲45.0 pts");
-    expect(text).toContain("▲59.5 pts");
-    expect(text).toContain("▲61.0 pts");
+    expect(text).toContain("▲45.0 points");
+    expect(text).toContain("▲59.5 points");
+    expect(text).toContain("▲61.0 points");
   });
 
   test("a faller keeps its arrow and gains the unit too", () => {
@@ -126,14 +126,14 @@ describe("#5659 surface one — QuantityGroup ladder rungs", () => {
         />,
       ),
     );
-    expect(falling).toContain("▼12.0 pts");
+    expect(falling).toContain("▼12.0 points");
     expect(BARE_BADGE.test(falling)).toBe(false);
   });
 
   test("the visible text and the accessible name now agree on the unit", () => {
     // They always disagreed: the aria-label has read "points" since UX-1052.
     expect(html).toContain('aria-label="up 45.0 points"');
-    expect(text).toContain("▲45.0 pts");
+    expect(text).toContain("▲45.0 points");
   });
 
   test("ONE DECIMAL is kept, so the gate that admits a badge still prints one", () => {
@@ -149,8 +149,8 @@ describe("#5659 surface one — QuantityGroup ladder rungs", () => {
         />,
       ),
     );
-    expect(halfPoint).toContain("▲0.5 pts");
-    expect(halfPoint).not.toContain("▲0 pts");
+    expect(halfPoint).toContain("▲0.5 points");
+    expect(halfPoint).not.toContain("▲0 points");
   });
 
   test("this guard cannot pass by rendering no badge at all", () => {
@@ -169,7 +169,7 @@ describe("#5659 surface one — QuantityGroup ladder rungs", () => {
         ]}
       />,
     );
-    expect(still).not.toContain("pts");
+    expect(still).not.toContain("points");
     expect(still).not.toContain("▲");
   });
 });
@@ -200,7 +200,7 @@ describe("#5659 surface two — TeamChampionshipPath step", () => {
       ),
     );
     expect(text).toContain("10%");
-    expect(text).toContain("+9.7 pts");
+    expect(text).toContain("+9.7 points");
     expect(BARE_BADGE.test(text)).toBe(false);
   });
 
@@ -210,7 +210,7 @@ describe("#5659 surface two — TeamChampionshipPath step", () => {
         <TeamChampionshipPath entries={[pathEntry(-0.043)]} color="#007A33" />,
       ),
     );
-    expect(text).toContain("-4.3 pts");
+    expect(text).toContain("-4.3 points");
   });
 
   test("UX-P275 survives: a sub-rounding drift is still no badge, and no unit", () => {
@@ -219,7 +219,7 @@ describe("#5659 surface two — TeamChampionshipPath step", () => {
         <TeamChampionshipPath entries={[pathEntry(0.00003)]} color="#007A33" />,
       ),
     );
-    expect(text).not.toContain("pts");
+    expect(text).not.toContain("points");
     expect(text).toContain("10%");
   });
 
@@ -229,6 +229,6 @@ describe("#5659 surface two — TeamChampionshipPath step", () => {
         <TeamChampionshipPath entries={[pathEntry(null)]} color="#007A33" />,
       ),
     );
-    expect(text).not.toContain("pts");
+    expect(text).not.toContain("points");
   });
 });

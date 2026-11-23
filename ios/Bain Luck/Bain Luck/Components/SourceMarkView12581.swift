@@ -11,22 +11,47 @@ struct SourceMarkButton: View {
     let mark: SourceMark
     /// The number the mark follows, as the row prints it; the sheet repeats it.
     let number: Double?
+    /// Exact rounded whole percent printed by the card/row (e.g. pair/bundle rounding `86` when `number` is `0.865`).
+    var renderedPercent: Int? = nil
+    /// Optional team or competitor name when the card shows two sides (#12989 follow-up).
+    let subject: String?
+    /// Optional row caption / market label under `subject` when multiple rows share the same subject (#13113 follow-up).
+    let subtitle: String?
+    /// True when the tapped number is a finished game's pregame reading (#12989 follow-up).
+    let isPregame: Bool
     /// The font size of the number the ring follows; the ring is 0.7 of it.
     let numberSize: CGFloat
     /// Compact dense-list mode keeps row height tight while expanding hit area via `.contentShape`.
     var compactRow: Bool = false
+    /// True when the row prints one decimal place ("4.6%"), so the sheet's headline and source prices print tenths too.
+    var showsTenths: Bool = false
 
     @State private var open = false
 
     /// The ring's share of the number's type size (Alex's ruling: about 0.7).
     static let ringScale: CGFloat = 0.7
 
-    init?(_ mark: SourceMark?, number: Double? = nil, numberSize: CGFloat, compactRow: Bool = false) {
+    init?(
+        _ mark: SourceMark?,
+        number: Double? = nil,
+        renderedPercent: Int? = nil,
+        subject: String? = nil,
+        subtitle: String? = nil,
+        isPregame: Bool = false,
+        numberSize: CGFloat,
+        compactRow: Bool = false,
+        showsTenths: Bool = false
+    ) {
         guard let mark, mark.draws else { return nil }
         self.mark = mark
         self.number = number
+        self.renderedPercent = renderedPercent
+        self.subject = subject
+        self.subtitle = subtitle
+        self.isPregame = isPregame
         self.numberSize = numberSize
         self.compactRow = compactRow
+        self.showsTenths = showsTenths
     }
 
     var body: some View {
@@ -43,23 +68,85 @@ struct SourceMarkButton: View {
         .accessibilityLabel("Where this number comes from")
         .accessibilityIdentifier("source-mark-12581")
         .sheet(isPresented: $open) {
-            SourceMarkSheet(mark: mark, number: number)
-                .presentationDetents([.medium, .large])
+            SourceMarkSheet(
+                mark: mark,
+                number: number,
+                renderedPercent: renderedPercent,
+                subject: subject,
+                subtitle: subtitle,
+                isPregame: isPregame,
+                showsTenths: showsTenths
+            )
+            .presentationDetents([.medium, .large])
         }
     }
 }
 
-/// The sheet: the number the reader tapped, large and whole; one row per source
-/// the server listed, in its order, with the source's name, its price as a whole
-/// number and how old that price is (no age when the server sent no observation
-/// time); then one line of method. A settled number says "Official result" first.
+/// The sheet: the number the reader tapped, large and whole (or with tenths when the
+/// row prints tenths); one row per source the server listed, in its order, with the
+/// source's name, its price at matching precision and how old that price is (no age
+/// when the server sent no observation time); then one line of method. A settled
+/// number says "Official result" first.
 struct SourceMarkSheet: View {
     let mark: SourceMark
     var number: Double? = nil
+    var renderedPercent: Int? = nil
+    var subject: String? = nil
+    var subtitle: String? = nil
+    var isPregame: Bool = false
+    var showsTenths: Bool = false
     var now: Date = Date()
     @Environment(\.dismiss) private var dismiss
 
     static let title = "Where this number comes from"
+
+    static func formatSheetProbability(_ probability: Double, renderedPercent: Int? = nil, showsTenths: Bool) -> String {
+        guard showsTenths else {
+            return formatProbability(probability, renderedPercent: renderedPercent)
+        }
+        let pct = probability * 100
+        if pct > 0 && pct < 0.05 { return "<0.1%" }
+        if pct > 99.95 && pct < 100 { return ">99.9%" }
+        return String(format: "%.1f%%", pct)
+    }
+
+    static func contextLine(subject: String?, isPregame: Bool) -> String? {
+        let trimmed = subject?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !trimmed.isEmpty && isPregame { return "\(trimmed) · Pregame" }
+        if !trimmed.isEmpty { return trimmed }
+        if isPregame { return "Pregame" }
+        return nil
+    }
+
+    static func subtitleLine(_ subtitle: String?) -> String? {
+        let trimmed = subtitle?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    /// When one unscaled venue stands behind the tapped number and its rounded
+    /// price equals the headline, state the venue once ("From Kalshi", "From
+    /// Sportsbooks (12) · 4m ago") instead of repeating both the venue and the
+    /// percentage across a row and a possessive footer.
+    static func singleUnscaledAttribution(
+        _ mark: SourceMark,
+        headline: String?,
+        showsTenths: Bool = false,
+        now: Date = Date()
+    ) -> String? {
+        guard (mark.state == .single || mark.state == .blend),
+              mark.sources.count == 1,
+              Self.settledLine(mark, now: now) == nil,
+              mark.method?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false,
+              let headline,
+              let only = Self.lines(mark, showsTenths: showsTenths, now: now).first,
+              only.price == headline else {
+            return nil
+        }
+        if let age = only.age {
+            return "From \(only.name) · \(age)"
+        }
+        return "From \(only.name)"
+    }
 
     /// One source as the sheet prints it.
     struct Line: Equatable {
@@ -68,17 +155,31 @@ struct SourceMarkSheet: View {
         let age: String?
     }
 
-    static func lines(_ mark: SourceMark, now: Date = Date()) -> [Line] {
+    static func lines(_ mark: SourceMark, showsTenths: Bool = false, now: Date = Date()) -> [Line] {
         mark.sources.map { source in
             Line(name: source.count.map { "\(source.name) (\($0))" } ?? source.name,
-                 price: source.probability.map { formatProbability($0) },
+                 price: source.probability.map { formatSheetProbability($0, showsTenths: showsTenths) },
                  age: SourceAge.format(source.observedAt, now: now))
         }
     }
 
-    /// The tapped number, clamped like the row (`formatProbability`: "<1%" / ">99%").
-    static func headline(_ number: Double?) -> String? {
-        number.map { formatProbability($0) }
+    /// The tapped number, matching the row's precision.
+    static func headline(_ number: Double?, renderedPercent: Int? = nil, showsTenths: Bool = false) -> String? {
+        if let number {
+            return formatSheetProbability(number, renderedPercent: renderedPercent, showsTenths: showsTenths)
+        }
+        return showsTenths ? nil : renderedPercent.map { "\($0)%" }
+    }
+
+    static func parsedWholePercent(from printedText: String?) -> Int? {
+        guard let raw = printedText?.trimmingCharacters(in: .whitespacesAndNewlines),
+              raw.hasSuffix("%"),
+              !raw.contains("."),
+              !raw.hasPrefix("<"),
+              !raw.hasPrefix(">") else {
+            return nil
+        }
+        return Int(raw.dropLast())
     }
 
     /// One line of method under the rows. Multi-source blends and scaled
@@ -112,18 +213,47 @@ struct SourceMarkSheet: View {
     }
 
     var body: some View {
+        let headlineText = Self.headline(number, renderedPercent: renderedPercent, showsTenths: showsTenths)
+        let contextText = Self.contextLine(subject: subject, isPregame: isPregame)
+        let subtitleText = Self.subtitleLine(subtitle)
+        let singleAttribution = Self.singleUnscaledAttribution(mark, headline: headlineText, showsTenths: showsTenths, now: now)
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    if let headline = Self.headline(number) {
-                        Text(headline)
-                            .font(.system(size: 44, weight: .bold))
-                            .monospacedDigit()
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                    if contextText != nil || subtitleText != nil || headlineText != nil {
+                        VStack(alignment: .leading, spacing: 2) {
+                            if let contextText {
+                                Text(contextText)
+                                    .font(.subheadline.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            if let subtitleText {
+                                Text(subtitleText)
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            if let headlineText {
+                                Text(headlineText)
+                                    .font(.system(size: 44, weight: .bold))
+                                    .monospacedDigit()
+                                    .padding(.top, subtitleText != nil ? 2 : 0)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
                     }
-                    rows
-                    if let method = Self.method(mark) {
-                        Text(method).font(.footnote).foregroundStyle(.secondary)
+                    if let singleAttribution {
+                        Text(singleAttribution)
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 2)
+                    } else {
+                        rows
+                        if let method = Self.method(mark) {
+                            Text(method).font(.footnote).foregroundStyle(.secondary)
+                        }
                     }
                 }
                 .padding()
@@ -152,7 +282,7 @@ struct SourceMarkSheet: View {
     /// The sheet's rows, the settled line first. Plain stacks rather than a
     /// `List`, so the rows are one view a fixture render can photograph.
     var rows: some View {
-        let lines = (Self.settledLine(mark, now: now).map { [$0] } ?? []) + Self.lines(mark, now: now)
+        let lines = (Self.settledLine(mark, now: now).map { [$0] } ?? []) + Self.lines(mark, showsTenths: showsTenths, now: now)
         return VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
                 if index > 0 { Divider() }
@@ -163,13 +293,26 @@ struct SourceMarkSheet: View {
 
     private func row(_ line: Line) -> some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text(line.name).font(.body)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(line.name)
+                    .font(.body)
+                    .fixedSize(horizontal: false, vertical: true)
+                if let age = line.age {
+                    Text(age)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
             Spacer(minLength: 8)
             if let price = line.price {
-                Text(price).font(.body.weight(.semibold)).monospacedDigit()
-            }
-            if let age = line.age {
-                Text(age).font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                Text(price)
+                    .font(.body.weight(.semibold))
+                    .monospacedDigit()
+                    .multilineTextAlignment(.trailing)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .layoutPriority(1)
             }
         }
         .accessibilityElement(children: .combine)

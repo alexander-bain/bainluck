@@ -390,7 +390,7 @@ describe("the banner a reader sees carries the repaired age", () => {
     expect(text).toContain("Showing the last complete snapshot.");
     expect(text).toContain("These numbers were built");
     expect(text).toContain("Sep 15");
-    expect(text).toContain("132 hourly rebuilds have come and gone");
+    expect(text).toContain("132 daily rebuilds have come and gone");
   });
 
   test("the artifact on screen 2026-09-20 23:40Z is dated 5 days, beside its Sep 15", () => {

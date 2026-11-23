@@ -57,9 +57,12 @@ __all__ = [
     "FINISHED_STATUSES",
     "RESOLVABLE_STATUSES",
     "SETTLED_HERO_SOURCE",
+    "SettledCurrentChance",
     "SettledHero",
+    "apply_settled_current_odds",
     "is_finished_status",
     "resolve_settled_hero",
+    "settled_current_chance",
 ]
 
 #: The ONLY status whose score is trusted enough to crown a winner. See the module
@@ -155,3 +158,145 @@ def resolve_settled_hero(
     if away > home:
         return SettledHero(home_probability=0.0, away_probability=1.0, result="away")
     return SettledHero(home_probability=0.5, away_probability=0.5, result="draw")
+
+
+@dataclass(frozen=True)
+class SettledCurrentChance:
+    """Resolved current-chance fields for a finished game (#13172 Option B).
+
+    - ``settled`` decisive (home won): ``1.0 / 0.0`` (``100 / 0``), plus
+      ``draw=0.0`` (``0``) on draw-priced sports.
+    - ``settled`` decisive (away won): ``0.0 / 1.0`` (``0 / 100``), plus
+      ``draw=0.0`` (``0``) on draw-priced sports.
+    - ``settled`` draw on a draw-priced sport (soccer): ``0.0 / 0.0 / draw=1.0``
+      (``0 / 0 / 100``) — never 50 and 50.
+    - ``settled`` draw on a two-way sport (e.g. NFL tie): ``0.5 / 0.5``
+      (``50 / 50``), ``draw=None``.
+    - ``final_unresolved`` / ``None`` (finished without a verified result):
+      all fields ``None`` — never the last live price.
+    """
+
+    home_probability: Optional[float]
+    away_probability: Optional[float]
+    draw_probability: Optional[float]
+    home_rendered_percent: Optional[int]
+    away_rendered_percent: Optional[int]
+    draw_rendered_percent: Optional[int]
+    resolved: bool
+
+
+def settled_current_chance(
+    hero: Any,
+    *,
+    sport_key: Any = None,
+) -> SettledCurrentChance:
+    """Derive current-chance values for a finished game from ``resolve_hero``.
+
+    Caller gates on ``is_finished_status(served_status)``; live, scheduled,
+    suspended, and postponed games never call this helper.
+    """
+    from app.utils.draw_priced_winner import sport_prices_a_draw
+
+    if hero is None or getattr(hero, "source", None) != SETTLED_HERO_SOURCE:
+        return SettledCurrentChance(
+            home_probability=None,
+            away_probability=None,
+            draw_probability=None,
+            home_rendered_percent=None,
+            away_rendered_percent=None,
+            draw_rendered_percent=None,
+            resolved=False,
+        )
+
+    draw_priced = sport_prices_a_draw(sport_key)
+    result = getattr(hero, "settled_result", None) or getattr(hero, "result", None)
+
+    if result == "draw":
+        if draw_priced:
+            return SettledCurrentChance(
+                home_probability=0.0,
+                away_probability=0.0,
+                draw_probability=1.0,
+                home_rendered_percent=0,
+                away_rendered_percent=0,
+                draw_rendered_percent=100,
+                resolved=True,
+            )
+        return SettledCurrentChance(
+            home_probability=0.5,
+            away_probability=0.5,
+            draw_probability=None,
+            home_rendered_percent=50,
+            away_rendered_percent=50,
+            draw_rendered_percent=None,
+            resolved=True,
+        )
+
+    if result == "home" or (result is None and getattr(hero, "home_probability", None) == 1.0):
+        return SettledCurrentChance(
+            home_probability=1.0,
+            away_probability=0.0,
+            draw_probability=0.0 if draw_priced else None,
+            home_rendered_percent=100,
+            away_rendered_percent=0,
+            draw_rendered_percent=0 if draw_priced else None,
+            resolved=True,
+        )
+
+    return SettledCurrentChance(
+        home_probability=0.0,
+        away_probability=1.0,
+        draw_probability=0.0 if draw_priced else None,
+        home_rendered_percent=0,
+        away_rendered_percent=100,
+        draw_rendered_percent=0 if draw_priced else None,
+        resolved=True,
+    )
+
+
+def apply_settled_current_odds(
+    current_odds: Optional[dict[str, Any]],
+    hero: Any,
+    *,
+    sport_key: Any = None,
+    include_rendered: bool = True,
+    fallback_metadata: Optional[dict[str, Any]] = None,
+) -> Optional[dict[str, Any]]:
+    """Overlay settled/unresolved current-chance fields onto ``current_odds``.
+
+    Preserves every non-chance metadata field (``spread``, ``over_under``,
+    ``bookmaker_count``, ``captured_at``, ``projected_*``, etc.) on an
+    existing ``current_odds`` dict. When no dict existed yet, creates one for
+    a resolved result and returns ``None`` for ``final_unresolved``.
+    """
+    from app.utils.draw_priced_winner import sport_prices_a_draw
+
+    sc = settled_current_chance(hero, sport_key=sport_key)
+    draw_priced = sport_prices_a_draw(sport_key)
+
+    if current_odds is None:
+        if not sc.resolved:
+            return None
+        out: dict[str, Any] = dict(fallback_metadata or {})
+        out["home_probability"] = sc.home_probability
+        out["away_probability"] = sc.away_probability
+        if include_rendered:
+            out["home_rendered_percent"] = sc.home_rendered_percent
+            out["away_rendered_percent"] = sc.away_rendered_percent
+        if draw_priced:
+            out["draw_probability"] = sc.draw_probability
+            if include_rendered:
+                out["draw_rendered_percent"] = sc.draw_rendered_percent
+        return out
+
+    out = dict(current_odds)
+    out["home_probability"] = sc.home_probability
+    out["away_probability"] = sc.away_probability
+    if include_rendered or "home_rendered_percent" in out or "away_rendered_percent" in out:
+        out["home_rendered_percent"] = sc.home_rendered_percent
+        out["away_rendered_percent"] = sc.away_rendered_percent
+    if draw_priced:
+        out["draw_probability"] = sc.draw_probability
+        if include_rendered or "draw_rendered_percent" in out:
+            out["draw_rendered_percent"] = sc.draw_rendered_percent
+    return out
