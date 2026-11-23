@@ -35,9 +35,11 @@ struct MyStuffView: View {
     /// which is today's behaviour. The account-change rebind below still runs
     /// on whichever models the screen holds.
     private let macPlace: MacReadingPlace<MacReadingState10878.MyStuffModels>?
+    private let forceTeamFeedForTest: Bool
 
     init(macPlace: MacReadingPlace<MacReadingState10878.MyStuffModels>? = nil) {
         self.macPlace = macPlace
+        self.forceTeamFeedForTest = false
         _vm = StateObject(wrappedValue: macPlace?.models(orMake: { MacReadingState10878.MyStuffModels() }).feed ?? MyStuffViewModel())
         _pinContent = StateObject(wrappedValue: macPlace?.models(orMake: { MacReadingState10878.MyStuffModels() }).pins ?? SavedPinContentViewModel())
         _landingVM = StateObject(wrappedValue: MyStuffLandingViewModel295A())
@@ -47,6 +49,7 @@ struct MyStuffView: View {
     #if DEBUG
     init(viewModelForTest: MyStuffViewModel) {
         self.macPlace = nil
+        self.forceTeamFeedForTest = true
         _vm = StateObject(wrappedValue: viewModelForTest)
         _pinContent = StateObject(wrappedValue: SavedPinContentViewModel())
         _landingVM = StateObject(wrappedValue: MyStuffLandingViewModel295A())
@@ -55,6 +58,7 @@ struct MyStuffView: View {
 
     init(preloadedLandingForTest: MyStuffLandingViewModel295A.PreloadedSnapshot) {
         self.macPlace = nil
+        self.forceTeamFeedForTest = false
         _vm = StateObject(wrappedValue: MyStuffViewModel())
         _pinContent = StateObject(wrappedValue: SavedPinContentViewModel())
         _landingVM = StateObject(wrappedValue: MyStuffLandingViewModel295A(preloaded: preloadedLandingForTest))
@@ -88,7 +92,8 @@ struct MyStuffView: View {
     #endif
 
     private var usesLandingView295A: Bool {
-        !followManager.subjects.isEmpty
+        guard !forceTeamFeedForTest else { return false }
+        return !followManager.subjects.isEmpty
             || hasPins
             || (authManager.isAuthenticated && authManager.user?.onboardingCompleted == true)
     }

@@ -32,12 +32,18 @@ private final class TraitOverrideContainer13417: UIViewController {
     }
 }
 
+private final class LoadSignal13417: @unchecked Sendable {
+    var didStartLoad = false
+}
+
 private struct MockContainerHubService13417: ContainerHubLoading {
     let response: ContainerHubResponse
     let pairedSets: [PairedMetricSet]
+    var loadSignal: LoadSignal13417? = nil
 
     nonisolated func load(slug: String) async throws -> ContainerHubResponse {
-        response
+        loadSignal?.didStartLoad = true
+        return response
     }
 
     nonisolated func loadPairedMetrics(slug: String) async -> [PairedMetricSet] {
@@ -193,13 +199,14 @@ final class ContainerHubTwoColumnIPad13417Tests: XCTestCase {
         XCTAssertEqual(firstTwoEvents.count, 2)
         let game0Token = firstTwoEvents[0].away.split(separator: " ").last.map(String.init) ?? firstTwoEvents[0].away
         let game1Token = firstTwoEvents[1].away.split(separator: " ").last.map(String.init) ?? firstTwoEvents[1].away
-        let service = MockContainerHubService13417(response: nflResp, pairedSets: [])
-
+        let narrowSignal = LoadSignal13417()
+        let narrowService = MockContainerHubService13417(response: nflResp, pairedSets: [], loadSignal: narrowSignal)
         // Frame 1 at 700 pt .regular must already render 1 column (never flash 2 columns before measure).
         let frame1Narrow = await captureFirstLoadedFrame(
-            ContainerHubView(slug: "nfl-2026-week-12", displayName: "NFL Week 12", service: service),
+            ContainerHubView(slug: "nfl-2026-week-12", displayName: "NFL Week 12", service: narrowService),
             width: 700,
-            height: 1000
+            height: 1000,
+            loadSignal: narrowSignal
         )
         try maybeSave(frame1Narrow, "13417-frame1-700pt.png")
         let obsNarrow = try ocrObservations(frame1Narrow)
@@ -213,10 +220,13 @@ final class ContainerHubTwoColumnIPad13417Tests: XCTestCase {
         }
 
         // Frame 1 at 834 pt .regular already renders 2 columns immediately.
+        let regSignal = LoadSignal13417()
+        let regService = MockContainerHubService13417(response: nflResp, pairedSets: [], loadSignal: regSignal)
         let frame1Regular = await captureFirstLoadedFrame(
-            ContainerHubView(slug: "nfl-2026-week-12", displayName: "NFL Week 12", service: service),
+            ContainerHubView(slug: "nfl-2026-week-12", displayName: "NFL Week 12", service: regService),
             width: 834,
-            height: 1210
+            height: 1210,
+            loadSignal: regSignal
         )
         try maybeSave(frame1Regular, "13417-frame1-834pt.png")
         let obsReg = try ocrObservations(frame1Regular)
@@ -275,7 +285,7 @@ final class ContainerHubTwoColumnIPad13417Tests: XCTestCase {
             .init(tag: "ipad11-portrait-dark", label: "iPad 11\" Portrait · Dark", width: 834, height: 1210, sizeClass: .regular, scheme: .dark, dynamicType: .large, expectTwoColumns: true),
             .init(tag: "ipad11-landscape-light", label: "iPad 11\" Landscape · Light", width: 1210, height: 834, sizeClass: .regular, scheme: .light, dynamicType: .large, expectTwoColumns: true),
             .init(tag: "ipad11-landscape-dark", label: "iPad 11\" Landscape · Dark", width: 1210, height: 834, sizeClass: .regular, scheme: .dark, dynamicType: .large, expectTwoColumns: true),
-            .init(tag: "ipad11-portrait-ax5-light", label: "iPad 11\" Portrait · AX5 (1 col)", width: 834, height: 1210, sizeClass: .regular, scheme: .light, dynamicType: .accessibility5, expectTwoColumns: false),
+            .init(tag: "ipad11-portrait-ax5-light", label: "iPad 11\" Portrait · AX5 (1 col)", width: 834, height: 1650, sizeClass: .regular, scheme: .light, dynamicType: .accessibility5, expectTwoColumns: false),
             .init(tag: "ipad11-portrait-xxxLarge-light", label: "iPad 11\" Portrait · XXXLarge (2 col)", width: 834, height: 1210, sizeClass: .regular, scheme: .light, dynamicType: .xxxLarge, expectTwoColumns: true),
             .init(tag: "iphone-390-light", label: "iPhone 390 · Light (1 col)", width: 390, height: 844, sizeClass: .compact, scheme: .light, dynamicType: .large, expectTwoColumns: false),
             .init(tag: "iphone-390-dark", label: "iPhone 390 · Dark (1 col)", width: 390, height: 844, sizeClass: .compact, scheme: .dark, dynamicType: .large, expectTwoColumns: false),
@@ -471,7 +481,8 @@ final class ContainerHubTwoColumnIPad13417Tests: XCTestCase {
     private func captureFirstLoadedFrame<V: View>(
         _ view: V,
         width: CGFloat,
-        height: CGFloat
+        height: CGFloat,
+        loadSignal: LoadSignal13417? = nil
     ) async -> UIImage {
         let root = NavigationStack {
             view.navigationBarTitleDisplayMode(.inline)
@@ -498,13 +509,17 @@ final class ContainerHubTwoColumnIPad13417Tests: XCTestCase {
         window.frame = container.view.frame
         window.overrideUserInterfaceStyle = .light
         window.rootViewController = container
-        window.isHidden = false
+        window.makeKeyAndVisible()
 
         // Allow async .task {} mock load to deliver .loaded state, then capture on the single layout pass.
         container.view.setNeedsLayout()
         container.view.layoutIfNeeded()
+        for _ in 0..<20 {
+            if loadSignal?.didStartLoad == true { break }
+            try? await Task.sleep(nanoseconds: 25_000_000)
+        }
         await Task.yield()
-        try? await Task.sleep(nanoseconds: 50_000_000)
+        try? await Task.sleep(nanoseconds: 80_000_000)
         container.view.setNeedsLayout()
         container.view.layoutIfNeeded()
 

@@ -194,45 +194,80 @@ private struct GameCardTeamFollowBarBody295A: View {
                 _ = alertsPrompt.offerSheet(subjectName: subject.name)
             }
         } label: {
-            HStack(spacing: 5) {
-                TeamLogoView(
-                    url: subject.logoUrl,
-                    teamName: subject.name,
-                    color: Color(hex: MyStuffTeamTextColour.logoTintHex(subject.primaryColor)),
-                    size: 15,
-                    sportKey: sportKey,
-                    opponentName: entry.opponentName
-                )
-
-                Text(entry.shortName)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(nameInk)
-                    .lineLimit(fullWidth ? 2 : 1)
-                    .fixedSize(horizontal: !fullWidth, vertical: true)
-
-                if fullWidth {
-                    Spacer(minLength: 6)
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(alignment: .center, spacing: 6) {
+                            TeamLogoView(
+                                url: subject.logoUrl,
+                                teamName: subject.name,
+                                color: Color(hex: MyStuffTeamTextColour.logoTintHex(subject.primaryColor)),
+                                size: 18,
+                                sportKey: sportKey,
+                                opponentName: entry.opponentName
+                            )
+                            Text(entry.shortName)
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(nameInk)
+                                .lineLimit(nil)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        HStack(spacing: 4) {
+                            Image(systemName: following ? "checkmark" : "plus")
+                                .font(.caption2.weight(.bold))
+                            Text(following ? "Following" : "Follow")
+                                .font(.caption.weight(.semibold))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .foregroundStyle(accentInk)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 14).fill(bgFill))
+                    .overlay(RoundedRectangle(cornerRadius: 14).stroke(strokeColor, lineWidth: 1))
                 } else {
-                    Text("·")
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(dotInk)
-                }
+                    HStack(spacing: 5) {
+                        TeamLogoView(
+                            url: subject.logoUrl,
+                            teamName: subject.name,
+                            color: Color(hex: MyStuffTeamTextColour.logoTintHex(subject.primaryColor)),
+                            size: 15,
+                            sportKey: sportKey,
+                            opponentName: entry.opponentName
+                        )
 
-                HStack(spacing: 3) {
-                    Image(systemName: following ? "checkmark" : "plus")
-                        .font(.system(size: 9.5, weight: .bold))
-                    Text(following ? "Following" : "Follow")
-                        .font(.caption.weight(.semibold))
-                        .lineLimit(1)
-                        .fixedSize(horizontal: true, vertical: false)
+                        Text(entry.shortName)
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(nameInk)
+                            .lineLimit(fullWidth ? 2 : 1)
+                            .fixedSize(horizontal: !fullWidth, vertical: true)
+
+                        if fullWidth {
+                            Spacer(minLength: 6)
+                        } else {
+                            Text("·")
+                                .font(.caption2.weight(.bold))
+                                .foregroundStyle(dotInk)
+                        }
+
+                        HStack(spacing: 3) {
+                            Image(systemName: following ? "checkmark" : "plus")
+                                .font(.system(size: 9.5, weight: .bold))
+                            Text(following ? "Following" : "Follow")
+                                .font(.caption.weight(.semibold))
+                                .lineLimit(1)
+                                .fixedSize(horizontal: true, vertical: false)
+                        }
+                        .foregroundStyle(accentInk)
+                    }
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 6)
+                    .frame(maxWidth: fullWidth ? .infinity : nil, minHeight: 34, alignment: .leading)
+                    .background(Capsule().fill(bgFill))
+                    .overlay(Capsule().stroke(strokeColor, lineWidth: 1))
                 }
-                .foregroundStyle(accentInk)
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 6)
-            .frame(maxWidth: fullWidth ? .infinity : nil, minHeight: 34, alignment: .leading)
-            .background(Capsule().fill(bgFill))
-            .overlay(Capsule().stroke(strokeColor, lineWidth: 1))
             .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
