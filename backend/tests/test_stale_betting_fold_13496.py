@@ -328,3 +328,27 @@ class TestStaleBettingBoundariesAndGuards:
         merged = fold.merged_sources[501]
         assert merged["betting"]["value"] == pytest.approx(0.65)
         assert merged["betting_book_count"] == 8
+
+    def test_fold_twin_events_preserves_absorbed_betting_dict_without_value_key_5918(self):
+        # Regression for test_league_route_name_pair_fold_has_loaded_sport_5918:
+        # an absorbed twin carrying legacy/shape `{"home": 0.62, "away": 0.38}`
+        # when the survivor has no `betting` key at all must still union onto the survivor.
+        laliga = Sport(id=93, key="soccer_spain_la_liga", name="La Liga")
+        survivor = _event(
+            601,
+            home="RC Celta de Vigo",
+            away="Malaga CF",
+            sport=laliga,
+            espn_id="999001",
+        )
+        survivor.win_probability_sources = None
+        absorbed = _event(
+            602,
+            home="Celta Vigo",
+            away="Malaga",
+            sport=laliga,
+            sources={"betting": {"home": 0.62, "away": 0.38}},
+        )
+        fold = fold_twin_events([survivor, absorbed])
+        assert fold.dropped_ids == [602]
+        assert fold.merged_sources[601]["betting"] == {"home": 0.62, "away": 0.38}

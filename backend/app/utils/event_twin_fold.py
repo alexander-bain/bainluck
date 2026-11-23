@@ -3823,8 +3823,11 @@ def _elect(
                 continue
             if name == "betting":
                 if (
-                    parse_source_entry(merged.get("betting"))[0] is None
-                    and parse_source_entry(reading)[0] is not None
+                    ("betting" not in merged and reading is not None)
+                    or (
+                        parse_source_entry(merged.get("betting"))[0] is None
+                        and parse_source_entry(reading)[0] is not None
+                    )
                 ):
                     merged["betting"] = reading
                     sync_twin_betting_book_count(merged, loser_sources)
