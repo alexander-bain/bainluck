@@ -643,9 +643,27 @@ jobs:
           # No --force, ever. A rejection can perfectly well mean something newer
           # is already live on heavy, and forcing then rewinds it. Let git refuse
           # the non-fast-forward and let the next run re-read and re-judge.
-          if ! git push heroku-heavy "$MAIN_LIVE:refs/heads/master"; then
+          _heavy_log="$(mktemp)"
+          exec 3>&1 4>&2 >"$_heavy_log" 2>&1
+          if git push heroku-heavy "$MAIN_LIVE:refs/heads/master"; then _heavy_rc=0; else _heavy_rc=$?; fi
+          exec 1>&3 2>&4 3>&- 4>&-
+          cat "$_heavy_log"
+          if python3 .github/scripts/check_heroku_push.py \
+            --log "$_heavy_log" --push-exit "$_heavy_rc" \
+            --require-release-done --verify-api \
+            --app bainluck-heavy --expected-sha "$MAIN_LIVE"; then
+            _heavy_check=0
+          else
+            _heavy_check=$?
+          fi
+          rm -f "$_heavy_log"
+          if [ "$_heavy_rc" -ne 0 ] && [ "$_heavy_check" -eq 2 ]; then
             echo "Push rejected. NOT retrying with --force: the next scheduled run"
             echo "re-reads both live refs and re-judges from scratch."
+            exit 1
+          fi
+          if [ "$_heavy_check" -ne 0 ]; then
+            echo "::error::Heroku refused or failed the bainluck-heavy release."
             exit 1
           fi
 
