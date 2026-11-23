@@ -2,7 +2,9 @@
 
 import asyncio
 import logging
+import os
 import re
+from asyncio import sleep
 from bisect import bisect_left
 from collections import defaultdict
 from dataclasses import dataclass
@@ -20,6 +22,7 @@ from app.services.database import build_connect_args
 logger = logging.getLogger(__name__)
 
 _REFRESH_INTERVAL_SECONDS = 15 * 60
+_FIRST_RETRY_SECONDS = 30
 _REFRESH_BUDGET_SECONDS = 5
 _DATABASE_TIMEOUT_MS = 2_000
 _ALIAS_QUERY = (
@@ -91,7 +94,7 @@ def _alias_refresh_engine(search_engine: AsyncEngine) -> AsyncEngine:
     )
 
 
-async def _refresh_aliases(source: AsyncEngine, search_bind: Engine) -> None:
+async def _refresh_aliases(source: AsyncEngine, search_bind: Engine) -> bool:
     started = perf_counter()
     rows: list[AliasRow] = []
     try:
@@ -106,27 +109,35 @@ async def _refresh_aliases(source: AsyncEngine, search_bind: Engine) -> None:
         logger.warning(
             "Onboarding venue alias refresh skipped reason=%s", type(exc).__name__
         )
-        return
+        return False
 
     if not aliases.words:
         logger.warning("Onboarding venue alias refresh skipped reason=empty")
-        return
+        return False
 
     _by_bind[search_bind] = aliases
     logger.info(
-        "Onboarding venue aliases refreshed read_ms=%.1f total_ms=%.1f rows=%d",
+        "Onboarding venue aliases refreshed dyno=%s pid=%d read_ms=%.1f total_ms=%.1f rows=%d",
+        os.environ.get("DYNO", "local"),
+        os.getpid(),
         read_ms,
         (perf_counter() - started) * 1_000,
         len(rows),
     )
+    return True
 
 
 async def refresh_onboarding_venue_aliases(search_engine: AsyncEngine) -> None:
     """Own one refresh at a time for this web process."""
     source = _alias_refresh_engine(search_engine)
+    retry_seconds = _FIRST_RETRY_SECONDS
     try:
         while True:
-            await _refresh_aliases(source, search_engine.sync_engine)
-            await asyncio.sleep(_REFRESH_INTERVAL_SECONDS)
+            if await _refresh_aliases(source, search_engine.sync_engine):
+                retry_seconds = _FIRST_RETRY_SECONDS
+                await sleep(_REFRESH_INTERVAL_SECONDS)
+            else:
+                await sleep(retry_seconds)
+                retry_seconds = min(2 * retry_seconds, _REFRESH_INTERVAL_SECONDS)
     finally:
         await source.dispose()

@@ -776,6 +776,35 @@ async def test_timed_out_and_empty_alias_refresh_keep_the_last_copy(
     assert "Onboarding venue alias refresh skipped reason=empty" in caplog.text
 
 
+async def test_first_alias_failure_retries_and_then_serves_the_copy(
+    sessions, cache, client, monkeypatch
+):
+    engine = sessions.kw["bind"]
+    alias_query = venue_aliases._ALIAS_QUERY
+    waits = []
+    monkeypatch.setattr(venue_aliases, "_ALIAS_QUERY", text("SELECT 1 / 0"))
+
+    async def record_delay(seconds):
+        waits.append(seconds)
+        if len(waits) == 1:
+            assert engine.sync_engine not in venue_aliases._by_bind
+            monkeypatch.setattr(venue_aliases, "_ALIAS_QUERY", alias_query)
+            return
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(venue_aliases, "sleep", record_delay)
+    with pytest.raises(asyncio.CancelledError):
+        await venue_aliases.refresh_onboarding_venue_aliases(engine)
+
+    assert waits == [30, 15 * 60]
+    match = await client.get("/api/me/teams/search", params={"q": "Magp"})
+    assert match.status_code == 200
+    assert (match.json()[0]["id"], match.json()[0]["name"]) == (
+        1024,
+        "Newcastle United",
+    )
+
+
 async def test_rebuild_has_one_owner_and_failed_publish_keeps_previous_snapshot(
     sessions, cache, writer
 ):
