@@ -2921,6 +2921,39 @@
       "author": "NASA Earth Observatory",
       "license": "Public domain",
       "source_page": "https://commons.wikimedia.org/wiki/File:Top_of_Atmosphere.jpg"
+    },
+    {
+      "entity_key": "joe-burrow",
+      "aliases": [
+        "Joe Burrow"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Joe Burrow, NFL quarterback (ESPN headshot 3915511)",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/3915511.png",
+      "credit": "ESPN"
+    },
+    {
+      "entity_key": "brock-purdy",
+      "aliases": [
+        "Brock Purdy"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Brock Purdy, NFL quarterback (ESPN headshot 4361741)",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/4361741.png",
+      "credit": "ESPN"
+    },
+    {
+      "entity_key": "josh-allen",
+      "aliases": [
+        "Josh Allen"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "verified_subject": "Josh Allen, NFL quarterback (ESPN headshot 3918298)",
+      "url": "https://a.espncdn.com/i/headshots/nfl/players/full/3918298.png",
+      "credit": "ESPN"
     }
   ]
 }
