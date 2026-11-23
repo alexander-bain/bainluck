@@ -1557,6 +1557,14 @@ def _fuzzy_team_match(market_team: str, event_team: str) -> bool:
     if mt == et:
         return True
 
+    # Hyphen-vs-space exact equality ("Maccabi Tel-Aviv" <-> "Maccabi Tel Aviv",
+    # "ASVEL Lyon-Villeurbanne" <-> "ASVEL Lyon Villeurbanne"). Narrower than any
+    # containment or token-subset rule: every token must match in order.
+    if ("-" in mt or "-" in et) and (
+        " ".join(mt.replace("-", " ").split()) == " ".join(et.replace("-", " ").split())
+    ):
+        return True
+
     # One club, two names, both of them ours (#3813). Everything below this line
     # is a STRUCTURAL rule — containment, word-subset, acronym — and no
     # structural rule reaches "Athletic Club" from "Athletic Bilbao": they share
@@ -3752,11 +3760,68 @@ _KALSHI_NAME_ALIASES: dict[str, list[str]] = {
 }
 
 
+def _build_venue_partner_search_terms() -> dict[str, tuple[str, ...]]:
+    """Map lowercased whole club spellings to their alternate venue/league forms (#13238)."""
+    from app.utils.venue_club_spellings import (
+        LEAGUE_CLUB_SPELLINGS,
+        VENUE_CLUB_SPELLINGS,
+    )
+
+    display_by_lower: dict[str, str] = {}
+    adj: dict[str, set[str]] = {}
+    all_pairs: list[tuple[str, str]] = list(VENUE_CLUB_SPELLINGS.items())
+    for league_map in LEAGUE_CLUB_SPELLINGS.values():
+        all_pairs.extend(league_map.items())
+    for left, right in all_pairs:
+        l_low = left.strip().lower()
+        r_low = right.strip().lower()
+        if not l_low or not r_low or l_low == r_low:
+            continue
+        display_by_lower.setdefault(l_low, left.strip())
+        display_by_lower.setdefault(r_low, right.strip())
+        adj.setdefault(l_low, set()).add(r_low)
+        adj.setdefault(r_low, set()).add(l_low)
+
+    out: dict[str, tuple[str, ...]] = {}
+    for start in adj:
+        visited: set[str] = {start}
+        queue = [start]
+        while queue:
+            cur = queue.pop(0)
+            for nxt in adj.get(cur, ()):
+                if nxt not in visited:
+                    visited.add(nxt)
+                    queue.append(nxt)
+        partners = tuple(
+            sorted(
+                (
+                    display_by_lower[node]
+                    for node in visited
+                    if node != start
+                    and len(node) >= 4
+                    and node not in _INSTITUTIONAL_SUFFIXES
+                ),
+                key=str.lower,
+            )
+        )
+        if partners:
+            out[start] = partners
+    return out
+
+
+_VENUE_PARTNER_SEARCH_TERMS: dict[str, tuple[str, ...]] = (
+    _build_venue_partner_search_terms()
+)
+
+
 def _expand_team_search_terms(team: str) -> list[str]:
     """Generate multiple ILIKE-friendly search terms from a team name.
 
     Handles:
     - Kalshi name aliases ("A's" → "Athletics", "Chicago WS" → "White Sox")
+    - Exact venue/league whole-name partner spellings ("Olimpia Milano" →
+      "Pallacanestro Olimpia Milano", "Bayern Munich" → "FC Bayern München")
+    - Hyphen-to-space team spellings ("Maccabi Tel-Aviv" → "Maccabi Tel Aviv")
     - Abbreviated names ("WSH Capitals" → also search "Capitals")
     - City abbreviations ("MIN" → also search "Minnesota")
     - City-only names ("Pittsburgh" → already matches "Pittsburgh Pirates")
@@ -3770,6 +3835,17 @@ def _expand_team_search_terms(team: str) -> list[str]:
     alias_terms = _KALSHI_NAME_ALIASES.get(team.lower())
     if alias_terms:
         terms.extend(alias_terms)
+
+    partner_terms = _VENUE_PARTNER_SEARCH_TERMS.get(team.strip().lower())
+    if partner_terms:
+        for partner in partner_terms:
+            if partner not in terms:
+                terms.append(partner)
+
+    if "-" in team:
+        dehyphenated = " ".join(team.replace("-", " ").split())
+        if dehyphenated and dehyphenated not in terms:
+            terms.append(dehyphenated)
 
     words = team.split()
 

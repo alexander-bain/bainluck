@@ -164,6 +164,9 @@ _CLUB_NAME_ALIASES: dict[str, str] = {
     "bc olympiakos piraeus": "olympiacos",
     "fenerbahce sk": "fenerbahce",
     "fc bayern munchen": "bayern munich",
+    "pallacanestro olimpia milano": "olimpia milano",
+    "baskonia vitoria-gasteiz": "saski baskonia",
+    "anadolu efes sk": "anadolu efes",
     # #13142: Women's college basketball spelling (pair 15347844 / 15351848).
     "little rock trojans": "arkansas-little rock trojans",
 }
@@ -650,8 +653,19 @@ def token_overlap_score(name_a: str, name_b: str) -> float:
     norm_b = _expand_abbreviations(normalize_name(name_b))
     if not norm_a or not norm_b:
         return 0.0
-    words_a = {w for w in norm_a.split() if w not in _MATCH_STOPWORDS and len(w) > 1}
-    words_b = {w for w in norm_b.split() if w not in _MATCH_STOPWORDS and len(w) > 1}
+    # Exclude pure numeric/ordinal prefixes ("1.") so clubs like "1. FC Köln" and
+    # "1. FC Heidenheim" / "1. FC Nürnberg" cannot hit 0.5 overlap on {"1."}.
+    # Alphanumeric nicknames ("49ers", "76ers") are kept untouched.
+    words_a = {
+        w
+        for w in norm_a.split()
+        if w not in _MATCH_STOPWORDS and len(w) > 1 and not w.rstrip(".").isdigit()
+    }
+    words_b = {
+        w
+        for w in norm_b.split()
+        if w not in _MATCH_STOPWORDS and len(w) > 1 and not w.rstrip(".").isdigit()
+    }
     if not words_a or not words_b:
         return 0.0
     overlap = words_a & words_b
@@ -692,6 +706,10 @@ def names_match(name_a: str, name_b: str) -> bool:
     if _NATION_NAME_ALIASES.get(norm_a, norm_a) == _NATION_NAME_ALIASES.get(norm_b, norm_b):
         return True
     if _CLUB_NAME_ALIASES.get(norm_a, norm_a) == _CLUB_NAME_ALIASES.get(norm_b, norm_b):
+        return True
+    if ("-" in norm_a or "-" in norm_b) and (
+        " ".join(norm_a.replace("-", " ").split()) == " ".join(norm_b.replace("-", " ").split())
+    ):
         return True
 
     # 2. Suffix containment at word boundaries
