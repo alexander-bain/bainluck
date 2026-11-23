@@ -1149,6 +1149,50 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
             category=cat,
             outcomes=outs,
         )
+
+    # 16. #12288 Batch 9 preview groupings (Golf/Ryder Cup, UFC/Boxing, Critics/Oscars, Big One/Cosmic, Live Music/Broadway, Tech Shocks)
+    for mid, ext, name, cat, hist, outs in (
+        (114132, "PMB9-METEOR", "5kt meteor strike in 2026?", "tech", True, [("Yes", 0.13, 0.27)]),
+        (59153600, "PMB9-QMAG", "Highest earthquake magnitude in 2026?", "weather", False, [("7.9 or below", 0.67, 0.65), ("9.0 or above", 0.12, 0.10)]),
+        (108235, "PMB9-CAQ8", "Will there be an at least 8.0 magnitude earthquake in California before 2035?", "weather", False, [("Before 2035", 0.21, 0.22)]),
+        (114083, "PMB9-VOLC", "Major volcano eruption (VEI >=6) in 2026?", "weather", False, [("Yes", 0.05, 0.06)]),
+        (114162, "PMB9-MET1", "1 megaton meteor strike in 2026?", "weather", False, [("Yes", 0.04, 0.03)]),
+        (7266228, "KXB9-TSLASPX", "When will Tesla and SpaceX merge?", "tech", False, [("Before 2028", 0.87, 0.85), ("Before May 1, 2027", 0.66, 0.64)]),
+        (61321725, "PMB9-CWBK", "CoreWeave announces bankruptcy by...?", "tech", False, [("December 31, 2027", 0.16, 0.15), ("December 31, 2028", 0.23, 0.22)]),
+        (61321727, "PMB9-ANTBK", "Anthropic files for bankruptcy by...?", "tech", False, [("December 31, 2027", 0.09, 0.08), ("December 31, 2028", 0.15, 0.14)]),
+        (61321742, "PMB9-OAIBK", "OpenAI files for bankruptcy by...?", "tech", False, [("December 31, 2027", 0.06, 0.05), ("December 31, 2028", 0.12, 0.11)]),
+        (70733127, "PMB9-DEF", "Removed from U.S. defense list by June 30, 2027?", "tech", False, [("CXMT", 0.25, 0.24), ("Hesai", 0.17, 0.16)]),
+        (65536357, "PMB9-CCDIR", "Critics Choice Awards: Best Director", "entertainment", False, [("Christopher Nolan", 0.75, 0.72), ("Denis Villeneuve", 0.12, 0.13), ("Alejandro González Iñárritu", 0.08, 0.09)]),
+        (58495125, "PMB9-OSUPM", "Oscars 2027: Best Supporting Actor Winner", "entertainment", False, [("Paul Giamatti", 0.41, 0.43), ("Andrew Garfield", 0.40, 0.30), ("Sean Penn", 0.09, 0.10)]),
+        (58492242, "PMB9-OINTL", "Oscars 2027: Best International Feature Film Winner", "entertainment", False, [("La Bola Negra", 0.83, 0.81), ("All of a Sudden", 0.05, 0.06)]),
+        (58492241, "PMB9-OSCORE", "Oscars 2027: Best Original Score Winner", "entertainment", False, [("The Odyssey", 0.69, 0.71), ("Dune: Part Three", 0.12, 0.10)]),
+        (65536307, "PMB9-CCPIC", "Critics Choice Awards: Best Picture", "entertainment", False, [("You Can See Everything", 0.66, 0.64), ("The Odyssey", 0.20, 0.21)]),
+        (58495122, "PMB9-OADAPT", "Oscars 2027: Best Adapted Screenplay Winner", "entertainment", False, [("La Bola Negra", 0.62, 0.50), ("The Invite", 0.24, 0.24)]),
+        (59693546, "KXB9-BWAY", "How many people will attend Broadway shows during the 2026-27 season?", "entertainment", False, [("above 13,500,000", 0.96, 0.94), ("above 13,750,000", 0.86, 0.80)]),
+        (59693469, "PMB9-RROCK", "Who Will Perform at Red Rocks in 2027?", "entertainment", False, [("Mt. Joy", 0.95, 0.94), ("Rebelution", 0.91, 0.90)]),
+        (11415154, "KXB9-OPEN26", "Which movie has biggest opening week in 2026?", "entertainment", False, [("Avengers: Doomsday", 0.89, 0.84), ("Spider-Man: Brand New Day", 0.11, 0.15)]),
+        (52755614, "PMB9-ALBUM", "Top U.S. Selling Album: 2026", "entertainment", False, [("ARIRANG", 0.81, 0.80), ("GNX", 0.05, 0.06)]),
+        (59693617, "KXB9-DRAKE", "When will Drake release a new album?", "entertainment", False, [("Before Jan 1, 2027", 0.06, 0.12), ("Before Dec 1, 2026", 0.05, 0.09)]),
+        (3970169, "PMB9-RYDER", "2027 Ryder Cup Winner", "golf", False, [("Team Europe", 0.53, 0.51), ("Team USA", 0.40, 0.42)]),
+        (61056094, "KXB9-MASTERS", "2027 The Masters Champion", "golf", False, [("Scottie Scheffler", 0.21, 0.20), ("Rory McIlroy", 0.12, 0.12)]),
+        (70709343, "PMB9-RSM", "The RSM Classic Winner", "golf", False, [("Michael Thorbjornsen", 0.37, 0.20), ("Max Greyserman", 0.32, 0.45)]),
+        (11224673, "PMB9-LIV", "Will LIV Golf announce shutdown in 2026?", "golf", False, [("Yes", 0.03, 0.04)]),
+        (176, "KXB9-SLAM", "Will Scottie Scheffler win the grand slam before 2028?", "golf", False, [("Yes", 0.02, 0.03)]),
+        (58852162, "KXB9-CONOR", "UFC: Who Will Conor McGregor Fight Next?", "mma", False, [("Max Holloway", 0.30, 0.28), ("Michael Chandler", 0.21, 0.19), ("Nate Diaz", 0.14, 0.11)]),
+        (20565989, "KXB9-STRICK", "UFC: Who Will Sean Strickland Fight Next?", "mma", False, [("Nassourdine Imavov", 0.81, 0.78), ("Khamzat Chimaev", 0.07, 0.09)]),
+        (10603290, "KXB9-ULBERG", "UFC: Who will Carlos Ulberg fight next?", "mma", False, [("Magomed Ankalaev", 0.40, 0.41), ("Paulo Costa", 0.10, 0.13)]),
+        (57284647, "KXB9-ANK", "UFC: Who Will Magomed Ankalaev Fight Next?", "mma", False, [("Carlos Ulberg", 0.28, 0.35), ("Paulo Costa", 0.13, 0.12)]),
+        (10437337, "PMB9-FURYJOSH", "Tyson Fury and Anthony Joshua to Fight in 2026", "boxing", False, [("Yes", 0.04, 0.05)]),
+        (61141844, "KXB9-JSILVA", "UFC: Who Will Jean Silva Fight Next?", "mma", False, [("Lerone Murphy", 0.25, 0.23), ("Kevin Vallejos", 0.24, 0.24)]),
+    ):
+        await _add_market(
+            market_id=mid,
+            external_id=ext,
+            name=name,
+            category=cat,
+            outcomes=outs,
+            with_history=hist,
+        )
     await session.commit()
 
 

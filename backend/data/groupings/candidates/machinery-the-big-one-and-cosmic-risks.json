@@ -1,0 +1,78 @@
+{
+  "slug": "machinery-the-big-one-and-cosmic-risks",
+  "stage": "preview",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "movement",
+    "same_window",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "ODD · EARTH & SPACE",
+  "name": "The Big One & Cosmic Risks",
+  "category": "odd",
+  "tag": "ODD",
+  "section_title": "Meteor & Seismic Swings This Week",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "extra_llm_categories": [
+      "weather",
+      "tech"
+    ],
+    "card_rows": 3,
+    "card_section_key": "cosmic_risk_moves",
+    "hide_row_art": true,
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/9f/Pahoeoe_fountain_edit2.jpg/960px-Pahoeoe_fountain_edit2.jpg",
+    "card_image_alt": "Lava fountain erupting at twilight at Kilauea volcano, Hawaii",
+    "card_image_credit": "J.D. Griggs (Public domain, Wikimedia Commons)",
+    "card_image_author": "J.D. Griggs",
+    "card_image_license": "Public domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Pahoeoe_fountain_edit2.jpg",
+    "sections": [
+      {
+        "key": "cosmic_risk_moves",
+        "title": "Meteor & Seismic Swings This Week",
+        "fallback_title": "Quakes, Volcanoes & Meteor Impacts",
+        "item_noun": "charts",
+        "preserve_note": true,
+        "note": "Near-Earth impact and seismic risk odds have shifted over the past week.",
+        "atom_query": {
+          "kind": "market_history",
+          "fun_sub_tag": "batch9-cosmic-history",
+          "shape": "any",
+          "order_by": "movement_desc",
+          "min_items": 1,
+          "max_items": 1,
+          "max_outcomes": 3,
+          "initial_visible_limit": 1,
+          "hours": 168,
+          "min_swing_pp": 10,
+          "min_lifetime_volume": 1
+        }
+      },
+      {
+        "key": "cosmic_risks_slate",
+        "title": "Quakes, Volcanoes & Meteor Impacts",
+        "item_noun": "events",
+        "note": "Extreme geophysical and near-Earth impact scenarios tracked over 2026 and beyond.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch9-cosmic-slate",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 5,
+          "max_outcomes": 1,
+          "initial_visible_limit": 4,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}

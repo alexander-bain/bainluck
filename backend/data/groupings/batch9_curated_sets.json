@@ -1,0 +1,242 @@
+{
+  "schema_version": 1,
+  "description": "Curated preview grouping sets for Batch 9 (#12288): Golf Majors & Ryder Cup (duel_bar), UFC Next Fights & Boxing (contender_spotlight), Live Music/Broadway/Box Office (probability_history_chart), Critics Choice & Oscars (sibling_fields_grid), Tech Shocks & AI Bankruptcies (benchmark_strip), Big One & Cosmic Risks (benchmark_strip).",
+  "sets": {
+    "batch9-cosmic-history": {
+      "entries": [
+        {
+          "id": 114132,
+          "short_label": "A 5-kiloton meteor strike in 2026",
+          "headline_phrase": "a 5-kiloton meteor strike in 2026",
+          "headline_with_phrase": "a 5-kiloton meteor strike this year"
+        }
+      ]
+    },
+    "batch9-cosmic-slate": {
+      "entries": [
+        {
+          "id": 59153600,
+          "short_label": "2026 peak global earthquake magnitude",
+          "headline_phrase": "2026's strongest earthquake topping out at {lower_answer}",
+          "headline_with_phrase": "peak 2026 quake strength at {lower_answer}"
+        },
+        {
+          "id": 108235,
+          "short_label": "8.0+ California quake before 2035",
+          "headline_phrase": "an 8.0+ California earthquake before 2035",
+          "headline_with_phrase": "a major California quake before 2035"
+        },
+        {
+          "id": 114083,
+          "short_label": "Cataclysmic volcano eruption in 2026",
+          "headline_phrase": "a cataclysmic volcanic eruption in 2026",
+          "headline_with_phrase": "a massive 2026 eruption"
+        },
+        {
+          "id": 114162,
+          "short_label": "1-megaton meteor impact in 2026",
+          "headline_phrase": "a 1-megaton meteor impact in 2026",
+          "headline_with_phrase": "a megaton impact this year"
+        }
+      ]
+    },
+    "batch9-tech-shocks-ai-bankruptcies": {
+      "entries": [
+        {
+          "id": 7266228,
+          "short_label": "Tesla and SpaceX merger",
+          "headline_phrase": "Tesla and SpaceX merging {answer}",
+          "headline_with_phrase": "a Tesla-SpaceX merger {answer}"
+        },
+        {
+          "id": 61321725,
+          "short_label": "CoreWeave filing for bankruptcy",
+          "headline_phrase": "CoreWeave filing for bankruptcy {answer}",
+          "headline_with_phrase": "CoreWeave bankruptcy {answer}"
+        },
+        {
+          "id": 61321727,
+          "short_label": "Anthropic filing for bankruptcy",
+          "headline_phrase": "Anthropic filing for bankruptcy {answer}",
+          "headline_with_phrase": "Anthropic bankruptcy {answer}"
+        },
+        {
+          "id": 61321742,
+          "short_label": "OpenAI filing for bankruptcy",
+          "headline_phrase": "OpenAI filing for bankruptcy {answer}",
+          "headline_with_phrase": "OpenAI bankruptcy {answer}"
+        },
+        {
+          "id": 70733127,
+          "short_label": "Removed from U.S. defense list by mid-2027",
+          "headline_phrase": "{answer} leaving the U.S. defense list by June 2027",
+          "headline_with_phrase": "{answer} coming off the defense list"
+        }
+      ]
+    },
+    "batch9-critics-oscars-people": {
+      "entries": [
+        {
+          "id": 65536357,
+          "short_label": "Critics Choice Director",
+          "headline_phrase": "{answer} winning Critics Choice Best Director",
+          "headline_with_phrase": "{answer} directing the Critics Choice winner"
+        },
+        {
+          "id": 58495125,
+          "short_label": "Oscars Supporting Actor",
+          "headline_phrase": "{answer} winning Best Supporting Actor at the Oscars",
+          "headline_with_phrase": "{answer} taking Oscars Supporting Actor"
+        }
+      ]
+    },
+    "batch9-critics-oscars-craft": {
+      "entries": [
+        {
+          "id": 58492242,
+          "short_label": "Oscars Best International Feature",
+          "headline_phrase": "{answer} winning Best International Feature",
+          "headline_with_phrase": "{answer} taking International Feature"
+        },
+        {
+          "id": 58492241,
+          "short_label": "Oscars Best Original Score",
+          "headline_phrase": "{answer} winning Best Original Score",
+          "headline_with_phrase": "{answer} taking Original Score"
+        },
+        {
+          "id": 65536307,
+          "short_label": "Critics Choice Best Picture",
+          "headline_phrase": "{answer} winning Critics Choice Best Picture",
+          "headline_with_phrase": "{answer} taking Critics Choice Best Picture"
+        },
+        {
+          "id": 58495122,
+          "short_label": "Oscars Best Adapted Screenplay",
+          "headline_phrase": "{answer} winning Best Adapted Screenplay",
+          "headline_with_phrase": "{answer} taking Adapted Screenplay"
+        }
+      ]
+    },
+    "batch9-live-music-slate": {
+      "entries": [
+        {
+          "id": 59693546,
+          "short_label": "Broadway 2026–27 season attendance",
+          "headline_phrase": "2026–27 Broadway attendance finishing {lower_answer}",
+          "headline_with_phrase": "Broadway attendance topping 13.5 million"
+        },
+        {
+          "id": 59693469,
+          "short_label": "Red Rocks 2027 headliner",
+          "headline_phrase": "{answer} playing Red Rocks in 2027",
+          "headline_with_phrase": "{answer} returning to Red Rocks"
+        },
+        {
+          "id": 11415154,
+          "short_label": "Biggest opening week movie in 2026",
+          "headline_phrase": "{answer} claiming 2026's biggest opening week",
+          "headline_with_phrase": "{answer} leading 2026 box office"
+        },
+        {
+          "id": 52755614,
+          "short_label": "Top-selling U.S. album of 2026",
+          "headline_phrase": "{answer} finishing as 2026's top-selling U.S. album",
+          "headline_with_phrase": "{answer} leading 2026 album sales"
+        },
+        {
+          "id": 59693617,
+          "short_label": "Next Drake album release",
+          "headline_phrase": "Drake dropping a new album {answer}",
+          "headline_with_phrase": "Drake's next album {answer}"
+        }
+      ]
+    },
+    "batch9-ryder-cup-duel": {
+      "entries": [
+        {
+          "id": 3970169,
+          "short_label": "2027 Ryder Cup winner",
+          "headline_phrase": "{answer} winning the 2027 Ryder Cup",
+          "headline_with_phrase": "{answer} taking the Ryder Cup"
+        }
+      ]
+    },
+    "batch9-golf-majors": {
+      "entries": [
+        {
+          "id": 61056094,
+          "short_label": "2027 Masters champion",
+          "headline_phrase": "{answer} winning the 2027 Masters",
+          "headline_with_phrase": "{answer} claiming a green jacket"
+        },
+        {
+          "id": 70709343,
+          "short_label": "The RSM Classic winner",
+          "headline_phrase": "{answer} winning The RSM Classic",
+          "headline_with_phrase": "{answer} taking The RSM Classic"
+        },
+        {
+          "id": 11224673,
+          "short_label": "LIV Golf shuts down in 2026",
+          "headline_phrase": "LIV Golf shutting down in 2026",
+          "headline_with_phrase": "a LIV Golf shutdown"
+        },
+        {
+          "id": 176,
+          "short_label": "Scottie Scheffler career Grand Slam before 2028",
+          "headline_phrase": "Scottie Scheffler finishing the career Grand Slam before 2028",
+          "headline_with_phrase": "Scheffler completing the Grand Slam"
+        }
+      ]
+    },
+    "batch9-mcgregor-next-fight": {
+      "entries": [
+        {
+          "id": 58852162,
+          "short_label": "Conor McGregor's next opponent",
+          "headline_phrase": "Conor McGregor fighting {answer} next",
+          "headline_with_phrase": "{answer} drawing McGregor next"
+        }
+      ]
+    },
+    "batch9-ufc-next-opponents": {
+      "entries": [
+        {
+          "id": 20565989,
+          "short_label": "Sean Strickland's next opponent",
+          "headline_phrase": "Sean Strickland fighting {answer} next",
+          "headline_with_phrase": "{answer} facing Strickland next"
+        },
+        {
+          "id": 10603290,
+          "short_label": "Carlos Ulberg's next opponent",
+          "headline_phrase": "Carlos Ulberg fighting {answer} next",
+          "headline_with_phrase": "{answer} facing Ulberg next"
+        },
+        {
+          "id": 57284647,
+          "short_label": "Magomed Ankalaev's next opponent",
+          "headline_phrase": "Magomed Ankalaev fighting {answer} next",
+          "headline_with_phrase": "{answer} facing Ankalaev next"
+        }
+      ]
+    },
+    "batch9-boxing-and-ufc": {
+      "entries": [
+        {
+          "id": 10437337,
+          "short_label": "Tyson Fury vs. Anthony Joshua in 2026",
+          "headline_phrase": "Tyson Fury and Anthony Joshua fighting in 2026",
+          "headline_with_phrase": "Fury facing Joshua in 2026"
+        },
+        {
+          "id": 61141844,
+          "short_label": "Jean Silva's next opponent",
+          "headline_phrase": "Jean Silva fighting {answer} next",
+          "headline_with_phrase": "{answer} facing Jean Silva next"
+        }
+      ]
+    }
+  }
+}

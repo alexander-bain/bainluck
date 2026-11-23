@@ -2762,6 +2762,8 @@ _CATEGORY_LLM_POOL: dict[str, tuple[str, ...]] = {
     "football": ("football", "nfl", "americanfootball_nfl", "other"),
     "basketball": ("basketball", "nba", "basketball_nba", "basketball_ncaab", "other"),
     "hockey": ("hockey", "nhl", "icehockey_nhl", "other"),
+    "golf": ("golf", "pga", "other"),
+    "mma": ("mma", "ufc", "boxing", "other"),
     "soccer": ("soccer", "sports", "other"),
     "tech": ("tech", "technology", "ai", "science", "other"),
 }
@@ -3883,6 +3885,12 @@ _EXACT_CASE_TOKENS: dict[str, str] = {
     "millennium": "Millennium",
     "sec": "SEC",
     "pac-12": "Pac-12",
+    "ryder": "Ryder",
+    "cup": "Cup",
+    "conor": "Conor",
+    "mcgregor": "McGregor",
+    "mcgregor's": "McGregor's",
+    "mcgregor’s": "McGregor’s",
 }
 
 
@@ -3960,7 +3968,7 @@ def _prose_market_phrase(title: str, *, capitalize_first: bool = False) -> str:
                 words.append(w.lower())
         joined = " ".join(words)
         joined = re.sub(r"\bbig\s+ten\b", "Big Ten", joined, flags=re.IGNORECASE)
-        has_leading_possessive = bool(words and ("'" in words[0] or "’" in words[0]))
+        has_leading_possessive = any("'" in tok or "’" in tok for tok in words[:2])
         out = (
             joined
             if joined.lower().startswith(("the ", "a ", "an ")) or has_leading_possessive
@@ -4326,6 +4334,45 @@ def _build_dynamic_title_from_set(
             sp_phrase = _prose_market_phrase(str(spotlight_item["title"]))
             return f"{_prose_rate_outcome(str(sp_fav['name']), capitalize_first=True)} leads {sp_phrase} at {sp_fav['rendered_percent']}%"
 
+    def _sibling_headline() -> Optional[str]:
+        if not sibling_items:
+            return None
+        lead_sib = sibling_items[0]
+        lead_o = _fav_outcome(lead_sib)
+        if lead_o is None:
+            return None
+        lead_name = _prose_outcome_name(str(lead_o["name"]))
+        lead_title = str(lead_sib.get("title") or "").strip()
+        lead_p = int(lead_o["rendered_percent"])
+        _CASTING_ROLES = {
+            "james bond",
+            "m",
+            "q",
+            "moneypenny",
+            "bond girl",
+            "villain",
+            "main villain",
+        }
+        if len(sibling_items) >= 2:
+            sec_sib = sibling_items[1]
+            sec_o = _fav_outcome(sec_sib)
+            if sec_o is not None:
+                sec_name = _prose_outcome_name(str(sec_o["name"]))
+                sec_title = str(sec_sib.get("title") or "").strip()
+                sec_p = int(sec_o["rendered_percent"])
+                sec_verb = (
+                    "to play"
+                    if sec_title.lower() in _CASTING_ROLES
+                    else "leading"
+                )
+                return f"{lead_name} leads {lead_title} at {lead_p}%, with {sec_name} {sec_verb} {sec_title} at {sec_p}%"
+        return f"{lead_name} leads {lead_title} at {lead_p}%"
+
+    if sibling_items and lead_sec_form == "sibling_fields_grid":
+        sib_hl = _sibling_headline()
+        if sib_hl:
+            return sib_hl
+
     if benchmark_items:
         rule_dict = definition.get("rule") if isinstance(definition.get("rule"), Mapping) else {}
         headline_pool = _filter_card_benchmark_items(benchmark_items, rule_dict)
@@ -4414,35 +4461,9 @@ def _build_dynamic_title_from_set(
             return lead_clause
 
     if sibling_items:
-        lead_sib = sibling_items[0]
-        lead_o = _fav_outcome(lead_sib)
-        if lead_o is not None:
-            lead_name = _prose_outcome_name(str(lead_o["name"]))
-            lead_title = str(lead_sib.get("title") or "").strip()
-            lead_p = int(lead_o["rendered_percent"])
-            _CASTING_ROLES = {
-                "james bond",
-                "m",
-                "q",
-                "moneypenny",
-                "bond girl",
-                "villain",
-                "main villain",
-            }
-            if len(sibling_items) >= 2:
-                sec_sib = sibling_items[1]
-                sec_o = _fav_outcome(sec_sib)
-                if sec_o is not None:
-                    sec_name = _prose_outcome_name(str(sec_o["name"]))
-                    sec_title = str(sec_sib.get("title") or "").strip()
-                    sec_p = int(sec_o["rendered_percent"])
-                    sec_verb = (
-                        "to play"
-                        if sec_title.lower() in _CASTING_ROLES
-                        else "leading"
-                    )
-                    return f"{lead_name} leads {lead_title} at {lead_p}%, with {sec_name} {sec_verb} {sec_title} at {sec_p}%"
-            return f"{lead_name} leads {lead_title} at {lead_p}%"
+        sib_hl = _sibling_headline()
+        if sib_hl:
+            return sib_hl
 
     return str(definition.get("name") or definition.get("slug") or "Round-Up")
 
