@@ -1352,6 +1352,25 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   }
 }
 
+.wordLesson {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin-block: 0 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: var(--paper);
+  font-size: var(--screen-type, 13px);
+  line-height: 1.25;
+}
+.wordLesson p { margin: 0; }
+.wordLesson strong { margin-inline-end: 7px; }
+.wordLesson dfn { font-weight: 700; font-style: normal; }
+.wordLesson span { color: var(--secondary); }
+.wordLesson .checkLesson { flex-basis: 100%; color: var(--amber); }
+
 /* The foreman's clipboard and the shelf share the warm paper of the shop. */
 .foremanNote {
   display: flex;
