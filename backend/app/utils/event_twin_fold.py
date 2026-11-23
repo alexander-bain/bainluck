@@ -166,7 +166,6 @@ from app.utils.kalshi_occurrence_start import (
 )
 from app.utils.name_normalization import nation_spelling, strip_diacritics
 from app.utils.proven_duplicates import (
-    _flipped_reading,  # noqa: F401 — re-exported for guard tests
     flip_probability_sources,
     merge_opening_line,
 )
