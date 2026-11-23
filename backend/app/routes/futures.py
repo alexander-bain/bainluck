@@ -4766,6 +4766,283 @@ async def _withheld_price_outcome_ids(
     return ids
 
 
+@router.get("/cross-source-timeline")
+async def get_cross_source_timeline(
+    canonical_key: str = Query(..., description="Canonical market key"),
+    top: int = Query(10, ge=1, le=50, description="Number of top outcomes to show"),
+    hours: int = Query(168, ge=1, le=8760, description="Hours of history"),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Get a merged probability timeline across all sources sharing a canonical key.
+
+    Outcomes are matched across sources by team_id or normalized name.
+    For each time bucket, probabilities from multiple sources are averaged.
+    Returns the same shape as the single-market probability-timeline endpoint.
+    """
+    # Find all markets sharing this canonical key
+    markets_result = await db.execute(
+        select(FuturesMarket)
+        .options(
+            selectinload(FuturesMarket.outcomes)
+            .selectinload(FuturesOutcome.team)
+        )
+        .where(FuturesMarket.canonical_market_key == canonical_key)
+        .order_by(FuturesMarket.source)
+    )
+    markets = markets_result.scalars().unique().all()
+
+    if not markets:
+        raise HTTPException(status_code=404, detail="No markets found for this canonical key")
+
+    sources = sorted(set(m.source for m in markets))
+
+    # Merge outcomes across sources by team_id or normalized name
+    # merge_key -> { name, team_id, outcome_ids: [int], team: Team|None }
+    # #6641 — same rule, same placement inside the per-market loop, as the three
+    # other chart readers in this file.
+    from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
+
+    merged_outcomes: dict[str, dict] = {}
+    for market in markets:
+        for outcome in drop_duplicate_legs(
+            market.outcomes, lambda o: o.external_id
+        ):
+            merge_key = _outcome_merge_key(outcome)
+            if merge_key not in merged_outcomes:
+                merged_outcomes[merge_key] = {
+                    "name": outcome.name,
+                    "team_id": outcome.team_id,
+                    "team": outcome.team,
+                    "outcome_ids": [],
+                    "current_probabilities": [],
+                    "changes_24h": [],
+                    "opening_probabilities": [],
+                    "ranks": [],
+                }
+            entry = merged_outcomes[merge_key]
+            entry["outcome_ids"].append(outcome.id)
+            if outcome.current_probability is not None:
+                entry["current_probabilities"].append(float(outcome.current_probability))
+            # #10248 D5 — `reader_change_24h`.
+            chg = reader_change_24h(
+                market, outcome.id, outcome.current_probability,
+                outcome.probability_change_24h,
+            )
+            if chg is not None:
+                entry["changes_24h"].append(float(chg))
+            if outcome.opening_probability is not None:
+                entry["opening_probabilities"].append(float(outcome.opening_probability))
+            if outcome.rank is not None:
+                entry["ranks"].append(outcome.rank)
+            # Prefer the team-linked entry for name/team
+            if outcome.team and not entry["team"]:
+                entry["team"] = outcome.team
+                entry["name"] = outcome.name
+
+    # Sort merged outcomes by average current probability
+    sorted_merged = sorted(
+        merged_outcomes.values(),
+        key=lambda o: (
+            mean(o["current_probabilities"]) if o["current_probabilities"] else 0
+        ),
+        reverse=True,
+    )
+
+    # Top N outcome merge keys
+    top_entries = sorted_merged[:top]
+    top_outcome_ids = set()
+    for entry in top_entries:
+        top_outcome_ids.update(entry["outcome_ids"])
+
+    # All outcome IDs for Field computation
+    all_outcome_ids = []
+    for entry in sorted_merged:
+        all_outcome_ids.extend(entry["outcome_ids"])
+
+    if not all_outcome_ids:
+        return {
+            "market_id": markets[0].id,
+            "market_name": markets[0].name,
+            "canonical_key": canonical_key,
+            "sources": sources,
+            "hours": hours,
+            "top": top,
+            "timeline": [],
+            "outcomes": [],
+        }
+
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+    # Fetch all snapshots across all sibling markets
+    snapshot_query = (
+        select(FuturesOddsSnapshot)
+        .where(
+            FuturesOddsSnapshot.outcome_id.in_(all_outcome_ids),
+            FuturesOddsSnapshot.captured_at >= cutoff,
+        )
+        .order_by(FuturesOddsSnapshot.captured_at)
+    )
+    result = await db.execute(snapshot_query)
+    # #5898, and this is the fourth and last chart reader in this file. It is the
+    # explicit cross-source surface, so an unsupported row here is published
+    # BESIDE the honest venue's line as if the two disagreed about the world —
+    # the source-divergence-is-a-data-bug ruling in reverse. Same rule, same
+    # per-row bookmaker key, so the sibling market's point at that timestamp is
+    # untouched.
+    snapshots = _drop_unsupported_snapshot_points(
+        list(result.scalars().all()),
+        [o for m in markets for o in m.outcomes],
+        _exclusive_field_outcome_ids(markets),
+    )
+
+    if not snapshots:
+        return {
+            "market_id": markets[0].id,
+            "market_name": markets[0].name,
+            "canonical_key": canonical_key,
+            "sources": sources,
+            "hours": hours,
+            "top": top,
+            "timeline": [],
+            "outcomes": [],
+        }
+
+    # Build outcome_id -> merge_key lookup
+    oid_to_merge_key: dict[int, str] = {}
+    merge_key_list = list(merged_outcomes.keys())
+    for mk in merge_key_list:
+        for oid in merged_outcomes[mk]["outcome_ids"]:
+            oid_to_merge_key[oid] = mk
+
+    # Determine bucket size
+    now = datetime.now(timezone.utc)
+    primary = markets[0]
+    if primary.commence_time and now >= primary.commence_time:
+        bucket_seconds = 900
+    else:
+        bucket_seconds = 3600
+
+    # Group snapshots: merge_key -> bucket_key -> [probabilities]
+    # This averages across sources automatically since different outcome_ids
+    # from different sources map to the same merge_key
+    merged_buckets: dict[str, dict[int, list[float]]] = defaultdict(
+        lambda: defaultdict(list)
+    )
+    for snap in snapshots:
+        if snap.probability is not None:
+            mk = oid_to_merge_key.get(snap.outcome_id)
+            if mk is None:
+                continue
+            ts = int(snap.captured_at.timestamp())
+            bucket_key = (ts // bucket_seconds) * bucket_seconds
+            merged_buckets[mk][bucket_key].append(float(snap.probability))
+
+    # Collect all bucket keys
+    all_bucket_keys: set[int] = set()
+    for buckets in merged_buckets.values():
+        all_bucket_keys.update(buckets.keys())
+    sorted_bucket_keys = sorted(all_bucket_keys)
+
+    # Top merge keys
+    top_merge_keys = set()
+    for entry in top_entries:
+        mk_match = _outcome_merge_key_from_entry(entry)
+        top_merge_keys.add(mk_match)
+
+    # Build timeline
+    timeline = []
+    for bucket_key in sorted_bucket_keys:
+        bucket_ts = datetime.fromtimestamp(bucket_key, tz=timezone.utc).isoformat()
+        tl_entry: dict = {"timestamp": bucket_ts, "outcomes": {}}
+        field_prob = 0.0
+
+        for mk, entry in merged_outcomes.items():
+            probs = merged_buckets.get(mk, {}).get(bucket_key, [])
+            if not probs:
+                continue
+            avg_prob = mean(probs)
+
+            if mk in top_merge_keys:
+                tl_entry["outcomes"][entry["name"]] = round(avg_prob, 6)
+            else:
+                field_prob += avg_prob
+
+        if len(sorted_merged) > top and field_prob > 0:
+            tl_entry["outcomes"]["Field"] = round(field_prob, 6)
+
+        timeline.append(tl_entry)
+
+    # Build outcome metadata
+    outcomes_meta = []
+    for entry in top_entries:
+        avg_prob = mean(entry["current_probabilities"]) if entry["current_probabilities"] else None
+        avg_change = mean(entry["changes_24h"]) if entry["changes_24h"] else None
+        avg_opening = mean(entry["opening_probabilities"]) if entry["opening_probabilities"] else None
+        best_rank = min(entry["ranks"]) if entry["ranks"] else None
+
+        meta: dict = {
+            "id": entry["outcome_ids"][0] if entry["outcome_ids"] else None,
+            "name": entry["name"],
+            "current_probability": round(avg_prob, 6) if avg_prob is not None else None,
+            "rank": best_rank,
+            "probability_change_24h": round(avg_change, 6) if avg_change is not None else None,
+            "opening_probability": round(avg_opening, 6) if avg_opening is not None else None,
+        }
+        team = entry.get("team")
+        if team:
+            meta["team_id"] = team.id
+            meta["logo_small"] = team.logo_url_small
+            meta["logo_large"] = team.logo_url_large
+            meta["primary_color"] = team.primary_color
+            meta["secondary_color"] = team.secondary_color
+            meta["abbreviation"] = team.abbreviation
+            meta["record"] = team.current_record
+            meta["location"] = team.location
+            meta["espn_id"] = team.espn_id
+
+        outcomes_meta.append(meta)
+
+    # Add Field
+    if len(sorted_merged) > top:
+        remaining = sorted_merged[top:]
+        field_current = 0.0
+        for entry in remaining:
+            if entry["current_probabilities"]:
+                field_current += mean(entry["current_probabilities"])
+        outcomes_meta.append({
+            "id": None,
+            "name": "Field",
+            "current_probability": round(field_current, 6),
+        })
+
+    return {
+        "market_id": markets[0].id,
+        "market_name": markets[0].name,
+        "canonical_key": canonical_key,
+        "sources": sources,
+        "sport_category": markets[0].llm_sport_category,
+        "source": "merged",
+        "hours": hours,
+        "top": top,
+        # #7077 live half, same defect on the sibling door. This one is read by
+        # the web (`frontend/lib/api.ts:1104`), not native. Fixed with the same
+        # helper rather than left lying: one door honest and its twin not is how
+        # the next reader gets the wrong domain from the other route.
+        **_measure_timeline_coverage(timeline),
+        # ANNOTATED — queue 333, C272/B4 zero-read census (#1620).
+        # Self-describing payload metadata: it says what one step of `timeline` below
+        # actually spans, which is not recoverable from the series itself. No client
+        # reads it yet; a chart that labels its own x-axis will need it.
+        # ⚠️ STRIP-UNSAFE: `bucketSeconds` is a NON-OPTIONAL `Int` in shipped iOS
+        # (Models/FuturesModels.swift:302) — removing it makes `Decodable` throw on
+        # every build already in the wild.
+        "bucket_seconds": bucket_seconds,
+        "timeline": timeline,
+        "outcomes": outcomes_meta,
+    }
+
+
 @router.get("/{market_id}")
 async def get_futures_market_cached(
     market_id: int,
@@ -8224,283 +8501,6 @@ async def get_probability_timeline(
         db, market, payload, representation,
         field_ids=[o.id for o in sorted_outcomes[top:]],
     )
-
-
-@router.get("/cross-source-timeline")
-async def get_cross_source_timeline(
-    canonical_key: str = Query(..., description="Canonical market key"),
-    top: int = Query(10, ge=1, le=50, description="Number of top outcomes to show"),
-    hours: int = Query(168, ge=1, le=8760, description="Hours of history"),
-    db: AsyncSession = Depends(get_db),
-):
-    """
-    Get a merged probability timeline across all sources sharing a canonical key.
-
-    Outcomes are matched across sources by team_id or normalized name.
-    For each time bucket, probabilities from multiple sources are averaged.
-    Returns the same shape as the single-market probability-timeline endpoint.
-    """
-    # Find all markets sharing this canonical key
-    markets_result = await db.execute(
-        select(FuturesMarket)
-        .options(
-            selectinload(FuturesMarket.outcomes)
-            .selectinload(FuturesOutcome.team)
-        )
-        .where(FuturesMarket.canonical_market_key == canonical_key)
-        .order_by(FuturesMarket.source)
-    )
-    markets = markets_result.scalars().unique().all()
-
-    if not markets:
-        raise HTTPException(status_code=404, detail="No markets found for this canonical key")
-
-    sources = sorted(set(m.source for m in markets))
-
-    # Merge outcomes across sources by team_id or normalized name
-    # merge_key -> { name, team_id, outcome_ids: [int], team: Team|None }
-    # #6641 — same rule, same placement inside the per-market loop, as the three
-    # other chart readers in this file.
-    from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
-
-    merged_outcomes: dict[str, dict] = {}
-    for market in markets:
-        for outcome in drop_duplicate_legs(
-            market.outcomes, lambda o: o.external_id
-        ):
-            merge_key = _outcome_merge_key(outcome)
-            if merge_key not in merged_outcomes:
-                merged_outcomes[merge_key] = {
-                    "name": outcome.name,
-                    "team_id": outcome.team_id,
-                    "team": outcome.team,
-                    "outcome_ids": [],
-                    "current_probabilities": [],
-                    "changes_24h": [],
-                    "opening_probabilities": [],
-                    "ranks": [],
-                }
-            entry = merged_outcomes[merge_key]
-            entry["outcome_ids"].append(outcome.id)
-            if outcome.current_probability is not None:
-                entry["current_probabilities"].append(float(outcome.current_probability))
-            # #10248 D5 — `reader_change_24h`.
-            chg = reader_change_24h(
-                market, outcome.id, outcome.current_probability,
-                outcome.probability_change_24h,
-            )
-            if chg is not None:
-                entry["changes_24h"].append(float(chg))
-            if outcome.opening_probability is not None:
-                entry["opening_probabilities"].append(float(outcome.opening_probability))
-            if outcome.rank is not None:
-                entry["ranks"].append(outcome.rank)
-            # Prefer the team-linked entry for name/team
-            if outcome.team and not entry["team"]:
-                entry["team"] = outcome.team
-                entry["name"] = outcome.name
-
-    # Sort merged outcomes by average current probability
-    sorted_merged = sorted(
-        merged_outcomes.values(),
-        key=lambda o: (
-            mean(o["current_probabilities"]) if o["current_probabilities"] else 0
-        ),
-        reverse=True,
-    )
-
-    # Top N outcome merge keys
-    top_entries = sorted_merged[:top]
-    top_outcome_ids = set()
-    for entry in top_entries:
-        top_outcome_ids.update(entry["outcome_ids"])
-
-    # All outcome IDs for Field computation
-    all_outcome_ids = []
-    for entry in sorted_merged:
-        all_outcome_ids.extend(entry["outcome_ids"])
-
-    if not all_outcome_ids:
-        return {
-            "market_id": markets[0].id,
-            "market_name": markets[0].name,
-            "canonical_key": canonical_key,
-            "sources": sources,
-            "hours": hours,
-            "top": top,
-            "timeline": [],
-            "outcomes": [],
-        }
-
-    cutoff = datetime.now(timezone.utc) - timedelta(hours=hours)
-
-    # Fetch all snapshots across all sibling markets
-    snapshot_query = (
-        select(FuturesOddsSnapshot)
-        .where(
-            FuturesOddsSnapshot.outcome_id.in_(all_outcome_ids),
-            FuturesOddsSnapshot.captured_at >= cutoff,
-        )
-        .order_by(FuturesOddsSnapshot.captured_at)
-    )
-    result = await db.execute(snapshot_query)
-    # #5898, and this is the fourth and last chart reader in this file. It is the
-    # explicit cross-source surface, so an unsupported row here is published
-    # BESIDE the honest venue's line as if the two disagreed about the world —
-    # the source-divergence-is-a-data-bug ruling in reverse. Same rule, same
-    # per-row bookmaker key, so the sibling market's point at that timestamp is
-    # untouched.
-    snapshots = _drop_unsupported_snapshot_points(
-        list(result.scalars().all()),
-        [o for m in markets for o in m.outcomes],
-        _exclusive_field_outcome_ids(markets),
-    )
-
-    if not snapshots:
-        return {
-            "market_id": markets[0].id,
-            "market_name": markets[0].name,
-            "canonical_key": canonical_key,
-            "sources": sources,
-            "hours": hours,
-            "top": top,
-            "timeline": [],
-            "outcomes": [],
-        }
-
-    # Build outcome_id -> merge_key lookup
-    oid_to_merge_key: dict[int, str] = {}
-    merge_key_list = list(merged_outcomes.keys())
-    for mk in merge_key_list:
-        for oid in merged_outcomes[mk]["outcome_ids"]:
-            oid_to_merge_key[oid] = mk
-
-    # Determine bucket size
-    now = datetime.now(timezone.utc)
-    primary = markets[0]
-    if primary.commence_time and now >= primary.commence_time:
-        bucket_seconds = 900
-    else:
-        bucket_seconds = 3600
-
-    # Group snapshots: merge_key -> bucket_key -> [probabilities]
-    # This averages across sources automatically since different outcome_ids
-    # from different sources map to the same merge_key
-    merged_buckets: dict[str, dict[int, list[float]]] = defaultdict(
-        lambda: defaultdict(list)
-    )
-    for snap in snapshots:
-        if snap.probability is not None:
-            mk = oid_to_merge_key.get(snap.outcome_id)
-            if mk is None:
-                continue
-            ts = int(snap.captured_at.timestamp())
-            bucket_key = (ts // bucket_seconds) * bucket_seconds
-            merged_buckets[mk][bucket_key].append(float(snap.probability))
-
-    # Collect all bucket keys
-    all_bucket_keys: set[int] = set()
-    for buckets in merged_buckets.values():
-        all_bucket_keys.update(buckets.keys())
-    sorted_bucket_keys = sorted(all_bucket_keys)
-
-    # Top merge keys
-    top_merge_keys = set()
-    for entry in top_entries:
-        mk_match = _outcome_merge_key_from_entry(entry)
-        top_merge_keys.add(mk_match)
-
-    # Build timeline
-    timeline = []
-    for bucket_key in sorted_bucket_keys:
-        bucket_ts = datetime.fromtimestamp(bucket_key, tz=timezone.utc).isoformat()
-        tl_entry: dict = {"timestamp": bucket_ts, "outcomes": {}}
-        field_prob = 0.0
-
-        for mk, entry in merged_outcomes.items():
-            probs = merged_buckets.get(mk, {}).get(bucket_key, [])
-            if not probs:
-                continue
-            avg_prob = mean(probs)
-
-            if mk in top_merge_keys:
-                tl_entry["outcomes"][entry["name"]] = round(avg_prob, 6)
-            else:
-                field_prob += avg_prob
-
-        if len(sorted_merged) > top and field_prob > 0:
-            tl_entry["outcomes"]["Field"] = round(field_prob, 6)
-
-        timeline.append(tl_entry)
-
-    # Build outcome metadata
-    outcomes_meta = []
-    for entry in top_entries:
-        avg_prob = mean(entry["current_probabilities"]) if entry["current_probabilities"] else None
-        avg_change = mean(entry["changes_24h"]) if entry["changes_24h"] else None
-        avg_opening = mean(entry["opening_probabilities"]) if entry["opening_probabilities"] else None
-        best_rank = min(entry["ranks"]) if entry["ranks"] else None
-
-        meta: dict = {
-            "id": entry["outcome_ids"][0] if entry["outcome_ids"] else None,
-            "name": entry["name"],
-            "current_probability": round(avg_prob, 6) if avg_prob is not None else None,
-            "rank": best_rank,
-            "probability_change_24h": round(avg_change, 6) if avg_change is not None else None,
-            "opening_probability": round(avg_opening, 6) if avg_opening is not None else None,
-        }
-        team = entry.get("team")
-        if team:
-            meta["team_id"] = team.id
-            meta["logo_small"] = team.logo_url_small
-            meta["logo_large"] = team.logo_url_large
-            meta["primary_color"] = team.primary_color
-            meta["secondary_color"] = team.secondary_color
-            meta["abbreviation"] = team.abbreviation
-            meta["record"] = team.current_record
-            meta["location"] = team.location
-            meta["espn_id"] = team.espn_id
-
-        outcomes_meta.append(meta)
-
-    # Add Field
-    if len(sorted_merged) > top:
-        remaining = sorted_merged[top:]
-        field_current = 0.0
-        for entry in remaining:
-            if entry["current_probabilities"]:
-                field_current += mean(entry["current_probabilities"])
-        outcomes_meta.append({
-            "id": None,
-            "name": "Field",
-            "current_probability": round(field_current, 6),
-        })
-
-    return {
-        "market_id": markets[0].id,
-        "market_name": markets[0].name,
-        "canonical_key": canonical_key,
-        "sources": sources,
-        "sport_category": markets[0].llm_sport_category,
-        "source": "merged",
-        "hours": hours,
-        "top": top,
-        # #7077 live half, same defect on the sibling door. This one is read by
-        # the web (`frontend/lib/api.ts:1104`), not native. Fixed with the same
-        # helper rather than left lying: one door honest and its twin not is how
-        # the next reader gets the wrong domain from the other route.
-        **_measure_timeline_coverage(timeline),
-        # ANNOTATED — queue 333, C272/B4 zero-read census (#1620).
-        # Self-describing payload metadata: it says what one step of `timeline` below
-        # actually spans, which is not recoverable from the series itself. No client
-        # reads it yet; a chart that labels its own x-axis will need it.
-        # ⚠️ STRIP-UNSAFE: `bucketSeconds` is a NON-OPTIONAL `Int` in shipped iOS
-        # (Models/FuturesModels.swift:302) — removing it makes `Decodable` throw on
-        # every build already in the wild.
-        "bucket_seconds": bucket_seconds,
-        "timeline": timeline,
-        "outcomes": outcomes_meta,
-    }
 
 
 def _coverage_of(stamps: list) -> dict:
