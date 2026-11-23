@@ -208,11 +208,11 @@ def _l0_peek(slug: str, *, allow_stale: bool = False) -> Optional[tuple[dict, st
     return None
 
 
-def _read_from_redis_sync_or_none(rc, slug: str) -> Optional[tuple[dict, str]]:
+def _read_from_redis_sync_or_none(redis_conn, slug: str) -> Optional[tuple[dict, str]]:
     """Decode fresh or last-good Redis value synchronously (for sync Celery helpers)."""
     now_epoch = time.time()
     for key in (fresh_redis_key(slug), last_good_redis_key(slug)):
-        raw = rc.get(key)
+        raw = redis_conn.get(key)
         parsed = _parse_envelope(raw, now_epoch)
         if parsed is None:
             continue
@@ -229,16 +229,16 @@ async def _read_from_redis_async(
     if not _redis_tier_enabled():
         return None
     try:
-        rc = await _rc.get_shared_async_redis()
+        redis_conn = await _rc.get_shared_async_redis()
     except asyncio.CancelledError:
         raise
     except Exception:
         return None
-    if rc is None:
+    if redis_conn is None:
         return None
     now_epoch = time.time()
     result = await _rc.bounded_redis_call(
-        lambda: rc.mget([fresh_redis_key(slug), last_good_redis_key(slug)])
+        lambda: redis_conn.mget([fresh_redis_key(slug), last_good_redis_key(slug)])
     )
     if not result.is_ok or not result.value:
         return None
@@ -274,10 +274,10 @@ async def publish_tournament_payload_async(
     if not _redis_tier_enabled():
         return False
     try:
-        rc = await _rc.get_shared_async_redis()
-        if rc is None:
+        redis_conn = await _rc.get_shared_async_redis()
+        if redis_conn is None:
             return False
-        pipe = rc.pipeline(transaction=False)
+        pipe = redis_conn.pipeline(transaction=False)
         pipe.set(fresh_redis_key(slug), raw_env, ex=REDIS_FRESH_TTL_SECONDS)
         pipe.set(last_good_redis_key(slug), raw_env, ex=REDIS_LAST_GOOD_TTL_SECONDS)
         res = await _rc.bounded_redis_call(lambda: pipe.execute())
