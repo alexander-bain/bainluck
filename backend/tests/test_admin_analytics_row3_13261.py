@@ -4,12 +4,13 @@ first-visit landing paths (query-stripped), and Day-2 / Day-7 cohort retention.
 
 from __future__ import annotations
 
-from datetime import date
+from datetime import date, datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
+import app.routes.admin_analytics as admin_analytics_mod
 from app.routes.admin_analytics import (
     _clean_landing_path,
     _split_source_medium,
@@ -133,7 +134,15 @@ async def test_analytics_acquisition_returns_sources_shared_links_and_first_land
 
 
 @pytest.mark.asyncio
-async def test_analytics_retention_includes_d2_d7_cohorts_and_degrades_safely() -> None:
+async def test_analytics_retention_includes_d2_d7_cohorts_and_degrades_safely(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FrozenDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return datetime(2026, 11, 20, 12, 0, tzinfo=tz or timezone.utc)
+
+    monkeypatch.setattr(admin_analytics_mod, "datetime", _FrozenDateTime)
     fake_req = SimpleNamespace(headers={})
 
     cohort_rows = [
