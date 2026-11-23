@@ -369,3 +369,84 @@ async def test_taylor_swift_uses_person_portrait_elon_skips_repeat_and_date_row_
     s_by_mid = {int(r["market_id"]): r for r in summed_res.machinery_card["rows"]}
     assert s_by_mid[109527]["art"]["initials"] not in {"DEC", "JAN", "B2"}
     assert s_by_mid[109527]["art"]["initials"] == "SR"
+
+
+@pytest.mark.asyncio
+async def test_item3_bond_28_contenders_and_engaged_second_partner_fallback() -> None:
+    """Item 3: all 28 Bond contenders and Who Gets Engaged couples (including partner-2 fallback) resolve."""
+    clear_fun_markets_cache()
+    resolver = SubjectArtResolver()
+    bond_28 = (
+        "Raye",
+        "Olivia Dean",
+        "Dua Lipa",
+        "Harry Styles",
+        "Olivia Colman",
+        "Ralph Fiennes",
+        "Idris Elba",
+        "Charles Dance",
+        "Margaret Qualley",
+        "Florence Pugh",
+        "Anya Taylor-Joy",
+        "Zendaya",
+        "Ben Whishaw",
+        "Andrew Scott",
+        "Dev Patel",
+        "Richard Ayoade",
+        "Cillian Murphy",
+        "Oscar Isaac",
+        "Barry Keoghan",
+        "Adam Driver",
+        "Naomie Harris",
+        "Jodie Turner-Smith",
+        "Phoebe Dynevor",
+        "Jodie Comer",
+        "Boyd Holbrook",
+        "Anthony Mackie",
+        "Steven Yeun",
+        "Chiwetel Ejiofor",
+    )
+    for person in bond_28:
+        art = resolver.resolve(person, allow_team_lookup=False)
+        assert art["url"], f"Missing vetted portrait/cover for Bond contender {person!r}: {art}"
+
+    paths_by_slug = {p.stem: p for p in discover_machinery_candidate_paths()}
+    engaged_defn = load_machinery_definition(paths_by_slug["machinery-who-gets-engaged"])
+    engaged_markets = [
+        {
+            "id": 109618,
+            "name": "Will Sydney Sweeney & Scooter Braun get engaged?",
+            "status": "open",
+            "source": "polymarket",
+            "llm_sport_category": "entertainment",
+            "volume": 50000.0,
+            "outcomes": [{"id": 21, "name": "Yes", "probability": 0.45}, {"id": 22, "name": "No", "probability": 0.55}],
+        },
+        {
+            "id": 991001,
+            "name": "Will Livvy Dunne & Paul Skenes get engaged in 2026?",
+            "status": "open",
+            "source": "polymarket",
+            "llm_sport_category": "culture",
+            "volume": 50000.0,
+            "outcomes": [{"id": 23, "name": "Yes", "probability": 0.35}, {"id": 24, "name": "No", "probability": 0.65}],
+        },
+        {
+            "id": 991002,
+            "name": "Will Puka Nacua & Sara Saffari get engaged in 2026?",
+            "status": "open",
+            "source": "polymarket",
+            "llm_sport_category": "culture",
+            "volume": 50000.0,
+            "outcomes": [{"id": 25, "name": "Yes", "probability": 0.25}, {"id": 26, "name": "No", "probability": 0.75}],
+        },
+    ]
+    res = await produce_container_machinery({"markets": engaged_markets, "teams": []}, engaged_defn, now=NOW)
+    assert hasattr(res, "machinery_card"), res
+    urls = [(r.get("art") or {}).get("url") for r in res.machinery_card["rows"]]
+    assert len(urls) == 3 and all(urls), urls
+    sec_urls = [
+        (it.get("outcomes") or [{}])[0].get("art", {}).get("url")
+        for it in res.sections[0]["visual_block"]["items"]
+    ]
+    assert len(sec_urls) == 3 and all(sec_urls), sec_urls
