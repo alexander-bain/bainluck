@@ -110,12 +110,11 @@ SKIP_CALL_RE = re.compile(r"pytest\.mark\.skipif\(|pytest\.skip\(")
 #: start-placeholder files were wired with their own step, #12612). Nothing in
 #: these files is evidence while listed.
 KNOWN_UNWIRED_ROOT = {
-    # #12612 (Nov 22): after supplying missing NOT NULL seed columns + Queue #299
-    # proved-exclusivity metadata per Fable's Nov 20 instruction, T-7 returns
-    # final_n=5 (incomplete field 91002 sums to 1.00 <= 1.15 across its two present
-    # snapshots under Queue #263, so is_field_incomplete=False and both surviving
-    # legs publish un-normalized). Held per Fable's hard-stop rule (5 rows posted
-    # on #12612; never change expected 3 -> 5).
+    # #13463 (filed from #12612 hard-stop on Nov 22): after supplying missing NOT NULL
+    # seed columns + Queue #299 proved-exclusivity metadata, T-7 returns final_n=5
+    # because missing outcome lowers ro.mnm_cp_sum to 1.00 <= 1.15 under Queue #263,
+    # hiding incompleteness in precompute_calibration.py. Real calibration defect
+    # owned by Speed (#13463); keep test and seed untouched until #13463 lands.
     "test_calibration_horizon_population_262.py",
 }
 
