@@ -207,7 +207,6 @@ struct DistributionCardView: View {
         isLeader: Bool
     ) -> some View {
         let probability = outcome.probability ?? 0
-        let pct = outcome.renderedPercent ?? Int((probability * 100).rounded())
         let barWidth = max(5, probability / maxProbability * 100)
 
         HStack(spacing: 8) {
@@ -247,7 +246,7 @@ struct DistributionCardView: View {
 
             // Percentage + optional served source mark (#12887)
             HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text(probability > 0 ? "\(pct)%" : "\u{2014}")
+                Text(probability > 0 ? formatProbability(probability, renderedPercent: outcome.renderedPercent) : "\u{2014}")
                     .font(.system(size: 13, weight: .bold, design: .monospaced))
                     .foregroundStyle(primaryInk)
                     .frame(width: 40, alignment: .trailing)
