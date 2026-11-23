@@ -347,6 +347,7 @@ async def _seed_fixtures(pg_engine) -> None:
                     external_id="pg_13508_done_canon",
                     raw_ei=96.0,
                     ei_computed_at=fresh_ts,
+                    ei_metadata='{"snapshot_count": 25}',
                     win_probability_sources={
                         "betting": {
                             "value": 0.99,
@@ -520,6 +521,19 @@ async def _seed_fixtures(pg_engine) -> None:
                     captured_at=fresh_ts,
                 )
             )
+        for i in range(2):
+            snaps.append(
+                OddsSnapshot(
+                    event_id=CANON_DONE,
+                    bookmaker=f"done_b_{i}",
+                    home_moneyline=-200,
+                    away_moneyline=170,
+                    home_win_probability=0.65,
+                    away_win_probability=0.15,
+                    draw_probability=0.20,
+                    captured_at=fresh_ts,
+                )
+            )
         s.add_all(snaps)
 
         # Published Container holding Blackpool, ASVEL, Port Vale, and Chelsea
@@ -661,12 +675,22 @@ async def test_all_mounted_game_chance_surfaces_match_event_detail_on_postgres(
     assert details[CANON_LIVE]["current_odds"]["bookmaker_count"] == 10
 
     # 1. GET /api/events (unscoped) + GET /api/events?sport=...
+    # When unscoped /api/events reads both un-anchored CANON_ASVEL and priced catch-all
+    # TWIN_ASVEL on the same page, fold_twin_events elects TWIN_ASVEL (source count rung >
+    # names_league rung) and absorbs CANON_ASVEL into it with identical folded numbers.
+    inpage_alias = {CANON_ASVEL: TWIN_ASVEL}
     all_ev_r = await parity_client.get("/api/events", params={"days": 7, "limit": 200})
     assert all_ev_r.status_code == 200, all_ev_r.text
     by_id_all = {e["id"]: e for e in all_ev_r.json()["events"]}
     for eid in (CANON_BLACKPOOL, CANON_ASVEL, CANON_PV, CANON_LIVE):
-        assert eid in by_id_all, f"/api/events missing {eid}"
-        _assert_card_matches_detail(by_id_all[eid], details[eid], surface="GET /api/events")
+        alias_id = inpage_alias.get(eid)
+        if alias_id is not None:
+            assert not (eid in by_id_all and alias_id in by_id_all), (
+                f"/api/events leaked duplicate pair {eid}/{alias_id}"
+            )
+        card_id = eid if eid in by_id_all else alias_id
+        assert card_id is not None and card_id in by_id_all, f"/api/events missing {eid}"
+        _assert_card_matches_detail(by_id_all[card_id], details[eid], surface="GET /api/events")
 
     for eid, sk in (
         (CANON_BLACKPOOL, "soccer_england_league1"),
@@ -711,7 +735,8 @@ async def test_all_mounted_game_chance_surfaces_match_event_detail_on_postgres(
     ):
         sr = await parity_client.get("/api/events/search", params={"q": query, "per_page": 25})
         assert sr.status_code == 200, sr.text
-        s_cards = [e for e in sr.json()["results"] if e["id"] == eid]
+        allowed_ids = {eid} | ({inpage_alias[eid]} if eid in inpage_alias else set())
+        s_cards = [e for e in sr.json()["results"] if e["id"] in allowed_ids]
         assert len(s_cards) == 1, f"/api/events/search?q={query} missing {eid}"
         _assert_card_matches_detail(
             s_cards[0], details[eid], surface=f"GET /api/events/search?q={query}"
@@ -738,9 +763,9 @@ async def test_all_mounted_game_chance_surfaces_match_event_detail_on_postgres(
     ei_r = await parity_client.get("/api/events/ei-rankings", params={"limit": 50})
     assert ei_r.status_code == 200, ei_r.text
     ei_pool = (ei_r.json().get("highest") or []) + (ei_r.json().get("lowest") or [])
-    ei_cards = [e for e in ei_pool if e["id"] == CANON_BLACKPOOL]
+    ei_cards = [e for e in ei_pool if e["id"] == CANON_DONE]
     assert len(ei_cards) >= 1
-    _assert_card_matches_detail(ei_cards[0], details[CANON_BLACKPOOL], surface="GET /api/events/ei-rankings")
+    _assert_card_matches_detail(ei_cards[0], details[CANON_DONE], surface="GET /api/events/ei-rankings")
 
     fac_r = await parity_client.get(
         "/api/events/faceted", params={"sport": "soccer", "days": 7, "per_page": 50}
@@ -759,8 +784,9 @@ async def test_all_mounted_game_chance_surfaces_match_event_detail_on_postgres(
         if item.get("type") == "event" and isinstance(item.get("data"), dict)
     }
     for eid in (CANON_BLACKPOOL, CANON_ASVEL, CANON_PV, CANON_LIVE):
-        if eid in feed_by_id:
-            _assert_card_matches_detail(feed_by_id[eid], details[eid], surface="GET /api/feed")
+        card_id = eid if eid in feed_by_id else inpage_alias.get(eid)
+        if card_id is not None and card_id in feed_by_id:
+            _assert_card_matches_detail(feed_by_id[card_id], details[eid], surface="GET /api/feed")
 
     pc_r = await parity_client.get(
         "/api/feed/price-cards",
