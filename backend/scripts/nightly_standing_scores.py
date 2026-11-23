@@ -361,25 +361,36 @@ class PacedClient:
         path: str,
         *,
         params: dict[str, Any] | None = None,
+        timeout: float | None = None,
+        retries: int = 0,
     ) -> tuple[int | None, Any | None, str | None]:
-        if self._last_request_at is not None and self.pace_seconds > 0:
-            elapsed = self._monotonic() - self._last_request_at
-            remaining = self.pace_seconds - elapsed
-            if remaining > 0:
-                self._sleep(remaining)
-        self._last_request_at = self._monotonic()
-        self.request_count += 1
-        try:
-            full_url = f"{str(self.client.base_url).rstrip('/')}/{path.lstrip('/')}"
-            resp = self.client.get(path, params=params, headers=tagged(full_url))
-        except Exception as exc:
-            return None, None, f"{type(exc).__name__}: {exc}"
-        if resp.status_code != 200:
-            return resp.status_code, None, f"HTTP {resp.status_code} on {path}"
-        try:
-            return resp.status_code, resp.json(), None
-        except Exception as exc:
-            return resp.status_code, None, f"JSONDecodeError on {path}: {exc}"
+        last_result: tuple[int | None, Any | None, str | None] = (None, None, "no attempts")
+        attempts = max(0, int(retries)) + 1
+        for _ in range(attempts):
+            if self._last_request_at is not None and self.pace_seconds > 0:
+                elapsed = self._monotonic() - self._last_request_at
+                remaining = self.pace_seconds - elapsed
+                if remaining > 0:
+                    self._sleep(remaining)
+            self._last_request_at = self._monotonic()
+            self.request_count += 1
+            try:
+                full_url = f"{str(self.client.base_url).rstrip('/')}/{path.lstrip('/')}"
+                extra: dict[str, Any] = {}
+                if timeout is not None:
+                    extra["timeout"] = timeout
+                resp = self.client.get(path, params=params, headers=tagged(full_url), **extra)
+            except Exception as exc:
+                last_result = (None, None, f"{type(exc).__name__}: {exc}")
+                continue
+            if resp.status_code != 200:
+                last_result = (resp.status_code, None, f"HTTP {resp.status_code} on {path}")
+                continue
+            try:
+                return resp.status_code, resp.json(), None
+            except Exception as exc:
+                last_result = (resp.status_code, None, f"JSONDecodeError on {path}: {exc}")
+        return last_result
 
 
 def effective_pace_seconds(base_url: str, requested_pace: float) -> float:
@@ -437,7 +448,13 @@ def run_standing_scores(
             ) if isinstance(health_body, dict) else None
 
         # 2. Live + upcoming window (/api/events?days=3&limit=500) for Item 4 parity
-        st, ev_body, err = paced.get_json("/api/events", params={"days": 3, "limit": 500})
+        # Unfiltered /api/events can take >20s when cold, so give it 45s + 1 retry.
+        st, ev_body, err = paced.get_json(
+            "/api/events",
+            params={"days": 3, "limit": 500},
+            timeout=45.0,
+            retries=1,
+        )
         if err or not isinstance(ev_body, dict):
             http_errors.append({"path": "/api/events", "status": st, "error": err or "non-dict payload"})
             all_events: list[dict[str, Any]] = []
@@ -452,6 +469,8 @@ def run_standing_scores(
             st_s, sched_body, err_s = paced.get_json(
                 "/api/events",
                 params={"status": "scheduled", "days": 14, "past_days": 0, "limit": 500, "offset": offset},
+                timeout=45.0,
+                retries=1,
             )
             if err_s or not isinstance(sched_body, dict):
                 http_errors.append(
@@ -616,7 +635,10 @@ def run_standing_scores(
                     d["field"] == "headline_percent" or str(d["field"]).startswith("source.")
                     for d in card_diffs
                 )
-                if is_live_detail and prob_only:
+                if prob_only:
+                    # Back-to-back re-read on ALL games (scheduled and live) so
+                    # ordinary line movement between list read and page read is not
+                    # filed as a disagreement.
                     re_card = _refetch_surface_card(eid, surface, detail_sport or str(card.get("sport") or ""))
                     _, re_detail, re_err = paced.get_json(path)
                     if (
@@ -634,6 +656,7 @@ def run_standing_scores(
                                     "sport_key": detail_sport,
                                     "matchup": _matchup_label(detail),
                                     "surface": surface,
+                                    "is_live": is_live_detail,
                                     "initial_diffs": card_diffs,
                                 }
                             )
@@ -641,9 +664,34 @@ def run_standing_scores(
                         card_diffs = re_diffs
                 disagreements.extend(card_diffs)
 
-    status = "PASS"
-    if http_errors or disagreements or census["stale_over_threshold_count"] > 0 or games_verified == 0:
+    has_real_findings = bool(disagreements) or census["stale_over_threshold_count"] > 0
+    if has_real_findings or (games_verified == 0 and not http_errors):
         status = "FAIL"
+        parts: list[str] = []
+        if disagreements:
+            parts.append(f"{len(disagreements)} list-vs-page disagreement(s)")
+        if census["stale_over_threshold_count"] > 0:
+            parts.append(
+                f"{census['stale_over_threshold_count']} scheduled game(s) over "
+                f"{census['stale_threshold_hours']:.0f}h stale"
+            )
+        if games_verified == 0 and not http_errors:
+            parts.append("0 games verified")
+        if http_errors:
+            parts.append(f"{len(http_errors)} read(s) failed")
+        status_summary = "; ".join(parts) + f" across {games_verified} game(s) read."
+    elif http_errors:
+        status = "INCOMPLETE"
+        status_summary = (
+            f"{len(http_errors)} read(s) failed; no disagreement found in the "
+            f"{games_verified} game(s) read."
+        )
+    else:
+        status = "PASS"
+        status_summary = (
+            f"All {games_verified} game(s) agreed; 0 disagreements and 0 scheduled "
+            f"games over {census['stale_threshold_hours']:.0f}h stale."
+        )
 
     return {
         "schema_version": 1,
@@ -654,6 +702,7 @@ def run_standing_scores(
         "pace_seconds": pace,
         "requests_made": paced.request_count,
         "overall_status": status,
+        "status_summary": status_summary,
         "list_vs_page": {
             "games_selected": len(selected_games),
             "games_verified": games_verified,
@@ -677,6 +726,11 @@ def render_markdown_report(result: dict[str, Any]) -> str:
         f"# Nightly Standing Scores — {result['date']}",
         "",
         f"- **Status:** `{result['overall_status']}`",
+        *(
+            [f"- **Summary:** {result['status_summary']}"]
+            if result.get("status_summary")
+            else []
+        ),
         f"- **Live Commit:** `{result['live_commit'] or 'unknown'}`",
         f"- **Generated (UTC):** `{result['generated_at']}`",
         f"- **Games Checked:** `{lvp['games_verified']}/{lvp['games_selected']}` across `{len(lvp['sports_covered'])}` sport(s)",
@@ -779,8 +833,11 @@ def main(argv: list[str] | None = None) -> int:
         f"errors={result['http_errors_count']} "
         f"artifacts=[{dated_json}, {latest_json}, {dated_md}]"
     )
-    if args.fail_on_findings and result["overall_status"] != "PASS":
-        return 1
+    if args.fail_on_findings:
+        if result["overall_status"] == "FAIL":
+            return 1
+        if result["overall_status"] == "INCOMPLETE":
+            return 2
     return 0
 
 

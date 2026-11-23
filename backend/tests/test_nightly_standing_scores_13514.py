@@ -15,6 +15,7 @@ from scripts.nightly_standing_scores import (
     MIN_LIVE_PACE_SECONDS,
     compute_stale_sportsbook_census,
     effective_pace_seconds,
+    main as cli_main,
     render_markdown_report,
     run_standing_scores,
     select_audit_games,
@@ -222,11 +223,15 @@ def test_workflow_contract_valid_and_read_only():
     on_block = wf.get("on", wf.get(True))
     assert "schedule" in on_block
     assert "workflow_dispatch" in on_block
-    assert wf["permissions"] == {"contents": "read"}
+    assert wf["permissions"] == {"contents": "write", "issues": "write"}
     raw = wf_path.read_text(encoding="utf-8")
     assert "actions/upload-artifact@v4" in raw
     assert "GITHUB_STEP_SUMMARY" in raw
     assert "ci-nightly-standing-scores" in raw
+    assert "standing-scores-data" in raw
+    assert "[skip ci]" in raw
+    assert "overall_status == 'FAIL'" in raw
+    assert "Nightly standing scores: open list/page or stale-odds findings" in raw
 
 
 def test_live_game_price_tick_reverified_equal_is_not_flagged_as_disagreement():
@@ -290,3 +295,158 @@ def test_live_game_persistent_mismatch_still_fails():
     assert result["overall_status"] == "FAIL"
     assert result["list_vs_page"]["disagreements_count"] >= 1
     assert result["list_vs_page"]["live_tick_drifts_count"] == 0
+
+
+def test_scheduled_game_movement_reverified_equal_is_not_flagged():
+    ev_64 = _event_payload(501, sport="basketball_nba", status="scheduled", hours_from_now=4.0, hero=0.64, books=8)
+    ev_63 = _event_payload(501, sport="basketball_nba", status="scheduled", hours_from_now=4.0, hero=0.63, books=8)
+    calls: dict[str, int] = {"events": 0}
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/api/health":
+            return httpx.Response(200, json={"status": "ok", "commit": "e1364d7d"})
+        if path == "/api/events":
+            qs = parse_qs(
+                request.url.query.decode()
+                if isinstance(request.url.query, bytes)
+                else str(request.url.query)
+            )
+            if (qs.get("status") or [None])[0] == "scheduled":
+                return httpx.Response(200, json={"events": [ev_64 if calls["events"] <= 1 else ev_63]})
+            calls["events"] += 1
+            return httpx.Response(200, json={"events": [ev_64 if calls["events"] == 1 else ev_63]})
+        if path == "/api/feed":
+            return httpx.Response(200, json={"items": []})
+        if path.startswith("/api/leagues/"):
+            return httpx.Response(200, json={"upcoming_games": []})
+        if path == "/api/events/search":
+            return httpx.Response(200, json={"results": []})
+        if path == "/api/events/501":
+            return httpx.Response(200, json=ev_63)
+        return httpx.Response(404)
+
+    result = run_standing_scores(
+        base_url="http://test",
+        pace_seconds=0.0,
+        run_date="2026-11-23",
+        transport=httpx.MockTransport(_handler),
+        now_fn=lambda: NOW,
+        sleep_fn=lambda _: None,
+    )
+    assert result["overall_status"] == "PASS"
+    assert result["list_vs_page"]["disagreements_count"] == 0
+    assert result["list_vs_page"]["live_tick_drifts_count"] == 1
+    assert result["list_vs_page"]["live_tick_drifts"][0]["is_live"] is False
+
+
+def test_scheduled_game_persistent_mismatch_still_fails():
+    ev_64 = _event_payload(502, sport="basketball_nba", status="scheduled", hours_from_now=4.0, hero=0.64, books=8)
+    ev_61 = _event_payload(502, sport="basketball_nba", status="scheduled", hours_from_now=4.0, hero=0.61, books=8)
+    transport = _mock_transport(list_events=[ev_64], details_by_id={502: ev_61})
+    result = run_standing_scores(
+        base_url="http://test",
+        pace_seconds=0.0,
+        run_date="2026-11-23",
+        transport=transport,
+        now_fn=lambda: NOW,
+        sleep_fn=lambda _: None,
+    )
+    assert result["overall_status"] == "FAIL"
+    assert {d["field"] for d in result["list_vs_page"]["disagreements"]} == {
+        "headline_percent",
+        "source.betting",
+    }
+    assert result["list_vs_page"]["live_tick_drifts_count"] == 0
+
+
+def test_read_errors_without_disagreement_are_incomplete_not_fail(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    good1 = _event_payload(601, sport="basketball_nba", home="Celtics", away="Heat", hero=0.62, books=8)
+    good2 = _event_payload(602, sport="basketball_nba", home="Knicks", away="Nets", hero=0.55, books=8)
+    bad = _event_payload(603, sport="basketball_nba", home="Lakers", away="Suns", hero=0.58, books=8)
+    events_calls = 0
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        nonlocal events_calls
+        path = request.url.path
+        if path == "/api/health":
+            return httpx.Response(200, json={"status": "ok", "commit": "e1364d7d"})
+        if path == "/api/events":
+            qs = parse_qs(
+                request.url.query.decode()
+                if isinstance(request.url.query, bytes)
+                else str(request.url.query)
+            )
+            if (qs.get("status") or [None])[0] == "scheduled":
+                return httpx.Response(200, json={"events": [good1, good2, bad]})
+            events_calls += 1
+            if events_calls == 1:
+                raise httpx.ReadTimeout("timed out once")
+            return httpx.Response(200, json={"events": [good1, good2, bad]})
+        if path == "/api/feed":
+            return httpx.Response(200, json={"items": []})
+        if path.startswith("/api/leagues/"):
+            return httpx.Response(503, json={"detail": "busy"})
+        if path == "/api/events/search":
+            return httpx.Response(200, json={"results": []})
+        if path == "/api/events/601":
+            return httpx.Response(200, json=good1)
+        if path == "/api/events/602":
+            return httpx.Response(200, json=good2)
+        if path == "/api/events/603":
+            return httpx.Response(502, json={"detail": "bad gateway"})
+        return httpx.Response(404)
+
+    result = run_standing_scores(
+        base_url="http://test",
+        pace_seconds=0.0,
+        run_date="2026-11-23",
+        transport=httpx.MockTransport(_handler),
+        now_fn=lambda: NOW,
+        sleep_fn=lambda _: None,
+    )
+    assert events_calls == 2  # initial /api/events timeout retried once and recovered
+    assert result["overall_status"] == "INCOMPLETE"
+    assert result["list_vs_page"]["games_verified"] == 2
+    assert result["http_errors_count"] == 2  # league + 603; transient /api/events timeout recovered
+    assert "2 read(s) failed; no disagreement found in the 2 game(s) read." == result["status_summary"]
+    assert "no disagreement found in the 2 game(s) read" in render_markdown_report(result)
+
+    monkeypatch.setattr("scripts.nightly_standing_scores.run_standing_scores", lambda **_: result)
+    rc = cli_main(["--date", "2026-11-23", "--out-dir", str(tmp_path), "--fail-on-findings"])
+    assert rc == 2
+
+
+def test_read_errors_with_real_disagreement_remain_fail(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    card = _event_payload(701, sport="basketball_nba", hero=0.64, books=8)
+    detail = _event_payload(701, sport="basketball_nba", hero=0.69, books=10)
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/api/health":
+            return httpx.Response(200, json={"status": "ok"})
+        if path == "/api/events":
+            return httpx.Response(200, json={"events": [card]})
+        if path == "/api/feed":
+            return httpx.Response(503)
+        if path.startswith("/api/leagues/"):
+            return httpx.Response(200, json={"upcoming_games": []})
+        if path == "/api/events/search":
+            return httpx.Response(200, json={"results": []})
+        if path == "/api/events/701":
+            return httpx.Response(200, json=detail)
+        return httpx.Response(404)
+
+    result = run_standing_scores(
+        base_url="http://test",
+        pace_seconds=0.0,
+        run_date="2026-11-23",
+        transport=httpx.MockTransport(_handler),
+        now_fn=lambda: NOW,
+        sleep_fn=lambda _: None,
+    )
+    assert result["overall_status"] == "FAIL"
+    assert result["http_errors_count"] == 1
+    assert result["list_vs_page"]["disagreements_count"] >= 1
+    monkeypatch.setattr("scripts.nightly_standing_scores.run_standing_scores", lambda **_: result)
+    assert cli_main(["--date", "2026-11-23", "--out-dir", str(tmp_path), "--fail-on-findings"]) == 1
