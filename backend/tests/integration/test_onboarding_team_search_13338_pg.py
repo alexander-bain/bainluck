@@ -327,7 +327,7 @@ async def client(sessions):
 
 
 async def test_issue_and_additional_onboarding_queries_return_real_clubs(
-    warmed_sessions,
+    warmed_sessions, client, writer,
 ):
     sessions = warmed_sessions
     async with sessions() as db:
@@ -353,8 +353,6 @@ async def test_issue_and_additional_onboarding_queries_return_real_clubs(
         }
         assert await search_teams("Benjamin Torrealba", db) == []
 
-
-async def test_boston_onboarding_and_real_madrid_use_the_reader_routes(client, sessions, cache, writer):
     clubs = (
         (1210, "Boston Bruins", "icehockey_nhl", "Boston"),
         (1211, "Boston Bruins", "icehockey_nhl", "Boston"),

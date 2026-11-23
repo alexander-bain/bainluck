@@ -851,7 +851,7 @@ def _onboarding_name_candidates(
         # first word of another club's name. Keep exact matches ahead of it.
         location_length = func.length(Team.location)
         after_location = and_(
-            func.left(func.lower(Team.name), location_length + 1)
+            func.substr(func.lower(Team.name), 1, location_length + 1)
             == func.lower(Team.location) + " ",
             func.substr(Team.name, location_length + 2).regexp_match(rf"(?i)^{words[0]}"),
         )
