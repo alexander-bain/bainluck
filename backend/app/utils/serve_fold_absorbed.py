@@ -427,7 +427,11 @@ def _keep_page_survivor(
                 oriented_bag = raw_surv_sources
             if oriented_bag:
                 kept_own = getattr(kept_ev, "win_probability_sources", None)
-                combined = merge_probability_sources(kept_own, [(sid, oriented_bag)])
+                combined = merge_probability_sources(
+                    kept_own,
+                    [(sid, oriented_bag)],
+                    event_status=getattr(kept_ev, "status", None),
+                )
                 if combined != dict(kept_own or {}):
                     merged_sources[kept_ev.id] = combined
 

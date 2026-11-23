@@ -159,6 +159,7 @@ from datetime import timedelta
 from functools import lru_cache
 from typing import Any, Iterable, Optional
 
+from app.utils.aggregation import parse_source_entry
 from app.utils.kalshi_occurrence_start import (
     _is_orm_instance,
     loaded_sport_key,
@@ -166,8 +167,10 @@ from app.utils.kalshi_occurrence_start import (
 )
 from app.utils.name_normalization import nation_spelling, strip_diacritics
 from app.utils.proven_duplicates import (
+    apply_scheduled_stale_betting_override,
     flip_probability_sources,
     merge_opening_line,
+    sync_twin_betting_book_count,
 )
 from app.utils.search_fixture_dedup import FIXTURE_TIME_WINDOW_HOURS
 from app.utils.soccer_team_matching import club_alias_tokens, soccer_pair_matches
@@ -3803,19 +3806,41 @@ def _elect(
             result.flipped_loser_ids.add(loser.id)
 
     merged = dict(getattr(survivor, "win_probability_sources", None) or {})
-    added = False
-    for loser in losers:
+    original_snapshot = dict(merged)
+    loser_source_rows: list[tuple[int, dict | None]] = []
+    for idx, loser in enumerate(losers):
         flip = flips.get(id(loser))
         loser_sources = (
             flip.sources
             if flip is not None
             else getattr(loser, "win_probability_sources", None)
         )
+        loser_id = getattr(loser, "id", None)
+        row_id = loser_id if isinstance(loser_id, int) else (10_000_000 + idx)
+        loser_source_rows.append((row_id, loser_sources))
         for name, reading in (loser_sources or {}).items():
+            if name == "betting_book_count":
+                continue
+            if name == "betting":
+                if (
+                    ("betting" not in merged and reading is not None)
+                    or (
+                        parse_source_entry(merged.get("betting"))[0] is None
+                        and parse_source_entry(reading)[0] is not None
+                    )
+                ):
+                    merged["betting"] = reading
+                    sync_twin_betting_book_count(merged, loser_sources)
+                continue
             if name not in merged:
                 merged[name] = reading
-                added = True
-    if added:
+
+    apply_scheduled_stale_betting_override(
+        merged,
+        sorted(loser_source_rows, key=lambda row: row[0]),
+        event_status=getattr(survivor, "status", None),
+    )
+    if merged != original_snapshot:
         result.merged_sources[survivor.id] = merged
 
     _carry_opening_line(survivor, losers, result, flips)
