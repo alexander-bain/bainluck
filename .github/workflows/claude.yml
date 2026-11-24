@@ -1,9 +1,9 @@
 name: Claude Code
 
-# Stopped automatic comment/issue triggers: ~40,000+ runs triggered on comments/issues
-# and skipped (0 successes; 5 recent failures when "@claude" appeared incidentally in text),
-# plus queued workflow objects holding runner/queue slots during merge bursts.
-# Keep manual workflow_dispatch only until/unless an interactive @claude bot is needed.
+# Stopped automatic comment/issue triggers per Alex ruling 381: A (#12538):
+# measured 2026-11-24 at 977 skipped and 6 failed in the last 24 hours, 16 waiting,
+# and no successful run ever — queuing runs on incidental comments/mentions without
+# adding value. Keep manual workflow_dispatch only until/unless an interactive bot is needed.
 on:
   workflow_dispatch:
 

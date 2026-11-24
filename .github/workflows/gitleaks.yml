@@ -16,7 +16,6 @@ name: gitleaks
 
 on:
   push:
-    branches: [master]
   pull_request:
   schedule:
     - cron: "0 8 * * 1"   # weekly full-history sweep, Monday 08:00 UTC

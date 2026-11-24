@@ -570,6 +570,7 @@ class TestNativeInactivePreparation:
         workflow = (REPO / ".github/workflows/ci.yml").read_text()
         assert "full|frontend) ;;" in workflow and "            native)\n" in workflow
         assert 'compose push runs are always full"; SCOPE=full' in workflow
+        assert 'unresolved deploy base — defaulting to full"; SCOPE=full' in workflow
         assert "native test set failed or empty — defaulting to full\"; SCOPE=full" in workflow
         assert "unparseable scope" in workflow and "SCOPE=full ;;" in workflow
 

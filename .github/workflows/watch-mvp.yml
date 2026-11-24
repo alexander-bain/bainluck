@@ -4,7 +4,6 @@ name: Watch MVP
 # This is scoped verification for #4932, not an iPhone release prerequisite.
 on:
   pull_request:
-    types: [opened, synchronize, reopened]
     paths:
       - 'ios/Bain Luck/BainLuckWatch Watch App/**'
       - 'ios/Bain Luck/Bain Luck/Models/PredictionModels.swift'

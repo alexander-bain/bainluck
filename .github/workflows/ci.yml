@@ -105,6 +105,7 @@ jobs:
         id: decide
         run: |
           set -uo pipefail
+          BASE_RESOLVED=1
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             # The MERGE BASE, not the base branch tip. A two-dot diff against a
             # base that has moved reports master's own advances as part of this
@@ -125,10 +126,18 @@ jobs:
             # PUSH, not the last thing that reached a dyno, so a delta whose own
             # run never deployed is never reclassified by anybody. The resolver
             # is always an ancestor of the fallback, so the range can only widen.
-            BASE="$(bash .github/scripts/ci-deploy-base.sh \
-                      '${{ github.event.before }}' "$HEAD" \
-                     || echo '${{ github.event.before }}')"
-            [ -n "$BASE" ] || BASE='${{ github.event.before }}'
+            _base_err="$(mktemp)"
+            if BASE="$(bash .github/scripts/ci-deploy-base.sh \
+                      '${{ github.event.before }}' "$HEAD" 2>"$_base_err")" \
+               && [ -n "$BASE" ] \
+               && grep -qE "production (already )?serves " "$_base_err"; then
+              BASE_RESOLVED=1
+            else
+              BASE_RESOLVED=0
+              [ -n "$BASE" ] || BASE='${{ github.event.before }}'
+            fi
+            cat "$_base_err" >&2 || true
+            rm -f "$_base_err"
           fi
           # `|| echo full` is the last fail-safe: if the script cannot run at
           # all, we run everything.
@@ -137,10 +146,13 @@ jobs:
           case "$SCOPE" in
             full|frontend) ;;
             native)
-              # #10708 (Alex 77: A) + Release runs: PRs and pure-ios/ master
-              # pushes use native backend readers; compose pushes stay full.
+              # #10708 + Alex ruling 381: A (widens 77: A, #12538): PRs
+              # and pure-ios/ master pushes with a resolved deploy base use native
+              # backend readers; compose pushes and unresolved bases stay full.
               if [ "${{ github.event_name }}" != "pull_request" ] && { [ "${{ github.event_name }}" != "push" ] || [ "${GITHUB_REF:-}" != "refs/heads/master" ]; }; then
                 echo "native scope on non-master push — compose push runs are always full"; SCOPE=full
+              elif [ "${{ github.event_name }}" = "push" ] && [ "${BASE_RESOLVED:-0}" != "1" ]; then
+                echo "native scope on master push with unresolved deploy base — defaulting to full"; SCOPE=full
               else
                 # The roster ∪ every backend test that names a native path. A
                 # refusal or an empty set falls back to full, never a partial list.
