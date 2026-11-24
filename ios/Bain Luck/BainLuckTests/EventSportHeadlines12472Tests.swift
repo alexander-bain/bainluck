@@ -490,16 +490,16 @@ final class EventSportHeadlines12472Tests: XCTestCase {
         let nflHost = hostForMeasurement(nflCard, at: .large)
         let nflSize = nflHost.sizeThatFits(in: CGSize(width: 358, height: 1000))
         XCTAssertLessThanOrEqual(nflSize.width, 358.5)
-        // #13620: Direction 199 (#12771, e624d422f5) set NFL pregame height to 185.0pt; 390x852 capture
-        // keeps the full Win Probability chart (367.7..704.3pt) and footer comfortably above the fold.
+        // #13620: Direction 199 (#12771, e624d422f5) set NFL pregame height to 185.0pt.
+        // Bottom of 852pt screen: prediction-markets footer ends at 841.3pt (10.7pt room).
         XCTAssertLessThanOrEqual(nflSize.height, 192, "NFL pregame card height (\(nflSize.height)pt) keeps chart well above 852pt fold")
 
         let nbaHost = hostForMeasurement(nbaCard, at: .large)
         let nbaSize = nbaHost.sizeThatFits(in: CGSize(width: 358, height: 1000))
         XCTAssertLessThanOrEqual(nbaSize.width, 358.5)
-        // #13620: Direction 199 (#12771 -> 200.33pt) + cell-fit layout (#12837, 9003d3b0f8 -> 203.0pt);
-        // 390x852 capture keeps the full Win Probability chart (385.7..722.3pt) above the fold.
-        XCTAssertLessThanOrEqual(nbaSize.height, 210, "NBA live card height (\(nbaSize.height)pt) keeps chart well above 852pt fold")
+        // #13620: Direction 199 (#12771 -> 200.33pt) + cell-fit layout (#12837, 9003d3b0f8 -> 203.0pt).
+        // Bottom of 852pt screen: "Start Live Activity" row ends at 850.3pt (1.7pt room; bound 205 keeps it on-screen).
+        XCTAssertLessThanOrEqual(nbaSize.height, 205, "NBA live card height (\(nbaSize.height)pt) keeps chart well above 852pt fold")
 
         // Accessibility .accessibility2 width check (zero horizontal bleed)
         let nbaA11yHost = hostForMeasurement(nbaCard, at: .accessibility2)
