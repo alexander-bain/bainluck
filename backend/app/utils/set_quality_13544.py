@@ -558,7 +558,7 @@ def check_scout_no_repeated_rows(members: Sequence[Any]) -> Optional[str]:
             shorter_len = min(len(set_a), len(set_b))
             if (
                 shorter_len >= 2
-                and (set_a <= set_b or set_b <= set_a)
+                and (set_a.issubset(set_b) or set_b.issubset(set_a))
                 and diff
                 and diff <= _RESTATEMENT_FILLER_TOKENS
                 and len(inter) / max(1, len(union)) >= 0.50
