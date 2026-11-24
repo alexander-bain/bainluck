@@ -2495,7 +2495,7 @@ jobs:
       if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
       env:
         CALIBRATION_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/bl_cal12612
-      run: bash ../.github/scripts/run-12612-pg-gates.sh cal tests/test_calibration_examples_canonical_262.py tests/test_calibration_canonical_pg.py tests/test_calibration_horizon_honest_263.py
+      run: bash ../.github/scripts/run-12612-pg-gates.sh cal tests/test_calibration_examples_canonical_262.py tests/test_calibration_canonical_pg.py tests/test_calibration_horizon_honest_263.py tests/test_time_horizon_bounded_chunks.py
 
     - name: "#12252 shared tail \u2014 upload this attempt's 55-A retries for the flake sentinel"
       id: db_flaky_retries_upload
