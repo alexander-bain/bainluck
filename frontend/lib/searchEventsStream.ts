@@ -32,6 +32,8 @@ import type { CurrentOdds, Event, FeedEventData } from '@/lib/types';
 import type { DiscoverPriceCards } from '@/lib/discover/priceRefresh';
 import { compareFoldRevision, parseFoldRevision, type FoldRevision } from '@/lib/foldRevision';
 import { isFinishedStatus } from '@/lib/eventState';
+import { displayedPreview, type BlendPreviewState } from '@/lib/blendPreview';
+import { sportPricesADraw } from '@/lib/drawPricedWinner';
 
 const PRICED_STATUSES = new Set(['scheduled', 'live']);
 
@@ -179,4 +181,57 @@ export function patchSearchEvent(event: Event, book: SearchEventBook): Event {
     }
   }
   return changed ? next : event;
+}
+
+/**
+ * #10090: overlay a provisional `authority-v3` blend preview onto a Search game card.
+ * Respects finished immutability (#12506) and refuses to fabricate `1 - p` away
+ * values on three-way / draw-priced matches (#13509 / #6238).
+ */
+export function overlaySearchEventPreview(
+  event: Event,
+  state: BlendPreviewState | null | undefined,
+  now: number,
+  held?: HeldGame | null,
+): Event {
+  if (!state || held?.final || isFinishedStatus(event.status) || !searchEventStreamable(event)) {
+    return event;
+  }
+  const eventMeta = event as Event & {
+    blend_fold_revision?: unknown;
+    hero_probability_source?: string | null;
+  };
+  const p = displayedPreview(
+    state,
+    {
+      id: event.id,
+      status: held?.status ?? event.status,
+      hero_probability_source: held?.heroSource ?? eventMeta.hero_probability_source ?? null,
+      blend_fold_revision: held?.revision ?? eventMeta.blend_fold_revision,
+      sport: event.sport,
+    },
+    now,
+  );
+  if (p === null) return event;
+
+  const drawProb = (event.current_odds as { draw_probability?: number | null } | undefined)?.draw_probability;
+  const hasDraw = sportPricesADraw(event.sport) || drawProb != null;
+  if (hasDraw && state.pAway == null) return event;
+
+  const away = state.pAway != null ? state.pAway : 1 - p;
+  const next: Event = {
+    ...event,
+    hero_probability: p,
+    hero_probability_away: away,
+  };
+  if (event.current_odds) {
+    next.current_odds = {
+      ...event.current_odds,
+      home_probability: p,
+      away_probability: away,
+      home_rendered_percent: null,
+      away_rendered_percent: null,
+    } as CurrentOdds;
+  }
+  return next;
 }
