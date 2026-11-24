@@ -145,6 +145,18 @@ final class FirstRunChecklist364ATests: XCTestCase {
               }
             },
             {
+              "type": "futures",
+              "score": 83,
+              "data": {
+                "id": 57792807,
+                "name": "NCAA Football: 2026 Heisman Award Winner",
+                "sport": "americanfootball_ncaaf",
+                "llm_sport_category": "sports",
+                "status": "open",
+                "top_outcomes": [{"id": 9, "name": "Jeremiah Smith", "probability": 0.82, "rendered_percent": 82, "rank": 1}]
+              }
+            },
+            {
               "type": "bundle",
               "score": 83,
               "data": {
@@ -274,6 +286,29 @@ final class FirstRunChecklist364ATests: XCTestCase {
               "type": "bundle",
               "score": 80,
               "data": {
+                "id": "theme:story:middle_east_conflict:10228658",
+                "title": "Middle East Conflict",
+                "kind": "theme",
+                "items": [
+                  {
+                    "type": "futures",
+                    "score": 80,
+                    "data": {
+                      "id": 10228658,
+                      "name": "Prime Minister of Israel after the 2026 election?",
+                      "sport": null,
+                      "llm_sport_category": "politics",
+                      "status": "open",
+                      "top_outcomes": [{"id": 21, "name": "Gadi Eizenkot", "probability": 0.50, "rendered_percent": 50, "rank": 1}]
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "bundle",
+              "score": 80,
+              "data": {
                 "id": "b-over95",
                 "title": "Bad Bunny at 97%",
                 "kind": "roundup",
@@ -333,11 +368,13 @@ final class FirstRunChecklist364ATests: XCTestCase {
         state.followedCount = 1
         state.completedRows.insert(.follow)
         XCTAssertTrue(state.isSyncLitUp, "Row 4 must light up once reader follows or picks something")
+        XCTAssertEqual(state.savedCount, 1)
         XCTAssertEqual(state.progressText, "1 of 5 done")
 
         var setOnlyState = FirstRunChecklistState364A.untouched
         setOnlyState.selectedSetSlugs.insert("machinery-oscars-best-picture")
         XCTAssertTrue(setOnlyState.isSyncLitUp)
+        XCTAssertEqual(setOnlyState.savedCount, 1)
 
         state.dismissedFromMyStuff = true
         XCTAssertFalse(state.showsInMyStuff)
@@ -350,6 +387,13 @@ final class FirstRunChecklist364ATests: XCTestCase {
 
         XCTAssertEqual(content.lookupExamples.count, 3)
         XCTAssertEqual(content.lookupExamples.map(\.kind), [.game, .award, .election])
+        let awardExample = try XCTUnwrap(content.lookupExamples.first { $0.kind == .award })
+        XCTAssertEqual(awardExample.id, "lookup-award-6173044", "Non-sports award (Oscars) preferred and concisely titled")
+        XCTAssertEqual(awardExample.title, "Oscars: Best Picture")
+        let electionExample = try XCTUnwrap(content.lookupExamples.first { $0.kind == .election })
+        XCTAssertEqual(electionExample.id, "lookup-election-113364", "Conflict bundles must never supply Row 1 election example")
+        XCTAssertEqual(electionExample.title, "French Election")
+        XCTAssertNil(content.syncRowPreview?.imageUrl, "Row 4 starts without an unrelated teaser thumbnail before any pick")
         for ex in content.lookupExamples {
             XCTAssertTrue((5...95).contains(ex.percent), "Out-of-bounds % on lookup example \(ex)")
         }
@@ -438,13 +482,33 @@ final class FirstRunChecklist364ATests: XCTestCase {
             : [(.light, "light"), (.dark, "dark")]
 
         let liveEventSample = feedItems.compactMap(\.event).first(where: { $0.id == 15353145 }) ?? feedItems.compactMap(\.event).first
-        let fallbackOscars = try decoder.decode(SearchResponse.self, from: Data(#"{"query":"Oscars","teams":[],"event_concepts":[],"results":[],"futures_families":[{"family_key":"story:oscars","label":"Oscars","headline":{"id":6173044,"name":"Oscar Winner: Best Picture","llm_sport_category":"entertainment","category":"entertainment","status":"open"}}],"futures":[]}"#.utf8))
-        let oscarsResp = loadFixture("search_oscars.json").flatMap { try? decoder.decode(SearchResponse.self, from: $0) } ?? fallbackOscars
+        let fallbackSearchJSON = #"{"query":"Oscars","teams":[],"event_concepts":[],"results":[],"futures_families":[{"family_key":"story:oscars","label":"Oscars","headline":{"id":6173044,"name":"Oscar Winner: Best Picture","llm_sport_category":"entertainment","category":"entertainment","status":"open"},"members":[]},{"family_key":"story:macro_rates","label":"Fed & Rates","headline":{"id":57574250,"name":"Fed & Rates","llm_sport_category":"economics","category":"economics","status":"open"},"members":[]}],"futures":[]}"#
+        let fallbackSearch = try decoder.decode(SearchResponse.self, from: Data(fallbackSearchJSON.utf8))
+        let mergedSearchResp: SearchResponse = {
+            if let dO = loadFixture("search_oscars.json"),
+               let dI = loadFixture("search_inflation.json"),
+               var objO = (try? JSONSerialization.jsonObject(with: dO)) as? [String: Any],
+               let objI = (try? JSONSerialization.jsonObject(with: dI)) as? [String: Any] {
+                let famO = (objO["futures_families"] as? [Any]) ?? []
+                let famI = (objI["futures_families"] as? [Any]) ?? []
+                let futO = (objO["futures"] as? [Any]) ?? []
+                let futI = (objI["futures"] as? [Any]) ?? []
+                objO["futures_families"] = famO + famI
+                objO["futures"] = futO + futI
+                if let merged = try? JSONSerialization.data(withJSONObject: objO),
+                   let decoded = try? decoder.decode(SearchResponse.self, from: merged) {
+                    return decoded
+                }
+            }
+            return loadFixture("search_oscars.json").flatMap { try? decoder.decode(SearchResponse.self, from: $0) } ?? fallbackSearch
+        }()
         let emptyResp = try decoder.decode(SearchResponse.self, from: Data(#"{"query":"","teams":[],"event_concepts":[],"results":[],"futures":[]}"#.utf8))
         let emptyFeedResp = try decoder.decode(FeedResponse.self, from: Data(#"{"items":[],"total":0,"limit":12,"offset":0,"has_more":false}"#.utf8))
 
-        let fallbackBrown = try decoder.decode([TeamSearchResult].self, from: Data(#"[{"id":2392,"name":"Brown Bears","location":"Providence","sport_key":"basketball_ncaab","logo_url":null,"abbreviation":"BRWN","sports":[]}]"#.utf8))
-        let brownTeams = loadFixture("teams_brown.json").flatMap { try? decoder.decode([TeamSearchResult].self, from: $0) } ?? fallbackBrown
+        let fallbackBoston = try decoder.decode([TeamSearchResult].self, from: Data(#"[{"id":100,"name":"Boston Celtics","location":"Boston","sport_key":"basketball_nba","logo_url":null,"abbreviation":"BOS","sports":[]}]"#.utf8))
+        let bostonOrBrownTeams = loadFixture("teams_boston.json").flatMap { try? decoder.decode([TeamSearchResult].self, from: $0) }
+            ?? loadFixture("teams_brown.json").flatMap { try? decoder.decode([TeamSearchResult].self, from: $0) }
+            ?? fallbackBoston
         _ = emptyResp
 
         for width in widthsToRender {
@@ -579,8 +643,8 @@ final class FirstRunChecklist364ATests: XCTestCase {
                     defaults: defFollow,
                     debounceNs: 0,
                     searchLocationTeams: { _ in [] },
-                    searchTeamsByName: { _ in brownTeams },
-                    searchGlobal: { _ in oscarsResp },
+                    searchTeamsByName: { _ in bostonOrBrownTeams },
+                    searchGlobal: { _ in mergedSearchResp },
                     sentenceParser: { s in try await FirstRunSentenceSampleProvider359A.parseSampleSentence(s) }
                 )
                 followVM.searchQuery = "Boston Celtics, Oscars, Spurs, and inflation"
@@ -611,7 +675,7 @@ final class FirstRunChecklist364ATests: XCTestCase {
                     exportDir: exportDir,
                     preloaded: preloaded,
                     width: width,
-                    height: 844,
+                    height: 1560,
                     colorScheme: scheme
                 )
 
@@ -627,8 +691,10 @@ final class FirstRunChecklist364ATests: XCTestCase {
                 )
 
                 // 09: Row 5 step (Get a heads-up)
+                let previewMover = content.startWithTonight.first(where: { $0.slotLabel == "Biggest mover" })
+                    ?? content.startWithTonight.first
                 _ = try await renderAndOCR(
-                    view: FirstRunAlertsStepView364A(),
+                    view: FirstRunAlertsStepView364A(previewMover: previewMover),
                     filename: "364a-09-row5-alerts-\(sTag)-\(wTag).png",
                     exportDir: exportDir,
                     preloaded: preloaded,

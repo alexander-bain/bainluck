@@ -84,18 +84,18 @@ struct FirstRunChecklistView364A: View {
         VStack(spacing: 0) {
             topBar
                 .padding(.horizontal, 16)
-                .padding(.top, 10)
-                .padding(.bottom, 8)
+                .padding(.top, 8)
+                .padding(.bottom, 4)
 
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                VStack(alignment: .leading, spacing: 11) {
                     headerBlock
                     rowsCard
                     startWithTonightBlock
                 }
                 .padding(.horizontal, 16)
-                .padding(.top, 4)
-                .padding(.bottom, 24)
+                .padding(.top, 2)
+                .padding(.bottom, 14)
                 .frame(maxWidth: 680)
                 .frame(maxWidth: .infinity)
             }
@@ -162,35 +162,47 @@ struct FirstRunChecklistView364A: View {
     }
 
     private var rowsCard: some View {
-        VStack(spacing: 0) {
+        let syncLit = state.isSyncLitUp
+        let syncPreview = FirstRunChecklistRowPreview364A(
+            subtitle: syncLit ? "Sign in to sync across devices" : "Follow or pick first",
+            percentText: nil,
+            imageUrl: syncLit ? (content.followRowPreview?.imageUrl ?? content.setsRowPreview?.imageUrl) : nil,
+            sfSymbol: "iphone.and.ipad",
+            accentHex: "#005CC2"
+        )
+        return VStack(spacing: 0) {
             lookUpRow
-            Divider().padding(.leading, 16)
+            Divider().padding(.leading, 14)
             standardRow(
                 row: .follow,
                 preview: content.followRowPreview,
                 lit: true,
-                mutedNote: nil
+                mutedNote: nil,
+                badgePillText: nil
             )
-            Divider().padding(.leading, 16)
+            Divider().padding(.leading, 14)
             standardRow(
                 row: .exploreSets,
                 preview: content.setsRowPreview,
                 lit: true,
-                mutedNote: nil
+                mutedNote: nil,
+                badgePillText: nil
             )
-            Divider().padding(.leading, 16)
+            Divider().padding(.leading, 14)
             standardRow(
                 row: .syncDevices,
-                preview: content.syncRowPreview,
-                lit: state.isSyncLitUp,
-                mutedNote: state.isSyncLitUp ? "Ready to sync" : "Follow or pick first"
+                preview: syncPreview,
+                lit: syncLit,
+                mutedNote: syncPreview.subtitle,
+                badgePillText: syncLit ? "\(max(1, state.savedCount)) saved" : nil
             )
-            Divider().padding(.leading, 16)
+            Divider().padding(.leading, 14)
             standardRow(
                 row: .alerts,
                 preview: content.alertsRowPreview,
                 lit: true,
-                mutedNote: nil
+                mutedNote: nil,
+                badgePillText: nil
             )
         }
         .background(DS.cardBg, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
@@ -203,18 +215,18 @@ struct FirstRunChecklistView364A: View {
     private var lookUpRow: some View {
         let isDone = state.completedRows.contains(.lookUp)
         let preview = content.lookupRowPreview
-        return VStack(alignment: .leading, spacing: 10) {
+        return VStack(alignment: .leading, spacing: 7) {
             Button {
                 onOpenRow(.lookUp)
             } label: {
-                HStack(spacing: 12) {
+                HStack(spacing: 10) {
                     ChecklistThumbnail364A(
                         urlString: preview?.imageUrl,
                         sfSymbol: preview?.sfSymbol ?? "magnifyingglass",
                         accentHex: preview?.accentHex ?? "#005CC2",
-                        size: 38
+                        size: 34
                     )
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 1) {
                         Text(FirstRunChecklistRowID364A.lookUp.title)
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(DS.textPrimary)
@@ -251,18 +263,18 @@ struct FirstRunChecklistView364A: View {
                     .foregroundStyle(DS.blueReadable)
             }
             .padding(.horizontal, 10)
-            .padding(.vertical, 8)
+            .padding(.vertical, 6)
             .background(DS.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
             .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(DS.border, lineWidth: 1))
             .onTapGesture { onOpenRow(.lookUp) }
 
             if !content.lookupExamples.isEmpty {
-                FirstRunPickedChipFlow212A(spacing: 6) {
+                FirstRunPickedChipFlow212A(spacing: 5) {
                     ForEach(content.lookupExamples.prefix(3)) { ex in
                         Button {
                             onTapLookupExample(ex)
                         } label: {
-                            HStack(spacing: 5) {
+                            HStack(spacing: 4) {
                                 Text(ex.title)
                                     .font(.caption.weight(.medium))
                                     .foregroundStyle(DS.textPrimary)
@@ -272,8 +284,8 @@ struct FirstRunChecklistView364A: View {
                                     .foregroundStyle(DS.blueReadable)
                                     .fixedSize(horizontal: true, vertical: false)
                             }
-                            .padding(.horizontal, 9)
-                            .padding(.vertical, 5)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
                             .background(DS.trackBg, in: Capsule())
                             .overlay(Capsule().stroke(DS.border, lineWidth: 1))
                         }
@@ -283,30 +295,32 @@ struct FirstRunChecklistView364A: View {
                 }
             }
         }
-        .padding(14)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
     }
 
     private func standardRow(
         row: FirstRunChecklistRowID364A,
         preview: FirstRunChecklistRowPreview364A?,
         lit: Bool,
-        mutedNote: String?
+        mutedNote: String?,
+        badgePillText: String?
     ) -> some View {
         let isDone = state.completedRows.contains(row)
         let isRowLit = lit || isDone
         return Button {
             onOpenRow(row)
         } label: {
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 ChecklistThumbnail364A(
                     urlString: preview?.imageUrl,
                     sfSymbol: preview?.sfSymbol ?? "checkmark",
                     accentHex: preview?.accentHex ?? "#005CC2",
-                    size: 38
+                    size: 34
                 )
-                .opacity(isRowLit ? 1.0 : 0.48)
+                .opacity(isRowLit ? 1.0 : 0.42)
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 1) {
                     Text(row.title)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(isRowLit ? DS.textPrimary : DS.textSecondaryReadable)
@@ -324,7 +338,15 @@ struct FirstRunChecklistView364A: View {
 
                 Spacer(minLength: 6)
 
-                if let pct = preview?.percentText {
+                if let badgePillText {
+                    Text(badgePillText)
+                        .font(.caption.weight(.bold).monospacedDigit())
+                        .foregroundStyle(DS.blueReadable)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(DS.blueReadable.opacity(colorScheme == .dark ? 0.18 : 0.10), in: Capsule())
+                        .fixedSize(horizontal: true, vertical: false)
+                } else if let pct = preview?.percentText {
                     Text(pct)
                         .font(.subheadline.weight(.bold).monospacedDigit())
                         .foregroundStyle(DS.textPrimary)
@@ -333,7 +355,8 @@ struct FirstRunChecklistView364A: View {
 
                 rowStatusIcon(isDone: isDone, enabled: isRowLit)
             }
-            .padding(14)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
             .frame(maxWidth: .infinity, alignment: .leading)
             .contentShape(Rectangle())
         }
@@ -355,25 +378,25 @@ struct FirstRunChecklistView364A: View {
     }
 
     private var startWithTonightBlock: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 6) {
             Text("Start with tonight")
-                .font(.headline.weight(.bold))
+                .font(.subheadline.weight(.bold))
                 .foregroundStyle(DS.textPrimary)
 
-            VStack(spacing: 8) {
+            VStack(spacing: 6) {
                 ForEach(content.startWithTonight) { card in
                     Button {
                         onSelectTonightCard(card)
                     } label: {
-                        HStack(spacing: 12) {
+                        HStack(spacing: 10) {
                             ChecklistThumbnail364A(
                                 urlString: card.imageUrl,
                                 sfSymbol: card.sfSymbol,
                                 accentHex: card.accentHex,
-                                size: 42
+                                size: 36
                             )
 
-                            VStack(alignment: .leading, spacing: 2) {
+                            VStack(alignment: .leading, spacing: 1) {
                                 HStack(spacing: 6) {
                                     Text(card.slotLabel.uppercased())
                                         .font(.caption2.weight(.bold))
@@ -399,15 +422,16 @@ struct FirstRunChecklistView364A: View {
                             Spacer(minLength: 8)
 
                             Text("\(card.percent)%")
-                                .font(.title3.weight(.heavy).monospacedDigit())
+                                .font(.headline.weight(.heavy).monospacedDigit())
                                 .foregroundStyle(DS.textPrimary)
                                 .fixedSize(horizontal: true, vertical: false)
                         }
-                        .padding(12)
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 8)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(DS.cardBg, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        .background(DS.cardBg, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                         .overlay(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
                                 .stroke(DS.border, lineWidth: 1)
                         )
                         .contentShape(Rectangle())
@@ -426,12 +450,12 @@ struct FirstRunChecklistView364A: View {
                 Text("Go to Discover \u{2192}")
                     .font(.headline)
                     .foregroundStyle(solidButtonForeground)
-                    .frame(maxWidth: .infinity, minHeight: 50)
+                    .frame(maxWidth: .infinity, minHeight: 46)
                     .background(DS.blueReadable, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
             .buttonStyle(.plain)
             .padding(.horizontal, 16)
-            .padding(.vertical, 12)
+            .padding(.vertical, 9)
             .accessibilityIdentifier("checklist364A.goToDiscoverButton")
         }
         .background(DS.surface)
@@ -817,13 +841,24 @@ struct FirstRunFollowStepView364A: View {
 
     @ViewBuilder
     private var sentenceCardSection: some View {
-        if case .chips(let chips, let selectedIds, _) = vm.sentenceState {
+        if case .chips(let chips, let selectedIds, let isSample) = vm.sentenceState {
             let clearChips = chips.filter { $0.ambiguityGroup == nil }
             let ambiguousGroups = Dictionary(grouping: chips.filter { $0.ambiguityGroup != nil }) { $0.ambiguityGroup ?? "" }
             VStack(alignment: .leading, spacing: 10) {
-                Text("Confirm your picks")
-                    .font(.subheadline.weight(.bold))
-                    .foregroundStyle(DS.textPrimary)
+                HStack(spacing: 8) {
+                    Text("Confirm your picks")
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(DS.textPrimary)
+                    Spacer(minLength: 4)
+                    if isSample {
+                        Text(FirstRunSentenceSampleProvider359A.sampleBadgeText)
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(DS.textSecondaryReadable)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 3)
+                            .background(DS.trackBg, in: Capsule())
+                    }
+                }
                 if !clearChips.isEmpty {
                     FirstRunPickedChipFlow212A(spacing: 8) {
                         ForEach(clearChips) { chip in
@@ -966,8 +1001,8 @@ struct FirstRunSignInStepView364A: View {
         VStack(spacing: 0) {
             StepTopBar364A(
                 title: FirstRunChecklistRowID364A.syncDevices.title,
-                actionTitle: "Skip",
-                onAction: onBackOrSkip
+                actionTitle: nil,
+                onAction: {}
             )
             ScrollView {
                 EarnedSignInCard212A(
@@ -983,7 +1018,29 @@ struct FirstRunSignInStepView364A: View {
 }
 
 struct FirstRunAlertsStepView364A: View {
+    var previewMover: FirstRunTonightCard364A? = nil
     var onDone: () -> Void = {}
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var solidButtonForeground: Color {
+        colorScheme == .dark ? Color(hex: "#0F172A") : .white
+    }
+
+    private var amberAccent: Color {
+        Color(hex: MyStuffTeamTextColour.probabilityHex("#D97706", colorScheme: colorScheme))
+    }
+
+    private var exampleTitle: String {
+        previewMover?.title ?? "Nevada at San Francisco"
+    }
+
+    private var exampleBody: String {
+        let shift = previewMover?.deltaText ?? "up 33 points"
+        let pct = previewMover?.percent ?? 60
+        let capitalizedShift = shift.prefix(1).uppercased() + shift.dropFirst()
+        return "\(capitalizedShift) \u{00B7} now \(pct)%"
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -992,12 +1049,119 @@ struct FirstRunAlertsStepView364A: View {
                 actionTitle: nil,
                 onAction: {}
             )
-            GameAlertsPinPromptSheet13084(
-                onTurnOn: { onDone() },
-                onNotNow: onDone
-            )
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    // Show, do not describe: live lock-screen style heads-up preview
+                    HStack(spacing: 12) {
+                        ChecklistThumbnail364A(
+                            urlString: previewMover?.imageUrl,
+                            sfSymbol: "bell.badge.fill",
+                            accentHex: "#D97706",
+                            size: 40
+                        )
+                        VStack(alignment: .leading, spacing: 2) {
+                            HStack(spacing: 6) {
+                                Text("LIVE EXAMPLE")
+                                    .font(.caption2.weight(.bold))
+                                    .tracking(0.6)
+                                    .foregroundStyle(amberAccent)
+                                Spacer(minLength: 4)
+                                Text("now")
+                                    .font(.caption2)
+                                    .foregroundStyle(DS.textSecondaryReadable)
+                            }
+                            Text(exampleTitle)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(DS.textPrimary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(exampleBody)
+                                .font(.caption.weight(.medium))
+                                .foregroundStyle(DS.greenReadable)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(12)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(DS.cardBg, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(DS.border, lineWidth: 1)
+                    )
+
+                    VStack(alignment: .leading, spacing: 0) {
+                        headsUpFeatureRow(
+                            symbol: "sportscourt.fill",
+                            tint: DS.greenReadable,
+                            title: "Game starts",
+                            subtitle: "Tipoff and kickoff for teams you follow."
+                        )
+                        Divider().padding(.leading, 48)
+                        headsUpFeatureRow(
+                            symbol: "chart.line.uptrend.xyaxis",
+                            tint: amberAccent,
+                            title: "Big moves",
+                            subtitle: "Swings of 15 points or more."
+                        )
+                    }
+                    .background(DS.cardBg, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(DS.border, lineWidth: 1)
+                    )
+
+                    Text("Apple\u{2019}s alert prompt appears only after you tap Turn on. Offered again when you follow a team with a game coming.")
+                        .font(.footnote)
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    VStack(spacing: 10) {
+                        Button(action: onDone) {
+                            Text("Turn on heads-up")
+                                .font(.headline)
+                                .foregroundStyle(solidButtonForeground)
+                                .frame(maxWidth: .infinity, minHeight: 50)
+                                .background(DS.blueReadable, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("checklist364A.alerts.turnOn")
+
+                        Button(action: onDone) {
+                            Text("Not now")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(DS.textSecondaryReadable)
+                                .frame(maxWidth: .infinity, minHeight: 40)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityIdentifier("checklist364A.alerts.notNow")
+                    }
+                    .padding(.top, 4)
+                }
+                .padding(16)
+            }
         }
         .background(DS.surface)
+    }
+
+    private func headsUpFeatureRow(symbol: String, tint: Color, title: String, subtitle: String) -> some View {
+        HStack(spacing: 12) {
+            Image(systemName: symbol)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(tint)
+                .frame(width: 28, height: 28)
+                .background(tint.opacity(colorScheme == .dark ? 0.18 : 0.10), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(DS.textPrimary)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(DS.textSecondaryReadable)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 4)
+        }
+        .padding(12)
     }
 }
 
@@ -1052,7 +1216,11 @@ private struct StepTopBar364A: View {
     let onAction: () -> Void
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: 8) {
+            Image(systemName: "chevron.left")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(DS.blueReadable)
+                .accessibilityHidden(true)
             Text(title)
                 .font(.headline.weight(.bold))
                 .foregroundStyle(DS.textPrimary)

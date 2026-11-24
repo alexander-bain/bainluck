@@ -69,6 +69,10 @@ nonisolated struct FirstRunChecklistState364A: Equatable, Codable, Sendable {
         FirstRunChecklistRowID364A.allCases.count
     }
 
+    var savedCount: Int {
+        followedCount + selectedSetSlugs.count
+    }
+
     /// Row 4 (`"Keep it on all your devices"`) lights up once the reader has
     /// followed or picked something, and stays quiet beforehand (`364: A`).
     var isSyncLitUp: Bool {
@@ -186,8 +190,19 @@ nonisolated enum FirstRunSubjectArt364A {
         }
 
         for item in feedItems {
+            if let ev = item.event {
+                assign("team:\(ev.homeTeam.lowercased())", url: ev.homeTeamData?.logoSmall ?? ev.homeTeamData?.logoLarge)
+                assign("team:\(ev.awayTeam.lowercased())", url: ev.awayTeamData?.logoSmall ?? ev.awayTeamData?.logoLarge)
+            }
             if let bundle = item.bundle {
+                for child in bundle.items {
+                    if let ev = child.event {
+                        assign("team:\(ev.homeTeam.lowercased())", url: ev.homeTeamData?.logoSmall ?? ev.homeTeamData?.logoLarge)
+                        assign("team:\(ev.awayTeam.lowercased())", url: ev.awayTeamData?.logoSmall ?? ev.awayTeamData?.logoLarge)
+                    }
+                }
                 let bLower = bundle.title.lowercased()
+                let bIdLower = bundle.id.lowercased()
                 let bSlug = (bundle.roundupContract?.machineryCard?.slug ?? bundle.collectionRef?.slug ?? "").lowercased()
                 let bImg = bundle.roundupContract?.machineryCard?.imageUrl
                     ?? bundle.imageUrl
@@ -197,11 +212,11 @@ nonisolated enum FirstRunSubjectArt364A {
                     assign("awards", url: bImg)
                     assign("entertainment", url: bImg)
                 }
-                if bLower.contains("fed") || bLower.contains("inflation") || bLower.contains("rate") {
+                if bIdLower.contains("story:macro_rates") || bLower.contains("fed") || bLower.contains("inflation") || bLower.contains("rate") {
                     assign("economy", url: bImg)
                     assign("economics", url: bImg)
                 }
-                if bLower == "ai" || bSlug == "ai" || bLower.contains("tech") {
+                if bIdLower.contains("story:ai") || bLower == "ai" || bSlug == "ai" || bLower.contains("tech") {
                     assign("tech", url: bImg)
                     assign("ai", url: bImg)
                 }
@@ -233,6 +248,9 @@ nonisolated enum FirstRunSubjectArt364A {
             return logo
         }
         let nameLower = suggestion.name.lowercased()
+        if let teamLogo = subjectArt["team:\(nameLower)"] {
+            return teamLogo
+        }
         let kindLower = suggestion.sportOrCategoryLabel.lowercased()
         if nameLower.contains("oscar") || kindLower == "awards" {
             return subjectArt["awards"] ?? subjectArt["entertainment"]
@@ -415,12 +433,11 @@ nonisolated enum FirstRunChecklistExtractor364A {
             )
         }
 
-        let oddCard = tonight.first(where: { $0.slotLabel == "Odd one" })
         previews[.syncDevices] = FirstRunChecklistRowPreview364A(
-            subtitle: "Follow or pick to sync",
+            subtitle: "Follow or pick first",
             percentText: nil,
-            imageUrl: oddCard?.imageUrl ?? subjectArt["tech"],
-            sfSymbol: "icloud.fill",
+            imageUrl: nil,
+            sfSymbol: "iphone.and.ipad",
             accentHex: "#005CC2"
         )
 
@@ -441,6 +458,42 @@ nonisolated enum FirstRunChecklistExtractor364A {
             rowPreviews: previews,
             subjectArtByCategory: subjectArt
         )
+    }
+
+    private static func isConflictOrGrimBundleOrMarket(_ text: String) -> Bool {
+        if FirstRunPair212A.isGrimOrSensitiveTopic(title: text) {
+            return true
+        }
+        let lower = text.lowercased()
+        return lower.contains("conflict")
+            || lower.contains("middle_east")
+            || lower.contains("middle east")
+            || lower.contains("russia_ukraine")
+            || lower.contains("war")
+            || lower.contains("israel")
+            || lower.contains("gaza")
+            || lower.contains("ukraine")
+    }
+
+    private static func conciseChipTitle(for rawTitle: String, kind: FirstRunLookupExample364A.Kind) -> String {
+        switch kind {
+        case .award:
+            if rawTitle.lowercased().hasPrefix("oscar winner: ") {
+                return "Oscars: " + rawTitle.dropFirst("Oscar Winner: ".count)
+            }
+            return rawTitle
+        case .election:
+            let lower = rawTitle.lowercased()
+            if lower.contains("french presidential election") {
+                return "French Election"
+            }
+            if lower.contains("prime minister of spain") {
+                return "Spain Prime Minister"
+            }
+            return rawTitle
+        case .game:
+            return rawTitle
+        }
     }
 
     static func extractLookupExamples(
@@ -475,49 +528,61 @@ nonisolated enum FirstRunChecklistExtractor364A {
             ))
         }
 
-        // Collect all unsettled futures in feed order
+        // Collect all non-grim, conflict-free unsettled futures in feed order
         var futuresWithBundle: [(fut: FeedFuturesData, bundleImg: String?)] = []
         var seenFutIds: Set<Int> = []
         for item in feedItems {
             if let fut = item.futures, seenFutIds.insert(fut.id).inserted {
+                guard !isConflictOrGrimBundleOrMarket(fut.name) else { continue }
                 futuresWithBundle.append((fut, fut.imageUrl))
             } else if let bundle = item.bundle {
+                let bundleDescriptor = "\(bundle.id) \(bundle.title) \(bundle.roundupContract?.kicker ?? "")"
+                guard !isConflictOrGrimBundleOrMarket(bundleDescriptor) else { continue }
                 let bImg = bundle.roundupContract?.machineryCard?.imageUrl ?? bundle.imageUrl
                 for child in bundle.items {
                     if let fut = child.futures, seenFutIds.insert(fut.id).inserted {
+                        guard !isConflictOrGrimBundleOrMarket(fut.name) else { continue }
                         futuresWithBundle.append((fut, fut.imageUrl ?? bImg))
                     }
                 }
             }
         }
 
-        // 2. An award (e.g. Oscars Best Picture)
-        for (fut, img) in futuresWithBundle {
-            guard !FeedLifecycle.futuresIsSettled(fut, now: now) else { continue }
-            guard !FirstRunPair212A.isGrimOrSensitiveTopic(title: fut.name) else { continue }
+        // 2. An award (prefer non-sports award like Oscars over sports awards like Heisman)
+        let awardCandidates = futuresWithBundle.compactMap { entry -> (isNonSports: Bool, fut: FeedFuturesData, img: String?, pct: Int)? in
+            let fut = entry.fut
+            guard !FeedLifecycle.futuresIsSettled(fut, now: now) else { return nil }
             let lower = fut.name.lowercased()
-            let isAward = lower.contains("oscar") || lower.contains("grammy") || lower.contains("emmy")
-                || lower.contains("golden globe") || lower.contains("heisman") || lower.contains("game of the year")
-            guard isAward else { continue }
+            let isNonSportsAward = fut.sport == nil && (
+                lower.contains("oscar")
+                || lower.contains("grammy")
+                || lower.contains("emmy")
+                || lower.contains("golden globe")
+                || lower.contains("game of the year")
+            )
+            let isSportsAward = lower.contains("heisman") || lower.contains("mvp")
+            guard isNonSportsAward || isSportsAward else { return nil }
             guard let resolved = FirstRunPair212A.resolvePrimaryOutcome(for: fut),
-                  (5...95).contains(resolved.percent) else { continue }
+                  (5...95).contains(resolved.percent) else { return nil }
+            return (isNonSportsAward, fut, entry.bundleImg, resolved.percent)
+        }
+        if let chosenAward = awardCandidates.first(where: \.isNonSports) ?? awardCandidates.first {
+            let lower = chosenAward.fut.name.lowercased()
             out.append(FirstRunLookupExample364A(
-                id: "lookup-award-\(fut.id)",
+                id: "lookup-award-\(chosenAward.fut.id)",
                 kind: .award,
                 badgeText: "Award",
-                title: fut.name,
-                query: lower.contains("oscar") ? "Oscars" : fut.name,
-                percent: resolved.percent,
-                imageUrl: FirstRunSubjectArt364A.cleanHTTPS(img) ?? subjectArt["awards"] ?? subjectArt["entertainment"],
+                title: conciseChipTitle(for: chosenAward.fut.name, kind: .award),
+                query: lower.contains("oscar") ? "Oscars" : chosenAward.fut.name,
+                percent: chosenAward.pct,
+                imageUrl: FirstRunSubjectArt364A.cleanHTTPS(chosenAward.img) ?? subjectArt["awards"] ?? subjectArt["entertainment"],
                 sfSymbol: "trophy.fill"
             ))
-            break
         }
 
-        // 3. An election (non-grim, 5...95%)
+        // 3. An election (conflict-free, non-grim, 5...95%)
         for (fut, img) in futuresWithBundle {
             guard !FeedLifecycle.futuresIsSettled(fut, now: now) else { continue }
-            guard !FirstRunPair212A.isGrimOrSensitiveTopic(title: fut.name) else { continue }
             let lower = fut.name.lowercased()
             let isElection = lower.contains("election") || lower.contains("presidential") || lower.contains("prime minister")
             guard isElection else { continue }
@@ -528,7 +593,7 @@ nonisolated enum FirstRunChecklistExtractor364A {
                 id: "lookup-election-\(fut.id)",
                 kind: .election,
                 badgeText: "Election",
-                title: fut.name,
+                title: conciseChipTitle(for: fut.name, kind: .election),
                 query: queryTerm,
                 percent: resolved.percent,
                 imageUrl: FirstRunSubjectArt364A.cleanHTTPS(img),
@@ -698,15 +763,63 @@ nonisolated enum FirstRunChecklistExtractor364A {
             ))
         }
 
-        // Showcase distinct forms first (paired_stage_bars, sibling_fields_grid, benchmark_strip, etc.)
+        // Prefer sets with public HTTPS photos (deprioritizing api.bainluck.com), pick distinct native forms
+        // first (`paired_stage_bars`, `sibling_fields_grid`, `benchmark_strip`), then diversify domains/categories.
+        let nonAppHost = candidates.filter { !($0.imageUrl?.lowercased().contains("api.bainluck.com") ?? false) }
+        let appHost = candidates.filter { $0.imageUrl?.lowercased().contains("api.bainluck.com") ?? false }
+        let ordered = nonAppHost + appHost
+
+        func primaryDomain(for category: String) -> String {
+            let first = category.split(separator: "\u{00B7}").first?.trimmingCharacters(in: .whitespacesAndNewlines).uppercased() ?? ""
+            if first.contains("OSCAR") || first.contains("ENTERTAINMENT") {
+                return "CULTURE"
+            }
+            return first
+        }
+
         var selected: [FirstRunSetChoice364A] = []
         var usedForms: Set<MachineryFormId> = []
-        for choice in candidates where usedForms.insert(choice.machineryCard.formId).inserted {
+        var usedDomains: Set<String> = []
+        var usedKickers: Set<String> = []
+
+        func appendChoice(_ choice: FirstRunSetChoice364A) {
             selected.append(choice)
+            usedForms.insert(choice.machineryCard.formId)
+            usedDomains.insert(primaryDomain(for: choice.category))
+            usedKickers.insert(choice.category.uppercased())
+        }
+
+        let formPreferredOrder = ordered.sorted { lhs, rhs in
+            func rank(_ f: MachineryFormId) -> Int {
+                switch f {
+                case .pairedStageBars: return 0
+                case .siblingFieldsGrid: return 1
+                default: return 2
+                }
+            }
+            return rank(lhs.machineryCard.formId) < rank(rhs.machineryCard.formId)
+        }
+
+        for choice in formPreferredOrder where !usedForms.contains(choice.machineryCard.formId) {
+            appendChoice(choice)
             if selected.count >= limit { return selected }
         }
-        for choice in candidates where !selected.contains(where: { $0.slug == choice.slug }) {
-            selected.append(choice)
+        for choice in ordered where !selected.contains(where: { $0.slug == choice.slug }) {
+            let domain = primaryDomain(for: choice.category)
+            if !domain.isEmpty, !usedDomains.contains(domain) {
+                appendChoice(choice)
+                if selected.count >= limit { return selected }
+            }
+        }
+        for choice in ordered where !selected.contains(where: { $0.slug == choice.slug }) {
+            let key = choice.category.uppercased()
+            if !key.isEmpty, !usedKickers.contains(key) {
+                appendChoice(choice)
+                if selected.count >= limit { return selected }
+            }
+        }
+        for choice in ordered where !selected.contains(where: { $0.slug == choice.slug }) {
+            appendChoice(choice)
             if selected.count >= limit { break }
         }
         return selected
