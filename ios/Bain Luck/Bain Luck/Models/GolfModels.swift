@@ -116,8 +116,8 @@ nonisolated struct GolfTournamentData: Decodable, Sendable, Identifiable {
         venue = try container.decodeIfPresent(String.self, forKey: .venue)
         location = try container.decodeIfPresent(String.self, forKey: .location)
         scheduleStatus = try container.decodeIfPresent(String.self, forKey: .scheduleStatus)
-        golfers = (try? container.decodeIfPresent([GolfGolferData].self, forKey: .golfers)) ?? []
-        overflowOutcomes = try container.decodeIfPresent([GolfGolferData].self, forKey: .overflowOutcomes) ?? []
+        golfers = decodeTolerantArray(container, forKey: .golfers)
+        overflowOutcomes = decodeTolerantArray(container, forKey: .overflowOutcomes)
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -169,15 +169,15 @@ nonisolated struct GolfGolferData: Decodable, Sendable, Identifiable, Equatable 
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         name = try container.decode(String.self, forKey: .name)
-        probability = (try? container.decode(Double.self, forKey: .probability)) ?? 0
-        renderedPercent = try container.decodeIfPresent(Int.self, forKey: .renderedPercent)
-        rank = try container.decodeIfPresent(Int.self, forKey: .rank)
-        // Tolerant: a malformed movement value must not erase this golfer or the
-        // rest of the field.
-        movement24h = try? container.decodeIfPresent(Double.self, forKey: .movement24h)
+        probability = decodeTolerantDouble(container, forKey: .probability) ?? 0
+        renderedPercent = try? container.decodeIfPresent(Int.self, forKey: .renderedPercent)
+        rank = try? container.decodeIfPresent(Int.self, forKey: .rank)
+        // Tolerant: a malformed or Decimal-string numeric value must not erase
+        // this golfer or wipe the entire tournament field (#13535).
+        movement24h = decodeTolerantDouble(container, forKey: .movement24h)
         movementIsDated = try? container.decodeIfPresent(Bool.self, forKey: .movementIsDated)
-        openingProbability = try container.decodeIfPresent(Double.self, forKey: .openingProbability)
-        americanOdds = try container.decodeIfPresent(Int.self, forKey: .americanOdds)
+        openingProbability = decodeTolerantDouble(container, forKey: .openingProbability)
+        americanOdds = try? container.decodeIfPresent(Int.self, forKey: .americanOdds)
         isWinner = try? container.decodeIfPresent(Bool.self, forKey: .isWinner)
         won = try? container.decodeIfPresent(Bool.self, forKey: .won)
         sourceMark = try? container.decodeIfPresent(SourceMark.self, forKey: .sourceMark)
@@ -303,6 +303,23 @@ nonisolated struct GolfRoundTopOutcome: Decodable, Equatable, Identifiable, Send
     let openingProbability: Double?
 
     var id: String { name }
+
+    init(name: String, probability: Double, openingProbability: Double? = nil) {
+        self.name = name
+        self.probability = probability
+        self.openingProbability = openingProbability
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        name = try container.decode(String.self, forKey: .name)
+        probability = decodeTolerantDouble(container, forKey: .probability) ?? 0
+        openingProbability = decodeTolerantDouble(container, forKey: .openingProbability)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case name, probability, openingProbability
+    }
 }
 
 nonisolated struct GolfRoundTopGroup: Decodable, Equatable, Identifiable, Sendable {
@@ -350,19 +367,50 @@ nonisolated struct GolfTournamentDetailResponse: Decodable, Sendable {
     init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         tournament = try container.decode(GolfTournamentData.self, forKey: .tournament)
-        // Tolerant on everything but the tournament itself: a malformed mover or
-        // a field this build has not seen must not blank a page whose subject
-        // decoded perfectly well (the per-item tolerance rule of #1471).
-        golfers = (try? container.decodeIfPresent([GolfGolferData].self, forKey: .golfers)) ?? []
-        overflowOutcomes = try container.decodeIfPresent([GolfGolferData].self, forKey: .overflowOutcomes) ?? []
-        biggestMovers = (try? container.decodeIfPresent([GolfMoverData].self, forKey: .biggestMovers)) ?? []
+        // Tolerant on everything but the tournament itself: a malformed mover,
+        // string-encoded decimal, or unknown row must not blank a page whose
+        // subject decoded cleanly (#1471, #13535).
+        golfers = decodeTolerantArray(container, forKey: .golfers)
+        overflowOutcomes = decodeTolerantArray(container, forKey: .overflowOutcomes)
+        biggestMovers = decodeTolerantArray(container, forKey: .biggestMovers)
         evolutionMarketId = try? container.decodeIfPresent(Int.self, forKey: .evolutionMarketId)
-        markets = (try? container.decodeIfPresent([GolfTournamentMarketGroup].self, forKey: .markets)) ?? []
-        roundTopGroups = (try? container.decodeIfPresent([GolfRoundTopGroup].self, forKey: .roundTopGroups)) ?? []
+        markets = decodeTolerantArray(container, forKey: .markets)
+        roundTopGroups = decodeTolerantArray(container, forKey: .roundTopGroups)
     }
 
     private enum CodingKeys: String, CodingKey {
         case tournament, golfers, overflowOutcomes, biggestMovers
         case evolutionMarketId, markets, roundTopGroups
     }
+}
+
+nonisolated private struct LenientGolfElement<T: Decodable>: Decodable {
+    let value: T?
+    init(from decoder: Decoder) throws {
+        value = try? T(from: decoder)
+    }
+}
+
+nonisolated private func decodeTolerantArray<T: Decodable, K: CodingKey>(
+    _ container: KeyedDecodingContainer<K>,
+    forKey key: K
+) -> [T] {
+    ((try? container.decodeIfPresent([LenientGolfElement<T>].self, forKey: key)) ?? nil)?
+        .compactMap(\.value) ?? []
+}
+
+nonisolated private func decodeTolerantDouble<K: CodingKey>(
+    _ container: KeyedDecodingContainer<K>,
+    forKey key: K
+) -> Double? {
+    if let number = try? container.decodeIfPresent(Double.self, forKey: key), number.isFinite {
+        return number
+    }
+    if let text = try? container.decodeIfPresent(String.self, forKey: key) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let parsed = Double(trimmed), parsed.isFinite {
+            return parsed
+        }
+    }
+    return nil
 }

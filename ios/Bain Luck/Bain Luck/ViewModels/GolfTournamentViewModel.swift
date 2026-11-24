@@ -102,7 +102,7 @@ final class GolfTournamentViewModel: ObservableObject {
         let rawStatus = response.tournament.scheduleStatus?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let isSettledOrFinished = EventState.isFinished(rawStatus)
             || SettledQuote.isSettled(rawStatus)
-            || response.golfers.contains(where: { ($0.isWinner == true) || ($0.won == true) })
+            || response.golfers.contains(where: { GolfTournamentPresentation.resolvedWinnerFlag(for: $0) == true })
         let effectiveLeaderboardFetcher: (@Sendable (String) async throws -> GolfLeaderboardResponse)? = {
             if let fetchLeaderboard { return fetchLeaderboard }
             if includeDefaultLeaderboard {
@@ -294,13 +294,17 @@ nonisolated struct GolfTournamentPresentation: Equatable, Sendable {
         // ORDERED HERE, NOT TRUSTED FROM THE WIRE. The server sends rank 1..n
         // today, but a field sorted by anything else would print a 6.1%
         // favourite below a 2.7% golfer with no error anywhere — the kind of
-        // wrong that reads as a data outage. Sorting on the number we PRINT
-        // makes the order and the page agree by construction.
+        // wrong that reads as a data outage. When settled, any confirmed winner
+        // always takes #1 ahead of live/pregame odds so a late settlement flip
+        // never leaves the champion buried down the board (#13535).
         //
         // `rank` breaks ties so two golfers on the same probability keep a
         // stable order between renders rather than swapping under the thumb.
         field = response.golfers
             .sorted {
+                let lhsWinner = Self.resolvedWinnerFlag(for: $0) == true
+                let rhsWinner = Self.resolvedWinnerFlag(for: $1) == true
+                if lhsWinner != rhsWinner { return lhsWinner }
                 if $0.probability != $1.probability { return $0.probability > $1.probability }
                 return ($0.rank ?? Int.max) < ($1.rank ?? Int.max)
             }
@@ -316,10 +320,38 @@ nonisolated struct GolfTournamentPresentation: Equatable, Sendable {
                     movement24h: golfer.movement24h,
                     renderedPercent: golfer.renderedPercent,
                     openingProbability: golfer.openingProbability,
-                    isWinner: (golfer.isWinner == true) || (golfer.won == true) ? true : golfer.isWinner,
+                    isWinner: Self.resolvedWinnerFlag(for: golfer),
                     sourceMark: golfer.sourceMark
                 )
             }
+    }
+
+    /// Resolves an explicit tournament-level win/loss flag from a golfer row,
+    /// reading `isWinner`, `won`, and settled `sourceMark` uniformly (#13535).
+    static func resolvedWinnerFlag(
+        isWinner: Bool?,
+        won: Bool? = nil,
+        sourceMark: SourceMark?
+    ) -> Bool? {
+        if isWinner == true || won == true { return true }
+        if sourceMark?.state == .settled,
+           let result = sourceMark?.settled?.result?
+               .trimmingCharacters(in: .whitespacesAndNewlines)
+               .lowercased()
+        {
+            if result == "won" || result == "win" { return true }
+            if result == "lost" || result == "loss" || result == "not won" { return false }
+        }
+        if isWinner == false || won == false { return false }
+        return nil
+    }
+
+    static func resolvedWinnerFlag(for golfer: GolfGolferData) -> Bool? {
+        resolvedWinnerFlag(isWinner: golfer.isWinner, won: golfer.won, sourceMark: golfer.sourceMark)
+    }
+
+    static func resolvedWinnerFlag(for row: GolfTournamentFieldRow) -> Bool? {
+        resolvedWinnerFlag(isWinner: row.isWinner, won: nil, sourceMark: row.sourceMark)
     }
 }
 
