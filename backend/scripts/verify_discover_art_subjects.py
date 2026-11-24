@@ -23,6 +23,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+if str(BACKEND_ROOT) not in sys.path:
+    sys.path.insert(0, str(BACKEND_ROOT))
+
+from app.utils.agent_origin import curl_args, tagged  # noqa: E402
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ART_JSON_PATH = REPO_ROOT / "backend" / "data" / "discover" / "verified_discover_art.json"
 
@@ -94,6 +100,7 @@ def _curl_fetch(url: str, *, retries: int = 3) -> tuple[int, str]:
                 _USER_AGENT,
                 "-H",
                 "Accept-Language: en-US,en;q=0.9",
+                *curl_args(url),
                 "-w",
                 "\n__HTTP_CODE__:%{http_code}",
                 url,
@@ -118,13 +125,13 @@ def _curl_fetch(url: str, *, retries: int = 3) -> tuple[int, str]:
 
 
 def _head_status(url: str) -> int:
-    req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": _USER_AGENT})
+    req = urllib.request.Request(url, method="HEAD", headers=tagged(url, {"User-Agent": _USER_AGENT}))
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             return int(resp.status)
     except urllib.error.HTTPError as exc:
         if exc.code == 405:
-            req_get = urllib.request.Request(url, method="GET", headers={"User-Agent": _USER_AGENT})
+            req_get = urllib.request.Request(url, method="GET", headers=tagged(url, {"User-Agent": _USER_AGENT}))
             with urllib.request.urlopen(req_get, timeout=10) as resp:
                 return int(resp.status)
         return int(exc.code)
@@ -245,7 +252,7 @@ def _fetch_espn_athletes(sport_token: str, athlete_id: str) -> list[tuple[dict[s
     found: list[tuple[dict[str, Any], str]] = []
     for api_path in paths:
         api_url = f"https://site.web.api.espn.com/apis/common/v3/sports/{api_path}/athletes/{athlete_id}"
-        req = urllib.request.Request(api_url, headers={"User-Agent": _USER_AGENT})
+        req = urllib.request.Request(api_url, headers=tagged(api_url, {"User-Agent": _USER_AGENT}))
         try:
             with urllib.request.urlopen(req, timeout=12) as resp:
                 data = json.loads(resp.read().decode("utf-8"))
