@@ -1181,7 +1181,10 @@ struct DiscoverView: View {
                               let roundupRef = roundupBundle.roundupCollectionRef,
                               let roundupModel = DiscoverRoundupCardModel.build(
                                   title: roundupBundle.title,
-                                  contract: roundupBundle.roundupContract
+                                  contract: roundupBundle.roundupContract,
+                                  fallbackKicker: (roundupBundle.roundupContract?.hasUnknownLookFallback == true || roundupBundle.roundupContract?.kitCard != nil) ? roundupRef.name : nil,
+                                  fallbackFooter: (roundupBundle.roundupContract?.hasUnknownLookFallback == true || roundupBundle.roundupContract?.kitCard != nil) ? DiscoverRoundupCardModel.fallbackFooter(for: roundupRef) : nil,
+                                  allowFlexibleRowCount: (roundupBundle.roundupContract?.hasUnknownLookFallback == true || roundupBundle.roundupContract?.kitCard != nil)
                               ) {
                         DiscoverRoundupCardView(
                             model: roundupModel,
@@ -3689,14 +3692,20 @@ struct NativeGroupCard: View {
                 .padding(12)
                 .background(expandedTrayColor)
             } else {
-                ForEach(Array(items.prefix(DiscoverGroupRows.visibleCount(itemCount: items.count, expanded: expanded))), id: \.id) { item in
+                let visibleItems = Array(items.prefix(DiscoverGroupRows.visibleCount(itemCount: items.count, expanded: expanded)))
+                let renderableItems = visibleItems.filter { $0.futures != nil || $0.event != nil }
+                ForEach(renderableItems, id: \.id) { item in
                     if let data = item.futures {
                         compactRow(data)
                             .padding(.horizontal, 14)
                             .padding(.vertical, 12)
-                        if item.id != items.prefix(DiscoverGroupRows.visibleCount(itemCount: items.count, expanded: expanded)).last?.id {
-                            Divider().padding(.horizontal, 14)
-                        }
+                    } else if let event = item.event {
+                        compactEventRow(event)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 12)
+                    }
+                    if item.id != renderableItems.last?.id {
+                        Divider().padding(.horizontal, 14)
                     }
                 }
             }
@@ -3873,6 +3882,62 @@ struct NativeGroupCard: View {
         .accessibilityElement(children: hasMark ? .contain : .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier(NativeCompactFuturesRow.rowIdentifier)
+    }
+
+    private func compactEventRow(_ event: FeedEventData) -> some View {
+        let short = TeamShortName.shortPair(
+            away: event.awayTeam,
+            home: event.homeTeam,
+            awayServed: event.awayTeamData?.abbreviation,
+            homeServed: event.homeTeamData?.abbreviation,
+            sportKey: event.sport
+        )
+        let cardOdds = CompactGameCard12616.currentOddsForCard(event)
+        let isLive = event.status == "live"
+        let subtitle: String = {
+            if isLive, let awayScore = event.awayScore, let homeScore = event.homeScore {
+                return "Live · \(awayScore)–\(homeScore)"
+            }
+            return event.sportName ?? sportDisplayName(for: event.sport)
+        }()
+        let isAX = dynamicTypeSize.isAccessibilitySize
+        let rowLayout = isAX
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
+            : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
+        return rowLayout {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("\(short.away) at \(short.home)")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(primaryInk)
+                    .lineLimit(isAX ? nil : 2)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(secondaryInk)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            if let awayProb = cardOdds?.awayProbability, let homeProb = cardOdds?.homeProbability {
+                let awayText = formatProbability(awayProb, renderedPercent: cardOdds?.awayRenderedPercent)
+                let homeText = formatProbability(homeProb, renderedPercent: cardOdds?.homeRenderedPercent)
+                Text("\(awayText) · \(homeText)")
+                    .font(.subheadline.weight(.bold).monospacedDigit())
+                    .foregroundStyle(primaryInk)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if let collectionRef {
+                openContainer(collectionRef)
+            } else {
+                navigationPath.append(Route.eventDetail(id: event.id))
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
     }
 
     @ViewBuilder

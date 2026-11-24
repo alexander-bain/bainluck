@@ -49,6 +49,7 @@ import {
   resolveLeagueTerminalState,
 } from "@/lib/leaguePageChrome";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+import { useLeaguePriceStream } from "@/hooks/useLeaguePriceStream";
 
 // Lazy-load the heavy interactive EvolutionView so it is not in this page's
 // initial bundle (it stalled the league page 6–15s on first load while its APIs
@@ -186,6 +187,11 @@ export default function LeagueShowcasePage() {
   const [leagueMarkets, setLeagueMarkets] = useState<LeagueFuturesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [failure, setFailure] = useState<SportResolutionFailure | null>(null);
+
+  // #10090: project live committed + provisional SSE prices onto rails, sections,
+  // and binary board (championship grid stays on its hourly server precompute
+  // until `/api/playoffs/{league}` invalidates on live market moves).
+  const livePrices = useLeaguePriceStream(leagueMarkets);
 
   // Analytics
   usePageTracking({
@@ -413,10 +419,10 @@ export default function LeagueShowcasePage() {
   // same league renders as a map on one and an answer on the other, and the parity
   // bug is unfindable because both clients are "correct".
   const tier = leagueMarkets?.tier ?? null;
-  const upcomingGames = leagueMarkets?.upcoming_games ?? [];
+  const upcomingGames = leagueMarkets ? livePrices.upcomingGames : [];
   const recentResults = leagueMarkets?.recent_results ?? [];
   const unreportedGames = leagueMarkets?.unreported_games ?? [];
-  const marketSections = Object.entries(leagueMarkets?.sections ?? {});
+  const marketSections = Object.entries(leagueMarkets ? livePrices.sections : {});
   const gridTeams = grid?.teams?.length ?? 0;
 
   // UX-1052 item 8 — every yes/no question on the page, collected ONCE.
