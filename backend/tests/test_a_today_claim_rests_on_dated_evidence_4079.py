@@ -197,7 +197,7 @@ def test_a_reversed_sign_is_stated_the_way_the_day_actually_went():
 
     assert change == pytest.approx(0.405)
     assert _headline(change, "$745", spy) == (
-        "S&P 500 (SPY) closes above $745 on September 21 odds up 40.5 points"
+        "S&P 500 (SPY) closes above $745 on September 21 odds up 40 points"
     )
     assert "down" not in (_headline(change, "$745", spy) or "")
 
@@ -354,7 +354,7 @@ def test_a_genuine_dated_move_keeps_its_chip_and_its_number():
     assert change == pytest.approx(0.395)
     assert _headline(
         change, "$740", "S&P 500 (SPY) closes above $740 on September 21?"
-    ) == "S&P 500 (SPY) closes above $740 on September 21 odds up 39.5 points"
+    ) == "S&P 500 (SPY) closes above $740 on September 21 odds up 40 points"
 
 
 def test_the_binary_card_copy_path_states_the_dated_move_too():
@@ -442,8 +442,8 @@ def test_refusing_the_today_claim_does_not_take_the_DATED_LIFETIME_one_with_it()
         now=NOW,
     )
 
-    assert copy.headline == "Down 78.5 points since Sep 15"
-    assert copy.context_summary == "Down 78.5 points since Sep 15 — now 5% chance"
+    assert copy.headline == "Down 78 points since Sep 15"
+    assert copy.context_summary == "Down 78 points since Sep 15 — now 5% chance"
     assert "today" not in copy.reason
 
 

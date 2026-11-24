@@ -201,20 +201,18 @@ class TestADatedMoveStillSpeaks:
 
     def test_the_production_specimen_still_states_its_move(self, monkeypatch):
         reason = _reason(monkeypatch, _golfer(_SHIPLEY_MOVE, dated=True))
-        assert reason == "PGA Tour: Neal Shipley leads at 28.3% (up 25.1 points today)"
+        assert reason == "PGA Tour: Neal Shipley leads at 28.3% (up 25 points today)"
 
     @pytest.mark.parametrize("movement", [0.1, 0.015, -0.225, 0.078, 0.01])
     def test_the_dated_magnitude_is_untouched(self, monkeypatch, movement):
-        """This ship changes WHETHER a number may be said, never WHICH number."""
+        """This ship changes WHETHER a number may be said, and renders whole points (#13602)."""
         reason = _reason(monkeypatch, _golfer(movement, dated=True))
-        expected = round(abs(movement) * 100, 1)
-        if expected == int(expected):
-            expected = int(expected)
+        expected = int(round(abs(movement) * 100))
         assert f"{expected} point" in reason, reason
 
     def test_direction_survives(self, monkeypatch):
-        assert "(down 7.5 points today)" in _reason(monkeypatch, _golfer(-0.075, dated=True))
-        assert "(up 7.5 points today)" in _reason(monkeypatch, _golfer(0.075, dated=True))
+        assert "(down 8 points today)" in _reason(monkeypatch, _golfer(-0.075, dated=True))
+        assert "(up 8 points today)" in _reason(monkeypatch, _golfer(0.075, dated=True))
 
     def test_the_sub_threshold_floor_still_applies_to_dated_moves(self, monkeypatch):
         """Unchanged by this ship: dated does not mean loud."""

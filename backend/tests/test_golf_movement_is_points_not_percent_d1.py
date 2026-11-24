@@ -137,21 +137,19 @@ class TestTheMovementIsSaidInPoints:
 
     def test_a_downward_move_is_also_points(self, monkeypatch):
         clause = _reason(monkeypatch, -0.075)
-        assert "(down 7.5 points today)" in clause
+        assert "(down 8 points today)" in clause
         assert "%" not in clause[clause.index("(") :]
 
 
 # --- 2. The number did not move ------------------------------------------
 
 class TestOnlyTheUnitChanged:
-    """This was a label bug. Silently changing the magnitude would be worse."""
+    """This was a label bug. Whole points now mirror the card scale (#13602)."""
 
     @pytest.mark.parametrize("movement", [0.1, 0.015, -0.225, 0.078])
     def test_the_magnitude_is_still_delta_times_one_hundred(self, monkeypatch, movement):
         reason = _reason(monkeypatch, movement)
-        expected = round(abs(movement) * 100, 1)
-        if expected == int(expected):
-            expected = int(expected)
+        expected = int(round(abs(movement) * 100))
         assert f"{expected} point" in reason, reason
 
 
@@ -172,7 +170,7 @@ class TestTheGolfCardUsesTheSharedFormatter:
 
     def test_the_formatter_is_the_one_the_futures_cards_use(self):
         """Pins the arithmetic the docstring promises, so a change there is seen."""
-        assert _points(0.225) == "22.5 points"  # "Down 22.5 points since Feb 3"
+        assert _points(0.225) == "22 points"  # #13602 whole points
         assert _points(0.1) == "10 points"
 
 
@@ -188,8 +186,10 @@ class TestTheCopyReadsLikeEnglish:
         assert "10 points" in reason
         assert "10.0" not in reason
 
-    def test_a_fractional_move_keeps_its_decimal(self, monkeypatch):
-        assert "7.8 points" in _reason(monkeypatch, 0.078)
+    def test_a_fractional_move_rounds_to_whole_points(self, monkeypatch):
+        reason = _reason(monkeypatch, 0.078)
+        assert "up 8 points today" in reason
+        assert "7.8 points" not in reason
 
     def test_a_move_below_the_threshold_says_nothing_at_all(self, monkeypatch):
         """Unchanged by this ship, and the reason it is safe to assert equality

@@ -216,7 +216,7 @@ def test_an_undatable_baseline_says_nothing_here_as_before():
 
 def test_the_down_direction_reads_correctly():
     out = headline(SENATE, top_surprise_change=-0.225)
-    assert out == "Democratic Party leads at 55%, down 22.5 points since Feb 19"
+    assert out == "Democratic Party leads at 55%, down 22 points since Feb 19"
 
 
 def test_the_percent_stated_is_the_one_the_board_prints_not_one_re_derived():
