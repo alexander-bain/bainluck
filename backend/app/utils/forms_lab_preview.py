@@ -7,9 +7,8 @@ and falls back cleanly to plain rows (``status == "refused_fallback_rows"``) on 
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence
 
-from app.utils.container_machinery import SubjectArtResolver, _default_art_resolver
 from app.utils.forms_lab_truth import (
     TruthCheckResult,
     check_ladder_monotonic,
@@ -26,6 +25,9 @@ from app.utils.member_art_13551 import (
     team_conference,
     team_short_code,
 )
+
+if TYPE_CHECKING:
+    from app.utils.container_machinery import SubjectArtResolver
 
 BATCH1_LOOK_ORDER: tuple[str, ...] = (
     "grid_of_cells",
@@ -921,6 +923,8 @@ def build_forms_lab_batch1_preview(
     team_lookup: Optional[Mapping[str, Any]] = None,
 ) -> dict[str, Any]:
     """Assemble the complete admin-only Batch 1 preview payload across Items 3–7."""
+    from app.utils.container_machinery import SubjectArtResolver, _default_art_resolver
+
     resolver = SubjectArtResolver(team_lookup=team_lookup) if team_lookup is not None else _default_art_resolver()
     catalog = real_sets_catalog()
 

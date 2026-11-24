@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Any, Mapping, Optional
+from typing import TYPE_CHECKING, Any, Mapping, Optional
 
-from app.utils.container_machinery import SubjectArtResolver, _default_art_resolver
 from app.utils.discover_image_policy import _ESPN_TEAM_LOGOS
+
+if TYPE_CHECKING:
+    from app.utils.container_machinery import SubjectArtResolver
 
 CANONICAL_CONTENDER_ALIASES: dict[str, str] = {
     "gemini": "Google",
@@ -284,7 +286,12 @@ def resolve_member_art(
     team_lookup: Optional[Mapping[str, Any]] = None,
 ) -> dict[str, Any]:
     """Resolve a verified picture (logo, portrait, or poster) plus short label metadata for a member."""
-    res = resolver or (SubjectArtResolver(team_lookup=team_lookup) if team_lookup is not None else _default_art_resolver())
+    if resolver is not None:
+        res = resolver
+    else:
+        from app.utils.container_machinery import SubjectArtResolver as RuntimeArtResolver, _default_art_resolver
+
+        res = RuntimeArtResolver(team_lookup=team_lookup) if team_lookup is not None else _default_art_resolver()
     clean = _PROP_SUFFIX_RE.sub("", (name or "").strip())
     canonical = canonical_contender_name(clean)
     folded = fold_unicode_name(clean)

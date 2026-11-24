@@ -228,16 +228,20 @@ def check_no_price_floor(
     at_floor = sum(1 for v in vals if v <= floor_pct)
     frac = at_floor / len(vals)
     spread = max(vals) - min(vals)
-    passed = not (max(vals) <= floor_pct or (frac >= max_floor_fraction and spread <= 3.0 and len(vals) >= 3))
-    reason = (
-        "ok"
-        if passed
-        else f"{field_label} is pinned to the <={floor_pct:g}% price floor ({at_floor}/{len(vals)} entries, spread {spread:g}%)"
+    is_floor_blocked = max(vals) <= floor_pct or (
+        frac >= max_floor_fraction and spread <= 3.0 and len(vals) >= 3
     )
+    if is_floor_blocked:
+        return TruthCheckResult(
+            check_id="no_price_floor",
+            passed=False,
+            reason=f"{field_label} is pinned to the <={floor_pct:g}% price floor ({at_floor}/{len(vals)} entries, spread {spread:g}%)",
+            observed={"field": field_label, "at_floor": at_floor, "total": len(vals), "max_pct": max(vals)},
+        )
     return TruthCheckResult(
         check_id="no_price_floor",
-        passed=passed,
-        reason=reason,
+        passed=True,
+        reason="ok",
         observed={"field": field_label, "at_floor": at_floor, "total": len(vals), "max_pct": max(vals)},
     )
 
