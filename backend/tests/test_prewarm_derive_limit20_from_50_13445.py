@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from importlib import import_module
@@ -166,7 +167,12 @@ async def test_route_parity_get_feed_limit20_vs_slice_of_base50(
     event_pct: float | None,
     opening_seating: bool,
 ) -> None:
-    """Real `GET /api/feed` with limit=20 equals `render_feed_page_from_base(base_50, limit=20)`."""
+    """Real `GET /api/feed` with limit=20 equals `render_feed_page_from_base(base_50, limit=20)`.
+
+    Note: ``add_roundup_feed_items`` is stubbed to ``[]`` here so the ``machinery=1``
+    case exercises the flag and cache path without roundup sets; parity with active
+    roundup sets is verified against the production snapshot recorded on #13445.
+    """
     from app.main import app
 
     monkeypatch.setenv("BYPASS_RATE_LIMITS", "1")
@@ -484,3 +490,177 @@ async def test_priority_tier_never_groups_live_child_under_absent_parent() -> No
     )
     assert [lbl for lbl, _ in same_tier_grouped] == ["discover_native"]
     assert [c["label"] for c in same_tier_children["discover_native"]] == ["discover"]
+
+
+def _make_stub_get_feed(full_deck: list[dict], built_labels: list[str]):
+    """Shared fake `get_feed` recording built labels and populating page_base scope."""
+
+    async def _fake_get_feed(**kwargs):
+        req: Request = kwargs["request"]
+        limit = int(kwargs["limit"])
+        mode = kwargs.get("mode")
+        event_pct = kwargs.get("event_pct")
+        include_events = bool(kwargs.get("include_events", True))
+        include_futures = bool(kwargs.get("include_futures", True))
+        lbl = {
+            (50, "discover"): "discover_native",
+            (20, "discover"): "discover",
+            (50, "sports"): "sports_native",
+            (20, "sports"): "sports",
+            (200, "discover"): "sports_native_events",
+        }[(limit, mode or "discover")]
+        built_labels.append(lbl)
+
+        cache_shape = {
+            "sport": None,
+            "limit": limit,
+            "offset": 0,
+            "include_events": include_events,
+            "include_futures": include_futures,
+            "tags": None,
+            "event_pct": event_pct,
+            "my_teams_only": False,
+            "mode": mode or ("discover" if include_futures else None),
+            "category": None,
+            "edition": None,
+            "collections": None,
+            "opening_seating": False,
+            "machinery": False,
+            "fun_admission": False,
+        }
+        ckey = feed_response_cache_key(**cache_shape)
+        pb_key = feed_page_base_cache_key(
+            **{k: v for k, v in cache_shape.items() if k not in ("offset", "edition", "machinery")}
+        )
+        pb_body = {"items": full_deck, "total": len(full_deck), "limit": limit}
+        req.scope[FEED_PREWARM_KEY_SCOPE_KEY] = ckey
+        req.scope[FEED_PREWARM_MACHINERY_BASE_SCOPE_KEY] = {
+            "cache_shape": cache_shape,
+            "page_base_key": pb_key,
+            "page_base_body": pb_body,
+            "page_base_last_good_body": pb_body,
+            "page_base_fresh_ttl": 30,
+            "page_base_stale_ttl": 60,
+            "page_base_last_good_ttl": 300,
+            "opening_seating": False,
+            "edition_policy": None,
+            "age_origin": 1_800_000_000.0,
+        }
+        return {
+            "items": full_deck[:limit],
+            "total": len(full_deck),
+            "limit": limit,
+            "offset": 0,
+            "has_more": len(full_deck) > limit,
+            "cache": {"status": "miss", "built_at": 1_800_000_000.0},
+        }
+
+    return _fake_get_feed
+
+
+@asynccontextmanager
+async def _stub_task_session():
+    await asyncio.sleep(0.005)
+    yield MagicMock()
+
+
+@pytest.mark.asyncio
+async def test_derive_exception_does_not_fail_parent_or_abort_live_pass(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """If deriving a limit=20 sibling raises, the parent stays ok, fallback builds child, and other shapes publish."""
+    monkeypatch.setenv("CONTAINER_MACHINERY_SLICE1_ENABLED", "false")
+    rc, hashes, written_keys = _fake_sync_rc()
+    built_labels: list[str] = []
+    full_deck = [
+        {"type": "futures", "id": f"f-{i}", "data": {"id": 100 + i, "status": "open"}}
+        for i in range(60)
+    ]
+    hashes[pcp.FEED_PREWARM_LIVE_SHAPES_KEY] = {s["label"]: "1" for s in pcp.FEED_PREWARM_SHAPES}
+
+    async def _fake_mach_live(*_a, **_kw):
+        return {"outcome": "skipped", "live_slugs": []}
+
+    orig_publish_derived = pcp._publish_derived_siblings_from_parent
+
+    def _booming_derive(*args, **kwargs):
+        if kwargs.get("parent_label") == "discover_native":
+            raise RuntimeError("derived boom")
+        return orig_publish_derived(*args, **kwargs)
+
+    with (
+        caplog.at_level(logging.WARNING),
+        patch("app.tasks.redis_state.get_redis_client", return_value=rc),
+        patch("app.routes.feed.get_feed", _make_stub_get_feed(full_deck, built_labels)),
+        patch("app.tasks.base.get_task_session", _stub_task_session),
+        patch.object(pcp, "_prewarm_live_machinery_roundups", _fake_mach_live),
+        patch.object(pcp, "_publish_derived_siblings_from_parent", side_effect=_booming_derive),
+        patch("app.utils.feed_served_markets.record_served_market_ids"),
+    ):
+        published = await pcp._prewarm_live_feed_shapes()
+
+    assert published == 5
+    assert "discover" in built_labels
+    report = json.loads(written_keys[pcp.FEED_LIVE_PREWARM_STATUS_KEY][1])
+    assert report["shapes"]["discover_native"]["outcome"] == "ok"
+    assert report["shapes"]["discover"]["outcome"] == "ok"
+    assert "derived_from" not in report["shapes"]["discover"]
+    assert report["shapes"]["sports_native"]["outcome"] == "ok"
+    assert report["shapes"]["sports"]["outcome"] == "ok"
+    assert report["shapes"]["sports"]["derived_from"] == "sports_native"
+    assert report["shapes"]["sports_native_events"]["outcome"] == "ok"
+    assert any(
+        rec.levelno >= logging.WARNING
+        and "discover_native" in rec.getMessage()
+        and "discover" in rec.getMessage()
+        for rec in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_derive_inner_child_error_logs_warning_and_lets_fallback_build(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An exception inside the per-child derivation loop warns (parent + child) and falls back cleanly."""
+    monkeypatch.setenv("CONTAINER_MACHINERY_SLICE1_ENABLED", "false")
+    rc, hashes, written_keys = _fake_sync_rc()
+    built_labels: list[str] = []
+    full_deck = [
+        {"type": "futures", "id": f"f-{i}", "data": {"id": 100 + i, "status": "open"}}
+        for i in range(60)
+    ]
+    hashes[pcp.FEED_PREWARM_LIVE_SHAPES_KEY] = {s["label"]: "1" for s in pcp.FEED_PREWARM_SHAPES}
+
+    async def _fake_mach_live(*_a, **_kw):
+        return {"outcome": "skipped", "live_slugs": []}
+
+    with (
+        caplog.at_level(logging.WARNING),
+        patch("app.tasks.redis_state.get_redis_client", return_value=rc),
+        patch("app.routes.feed.get_feed", _make_stub_get_feed(full_deck, built_labels)),
+        patch("app.tasks.base.get_task_session", _stub_task_session),
+        patch.object(pcp, "_prewarm_live_machinery_roundups", _fake_mach_live),
+        patch(
+            "app.utils.feed_cache.render_feed_page_from_base",
+            side_effect=ValueError("render failed"),
+        ),
+        patch("app.utils.feed_served_markets.record_served_market_ids"),
+    ):
+        published = await pcp._prewarm_live_feed_shapes()
+
+    assert published == 5
+    assert "discover" in built_labels
+    assert "sports" in built_labels
+    report = json.loads(written_keys[pcp.FEED_LIVE_PREWARM_STATUS_KEY][1])
+    assert report["shapes"]["discover_native"]["outcome"] == "ok"
+    assert report["shapes"]["discover"]["outcome"] == "ok"
+    assert report["shapes"]["sports_native"]["outcome"] == "ok"
+    assert report["shapes"]["sports"]["outcome"] == "ok"
+    assert any(
+        rec.levelno >= logging.WARNING
+        and "discover_native" in rec.getMessage()
+        and "discover" in rec.getMessage()
+        for rec in caplog.records
+    )
