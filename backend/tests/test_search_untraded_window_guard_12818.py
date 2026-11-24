@@ -368,200 +368,206 @@ async def test_donald_trump_untraded_markets_cannot_displace_traded_from_60_row_
     from app.services.database import Base, get_db, get_db_rw
 
     engine = create_async_engine(DB_URL)
-    async with engine.begin() as conn:
-        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
-        await conn.run_sync(Base.metadata.drop_all)
-        await conn.run_sync(Base.metadata.create_all)
+    try:
+        async with engine.begin() as conn:
+            await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+            await conn.run_sync(Base.metadata.drop_all)
+            await conn.run_sync(Base.metadata.create_all)
 
-    maker = async_sessionmaker(engine, expire_on_commit=False)
-    now = datetime.now(timezone.utc)
-    res_dt = now + timedelta(days=90)
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        now = datetime.now(timezone.utc)
+        res_dt = now + timedelta(days=90)
 
-    async with maker() as s:
-        pol = Sport(key="politics_us", name="US Politics")
-        s.add(pol)
-        await s.flush()
+        async with maker() as s:
+            pol = Sport(key="politics_us", name="US Politics")
+            s.add(pol)
+            await s.flush()
 
-        marquee = FuturesMarket(
-            source="polymarket",
-            external_id="PM-TRUMP-44M",
-            name="Donald J. Trump: 2026 Presidential Approval Benchmark Score",
-            market_type="politics",
-            llm_sport_category="politics",
-            status="open",
-            sport_id=pol.id,
-            market_tier=1,
-            volume=44_000_000,
-            volume_24h=250_000,
-            resolution_date=res_dt,
-            updated_at=now - timedelta(hours=1),
-        )
-        s.add(marquee)
-        await s.flush()
-        s.add(
-            FuturesOutcome(
-                market_id=marquee.id,
-                external_id="PM-TRUMP-44M-YES",
-                name="Above 45%",
-                current_probability=0.46,
-                current_yes_bid=0.45,
-                current_yes_ask=0.47,
-            )
-        )
-
-        # 65 short-title tier-5 Polymarket markets nobody has traded (`volume=0`, empty/NULL books)
-        # exceeding _SEARCH_FUTURES_WINDOW + _SEARCH_FUTURES_REFILL (= 60) with exact phrase match.
-        untraded_ids: list[int] = []
-        for idx in range(65):
-            u = FuturesMarket(
+            marquee = FuturesMarket(
                 source="polymarket",
-                external_id=f"PM-TRUMP-EMPTY-{idx}",
+                external_id="PM-TRUMP-44M",
+                name="Donald J. Trump: 2026 Presidential Approval Benchmark Score",
+                market_type="politics",
+                llm_sport_category="politics",
+                status="open",
+                sport_id=pol.id,
+                market_tier=1,
+                volume=44_000_000,
+                volume_24h=250_000,
+                resolution_date=res_dt,
+                updated_at=now - timedelta(hours=1),
+            )
+            s.add(marquee)
+            await s.flush()
+            s.add(
+                FuturesOutcome(
+                    market_id=marquee.id,
+                    external_id="PM-TRUMP-44M-YES",
+                    name="Above 45%",
+                    current_probability=0.46,
+                    current_yes_bid=0.45,
+                    current_yes_ask=0.47,
+                )
+            )
+
+            # 65 short-title tier-5 Polymarket markets nobody has traded (`volume=0`, empty/NULL books)
+            # exceeding _SEARCH_FUTURES_WINDOW + _SEARCH_FUTURES_REFILL (= 60) with exact phrase match.
+            untraded_ids: list[int] = []
+            for idx in range(65):
+                u = FuturesMarket(
+                    source="polymarket",
+                    external_id=f"PM-TRUMP-EMPTY-{idx}",
+                    name="Donald Trump",
+                    market_type="politics",
+                    llm_sport_category="politics",
+                    status="open",
+                    sport_id=pol.id,
+                    market_tier=5,
+                    volume=0,
+                    volume_24h=0,
+                    open_interest=0,
+                    resolution_date=res_dt,
+                    updated_at=now,
+                )
+                s.add(u)
+                await s.flush()
+                untraded_ids.append(u.id)
+                s.add(
+                    FuturesOutcome(
+                        market_id=u.id,
+                        external_id=f"PM-TRUMP-EMPTY-{idx}-YES",
+                        name="Yes",
+                        current_probability=None if idx % 2 == 0 else 0.50,
+                        current_yes_bid=None if idx % 2 == 0 else 0.01,
+                        current_yes_ask=None if idx % 2 == 0 else 0.99,
+                    )
+                )
+
+            # Kalshi-shaped zero-volume (`volume=None`) empty-book market (`0.01/0.99 @ 0.50`)
+            kalshi_empty = FuturesMarket(
+                source="kalshi",
+                external_id="KX-TRUMP-EMPTY",
                 name="Donald Trump",
                 market_type="politics",
                 llm_sport_category="politics",
                 status="open",
                 sport_id=pol.id,
                 market_tier=5,
-                volume=0,
-                volume_24h=0,
-                open_interest=0,
+                volume=None,
+                volume_24h=None,
+                open_interest=None,
                 resolution_date=res_dt,
                 updated_at=now,
             )
-            s.add(u)
+            s.add(kalshi_empty)
             await s.flush()
-            untraded_ids.append(u.id)
             s.add(
                 FuturesOutcome(
-                    market_id=u.id,
-                    external_id=f"PM-TRUMP-EMPTY-{idx}-YES",
+                    market_id=kalshi_empty.id,
+                    external_id="KX-TRUMP-EMPTY-YES",
                     name="Yes",
-                    current_probability=None if idx % 2 == 0 else 0.50,
-                    current_yes_bid=None if idx % 2 == 0 else 0.01,
-                    current_yes_ask=None if idx % 2 == 0 else 0.99,
+                    current_probability=0.50,
+                    current_yes_bid=0.01,
+                    current_yes_ask=0.99,
                 )
             )
 
-        # Kalshi-shaped zero-volume (`volume=None`) empty-book market (`0.01/0.99 @ 0.50`)
-        kalshi_empty = FuturesMarket(
-            source="kalshi",
-            external_id="KX-TRUMP-EMPTY",
-            name="Donald Trump",
-            market_type="politics",
-            llm_sport_category="politics",
-            status="open",
-            sport_id=pol.id,
-            market_tier=5,
-            volume=None,
-            volume_24h=None,
-            open_interest=None,
-            resolution_date=res_dt,
-            updated_at=now,
-        )
-        s.add(kalshi_empty)
-        await s.flush()
-        s.add(
-            FuturesOutcome(
-                market_id=kalshi_empty.id,
-                external_id="KX-TRUMP-EMPTY-YES",
-                name="Yes",
-                current_probability=0.50,
-                current_yes_bid=0.01,
-                current_yes_ask=0.99,
+            # Control: Kalshi `volume=None` market with a genuine tight book must NOT be treated as untraded
+            null_vol_priced = FuturesMarket(
+                source="kalshi",
+                external_id="KX-TRUMP-PRICED",
+                name="Donald Trump Cabinet Confirmation Odds",
+                market_type="politics",
+                llm_sport_category="politics",
+                status="open",
+                sport_id=pol.id,
+                market_tier=2,
+                volume=None,
+                volume_24h=None,
+                open_interest=None,
+                resolution_date=res_dt,
+                updated_at=now - timedelta(minutes=10),
             )
-        )
-
-        # Control: Kalshi `volume=None` market with a genuine tight book must NOT be treated as untraded
-        null_vol_priced = FuturesMarket(
-            source="kalshi",
-            external_id="KX-TRUMP-PRICED",
-            name="Donald Trump Cabinet Confirmation Odds",
-            market_type="politics",
-            llm_sport_category="politics",
-            status="open",
-            sport_id=pol.id,
-            market_tier=2,
-            volume=None,
-            volume_24h=None,
-            open_interest=None,
-            resolution_date=res_dt,
-            updated_at=now - timedelta(minutes=10),
-        )
-        s.add(null_vol_priced)
-        await s.flush()
-        s.add(
-            FuturesOutcome(
-                market_id=null_vol_priced.id,
-                external_id="KX-TRUMP-PRICED-YES",
-                name="Yes",
-                current_probability=0.35,
-                current_yes_bid=0.33,
-                current_yes_ask=0.37,
+            s.add(null_vol_priced)
+            await s.flush()
+            s.add(
+                FuturesOutcome(
+                    market_id=null_vol_priced.id,
+                    external_id="KX-TRUMP-PRICED-YES",
+                    name="Yes",
+                    current_probability=0.35,
+                    current_yes_bid=0.33,
+                    current_yes_ask=0.37,
+                )
             )
-        )
 
-        # Tier-2 outcome-only traded market (`name` omits "Trump", outcome names "Donald Trump")
-        outcome_only_traded = FuturesMarket(
-            source="polymarket",
-            external_id="PM-TIME-POTY-2026",
-            name="Time Person of the Year 2026",
-            market_type="culture",
-            llm_sport_category="culture",
-            status="open",
-            sport_id=pol.id,
-            market_tier=2,
-            volume=10_000_000,
-            volume_24h=100_000,
-            resolution_date=res_dt,
-            updated_at=now - timedelta(minutes=20),
-        )
-        s.add(outcome_only_traded)
-        await s.flush()
-        s.add(
-            FuturesOutcome(
-                market_id=outcome_only_traded.id,
-                external_id="PM-TIME-POTY-2026-TRUMP",
-                name="Donald Trump",
-                current_probability=0.18,
-                current_yes_bid=0.17,
-                current_yes_ask=0.19,
+            # Tier-2 outcome-only traded market (`name` omits "Trump", outcome names "Donald Trump")
+            outcome_only_traded = FuturesMarket(
+                source="polymarket",
+                external_id="PM-TIME-POTY-2026",
+                name="Time Person of the Year 2026",
+                market_type="culture",
+                llm_sport_category="culture",
+                status="open",
+                sport_id=pol.id,
+                market_tier=2,
+                volume=10_000_000,
+                volume_24h=100_000,
+                resolution_date=res_dt,
+                updated_at=now - timedelta(minutes=20),
             )
-        )
-        await s.commit()
-
-        # Verify exact SQL <-> Python agreement across every seeded market
-        sql_rows = (
-            await s.execute(
-                select(FuturesMarket.id, events_mod._futures_untraded_order_key())
+            s.add(outcome_only_traded)
+            await s.flush()
+            s.add(
+                FuturesOutcome(
+                    market_id=outcome_only_traded.id,
+                    external_id="PM-TIME-POTY-2026-TRUMP",
+                    name="Donald Trump",
+                    current_probability=0.18,
+                    current_yes_bid=0.17,
+                    current_yes_ask=0.19,
+                )
             )
-        ).all()
-        sql_rank_by_id = dict(sql_rows)
-        all_markets = (
-            await s.execute(select(FuturesMarket))
-        ).scalars().all()
-        for m in all_markets:
-            await s.refresh(m, attribute_names=["outcomes"])
-            expected_rank = 0 if events_mod._futures_row_is_traded(m) else 1
-            assert sql_rank_by_id[m.id] == expected_rank, (m.external_id, sql_rank_by_id[m.id], expected_rank)
+            await s.commit()
 
-    async def _override():
-        async with maker() as sess:
-            yield sess
+            # Verify exact SQL <-> Python agreement across every seeded market
+            sql_rows = (
+                await s.execute(
+                    select(FuturesMarket.id, events_mod._futures_untraded_order_key())
+                )
+            ).all()
+            sql_rank_by_id = dict(sql_rows)
+            all_markets = (
+                await s.execute(select(FuturesMarket))
+            ).scalars().all()
+            for m in all_markets:
+                await s.refresh(m, attribute_names=["outcomes"])
+                expected_rank = 0 if events_mod._futures_row_is_traded(m) else 1
+                assert sql_rank_by_id[m.id] == expected_rank, (m.external_id, sql_rank_by_id[m.id], expected_rank)
 
-    app.dependency_overrides[get_db] = _override
-    app.dependency_overrides[get_db_rw] = _override
-    fake = _FakeRedis()
-    try:
-        with patch("app.tasks.redis_state.get_redis_client", return_value=fake):
-            async with AsyncClient(
-                transport=ASGITransport(app=app), base_url="http://test"
-            ) as client:
-                resp = await client.get("/api/events/search", params={"q": "donald trump"})
-                assert resp.status_code == 200, resp.text
-                body = resp.json()
+        async def _override():
+            async with maker() as sess:
+                yield sess
+
+        app.dependency_overrides[get_db] = _override
+        app.dependency_overrides[get_db_rw] = _override
+        fake = _FakeRedis()
+        try:
+            with patch("app.tasks.redis_state.get_redis_client", return_value=fake):
+                async with AsyncClient(
+                    transport=ASGITransport(app=app), base_url="http://test"
+                ) as client:
+                    resp = await client.get("/api/events/search", params={"q": "donald trump"})
+                    assert resp.status_code == 200, resp.text
+                    body = resp.json()
+        finally:
+            app.dependency_overrides.clear()
     finally:
-        app.dependency_overrides.clear()
-        await engine.dispose()
+        try:
+            async with engine.begin() as conn:
+                await conn.run_sync(Base.metadata.drop_all)
+        finally:
+            await engine.dispose()
 
     returned_ids = [f["id"] for f in body.get("futures", [])]
     assert returned_ids, "CONTROL: search returned no futures at all"

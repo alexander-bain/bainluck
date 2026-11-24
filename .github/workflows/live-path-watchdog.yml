@@ -2496,6 +2496,10 @@ jobs:
       env:
         CALIBRATION_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/bl_cal12612
       run: bash ../.github/scripts/run-12612-pg-gates.sh cal tests/test_calibration_examples_canonical_262.py tests/test_calibration_canonical_pg.py tests/test_calibration_horizon_honest_263.py
+    - name: "#12818 search untraded 60-row window guard (real Postgres)"
+      id: db_12818_search_untraded_window_guard
+      if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
+      run: bash ../.github/scripts/run-12612-pg-gates.sh search12818 tests/test_search_untraded_window_guard_12818.py
 
     - name: "#12252 shared tail \u2014 upload this attempt's 55-A retries for the flake sentinel"
       id: db_flaky_retries_upload
