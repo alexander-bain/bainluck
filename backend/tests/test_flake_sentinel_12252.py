@@ -290,3 +290,57 @@ def test_the_sentinel_runs_daily_and_may_write_issues():
     assert on["schedule"] == [{"cron": "40 15 * * *"}]
     assert wf["permissions"] == {"actions": "read", "contents": "read", "issues": "write"}
     assert "scripts/flake_sentinel.py" in wf["jobs"]["sentinel"]["steps"][-1]["run"]
+
+
+def test_multi_test_burst_in_one_job_counts_as_one_rig_event_not_per_test_quarantine(filed):
+    burst_tests = [f"tests/integration/test_rig_burst_{idx}_pg.py::test_case" for idx in range(13)]
+    events = [
+        fs.Event(t, f"sha{r}", r, 1, "database-integration (shared-tail-2)", f"2026-11-06T0{r}:30:00Z", "retry")
+        for r in range(1, 6)
+        for t in burst_tests
+    ]
+    # Include one genuine isolated flake across two different runs (below burst threshold in each run)
+    events += [_ev(T1, "2026-11-05T01:00:00Z", run=101), _ev(T1, "2026-11-06T01:00:00Z", run=102)]
+
+    per_test, bursts = fs.split_rig_bursts(events)
+    assert len(bursts) == 5
+    assert all(b["test_count"] == 13 for b in bursts)
+    assert set(fs.flaky(events)) == {T1}
+
+    api = FakeApi()
+    lines = fs.file_flakes(api, per_test, NOW, dry=False)
+    assert len(filed) == 1
+    assert filed[0]["title"] == f"Flaky: {T1}"
+    assert len(lines) == 1
+    summary = fs.report(events, [], lines, SimpleNamespace(calls=5), None, rig_bursts=bursts)
+    assert "**Job-wide bursts (4+ tests in one job, counted as one rig event, never quarantined):** 5" in summary
+    assert all(bt not in summary for bt in burst_tests)
+
+
+def test_55a_retry_is_written_only_when_retry_passes(monkeypatch, tmp_path, capsys):
+    from tests import conftest
+
+    retries = tmp_path / "flaky-retries.txt"
+    monkeypatch.setenv("FLAKY_RETRIES_FILE", str(retries))
+    monkeypatch.setattr(conftest, "_RETRIED_NODEIDS", set())
+
+    # Attempt 1 fails -> rerun; attempt 1 teardown passes; attempt 2 fails -> NOT recorded.
+    bad = "tests/integration/test_a_pg.py::test_fails_twice"
+    conftest.pytest_runtest_logreport(SimpleNamespace(when="call", outcome="rerun", nodeid=bad))
+    conftest.pytest_runtest_logreport(SimpleNamespace(when="teardown", outcome="passed", nodeid=bad))
+    assert not retries.exists()
+    conftest.pytest_runtest_logreport(SimpleNamespace(when="call", outcome="failed", nodeid=bad))
+    assert not retries.exists()
+
+    # Attempt 1 fails -> rerun; attempt 1 teardown passes; attempt 2 call passes -> recorded once.
+    good = "tests/integration/test_a_pg.py::test_flaked_then_passed"
+    conftest.pytest_runtest_logreport(SimpleNamespace(when="call", outcome="rerun", nodeid=good))
+    conftest.pytest_runtest_logreport(SimpleNamespace(when="teardown", outcome="passed", nodeid=good))
+    conftest.pytest_runtest_logreport(SimpleNamespace(when="setup", outcome="passed", nodeid=good))
+    assert not retries.exists()
+    conftest.pytest_runtest_logreport(SimpleNamespace(when="call", outcome="passed", nodeid=good))
+    conftest.pytest_runtest_logreport(SimpleNamespace(when="teardown", outcome="passed", nodeid=good))
+
+    assert retries.read_text().splitlines() == [good]
+    out = capsys.readouterr().out
+    assert "::warning title=Retried once (55-A)::" in out

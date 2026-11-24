@@ -75,6 +75,9 @@ RETRY_ATTEMPTS = (1, 2, 3)
 RATE_FLOOR = 100
 # Evidence newer than this is "new since the last daily run" (the cron is late by hours).
 NEW_EVIDENCE_HOURS = 30
+# #12252: >=4 distinct tests failing in one job run indicates a shared rig failure
+# rather than independent test flakes; collapse into one rig event and never quarantine.
+RIG_BURST_MIN_TESTS = 4
 
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 # `-v` lines ("tests/x.py::t FAILED") and the short summary ("FAILED tests/x.py::t - ...").
@@ -205,12 +208,50 @@ def fingerprint(test: str) -> str:
     return hashlib.sha256(test.encode()).hexdigest()[:12]
 
 
-def flaky(events: list[Event], since: str | None = None) -> dict[str, list[Event]]:
-    """Tests with THRESHOLD or more events (after ``since`` when given)."""
-    by: dict[str, list[Event]] = defaultdict(list)
+def split_rig_bursts(
+    events: list[Event],
+    *,
+    burst_threshold: int = RIG_BURST_MIN_TESTS,
+) -> tuple[list[Event], list[dict]]:
+    """Collapse bursts of ``burst_threshold``+ distinct tests inside one job run.
+
+    When external/infra breakage (e.g. a broken dependency or closed service in
+    one runner) fails many unrelated tests inside a single ``(run_id, attempt, job)``,
+    that job run counts as ONE rig burst event rather than quarantining every test.
+    """
+    by_job_run: dict[tuple[int, int, str], list[Event]] = defaultdict(list)
     for e in events:
-        if since is None or e.at > since:
-            by[e.test].append(e)
+        by_job_run[(e.run_id, e.attempt, e.job)].append(e)
+
+    per_test: list[Event] = []
+    rig_bursts: list[dict] = []
+    for (run_id, attempt, job), group in sorted(
+        by_job_run.items(), key=lambda kv: (kv[1][0].at, kv[0])
+    ):
+        distinct_tests = {e.test for e in group}
+        if len(distinct_tests) >= burst_threshold:
+            first = min(group, key=lambda e: e.at)
+            rig_bursts.append({
+                "run_id": run_id,
+                "attempt": attempt,
+                "job": job,
+                "sha": first.sha,
+                "at": first.at,
+                "test_count": len(distinct_tests),
+                "link": first.link(),
+            })
+        else:
+            per_test.extend(group)
+    return per_test, rig_bursts
+
+
+def flaky(events: list[Event], since: str | None = None) -> dict[str, list[Event]]:
+    """Tests with THRESHOLD or more non-burst events (after ``since`` when given)."""
+    windowed = [e for e in events if since is None or e.at > since]
+    per_test, _ = split_rig_bursts(windowed)
+    by: dict[str, list[Event]] = defaultdict(list)
+    for e in per_test:
+        by[e.test].append(e)
     return {t: sorted(es, key=lambda e: e.at) for t, es in by.items() if len(es) >= THRESHOLD}
 
 
@@ -375,9 +416,18 @@ def file_flakes(api: Api, events: list[Event], now: dt.datetime, dry: bool) -> l
     return lines
 
 
-def report(events: list[Event], job_level: list[dict], filed: list[str], api: Api, partial: str | None) -> str:
+def report(
+    events: list[Event],
+    job_level: list[dict],
+    filed: list[str],
+    api: Api,
+    partial: str | None,
+    rig_bursts: list[dict] | None = None,
+) -> str:
+    per_test, detected_bursts = split_rig_bursts(events)
+    bursts = detected_bursts if rig_bursts is None else rig_bursts
     by: dict[str, list[Event]] = defaultdict(list)
-    for e in events:
+    for e in per_test:
         by[e.test].append(e)
     seen = sorted(by.items(), key=lambda kv: (-len(kv[1]), kv[0]))
     out = [f"## Flake sentinel — last {WINDOW_DAYS} days ({api.calls} GitHub calls)"]
@@ -388,6 +438,13 @@ def report(events: list[Event], job_level: list[dict], filed: list[str], api: Ap
     once = [(t, es) for t, es in seen if len(es) < THRESHOLD]
     out.append("\n**Seen once this week (watch, not filed):**")
     out += [f"- `{t}` — {es[0].job}, `{es[0].sha[:10]}` ([run]({es[0].link()}))" for t, es in once] or ["- none"]
+    out.append(f"\n**Job-wide bursts ({RIG_BURST_MIN_TESTS}+ tests in one job, counted as one rig event, never quarantined):** "
+               f"{len(bursts)}")
+    out += [
+        f"- {b['job']} — {b['test_count']} tests on `{b['sha'][:10]}` "
+        f"([run {b['run_id']}, attempt {b['attempt']}]({b['link']}))"
+        for b in bursts
+    ]
     out.append(f"\n**Jobs that failed then passed with no test named** (setup step or cascade, never filed): "
                f"{len(job_level)}")
     names = defaultdict(int)
@@ -406,17 +463,18 @@ def main(argv: list[str] | None = None) -> int:
         print("GITHUB_TOKEN unset — nothing read", file=sys.stderr)
         return 2
     api, now = Api(token), dt.datetime.now(dt.timezone.utc)
-    events, job_level, partial, filed = [], [], None, []
+    events, job_level, partial, filed, rig_bursts = [], [], None, [], []
     try:
         runs = list_runs(api, now)
         events, job_level = rerun_events(api, runs)
         events += retry_events(api, _iso(now - dt.timedelta(days=WINDOW_DAYS)))
-        filed = file_flakes(api, events, now, args.dry_run)
+        per_test, rig_bursts = split_rig_bursts(events)
+        filed = file_flakes(api, per_test, now, args.dry_run)
     except RateLimited as exc:
         partial = str(exc)
     except urllib.error.HTTPError as exc:
         partial = f"GitHub returned {exc.code} on {_where(exc.url or '')}"
-    text = report(events, job_level, filed, api, partial)
+    text = report(events, job_level, filed, api, partial, rig_bursts=rig_bursts)
     print(text)
     summary = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary:
