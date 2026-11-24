@@ -364,8 +364,6 @@ jobs:
     - name: "#11934 sentence interests return verified chips (real Postgres)"
       id: db_11934_sentence_interests
       if: ${{ !cancelled() && (matrix.group == 'shared' && needs.change-scope.outputs.reuse != 'true') }}
-      env:
-        REDIS_URL: redis://localhost:56379/11
       run: |
         python -m pytest tests/test_onboarding_interest_sentences_11934.py \
           -v -rs > /tmp/onboarding11934.txt 2>&1 || {
