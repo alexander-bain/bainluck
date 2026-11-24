@@ -588,6 +588,7 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
         source: str = "kalshi",
         sport_id: int | None = None,
         with_history: bool = False,
+        mutually_exclusive: bool = True,
     ) -> FuturesMarket:
         kw = {"id": market_id} if market_id is not None else {}
         fm = FuturesMarket(
@@ -599,7 +600,7 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
             category=category,
             llm_sport_category=category,
             market_tier=1,
-            mutually_exclusive=True,
+            mutually_exclusive=mutually_exclusive,
             status="open",
             volume=250_000,
             resolution_date=res_future,
@@ -987,9 +988,10 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
 
     # 12. #12288 Batch 5 preview groupings (March Madness 2027, AI Model Leaderboard, Big Tech Deals & Hardware, NHL 100-Point Club)
     for mid, ext, name, cat, sid, outs in (
-        (52755955, "PMB5-APPOLL", "AP Poll #1 team on December 7", "basketball", ncaab.id, [("Houston", 0.54, 0.50), ("Duke", 0.25, 0.27)]),
+        (52755955, "PMB5-APPOLL", "AP Poll #1 team on December 7", "basketball", ncaab.id, [("Houston", 0.54, 0.50), ("Duke", 0.25, 0.27), ("Florida", 0.14, 0.13)]),
         (68954772, "PMB5-DUKEFF", "Will Duke reach the 2027 Final Four?", "basketball", ncaab.id, [("Yes", 0.37, 0.35)]),
         (68954773, "PMB5-FLAFF", "Will Florida reach the 2027 Final Four?", "basketball", ncaab.id, [("Yes", 0.32, 0.30)]),
+        (68954775, "PMB5-HOUFF", "Will Houston reach the 2027 Final Four?", "basketball", ncaab.id, [("Yes", 0.31, 0.29)]),
         (109596, "KXB5-BESTAI", "Best AI model at year-end?", "tech", None, [("Gemini", 0.83, 0.80), ("Claude", 0.10, 0.12)]),
         (62134324, "KXB5-OPUS", "Next Claude Opus released by?", "tech", None, [("Dec 31", 0.79, 0.75)]),
         (109623, "KXB5-CODEAI", "Best coding AI model at year-end?", "tech", None, [("Anthropic", 0.49, 0.46), ("OpenAI", 0.31, 0.33)]),
@@ -1023,9 +1025,10 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
         (114149, "KXB6-DUNEAV", "Will Dune 3 or Avengers: Doomsday gross more on opening weekend?", "entertainment", [("Avengers: Doomsday", 0.98, 0.96), ("Dune 3", 0.02, 0.04)]),
         (113355, "KXB6-TOP2026", "Highest grossing movie in 2026?", "entertainment", [("Spider-Man: Brand New Day", 0.91, 0.89)]),
         (113356, "KXB6-OPEN2026", "Which movie has biggest opening weekend in 2026?", "entertainment", [("Avengers: Doomsday", 0.90, 0.88)]),
-        (70160313, "PMB6-GGACTF", "Golden Globe Winner: Best Actress - Musical or Comedy", "entertainment", [("Julianne Moore", 0.77, 0.75)]),
+        (70160313, "PMB6-GGACTF", "Golden Globe Winner: Best Actress - Musical or Comedy", "entertainment", [("Julianne Moore", 0.77, 0.75), ("Olivia Wilde", 0.06, 0.06), ("Inde Navarrette", 0.06, 0.05), ("Olivia Colman", 0.02, 0.02)]),
         (70160296, "PMB6-GGACTRLS", "Golden Globe Winner: Best Actress in a Limited Series", "entertainment", [("Florence Pugh", 0.72, 0.70)]),
         (70160294, "PMB6-GGSUPATV", "Golden Globe Winner: Best Supporting Actress on TV", "entertainment", [("Kate O'Flynn", 0.71, 0.68)]),
+        (70160314, "PMB6-GGACTM", "Golden Globe Winner: Best Actor - Musical or Comedy", "entertainment", [("Timothée Chalamet", 0.65, 0.62)]),
     ):
         await _add_market(
             market_id=mid,
@@ -1034,6 +1037,14 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
             category=cat,
             outcomes=outs,
         )
+    await _add_market(
+        market_id=61484904,
+        external_id="KXB6-GGNOM",
+        name="Golden Globe Nominations: Best Actress in a Motion Picture – Musical or Comedy",
+        category="entertainment",
+        outcomes=[("Julianne Moore", 0.98, 0.96), ("Olivia Wilde", 0.96, 0.94), ("Inde Navarrette", 0.90, 0.88), ("Olivia Colman", 0.77, 0.74)],
+        mutually_exclusive=False,
+    )
 
     # 14. #12288 Batch 7 preview groupings (8 forms across Oscars, CFB, NFL, NHL, NCAAB, Euro Soccer, Tech & Space, Weather)
     actor_outcomes = [

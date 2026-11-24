@@ -154,8 +154,9 @@ def test_the_collection_kinds_are_existing_vocabulary():
 
 
 class _Result:
-    def __init__(self, rows):
+    def __init__(self, rows, *, rowcount: int = 0):
         self._rows = rows
+        self.rowcount = rowcount
 
     def fetchone(self):
         return self._rows[0] if self._rows else None
@@ -176,9 +177,10 @@ BARRIER = datetime(2026, 9, 12, 11, 0, tzinfo=timezone.utc)
 class ContainerSession:
     """Holds a slug -> row map; INSERT … ON CONFLICT adds unless ``insert_lands`` is off."""
 
-    def __init__(self, rows=None, insert_lands=True):
+    def __init__(self, rows=None, insert_lands=True, backfill_bounds=None):
         self.rows = dict(rows or {})
         self.insert_lands = insert_lands
+        self.backfill_bounds = dict(backfill_bounds or {})
         self.statements = []
         self.commits = 0
         self.rollbacks = 0
@@ -201,6 +203,32 @@ class ContainerSession:
                     100 + len(self.rows), params["slug"], params["window_start"], params["window_end"]
                 )
             return _Result([])
+        if sql.startswith("UPDATE containers SET window_start = COALESCE"):
+            updated = 0
+            target_id = int(params["id"])
+            for slug, row in list(self.rows.items()):
+                if int(row[0]) == target_id and (row[2] is None or row[3] is None):
+                    self.rows[slug] = (
+                        row[0],
+                        row[1],
+                        row[2] if row[2] is not None else params["window_start"],
+                        row[3] if row[3] is not None else params["window_end"],
+                    )
+                    updated += 1
+            return _Result([], rowcount=updated)
+        if sql.startswith("UPDATE containers c SET window_start = COALESCE"):
+            updated = 0
+            for slug, row in list(self.rows.items()):
+                if slug.startswith("nfl-") and (row[2] is None or row[3] is None) and slug in self.backfill_bounds:
+                    lo, hi = self.backfill_bounds[slug]
+                    self.rows[slug] = (
+                        row[0],
+                        row[1],
+                        row[2] if row[2] is not None else lo,
+                        row[3] if row[3] is not None else hi,
+                    )
+                    updated += 1
+            return _Result([], rowcount=updated)
         raise AssertionError(f"unexpected statement: {sql[:80]}")
 
     async def commit(self):
@@ -211,6 +239,9 @@ class ContainerSession:
 
     def inserts(self):
         return [p for s, p in self.statements if s.startswith("INSERT INTO containers")]
+
+    def updates(self):
+        return [(s, p) for s, p in self.statements if s.startswith("UPDATE containers")]
 
 
 class Schedule:
@@ -262,21 +293,57 @@ async def test_apply_bootstraps_one_flat_row_per_current_week_and_commits_each(r
     assert runs[0]["bootstrap"] == "created" and runs[0]["family"] == "nfl"
     (insert,) = session.inserts()
     assert insert["kind"] == "season" and insert["name"] == "NFL 2026 · Week 1"
+    lo, hi = ca._nfl_week_window_bounds(real, NflWeek(season=2026, week=1))
+    assert lo is not None and hi is not None and lo < hi
+    assert insert["window_start"] == lo and insert["window_end"] == hi
     assert nfl_calls[0].container.slug == "nfl-2026-week-1"
+    assert nfl_calls[0].container.window_start == lo
+    assert nfl_calls[0].container.window_end == hi
     assert nfl_calls[0].container.id is not None and nfl_calls[0].apply is True
     assert session.commits == 1
 
 
 @pytest.mark.asyncio
 async def test_an_existing_row_is_used_and_never_rewritten(real, nfl_calls):
-    session = ContainerSession(rows={"nfl-2026-week-1": (7, "nfl-2026-week-1", None, None)})
+    existing_lo, existing_hi = _at(2026, 9, 9), _at(2026, 9, 13)
+    session = ContainerSession(
+        rows={"nfl-2026-week-1": (7, "nfl-2026-week-1", existing_lo, existing_hi)}
+    )
 
     runs = await ca.run_nfl_collection(session, NFL_2026, apply=True, now=WEEK1_NOW,
                                        service=Schedule(real))
 
     assert runs[0]["bootstrap"] == "existing"
     assert session.inserts() == []
+    assert [s for s, _p in session.updates() if "WHERE id = :id" in s] == []
     assert nfl_calls[0].container.id == 7
+    assert (nfl_calls[0].container.window_start, nfl_calls[0].container.window_end) == (
+        existing_lo,
+        existing_hi,
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_existing_row_with_null_window_gets_filled_and_past_weeks_backfilled(real, nfl_calls):
+    w4_lo, w4_hi = _at(2026, 10, 2, 0), _at(2026, 10, 6, 0)
+    session = ContainerSession(
+        rows={
+            "nfl-2026-week-1": (7, "nfl-2026-week-1", None, None),
+            "nfl-2026-week-4": (9, "nfl-2026-week-4", None, None),
+        },
+        backfill_bounds={"nfl-2026-week-4": (w4_lo, w4_hi)},
+    )
+
+    runs = await ca.run_nfl_collection(
+        session, NFL_2026, apply=True, now=WEEK1_NOW, service=Schedule(real)
+    )
+
+    assert runs[0]["bootstrap"] == "existing"
+    w1_lo, w1_hi = ca._nfl_week_window_bounds(real, NflWeek(season=2026, week=1))
+    assert nfl_calls[0].container.window_start == w1_lo
+    assert nfl_calls[0].container.window_end == w1_hi
+    assert session.rows["nfl-2026-week-4"][2:] == (w4_lo, w4_hi)
+    assert session.commits == 2
 
 
 @pytest.mark.asyncio

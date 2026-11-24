@@ -45,8 +45,9 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
-from app.models.models import RankingGrade, RankingSlateSnapshot
+from app.models.models import Event, RankingGrade, RankingSlateSnapshot
 from app.routes.admin_utils import _check_admin_secret
 from app.services.database import get_db, get_db_rw
 from app.utils.ranking_eval import (
@@ -1828,4 +1829,301 @@ async def get_screen_grades(
             "grades": {g: _DB_TO_SCREEN_GRADE.get(r.grade, r.grade) for (g, k), r in first.items() if k == key},
         })
     return {"week": week, "surface": SURFACE_SCREENS, "screens": out}
+
+
+# ---------------------------------------------------------------------------
+# #13511 (Step 1) — Game page below-the-charts nuggets grading endpoints
+# ---------------------------------------------------------------------------
+
+SURFACE_GAME_NUGGETS = "game_nuggets"
+_GAME_NUGGET_GRADES = ("yes", "no")
+
+
+class GameNuggetGradeIn(BaseModel):
+    slate_id: str = Field(..., max_length=64)
+    event_id: int
+    nugget_id: str = Field(..., min_length=1, max_length=96)
+    position: int = Field(..., ge=1, le=12)
+    grade: str = Field(..., max_length=16)
+    grader: str = Field(..., min_length=1, max_length=40)
+    note: str | None = Field(default=None, max_length=300)
+
+
+def _game_nugget_slate_id(raw: str | None, now: datetime) -> str:
+    if raw and re.match(r"^[A-Za-z0-9-]{1,64}$", raw):
+        return raw
+    return f"game-nuggets-{now.strftime('%Y-%m-%d')}"
+
+
+def _game_nugget_item_key(event_id: int, nugget_id: str) -> str:
+    return f"event:{event_id}:{nugget_id}"[:120]
+
+
+def _select_eval_events(events: list[Event], *, limit: int) -> list[Event]:
+    """Select upcoming/live/recent events round-robin across distinct sports."""
+    buckets: dict[str, list[Event]] = {}
+    for ev in events:
+        sk = ev.sport.key if getattr(ev, "sport", None) is not None else "unknown"
+        buckets.setdefault(sk, []).append(ev)
+    order = sorted(buckets.keys(), key=lambda sk: (-len(buckets[sk]), sk))
+    selected: list[Event] = []
+    while len(selected) < limit and order:
+        next_order: list[str] = []
+        for sk in order:
+            q = buckets[sk]
+            if not q:
+                continue
+            selected.append(q.pop(0))
+            if q:
+                next_order.append(sk)
+            if len(selected) >= limit:
+                break
+        order = next_order
+    return selected
+
+
+def _summarize_game_nugget_grades(rows: list[RankingGrade]) -> dict[str, Any]:
+    latest_by_pair: dict[tuple[str, str], RankingGrade] = {}
+    for r in sorted(rows, key=lambda x: (x.graded_at or datetime.min.replace(tzinfo=timezone.utc), x.id or 0)):
+        latest_by_pair[(str(r.grader or "").lower(), str(r.item_key or ""))] = r
+
+    yes_count = 0
+    no_count = 0
+    by_grader: dict[str, dict[str, int]] = {}
+    grades_out: list[dict[str, Any]] = []
+    for (_, item_key), r in latest_by_pair.items():
+        gval = str(r.grade or "").lower()
+        if gval == "yes":
+            yes_count += 1
+        elif gval == "no":
+            no_count += 1
+        gname = str(r.grader or "")
+        entry = by_grader.setdefault(gname, {"yes": 0, "no": 0, "total": 0})
+        if gval in ("yes", "no"):
+            entry[gval] += 1
+            entry["total"] += 1
+        grades_out.append(
+            {
+                "grader": gname,
+                "item_key": item_key,
+                "position": r.position,
+                "grade": gval,
+                "note": r.note,
+                "graded_at": r.graded_at.isoformat() if r.graded_at else None,
+            }
+        )
+
+    total = yes_count + no_count
+    rate = round(yes_count / total, 4) if total > 0 else None
+    return {
+        "graded_count": total,
+        "yes_count": yes_count,
+        "no_count": no_count,
+        "repeat_rate": rate,
+        "target_rate": 0.75,
+        "meets_target": (rate is not None and rate >= 0.75),
+        "by_grader": by_grader,
+        "grades": grades_out,
+    }
+
+
+@router.get("/game-nuggets/deck")
+async def get_game_nuggets_deck(
+    request: Request,
+    limit: int = Query(20, ge=1, le=30),
+    slate: str | None = Query(None, max_length=64),
+    secret: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return lightweight 20-game slate metadata + grade summary (#13511).
+
+    Does NOT build nuggets inside the deck call; the grading UI loads one game
+    per request via ``/game-nuggets/games/{event_id}`` so neither cold latency
+    nor L1 cache eviction hits the web workers.
+    """
+    _check_admin_secret(secret, request=request)
+    now = datetime.now(timezone.utc)
+    slate_id = _game_nugget_slate_id(slate, now)
+
+    candidate_events = (
+        await db.execute(
+            select(Event)
+            .options(selectinload(Event.sport))
+            .where(
+                Event.status.in_(["live", "in_progress", "scheduled", "completed"]),
+                Event.commence_time >= now - timedelta(hours=6),
+                Event.commence_time <= now + timedelta(days=5),
+            )
+            .order_by(Event.commence_time.asc(), Event.id.asc())
+            .limit(max(limit * 4, 80))
+        )
+    ).scalars().all()
+
+    chosen_candidates = _select_eval_events(list(candidate_events), limit=limit)
+
+    grade_rows = (
+        await db.execute(
+            select(RankingGrade).where(
+                RankingGrade.surface == SURFACE_GAME_NUGGETS,
+                RankingGrade.slate_id == slate_id,
+            )
+        )
+    ).scalars().all()
+    summary = _summarize_game_nugget_grades(list(grade_rows))
+    grader_header = request.headers.get("X-Grader-Name")
+    active_grader = (
+        " ".join(urllib.parse.unquote(grader_header).split())
+        if grader_header
+        else None
+    )
+    graded_keys_by_event: dict[int, set[str]] = {}
+    for g in summary["grades"]:
+        if active_grader and g["grader"].lower() != active_grader.lower():
+            continue
+        ikey = str(g.get("item_key") or "")
+        if ikey.startswith("event:"):
+            parts = ikey.split(":", 2)
+            if len(parts) >= 2 and parts[1].isdigit():
+                graded_keys_by_event.setdefault(int(parts[1]), set()).add(ikey)
+
+    games: list[dict[str, Any]] = []
+    for ev in chosen_candidates:
+        eid = int(ev.id)
+        games.append(
+            {
+                "event_id": eid,
+                "home_team": ev.home_team_name,
+                "away_team": ev.away_team_name,
+                "sport": ev.sport.key if getattr(ev, "sport", None) is not None else None,
+                "status": ev.status,
+                "commence_time": ev.commence_time.isoformat() if ev.commence_time else None,
+                "graded_count": len(graded_keys_by_event.get(eid, ())),
+            }
+        )
+
+    return {
+        "slate_id": slate_id,
+        "surface": SURFACE_GAME_NUGGETS,
+        "games_count": len(games),
+        "games": games,
+        "summary": {k: v for k, v in summary.items() if k != "grades"},
+    }
+
+
+@router.get("/game-nuggets/games/{event_id}")
+async def get_game_nuggets_for_event(
+    event_id: int,
+    request: Request,
+    limit: int = Query(8, ge=1, le=12),
+    slate: str | None = Query(None, max_length=64),
+    secret: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Build ranked nuggets + saved-grade overlay for ONE game per request (#13511)."""
+    from app.routes.events import build_event_nuggets
+
+    _check_admin_secret(secret, request=request)
+    now = datetime.now(timezone.utc)
+    slate_id = _game_nugget_slate_id(slate, now)
+    payload = await build_event_nuggets(int(event_id), db, limit=limit, now=now)
+
+    grade_rows = (
+        await db.execute(
+            select(RankingGrade).where(
+                RankingGrade.surface == SURFACE_GAME_NUGGETS,
+                RankingGrade.slate_id == slate_id,
+            )
+        )
+    ).scalars().all()
+    summary = _summarize_game_nugget_grades(list(grade_rows))
+    grader_header = request.headers.get("X-Grader-Name")
+    active_grader = (
+        " ".join(urllib.parse.unquote(grader_header).split())
+        if grader_header
+        else None
+    )
+    grades_by_key: dict[str, dict[str, Any]] = {}
+    for g in summary["grades"]:
+        if active_grader and g["grader"].lower() != active_grader.lower():
+            continue
+        grades_by_key[g["item_key"]] = g
+
+    eid = int(payload["event_id"])
+    for n in payload.get("nuggets") or ():
+        ikey = _game_nugget_item_key(eid, n["id"])
+        n["item_key"] = ikey
+        saved = grades_by_key.get(ikey)
+        if saved is not None:
+            n["saved_grade"] = saved["grade"]
+            n["saved_note"] = saved.get("note")
+
+    return {
+        "slate_id": slate_id,
+        "surface": SURFACE_GAME_NUGGETS,
+        "event_id": eid,
+        "game": payload,
+        "summary": {k: v for k, v in summary.items() if k != "grades"},
+    }
+
+
+@router.post("/game-nuggets/grades")
+async def post_game_nugget_grade(
+    body: GameNuggetGradeIn,
+    request: Request,
+    secret: str = Query(None),
+    db: AsyncSession = Depends(get_db_rw),
+) -> dict:
+    """Save Alex's yes/no fan-repeat grade for one game nugget (#13511)."""
+    _check_admin_secret(secret, request=request)
+    grade_val = body.grade.strip().lower()
+    if grade_val not in _GAME_NUGGET_GRADES:
+        raise HTTPException(status_code=422, detail=f"grade must be one of {_GAME_NUGGET_GRADES}")
+    grader = " ".join(body.grader.split())
+    if not grader:
+        raise HTTPException(status_code=422, detail="grader needs a name")
+    now = datetime.now(timezone.utc)
+    slate_id = _game_nugget_slate_id(body.slate_id, now)
+    item_key = _game_nugget_item_key(body.event_id, body.nugget_id)
+
+    db.add(
+        RankingGrade(
+            slate_id=slate_id,
+            surface=SURFACE_GAME_NUGGETS,
+            grader=grader,
+            expert=True,
+            position=body.position,
+            item_key=item_key,
+            grade=grade_val,
+            note=(body.note or "").strip() or None,
+        )
+    )
+    await db.commit()
+    return {"status": "ok", "item_key": item_key, "grade": grade_val, "grader": grader}
+
+
+@router.get("/game-nuggets/grades")
+async def get_game_nugget_grades(
+    request: Request,
+    slate_id: str | None = Query(None, max_length=64),
+    secret: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return latest per-nugget grades and 3-in-4 repeat-rate summary (#13511)."""
+    _check_admin_secret(secret, request=request)
+    now = datetime.now(timezone.utc)
+    resolved_slate = _game_nugget_slate_id(slate_id, now)
+    rows = (
+        await db.execute(
+            select(RankingGrade).where(
+                RankingGrade.surface == SURFACE_GAME_NUGGETS,
+                RankingGrade.slate_id == resolved_slate,
+            )
+        )
+    ).scalars().all()
+    summary = _summarize_game_nugget_grades(list(rows))
+    return {
+        "slate_id": resolved_slate,
+        "surface": SURFACE_GAME_NUGGETS,
+        **summary,
+    }
 

@@ -177,4 +177,20 @@ final class DiscoverMasonryTests: XCTestCase {
         XCTAssertEqual(DiscoverMasonry.columns(cardCount: 3, columnCount: 0), [[0, 1, 2]])
         XCTAssertEqual(DiscoverMasonry.columns(cardCount: 3, columnCount: -2), [[0, 1, 2]])
     }
+
+    func testChunkRangesPartitionContiguouslyAndHandleBounds() {
+        XCTAssertEqual(DiscoverMasonry.chunkRanges(count: 0, columnCount: 2, rowsPerChunk: 2), [])
+        XCTAssertEqual(DiscoverMasonry.chunkRanges(in: 5..<5, columnCount: 2, rowsPerChunk: 2), [])
+        XCTAssertEqual(DiscoverMasonry.chunkRanges(count: 3, columnCount: 2, rowsPerChunk: 2), [0..<3])
+        XCTAssertEqual(DiscoverMasonry.chunkRanges(count: 10, columnCount: 2, rowsPerChunk: 2), [0..<4, 4..<8, 8..<10])
+        XCTAssertEqual(DiscoverMasonry.chunkRanges(in: 10..<20, columnCount: 2, rowsPerChunk: 3), [10..<16, 16..<20])
+    }
+
+    func testCardAreaWidthMatchesContentClampingAndHandlesInvalidWidth() {
+        XCTAssertEqual(DiscoverMasonry.cardAreaWidth(containerWidth: 0, maxContentWidth: 800), 0)
+        XCTAssertEqual(DiscoverMasonry.cardAreaWidth(containerWidth: -10, maxContentWidth: 800), 0)
+        XCTAssertEqual(DiscoverMasonry.cardAreaWidth(containerWidth: 390, maxContentWidth: .infinity), 358)
+        XCTAssertEqual(DiscoverMasonry.cardAreaWidth(containerWidth: 834, maxContentWidth: 800), 768)
+        XCTAssertEqual(DiscoverMasonry.cardAreaWidth(containerWidth: 1376, maxContentWidth: 800), 768)
+    }
 }

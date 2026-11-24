@@ -35,6 +35,7 @@ from app.utils.discover_fun_scout import (  # noqa: E402
     SCOUT_ANTHROPIC_API_KEY_ENV,
     SCOUT_RUN_CAP_USD,
     ScoutMarketRow,
+    ScoutTaggedMarket,
     ScoutUncoveredFamily,
     build_scout_anthropic_client,
     build_scout_openai_client,
@@ -199,6 +200,18 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="Optional path to save the first-pass tagged candidates as JSON.",
     )
+    parser.add_argument(
+        "--reuse-tagged-json",
+        type=Path,
+        default=None,
+        help="Optional path to reuse a previously dumped Pass 1 tagged JSON instead of calling OpenAI.",
+    )
+    parser.add_argument(
+        "--dump-validated-json",
+        type=Path,
+        default=None,
+        help="Optional path to save validated set proposals per model as structured JSON.",
+    )
     args = parser.parse_args(argv)
 
     if args.check_key:
@@ -256,20 +269,38 @@ def main(argv: list[str] | None = None) -> int:
 
     markets, families, captured_at = load_titles_fixture(args.fixture)
     examples = list(load_fun_markets_registry().markets.values())
-    openai_client = build_scout_openai_client()
+    openai_client = None if args.reuse_tagged_json is not None else build_scout_openai_client()
     anthropic_client = build_scout_anthropic_client()
 
-    shared_tag_budget = JobBudget(SCOUT_RUN_CAP_USD)
-    tagged, shared_tag_cost = run_scout_tagging_pass(
-        markets,
-        openai_client=openai_client,
-        approved_examples=examples,
-        job_budget=shared_tag_budget,
-    )
-    print(
-        f"\nShared tagging pass complete: {len(tagged)} candidates tagged from {len(markets)} markets; "
-        f"actual_tag_cost=${shared_tag_cost:.4f}"
-    )
+    if args.reuse_tagged_json is not None:
+        raw_tagged = json.loads(args.reuse_tagged_json.read_text(encoding="utf-8"))
+        tagged = [
+            ScoutTaggedMarket(
+                market_id=int(item["market_id"]),
+                fun_group=str(item.get("fun_group") or "fun").strip().lower(),
+                reason=str(item.get("reason") or ""),
+                is_fun_single=bool(item.get("is_fun_single")),
+                set_hint=str(item["set_hint"]) if item.get("set_hint") else None,
+            )
+            for item in raw_tagged
+        ]
+        shared_tag_cost = 0.0
+        print(
+            f"\nReused {len(tagged)} tagged candidates from {args.reuse_tagged_json} "
+            f"(shared_tag_cost=$0.0000)"
+        )
+    else:
+        shared_tag_budget = JobBudget(SCOUT_RUN_CAP_USD)
+        tagged, shared_tag_cost = run_scout_tagging_pass(
+            markets,
+            openai_client=openai_client,
+            approved_examples=examples,
+            job_budget=shared_tag_budget,
+        )
+        print(
+            f"\nShared tagging pass complete: {len(tagged)} candidates tagged from {len(markets)} markets; "
+            f"actual_tag_cost=${shared_tag_cost:.4f}"
+        )
     tag_eval = evaluate_tagging_pass_against_seed_sets(tagged, markets)
     print(
         f"First-pass seed survival (unique): {tag_eval['unique_seed_survived']}/"
@@ -304,6 +335,7 @@ def main(argv: list[str] | None = None) -> int:
 
     prior = args.prior_month_usd + shared_tag_cost
     total_actual_usd = shared_tag_cost
+    validated_by_model: dict[str, list[dict[str, Any]]] = {}
     prev_model_env = os.environ.get("LLM_MODEL_FUN_SCOUT_SETS")
     try:
         for model in args.models:
@@ -322,6 +354,25 @@ def main(argv: list[str] | None = None) -> int:
             prior += set_cost
             total_actual_usd += set_cost
             eval_report = evaluate_scout_against_seed_sets(run["validated_sets"])
+            validated_by_model[model] = [
+                {
+                    "slug": v.slug,
+                    "name": v.name,
+                    "kicker": v.kicker,
+                    "category": v.category,
+                    "why_better_together": v.why_better_together,
+                    "look": v.look,
+                    "members": [
+                        {
+                            "market_id": member.market_id,
+                            "source": member.source,
+                            "title": member.title,
+                        }
+                        for member in v.members
+                    ],
+                }
+                for v in run["validated_sets"]
+            ]
             print(f"\n=== Model: {model} ===")
             print(run["spend_line"])
             print(
@@ -362,6 +413,13 @@ def main(argv: list[str] | None = None) -> int:
             os.environ.pop("LLM_MODEL_FUN_SCOUT_SETS", None)
         else:
             os.environ["LLM_MODEL_FUN_SCOUT_SETS"] = prev_model_env
+    if args.dump_validated_json is not None:
+        args.dump_validated_json.parent.mkdir(parents=True, exist_ok=True)
+        args.dump_validated_json.write_text(
+            json.dumps(validated_by_model, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        print(f"Saved validated sets to {args.dump_validated_json}")
     print(
         f"\n=== Benchmark total actual spend: ${total_actual_usd:.4f} "
         f"(shared_tag=${shared_tag_cost:.4f}, set_passes=${total_actual_usd - shared_tag_cost:.4f}) ==="

@@ -204,7 +204,6 @@ struct Bain_LuckApp: App {
                         EventDetailView(eventId: id)
                             .environmentObject(navigation)
                     }
-                    .preferredColorScheme(.light)
                 }
                 .environmentObject(authManager)
                 .environmentObject(pinManager)
@@ -359,7 +358,6 @@ struct Bain_LuckApp: App {
             }
             // #10874 — saved/recent Spotlight index + opening a tapped result.
             .spotlight10874(userID: authManager.activeFeedUserId, pins: pinManager, navigation: navCoordinator)
-            .preferredColorScheme(.light)
     }
 
     #if os(macOS)

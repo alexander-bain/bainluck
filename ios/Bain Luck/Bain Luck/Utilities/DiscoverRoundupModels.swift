@@ -168,6 +168,8 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
     let presentation: String?
     let rows: [FeedRoundupRow]
     let machineryCard: MachineryCardContract?
+    let kitCard: KitCardEnvelope366B?
+    let hasUnknownLookFallback: Bool
     let pairedMetricSet: PairedMetricSet?
 
     private enum CodingKeys: String, CodingKey {
@@ -180,6 +182,10 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
         case countLineSnake = "count_line"
         case machineryCard
         case machineryCardSnake = "machinery_card"
+        case kitCard
+        case kitCardSnake = "kit_card"
+        case kitSpec
+        case kitSpecSnake = "kit_spec"
         case pairedMetricSet
         case pairedMetricSetSnake = "paired_metric_set"
     }
@@ -195,6 +201,8 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
         presentation: String? = nil,
         rows: [FeedRoundupRow],
         machineryCard: MachineryCardContract? = nil,
+        kitCard: KitCardEnvelope366B? = nil,
+        hasUnknownLookFallback: Bool = false,
         pairedMetricSet: PairedMetricSet? = nil
     ) {
         self.kicker = kicker
@@ -207,6 +215,8 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
         self.presentation = presentation
         self.rows = rows
         self.machineryCard = machineryCard
+        self.kitCard = kitCard
+        self.hasUnknownLookFallback = hasUnknownLookFallback
         self.pairedMetricSet = pairedMetricSet
     }
 
@@ -226,8 +236,19 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
         order = try? c.decodeIfPresent(String.self, forKey: .order)
         presentation = try? c.decodeIfPresent(String.self, forKey: .presentation)
         rows = (try? c.decodeIfPresent([FeedRoundupRow].self, forKey: .rows)) ?? []
+        let hasMachineryPayload = (c.contains(.machineryCard) && ((try? c.decodeNil(forKey: .machineryCard)) == false))
+            || (c.contains(.machineryCardSnake) && ((try? c.decodeNil(forKey: .machineryCardSnake)) == false))
+        let hasKitPayload = (c.contains(.kitCard) && ((try? c.decodeNil(forKey: .kitCard)) == false))
+            || (c.contains(.kitCardSnake) && ((try? c.decodeNil(forKey: .kitCardSnake)) == false))
+            || (c.contains(.kitSpec) && ((try? c.decodeNil(forKey: .kitSpec)) == false))
+            || (c.contains(.kitSpecSnake) && ((try? c.decodeNil(forKey: .kitSpecSnake)) == false))
         machineryCard = (try? c.decodeIfPresent(MachineryCardContract.self, forKey: .machineryCard))
             ?? (try? c.decodeIfPresent(MachineryCardContract.self, forKey: .machineryCardSnake))
+        kitCard = (try? c.decodeIfPresent(KitCardEnvelope366B.self, forKey: .kitCard))
+            ?? (try? c.decodeIfPresent(KitCardEnvelope366B.self, forKey: .kitCardSnake))
+            ?? (try? c.decodeIfPresent(KitCardEnvelope366B.self, forKey: .kitSpec))
+            ?? (try? c.decodeIfPresent(KitCardEnvelope366B.self, forKey: .kitSpecSnake))
+        hasUnknownLookFallback = ((machineryCard == nil) && hasMachineryPayload) || ((kitCard == nil) && hasKitPayload)
         pairedMetricSet = (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSet))
             ?? (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSetSnake))
     }
@@ -323,15 +344,24 @@ nonisolated struct DiscoverRoundupCardModel: Equatable, Sendable {
         return "\(title). \(rowSpeech). \(footer)"
     }
 
+    static func fallbackFooter(for ref: FeedThemeCollectionRef) -> String {
+        ref.collectionCount > 1 ? "See all \(ref.collectionCount) in \(ref.name)" : "Open \(ref.name)"
+    }
+
     static func build(
         title: String?,
         contract: FeedRoundupContract?,
+        fallbackKicker: String? = nil,
+        fallbackFooter: String? = nil,
+        allowFlexibleRowCount: Bool = false,
         now: Date = Date()
     ) -> DiscoverRoundupCardModel? {
         guard let contract else { return nil }
         let headline = trimmed(title)
-        let kicker = trimmed(contract.kicker)
-        let footer = trimmed(contract.footer)
+        let rawKicker = trimmed(contract.kicker)
+        let kicker = rawKicker.isEmpty ? trimmed(fallbackKicker) : rawKicker
+        let rawFooter = trimmed(contract.footer)
+        let footer = rawFooter.isEmpty ? trimmed(fallbackFooter) : rawFooter
         guard !headline.isEmpty, !kicker.isEmpty, !footer.isEmpty else { return nil }
 
         let upperKicker = kicker.uppercased()
@@ -341,9 +371,9 @@ nonisolated struct DiscoverRoundupCardModel: Equatable, Sendable {
         let isCompleteGroup = contract.completeGroup == true
         let isStrip = trimmed(contract.presentation).lowercased() == "strip"
 
-        let minRows = (isTwoRowPair || isWeekEvents) ? 2 : 3
-        let maxRows = isTwoRowPair ? 2 : isWeekEvents ? 4 : isCompleteGroup ? 8 : 5
-        let served = contract.rows
+        let minRows = allowFlexibleRowCount ? 1 : ((isTwoRowPair || isWeekEvents) ? 2 : 3)
+        let maxRows = allowFlexibleRowCount ? 8 : (isTwoRowPair ? 2 : isWeekEvents ? 4 : isCompleteGroup ? 8 : 5)
+        let served = allowFlexibleRowCount ? Array(contract.rows.prefix(maxRows)) : contract.rows
         guard served.count >= minRows, served.count <= maxRows else { return nil }
 
         struct ValidatedRow {

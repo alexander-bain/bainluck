@@ -144,12 +144,6 @@
           "headline_with_phrase": "{answer} winning Critics Choice Comedy Actor"
         },
         {
-          "id": 70160350,
-          "short_label": "The Voice Season 30 winner",
-          "headline_phrase": "{answer} winning The Voice Season 30",
-          "headline_with_phrase": "{answer} winning The Voice"
-        },
-        {
           "id": 60481087,
           "short_label": "Dancing with the Stars Season 35 winner",
           "headline_phrase": "{answer} winning Dancing with the Stars",
@@ -160,6 +154,16 @@
           "short_label": "Next SNL showrunner",
           "headline_phrase": "{answer} running Saturday Night Live next",
           "headline_with_phrase": "{answer} taking over Saturday Night Live"
+        }
+      ]
+    },
+    "batch8-tv-other-races": {
+      "entries": [
+        {
+          "id": 70160350,
+          "short_label": "The Voice Season 30 winner",
+          "headline_phrase": "{answer} winning The Voice Season 30",
+          "headline_with_phrase": "{answer} winning The Voice"
         },
         {
           "id": 109441,
@@ -350,7 +354,11 @@
           "short_label": "FIDE Blitz #2 rating in Jan 2027",
           "headline_phrase": "{answer} holding #2 FIDE blitz chess rating in Jan 2027",
           "headline_with_phrase": "{answer} holding blitz #2 rating"
-        },
+        }
+      ]
+    },
+    "batch8-chess-ai-milestones": {
+      "entries": [
         {
           "id": 62368048,
           "short_label": "An LLM beats a chess grandmaster",

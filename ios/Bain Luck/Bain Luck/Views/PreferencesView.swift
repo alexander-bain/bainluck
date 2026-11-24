@@ -122,6 +122,7 @@ struct PreferencesView: View {
     @State private var analyticsConsentGranted = TelemetryConsent.shared.isGranted
     @State private var telemetryPersistence = TelemetryConsent.shared.persistence
     @State private var groupingMachineryEnabled = false
+    @State private var devSourcesOverlayEnabled = false
 
     var body: some View {
         Group {
@@ -217,9 +218,11 @@ struct PreferencesView: View {
             analyticsConsentGranted = TelemetryConsent.shared.isGranted
             telemetryPersistence = TelemetryConsent.shared.persistence
             groupingMachineryEnabled = GroupingMachineryGate12288.isSwitchEnabled(for: authManager.user)
+            devSourcesOverlayEnabled = DevSourcesOverlay11920.isSwitchEnabled(for: authManager.user)
         }
         .onChange(of: authManager.user?.id) { _, _ in
             groupingMachineryEnabled = GroupingMachineryGate12288.isSwitchEnabled(for: authManager.user)
+            devSourcesOverlayEnabled = DevSourcesOverlay11920.isSwitchEnabled(for: authManager.user)
         }
     }
 
@@ -977,6 +980,41 @@ struct PreferencesView: View {
                 .shadow(color: .black.opacity(0.03), radius: 4, x: 0, y: 2)
                 .padding(.horizontal)
                 .accessibilityIdentifier("preferences.ownerGroupingMachineryToggle")
+
+                Toggle(isOn: Binding(
+                    get: { devSourcesOverlayEnabled },
+                    set: { enabled in
+                        devSourcesOverlayEnabled = enabled
+                        DevSourcesOverlay11920.setSwitchEnabled(enabled, for: authManager.user)
+                    }
+                )) {
+                    HStack(spacing: 10) {
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 20))
+                            .foregroundStyle(.secondary)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Source breadth overlay")
+                                .font(.subheadline)
+                                .fontWeight(.medium)
+                                .foregroundStyle(.primary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("Show source counts and weights beside source marks (owner dev view, default off)")
+                                .font(.caption2)
+                                .foregroundStyle(Color.secondary.opacity(0.75))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+                .toggleStyle(.switch)
+                .tint(Color.accentColor)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .background(Color.cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.barTrack.opacity(0.4), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.03), radius: 4, x: 0, y: 2)
+                .padding(.horizontal)
+                .accessibilityIdentifier("preferences.ownerDevSourcesOverlayToggle11920")
             }
         }
     }

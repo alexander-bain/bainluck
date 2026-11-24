@@ -251,14 +251,19 @@ async def test_missing_team_futures_price_has_a_reason():
     }
 
 
-async def test_a_failed_screen_fails_open_inside_its_savepoint():
+async def test_a_failed_screen_omits_unscreened_inside_its_savepoint():
+    from app.routes.user import TeamFuturesScreenUnavailableError
+
     async def _boom(_db, _markets):
         raise RuntimeError("screen down")
 
+    db = _DB()
     with patch.object(futures_route, "withheld_price_outcome_ids_for_markets", _boom):
-        data, db = await _run()
-    # Today's numbers, and the savepoint — not the request's transaction — rolled back.
-    assert (QBS.id, "Jalen Hurts") in _served(data)
+        with pytest.raises(TeamFuturesScreenUnavailableError) as exc_info:
+            await _run(db)
+    # Zero surviving markets after an incomplete screen must fail honestly (503,
+    # never empty list), while still keeping the failure isolated inside the savepoint.
+    assert exc_info.value.status_code == 503
     assert db.savepoint_log == ["rollback"]
 
 
