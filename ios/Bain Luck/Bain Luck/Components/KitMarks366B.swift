@@ -54,6 +54,71 @@ struct KitMarkView366B: View {
     }
 }
 
+// MARK: - Initials Fallback (`387: A`)
+
+/// Ruling 387: A — Delegates team/org/flag badges to `TeamLogoView.badge` (`TeamShortName`)
+/// and person/film/topic initials to `PairedMetricPresentation.initials` with zero custom slicing.
+nonisolated enum KitInitials366B {
+    private static let connectorWords: Set<String> = ["&", "and", "of", "the"]
+
+    static func initials(for raw: String, subjectKind: String? = nil) -> String {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "?" }
+
+        if let kind = subjectKind,
+           KitPictureShape366B.resolve(forSubjectKind: kind) == .containedCrest {
+            let teamBadge = TeamLogoView.badge(teamName: trimmed, opponentName: nil)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !teamBadge.isEmpty {
+                return teamBadge
+            }
+        }
+
+        let parts = trimmed.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        if parts.count == 1, let single = parts.first,
+           (2...3).contains(single.count),
+           single.contains(where: { $0.isLetter }),
+           single.allSatisfy({ ($0.isLetter && $0.isUppercase) || $0.isNumber }) {
+            return single
+        }
+
+        let substantive = parts.filter { !connectorWords.contains($0.lowercased()) }
+        let input = substantive.count >= 2 ? substantive.joined(separator: " ") : trimmed
+        let resolved = PairedMetricPresentation.initials(for: input)
+        return resolved == "—" ? "?" : resolved
+    }
+}
+
+/// Ruling 387: A — Circle initials badge matching sibling picture slot geometry while staying
+/// invisible to VoiceOver (`.accessibilityHidden(true)`).
+struct KitInitialsCircle366B: View {
+    let name: String
+    var subjectKind: String? = nil
+    let box: CGSize
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    var body: some View {
+        let diameter = max(16, min(box.width, box.height))
+        Circle()
+            .fill(KitTones366B.elevatedBackground(for: colorScheme))
+            .overlay(
+                Circle()
+                    .stroke(KitTones366B.cardBorder(for: colorScheme), lineWidth: 1)
+            )
+            .overlay {
+                Text(KitInitials366B.initials(for: name, subjectKind: subjectKind))
+                    .font(.system(size: max(8.5, diameter * 0.38), weight: .bold))
+                    .foregroundStyle(KitTones366B.textColor(for: .secondary, scheme: colorScheme))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+            }
+            .frame(width: diameter, height: diameter)
+            .frame(width: box.width, height: box.height)
+            .accessibilityHidden(true)
+    }
+}
+
 // MARK: - 1. Picture Mark (Unified Shape Rule)
 
 /// Canonical Kit v1 picture shape rule (#13589 / Ruling 366: B):
@@ -97,12 +162,12 @@ struct KitPictureMarkView366B: View {
         KitPictureShape366B.resolve(forSubjectKind: mark.subjectKind)
     }
 
-    var renderedBoxSize: CGSize {
+    static func boxSize(for mark: KitV1PictureMark, fixedSquareBox: CGFloat? = nil) -> CGSize {
         if let fixedSquareBox {
             return CGSize(width: fixedSquareBox, height: fixedSquareBox)
         }
         let isMd = (mark.size == .md)
-        switch pictureShape {
+        switch KitPictureShape366B.resolve(forSubjectKind: mark.subjectKind) {
         case .roundPerson:
             let side: CGFloat = isMd ? 32 : 24
             return CGSize(width: side, height: side)
@@ -117,6 +182,10 @@ struct KitPictureMarkView366B: View {
             let side: CGFloat = isMd ? 32 : 24
             return CGSize(width: side, height: side)
         }
+    }
+
+    var renderedBoxSize: CGSize {
+        Self.boxSize(for: mark, fixedSquareBox: fixedSquareBox)
     }
 
     private var resolvedURL: URL? {
@@ -206,34 +275,8 @@ struct KitPictureMarkView366B: View {
         }
     }
 
-    private func fallbackBadge(box: CGSize, radius: CGFloat) -> some View {
-        let symbolName: String? = {
-            switch mark.subjectKind {
-            case "person": return "person.fill"
-            case "flag": return "flag.fill"
-            case "film": return "film"
-            case "team", "organization": return nil
-            default: return "photo"
-            }
-        }()
-        return RoundedRectangle(cornerRadius: radius, style: .continuous)
-            .fill(KitTones366B.elevatedBackground(for: colorScheme))
-            .overlay(
-                RoundedRectangle(cornerRadius: radius, style: .continuous)
-                    .stroke(KitTones366B.cardBorder(for: colorScheme), lineWidth: 1)
-            )
-            .overlay {
-                if let symbolName {
-                    Image(systemName: symbolName)
-                        .font(.system(size: max(9, min(box.width, box.height) * 0.42), weight: .semibold))
-                        .foregroundStyle(KitTones366B.textColor(for: .secondary, scheme: colorScheme))
-                } else {
-                    Text(TeamLogoView.badge(teamName: mark.alt, opponentName: nil))
-                        .font(.system(size: max(8, box.width * 0.36), weight: .bold))
-                        .foregroundStyle(KitTones366B.textColor(for: .secondary, scheme: colorScheme))
-                }
-            }
-            .frame(width: box.width, height: box.height)
+    private func fallbackBadge(box: CGSize, radius _: CGFloat) -> some View {
+        KitInitialsCircle366B(name: mark.alt, subjectKind: mark.subjectKind, box: box)
     }
 }
 

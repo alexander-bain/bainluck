@@ -367,13 +367,76 @@ struct KitStackBodyView366B: View {
         }
     }
 
+    private func isLeadingMetaOrRank(_ mark: KitV1Mark) -> Bool {
+        guard case .word(let w) = mark else { return false }
+        return w.style == .rank || w.style == .meta
+    }
+
+    private func isSplitBarRow(_ marks: [KitV1Mark]) -> Bool {
+        marks.contains {
+            if case .bar(let b) = $0 { return b.barStyle == .split }
+            return false
+        }
+    }
+
+    /// Ruling 387: A — Reference picture mark from sibling rows so a row without a verified picture
+    /// draws its initials in a matching circle without altering pictureless cards (`388: A`).
+    private var siblingLeadingPicture: KitV1PictureMark? {
+        for item in stackBody.items where !isSplitBarRow(item.marks) {
+            let afterPrefix = item.marks.drop(while: isLeadingMetaOrRank)
+            if case .picture(let pic) = afterPrefix.first {
+                return pic
+            }
+        }
+        return nil
+    }
+
+    private func leadingInitialsName(for marks: [KitV1Mark]) -> String? {
+        guard siblingLeadingPicture != nil, !isSplitBarRow(marks) else { return nil }
+        let hasPicture = marks.contains {
+            if case .picture = $0 { return true }
+            return false
+        }
+        guard !hasPicture else { return nil }
+        let afterPrefix = marks.drop(while: isLeadingMetaOrRank)
+        for mark in afterPrefix {
+            if case .word(let w) = mark {
+                let trimmed = w.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty { return trimmed }
+            }
+        }
+        return nil
+    }
+
     @ViewBuilder
     private func markRow(marks: [KitV1Mark]) -> some View {
+        let prefixCount = marks.prefix(while: isLeadingMetaOrRank).count
+        let leadingPrefix = Array(marks.prefix(prefixCount))
+        let rest = Array(marks.dropFirst(prefixCount))
+        let initialsName = leadingInitialsName(for: marks)
+        let refPicture = siblingLeadingPicture
+
         if dynamicTypeSize.isAccessibilitySize {
-            accessibilityMarkStack(marks: marks)
+            accessibilityMarkStack(
+                marks: marks,
+                leadingPrefix: leadingPrefix,
+                rest: rest,
+                initialsName: initialsName,
+                referencePicture: refPicture
+            )
         } else {
             HStack(alignment: .center, spacing: 8) {
-                ForEach(Array(marks.enumerated()), id: \.offset) { _, mark in
+                ForEach(Array(leadingPrefix.enumerated()), id: \.offset) { _, mark in
+                    KitMarkView366B(mark: mark)
+                }
+                if let refPicture, let initialsName {
+                    KitInitialsCircle366B(
+                        name: initialsName,
+                        subjectKind: refPicture.subjectKind,
+                        box: KitPictureMarkView366B.boxSize(for: refPicture)
+                    )
+                }
+                ForEach(Array(rest.enumerated()), id: \.offset) { _, mark in
                     KitMarkView366B(mark: mark)
                 }
             }
@@ -381,7 +444,13 @@ struct KitStackBodyView366B: View {
     }
 
     @ViewBuilder
-    private func accessibilityMarkStack(marks: [KitV1Mark]) -> some View {
+    private func accessibilityMarkStack(
+        marks: [KitV1Mark],
+        leadingPrefix: [KitV1Mark],
+        rest: [KitV1Mark],
+        initialsName: String?,
+        referencePicture: KitV1PictureMark?
+    ) -> some View {
         if let splitIndex = marks.firstIndex(where: {
             if case .bar(let b) = $0, b.barStyle == .split { return true }
             return false
@@ -405,22 +474,29 @@ struct KitStackBodyView366B: View {
                 }
             }
         } else {
-            let labelAndPictureMarks = marks.filter {
+            let isLabelOrPic: (KitV1Mark) -> Bool = {
                 switch $0 {
                 case .picture, .word: return true
                 case .number, .bar, .tile, .ring, .dot, .line: return false
                 }
             }
-            let metricMarks = marks.filter {
-                switch $0 {
-                case .picture, .word: return false
-                case .number, .bar, .tile, .ring, .dot, .line: return true
-                }
-            }
+            let prefixLabelMarks = leadingPrefix.filter(isLabelOrPic)
+            let restLabelMarks = rest.filter(isLabelOrPic)
+            let metricMarks = marks.filter { !isLabelOrPic($0) }
             VStack(alignment: .leading, spacing: 6) {
-                if !labelAndPictureMarks.isEmpty {
+                if !prefixLabelMarks.isEmpty || !restLabelMarks.isEmpty || initialsName != nil {
                     HStack(alignment: .center, spacing: 8) {
-                        ForEach(Array(labelAndPictureMarks.enumerated()), id: \.offset) { _, mark in
+                        ForEach(Array(prefixLabelMarks.enumerated()), id: \.offset) { _, mark in
+                            KitMarkView366B(mark: mark)
+                        }
+                        if let referencePicture, let initialsName {
+                            KitInitialsCircle366B(
+                                name: initialsName,
+                                subjectKind: referencePicture.subjectKind,
+                                box: KitPictureMarkView366B.boxSize(for: referencePicture)
+                            )
+                        }
+                        ForEach(Array(restLabelMarks.enumerated()), id: \.offset) { _, mark in
                             KitMarkView366B(mark: mark)
                         }
                     }
@@ -549,9 +625,35 @@ struct KitGridBodyView366B: View {
         }
     }
 
+    private var siblingLeadingPicture: KitV1PictureMark? {
+        let hasRank = matrixHasLeadingRank
+        for row in gridBody.rows {
+            let entityMarks = hasRank ? Array(row.leading.dropFirst()) : row.leading
+            for mark in entityMarks {
+                if case .picture(let pic) = mark {
+                    return pic
+                }
+            }
+        }
+        return nil
+    }
+
     private func rowLeadingView(_ row: KitV1GridRow, hasRank: Bool, rowIndex: Int) -> some View {
         let rankMark: KitV1Mark? = hasRank ? row.leading.first : nil
         let entityMarks: [KitV1Mark] = hasRank ? Array(row.leading.dropFirst()) : row.leading
+        let missingLeadingPicture: KitV1PictureMark? = {
+            let hasPic = entityMarks.contains {
+                if case .picture = $0 { return true }
+                return false
+            }
+            guard !hasPic else { return nil }
+            return siblingLeadingPicture
+        }()
+        let leadingInitialsName: String? = entityMarks.compactMap { mark -> String? in
+            guard case .word(let w) = mark else { return nil }
+            let trimmed = w.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            return trimmed.isEmpty ? nil : trimmed
+        }.first
         let rowSpeech = KitAccessibilitySpeech366B.gridRowSpeech(
             row: row,
             gridBody: gridBody,
@@ -565,6 +667,13 @@ struct KitGridBodyView366B: View {
             if let rankMark {
                 KitMarkView366B(mark: rankMark)
                     .frame(width: dynamicTypeSize.isAccessibilitySize ? nil : 16, alignment: .leading)
+            }
+            if let missingLeadingPicture, let leadingInitialsName {
+                KitInitialsCircle366B(
+                    name: leadingInitialsName,
+                    subjectKind: missingLeadingPicture.subjectKind,
+                    box: KitPictureMarkView366B.boxSize(for: missingLeadingPicture)
+                )
             }
             ForEach(Array(entityMarks.enumerated()), id: \.offset) { _, mark in
                 KitMarkView366B(mark: mark)
@@ -925,7 +1034,115 @@ struct KitAxisBodyView366B: View {
     }
 
     private var trackHeight: CGFloat {
-        CGFloat(maxLane + 1) * 36 + 100
+        CGFloat(maxLane + 1) * 40 + 74
+    }
+
+    private var visibleFooterMarks: [KitV1Mark] {
+        let footers = axisBody.footerMarks ?? []
+        guard !elevatedDotsWithIndex.isEmpty else { return footers }
+        return footers.filter { mark in
+            if case .word(let w) = mark, w.style == .pill {
+                return false
+            }
+            return true
+        }
+    }
+
+    private var lowEndBaseDots: [KitV1DotMark] {
+        let threshold = axisBody.highlightBand?.lo ?? axisBody.scale.min
+        return baseDotsWithIndex
+            .map(\.dot)
+            .filter { $0.x <= threshold }
+            .sorted { a, b in
+                if a.x != b.x { return a.x < b.x }
+                return Self.entityName(from: a) < Self.entityName(from: b)
+            }
+    }
+
+    private var highEndBaseDots: [KitV1DotMark] {
+        let threshold = axisBody.highlightBand?.hi ?? axisBody.scale.max
+        return baseDotsWithIndex
+            .map(\.dot)
+            .filter { $0.x >= threshold }
+            .sorted { a, b in
+                if a.x != b.x { return a.x > b.x }
+                return Self.entityName(from: a) < Self.entityName(from: b)
+            }
+    }
+
+    private var sortedElevatedDots: [(index: Int, dot: KitV1DotMark)] {
+        elevatedDotsWithIndex.sorted { a, b in
+            if a.dot.x != b.dot.x { return a.dot.x > b.dot.x }
+            return Self.entityName(from: a.dot) < Self.entityName(from: b.dot)
+        }
+    }
+
+    static func entityName(from dot: KitV1DotMark) -> String {
+        let raw = dot.label.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let colon = raw.firstIndex(of: ":") {
+            let prefix = raw[..<colon].trimmingCharacters(in: .whitespacesAndNewlines)
+            if !prefix.isEmpty { return prefix }
+        }
+        if !raw.isEmpty { return raw }
+        let alt = dot.picture?.alt.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return alt.isEmpty ? "Marker" : alt
+    }
+
+    static func formatEndNamesLine(_ names: [String], maxChars: Int = 46) -> String {
+        var unique: [String] = []
+        var seen = Set<String>()
+        for raw in names {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, !seen.contains(trimmed) else { continue }
+            seen.insert(trimmed)
+            unique.append(trimmed)
+        }
+        guard !unique.isEmpty else { return "" }
+        let full = unique.joined(separator: ", ")
+        if full.count <= maxChars {
+            return full
+        }
+
+        var chosen: [String] = []
+        for (idx, name) in unique.enumerated() {
+            let candidateList = chosen + [name]
+            let remaining = unique.count - candidateList.count
+            let suffix = remaining > 0 ? " +\(remaining)" : ""
+            let candidate = candidateList.joined(separator: ", ") + suffix
+            if idx == 0 || candidate.count <= maxChars {
+                chosen.append(name)
+            } else {
+                break
+            }
+        }
+        let remaining = unique.count - chosen.count
+        return remaining > 0
+            ? chosen.joined(separator: ", ") + " +\(remaining)"
+            : chosen.joined(separator: ", ")
+    }
+
+    private func compactDotValue(_ dot: KitV1DotMark) -> String {
+        let scale = axisBody.scale
+        let isPercent = scale.scaleKind == .percent
+            || scale.unit == "%"
+            || scale.ticks.contains { $0.label.contains("%") }
+        let scaled: Double = {
+            if isPercent, scale.max <= 1.0, abs(dot.x) <= 1.0 {
+                return dot.x * 100.0
+            }
+            return dot.x
+        }()
+        if isPercent {
+            if scaled > 0 && scaled < 1.0 {
+                return "<1%"
+            }
+            return "\(Int(scaled.rounded()))%"
+        }
+        let formatted = abs(scaled.rounded() - scaled) < 0.05
+            ? "\(Int(scaled.rounded()))"
+            : String(format: "%.1f", scaled)
+        let unit = scale.unit.trimmingCharacters(in: .whitespacesAndNewlines)
+        return unit.isEmpty ? formatted : "\(formatted)\(unit)"
     }
 
     private func xFraction(_ value: Double) -> CGFloat {
@@ -943,6 +1160,13 @@ struct KitAxisBodyView366B: View {
         VStack(alignment: .leading, spacing: 10) {
             if !dots.isEmpty {
                 axisPlotView
+                if dynamicTypeSize.isAccessibilitySize && !axisBody.scale.ticks.isEmpty {
+                    scaleTicksView
+                }
+            }
+
+            if !elevatedDotsWithIndex.isEmpty && dynamicTypeSize.isAccessibilitySize {
+                accessibleBubbleTeamsList
             }
 
             if !lines.isEmpty && dots.isEmpty {
@@ -970,30 +1194,179 @@ struct KitAxisBodyView366B: View {
             }
 
             if let summaries = axisBody.summaryMarks, !summaries.isEmpty {
-                Group {
-                    if dynamicTypeSize.isAccessibilitySize {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(Array(summaries.enumerated()), id: \.offset) { _, mark in
-                                KitMarkView366B(mark: mark)
-                            }
-                        }
-                    } else {
-                        HStack(alignment: .center, spacing: 8) {
-                            ForEach(Array(summaries.enumerated()), id: \.offset) { idx, mark in
-                                KitMarkView366B(mark: mark)
-                                if idx < summaries.count - 1 {
-                                    Spacer(minLength: 4)
-                                }
-                            }
-                        }
+                axisEndSummariesView(summaries: summaries)
+            }
+
+            if !visibleFooterMarks.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(visibleFooterMarks.enumerated()), id: \.offset) { _, mark in
+                        KitMarkView366B(mark: mark)
                     }
                 }
             }
+        }
+    }
 
-            if let footers = axisBody.footerMarks, !footers.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(footers.enumerated()), id: \.offset) { _, mark in
+    @ViewBuilder
+    private var accessibleBubbleTeamsList: some View {
+        let sorted = sortedElevatedDots
+        VStack(alignment: .leading, spacing: 0) {
+            if let bandLabel = axisBody.highlightBand?.label.trimmingCharacters(in: .whitespacesAndNewlines),
+               !bandLabel.isEmpty {
+                Text(bandLabel.uppercased())
+                    .font(.caption.weight(.bold))
+                    .tracking(0.6)
+                    .foregroundStyle(KitTones366B.textColor(for: .secondary, scheme: colorScheme))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+            }
+            ForEach(sorted, id: \.index) { item in
+                Rectangle()
+                    .fill(KitTones366B.divider(for: colorScheme))
+                    .frame(height: 1)
+
+                accessibleBubbleRow(item: item)
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(KitTones366B.elevatedBackground(for: colorScheme))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(KitTones366B.cardBorder(for: colorScheme), lineWidth: 1)
+        )
+    }
+
+    @ViewBuilder
+    private func accessibleBubbleRow(item: (index: Int, dot: KitV1DotMark)) -> some View {
+        let dot = item.dot
+        let name = Self.entityName(from: dot)
+        let value = compactDotValue(dot)
+        let speech = KitAccessibilitySpeech366B.axisDotSpeech(
+            dot: dot,
+            axisBody: axisBody,
+            index: item.index,
+            total: dots.count,
+            spec: spec
+        )
+        let rowContent = Group {
+            if dynamicTypeSize >= .accessibility3 {
+                (Text(name) + Text("  ") + Text(value).bold().monospacedDigit())
+                    .font(.footnote)
+                    .foregroundStyle(KitTones366B.textColor(for: .primary, scheme: colorScheme))
+                    .fixedSize(horizontal: false, vertical: true)
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(name)
+                        .font(.footnote)
+                        .foregroundStyle(KitTones366B.textColor(for: .primary, scheme: colorScheme))
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer(minLength: 8)
+                    Text(value)
+                        .font(.footnote.weight(.bold).monospacedDigit())
+                        .foregroundStyle(KitTones366B.textColor(for: .primary, scheme: colorScheme))
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+
+        if let route = defaultRoute, let onRoute {
+            Button {
+                onRoute(route)
+            } label: {
+                rowContent.contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(speech)
+            .accessibilityIdentifier("kitV1.axisBubbleRow.\(item.index)")
+        } else {
+            rowContent
+                .accessibilityElement(children: .ignore)
+                .accessibilityLabel(speech)
+                .accessibilityIdentifier("kitV1.axisBubbleRow.\(item.index)")
+        }
+    }
+
+    @ViewBuilder
+    private func axisEndSummariesView(summaries: [KitV1Mark]) -> some View {
+        let shouldShowEndNames = !elevatedDotsWithIndex.isEmpty
+            && !baseDotsWithIndex.isEmpty
+            && axisBody.highlightBand != nil
+
+        if shouldShowEndNames {
+            let endNamesByIndex: [[String]] = [
+                lowEndBaseDots.map { Self.entityName(from: $0) },
+                highEndBaseDots.map { Self.entityName(from: $0) }
+            ]
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(Array(summaries.enumerated()), id: \.offset) { idx, mark in
+                    if case .word(let w) = mark {
+                        let serverProvidesNames = !(w.secondaryText ?? "")
+                            .trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            || w.text.contains(",")
+                            || w.text.contains("·")
+                        let endNames = idx < endNamesByIndex.count ? endNamesByIndex[idx] : []
+                        let derivedLine = serverProvidesNames ? "" : Self.formatEndNamesLine(endNames)
+
+                        if serverProvidesNames {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(w.text)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(KitTones366B.textColor(for: .secondary, scheme: colorScheme))
+                                    .fixedSize(horizontal: false, vertical: true)
+                                if let sec = w.secondaryText, !sec.isEmpty {
+                                    Text(sec)
+                                        .font(.caption2)
+                                        .foregroundStyle(KitTones366B.textColor(for: .muted, scheme: colorScheme))
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel(KitAccessibilitySpeech366B.expandPercent(
+                                [w.text, w.secondaryText].compactMap { $0 }.joined(separator: ", ")
+                            ))
+                        } else {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(w.text)
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(KitTones366B.textColor(for: .secondary, scheme: colorScheme))
+                                    .fixedSize(horizontal: false, vertical: true)
+                                if !derivedLine.isEmpty {
+                                    Text(derivedLine)
+                                        .font(.caption2)
+                                        .foregroundStyle(KitTones366B.textColor(for: .muted, scheme: colorScheme))
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .accessibilityElement(children: .combine)
+                            .accessibilityLabel(KitAccessibilitySpeech366B.expandPercent(
+                                derivedLine.isEmpty ? w.text : "\(w.text), \(derivedLine)"
+                            ))
+                        }
+                    } else {
                         KitMarkView366B(mark: mark)
+                    }
+                }
+            }
+        } else if dynamicTypeSize.isAccessibilitySize {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Array(summaries.enumerated()), id: \.offset) { _, mark in
+                    KitMarkView366B(mark: mark)
+                }
+            }
+        } else {
+            HStack(alignment: .center, spacing: 8) {
+                ForEach(Array(summaries.enumerated()), id: \.offset) { idx, mark in
+                    KitMarkView366B(mark: mark)
+                    if idx < summaries.count - 1 {
+                        Spacer(minLength: 4)
                     }
                 }
             }
@@ -1099,8 +1472,9 @@ struct KitAxisBodyView366B: View {
     }
 
     private var axisPlotView: some View {
-        let totalH = trackHeight
-        let baselineY = totalH - 28
+        let showInlineTicks = !dynamicTypeSize.isAccessibilitySize
+        let totalH = showInlineTicks ? trackHeight : max(80, trackHeight - 18)
+        let baselineY = showInlineTicks ? totalH - 26 : totalH - 8
         let ticks = axisBody.scale.ticks
         let visibleTicks = axisPlotVisibleTicks
         let scaleSpeech = KitAccessibilitySpeech366B.axisScaleSpeech(axisBody: axisBody)
@@ -1138,6 +1512,7 @@ struct KitAxisBodyView366B: View {
                     .offset(x: 8, y: baselineY)
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(scaleSpeech)
+                    .accessibilityHidden(dynamicTypeSize.isAccessibilitySize)
 
                 ForEach(baseDotsWithIndex, id: \.index) { item in
                     let idx = item.index
@@ -1187,7 +1562,7 @@ struct KitAxisBodyView366B: View {
                     let dot = item.dot
                     let lane = CGFloat(max(0, Int((dot.yLane ?? 0).rounded())))
                     let px = clampedX(dot.x, width: w, inset: 16)
-                    let py = baselineY - 34 - lane * 36
+                    let py = baselineY - 26 - lane * 40
                     let speech = KitAccessibilitySpeech366B.axisDotSpeech(
                         dot: dot,
                         axisBody: axisBody,
@@ -1198,13 +1573,12 @@ struct KitAxisBodyView366B: View {
                     if let pic = dot.picture {
                         let marker = VStack(spacing: 1) {
                             KitPictureMarkView366B(mark: pic, fixedSquareBox: 24)
-                            if !pic.alt.isEmpty && pic.alt.count <= 5 {
-                                Text(pic.alt)
-                                    .font(.system(size: 8.5, weight: .bold))
-                                    .foregroundStyle(KitTones366B.textColor(for: .secondary, scheme: colorScheme))
-                                    .lineLimit(1)
-                                    .fixedSize()
-                            }
+                            Text(compactDotValue(dot))
+                                .font(.system(size: 10, weight: .bold).monospacedDigit())
+                                .foregroundStyle(KitTones366B.textColor(for: .primary, scheme: colorScheme))
+                                .dynamicTypeSize(...DynamicTypeSize.large)
+                                .lineLimit(1)
+                                .fixedSize()
                         }
                         .frame(width: 46, height: 46)
                         .contentShape(Rectangle())
@@ -1217,32 +1591,36 @@ struct KitAxisBodyView366B: View {
                             .buttonStyle(.plain)
                             .accessibilityLabel(speech)
                             .accessibilityIdentifier("kitV1.axisDot.\(idx)")
+                            .accessibilityHidden(dynamicTypeSize.isAccessibilitySize)
                             .position(x: px, y: py)
                         } else {
                             marker
                                 .accessibilityElement(children: .ignore)
                                 .accessibilityLabel(speech)
                                 .accessibilityIdentifier("kitV1.axisDot.\(idx)")
+                                .accessibilityHidden(dynamicTypeSize.isAccessibilitySize)
                                 .position(x: px, y: py)
                         }
                     }
                 }
 
-                ForEach(visibleTicks, id: \.offset) { item in
-                    let idx = item.offset
-                    let tick = item.tick
-                    let tx: CGFloat = {
-                        if idx == 0 { return 16 }
-                        if idx == ticks.count - 1 { return max(16, w - 20) }
-                        return clampedX(tick.x, width: w, inset: 18)
-                    }()
-                    Text(tick.label)
-                        .font(.caption2.monospacedDigit())
-                        .foregroundStyle(KitTones366B.textColor(for: .muted, scheme: colorScheme))
-                        .dynamicTypeSize(...DynamicTypeSize.xLarge)
-                        .fixedSize(horizontal: true, vertical: false)
-                        .position(x: tx, y: totalH - 10)
-                        .accessibilityHidden(true)
+                if showInlineTicks {
+                    ForEach(visibleTicks, id: \.offset) { item in
+                        let idx = item.offset
+                        let tick = item.tick
+                        let tx: CGFloat = {
+                            if idx == 0 { return 16 }
+                            if idx == ticks.count - 1 { return max(16, w - 20) }
+                            return clampedX(tick.x, width: w, inset: 18)
+                        }()
+                        Text(tick.label)
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(KitTones366B.textColor(for: .muted, scheme: colorScheme))
+                            .dynamicTypeSize(...DynamicTypeSize.xLarge)
+                            .fixedSize(horizontal: true, vertical: false)
+                            .position(x: tx, y: totalH - 10)
+                            .accessibilityHidden(true)
+                    }
                 }
             }
         }

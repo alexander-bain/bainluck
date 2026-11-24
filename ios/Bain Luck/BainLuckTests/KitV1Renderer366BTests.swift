@@ -141,28 +141,36 @@ final class KitV1Renderer366BTests: XCTestCase {
         let measured = measureHost.sizeThatFits(in: CGSize(width: width, height: CGFloat.greatestFiniteMagnitude))
         let h = max(120, ceil(measured.height) + 4)
 
-        let host = hostForMeasurement(framed, at: dynamicType)
-        host.overrideUserInterfaceStyle = uiStyle
-        let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
-        let window = scene.map { UIWindow(windowScene: $0) } ?? UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: h))
-        window.frame = CGRect(x: 0, y: 0, width: width, height: h)
-        window.overrideUserInterfaceStyle = uiStyle
-        host.view.frame = window.bounds
-        window.rootViewController = host
-        window.isHidden = false
-        defer {
-            window.isHidden = true
-            window.rootViewController = nil
-        }
-        host.view.setNeedsLayout()
-        host.view.layoutIfNeeded()
-        await Task.yield()
+        let renderer = rendererForMeasurement(framed, at: dynamicType)
+        renderer.scale = h > 3000 ? 1.0 : (h > 1500 ? 2.0 : 3.0)
 
-        let fmt = UIGraphicsImageRendererFormat()
-        fmt.scale = 3.0
-        let image = UIGraphicsImageRenderer(bounds: host.view.bounds, format: fmt).image { ctx in
-            if !host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true) {
-                host.view.layer.render(in: ctx.cgContext)
+        let image: UIImage
+        if let cgImage = renderer.uiImage {
+            image = cgImage
+        } else {
+            let host = hostForMeasurement(framed, at: dynamicType)
+            host.overrideUserInterfaceStyle = uiStyle
+            let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+            let window = scene.map { UIWindow(windowScene: $0) } ?? UIWindow(frame: CGRect(x: 0, y: 0, width: width, height: h))
+            window.frame = CGRect(x: 0, y: 0, width: width, height: h)
+            window.overrideUserInterfaceStyle = uiStyle
+            host.view.frame = window.bounds
+            window.rootViewController = host
+            window.isHidden = false
+            defer {
+                window.isHidden = true
+                window.rootViewController = nil
+            }
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+            await Task.yield()
+
+            let fmt = UIGraphicsImageRendererFormat()
+            fmt.scale = 3.0
+            image = UIGraphicsImageRenderer(bounds: host.view.bounds, format: fmt).image { ctx in
+                if !host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true) {
+                    host.view.layer.render(in: ctx.cgContext)
+                }
             }
         }
 

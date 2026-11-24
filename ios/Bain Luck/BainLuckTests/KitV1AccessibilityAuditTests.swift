@@ -1020,6 +1020,250 @@ final class KitV1AccessibilityAuditTests: XCTestCase {
         }
         XCTAssertTrue(renderIssues.isEmpty, "Real sets render issues:\n" + renderIssues.joined(separator: "\n"))
     }
+
+    // MARK: - Item 15: Noon Kit Sheet Rulings (387: A, 388: A, 389: C + Fable's AX Rule)
+
+    func testMixedPictureRowsShowPicturesAndInitialsCircle387A() async throws {
+        XCTAssertEqual(KitInitials366B.initials(for: "Idris Elba", subjectKind: "person"), "IE")
+        XCTAssertEqual(KitInitials366B.initials(for: "Caleb McLaughlin", subjectKind: "person"), "CM")
+        XCTAssertEqual(KitInitials366B.initials(for: "NYR", subjectKind: "team"), "NYR")
+        XCTAssertEqual(KitInitials366B.initials(for: "Raye", subjectKind: "person"), "R")
+
+        let wrappers = try loadGoldenSpecs()
+        let bond = try XCTUnwrap(wrappers.first(where: { $0.id == "kit-batch1-next-james-bond" }))
+        let urls = collectHTTPSURLs(in: [bond.raw])
+        let preloaded = await preloadImages(for: urls)
+
+        var mixedJSON = bond.raw
+        if var body = mixedJSON["body"] as? [String: Any],
+           var items = body["items"] as? [[String: Any]],
+           items.count >= 2 {
+            // Drop `.picture` on the second row (reproducing 387: A: sibling rows keep pictures, missing row gets initials circle).
+            if let secondMarks = items[1]["marks"] as? [[String: Any]] {
+                items[1]["marks"] = secondMarks.filter { ($0["mark"] as? String) != "picture" }
+            }
+            // Add a third row whose `.picture` URL fails to load -> same initials circle fallback.
+            if var clone = items.first {
+                clone["id"] = "unloaded-candidate"
+                if var marks = clone["marks"] as? [[String: Any]] {
+                    marks = marks.map { mark in
+                        var m = mark
+                        if (m["mark"] as? String) == "picture" {
+                            m["url"] = "https://example.invalid/missing-portrait.jpg"
+                            m["alt"] = "Caleb McLaughlin"
+                        } else if (m["mark"] as? String) == "word" {
+                            m["text"] = "Caleb McLaughlin"
+                        } else if (m["mark"] as? String) == "number" {
+                            m["value"] = 9
+                            m["display"] = "9%"
+                        }
+                        return m
+                    }
+                    clone["marks"] = marks
+                }
+                items.append(clone)
+            }
+            body["items"] = items
+            mixedJSON["body"] = body
+        }
+
+        let spec = try XCTUnwrap(KitV1CardSpec.parse(from: try JSONSerialization.data(withJSONObject: mixedJSON)))
+        let expectedMissingName: String = {
+            if case .stack(let sb) = spec.body, sb.items.count > 1,
+               let wordMark = sb.items[1].marks.first(where: { if case .word = $0 { return true }; return false }),
+               case .word(let w) = wordMark {
+                return w.text
+            }
+            return "Theo James"
+        }()
+        let expectedInitials = KitInitials366B.initials(for: expectedMissingName)
+
+        for scheme in [ColorScheme.light, ColorScheme.dark] {
+            let card = try XCTUnwrap(KitCardView366B(spec: spec))
+                .environment(\.kitPreloadedImages366B, preloaded)
+            let (window, vc, img) = await hostInWindow(view: card, width: 390, scheme: scheme, dynamicType: .large)
+            let lines = try recognizeTextLines(in: img)
+            let joined = lines.joined(separator: " ")
+            let ax = collectAccessibilityElements(from: vc.view)
+            window.isHidden = true
+
+            XCTAssertFalse(lines.isEmpty)
+            XCTAssertFalse(joined.contains("\u{2026}"), "387: A mixed card truncated: \(joined)")
+            XCTAssertTrue(joined.localizedCaseContains(expectedMissingName), "Row text missing on \(scheme): \(joined)")
+            XCTAssertTrue(joined.contains(expectedInitials), "Missing-picture row must show initials '\(expectedInitials)' in circle on \(scheme): \(joined)")
+            XCTAssertTrue(joined.contains("CM"), "Unloaded picture row must show initials 'CM' on \(scheme): \(joined)")
+            XCTAssertTrue(ax.allSatisfy { !$0.traits.contains(.image) }, "Initials circle / pictures must never carry .image VoiceOver trait")
+
+            let tag = scheme == .dark ? "dark" : "light"
+            try writeAuditPNG(img, relativePath: "item15/387a-mixed-pictures-\(tag)-390.png")
+        }
+    }
+
+    func testPlainBarRowsWithoutPicturesRenderWithoutInitialsCircles388A() async throws {
+        let plainJSON: [String: Any] = [
+            "kit_version": 1,
+            "id": "kit-388a-plain-bars",
+            "layout": "stack",
+            "variant": "plain_bars",
+            "kicker": "ECONOMICS · FED & RATES",
+            "common_headline": "Federal Reserve policy path",
+            "stat_caption": "Hold at next meeting leads at 72% across markets",
+            "body": [
+                "items": [
+                    [
+                        "id": "hold",
+                        "marks": [
+                            ["mark": "word", "text": "No rate change", "style": "row", "tone": "primary", "width": "flex"],
+                            ["mark": "bar", "bar_style": "single", "fill": 0.72, "width": "sm"],
+                            ["mark": "number", "value": 72, "display": "72%", "unit": "%", "width": "xs"],
+                        ],
+                    ],
+                    [
+                        "id": "cut25",
+                        "marks": [
+                            ["mark": "word", "text": "25 bps cut", "style": "row", "tone": "primary", "width": "flex"],
+                            ["mark": "bar", "bar_style": "single", "fill": 0.24, "width": "sm"],
+                            ["mark": "number", "value": 24, "display": "24%", "unit": "%", "width": "xs"],
+                        ],
+                    ],
+                ],
+            ],
+        ]
+        let spec = try XCTUnwrap(KitV1CardSpec.parse(from: try JSONSerialization.data(withJSONObject: plainJSON)))
+        for scheme in [ColorScheme.light, ColorScheme.dark] {
+            let card = try XCTUnwrap(KitCardView366B(spec: spec))
+            let (window, _, img) = await hostInWindow(view: card, width: 390, scheme: scheme, dynamicType: .large)
+            let lines = try recognizeTextLines(in: img)
+            let joined = lines.joined(separator: " ")
+            window.isHidden = true
+
+            XCTAssertTrue(joined.contains("72%") && joined.contains("24%"), "Plain bar rows missing numbers: \(joined)")
+            XCTAssertFalse(joined.contains("\u{2026}"), "Plain bar card truncated: \(joined)")
+            XCTAssertFalse(joined.contains("NR"), "388: A plain-bar rows must not invent initials circles when no row has a picture: \(joined)")
+            let tag = scheme == .dark ? "dark" : "light"
+            try writeAuditPNG(img, relativePath: "item15/388a-plain-bars-\(tag)-390.png")
+        }
+    }
+
+    func testNHLAxis389CPercentsUnderCrestsNoGreyListEndNamesAndAXTextList() async throws {
+        let wrappers = try loadGoldenSpecs()
+        let nhl = try XCTUnwrap(wrappers.first(where: { $0.id == "kit-nhl-playoffs-bubble" }))
+        let urls = collectHTTPSURLs(in: [nhl.raw])
+        let preloaded = await preloadImages(for: urls)
+
+        XCTAssertEqual(
+            KitAxisBodyView366B.formatEndNamesLine(["Vancouver Canucks", "Chicago Blackhawks", "Detroit Red Wings"], maxChars: 46),
+            "Vancouver Canucks, Chicago Blackhawks +1"
+        )
+
+        // 1. Default text size Light & Dark at 390pt:
+        //    - percents directly under bubble crests
+        //    - grey pill list dropped
+        //    - one line of names per end
+        for scheme in [ColorScheme.light, ColorScheme.dark] {
+            let card = try XCTUnwrap(KitCardView366B(spec: nhl.spec))
+                .environment(\.kitPreloadedImages366B, preloaded)
+            let (window, _, img) = await hostInWindow(view: card, width: 390, scheme: scheme, dynamicType: .large)
+            let lines = try recognizeTextLines(in: img)
+            let joined = lines.joined(separator: " ")
+            window.isHidden = true
+
+            XCTAssertTrue(joined.contains("54%") && joined.contains("47%") && joined.contains("32%"),
+                          "389: C percents under bubble crests missing on \(scheme): \(joined)")
+            XCTAssertFalse(joined.contains("OTT 73%"), "389: C grey abbreviation list must be removed on \(scheme): \(joined)")
+            XCTAssertTrue(joined.contains("Vancouver Canucks"), "389: C low-end team name line missing on \(scheme): \(joined)")
+            XCTAssertTrue(joined.contains("Edmonton Oilers"), "389: C high-end team name line missing on \(scheme): \(joined)")
+            XCTAssertFalse(joined.contains("\u{2026}"), "389: C NHL card had ellipsis on \(scheme): \(joined)")
+
+            let tag = scheme == .dark ? "dark" : "light"
+            try writeAuditPNG(img, relativePath: "item15/389c-nhl-bubble-\(tag)-390.png")
+        }
+
+        // 2. Fable AX rule: strip `footer_marks` from the spec too and verify AX1 & AX5 still render
+        //    readable scaled bubble team names + percents, without duplicating AX VoiceOver elements.
+        var noFooterRaw = nhl.raw
+        if var b = noFooterRaw["body"] as? [String: Any] {
+            b.removeValue(forKey: "footer_marks")
+            noFooterRaw["body"] = b
+        }
+        let noFooterSpec = try XCTUnwrap(KitV1CardSpec.parse(from: try JSONSerialization.data(withJSONObject: noFooterRaw)))
+
+        let elevatedDots: [(index: Int, dot: KitV1DotMark)] = {
+            guard case .axis(let ab) = noFooterSpec.body else { return [] }
+            let allDots = (ab.marks ?? []).compactMap { mark -> KitV1DotMark? in
+                if case .dot(let d) = mark { return d }
+                return nil
+            }
+            return allDots.enumerated().compactMap { idx, d in
+                (d.picture != nil && d.yLane != nil) ? (idx, d) : nil
+            }
+        }()
+        guard case .axis(let noFooterAxis) = noFooterSpec.body else {
+            XCTFail("Expected axis body on NHL playoffs card")
+            return
+        }
+        let allNoFooterDotsCount = (noFooterAxis.marks ?? []).filter {
+            if case .dot = $0 { return true }
+            return false
+        }.count
+        XCTAssertEqual(elevatedDots.count, 13)
+
+        for (tag, dt) in [("ax1", DynamicTypeSize.accessibility1), ("ax3", DynamicTypeSize.accessibility3), ("ax5", DynamicTypeSize.accessibility5)] {
+            let card = try XCTUnwrap(KitCardView366B(spec: noFooterSpec) { _ in })
+                .environment(\.kitPreloadedImages366B, preloaded)
+            let (window, vc, img) = await hostInWindow(view: card, width: 390, scheme: .light, dynamicType: dt)
+            let lines = try recognizeTextLines(in: img)
+            let joined = lines.joined(separator: " ")
+            let ax = collectAccessibilityElements(from: vc.view)
+            window.isHidden = true
+
+            XCTAssertTrue(joined.contains("Washington Capitals") && joined.contains("54%"),
+                          "Fable AX rule: bubble team Capitals + 54% must be readable text at \(tag): \(joined)")
+            XCTAssertTrue(joined.contains("New York Rangers") && joined.contains("47%"),
+                          "Fable AX rule: bubble team Rangers + 47% must be readable text at \(tag): \(joined)")
+            XCTAssertTrue(joined.contains("Buffalo Sabres") && joined.contains("32%"),
+                          "Fable AX rule: bubble team Sabres + 32% must be readable text at \(tag): \(joined)")
+            XCTAssertFalse(joined.contains("\u{2026}"), "389: C AX render truncated at \(tag): \(joined)")
+
+            for (dotIdx, dot) in elevatedDots {
+                let expectedSpeech = KitAccessibilitySpeech366B.axisDotSpeech(
+                    dot: dot,
+                    axisBody: noFooterAxis,
+                    index: dotIdx,
+                    total: allNoFooterDotsCount,
+                    spec: noFooterSpec
+                )
+                let matching = ax.filter { $0.traits.contains(.button) && $0.label == expectedSpeech }
+                XCTAssertEqual(matching.count, 1, "Expected 1 scaled bubble team button for '\(expectedSpeech)' at \(tag)")
+                if let btn = matching.first {
+                    XCTAssertGreaterThanOrEqual(btn.frame.height, 43.9, "Bubble AX row height < 44pt at \(tag)")
+                    XCTAssertGreaterThanOrEqual(btn.frame.width, 200.0, "Bubble AX row width expected full text row (>=200pt), not dot at \(tag)")
+                    XCTAssertFalse(btn.label.contains("%"), "AX spoken label must expand '%': \(btn.label)")
+                }
+            }
+
+            try writeAuditPNG(img, relativePath: "item15/389c-nhl-bubble-\(tag)-390.png")
+        }
+
+        // 3. Forward-compatibility: if server `summary_marks` already carries end names in `secondary_text`,
+        //    do not append duplicate derived names.
+        var serverProvidedRaw = nhl.raw
+        if var b = serverProvidedRaw["body"] as? [String: Any] {
+            b["summary_marks"] = [
+                ["mark": "word", "text": "9 at 25% or less", "secondary_text": "Sharks, Flyers, Maple Leafs", "style": "sub"],
+                ["mark": "word", "text": "10 at 75% or more", "secondary_text": "Oilers, Wild, Hurricanes", "style": "sub"],
+            ]
+            serverProvidedRaw["body"] = b
+        }
+        let serverProvidedSpec = try XCTUnwrap(KitV1CardSpec.parse(from: try JSONSerialization.data(withJSONObject: serverProvidedRaw)))
+        let spCard = try XCTUnwrap(KitCardView366B(spec: serverProvidedSpec))
+            .environment(\.kitPreloadedImages366B, preloaded)
+        let (spWindow, _, spImg) = await hostInWindow(view: spCard, width: 390, scheme: .light, dynamicType: .large)
+        let spJoined = (try recognizeTextLines(in: spImg)).joined(separator: " ")
+        spWindow.isHidden = true
+        XCTAssertTrue(spJoined.contains("Sharks, Flyers, Maple Leafs"))
+        XCTAssertFalse(spJoined.contains("Vancouver Canucks, Chicago Blackhawks"))
+    }
 }
 
 private extension Set where Element == String {
