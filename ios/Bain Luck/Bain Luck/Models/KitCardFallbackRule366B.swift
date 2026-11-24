@@ -150,6 +150,27 @@ nonisolated struct KitCardEnvelope366B: Decodable, Equatable, Sendable {
             )
         }
 
+        if let refusal = decodeString(["refusal_reason", "refusalReason"]), !refusal.isEmpty {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Kit card refused: \(refusal)"
+                )
+            )
+        }
+
+        if let fallbackKey = ["fallback_today", "fallbackToday"].compactMap({ AnyKey(stringValue: $0) }).first(where: {
+            (try? c.decodeIfPresent(Bool.self, forKey: $0)) == true
+        }) {
+            _ = fallbackKey
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Kit card requested standard fallback"
+                )
+            )
+        }
+
         // Validate body non-emptiness and fail closed on any unknown mark kind anywhere inside the spec.
         var hasContentCollection = false
         for contentKeyName in ["body", "rows", "items", "days", "series", "sections", "cells", "marks"] {
@@ -210,12 +231,61 @@ nonisolated struct KitCardEnvelope366B: Decodable, Equatable, Sendable {
                     }
                 }
             }
+
+            // Meaning-carrying fields fail closed if given an unseen value (Fable 11:04 PM / Atlas #13551 agreement).
+            try validateMeaningToken(in: dict, keys: ["bar_style", "barStyle"], allowed: ["single", "split", "range"], label: "bar_style", codingPath: codingPath)
+            try validateMeaningToken(in: dict, keys: ["row_layout", "rowLayout"], allowed: ["matrix", "stacked_cells"], label: "row_layout", codingPath: codingPath)
+            try validateMeaningToken(in: dict, keys: ["scale_kind", "scaleKind"], allowed: ["percent", "numeric", "time"], label: "scale_kind", codingPath: codingPath)
+            if case .string("number")? = dict["mark"] {
+                try validateMeaningToken(in: dict, keys: ["unit"], allowed: ["%", "days", "one_in_n"], label: "number.unit", codingPath: codingPath)
+            }
+            for colorKey in ["fill_color", "fillColor", "color"] {
+                if let colorVal = dict[colorKey], case .null = colorVal {
+                    continue
+                } else if let colorVal = dict[colorKey] {
+                    guard case .object(let pair) = colorVal,
+                          case .string(let lightHex)? = pair["light"],
+                          case .string(let darkHex)? = pair["dark"],
+                          KitV1AdaptiveHex.isValidHex(lightHex),
+                          KitV1AdaptiveHex.isValidHex(darkHex) else {
+                        throw DecodingError.dataCorrupted(
+                            DecodingError.Context(
+                                codingPath: codingPath,
+                                debugDescription: "Kit \(colorKey) must be an adaptive {light, dark} #rrggbb object"
+                            )
+                        )
+                    }
+                }
+            }
+
             for (k, child) in dict {
                 let childIsMarks = (k == "marks")
                 try validateMarks(in: child, insideMarksCollection: childIsMarks, codingPath: codingPath)
             }
         case .string, .number, .bool, .null:
             break
+        }
+    }
+
+    private static func validateMeaningToken(
+        in dict: [String: KitJSONValue366B],
+        keys: [String],
+        allowed: Set<String>,
+        label: String,
+        codingPath: [CodingKey]
+    ) throws {
+        for key in keys {
+            guard let val = dict[key] else { continue }
+            if case .null = val { continue }
+            guard case .string(let raw) = val,
+                  allowed.contains(raw.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+                throw DecodingError.dataCorrupted(
+                    DecodingError.Context(
+                        codingPath: codingPath,
+                        debugDescription: "Unrecognized kit meaning-carrying \(label)"
+                    )
+                )
+            }
         }
     }
 }
