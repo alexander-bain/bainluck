@@ -55,7 +55,10 @@ _SECRET = re.compile(
     r"\d{3}-\d{2}-\d{4})\b",
     re.IGNORECASE,
 )
-_SCRIPT = re.compile(r"<(?:script|style)\b[^>]*>.*?</(?:script|style)\s*>", re.I | re.S)
+# Accept attributes and whitespace on closing tags when discarding opaque text.
+_SCRIPT = re.compile(
+    r"<(?P<tag>script|style)\b[^>]*>.*?</(?P=tag)(?=[\s/>])[^>]*>", re.I | re.S
+)
 _MARKUP = re.compile(r"<[^>]*>")
 _ABBREVIATION = re.compile(r"\b(st|mt|jr)\.(?=\s)|\bd\.c\.", re.I)
 _CLAUSE = re.compile(r"[!?;\n]+|\.(?=\s|$)|\b(?:but|however|instead|just)\b", re.I)

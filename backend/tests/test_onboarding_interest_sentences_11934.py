@@ -52,6 +52,12 @@ def test_contact_details_and_credentials_are_removed_before_matching():
         assert private not in cleaned
 
 
+@pytest.mark.parametrize("tag", ["script", "style"])
+def test_opaque_text_is_removed_when_the_closing_tag_has_attributes(tag):
+    sentence = f"<{tag}>Yankees</{tag}\t\n ignored>Celtics"
+    assert _clean_text(sentence).split() == ["Celtics"]
+
+
 @pytest.fixture
 async def sentence_client():
     database_url = os.environ.get("SEARCH_TEST_DATABASE_URL")
