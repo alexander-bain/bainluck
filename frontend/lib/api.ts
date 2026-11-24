@@ -718,11 +718,21 @@ export interface TeamFutureItem {
  */
 export type TeamDecidedState = "eliminated" | "won";
 
+export interface ChampionshipPathComponent {
+  market_id: number;
+  outcome_id: number | null;
+  source: string | null;
+  probability: number;
+  observed_at?: string | null;
+}
+
 export interface ChampionshipPathEntry {
   tier: number;
   label: string;
   market_name: string;
   market_id: number;
+  market_ids?: number[];
+  components?: ChampionshipPathComponent[];
   probability: number | null;
   rank: number | null;
   movement: number | null;
@@ -810,10 +820,32 @@ export interface TeamPageResponse {
   recent_events: TeamGameBrief[];
   futures: TeamFutureItem[];
   championship_path: ChampionshipPathEntry[];
+  championship_path_market_ids?: number[];
+}
+
+export interface TeamChampionshipPathResponse {
+  team_id: number;
+  championship_path: ChampionshipPathEntry[];
+  stream_market_ids: number[];
+  built_at: number;
 }
 
 export async function fetchTeamPage(identifier: string): Promise<TeamPageResponse> {
   return apiFetch<TeamPageResponse>(`/api/teams/${encodeURIComponent(identifier)}`);
+}
+
+export async function fetchTeamChampionshipPath(
+  identifier: number | string,
+  signal?: AbortSignal,
+): Promise<TeamChampionshipPathResponse> {
+  const res = await fetch(
+    `${API_URL}/api/teams/${encodeURIComponent(String(identifier))}/championship-path`,
+    { cache: "no-store", signal },
+  );
+  if (!res.ok) {
+    throw new Error(`Team championship path fetch failed (${res.status})`);
+  }
+  return res.json() as Promise<TeamChampionshipPathResponse>;
 }
 
 // Prop families (#242 backend / L2-167 card): a team's futures/prop markets grouped
