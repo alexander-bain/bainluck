@@ -4,13 +4,17 @@ import Foundation
 import ImageIO
 import XCTest
 
-/// #13633 / #12314 (ruling 382: B) — app icon and in-app Bain Luck mark use the
-/// whole clover drawing (original artwork supplied by Alex), unaltered across
-/// iOS light, dark, one-color/tinted, macOS, watchOS, and in-app surfaces.
+/// #13633 / #12314 (rulings 382: B & 390: A) — app icons use the whole clover
+/// drawing (original artwork supplied by Alex) as opaque RGB; the in-app
+/// `BainLuckMark` uses the transparent RGBA clover-and-shadow drawing (`390: A`).
 final class AppIcon12314Tests: XCTestCase {
 
     static let expectedSourceRGBASHA256 =
         "620805dcaf0cd80539bdf66d2296ddec8946dedc9dde17a8a5aa6a811147ec59"
+    /// Straight RGBA SHA-256 of `clover-mark-transparent-1024.png` is `4e65804e...3fa42`;
+    /// ImageIO decodes PNGs as premultiplied RGBA, whose exact byte hash is below.
+    static let expectedTransparentMarkPremulRGBASHA256 =
+        "b3d8ce578c943cf51f38495b093192a3e1c33ce9fc541ff8f83c2ae9d1df2d34"
 
     private var projectDir: URL {
         URL(fileURLWithPath: #filePath)
@@ -77,12 +81,11 @@ final class AppIcon12314Tests: XCTestCase {
         )
     }
 
-    func testColor1024IconsAndMarkAreFlattenedRGBAndMatchVerifiedPixelHash() throws {
+    func testColor1024AppIconsAreFlattenedRGBAndMatchVerifiedPixelHash() throws {
         let targets: [URL] = [
             iosIconSetDir.appendingPathComponent("icon_1024.png"),
             iosIconSetDir.appendingPathComponent("icon_1024_dark.png"),
             watchIconSetDir.appendingPathComponent("icon_1024.png"),
-            markImageSetDir.appendingPathComponent("bainluck_mark_1024.png"),
         ]
         for url in targets {
             let info = try inspectPNG(at: url)
@@ -92,6 +95,55 @@ final class AppIcon12314Tests: XCTestCase {
             let sha = try rgbaSHA256(of: info.cgImage)
             XCTAssertEqual(sha, Self.expectedSourceRGBASHA256, "Pixel hash mismatch: \(url.path)")
         }
+    }
+
+    func testInAppMarkIsTransparentRGBAWithoutMetadataAndMatchesVerifiedPixelHash() throws {
+        let url = markImageSetDir.appendingPathComponent("bainluck_mark_1024.png")
+        let raw = try Data(contentsOf: url)
+        let info = try inspectPNG(at: url)
+        XCTAssertEqual(info.width, 1024)
+        XCTAssertEqual(info.height, 1024)
+        XCTAssertEqual(info.colorType, 6, "BainLuckMark must be RGBA with clear alpha (390: A)")
+
+        var pos = 8
+        var chunkTypes: [String] = []
+        while pos + 8 <= raw.count {
+            let len = Int(raw[pos]) << 24 | Int(raw[pos + 1]) << 16 | Int(raw[pos + 2]) << 8 | Int(raw[pos + 3])
+            let ctype = String(bytes: raw[(pos + 4)..<(pos + 8)], encoding: .isoLatin1) ?? ""
+            chunkTypes.append(ctype)
+            pos += 12 + len
+        }
+        XCTAssertFalse(chunkTypes.contains("caBX"), "Metadata chunk must be stripped")
+        for unexpected in ["eXIf", "tEXt", "zTXt", "iTXt"] {
+            XCTAssertFalse(chunkTypes.contains(unexpected), "Unexpected chunk \(unexpected)")
+        }
+
+        let width = info.width
+        let height = info.height
+        let rawProvider = try XCTUnwrap(info.cgImage.dataProvider?.data as Data?)
+        let bpp = info.cgImage.bitsPerPixel / 8
+        let rowStride = info.cgImage.bytesPerRow
+        XCTAssertEqual(bpp, 4)
+        var unpremul = Data(capacity: width * height * 4)
+        var clearPixelCount = 0
+        rawProvider.withUnsafeBytes { rawBuf in
+            let base = rawBuf.bindMemory(to: UInt8.self).baseAddress!
+            for y in 0..<height {
+                let row = base.advanced(by: y * rowStride)
+                for x in 0..<width {
+                    let i = x * 4
+                    let a = row[i + 3]
+                    if a == 0 { clearPixelCount += 1 }
+                    unpremul.append(row[i])
+                    unpremul.append(row[i + 1])
+                    unpremul.append(row[i + 2])
+                    unpremul.append(a)
+                }
+            }
+        }
+        XCTAssertGreaterThan(clearPixelCount, 400_000, "Transparent mark background must be clear")
+        let sha = SHA256.hash(data: unpremul).map { String(format: "%02x", $0) }.joined()
+        XCTAssertEqual(sha, Self.expectedTransparentMarkPremulRGBASHA256)
     }
 
     func testOneColorTintedIconIsGrayscaleOfDrawingWithoutAlpha() throws {
