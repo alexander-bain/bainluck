@@ -114,3 +114,51 @@ export async function runManualRefresh<P extends { items?: T[] | null }, T exten
   recordEditionScores(scores, page1, deps.getId);
   return { kind: "new-edition", payload, page1, scores, hasMore: decision.hasMore };
 }
+
+/**
+ * #13643 — refresh matching held cards' bodies in place while preserving exact
+ * slot order and membership. Never adds, removes, or reorders cards on screen,
+ * and skips replacement candidates that fail `canReplace` (so an incoming stale
+ * or empty envelope cannot evict a seated card mid-read).
+ */
+export function refreshHeldBodiesInPlace<T>(
+  prev: T[],
+  incoming: readonly T[],
+  getId: (item: T) => string,
+  canReplace?: (candidate: T) => boolean,
+): T[] {
+  if (prev.length === 0 || incoming.length === 0) return prev;
+  const byId = new Map<string, T>();
+  for (const item of incoming) {
+    if (!canReplace || canReplace(item)) {
+      byId.set(getId(item), item);
+    }
+  }
+  if (byId.size === 0) return prev;
+  let changed = false;
+  const next = prev.map((item) => {
+    const fresh = byId.get(getId(item));
+    if (fresh === undefined || fresh === item) return item;
+    changed = true;
+    return fresh;
+  });
+  return changed ? next : prev;
+}
+
+/**
+ * #13643 — detect whether a fresh page-0 payload differs in order or
+ * membership from the reader's currently held page-1 deck, so the UI can offer
+ * `"New cards available"` at the top instead of moving cards under the reader.
+ */
+export function hasNewerDeckCards<T>(
+  heldPage1: readonly T[],
+  incoming: readonly T[],
+  getId: (item: T) => string,
+): boolean {
+  if (heldPage1.length === 0 || incoming.length === 0) return false;
+  if (heldPage1.length !== incoming.length) return true;
+  for (let i = 0; i < heldPage1.length; i += 1) {
+    if (getId(heldPage1[i]) !== getId(incoming[i])) return true;
+  }
+  return false;
+}

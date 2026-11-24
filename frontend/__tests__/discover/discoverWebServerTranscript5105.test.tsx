@@ -292,6 +292,15 @@ const cardsOf = (c: Node) => sequence(c).filter((t) => t !== "H");
 const positions = (c: Node) => walk(c).filter((n) => n["data-position"] !== undefined).map((n) => Number(n["data-position"]));
 const peeks = (c: Node) => walk(c).filter((n) => n["data-class"] === "animate-peek-right").length;
 const has = (c: Node, attr: string) => walk(c).some((n) => n[attr] !== undefined);
+async function clickTestId(c: Node, testId: string) {
+  const node = walk(c).find((n) => n["data-testid"] === testId);
+  if (!node) throw new Error(`missing node data-testid="${testId}"`);
+  const key = Object.keys(node).find((k) => k.startsWith("__reactProps$"));
+  const onClick = key ? (node[key] as { onClick?: () => void }).onClick : undefined;
+  if (!onClick) throw new Error(`missing onClick on data-testid="${testId}"`);
+  await act(async () => { onClick(); });
+  await settle();
+}
 const notice = (c: Node) => walk(c).find((n) => n["data-unavailable"] !== undefined)?.["data-unavailable"];
 const range = (n: number, from = 0) => Array.from({ length: n }, (_, i) => from + i);
 const F = (...ids: number[]) => ids.map((i) => `futures:${i}`);
@@ -360,7 +369,7 @@ describe("#5105 the real page consumes the real server's responses", () => {
     expect(sequence(page)).toEqual(["H", ...E(...range(25, 1))]);
   });
 
-  it("a tournament starts under the pin: the retired page 20 is never appended; one unpinned page zero replaces the deck with its newcomer", async () => {
+  it("a tournament starts under the pin: the retired page 20 stays seated until refreshed; one unpinned page zero replaces the deck with its newcomer", async () => {
     const [p0, retired, fresh, p1, lookahead] = transcript.scenarios.tournament_start;
     const before = ["futures:0", "tournament:t-open", ...F(...range(18, 1))];
     const replaced = F(0, 500, ...range(8, 1)).concat("tournament:t-open", F(...range(9, 9)));
@@ -371,9 +380,11 @@ describe("#5105 the real page consumes the real server's responses", () => {
     await fireSentinel();
     const asked = await serve(retired);
     expect(query(asked)).toEqual({ limit: "20", offset: "20", event_pct: "0.15", edition: served(p0).edition });
-    // Nothing of the retired edition's page 20 reached the screen.
+    // Nothing of the retired edition's page 20 reached the screen, and no uninvited page zero fired.
     expect(sequence(page)).toEqual(before);
+    expect(open()).toEqual([]);
 
+    await clickTestId(page, "discover-new-cards-button");
     const restart = await serve(fresh);
     expect(query(restart)).toEqual({ limit: "20", event_pct: "0.15" });
     expect(sequence(page)).toEqual(replaced);
@@ -411,6 +422,7 @@ describe("#5105 the real page consumes the real server's responses", () => {
     await serve(retired);
     expect(sequence(page)).toEqual(before);
 
+    await clickTestId(page, "discover-new-cards-button");
     await serve(refused);
     expect(sequence(page)).toEqual(before);
     expect(notice(page)).toBe("inline");
