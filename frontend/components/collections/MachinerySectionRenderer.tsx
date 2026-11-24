@@ -12,6 +12,8 @@ import type {
   MachineryVisualBlock,
 } from "@/lib/collections";
 import type { Event } from "@/lib/types";
+import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
+import { renderedPercent } from "@/lib/renderedPercent";
 
 export function isMachinerySlice1Enabled(): boolean {
   return process.env.NEXT_PUBLIC_CONTAINER_MACHINERY_SLICE1 === "true";
@@ -448,7 +450,7 @@ function ContenderSpotlightBlock({
                         isFav ? "font-extrabold text-text-primary" : "font-semibold text-text-secondary"
                       }`}
                     >
-                      {o.rendered_percent}%
+                      {formatProbabilityPercent(o.probability, { rendered: o.rendered_percent })}
                     </span>
                   </div>
                   <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-surface-elevated">
@@ -493,7 +495,7 @@ function ContenderSpotlightBlock({
               <div className="mb-1.5 flex w-full items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-text-muted">
                 <span>#{idx + 1}</span>
                 <span className="text-sm font-extrabold tabular-nums text-text-primary">
-                  {o.rendered_percent}%
+                  {formatProbabilityPercent(o.probability, { rendered: o.rendered_percent })}
                 </span>
               </div>
               <SubjectAvatar
@@ -554,7 +556,7 @@ function ContenderSpotlightBlock({
                 </div>
               </div>
               <span className="relative text-sm font-bold tabular-nums text-text-primary">
-                {o.rendered_percent}%
+                {formatProbabilityPercent(o.probability, { rendered: o.rendered_percent })}
               </span>
             </Link>
           ))}
@@ -635,7 +637,7 @@ function SiblingFieldsGridBlock({
                               isFav ? "font-bold text-text-primary" : "font-semibold text-text-secondary"
                             }`}
                           >
-                            {o.rendered_percent}%
+                            {formatProbabilityPercent(o.probability, { rendered: o.rendered_percent })}
                           </span>
                         </div>
                         <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-surface-elevated">
@@ -1032,7 +1034,10 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
               {topThree.map((r, idx) => {
                 const oid = Number(r.outcome_id ?? idx);
                 const name = String(r.name ?? "");
-                const pct = Number(r.rendered_percent ?? 0);
+                const probability = Number(r.probability ?? NaN);
+                const pct = r.rendered_percent == null
+                  ? (renderedPercent(probability) ?? 0)
+                  : Number(r.rendered_percent);
                 const art = r.art as MachinerySubjectArt | undefined;
                 const isPoster = art?.kind === "tmdb_poster";
                 return (
@@ -1044,7 +1049,7 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
                     <div className="mb-1 flex w-full items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-text-muted">
                       <span>#{idx + 1}</span>
                       <span className="text-xs font-extrabold tabular-nums text-text-primary">
-                        {pct}%
+                        {formatProbabilityPercent(probability, { rendered: pct })}
                       </span>
                     </div>
                     {podiumAnyArt && (
@@ -1131,7 +1136,9 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
           : card.rows.map((r) => {
               const oid = Number(r.outcome_id ?? 0);
               const name = String(r.name ?? "");
-              const pct = Number(r.rendered_percent ?? 0);
+              const probability = Number(r.probability ?? NaN);
+              const allocation = r.rendered_percent == null ? null : Number(r.rendered_percent);
+              const pct = allocation ?? renderedPercent(probability) ?? 0;
               const art = r.art as MachinerySubjectArt | undefined;
               const isFav = !card.scale_ordered || pct === maxPct;
               return (
@@ -1159,7 +1166,7 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
                           isFav ? "font-bold text-text-primary" : "font-semibold text-text-secondary"
                         }`}
                       >
-                        {pct}%
+                        {formatProbabilityPercent(probability, { rendered: allocation ?? undefined })}
                       </span>
                     </div>
                     <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-surface-elevated">

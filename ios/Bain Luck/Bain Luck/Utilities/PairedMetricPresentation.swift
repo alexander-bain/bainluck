@@ -200,13 +200,13 @@ nonisolated enum PairedMetricPresentation {
                 sublabel: priorPct.map { "was \($0)%" }
             )
         }
-        guard let rawPct = renderedPercent(entry.stage1Probability) else {
+        guard let probability = entry.stage1Probability, let rawPct = renderedPercent(probability) else {
             let fallback = (entry.missingStage1Reason?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
                 ?? "No recent \(set.stage1Label.lowercased()) %"
             return FormattedPairedStageDisplay(kind: .missing, percent: nil, label: fallback)
         }
-        let pct = max(1, min(99, rawPct))
-        return FormattedPairedStageDisplay(kind: .percent, percent: pct, label: "\(pct)%")
+        let pct = entry.stage1RenderedPercent ?? max(0, min(99, rawPct))
+        return FormattedPairedStageDisplay(kind: .percent, percent: pct, label: formatProbability(probability, renderedPercent: pct))
     }
 
     /// Formats Stage 2 (`Wins %` / `Win Cup %`) via `renderedPercent`, clamped to `1..99%` while open,
@@ -229,13 +229,13 @@ nonisolated enum PairedMetricPresentation {
                 label: formatProbability(probability, renderedPercent: percent)
             )
         }
-        guard let rawPct = renderedPercent(entry.stage2Probability) else {
+        guard let probability = entry.stage2Probability, let rawPct = renderedPercent(probability) else {
             let fallback = (entry.missingStage2Reason?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap { $0.isEmpty ? nil : $0 }
                 ?? "Not listed to win"
             return FormattedPairedStageDisplay(kind: .missing, percent: nil, label: fallback)
         }
-        let pct = max(1, min(99, rawPct))
-        return FormattedPairedStageDisplay(kind: .percent, percent: pct, label: "\(pct)%")
+        let pct = max(0, min(99, rawPct))
+        return FormattedPairedStageDisplay(kind: .percent, percent: pct, label: formatProbability(probability, renderedPercent: pct))
     }
 
     /// Proportional `0.0...1.0` fill width behind a percentage readout box (`94%` -> `0.94`,

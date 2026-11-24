@@ -2070,7 +2070,7 @@ def _canonical_market_outcome_map(
             rp = int(card_pcts[idx])
         if rp is None:
             rp = _half_up_pct(float(r["probability"]))
-        pct_int = max(1, min(99, int(rp))) if 0.0 < float(r["probability"]) < 1.0 else int(rp)
+        pct_int = int(rp)
         r["rendered_percent"] = pct_int
         by_oid[int(r["id"])] = pct_int
         nk = _norm_key(_clean_outcome_label(str(r["name"])))
@@ -2375,7 +2375,7 @@ def _hydrate_market_visual_item(
             canon_subj = art.get("canonical_name")
             if canon_subj and _ascii_fold_key(canon_subj) == _ascii_fold_key(o_name):
                 o_name = str(canon_subj)
-            pct_val = int(o.get("rendered_percent") or _half_up_pct(p))
+            pct_val = int(o["rendered_percent"])
             for fk_alias in (_norm_key(o_name), _ascii_fold_key(o_name)):
                 if fk_alias and fk_alias not in canon_by_key:
                     canon_by_key[fk_alias] = pct_val
@@ -3661,7 +3661,7 @@ async def _load_snapshot_from_db(
                     else:
                         card_pct = card_pcts[idx] if idx < len(card_pcts) else None
                         rp = card_pct if card_pct is not None else _half_up_pct(p_f)
-                        pct_int = max(1, min(99, int(rp))) if 0.0 < p_f < 1.0 else int(rp)
+                        pct_int = int(rp)
                     by_oid[oid] = pct_int
                     r_name = str(row.get("name") or "")
                     for nk in (
@@ -5393,8 +5393,9 @@ async def produce_container_machinery(
             }
             if isinstance(nom_p, (int, float)):
                 row_d["secondary_probability"] = float(nom_p)
-                row_d["secondary_rendered_percent"] = int(
-                    e.get("stage_1_rendered_percent") or _half_up_pct(float(nom_p))
+                nomination_percent = e.get("stage_1_rendered_percent")
+                row_d["secondary_rendered_percent"] = (
+                    int(nomination_percent) if nomination_percent is not None else _half_up_pct(float(nom_p))
                 )
             rows_out.append(row_d)
     elif vb_form in {"coin_flip_matchups", "matchup_slate"}:

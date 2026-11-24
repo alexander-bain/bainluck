@@ -16,6 +16,7 @@ from app.utils.container_machinery import (
     CANDIDATE_2028_PRESIDENTIAL_PATH,
     CANDIDATE_NFL_WEEK_PATH,
     CANDIDATE_OSCARS_BEST_PICTURE_PATH,
+    _canonical_market_outcome_map,
     compute_visual_diversity_report,
     discover_machinery_candidate_paths,
     evaluate_machinery_candidates_preview,
@@ -31,6 +32,21 @@ CORE_FOUR_SLUGS = [
     "machinery-2028-presidential",
     "machinery-fed-and-macro",
 ]
+
+
+@pytest.mark.parametrize("allocated", [0, None])
+def test_grouped_field_retains_a_zero_display_allocation(allocated):
+    probability = 0.007 if allocated is not None else 0.003
+    outcomes = [
+        {"id": 101, "name": "Contender", "probability": probability, "rendered_percent": allocated},
+        {"id": 102, "name": "Leader", "probability": 0.87, "rendered_percent": 87},
+        {"id": 103, "name": "Other", "probability": None},
+    ]
+    rows, by_id, by_name = _canonical_market_outcome_map(outcomes)
+    assert by_id == {101: 0, 102: 87}
+    assert by_name["contender"] == 0
+    assert rows[0]["probability"] == probability
+    assert rows[0]["rendered_percent"] == 0
 
 
 @pytest.mark.asyncio

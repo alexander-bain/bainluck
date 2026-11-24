@@ -100,6 +100,7 @@ nonisolated struct PairedSubjectEntry: Decodable, Equatable, Identifiable, Senda
     let stage1MarketId: Int
     let stage1Outcome: String?
     let stage1Probability: Double?
+    var stage1RenderedPercent: Int? = nil
     /// `"yes"`, `"no"`, or `nil` while unsettled.
     let stage1SettledState: String?
     let stage1SourceMark: SourceMark?
@@ -159,6 +160,7 @@ nonisolated struct PairedSubjectEntry: Decodable, Equatable, Identifiable, Senda
         self.stage1MarketId = c.decodeFirst(Int.self, keys: ["stage1MarketId", "stage_1_market_id"]) ?? 0
         self.stage1Outcome = c.decodeFirst(String.self, keys: ["stage1Outcome", "stage_1_outcome"])
         self.stage1Probability = c.decodeFirst(Double.self, keys: ["stage1Probability", "stage_1_probability"])
+        self.stage1RenderedPercent = c.decodeFirst(Int.self, keys: ["stage1RenderedPercent", "stage_1_rendered_percent"])
         self.stage1SettledState = c.decodeFirst(String.self, keys: ["stage1SettledState", "stage_1_settled_state"])
         self.stage1SourceMark = c.decodeFirst(SourceMark.self, keys: ["stage1SourceMark", "stage_1_source_mark"])
         self.stage2MarketId = c.decodeFirst(Int.self, keys: ["stage2MarketId", "stage_2_market_id"]) ?? 0
