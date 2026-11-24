@@ -32,6 +32,8 @@ import type { CurrentOdds, Event, FeedEventData } from '@/lib/types';
 import type { DiscoverPriceCards } from '@/lib/discover/priceRefresh';
 import { compareFoldRevision, parseFoldRevision, type FoldRevision } from '@/lib/foldRevision';
 import { isFinishedStatus } from '@/lib/eventState';
+import { displayedPreview, type BlendPreviewState } from '@/lib/blendPreview';
+import { sportPricesADraw } from '@/lib/drawPricedWinner';
 
 const PRICED_STATUSES = new Set(['scheduled', 'live']);
 
@@ -42,8 +44,13 @@ export interface HeldGame {
   observedMs: number | null;
   homeProbability: number | null;
   awayProbability: number | null;
+  drawProbability: number | null;
   heroProbability: number | null;
   heroProbabilityAway: number | null;
+  heroProbabilityDraw: number | null;
+  homeRenderedPercent: number | null;
+  awayRenderedPercent: number | null;
+  drawRenderedPercent: number | null;
   heroSource: string | null;
   /** Live games only: the score and clock read with the probability. */
   live: { homeScore: number | null; awayScore: number | null; period: string | null; clock: string | null } | null;
@@ -51,6 +58,27 @@ export interface HeldGame {
   final?: { homeScore: number | null; awayScore: number | null; completedAt: string | null } | null;
 }
 export type SearchEventBook = Map<number, HeldGame>;
+
+function finiteProb(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 1;
+}
+
+function finitePct(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function eventDrawProbability(event: Event): number | null {
+  const heroDraw = (event as Event & { hero_probability_draw?: number | null }).hero_probability_draw;
+  const oddsDraw = event.current_odds?.draw_probability;
+  if (finiteProb(heroDraw)) return heroDraw;
+  if (finiteProb(oddsDraw)) return oddsDraw;
+  return null;
+}
+
+function eventHasThreeWayDraw(event: Event): boolean {
+  const drawProb = eventDrawProbability(event);
+  return sportPricesADraw(event.sport) || (drawProb !== null && drawProb > 0);
+}
 
 export function searchEventStreamable(event: Event): boolean {
   return PRICED_STATUSES.has(event.status);
@@ -84,6 +112,7 @@ export function adoptSearchEventCards(
     const fresh = item.data as FeedEventData & {
       blend_fold_revision?: unknown; hero_probability_observed_at?: string | null;
       hero_probability?: number | null; hero_probability_away?: number | null;
+      hero_probability_draw?: number | null;
       hero_probability_source?: string | null; live_state?: unknown; completed_at?: string | null;
     };
     const served = byId.get(fresh.id);
@@ -117,14 +146,49 @@ export function adoptSearchEventCards(
       // blend's reading time does not gate it (a settled card has none).
       if (!final && held.observedMs !== null && (observedMs === null || observedMs < held.observedMs)) continue;
     }
+
+    const odds = fresh.current_odds;
+    const rawHome = finiteProb(odds?.home_probability)
+      ? odds!.home_probability!
+      : finiteProb(fresh.hero_probability)
+        ? fresh.hero_probability!
+        : null;
+    const rawAway = finiteProb(odds?.away_probability)
+      ? odds!.away_probability!
+      : finiteProb(fresh.hero_probability_away)
+        ? fresh.hero_probability_away!
+        : null;
+    const rawDraw = finiteProb(fresh.hero_probability_draw)
+      ? fresh.hero_probability_draw!
+      : finiteProb(odds?.draw_probability)
+        ? odds!.draw_probability!
+        : null;
+    const isThreeWay =
+      eventHasThreeWayDraw(served) || (rawDraw !== null && rawDraw > 0);
+    const validThreeWay =
+      rawHome !== null && rawAway !== null && rawDraw !== null;
+
+    // On a three-way card, all three numbers (home, draw, away) move together or
+    // none do. Reject an incomplete/withheld payload (e.g., #13131 scheduled soccer
+    // with null probabilities despite "updated" disposition) so partial or empty
+    // readings never blank or desync the served 3-way odds.
+    if (!final && isThreeWay && !validThreeWay) {
+      continue;
+    }
+
     const game: HeldGame = {
       status: fresh.status,
       revision,
       observedMs,
-      homeProbability: fresh.current_odds?.home_probability ?? null,
-      awayProbability: fresh.current_odds?.away_probability ?? null,
-      heroProbability: typeof fresh.hero_probability === 'number' ? fresh.hero_probability : null,
-      heroProbabilityAway: typeof fresh.hero_probability_away === 'number' ? fresh.hero_probability_away : null,
+      homeProbability: rawHome,
+      awayProbability: rawAway,
+      drawProbability: isThreeWay ? rawDraw : null,
+      heroProbability: finiteProb(fresh.hero_probability) ? fresh.hero_probability : rawHome,
+      heroProbabilityAway: finiteProb(fresh.hero_probability_away) ? fresh.hero_probability_away : rawAway,
+      heroProbabilityDraw: isThreeWay ? rawDraw : null,
+      homeRenderedPercent: finitePct(odds?.home_rendered_percent),
+      awayRenderedPercent: finitePct(odds?.away_rendered_percent),
+      drawRenderedPercent: isThreeWay ? finitePct(odds?.draw_rendered_percent) : null,
       heroSource: fresh.hero_probability_source ?? null,
       live,
       final,
@@ -156,15 +220,74 @@ export function patchSearchEvent(event: Event, book: SearchEventBook): Event {
   const set = <K extends keyof typeof next>(key: K, value: (typeof next)[K]) => {
     if (next[key] !== value) { next[key] = value; changed = true; }
   };
-  if (event.current_odds && game.homeProbability !== null && game.awayProbability !== null &&
-      (event.current_odds.home_probability !== game.homeProbability ||
-       event.current_odds.away_probability !== game.awayProbability)) {
-    next.current_odds = { ...event.current_odds, home_probability: game.homeProbability,
-      away_probability: game.awayProbability } as CurrentOdds;
-    changed = true;
+
+  const isThreeWay = eventHasThreeWayDraw(event) || game.drawProbability !== null;
+  if (isThreeWay) {
+    if (
+      game.homeProbability !== null &&
+      game.awayProbability !== null &&
+      game.drawProbability !== null
+    ) {
+      const odds = event.current_odds;
+      const probChanged =
+        odds?.home_probability !== game.homeProbability ||
+        odds?.away_probability !== game.awayProbability ||
+        odds?.draw_probability !== game.drawProbability ||
+        odds?.home_rendered_percent !== game.homeRenderedPercent ||
+        odds?.away_rendered_percent !== game.awayRenderedPercent ||
+        odds?.draw_rendered_percent !== game.drawRenderedPercent;
+      if (odds && probChanged) {
+        next.current_odds = {
+          ...odds,
+          home_probability: game.homeProbability,
+          away_probability: game.awayProbability,
+          draw_probability: game.drawProbability,
+          home_rendered_percent: game.homeRenderedPercent,
+          away_rendered_percent: game.awayRenderedPercent,
+          draw_rendered_percent: game.drawRenderedPercent,
+        } as CurrentOdds;
+        changed = true;
+      }
+      set('hero_probability', game.heroProbability ?? game.homeProbability);
+      set('hero_probability_away', game.heroProbabilityAway ?? game.awayProbability);
+      set('hero_probability_draw', game.heroProbabilityDraw ?? game.drawProbability);
+    }
+  } else {
+    if (
+      event.current_odds &&
+      game.homeProbability !== null &&
+      game.awayProbability !== null
+    ) {
+      const odds = event.current_odds;
+      const hasServedPct =
+        'home_rendered_percent' in odds || 'away_rendered_percent' in odds;
+      const probsChanged =
+        odds.home_probability !== game.homeProbability ||
+        odds.away_probability !== game.awayProbability;
+      const pctChanged =
+        hasServedPct &&
+        (odds.home_rendered_percent !== game.homeRenderedPercent ||
+          odds.away_rendered_percent !== game.awayRenderedPercent);
+      if (probsChanged || pctChanged) {
+        next.current_odds = hasServedPct
+          ? ({
+              ...odds,
+              home_probability: game.homeProbability,
+              away_probability: game.awayProbability,
+              home_rendered_percent: game.homeRenderedPercent,
+              away_rendered_percent: game.awayRenderedPercent,
+            } as CurrentOdds)
+          : ({
+              ...odds,
+              home_probability: game.homeProbability,
+              away_probability: game.awayProbability,
+            } as CurrentOdds);
+        changed = true;
+      }
+    }
+    if (game.heroProbability !== null) set('hero_probability', game.heroProbability);
+    if (game.heroProbabilityAway !== null) set('hero_probability_away', game.heroProbabilityAway);
   }
-  if (game.heroProbability !== null) set('hero_probability', game.heroProbability);
-  if (game.heroProbabilityAway !== null) set('hero_probability_away', game.heroProbabilityAway);
   if ('hero_probability_source' in event && game.heroSource !== null) set('hero_probability_source', game.heroSource);
   if (game.live) {
     set('home_score', game.live.homeScore);
@@ -179,4 +302,56 @@ export function patchSearchEvent(event: Event, book: SearchEventBook): Event {
     }
   }
   return changed ? next : event;
+}
+
+/**
+ * #10090: overlay a provisional `authority-v3` blend preview onto a Search game card.
+ * Respects finished immutability (#12506) and leaves three-way / draw-priced
+ * matches on their confirmed numbers because provisional frames carry no draw (#13597 / #13509).
+ */
+export function overlaySearchEventPreview(
+  event: Event,
+  state: BlendPreviewState | null | undefined,
+  now: number,
+  held?: HeldGame | null,
+): Event {
+  if (!state || held?.final || isFinishedStatus(event.status) || !searchEventStreamable(event)) {
+    return event;
+  }
+  if (eventHasThreeWayDraw(event)) {
+    return event;
+  }
+  const eventMeta = event as Event & {
+    blend_fold_revision?: unknown;
+    hero_probability_source?: string | null;
+  };
+  const p = displayedPreview(
+    state,
+    {
+      id: event.id,
+      status: held?.status ?? event.status,
+      hero_probability_source: held?.heroSource ?? eventMeta.hero_probability_source ?? null,
+      blend_fold_revision: held?.revision ?? eventMeta.blend_fold_revision,
+      sport: event.sport,
+    },
+    now,
+  );
+  if (p === null) return event;
+
+  const away = state.pAway != null ? state.pAway : 1 - p;
+  const next: Event = {
+    ...event,
+    hero_probability: p,
+    hero_probability_away: away,
+  };
+  if (event.current_odds) {
+    next.current_odds = {
+      ...event.current_odds,
+      home_probability: p,
+      away_probability: away,
+      home_rendered_percent: null,
+      away_rendered_percent: null,
+    } as CurrentOdds;
+  }
+  return next;
 }

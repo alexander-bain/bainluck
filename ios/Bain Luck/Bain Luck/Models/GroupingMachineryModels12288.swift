@@ -465,8 +465,17 @@ nonisolated struct MachineryVisualBlock: Decodable, Equatable, Sendable {
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: MachineryCodingKey.self)
-        let rawForm = c.decodeFirst(String.self, keys: ["formId", "form_id", "form"]) ?? "sibling_fields_grid"
-        let resolvedForm = MachineryFormId(rawValue: rawForm) ?? .siblingFieldsGrid
+        guard let rawForm = c.decodeFirst(String.self, keys: ["formId", "form_id", "form"])?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawForm.isEmpty,
+              let resolvedForm = MachineryFormId(rawValue: rawForm) else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Unrecognized MachineryVisualBlock form_id"
+                )
+            )
+        }
         self.formId = resolvedForm
         self.initialVisibleLimit = c.decodeFirst(Int.self, keys: ["initialVisibleLimit", "initial_visible_limit"]) ?? 3
         let rawNoun = c.decodeFirst(String.self, keys: ["itemNoun", "item_noun", "unitNoun", "unit_noun"])?
@@ -590,8 +599,17 @@ nonisolated struct MachineryCardContract: Decodable, Equatable, Identifiable, Se
         let c = try decoder.container(keyedBy: MachineryCodingKey.self)
         let decodedSlug = c.decodeFirst(String.self, keys: ["slug"]) ?? ""
         self.slug = decodedSlug
-        let rawForm = c.decodeFirst(String.self, keys: ["formId", "form_id"]) ?? "sibling_fields_grid"
-        let resolvedForm = MachineryFormId(rawValue: rawForm) ?? .siblingFieldsGrid
+        guard let rawForm = c.decodeFirst(String.self, keys: ["formId", "form_id"])?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+              !rawForm.isEmpty,
+              let resolvedForm = MachineryFormId(rawValue: rawForm) else {
+            throw DecodingError.dataCorrupted(
+                DecodingError.Context(
+                    codingPath: decoder.codingPath,
+                    debugDescription: "Unrecognized MachineryCardContract form_id"
+                )
+            )
+        }
         self.formId = resolvedForm
         self.kicker = c.decodeFirst(String.self, keys: ["kicker"]) ?? "ROUND-UP"
         self.title = c.decodeFirst(String.self, keys: ["title"]) ?? ""
