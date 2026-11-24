@@ -8,12 +8,13 @@ import json
 import re
 from collections import defaultdict
 from dataclasses import dataclass
+from itertools import groupby
 from pathlib import Path
 from typing import Awaitable, Callable, Iterable, Literal
 
 from fastapi import HTTPException, Request
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config.major_team_search import MAJOR_TEAM_QUERY_ALIASES
@@ -27,10 +28,12 @@ from app.services.onboarding_team_membership import (
 from app.utils.competition_identity import load_competitions
 from app.utils.sport_keys import SPORT_HIERARCHY
 from app.utils.static_divisions import lookup_division
+from app.utils.team_short_name import is_college_sport
 
 _CATALOG = (
     Path(__file__).resolve().parents[2] / "data" / "onboarding" / "interest-catalog.tsv"
 )
+_CONTAINERS = _CATALOG.parent.parent / "containers"
 _MAX_BODY_BYTES = 8192
 _MAX_WORDS = 80
 _MAX_MENTIONS = 16
@@ -61,7 +64,11 @@ _SCRIPT = re.compile(
 )
 _MARKUP = re.compile(r"<[^>]*>")
 _ABBREVIATION = re.compile(r"\b(st|mt|jr)\.(?=\s)|\bd\.c\.", re.I)
-_CLAUSE = re.compile(r"[!?;\n]+|\.(?=\s|$)|\b(?:but|however|instead|just)\b", re.I)
+_CLAUSE = re.compile(
+    r"[!?;\n]+|\.(?=\s|$)|\b(?:but|however|instead|just)\b"
+    r"|,\s*(?=(?:i|we)\s+(?:like|love|follow|want|watch|prefer|support)\b)",
+    re.I,
+)
 _DIRECTIVE = re.compile(
     r"^(?:(?:please|also|now)\s+)*(?:ignore (?:your|all|the) (?:prior |previous )?instructions"
     r"|return every (?:team|item|chip)|(?:add|make|create) a (?:new )?chip|"
@@ -97,7 +104,17 @@ _NEGATE = (
     ("whoever", "is", "playing"),
     ("against",),
 )
-_POST_NEGATE = (("is", "not", "for", "me"), ("is", "not", "my", "thing"))
+_POST_NEGATE = (
+    ("is", "not", "for", "me"), ("is", "not", "my", "thing"),
+    ("not", "anymore"), ("not", "any", "more"),
+)
+_FORMER_PREFERENCE = re.compile(
+    r"\bused to (?:follow|like|love|watch|support|root for|cheer for|be an? fan of)\b"
+)
+_WEATHER_QUERY = re.compile(
+    r"\b(?:weather|forecast|rain|snow|temperature|thunderstorms?)\b"
+)
+_ROYAL_NEWS = re.compile(r"\b(?:celebrit(?:y|ies)|royal family|monarchy|royal news)\b")
 _NO_EDGE = frozenset(
     "a an and are at about but for from i in is of on or that the to was will with".split()
 )
@@ -175,7 +192,9 @@ def _parts(sentence: str) -> list[tuple[str, ...]]:
     for clause in _CLAUSE.split(sentence):
         text = normalize_alias(clause)
         if text and not _DIRECTIVE.match(text):
-            parts.append(tuple(text.split()))
+            # Repeated words add no information. Collapse them before applying
+            # the word cap so a repeated name is still a bounded lookup.
+            parts.append(tuple(word for word, _ in groupby(text.split())))
     return parts
 
 
@@ -234,6 +253,11 @@ async def _registry_matches(
 def _scan(words: tuple[str, ...], aliases: dict[str, list[Target]]) -> list[Mention]:
     mentions = []
     excluded = False
+    text = " ".join(words)
+    former = _FORMER_PREFERENCE.search(text)
+    former_start = len(text[:former.end()].split()) if former else len(words)
+    weather_query = bool(_WEATHER_QUERY.search(text))
+    royal_news = bool(_ROYAL_NEWS.search(text))
     start = 0
     while start < len(words):
         negation = next(
@@ -245,19 +269,28 @@ def _scan(words: tuple[str, ...], aliases: dict[str, list[Target]]) -> list[Ment
             continue
         last = min(len(words), start + _MAX_SPAN_WORDS)
         for end in range(last, start, -1):
-            targets = aliases.get(" ".join(words[start:end]))
+            phrase = " ".join(words[start:end])
+            targets = aliases.get(phrase)
             if targets:
                 after = any(words[end : end + len(cue)] == cue for cue in _POST_NEGATE)
+                # The city after a forecast preposition qualifies the forecast.
+                if weather_query and start and words[start - 1] in {"in", "for", "near", "around"}:
+                    targets = [target for target in targets if target.kind != "city"]
+                if royal_news and phrase in {"royals", "the royals"}:
+                    targets = aliases.get("british royal family", [])
+                if not targets:
+                    start = end
+                    break
                 if all(target.kind == "division-team" for target in targets):
                     mentions.extend(
                         Mention(
                             (Target("team", target.name, target.selector),),
-                            excluded or after,
+                            excluded or after or start >= former_start,
                         )
                         for target in targets
                     )
                 else:
-                    mentions.append(Mention(tuple(targets), excluded or after))
+                    mentions.append(Mention(tuple(targets), excluded or after or start >= former_start))
                 start = end
                 break
         else:
@@ -364,19 +397,37 @@ async def _sports(db: AsyncSession, targets: Iterable[Target]) -> dict[str, int 
     for sport in SPORT_HIERARCHY.values():
         for league in sport["leagues"]:
             registered.update(league["sport_keys"])
-    if any(key.startswith("event:") for key in keys):
+    if any(key.startswith(("event:", "competition:")) for key in keys):
         competitions = await asyncio.to_thread(load_competitions)
         registered.update(
             key for row in competitions if (key := row.get("standing_concept_key"))
         )
-    resolved: dict[str, int | str] = {key: key for key in keys if key in registered}
-    resolved.update(
-        (
-            await db.execute(
-                select(Sport.key, Sport.id).where(Sport.key.in_(keys), Sport.active)
-            )
-        ).all()
+        registered.update(
+            f"competition:{row['slug']}" for row in competitions
+        )
+    registered.update(
+        selector for selector in keys if selector.startswith("collection:")
+        and (_CONTAINERS / f"{selector.removeprefix('collection:')}.json").is_file()
     )
+    resolved: dict[str, int | str] = {key: key for key in keys if key in registered}
+    display_names = {
+        key.removeprefix("sport-name:").casefold(): key
+        for key in keys if key.startswith("sport-name:")
+    }
+    matches = await db.execute(
+        select(Sport.key, Sport.id, func.lower(Sport.name))
+        .where(or_(Sport.key.in_(keys), func.lower(Sport.name).in_(sorted(display_names))))
+        .where(Sport.active)
+    )
+    by_name: dict[str, list[int]] = defaultdict(list)
+    for key, sport_id, name in matches:
+        if key in keys:
+            resolved[key] = sport_id
+        if name in display_names:
+            by_name[name].append(sport_id)
+    for name, ids in by_name.items():
+        if len(ids) == 1:
+            resolved[display_names[name]] = ids[0]
     return resolved
 
 
@@ -483,7 +534,7 @@ async def _resolve(
                 team_id
                 for (stored, league), team_id in teams.items()
                 if stored == target.selector.lower()
-                and "_ncaa" in league
+                and is_college_sport(league)
                 and team_id not in excluded_ids
             }
         )

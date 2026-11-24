@@ -1,7 +1,7 @@
 kind	name	selector	aliases
 topic	Academy Awards	oscars	oscars|oscars award|oscrs|best picture|oscar awards|los oscar|academy award
 topic	Grammy Awards	grammys	grammys|grammy|album of the year|song of the year|record of the year
-topic	Awards shows	awards	awards season|awards shows
+topic	Awards shows	awards	awards season|awards shows|award shows|award ceremonies|awards ceremony
 topic	AI	ai	artificial intelligence|openai|ai model|ai lab|large language models
 topic	Fed interest rates	economics/fed	fed|fomc|federal reserve|interest rates|rate cuts|intrest rates
 topic	Inflation	economics/inflation	cpi|consumer prices|inflaton
@@ -15,14 +15,14 @@ topic	2028 presidential election	politics/presidential	2028 election|2028 presid
 topic	US elections	politics	elections|us election|american elections|midterms
 topic	Congress	politics/congressional	congress|senate control|controls the senate|house control
 topic	Supreme Court	politics/scotus	scotus|us supreme court
-topic	World politics	politics/international	international politics|uk politics|global politics
+topic	World politics	politics/international	international politics|uk politics|global politics|geopolitics|foreign affairs|international affairs|world affairs
 topic	Music	entertainment/music	billboard|billboard number ones
-topic	Movies	entertainment/movies	films|movie|rotten tomatoes|rotten tomatoes scores
-topic	Box office	entertainment/movies_tv/box_office	boxoffice|opening weekend gross
-topic	TV shows	entertainment/tv_streaming	tv|television|streaming shows
+topic	Movies	entertainment/movies	films|movie|rotten tomatoes|rotten tomatoes scores|cinema|film releases|movie releases
+topic	Box office	entertainment/movies_tv/box_office	boxoffice|opening weekend gross|ticket sales|movie ticket sales|box office receipts
+topic	TV shows	entertainment/tv_streaming	tv|television|streaming shows|tv series|tv news|streaming television|television series
 topic	Reality TV	entertainment/movies_tv/reality_tv	the bachelor|survivor|bachelorette|love island
 topic	Tech companies	entertainment/tech_culture	tech|big tech|next iphone|technology companies
-topic	Weather	weather	weather forecasts|hottest year
+topic	Weather	weather	weather forecasts|hottest year|snow|snowfall|rain|rainfall|temperature|weather forecast
 topic	Climate	weather/climate	climate change|global warming|warming
 topic	Hurricanes	weather/events/hurricane	hurricane|hurricane season|tropical storms
 sport	NBA	basketball_nba	national basketball association
@@ -31,7 +31,7 @@ sport	College football	americanfootball_ncaaf	cfb|ncaa football
 sport	Premier League	soccer_epl	epl|english premier league
 sport	La Liga	soccer_spain_la_liga	spanish la liga
 sport	MLS	soccer_usa_mls	major league soccer
-sport	Formula 1	motorsport_f1	f1|formule 1|formula one
+sport	Formula 1	motorsport_f1	f1|formule 1|formula one|formula uno|formula 1 racing|formula one racing
 sport	NASCAR	motorsport_nascar	nascar cup series
 sport	Golf	golf	pga tour|golf majors|all four majors
 sport	Tennis	tennis_atp	all four majors|tennis majors
@@ -80,7 +80,7 @@ school	Texas	Texas Longhorns	texas football|university of texas
 school	Colorado	Colorado Buffaloes	colorado football|colorado buffaloes
 school	Stanford	Stanford Cardinal	stanford university
 school	Notre Dame	Notre Dame Fighting Irish	notre dame football|fighting irish
-school	Syracuse	Syracuse Orange	syracuse university
+school	Syracuse	Syracuse Orange	syracuse university|syracuse university|syracuse basketball|syracuse orange
 school	Georgia	Georgia Bulldogs	georgia football|georgia bulldogs|dawgs
 school	Minnesota	Minnesota Golden Gophers	gophers|minnesota gophers
 school	North Carolina	North Carolina Tar Heels	unc|carolina|tar heels|tar heels hoops
@@ -92,7 +92,7 @@ school	UConn	UConn Huskies	uconn women|connecticut huskies
 school	Louisville	Louisville Cardinals	louisville cardinals|cards
 school	USC	USC Trojans	southern california|usc trojans
 school	South Carolina	South Carolina Gamecocks	usc|gamecocks|south carolina women's basketball
-school	Miami (FL)	Miami Hurricanes	the u|miami hurricanes
+school	Miami (FL)	Miami Hurricanes	the u|miami hurricanes|university of miami|miami florida|miami football
 school	Utah	Utah Utes	utah utes|the u
 school	Indiana	Indiana Hoosiers	hoosiers
 school	Washington	Washington Huskies	washington huskies|dawgs
@@ -144,17 +144,61 @@ person	Caitlin Clark	Caitlin Clark
 person	Shohei Ohtani	Shohei Ohtani	ohtani
 person	Patrick Mahomes	Patrick Mahomes	mahomes
 person	Elon Musk	Elon Musk	musk
-unsupported	Space	No verified interest destination for this subject	spacex|starship|starship launches|space launches|land on the moon
 unsupported	Science	No verified interest destination for the broad subject
 unsupported	Video games	The existing game-specific collections do not represent the subject as a whole	gta 6|gta vi|gaming
-unsupported	Nobel Prizes	No verified awards collection for this subject	nobel prize
 unsupported	Time Person of the Year	No verified interest destination for this award	time s person of the year
 unsupported	Eurovision	No verified stand-alone interest destination for this contest
 unsupported	World conflicts	No verified interest destination separate from World politics	war in ukraine
 unsupported	Medicine and health	No verified interest destination for this subject	fda approvals|weight loss drugs
-unsupported	Celebrity news	No verified interest destination for this subject	celebrity gossip
 unsupported	MotoGP	No verified league key for this competition	moto gp
-unsupported	WWE	No verified league key for this competition	world wrestling entertainment
 unsupported	SEC	Conference is not a league or separately confirmable interest	sec football
 unsupported	Big Ten	Conference is not a league or separately confirmable interest
 unsupported	India national cricket team	No verified team selector in this catalog	india
+topic	Emmy Awards	emmys	emmys|the emmys|emmy awards|emmy winners
+topic	Housing and mortgage rates	economics/housing	housing market|housing prices|home prices|mortgage rate|mortgage rates|mortgages|house prices
+topic	Jobs and unemployment	economics/jobs	unemployment|jobless claims|unemployment rate|jobs report|employment report|nonfarm payrolls|labor market
+topic	Celebrity news	entertainment/celebrity	celebrity gossip|celebrity culture|celebrity stories|celebrity updates|celebrities|celebrity
+topic	Royal family	entertainment/royal_family	british royal family|british royals|royal news|royal household|the monarchy
+topic	Oil prices	economics/energy/oil	crude prices|crude oil|crude oil prices|oil price|brent crude|wti crude
+unsupported	Space	No verified interest destination for this subject	spacex|starship|starship launches|space launches|land on the moon
+unsupported	Nobel Prizes	No verified awards collection for this subject	nobel prize
+topic	Golden Globes	golden-globes	the golden globes|golden globe awards|golden globe winners
+sport	Champions League	soccer_uefa_champs_league	uefa champions league|ucl|champions league football
+sport	WNBA	basketball_wnba	women s nba|women s national basketball association
+sport	WWE	sport-name:WWE	world wrestling entertainment|wwe wrestling
+sport	IndyCar	sport-name:IndyCar	indy car|indycar series|indycar racing
+sport	College Football Playoff	collection:roundup-cfp-picture	college football playoffs|cfp
+sport	Heisman Trophy	sport-name:Heisman Trophy	heisman|heisman race
+sport	Wimbledon	tennis_atp_wimbledon	wimbledon tennis|the championships wimbledon
+sport	US Open (tennis)	competition:us-open-tennis	us open tennis|tennis us open|us open in tennis
+sport	Tour de France	competition:tour-de-france	the tour de france|le tour
+sport	Olympics	olympics	olympic games|summer olympics|winter olympics
+sport	Women's college basketball	basketball_wncaab	wncaab|women s ncaa basketball|ncaa women s basketball
+sport	NHL	icehockey_nhl	national hockey league|nhl hockey
+sport	MLB	baseball_mlb	major league baseball|mlb baseball
+city	Pittsburgh	pittsburgh	pittsburgh sports|pittsburgh teams
+city	Dallas	dallas	dallas teams|dallas sports|dallas fort worth|dfw
+city	Toronto	toronto	toronto teams|toronto sports
+city	Miami	miami	miami teams|miami sports|south florida teams
+city	New Orleans	new orleans	nola|new orleans teams|new orleans sports
+city	Oklahoma City	okc	oklahoma city teams|okc teams|okc sports
+school	Kansas	Kansas Jayhawks	kansas basketball|ku basketball|university of kansas|jayhawks
+school	Iowa	Iowa Hawkeyes	iowa basketball|university of iowa|iowa hawkeyes|hawkeyes
+school	Kentucky	Kentucky Wildcats	kentucky basketball|university of kentucky|kentucky wildcats
+school	Oregon	Oregon Ducks	university of oregon|oregon ducks|oregon football
+school	Oklahoma	Oklahoma Sooners	university of oklahoma|sooners|oklahoma football
+school	UCLA	UCLA Bruins	ucla bruins|university of california los angeles
+school	Harvard	Harvard Crimson	harvard university|the harvard crimson
+school	Yale	Yale Bulldogs	yale university|yale bulldogs
+school	LSU	LSU Tigers	louisiana state university|louisiana state|lsu football
+school	California	California Golden Bears	cal berkeley|uc berkeley|university of california berkeley|cal golden bears
+school	Army	Army Black Knights	army football|army west point|black knights
+school	Navy	Navy Midshipmen	navy football|naval academy|navy mids|midshipmen
+school	BYU	BYU Cougars	brigham young university|brigham young|byu football
+team	Manchester City	soccer_epl	man city|mcfc|mancity
+team	Indiana Fever	basketball_wnba	the indiana fever|fever basketball
+team	Portland Timbers	soccer_usa_mls	the timbers|timbers soccer
+team	Portland Thorns	soccer_usa_nwsl	portland thorns fc|the thorns
+person	Coco Gauff	Coco Gauff	gauff
+person	LeBron James	LeBron James	lebron|king james
+person	Carlos Alcaraz	Carlos Alcaraz	alcaraz

@@ -89,6 +89,9 @@ async def sentence_client():
                     Sport(id=2, key="basketball_ncaab", name="NCAAB"),
                     Sport(id=3, key="soccer_epl", name="EPL"),
                     Sport(id=4, key="americanfootball_nfl", name="NFL"),
+                    Sport(id=5, key="baseball_mlb", name="MLB"),
+                    Sport(id=6, key="basketball_wncaab", name="Women's college basketball"),
+                    Sport(id=7, key="wrestling_test_league", name="WWE"),
                 ]
             )
             await db.flush()
@@ -124,6 +127,8 @@ async def sentence_client():
                     Team(id=19, sport_id=4, name="New York Giants"),
                     Team(id=20, sport_id=4, name="Washington Commanders"),
                     Team(id=21, sport_id=4, name="Dallas Cowboys"),
+                    Team(id=23, sport_id=5, name="Kansas City Royals"),
+                    Team(id=24, sport_id=6, name="Yale Bulldogs"),
                 ]
             )
             await db.flush()
@@ -294,6 +299,25 @@ async def test_known_ambiguity_and_verified_registry_identity(sentence_client):
         ("sport", "motorsport_f1"),
         ("sport", "event:golf:ryder-cup"),
     ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "sentence,want",
+    [
+        ("Celebrity gossip and news about the royals", {"Celebrity news", "Royal family"}),
+        ("A temperature forecast for Boston", {"Weather"}),
+        ("I used to cheer for Dallas Cowboys. I follow Brown.", {"Brown"}),
+        ("No politics, I like the Lakers and cinema", {"Los Angeles Lakers", "Movies"}),
+        ("Cowboys " * 1000, {"Dallas Cowboys"}),
+        ("Yale basketball and the Emmys", {"Yale", "Emmy Awards"}),
+        ("WWE wrestling and IndyCar", {"WWE"}),
+    ],
+)
+async def test_sentence_handles_context_and_uses_existing_identities(sentence_client, sentence, want):
+    result = await sentence_client.post("/api/me/onboarding/interests", json={"text": sentence})
+    assert result.status_code == 200, result.text
+    assert {chip["name"] for chip in result.json()} == want
 
 
 @pytest.mark.asyncio
