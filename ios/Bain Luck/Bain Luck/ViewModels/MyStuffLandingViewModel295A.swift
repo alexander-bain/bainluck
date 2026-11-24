@@ -1117,6 +1117,66 @@ final class MyStuffLandingViewModel295A: ObservableObject {
             case .tournament, .concept:
                 break
             }
+
+        case .subject:
+            if let mid = subject.marketId, mid > 0 {
+                do {
+                    let detail = try await APIClient.shared.fetchFuturesDetail(id: mid)
+                    let activeOutcomes = detail.outcomes.filter { ($0.probability ?? 0) > 0 && $0.isOut != true }
+                    let lead = detail.leadOutcomeId.flatMap { leadId in activeOutcomes.first(where: { $0.id == leadId }) } ?? activeOutcomes.first
+                    if let lead, let prob = lead.probability {
+                        let move = lead.probabilityChange24h.flatMap {
+                            MyStuffVisitLedger295A.formatPointMove(deltaProbability: $0, timeframe: .last24Hours)
+                        }
+                        pack.markets.append(
+                            MyStuffMarketItem295A(
+                                id: "\(detail.id):\(lead.name.lowercased())",
+                                marketId: detail.id,
+                                marketTitle: cleanMarketTitle(detail.name),
+                                outcomeLabel: lead.name,
+                                subjectName: subject.name,
+                                logoUrl: subject.logoUrl ?? detail.imageUrl,
+                                primaryColor: subject.primaryColor,
+                                probability: prob,
+                                changePoints: move?.points,
+                                movementNote: move?.text,
+                                sourceMark: nil
+                            )
+                        )
+                    }
+                    return pack
+                } catch {
+                    pack.didFail = true
+                }
+            }
+            let query = (subject.searchQuery?.isEmpty == false ? subject.searchQuery : nil) ?? subject.name
+            guard !query.isEmpty else { return pack }
+            do {
+                let response = try await APIClient.shared.fetchSearch(query: query)
+                pack.didFail = false
+                for market in response.futures.prefix(3) {
+                    guard market.status != "resolved",
+                          let top = market.topOutcomes?.first,
+                          let prob = top.probability, prob > 0 else { continue }
+                    pack.markets.append(
+                        MyStuffMarketItem295A(
+                            id: "\(market.id):\(top.name.lowercased())",
+                            marketId: market.id,
+                            marketTitle: cleanMarketTitle(market.name),
+                            outcomeLabel: top.name,
+                            subjectName: subject.name,
+                            logoUrl: subject.logoUrl,
+                            primaryColor: subject.primaryColor,
+                            probability: prob,
+                            changePoints: nil,
+                            movementNote: nil,
+                            sourceMark: nil
+                        )
+                    )
+                }
+            } catch {
+                pack.didFail = true
+            }
         }
         return pack
     }
