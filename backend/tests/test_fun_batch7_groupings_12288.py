@@ -234,7 +234,6 @@ def test_batch7_sets_are_preview_and_disjoint_from_prior_batches() -> None:
 
     categories = set()
     held_preview = {
-        "machinery-afc-west-duel",
         "machinery-college-basketball-slate",
     }
     for slug in BATCH7_SLUGS:
