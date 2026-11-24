@@ -366,14 +366,13 @@ class TestTheRoutesAreWired:
 
     def test_the_detail_route(self):
         from app.routes.events import get_event
-        from app.utils import unified_game_read
 
         src = inspect.getsource(get_event)
-        assert "load_unified_game_reads(" in src
-        assert "folded_probability_sources_with_revision" in src
+        assert "absorbed = await serve_fold_absorbed_rows(db, event)" in src
+        assert "folded_series_event_ids(db, event_id, absorbed)" in src
+        # #9051: the route reads the fold with its revision vector.
+        assert "folded_probability_sources_with_revision(db, event, absorbed)" in src
         assert "db, event, event_sport_key, absorbed" in src
-        src_u = inspect.getsource(unified_game_read.load_unified_game_reads)
-        assert "serve_fold_absorbed_rows_with_completeness" in src_u
 
     def test_the_history_route(self):
         from app.routes.events import get_event_odds_history

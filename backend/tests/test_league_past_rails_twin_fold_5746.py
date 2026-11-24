@@ -279,7 +279,7 @@ class TestTheRailsAreStillWiredUp:
         )
         for reader in (
             "for _e in (*_g_events, *_r_events, *_u_events):",
-            "fold_card_fn=_tag_folded_rows,",
+            "_tag_folded = await _tag_folded_rows(",
             "_grows = _format_all(_g_events)",
         ):
             assert fold_at < source.index(reader), reader

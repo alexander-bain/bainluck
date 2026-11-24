@@ -650,9 +650,8 @@ class TestNotAMove:
         from app.routes import events, feed
         from app.tasks import taxonomy
 
-        assert "pregame_blend_rests_on_espn_alone(_hero_view)" in inspect.getsource(events)
-        assert "pregame_blend_rests_on_espn_alone(_ev_view)" in inspect.getsource(feed)
-        assert "pregame_blend_rests_on_espn_alone(event)" in inspect.getsource(taxonomy)
+        for module in (feed, events, taxonomy):
+            assert "pregame_blend_rests_on_espn_alone(event)" in inspect.getsource(module), module.__name__
         src = inspect.getsource(taxonomy._tag_event)
         assert "pregame_blend_rests_on_espn_alone(event)" in src
 

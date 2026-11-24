@@ -62,7 +62,6 @@ from app.utils.event_twin_fold import (
     _group_is_id_anchored,
     cross_board_identity,
     fold_twin_events,
-    twin_identity_rank,
 )
 from app.utils.kalshi_occurrence_start import loaded_sport_key
 from app.utils.proven_duplicates import (
@@ -343,33 +342,6 @@ async def serve_fold_absorbed_rows_with_completeness(db, event) -> tuple[list, b
         if survivor_id == event.id
     }
     flipped_ids = set(getattr(fold, "flipped_loser_ids", None) or ())
-    if not absorbed and not sport_key.endswith("_other"):
-        winner_id = fold.survivor_of.get(event.id)
-        winner = next((c for c in candidates if c.id == winner_id), None)
-        winner_sk = loaded_sport_key(winner) if winner is not None else None
-        if winner_sk and winner_sk.endswith("_other"):
-            # Mirror `_keep_page_survivor`: when a named-league row loses `_elect`
-            # only to a `*_other` catch-all twin, the league list keeps the named
-            # row and folds the catch-all twin onto it; the event page must match.
-            by_id = {c.id: c for c in candidates}
-            other_losers = [
-                lid for lid, sid in fold.survivor_of.items()
-                if sid == winner_id and lid != event.id
-            ]
-            same_league_losers = [
-                by_id[lid] for lid in other_losers
-                if lid in by_id and loaded_sport_key(by_id[lid]) == sport_key
-            ]
-            if (
-                not same_league_losers
-                or max([event, *same_league_losers], key=twin_identity_rank).id == event.id
-            ):
-                other_members = [winner_id, *other_losers]
-                event_flipped = event.id in flipped_ids
-                absorbed = set(other_members)
-                flipped_ids = {
-                    mid for mid in other_members if (mid in flipped_ids) != event_flipped
-                }
     rows = sorted(
         (row for row in candidates if row.id in absorbed), key=lambda row: row.id
     )

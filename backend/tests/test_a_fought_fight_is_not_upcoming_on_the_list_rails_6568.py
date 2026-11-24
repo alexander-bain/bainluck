@@ -586,8 +586,8 @@ def test_the_correction_runs_before_the_fold_on_both_rails():
     import inspect
 
     for route, fold_marker in (
-        (search_events, "load_unified_game_reads("),
-        (list_events, "load_unified_game_reads("),
+        (search_events, "fold_twin_events(events)"),
+        (list_events, "fold_list_with_catchall_twins("),
     ):
         body = inspect.getsource(route)
         assert body.index("await recover_kalshi_expiration_starts(db, events)") < (

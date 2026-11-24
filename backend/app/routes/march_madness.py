@@ -15,7 +15,7 @@ import logging
 import unicodedata
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import APIRouter, Depends
 from sqlalchemy import or_, select, func as sqlfunc
@@ -296,24 +296,8 @@ async def _compute_biggest_movers(
     return biggest_movers[:10]
 
 
-def _event_scores(event) -> tuple[Optional[int], Optional[int]]:
-    """Read home/away scores from an ORM ``Event`` (``home_score``/``away_score``) or stub."""
-    home = getattr(event, "home_score", None)
-    if home is None:
-        home = getattr(event, "score_home", None)
-    away = getattr(event, "away_score", None)
-    if away is None:
-        away = getattr(event, "score_away", None)
-    return home, away
-
-
-def _build_bracket_game(event, tournament_type: str, unified_read: Any = None) -> dict:
+def _build_bracket_game(event, tournament_type: str) -> dict:
     """Build a single bracket game dict from an Event row."""
-    _status = served_event_status(
-        event.status, event.commence_time, datetime.now(timezone.utc)
-    )
-    score_home, score_away = _event_scores(event)
-    legacy_odds = getattr(event, "current_odds", None)
     game = {
         "event_id": event.id,
         "round": event.tournament_round,
@@ -322,42 +306,19 @@ def _build_bracket_game(event, tournament_type: str, unified_read: Any = None) -
         "away_team": event.away_team_name,
         "seed_home": event.tournament_seed_home,
         "seed_away": event.tournament_seed_away,
-        "score_home": score_home,
-        "score_away": score_away,
+        "score_home": event.score_home,
+        "score_away": event.score_away,
         # Q438: the lifecycle invariant, not the raw column — a bracket slot must
         # not read LIVE before tip-off. See `app/utils/lifecycle`.
-        "status": _status,
+        "status": served_event_status(
+            event.status, event.commence_time, datetime.now(timezone.utc)
+        ),
         "commence_time": event.commence_time.isoformat() if event.commence_time else None,
     }
 
-    if unified_read is not None:
-        from app.utils.unified_game_read import resolve_unified_card_chance
-
-        _sport_key = event.sport.key if getattr(event, "sport", None) else None
-        _chance = resolve_unified_card_chance(
-            unified_read, sport_key=_sport_key, served_status=_status
-        )
-        if _chance.home_probability is not None:
-            game["prob_home"] = round(_chance.home_probability, 3)
-            game["prob_away"] = (
-                round(_chance.away_probability, 3)
-                if _chance.away_probability is not None
-                else None
-            )
-            game["source_mark"] = _chance.source_mark
-            game["away_source_mark"] = _chance.away_source_mark
-            game["bookmaker_count"] = _chance.bookmaker_count
-        elif isinstance(legacy_odds, dict):
-            home_prob = legacy_odds.get("home")
-            away_prob = legacy_odds.get("away")
-            game["prob_home"] = round(home_prob, 3) if home_prob else None
-            game["prob_away"] = round(away_prob, 3) if away_prob else None
-        else:
-            game["prob_home"] = None
-            game["prob_away"] = None
-    elif isinstance(legacy_odds, dict):
-        home_prob = legacy_odds.get("home")
-        away_prob = legacy_odds.get("away")
+    if event.current_odds:
+        home_prob = event.current_odds.get("home")
+        away_prob = event.current_odds.get("away")
         game["prob_home"] = round(home_prob, 3) if home_prob else None
         game["prob_away"] = round(away_prob, 3) if away_prob else None
     else:
@@ -388,15 +349,14 @@ def _detect_upset(event, game: dict, tournament_type: str) -> dict | None:
     """Return an upset dict if this completed event is a seed upset, else None."""
     if event.status not in ("completed", "closed"):
         return None
-    score_home, score_away = _event_scores(event)
-    if score_home is None or score_away is None:
+    if event.score_home is None or event.score_away is None:
         return None
     seed_h = event.tournament_seed_home
     seed_a = event.tournament_seed_away
     if not seed_h or not seed_a or seed_h == seed_a:
         return None
 
-    home_won = score_home > score_away
+    home_won = event.score_home > event.score_away
     if not ((home_won and seed_h > seed_a) or (not home_won and seed_a > seed_h)):
         return None
 
@@ -413,8 +373,8 @@ def _detect_upset(event, game: dict, tournament_type: str) -> dict | None:
         "seed_winner": seed_winner,
         "seed_loser": seed_loser,
         "score": (
-            f"{score_home}-{score_away}" if home_won
-            else f"{score_away}-{score_home}"
+            f"{event.score_home}-{event.score_away}" if home_won
+            else f"{event.score_away}-{event.score_home}"
         ),
         "winner_pre_game_prob": game.get("prob_home") if home_won else game.get("prob_away"),
         "historical_upset_rate": hist["upset_pct"] if hist else None,
@@ -441,10 +401,9 @@ def _find_cinderellas(
             tk_away = _team_match_key(event.away_team_name) if event.away_team_name else ""
             if team_key in (tk_home, tk_away) and event.status in ("completed", "closed"):
                 games_played += 1
-                score_home, score_away = _event_scores(event)
-                if score_home is not None and score_away is not None:
-                    if (team_key == tk_home and score_home > score_away) or \
-                       (team_key == tk_away and score_away > score_home):
+                if event.score_home is not None and event.score_away is not None:
+                    if (team_key == tk_home and event.score_home > event.score_away) or \
+                       (team_key == tk_away and event.score_away > event.score_home):
                         games_won += 1
 
         cinderellas.append({
@@ -465,36 +424,16 @@ async def _process_bracket(
     tournament_events: list,
     championship_odds: list[dict],
     now: datetime,
-    db: Optional[AsyncSession] = None,
 ) -> tuple[list[dict], list[dict], list[dict], list[dict]]:
     """Process bracket games, live games, upsets, and cinderellas from tournament events."""
-    unified_by_id: dict = {}
-    if db is not None and tournament_events:
-        from app.utils.unified_game_read import load_unified_game_reads
-
-        unified_batch = await load_unified_game_reads(
-            db,
-            tournament_events,
-            collapse_in_page=False,
-            include_same_league_external=True,
-            include_odds=True,
-            fault_tolerant_external=True,
-            fault_tolerant_odds=True,
-            now=now,
-        )
-        unified_by_id = unified_batch.by_id
-
     bracket_games = []
     live_games = []
     upsets = []
-    cinderellas = []
     team_seed_map: dict[str, int] = {}
     team_region_map: dict[str, str] = {}
 
     for event in tournament_events:
-        game = _build_bracket_game(
-            event, tournament_type, unified_read=unified_by_id.get(event.id)
-        )
+        game = _build_bracket_game(event, tournament_type)
         bracket_games.append(game)
 
         # Track seeds/regions for championship odds enrichment
@@ -528,9 +467,8 @@ async def _process_bracket(
     # Mark eliminated teams
     eliminated_teams: set[str] = set()
     for event in tournament_events:
-        score_home, score_away = _event_scores(event)
-        if event.status in ("completed", "closed") and score_home is not None and score_away is not None:
-            if score_home > score_away:
+        if event.status in ("completed", "closed") and event.score_home is not None and event.score_away is not None:
+            if event.score_home > event.score_away:
                 eliminated_teams.add(_team_match_key(event.away_team_name))
             else:
                 eliminated_teams.add(_team_match_key(event.home_team_name))
@@ -593,7 +531,6 @@ async def _get_march_madness_data(
     if tournament_state in ("pre_tournament", "in_progress", "completed"):
         bracket_query = (
             select(Event)
-            .options(selectinload(Event.sport))
             .where(
                 Event.is_tournament_game.is_(True),
                 Event.tournament_type == tournament_type,
@@ -604,7 +541,7 @@ async def _get_march_madness_data(
         tournament_events = bracket_result.scalars().all()
 
         bracket_games, live_games, upsets, cinderellas = await _process_bracket(
-            tournament_type, tournament_events, championship_odds, now, db=db,
+            tournament_type, tournament_events, championship_odds, now,
         )
 
     # 4. Alma mater personalization

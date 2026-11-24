@@ -434,7 +434,6 @@ def format_event_data(
     stored_tags: Any | None = None,
     commence_time_source: str | None = None,
     current_draw_prob: float | None = None,
-    bookmaker_count: int | None = None,
 ) -> dict:
     """Build the compact event data dict for the feed response.
 
@@ -520,8 +519,6 @@ def format_event_data(
                 odds_data["draw_rendered_percent"] = _sc.draw_rendered_percent
             if prob_source:
                 odds_data["source"] = prob_source
-            if bookmaker_count is not None:
-                odds_data["bookmaker_count"] = bookmaker_count
             data["current_odds"] = odds_data
 
         if hero is not None:
@@ -591,8 +588,6 @@ def format_event_data(
                     odds_data["draw_rendered_percent"] = None
             if prob_source:
                 odds_data["source"] = prob_source
-            if bookmaker_count is not None:
-                odds_data["bookmaker_count"] = bookmaker_count
             data["current_odds"] = odds_data
         elif _suppress_incomplete_three_way and (hero is not None or prob_source):
             # Preserve `current_odds` key with nulled chance fields when suppressed.
@@ -606,8 +601,6 @@ def format_event_data(
             }
             if prob_source:
                 odds_data["source"] = prob_source
-            if bookmaker_count is not None:
-                odds_data["bookmaker_count"] = bookmaker_count
             data["current_odds"] = odds_data
 
         if hero is not None:

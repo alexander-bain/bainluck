@@ -40,7 +40,6 @@ import inspect
 import re
 
 from app.routes import events as events_route
-from app.utils import unified_game_read
 
 
 def _strip_comments(src: str) -> str:
@@ -65,8 +64,6 @@ LIST_CODE = _code(events_route.list_events)
 DETAIL_CODE = _code(events_route.get_event)
 SEARCH_CODE = _code(events_route.search_events)
 MODULE_CODE = _strip_comments(inspect.getsource(events_route))
-UNIFIED_READ_CODE = _code(unified_game_read.load_unified_game_reads)
-UNIFIED_FETCH_CODE = _code(unified_game_read._fetch_odds_snapshots)
 
 
 # ---------------------------------------------------------------------------
@@ -79,20 +76,17 @@ def test_list_events_delegates_to_the_shared_enrichment_query():
     guards and its real-Postgres equivalence test cover this route no longer —
     while still being green, because they cover the search route.
 
-    Since #13479 and #13508, the list routes through `load_unified_game_reads`,
-    passes same-orientation absorbed twin ids alongside canonical event ids, and
-    collapses snapshots via the shared `group_latest_snapshots_by_event` picker —
-    matching `get_event` (`latest_snapshot_for_each_bookmaker`).
+    Since #13479, the list also passes same-orientation absorbed twin ids
+    alongside canonical event ids (`odds_query_ids`) and collapses snapshots via
+    the shared `group_latest_snapshots_by_event` picker — the same picker used
+    by `get_event` (`latest_snapshot_for_each_bookmaker`).
     """
-    assert "load_unified_game_reads(" in LIST_CODE, (
-        "list_events no longer delegates its odds enrichment to load_unified_game_reads"
-    )
-    assert "odds_query_fn=latest_odds_per_bookmaker_query" in LIST_CODE, (
-        "list_events no longer builds its odds enrichment from the shared helper"
-    )
-    assert "group_latest_snapshots_by_event(" in UNIFIED_READ_CODE, (
-        "load_unified_game_reads no longer picks freshest snapshots through the shared helper"
-    )
+    assert (
+        "latest_odds_per_bookmaker_query(odds_query_ids)" in LIST_CODE
+    ), "list_events no longer builds its odds enrichment from the shared helper"
+    assert (
+        "group_latest_snapshots_by_event(" in LIST_CODE
+    ), "list_events no longer picks freshest snapshots through the shared helper"
 
 
 def test_event_detail_delegates_to_the_shared_enrichment_query():
@@ -105,23 +99,17 @@ def test_event_detail_delegates_to_the_shared_enrichment_query():
     ship rather than the assertion relaxing to a bare
     `latest_odds_per_bookmaker_query(`, which would pass on any argument at all.
     """
-    assert "load_unified_game_reads(" in DETAIL_CODE, (
-        "get_event no longer delegates its odds enrichment to load_unified_game_reads"
-    )
-    assert "include_series_fold_ids=True" in DETAIL_CODE, (
-        "get_event no longer asks load_unified_game_reads for folded_series_event_ids"
-    )
-    assert "odds_query_fn=latest_odds_per_bookmaker_query" in DETAIL_CODE, (
-        "get_event no longer builds its odds enrichment from the shared helper"
-    )
+    assert (
+        "latest_odds_per_bookmaker_query(odds_event_ids)" in DETAIL_CODE
+    ), "get_event no longer builds its odds enrichment from the shared helper"
     # The ORIENTATION-checked fold specifically. `folded_event_ids` would compile,
     # pass every test above, and serve a crossed pair's prices with the two sides
     # swapped — a defect whose only witness is a pair production does not
     # currently hold, so nothing behavioural on today's population would catch
     # the substitution.
-    assert "folded_series_event_ids(db, eid, non_flipped_abs)" in UNIFIED_READ_CODE, (
-        "load_unified_game_reads's odds ids no longer come from the orientation-checked fold"
-    )
+    assert (
+        "folded_series_event_ids(db, event_id, absorbed)" in DETAIL_CODE
+    ), "get_event's odds ids no longer come from the orientation-checked fold"
 
 
 def test_no_call_site_reintroduces_the_window_scan():
@@ -131,8 +119,6 @@ def test_no_call_site_reintroduces_the_window_scan():
         ("list_events", LIST_CODE),
         ("get_event", DETAIL_CODE),
         ("search_events", SEARCH_CODE),
-        ("load_unified_game_reads", UNIFIED_READ_CODE),
-        ("_fetch_odds_snapshots", UNIFIED_FETCH_CODE),
     ):
         assert "row_number()" not in code, (
             f"{name} reintroduced the window scan over full snapshot history — it "
