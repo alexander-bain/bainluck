@@ -260,6 +260,140 @@ test('pairedMetricSetMarketIds, patchMachineryVisualBlock, and applyEventConcept
   );
   expect((blockPatched.items?.[0].outcomes as { rendered_percent: number }[])[0].rendered_percent).toBe(58);
 
+  // #13601 (1): coin_flip_matchups prefers served rendered percents and otherwise uses
+  // renderedDuelPercents so 0.505/0.495 prints 51% & 49% (sum 100), never 51% & 50%.
+  for (const [homeProb, awayProb, expHome, expAway] of [
+    [0.505, 0.495, 51, 49],
+    [0.495, 0.505, 49, 51],
+    [0.515, 0.485, 52, 48],
+    [0.525, 0.475, 53, 47],
+  ] as const) {
+    const unservedMatchup = patchMachineryVisualBlock(
+      {
+        form_id: 'coin_flip_matchups',
+        items: [{ event_id: 901, home_pct: 50, away_pct: 50 }],
+      },
+      new Map([
+        [
+          'event-901',
+          {
+            type: 'event',
+            data: {
+              id: 901,
+              status: 'scheduled',
+              sport: 'basketball_nba',
+              current_odds: { home_probability: homeProb, away_probability: awayProb },
+            },
+          } as unknown as FeedItem,
+        ],
+      ]),
+    );
+    const row = unservedMatchup.items?.[0] as { home_pct: number; away_pct: number };
+    expect(row.home_pct).toBe(expHome);
+    expect(row.away_pct).toBe(expAway);
+    expect(row.home_pct + row.away_pct).toBe(100);
+  }
+
+  const servedMatchup = patchMachineryVisualBlock(
+    {
+      form_id: 'coin_flip_matchups',
+      items: [{ event_id: 902, home_pct: 50, away_pct: 50 }],
+    },
+    new Map([
+      [
+        'event-902',
+        {
+          type: 'event',
+          data: {
+            id: 902,
+            status: 'scheduled',
+            sport: 'basketball_nba',
+            current_odds: {
+              home_probability: 0.505,
+              away_probability: 0.495,
+              home_rendered_percent: 51,
+              away_rendered_percent: 49,
+            },
+          },
+        } as unknown as FeedItem,
+      ],
+    ]),
+  );
+  const servedRow = servedMatchup.items?.[0] as { home_pct: number; away_pct: number };
+  expect(servedRow.home_pct).toBe(51);
+  expect(servedRow.away_pct).toBe(49);
+
+  // #13601 (2): patchVisualOutcomes and probability_history_chart use server
+  // rendered_percent when present (#11995) and round locally only on provisional frames.
+  const serverPercentOutcomes = patchMachineryVisualBlock(
+    {
+      form_id: 'sibling_fields_grid',
+      items: [
+        {
+          market_id: 502,
+          title: 'Confirmed vs Provisional',
+          outcomes: [
+            { outcome_id: 80, name: 'Candidate A', probability: 0.34, rendered_percent: 34, art: {} as never },
+            { outcome_id: 81, name: 'Candidate B', probability: 0.4, rendered_percent: 40, art: {} as never },
+          ],
+        },
+      ],
+    },
+    new Map([
+      [
+        'futures-502',
+        {
+          type: 'futures',
+          data: {
+            id: 502,
+            status: 'open',
+            top_outcomes: [
+              { id: 80, name: 'Candidate A', probability: 0.34, rendered_percent: 33 },
+              { id: 81, name: 'Candidate B', probability: 0.44, rendered_percent: null },
+            ],
+          },
+        } as unknown as FeedItem,
+      ],
+    ]),
+  );
+  const patchedOuts = serverPercentOutcomes.items?.[0].outcomes as { rendered_percent: number }[];
+  expect(patchedOuts[0].rendered_percent).toBe(33);
+  expect(patchedOuts[1].rendered_percent).toBe(44);
+
+  const chartPatched = patchMachineryVisualBlock(
+    {
+      form_id: 'probability_history_chart',
+      items: [
+        {
+          market_id: 503,
+          series: [
+            { outcome_id: 90, current_pct: 34 },
+            { outcome_id: 91, current_pct: 40 },
+          ],
+        },
+      ],
+    },
+    new Map([
+      [
+        'futures-503',
+        {
+          type: 'futures',
+          data: {
+            id: 503,
+            status: 'open',
+            top_outcomes: [
+              { id: 90, name: 'Confirmed', probability: 0.34, rendered_percent: 33 },
+              { id: 91, name: 'Provisional', probability: 0.46, rendered_percent: null },
+            ],
+          },
+        } as unknown as FeedItem,
+      ],
+    ]),
+  );
+  const patchedSeries = chartPatched.items?.[0].series as { current_pct: number }[];
+  expect(patchedSeries[0].current_pct).toBe(33);
+  expect(patchedSeries[1].current_pct).toBe(46);
+
   // #13509: soccer matchup rejects preview without p_away; adopts when p_away present
   const soccerChild = {
     kind: 'matchup' as const,
@@ -461,6 +595,15 @@ test('CollectionHub machinery section (market_preview) and AwardCategoryPairedCa
   expect(dtPairedMs).toBeLessThan(500);
   expect(pairedMetricsMock).toHaveBeenCalledTimes(2);
   expect(container.textContent).toContain('49%');
+
+  // Burst protection: rapid follow-up invalidation at +2s stays debounced under the 10s floor until +10s.
+  pairedMetricsMock.mockResolvedValueOnce({ sets: [makePairedSet(0.52)] });
+  pairedStream!.emit('market', wire({ market_id: 602, terminal: false, invalidation: true }));
+  await flush(2_000);
+  expect(pairedMetricsMock).toHaveBeenCalledTimes(2);
+  await flush(8_000);
+  expect(pairedMetricsMock).toHaveBeenCalledTimes(3);
+  expect(container.textContent).toContain('52%');
 });
 
 test('/event/[domain]/[slug] re-prices matchup children (authority-v3), evolution leaderboard (market_preview), and envelope refresh in < 500 ms', async () => {

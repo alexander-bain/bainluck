@@ -5,13 +5,13 @@ import type { PairedMetricSet } from '@/lib/discover/visualForms';
 import { pairedMetricSetMarketIds } from '@/lib/pairedMetricStream';
 import { useMarketStream } from './useMarketStream';
 
-const PAIRED_REFRESH_FLOOR_MS = 2_000;
+const PAIRED_REFRESH_FLOOR_MS = 10_000;
 
 /**
  * #10090: Subscribes to `/api/markets/stream` for all open legs of the
- * provided `PairedMetricSet[]` and invokes a debounced (leading-edge + 2 s
- * floor) `onRefresh` callback on invalidation so server `blend_with_verdict`
- * remains the sole blending authority.
+ * provided `PairedMetricSet[]` and invokes a debounced (leading-edge + 10 s
+ * burst floor) `onRefresh` callback on invalidation so server
+ * `blend_with_verdict` remains the sole blending authority.
  */
 export function usePairedMetricSetStream(
   sets: readonly PairedMetricSet[],

@@ -7,8 +7,17 @@
 import type { MachineryOutcomeVisual, MachineryVisualBlock } from '@/lib/collections';
 import { sportPricesADraw } from '@/lib/drawPricedWinner';
 import { isFinishedStatus } from '@/lib/eventState';
-import { renderedPercent } from '@/lib/renderedPercent';
+import { renderedDuelPercents, renderedPercent } from '@/lib/renderedPercent';
 import type { FeedEventData, FeedFuturesData, FeedItem } from '@/lib/types';
+
+function outcomeRenderedPercent(
+  row: { probability?: number | null; rendered_percent?: number | null },
+): number | null {
+  if (typeof row.rendered_percent === 'number' && Number.isFinite(row.rendered_percent)) {
+    return row.rendered_percent;
+  }
+  return renderedPercent(row.probability);
+}
 
 function patchVisualOutcomes(
   outcomes: MachineryOutcomeVisual[] | undefined,
@@ -17,23 +26,24 @@ function patchVisualOutcomes(
   if (!outcomes?.length || futuresData.status === 'resolved' || futuresData.status === 'settled') {
     return outcomes;
   }
-  const byId = new Map<number, number>();
+  const byId = new Map<number, { probability: number; pct: number }>();
   for (const row of futuresData.top_outcomes ?? []) {
     if (typeof row.probability === 'number' && Number.isFinite(row.probability)) {
-      byId.set(row.id, row.probability);
+      const pct = outcomeRenderedPercent(row);
+      if (pct !== null) {
+        byId.set(row.id, { probability: row.probability, pct });
+      }
     }
   }
   let changed = false;
   const next = outcomes.map((o) => {
-    const p = byId.get(o.outcome_id);
-    if (p === undefined || p === o.probability) return o;
-    const pct = renderedPercent(p);
-    if (pct === null) return o;
+    const hit = byId.get(o.outcome_id);
+    if (!hit || (hit.probability === o.probability && hit.pct === o.rendered_percent)) return o;
     changed = true;
     return {
       ...o,
-      probability: p,
-      rendered_percent: pct,
+      probability: hit.probability,
+      rendered_percent: hit.pct,
     };
   });
   return changed ? next : outcomes;
@@ -60,8 +70,24 @@ export function patchMachineryVisualBlock(
       if (typeof homeP !== 'number' || !Number.isFinite(homeP)) return item;
       if (hasDraw && (typeof awayP !== 'number' || !Number.isFinite(awayP))) return item;
       const resolvedAwayP = typeof awayP === 'number' && Number.isFinite(awayP) ? awayP : 1 - homeP;
-      const homePct = renderedPercent(homeP);
-      const awayPct = renderedPercent(resolvedAwayP);
+      const servedHome = ev.current_odds.home_rendered_percent;
+      const servedAway = ev.current_odds.away_rendered_percent;
+      let homePct: number | null;
+      let awayPct: number | null;
+      if (
+        typeof servedHome === 'number' &&
+        Number.isInteger(servedHome) &&
+        typeof servedAway === 'number' &&
+        Number.isInteger(servedAway)
+      ) {
+        homePct = servedHome;
+        awayPct = servedAway;
+      } else {
+        const [pairedAway, pairedHome] = renderedDuelPercents(resolvedAwayP, homeP);
+        awayPct = pairedAway ?? renderedPercent(resolvedAwayP);
+        homePct = pairedHome ?? renderedPercent(homeP);
+      }
+      if (homePct === null || awayPct === null) return item;
       if (item.home_pct === homePct && item.away_pct === awayPct) return item;
       changed = true;
       return { ...item, home_pct: homePct, away_pct: awayPct };
@@ -82,7 +108,7 @@ export function patchMachineryVisualBlock(
       const byId = new Map<number, number>();
       for (const row of futuresData.top_outcomes ?? []) {
         if (typeof row.probability === 'number' && Number.isFinite(row.probability)) {
-          const pct = renderedPercent(row.probability);
+          const pct = outcomeRenderedPercent(row);
           if (pct !== null) byId.set(row.id, pct);
         }
       }

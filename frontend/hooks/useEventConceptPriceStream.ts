@@ -34,7 +34,7 @@ import {
 import { useMarketStream } from './useMarketStream';
 
 export const MAX_CONCEPT_MATCHUP_STREAMS = 10;
-const CONCEPT_REFRESH_FLOOR_MS = 2_000;
+const CONCEPT_REFRESH_FLOOR_MS = 10_000;
 
 type EventPreviewView = {
   reader: AuthorityPreviewReader;
