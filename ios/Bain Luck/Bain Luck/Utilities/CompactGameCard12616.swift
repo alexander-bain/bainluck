@@ -1,5 +1,21 @@
 import SwiftUI
 
+private struct LiveOddsRefreshActiveKey13634: EnvironmentKey {
+    static let defaultValue = false
+}
+
+extension EnvironmentValues {
+    /// Fail-closed live-tenths gate (#13634): cards and charts print tenths
+    /// (`54.2%`) ONLY while their owning surface has an active, healthy live
+    /// refresh running. Non-refreshing surfaces (Search, Team, League, Sport,
+    /// Hub, My Stuff landing) and offline/stopped/cached feeds inherit `false`
+    /// and print whole percents (`54%`) instead of frozen tenths.
+    var liveOddsRefreshActive: Bool {
+        get { self[LiveOddsRefreshActiveKey13634.self] }
+        set { self[LiveOddsRefreshActiveKey13634.self] = newValue }
+    }
+}
+
 /// #12616 (Decision 161-B, "chance first") — pure column grammar, scheduled
 /// sportsbook projection admission, live tenths duel formatting, optional
 /// three-way soccer draw row, and compact context-line formatting for
@@ -196,13 +212,16 @@ enum CompactGameCard12616 {
         isScheduled: Bool,
         isLive: Bool,
         isFinished: Bool,
-        isSuspended: Bool
+        isSuspended: Bool,
+        showsLiveTenths: Bool = false
     ) -> String? {
         guard DrawPricedWinner.sportPricesADraw(event.sport), !isSuspended else { return nil }
         if isLive {
             guard hasExplicitThreeWayCurrent(event),
                   let draw = usableProbability(event.currentOdds?.drawProbability) else { return nil }
-            return formatSingleLiveTenths(draw)
+            return showsLiveTenths
+                ? formatSingleLiveTenths(draw)
+                : formatProbability(draw, renderedPercent: nil)
         }
         if isScheduled {
             guard hasExplicitThreeWayCurrent(event),

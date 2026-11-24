@@ -280,6 +280,7 @@ struct FeedView: View {
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             #endif
         }
+        .environment(\.liveOddsRefreshActive, vm.liveOddsRefreshRunning)
     }
 
     private var categoryName: String {

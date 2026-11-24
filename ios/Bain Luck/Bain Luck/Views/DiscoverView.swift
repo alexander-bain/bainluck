@@ -158,6 +158,10 @@ struct DiscoverView: View {
     }
     @Environment(\.scenePhase) private var priceScenePhase
     @State private var priceViewVisible = false
+
+    private var shouldDeliverLivePrices: Bool {
+        priceViewVisible && priceScenePhase == .active && navigationPath.isEmpty
+    }
     @EnvironmentObject private var authManager: AuthManager
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @State private var visibleCount: Int
@@ -1471,6 +1475,7 @@ struct DiscoverView: View {
                 }
             }
         }
+        .environment(\.liveOddsRefreshActive, vm.livePriceRefreshRunning)
         .modifier(ConditionalScrollAnchorModifier(anchorId: isGuessSlot ? gi.id : nil))
         .onDisappear { vm.setPriceCardsVisible(owner: gi.id, cards: [], visible: false) }
         .onChange(of: DiscoverPriceRefresh.leaves(gi.priceCards).map(\.id)) { _, _ in
@@ -2876,10 +2881,13 @@ struct DiscoverView: View {
             #endif
             AnalyticsService.trackScreen(name: "discover", type: "discover")
             priceViewVisible = true
-            vm.setPriceDeliveryActive(priceScenePhase == .active)
+            vm.setPriceDeliveryActive(shouldDeliverLivePrices)
         }
-        .onChange(of: priceScenePhase) { _, phase in
-            vm.setPriceDeliveryActive(priceViewVisible && phase == .active)
+        .onChange(of: priceScenePhase) { _, _ in
+            vm.setPriceDeliveryActive(shouldDeliverLivePrices)
+        }
+        .onChange(of: navigationPath.isEmpty) { _, _ in
+            vm.setPriceDeliveryActive(shouldDeliverLivePrices)
         }
         .task {
             if vm.items.isEmpty {

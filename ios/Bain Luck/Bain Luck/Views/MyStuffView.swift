@@ -877,6 +877,7 @@ struct MyStuffView: View {
                 UIImpactFeedbackGenerator(style: .light).impactOccurred()
                 #endif
             }
+            .environment(\.liveOddsRefreshActive, vm.liveOddsRefreshRunning)
             .macReadingOffset(macPlace)
         }
     }
