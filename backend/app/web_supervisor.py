@@ -16,9 +16,9 @@ every existing Uvicorn CLI flag (``--limit-max-requests``, jitter, graceful shut
 - At most one worker recycles at a time, only when at least one sibling responds healthy,
   and only after ``WEB_WORKER_MIN_STAGGER_SECONDS`` (default 300s) has elapsed since the
   previous recycle or unexpected respawn.
-- Old workers are terminated cleanly and joined up to
-  ``WEB_WORKER_SHUTDOWN_JOIN_TIMEOUT_SECONDS`` (default 25s, with ``kill()`` fallback)
-  *before* spawning the replacement, so worker count never exceeds ``WEB_CONCURRENCY``.
+- Old workers are terminated and drained cleanly only *after* their replacement answers
+  ready, so a failed replacement startup never exits the parent or leaves zero workers
+  serving, and open streams never stall capacity in a single-worker window.
 - Single-worker mode (``WEB_CONCURRENCY=1``) runs Uvicorn directly without self-inflicted
   clock restarts.
 """
@@ -28,7 +28,9 @@ from __future__ import annotations
 import importlib
 import inspect
 import logging
+import multiprocessing.process
 import os
+import pickle
 import sys
 import time
 from collections.abc import Callable, Sequence
@@ -43,12 +45,57 @@ from uvicorn.supervisors.multiprocess import Multiprocess, Process
 logger = logging.getLogger("uvicorn.error")
 
 _STARTUP_FAILURE = getattr(uvicorn, "STARTUP_FAILURE", 3)
+_UVICORN_PROCESS = Process
+_PROCESS_HAS_IS_READY = hasattr(Process, "is_ready")
 _MULTIPROCESS_TAKES_TARGET = "target" in inspect.signature(Multiprocess.__init__).parameters
 _PROCESS_TAKES_TARGET = "target" in inspect.signature(Process.__init__).parameters
 
 DEFAULT_WORKER_MAX_AGE_SECONDS = 1800.0
 DEFAULT_WORKER_MIN_STAGGER_SECONDS = 300.0
 DEFAULT_SHUTDOWN_JOIN_TIMEOUT_SECONDS = 25.0
+DEFAULT_STARTUP_TIMEOUT_SECONDS = 30.0
+
+
+class _CompatReadyProcess(Process):
+    """Add Uvicorn 0.54+ ``is_ready`` / ``exitcode`` semantics on older Uvicorn (e.g. 0.48.0)."""
+
+    def _close_pipes(self) -> None:
+        for conn in (getattr(self, "parent_conn", None), getattr(self, "child_conn", None)):
+            if conn is None:
+                continue
+            try:
+                conn.close()
+            except OSError:
+                pass
+
+    def _healthcheck(self, timeout: float) -> bool | None:
+        try:
+            self.parent_conn.send(b"ping")
+            if self.parent_conn.poll(timeout):
+                return bool(self.parent_conn.recv())
+            return None
+        except (OSError, EOFError, pickle.UnpicklingError):
+            return None
+
+    def ping(self, timeout: float = 5) -> bool:
+        return self._healthcheck(timeout) is not None
+
+    def is_ready(self, timeout: float = 5) -> bool:
+        return self._healthcheck(timeout) is True
+
+    def pong(self) -> None:
+        self.child_conn.recv()
+        bound_server = getattr(self.real_target, "__self__", None)
+        started = getattr(bound_server, "started", None)
+        self.child_conn.send(True if started is None else bool(started))
+
+    def kill(self) -> None:
+        super().kill()
+        self._close_pipes()
+
+    @property
+    def exitcode(self) -> int | None:
+        return self.process.exitcode
 
 
 def _env_nonneg_float(name: str, default: float) -> float:
@@ -85,6 +132,7 @@ class StaggeredClockMultiprocess(Multiprocess):
         max_age_seconds: float | None = None,
         min_stagger_seconds: float | None = None,
         shutdown_join_timeout_seconds: float | None = None,
+        startup_timeout_seconds: float | None = None,
         monotonic_fn: Callable[[], float] = time.monotonic,
     ) -> None:
         self.target = target
@@ -118,17 +166,59 @@ class StaggeredClockMultiprocess(Multiprocess):
             else max(1.0, float(shutdown_join_timeout_seconds))
         )
         self.shutdown_join_timeout_seconds = raw_join_timeout
+        raw_startup_timeout = (
+            _env_nonneg_float("WEB_WORKER_STARTUP_TIMEOUT_SECONDS", DEFAULT_STARTUP_TIMEOUT_SECONDS)
+            if startup_timeout_seconds is None
+            else float(startup_timeout_seconds)
+        )
+        self.startup_timeout_seconds = max(1.0, raw_startup_timeout)
         self._started_at: list[float] = []
         self._next_recycle_at: list[float | None] = []
         self._last_event_at: float | None = None
+        self._retiring_processes: list[Process] = []
 
     def _spawn_process(self) -> Process:
-        if _PROCESS_TAKES_TARGET:
+        if not _PROCESS_HAS_IS_READY and Process is _UVICORN_PROCESS:
+            process: Process = _CompatReadyProcess(self.config, self.target, self.sockets)  # type: ignore[call-arg]
+        elif _PROCESS_TAKES_TARGET:
             process = Process(self.config, self.target, self.sockets)  # type: ignore[call-arg]
         else:
             process = Process(self.config, self.sockets)  # type: ignore[call-arg]
         process.start()
         return process
+
+    def _kill_and_join_worker(self, process: Process, join_timeout: float = 5.0) -> None:
+        process.kill()
+        inner = getattr(process, "process", None)
+        if inner is not None and hasattr(inner, "join"):
+            inner.join(timeout=join_timeout)
+        else:
+            process.join()
+
+    def _wait_until_worker_ready(self, process: Process) -> bool:
+        if hasattr(process, "is_ready"):
+            deadline = time.monotonic() + self.startup_timeout_seconds
+            while time.monotonic() < deadline:
+                self.handle_signals()
+                if self.should_exit.is_set():
+                    return False
+                inner = getattr(process, "process", None)
+                if isinstance(inner, multiprocessing.process.BaseProcess) and not inner.is_alive():
+                    return False
+                if getattr(process, "exitcode", None) is not None:
+                    return False
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    break
+                if process.is_ready(timeout=min(1.0, remaining)):
+                    return True
+                sleep_for = min(0.1, max(0.0, deadline - time.monotonic()))
+                if sleep_for > 0:
+                    time.sleep(sleep_for)
+            return False
+        if hasattr(process, "wait_until_ready"):
+            return bool(process.wait_until_ready(self.startup_timeout_seconds, self.should_exit))
+        return bool(process.is_alive(timeout=self.config.timeout_worker_healthcheck))
 
     def _next_non_overlapping_slot(self, idx: int, now: float) -> float | None:
         if self.max_age_seconds <= 0 or len(self.processes) <= 1:
@@ -164,22 +254,38 @@ class StaggeredClockMultiprocess(Multiprocess):
         process.terminate()
         inner = getattr(process, "process", None)
         if inner is not None and hasattr(inner, "join"):
-            inner.join(timeout=self.shutdown_join_timeout_seconds)
-            still_alive = bool(inner.is_alive()) if hasattr(inner, "is_alive") else False
+            if isinstance(inner, multiprocessing.process.BaseProcess):
+                deadline = time.monotonic() + self.shutdown_join_timeout_seconds
+                while inner.is_alive() and time.monotonic() < deadline:
+                    self.handle_signals()
+                    if self.should_exit.is_set():
+                        if inner.is_alive():
+                            self._retiring_processes.append(process)
+                        return
+                    remaining = deadline - time.monotonic()
+                    if remaining <= 0:
+                        break
+                    inner.join(timeout=min(0.25, remaining))
+                still_alive = inner.is_alive()
+            else:
+                inner.join(timeout=self.shutdown_join_timeout_seconds)
+                still_alive = bool(inner.is_alive()) if hasattr(inner, "is_alive") else False
         else:
             process.join()
             still_alive = False
-        if still_alive:
+        if still_alive and not self.should_exit.is_set():
             logger.warning(
                 "Staggered clock recycle force-killing worker [%s] after %.1fs graceful wait",
                 pid,
                 self.shutdown_join_timeout_seconds,
             )
-            process.kill()
-            if inner is not None and hasattr(inner, "join"):
-                inner.join(timeout=5.0)
-            else:
-                process.join()
+            self._kill_and_join_worker(process, join_timeout=5.0)
+
+    def join_all(self) -> None:
+        super().join_all()
+        for process in self._retiring_processes:
+            process.join()
+        self._retiring_processes.clear()
 
     def init_processes(self) -> None:
         self.processes = [self._spawn_process() for _ in range(self.processes_num)]
@@ -290,13 +396,38 @@ class StaggeredClockMultiprocess(Multiprocess):
             old_pid,
             age_s,
         )
+        # Start the replacement first and wait until it answers ready before
+        # adding it to self.processes or retiring old_proc. A failed startup
+        # must never stop the parent or leave fewer workers serving.
+        new_proc = self._spawn_process()
+        if not self._wait_until_worker_ready(new_proc):
+            exitcode = getattr(new_proc, "exitcode", None)
+            new_pid = new_proc.pid
+            self._kill_and_join_worker(new_proc)
+            if self.should_exit.is_set():
+                return None
+            fail_now = self._monotonic()
+            retry_delay = self.min_stagger_seconds if self.min_stagger_seconds > 0 else 1.0
+            self._last_event_at = fail_now
+            self._next_recycle_at[target_idx] = fail_now + retry_delay
+            self._push_siblings_past_stagger(target_idx, fail_now)
+            logger.error(
+                "Staggered clock recycle aborted: slot=%d replacement_pid=%s failed to become ready "
+                "(exitcode=%s); keeping old_pid=%s and retrying in %.0fs",
+                target_idx,
+                new_pid,
+                exitcode,
+                old_pid,
+                retry_delay,
+            )
+            return None
+
+        self.processes[target_idx] = new_proc
         self._terminate_and_join_worker(old_proc)
 
         if self.should_exit.is_set():
             return None
 
-        new_proc = self._spawn_process()
-        self.processes[target_idx] = new_proc
         done_now = self._monotonic()
         self._started_at[target_idx] = done_now
         self._last_event_at = done_now
@@ -351,9 +482,8 @@ def run_cli(argv: Sequence[str] | None = None) -> None:
             logger.warning("You must pass the application as an import string to enable 'workers'.")
             sys.exit(1)
     else:
-        # Multiprocess children spawn fresh interpreters and call config.load()
-        # in Server._serve(); importing app.main in the parent would pin ~165 MB
-        # of unused RSS alongside the Procfile release-phase import check.
+        # Match Uvicorn 0.54.0: multiprocess workers load config.app inside each
+        # spawned child; single-worker mode loads it here before Server.run().
         config.load_app()
     server = uvicorn.server.Server(config=config)
 

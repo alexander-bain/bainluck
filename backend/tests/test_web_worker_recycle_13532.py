@@ -10,8 +10,8 @@ all three Uvicorn recycle flags:
   30m staggered 15m apart), enforcing a healthy sibling check and a minimum inter-recycle
   cool-down (`WEB_WORKER_MIN_STAGGER_SECONDS`) so both workers never restart together.
 - `--timeout-graceful-shutdown` (`15`s) and supervisor join timeout (`25`s -> `.kill()`
-  fallback) bound SSE stream drains (`MAX_CONNECTION_S = 900`s) before starting the
-  replacement worker.
+  fallback) bound SSE stream drains (`MAX_CONNECTION_S = 900`s) while the already-ready
+  replacement worker takes over traffic cleanly.
 - `--limit-max-requests 5000 --limit-max-requests-jitter 1000` stays in place as a
   request-count backstop under traffic bursts.
 - Three in-process L1 caps stay tightened (`10`, `10`, `48`).
@@ -21,6 +21,11 @@ from __future__ import annotations
 
 import os
 import shlex
+import socket
+import subprocess
+import sys
+import time
+import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
@@ -93,12 +98,16 @@ class _FakeWorkerProcess:
         self,
         *,
         alive: bool = True,
+        ready: bool = True,
+        exitcode: int | None = None,
         hung_on_terminate: bool = False,
         timeline: list[str] | None = None,
     ) -> None:
         type(self)._next_pid += 1
         self.pid = type(self)._next_pid
         self.alive = alive
+        self.ready = ready
+        self.exitcode = exitcode
         self.timeline = timeline if timeline is not None else []
         self.started = False
         self.terminated = False
@@ -107,10 +116,15 @@ class _FakeWorkerProcess:
 
     def start(self) -> None:
         self.started = True
+        if not self.ready and self.exitcode is not None:
+            self.alive = False
         self.timeline.append(f"start:{self.pid}")
 
     def is_alive(self, timeout: float = 5) -> bool:
         return self.alive
+
+    def is_ready(self, timeout: float = 5) -> bool:
+        return self.alive and self.ready
 
     def terminate(self) -> None:
         self.terminated = True
@@ -275,7 +289,7 @@ class TestStaggeredClockSupervisor13532:
             clock.advance(899.0)
             assert sup.recycle_aged_worker_if_due() is None
 
-            # At +15 min: worker 0 recycles cleanly BEFORE replacement starts.
+            # At +15 min: replacement starts & becomes ready BEFORE old worker retires.
             clock.advance(1.0)  # now = 1900.0
             first_old_pid = sup.processes[0].pid
             recycled = sup.recycle_aged_worker_if_due()
@@ -284,10 +298,10 @@ class TestStaggeredClockSupervisor13532:
             assert new0_pid != first_old_pid
             assert sup._next_recycle_at == [3700.0, 2800.0]
 
-            # Old worker was terminated & joined BEFORE replacement spawned.
-            t_idx = timeline.index(f"terminate:{first_old_pid}")
+            # Replacement spawned BEFORE old worker was terminated & joined.
             s_idx = timeline.index(f"start:{new0_pid}")
-            assert t_idx < s_idx
+            t_idx = timeline.index(f"terminate:{first_old_pid}")
+            assert s_idx < t_idx
 
             # Immediately afterwards, worker 1 is still untouched even inside cooldown.
             clock.advance(299.0)  # now = 2199.0
@@ -404,7 +418,68 @@ class TestStaggeredClockSupervisor13532:
             assert hung.killed is True
             assert hung.process.join_timeouts == [25.0, 5.0]
             assert f"kill:{hung_pid}" in timeline
-            assert timeline.index(f"kill:{hung_pid}") < timeline.index(f"start:{sup.processes[0].pid}")
+            assert timeline.index(f"start:{sup.processes[0].pid}") < timeline.index(f"terminate:{hung_pid}")
+            assert timeline.index(f"terminate:{hung_pid}") < timeline.index(f"kill:{hung_pid}")
+
+    def test_failed_replacement_keeps_old_worker_and_parent_alive_and_retries_after_min_gap(
+        self,
+    ) -> None:
+        clock = _FakeClock(1_000.0)
+        cfg = _supervisor_config(workers=2)
+        timeline: list[str] = []
+        spawned: list[_FakeWorkerProcess] = []
+
+        def _make_proc(*_args, **_kwargs):
+            idx = len(spawned)
+            # Attempts 0 & 1 are initial workers; attempt 2 fails startup; attempt 3 succeeds.
+            fails = idx == 2
+            proc = _FakeWorkerProcess(
+                ready=not fails,
+                exitcode=(web_supervisor._STARTUP_FAILURE if fails else None),
+                timeline=timeline,
+            )
+            spawned.append(proc)
+            return proc
+
+        with patch.object(web_supervisor, "Process", side_effect=_make_proc):
+            sup = web_supervisor.StaggeredClockMultiprocess(
+                cfg,
+                target=lambda sockets=None: None,
+                sockets=[],
+                max_age_seconds=1800.0,
+                min_stagger_seconds=300.0,
+                startup_timeout_seconds=5.0,
+                monotonic_fn=clock,
+            )
+            sup.init_processes()
+            old0, old1 = sup.processes[0], sup.processes[1]
+
+            clock.now = 1900.0
+            assert sup.recycle_aged_worker_if_due() is None
+
+            failed_proc = spawned[2]
+            assert failed_proc.killed is True
+            assert old0.terminated is False
+            assert sup.processes == [old0, old1]
+            assert not sup.should_exit.is_set()
+
+            # Parent keep-alive stays up because the failed replacement never entered self.processes.
+            sup.keep_subprocess_alive()
+            assert not sup.should_exit.is_set()
+            assert sup.processes == [old0, old1]
+            assert sup._next_recycle_at[0] == 2200.0
+
+            # Still in retry cooldown.
+            clock.now = 2199.0
+            assert sup.recycle_aged_worker_if_due() is None
+
+            # At +min_stagger, replacement retries and succeeds cleanly.
+            clock.now = 2200.0
+            assert sup.recycle_aged_worker_if_due() == 0
+            assert old0.terminated is True
+            assert sup.processes[0] is spawned[3]
+            assert sup.processes[1] is old1
+            assert sup._next_recycle_at == [4000.0, 2800.0]
 
     def test_supports_uvicorn_054_two_arg_multiprocess_and_process(self) -> None:
         import threading
@@ -461,3 +536,245 @@ class TestL1CacheCaps13532:
             assert f"k:{rc._LAST_GOOD_MAX + 4}" in rc._last_good
         finally:
             rc._reset_last_good_for_tests()
+
+
+def _free_local_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        return int(sock.getsockname()[1])
+
+
+def _write_dummy_asgi_app(tmp_path: Path) -> Path:
+    app_file = tmp_path / "dummy_sup_app.py"
+    app_file.write_text(
+        """
+import asyncio, fcntl, os
+
+COUNTER = os.environ["START_COUNTER_FILE"]
+FAIL_ON = {int(x) for x in os.environ.get("FAIL_ON_START_N", "").split(",") if x.strip()}
+
+
+def _bump() -> int:
+    with open(COUNTER, "a+", encoding="utf-8") as fh:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX)
+        fh.seek(0)
+        raw = fh.read().strip()
+        n = int(raw) if raw else 0
+        n += 1
+        fh.seek(0)
+        fh.truncate()
+        fh.write(str(n))
+        fh.flush()
+        fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    return n
+
+
+async def app(scope, receive, send):
+    if scope["type"] == "lifespan":
+        while True:
+            msg = await receive()
+            if msg["type"] == "lifespan.startup":
+                n = _bump()
+                await asyncio.sleep(float(os.environ.get("BOOT_SECONDS", "0.1")))
+                if n in FAIL_ON:
+                    await send({"type": "lifespan.startup.failed", "message": f"fail start {n}"})
+                    return
+                await send({"type": "lifespan.startup.complete"})
+            elif msg["type"] == "lifespan.shutdown":
+                await send({"type": "lifespan.shutdown.complete"})
+                return
+    if scope["type"] != "http":
+        return
+    pid = str(os.getpid()).encode("ascii")
+    await send(
+        {
+            "type": "http.response.start",
+            "status": 200,
+            "headers": [(b"content-type", b"text/plain"), (b"connection", b"close")],
+        }
+    )
+    await send({"type": "http.response.body", "body": pid})
+""".lstrip(),
+        encoding="utf-8",
+    )
+    return app_file
+
+
+def _fetch_pid(port: int, *, timeout: float = 2.0) -> int | None:
+    try:
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/pid", timeout=timeout) as resp:
+            if resp.status == 200:
+                return int(resp.read().decode("ascii").strip())
+    except Exception:
+        return None
+    return None
+
+
+def _run_real_supervisor(
+    tmp_path: Path,
+    *,
+    port: int,
+    max_age_s: float,
+    min_stagger_s: float,
+    fail_on_start_n: str = "",
+) -> tuple[subprocess.Popen[str], Path, Path]:
+    _write_dummy_asgi_app(tmp_path)
+    counter_file = tmp_path / "starts.txt"
+    log_file = tmp_path / "supervisor.log"
+    env = os.environ.copy()
+    env.update(
+        {
+            "PYTHONPATH": f"{tmp_path}:{BACKEND_DIR}",
+            "START_COUNTER_FILE": str(counter_file),
+            "FAIL_ON_START_N": fail_on_start_n,
+            "BOOT_SECONDS": "0.1",
+            "WEB_CONCURRENCY": "2",
+            "WEB_WORKER_MAX_AGE_SECONDS": str(max_age_s),
+            "WEB_WORKER_MIN_STAGGER_SECONDS": str(min_stagger_s),
+            "WEB_WORKER_STARTUP_TIMEOUT_SECONDS": "15",
+            "WEB_WORKER_SHUTDOWN_JOIN_TIMEOUT_SECONDS": "5",
+        }
+    )
+    log_fh = open(log_file, "w+", encoding="utf-8")
+    proc = subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "app.web_supervisor",
+            "dummy_sup_app:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--limit-max-requests",
+            "5000",
+            "--limit-max-requests-jitter",
+            "1000",
+            "--timeout-graceful-shutdown",
+            "3",
+        ],
+        cwd=str(BACKEND_DIR),
+        env=env,
+        stdout=log_fh,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    proc._test_log_fh = log_fh  # type: ignore[attr-defined]
+    return proc, log_file, counter_file
+
+
+def _stop_real_supervisor(proc: subprocess.Popen[str]) -> int:
+    try:
+        if proc.poll() is None:
+            proc.terminate()
+            proc.wait(timeout=15.0)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=5.0)
+    finally:
+        fh = getattr(proc, "_test_log_fh", None)
+        if fh is not None:
+            fh.close()
+    assert proc.returncode is not None
+    return int(proc.returncode)
+
+
+class TestRealProcessStaggeredSupervisor13532:
+    def test_real_supervisor_two_workers_recycles_cleanly(self, tmp_path: Path) -> None:
+        port = _free_local_port()
+        proc, log_file, _counter = _run_real_supervisor(
+            tmp_path,
+            port=port,
+            max_age_s=4.0,
+            min_stagger_s=1.0,
+        )
+        try:
+            initial_pids: set[int] = set()
+            deadline = time.monotonic() + 15.0
+            while time.monotonic() < deadline and len(initial_pids) < 2:
+                pid = _fetch_pid(port)
+                if pid is not None:
+                    initial_pids.add(pid)
+                else:
+                    time.sleep(0.05)
+            assert len(initial_pids) == 2, f"Expected 2 initial workers, got {initial_pids}"
+
+            new_pid_seen: int | None = None
+            recycle_deadline = time.monotonic() + 15.0
+            while time.monotonic() < recycle_deadline:
+                assert proc.poll() is None, log_file.read_text(encoding="utf-8", errors="replace")
+                pid = _fetch_pid(port)
+                if pid is not None and pid not in initial_pids:
+                    new_pid_seen = pid
+                logs_now = log_file.read_text(encoding="utf-8", errors="replace")
+                if new_pid_seen is not None and "Staggered clock recycle complete:" in logs_now:
+                    break
+                time.sleep(0.1)
+            assert new_pid_seen is not None, log_file.read_text(encoding="utf-8", errors="replace")
+
+            rc_code = _stop_real_supervisor(proc)
+            assert rc_code == 0, log_file.read_text(encoding="utf-8", errors="replace")
+            logs = log_file.read_text(encoding="utf-8", errors="replace")
+            assert "Staggered clock recycle starting:" in logs
+            assert "Staggered clock recycle complete:" in logs
+            assert "stopping the parent process" not in logs
+        finally:
+            if proc.poll() is None:
+                _stop_real_supervisor(proc)
+
+    def test_real_supervisor_failed_replacement_keeps_serving_and_retries(self, tmp_path: Path) -> None:
+        port = _free_local_port()
+        proc, log_file, _counter = _run_real_supervisor(
+            tmp_path,
+            port=port,
+            max_age_s=4.0,
+            min_stagger_s=1.5,
+            fail_on_start_n="3",
+        )
+        try:
+            initial_pids: set[int] = set()
+            deadline = time.monotonic() + 15.0
+            while time.monotonic() < deadline and len(initial_pids) < 2:
+                pid = _fetch_pid(port)
+                if pid is not None:
+                    initial_pids.add(pid)
+                else:
+                    time.sleep(0.05)
+            assert len(initial_pids) == 2
+
+            # Wait for start #3 failure AND start #4 recovery + old worker retirement while serving continuously.
+            recovered_pid: int | None = None
+            saw_abort = False
+            saw_complete = False
+            poll_failures = 0
+            wait_deadline = time.monotonic() + 25.0
+            while time.monotonic() < wait_deadline:
+                assert proc.poll() is None, log_file.read_text(encoding="utf-8", errors="replace")
+                pid = _fetch_pid(port)
+                if pid is None:
+                    poll_failures += 1
+                elif pid not in initial_pids:
+                    recovered_pid = pid
+                logs_now = log_file.read_text(encoding="utf-8", errors="replace")
+                if "Staggered clock recycle aborted:" in logs_now:
+                    saw_abort = True
+                if "Staggered clock recycle complete:" in logs_now:
+                    saw_complete = True
+                if recovered_pid is not None and saw_abort and saw_complete:
+                    break
+                time.sleep(0.15)
+
+            assert saw_abort, log_file.read_text(encoding="utf-8", errors="replace")
+            assert saw_complete, log_file.read_text(encoding="utf-8", errors="replace")
+            assert recovered_pid is not None, log_file.read_text(encoding="utf-8", errors="replace")
+            assert poll_failures == 0
+
+            rc_code = _stop_real_supervisor(proc)
+            assert rc_code == 0, log_file.read_text(encoding="utf-8", errors="replace")
+            logs = log_file.read_text(encoding="utf-8", errors="replace")
+            assert "Staggered clock recycle aborted:" in logs
+            assert "Staggered clock recycle complete:" in logs
+            assert "stopping the parent process" not in logs
+        finally:
+            if proc.poll() is None:
+                _stop_real_supervisor(proc)
