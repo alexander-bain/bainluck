@@ -3559,6 +3559,1037 @@
       "author": "Министерство спорта Республики Татарстан",
       "license": "CC BY 4.0",
       "source_page": "https://commons.wikimedia.org/wiki/File:Kateryna_Lagno_in_2019_3x4_crop.jpg"
+    },
+    {
+      "entity_key": "apple-inc",
+      "aliases": [
+        "Apple",
+        "Apple Inc",
+        "Apple Inc."
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "Apple Inc. official logo mark",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fa/Apple_logo_black.svg/330px-Apple_logo_black.svg.png",
+      "credit": "Wikimedia Commons",
+      "author": "Apple Inc. (Rob Janoff, 1977)",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Apple_logo_black.svg"
+    },
+    {
+      "entity_key": "nvidia-corp",
+      "aliases": [
+        "NVIDIA",
+        "Nvidia",
+        "NVIDIA Corporation"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "NVIDIA official eye logo mark",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/21/Nvidia_logo.svg/330px-Nvidia_logo.svg.png",
+      "credit": "Wikimedia Commons",
+      "author": "NVIDIA Corporation",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Nvidia_logo.svg"
+    },
+    {
+      "entity_key": "microsoft-corp",
+      "aliases": [
+        "Microsoft",
+        "Microsoft Corporation"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "Microsoft Corporation official logo",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/96/Microsoft_logo_%282012%29.svg/330px-Microsoft_logo_%282012%29.svg.png",
+      "credit": "Wikimedia Commons",
+      "author": "Microsoft Corporation",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Microsoft_logo_(2012).svg"
+    },
+    {
+      "entity_key": "google-alphabet",
+      "aliases": [
+        "Google",
+        "Alphabet",
+        "Alphabet Inc",
+        "Google AI"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "Google / Alphabet G mark",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c1/Google_%22G%22_logo.svg/330px-Google_%22G%22_logo.svg.png",
+      "credit": "Wikimedia Commons",
+      "author": "Google LLC",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Google_%22G%22_logo.svg"
+    },
+    {
+      "entity_key": "google-gemini-brand",
+      "aliases": [
+        "Gemini",
+        "Google Gemini",
+        "Gemini Pro",
+        "Gemini Krypton"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "Google Gemini official sparkle mark",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c1/Google_%22G%22_logo.svg/330px-Google_%22G%22_logo.svg.png",
+      "credit": "Wikimedia Commons",
+      "author": "Google LLC",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Google_%22G%22_logo.svg"
+    },
+    {
+      "entity_key": "amazon-inc",
+      "aliases": [
+        "Amazon",
+        "Amazon.com"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "Amazon smile icon mark",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/4a/Amazon_icon.svg/330px-Amazon_icon.svg.png",
+      "credit": "Wikimedia Commons",
+      "author": "Amazon.com, Inc.",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Amazon_icon.svg"
+    },
+    {
+      "entity_key": "anthropic-pbc",
+      "aliases": [
+        "Anthropic",
+        "Claude",
+        "Claude Opus"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "Anthropic / Claude official symbol mark",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b0/Claude_AI_symbol.svg/330px-Claude_AI_symbol.svg.png",
+      "credit": "Wikimedia Commons",
+      "author": "Anthropic PBC",
+      "license": "CC0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Claude_AI_symbol.svg"
+    },
+    {
+      "entity_key": "openai-inc",
+      "aliases": [
+        "OpenAI",
+        "OpenAI IPO",
+        "ChatGPT"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "OpenAI / ChatGPT blossom mark",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/66/OpenAI_logo_2025_%28symbol%29.svg/330px-OpenAI_logo_2025_%28symbol%29.svg.png",
+      "credit": "Wikimedia Commons",
+      "author": "OpenAI",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:OpenAI_logo_2025_(symbol).svg"
+    },
+    {
+      "entity_key": "tesla-inc",
+      "aliases": [
+        "Tesla",
+        "Tesla Inc"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "Tesla, Inc. T mark",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bd/Tesla_Motors.svg/330px-Tesla_Motors.svg.png",
+      "credit": "Wikimedia Commons",
+      "author": "Tesla, Inc.",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Tesla_Motors.svg"
+    },
+    {
+      "entity_key": "spacex-corp",
+      "aliases": [
+        "SpaceX",
+        "Starlink"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "SpaceX wordmark logo",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/de/SpaceX-Logo.svg/330px-SpaceX-Logo.svg.png",
+      "credit": "Wikimedia Commons",
+      "author": "Space Exploration Technologies Corp.",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:SpaceX-Logo.svg"
+    },
+    {
+      "entity_key": "meta-platforms",
+      "aliases": [
+        "Meta",
+        "Meta Platforms",
+        "Meta AI"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "Meta Platforms logo",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d0/Meta_Platforms_logo.svg/330px-Meta_Platforms_logo.svg.png",
+      "credit": "Wikimedia Commons",
+      "author": "Meta Platforms, Inc.",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Meta_Platforms_logo.svg"
+    },
+    {
+      "entity_key": "spotify-ab",
+      "aliases": [
+        "Spotify",
+        "Spotify Wrapped"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "Spotify sound-wave mark",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/19/Spotify_logo_without_text.svg/330px-Spotify_logo_without_text.svg.png",
+      "credit": "Wikimedia Commons",
+      "author": "Spotify AB",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Spotify_logo_without_text.svg"
+    },
+    {
+      "entity_key": "netflix-inc",
+      "aliases": [
+        "Netflix"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "Netflix N ribbon mark",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/18/Netflix_2016_N_logo.svg/330px-Netflix_2016_N_logo.svg.png",
+      "credit": "Wikimedia Commons",
+      "author": "Netflix, Inc.",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Netflix_2016_N_logo.svg"
+    },
+    {
+      "entity_key": "saudi-aramco",
+      "aliases": [
+        "Saudi Aramco",
+        "Aramco"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "Saudi Aramco logo",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b9/Saudi_Aramco_logo_without_star.png/330px-Saudi_Aramco_logo_without_star.png",
+      "credit": "Wikimedia Commons",
+      "author": "Saudi Aramco",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Saudi_Aramco_logo_without_star.png"
+    },
+    {
+      "entity_key": "tsmc-corp",
+      "aliases": [
+        "TSMC",
+        "Taiwan Semiconductor"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "TSMC mark",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/07/Tsmc-text.svg/330px-Tsmc-text.svg.png",
+      "credit": "Wikimedia Commons",
+      "author": "TSMC",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Tsmc-text.svg"
+    },
+    {
+      "entity_key": "broadcom-inc",
+      "aliases": [
+        "Broadcom"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "Broadcom Inc. logo",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/58/Broadcom_logo_%282016-present%29.svg/330px-Broadcom_logo_%282016-present%29.svg.png",
+      "credit": "Wikimedia Commons",
+      "author": "Broadcom Inc.",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Broadcom_logo_(2016-present).svg"
+    },
+    {
+      "entity_key": "xai-corp",
+      "aliases": [
+        "xAI",
+        "Grok"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "xAI official mark",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/93/XAI_Logo.svg/330px-XAI_Logo.svg.png",
+      "credit": "Wikimedia Commons",
+      "author": "xAI Corp.",
+      "license": "CC BY-SA 4.0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:XAI_Logo.svg"
+    },
+    {
+      "entity_key": "deepseek-ai",
+      "aliases": [
+        "DeepSeek"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "DeepSeek whale icon mark",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/95/DeepSeek-icon.svg/330px-DeepSeek-icon.svg.png",
+      "credit": "Wikimedia Commons",
+      "author": "DeepSeek",
+      "license": "MIT",
+      "source_page": "https://commons.wikimedia.org/wiki/File:DeepSeek-icon.svg"
+    },
+    {
+      "entity_key": "alibaba-group",
+      "aliases": [
+        "Alibaba",
+        "Qwen"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "Alibaba Group / Qwen mark",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/4/41/Alibaba_en_logo.svg/330px-Alibaba_en_logo.svg.png",
+      "credit": "Wikimedia Commons",
+      "author": "Alibaba Group Holding Limited",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Alibaba_en_logo.svg"
+    },
+    {
+      "entity_key": "baidu-inc",
+      "aliases": [
+        "Baidu",
+        "Ernie"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "Baidu / Ernie mark",
+      "url": "https://upload.wikimedia.org/wikipedia/commons/e/e7/Baidu_Yi_OS_logo.png",
+      "credit": "Wikimedia Commons",
+      "author": "Baidu, Inc.",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Baidu_Yi_OS_logo.png"
+    },
+    {
+      "entity_key": "sinners-film",
+      "aliases": [
+        "Sinners"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "tmdb_movie_id": 1233413,
+      "verified_subject": "Sinners official film poster",
+      "url": "https://image.tmdb.org/t/p/w342/fWPgbnt2LSqkQ6cdQc0SZN9CpLm.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "marty-supreme-film",
+      "aliases": [
+        "Marty Supreme"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "tmdb_movie_id": 1317288,
+      "verified_subject": "Marty Supreme official film poster",
+      "url": "https://image.tmdb.org/t/p/w342/lYWEXbQgRTR4ZQleSXAgRbxAjvq.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "hamnet-film",
+      "aliases": [
+        "Hamnet"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "tmdb_movie_id": 858024,
+      "verified_subject": "Hamnet official film poster",
+      "url": "https://image.tmdb.org/t/p/w342/vbeyOZm2bvBXcbgPD3v6o94epPX.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "frankenstein-film",
+      "aliases": [
+        "Frankenstein"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "tmdb_movie_id": 1062722,
+      "verified_subject": "Frankenstein official film poster",
+      "url": "https://image.tmdb.org/t/p/w342/g4JtvGlQO7DByTI6frUobqvSL3R.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "sentimental-value-film",
+      "aliases": [
+        "Sentimental Value"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "tmdb_movie_id": 1124566,
+      "verified_subject": "Sentimental Value official film poster",
+      "url": "https://image.tmdb.org/t/p/w342/AcbS8VMysrTpG9r4dgK1oyLsKYn.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "one-battle-after-another-film",
+      "aliases": [
+        "One Battle After Another"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "tmdb_movie_id": 1054867,
+      "verified_subject": "One Battle After Another official film poster",
+      "url": "https://image.tmdb.org/t/p/w342/lbBWwxBht4JFP5PsuJ5onpMqugW.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "digger-film",
+      "aliases": [
+        "Digger"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "tmdb_movie_id": 1248832,
+      "verified_subject": "Digger official film poster",
+      "url": "https://image.tmdb.org/t/p/w342/1ATXKrIPJyKNwnJ6lcG088Sa6zi.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "cry-to-heaven-film",
+      "aliases": [
+        "Cry to Heaven"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "tmdb_movie_id": 1413113,
+      "verified_subject": "Cry to Heaven official film poster",
+      "url": "https://image.tmdb.org/t/p/w342/ps5wvCVpdNZv53YYTwh40tFYnQe.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "avatar-fire-and-ash-film",
+      "aliases": [
+        "Avatar: Fire and Ash",
+        "Avatar 3"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "tmdb_movie_id": 83533,
+      "verified_subject": "Avatar: Fire and Ash official film poster",
+      "url": "https://image.tmdb.org/t/p/w342/bRBeSHfGHwkEpImlhxPmOcUsaeg.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "disclosure-day-film",
+      "aliases": [
+        "Disclosure Day"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "tmdb_movie_id": 1275779,
+      "verified_subject": "Disclosure Day official film poster",
+      "url": "https://image.tmdb.org/t/p/w342/AnJ8IQJI23hNpYXVNaythu061Ru.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "hoppers-film",
+      "aliases": [
+        "Hoppers"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "tmdb_movie_id": 1327819,
+      "verified_subject": "Hoppers official film poster",
+      "url": "https://image.tmdb.org/t/p/w342/xjtWQ2CL1mpmMNwuU5HeS4Iuwuu.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "no-other-choice-film",
+      "aliases": [
+        "No Other Choice"
+      ],
+      "kind": "film",
+      "presentation": "photo",
+      "tmdb_movie_id": 639988,
+      "verified_subject": "No Other Choice official film poster",
+      "url": "https://image.tmdb.org/t/p/w342/sBpxTGLzKnvPSVtL5yQYpSxvKEb.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "penelope-cruz",
+      "aliases": [
+        "Penélope Cruz",
+        "Penelope Cruz"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "tmdb_person_id": 955,
+      "verified_subject": "Penélope Cruz, actor/filmmaker",
+      "url": "https://image.tmdb.org/t/p/w185/n5SFgmvJSENQt8poE4qYacUnKOi.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "amanda-seyfried",
+      "aliases": [
+        "Amanda Seyfried"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "tmdb_person_id": 71070,
+      "verified_subject": "Amanda Seyfried, actor/filmmaker",
+      "url": "https://image.tmdb.org/t/p/w185/gtBUIpZ3dvLpOMIVORxE6sHSyZj.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "john-leguizamo",
+      "aliases": [
+        "John Leguizamo"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "tmdb_person_id": 5723,
+      "verified_subject": "John Leguizamo, actor/filmmaker",
+      "url": "https://image.tmdb.org/t/p/w185/kwYCdxTlDh9zauUCg4mp2XTCQTw.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "sam-rockwell",
+      "aliases": [
+        "Sam Rockwell"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "tmdb_person_id": 6807,
+      "verified_subject": "Sam Rockwell, actor/filmmaker",
+      "url": "https://image.tmdb.org/t/p/w185/afYhNpLwpa65Yy0Q0g00FNFhzx5.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "samantha-morton",
+      "aliases": [
+        "Samantha Morton"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "tmdb_person_id": 2206,
+      "verified_subject": "Samantha Morton, actor/filmmaker",
+      "url": "https://image.tmdb.org/t/p/w185/kHSfnDFbfeKah823y0Gr14lbt31.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "tao-okamoto",
+      "aliases": [
+        "Tao Okamoto"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "tmdb_person_id": 1156024,
+      "verified_subject": "Tao Okamoto, actor/filmmaker",
+      "url": "https://image.tmdb.org/t/p/w185/ztnb6OVslOSaTILOvGVpUOCY88W.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "meryl-streep",
+      "aliases": [
+        "Meryl Streep"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "tmdb_person_id": 5064,
+      "verified_subject": "Meryl Streep, actor/filmmaker",
+      "url": "https://image.tmdb.org/t/p/w185/g5cVxQBAQ3AXt3LhdBXtbbN47Uc.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "carey-mulligan",
+      "aliases": [
+        "Carey Mulligan"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "tmdb_person_id": 36662,
+      "verified_subject": "Carey Mulligan, actor/filmmaker",
+      "url": "https://image.tmdb.org/t/p/w185/iwVHhqoz5b62FR0SDpZ7wfsuTBI.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "sally-field",
+      "aliases": [
+        "Sally Field"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "tmdb_person_id": 35,
+      "verified_subject": "Sally Field, actor/filmmaker",
+      "url": "https://image.tmdb.org/t/p/w185/iMeq1j9Xwvaf6PbTJ0FQz69fpuA.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "brad-pitt",
+      "aliases": [
+        "Brad Pitt"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "tmdb_person_id": 287,
+      "verified_subject": "Brad Pitt, actor/filmmaker",
+      "url": "https://image.tmdb.org/t/p/w185/ajNaPmXVVMJFg9GWmu6MJzTaXdV.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "hannah-einbinder",
+      "aliases": [
+        "Hannah Einbinder"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "tmdb_person_id": 2559506,
+      "verified_subject": "Hannah Einbinder, actor/filmmaker",
+      "url": "https://image.tmdb.org/t/p/w185/iWMeyJAghUYP3zxmOxzcYLU5G8Z.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "michelle-pfeiffer",
+      "aliases": [
+        "Michelle Pfeiffer"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "tmdb_person_id": 1160,
+      "verified_subject": "Michelle Pfeiffer, actor/filmmaker",
+      "url": "https://image.tmdb.org/t/p/w185/8qwNMFzmM3BxGKIj1iIqiHHBpx3.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "linda-cardellini",
+      "aliases": [
+        "Linda Cardellini"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "tmdb_person_id": 1817,
+      "verified_subject": "Linda Cardellini, actor/filmmaker",
+      "url": "https://image.tmdb.org/t/p/w185/bcycvynDprC1rrhBNrnBjn5uOUd.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "stephen-root",
+      "aliases": [
+        "Stephen Root"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "tmdb_person_id": 17401,
+      "verified_subject": "Stephen Root, actor/filmmaker",
+      "url": "https://image.tmdb.org/t/p/w185/2Zwi6AydqQQ9InVdhjYcfJXNzkp.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "charles-melton",
+      "aliases": [
+        "Charles Melton"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "tmdb_person_id": 1907002,
+      "verified_subject": "Charles Melton, actor/filmmaker",
+      "url": "https://image.tmdb.org/t/p/w185/sxWslNRZdiBcPgwdVqoj7nSclr6.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "aaron-sorkin",
+      "aliases": [
+        "Aaron Sorkin"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "tmdb_person_id": 13520,
+      "verified_subject": "Aaron Sorkin, actor/filmmaker",
+      "url": "https://image.tmdb.org/t/p/w185/rcRPzHLGQIKZ6BWu5EVeDFDy75Y.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "callum-turner",
+      "aliases": [
+        "Callum Turner"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "tmdb_person_id": 1371041,
+      "verified_subject": "Callum Turner, actor/filmmaker",
+      "url": "https://image.tmdb.org/t/p/w185/b9Sz10HU71SQ5wrx7CfWPKQ4vDJ.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "jesse-plemons",
+      "aliases": [
+        "Jesse Plemons"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "tmdb_person_id": 88124,
+      "verified_subject": "Jesse Plemons, actor/filmmaker",
+      "url": "https://image.tmdb.org/t/p/w185/v6WBJbm02mfzLhs8zeUzFRDtoly.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "kieran-culkin",
+      "aliases": [
+        "Kieran Culkin"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "tmdb_person_id": 18793,
+      "verified_subject": "Kieran Culkin, actor/filmmaker",
+      "url": "https://image.tmdb.org/t/p/w185/4TiNEWVb5R0E62H9ljkY9RU4PoK.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "leonardo-dicaprio",
+      "aliases": [
+        "Leonardo DiCaprio"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "tmdb_person_id": 6193,
+      "verified_subject": "Leonardo DiCaprio, actor/filmmaker",
+      "url": "https://image.tmdb.org/t/p/w185/wo2hJpn04vbtmh0B9utCFdsQhxM.jpg",
+      "credit": "TMDB"
+    },
+    {
+      "entity_key": "victor-wembanyama-nba",
+      "aliases": [
+        "Victor Wembanyama"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 5104157,
+      "verified_subject": "Victor Wembanyama, NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/5104157.png",
+      "credit": "ESPN NBA"
+    },
+    {
+      "entity_key": "luka-doncic-nba",
+      "aliases": [
+        "Luka Doncic",
+        "Luka Dončić"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 3945274,
+      "verified_subject": "Luka Doncic, NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/3945274.png",
+      "credit": "ESPN NBA"
+    },
+    {
+      "entity_key": "nikola-jokic-nba",
+      "aliases": [
+        "Nikola Jokic",
+        "Nikola Jokić"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 3112335,
+      "verified_subject": "Nikola Jokic, NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/3112335.png",
+      "credit": "ESPN NBA"
+    },
+    {
+      "entity_key": "shai-gilgeous-alexander-nba",
+      "aliases": [
+        "Shai Gilgeous-Alexander"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 4278073,
+      "verified_subject": "Shai Gilgeous-Alexander, NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4278073.png",
+      "credit": "ESPN NBA"
+    },
+    {
+      "entity_key": "giannis-antetokounmpo-nba",
+      "aliases": [
+        "Giannis Antetokounmpo"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 3032977,
+      "verified_subject": "Giannis Antetokounmpo, NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/3032977.png",
+      "credit": "ESPN NBA"
+    },
+    {
+      "entity_key": "jayson-tatum-nba",
+      "aliases": [
+        "Jayson Tatum"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 4065648,
+      "verified_subject": "Jayson Tatum, NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4065648.png",
+      "credit": "ESPN NBA"
+    },
+    {
+      "entity_key": "anthony-edwards-nba",
+      "aliases": [
+        "Anthony Edwards"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 4594268,
+      "verified_subject": "Anthony Edwards, NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4594268.png",
+      "credit": "ESPN NBA"
+    },
+    {
+      "entity_key": "evan-mobley-nba",
+      "aliases": [
+        "Evan Mobley"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 4432158,
+      "verified_subject": "Evan Mobley, NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4432158.png",
+      "credit": "ESPN NBA"
+    },
+    {
+      "entity_key": "rudy-gobert-nba",
+      "aliases": [
+        "Rudy Gobert"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 3032976,
+      "verified_subject": "Rudy Gobert, NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/3032976.png",
+      "credit": "ESPN NBA"
+    },
+    {
+      "entity_key": "dyson-daniels-nba",
+      "aliases": [
+        "Dyson Daniels"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 4869342,
+      "verified_subject": "Dyson Daniels, NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4869342.png",
+      "credit": "ESPN NBA"
+    },
+    {
+      "entity_key": "bam-adebayo-nba",
+      "aliases": [
+        "Bam Adebayo"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 4066261,
+      "verified_subject": "Bam Adebayo, NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4066261.png",
+      "credit": "ESPN NBA"
+    },
+    {
+      "entity_key": "jalen-brunson-nba",
+      "aliases": [
+        "Jalen Brunson"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 3934672,
+      "verified_subject": "Jalen Brunson, NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/3934672.png",
+      "credit": "ESPN NBA"
+    },
+    {
+      "entity_key": "cade-cunningham-nba",
+      "aliases": [
+        "Cade Cunningham"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 4432166,
+      "verified_subject": "Cade Cunningham, NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4432166.png",
+      "credit": "ESPN NBA"
+    },
+    {
+      "entity_key": "payton-pritchard-nba",
+      "aliases": [
+        "Payton Pritchard"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 4066354,
+      "verified_subject": "Payton Pritchard, NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4066354.png",
+      "credit": "ESPN NBA"
+    },
+    {
+      "entity_key": "chet-holmgren-nba",
+      "aliases": [
+        "Chet Holmgren"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 4433255,
+      "verified_subject": "Chet Holmgren, NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4433255.png",
+      "credit": "ESPN NBA"
+    },
+    {
+      "entity_key": "jaren-jackson-jr-nba",
+      "aliases": [
+        "Jaren Jackson Jr."
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 4277961,
+      "verified_subject": "Jaren Jackson Jr., NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4277961.png",
+      "credit": "ESPN NBA"
+    },
+    {
+      "entity_key": "darius-garland-nba",
+      "aliases": [
+        "Darius Garland"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 4396907,
+      "verified_subject": "Darius Garland, NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4396907.png",
+      "credit": "ESPN NBA"
+    },
+    {
+      "entity_key": "norman-powell-nba",
+      "aliases": [
+        "Norman Powell"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 2595516,
+      "verified_subject": "Norman Powell, NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/2595516.png",
+      "credit": "ESPN NBA"
+    },
+    {
+      "entity_key": "malik-beasley-nba",
+      "aliases": [
+        "Malik Beasley"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 3907822,
+      "verified_subject": "Malik Beasley, NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/3907822.png",
+      "credit": "ESPN NBA"
+    },
+    {
+      "entity_key": "deandre-hunter-nba",
+      "aliases": [
+        "De'Andre Hunter"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 4065732,
+      "verified_subject": "De'Andre Hunter, NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4065732.png",
+      "credit": "ESPN NBA"
+    },
+    {
+      "entity_key": "ty-jerome-nba",
+      "aliases": [
+        "Ty Jerome"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 4065733,
+      "verified_subject": "Ty Jerome, NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4065733.png",
+      "credit": "ESPN NBA"
+    },
+    {
+      "entity_key": "naz-reid-nba",
+      "aliases": [
+        "Naz Reid"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 4396971,
+      "verified_subject": "Naz Reid, NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4396971.png",
+      "credit": "ESPN NBA"
+    },
+    {
+      "entity_key": "karl-anthony-towns-nba",
+      "aliases": [
+        "Karl-Anthony Towns"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 3136195,
+      "verified_subject": "Karl-Anthony Towns, NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/3136195.png",
+      "credit": "ESPN NBA"
+    },
+    {
+      "entity_key": "donovan-mitchell-nba",
+      "aliases": [
+        "Donovan Mitchell"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 3908809,
+      "verified_subject": "Donovan Mitchell, NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/3908809.png",
+      "credit": "ESPN NBA"
+    },
+    {
+      "entity_key": "scottie-barnes-nba",
+      "aliases": [
+        "Scottie Barnes"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 4433134,
+      "verified_subject": "Scottie Barnes, NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4433134.png",
+      "credit": "ESPN NBA"
+    },
+    {
+      "entity_key": "amen-thompson-nba",
+      "aliases": [
+        "Amen Thompson"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 4684740,
+      "verified_subject": "Amen Thompson, NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4684740.png",
+      "credit": "ESPN NBA"
+    },
+    {
+      "entity_key": "lamelo-ball-nba",
+      "aliases": [
+        "LaMelo Ball"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 4432816,
+      "verified_subject": "LaMelo Ball, NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4432816.png",
+      "credit": "ESPN NBA"
+    },
+    {
+      "entity_key": "alperen-sengun-nba",
+      "aliases": [
+        "Alperen Sengun",
+        "Alperen Şengün"
+      ],
+      "kind": "person",
+      "presentation": "portrait",
+      "espn_nba_id": 4871144,
+      "verified_subject": "Alperen Sengun, NBA player",
+      "url": "https://a.espncdn.com/i/headshots/nba/players/full/4871144.png",
+      "credit": "ESPN NBA"
     }
   ]
 }
