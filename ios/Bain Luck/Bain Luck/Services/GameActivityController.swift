@@ -87,7 +87,10 @@ struct GameActivityRecord {
     convenience init() {
         self.init(service: SystemGameActivityService(),
                   isForeground: { UIApplication.shared.applicationState == .active },
-                  hasPushUpdates: { GameActivityRegistrationCoordinator.shared.canRequestPushToken })
+                  hasPushUpdates: {
+                      GameActivityRegistrationCoordinator.shared.canRequestPushToken
+                          || LiveActivityPushStartCoordinator254A.shared.hasAnyDeviceRegisteredActivity
+                  })
     }
     init(service: any GameActivityServing, isForeground: @escaping () -> Bool,
          hasPushUpdates: @escaping () -> Bool = { false },

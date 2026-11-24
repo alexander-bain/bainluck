@@ -78,6 +78,9 @@ struct Bain_LuckApp: App {
         }
         FirebaseConfiguration.shared.setLoggerLevel(.min)
         FirebaseApp.configure()
+        // Pre-configure Google Sign-In and purge any leftover keychain state once
+        // on clean install after `_keychainStore` is initialized (#13516).
+        AuthManager.prepareGoogleSignIn()
         // Resolve consent BEFORE the first telemetry call below (Queue 311 A3 /
         // ruling 007, #1632). Collection is off by default in the plist, so
         // this either leaves it off (no choice yet, or a refusal) or restores a
@@ -240,6 +243,10 @@ struct Bain_LuckApp: App {
             .environmentObject(pinManager)
             // #10875 — the saved items (and their account) the Home/Lock Screen widget may show.
             .savedItemWidgets10875(pins: pinManager)
+            #if os(iOS) && canImport(ActivityKit)
+            // #13052 / 254: A — push-to-start Live Activity token & pin sync (no account required).
+            .liveActivityPushStart254A(pins: pinManager)
+            #endif
             .overlay {
                 PinFeedbackToast()
                     .environmentObject(pinManager)
@@ -295,7 +302,9 @@ struct Bain_LuckApp: App {
                 #else
                 NotificationManager.shared.navCoordinator = navCoordinator
                 #endif
-                NotificationManager.shared.requestPermissionAfterDelay()
+                // #13083 / Ruling 212: A — retire cold-launch permission ask; only register
+                // for APNs silently if the reader already granted notification access.
+                await NotificationManager.shared.registerIfAlreadyAuthorized()
                 if let userId = authManager.user?.id {
                     NotificationManager.shared.setUser(id: userId)
                     AnalyticsService.setCrashReportingUserId(String(userId))

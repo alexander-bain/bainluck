@@ -27,6 +27,11 @@ CONNECTION_LOST = (
     re.compile(r'unable to connect to "com\.apple\.instruments\.deviceservice[^"]*"'),
     re.compile(r"encountered an error \(Test crashed with signal \w+ before establishing connection\.\)"),
     re.compile(r"encountered an error \(Lost connection to (the )?test manager service"),
+    re.compile(r"encountered an error \(Early unexpected exit, operation never finished bootstrapping"),
+    re.compile(r"encountered an error \(Failed to establish communication with the test runner"),
+    re.compile(r"The test runner failed to initialize for UI testing"),
+    re.compile(r"(CoreSimulatorService|SimLaunchHostService)[^\n]*Connection interrupted"),
+    re.compile(r"Simulator device failed to launch com\.bainluck\.Bain-Luck\.watchkitapp[^\n]*RequestDenied"),
 )
 # Any of these means a test itself failed; never retry over them.
 TEST_CASE_ERROR = re.compile(r": error: -\[BainLuckWatchUITests\.")
