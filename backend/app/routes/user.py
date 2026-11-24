@@ -1903,7 +1903,7 @@ def _build_team_futures_result_item(
         else None
     )
     season_year = _extract_season_year(market.canonical_market_key, market.name)
-    illiquid = _is_illiquid_binary_field(
+    _illiquid = _is_illiquid_binary_field(
         market.source,
         field_prob_sum,
         getattr(outcome, "current_yes_bid", None),
@@ -1934,12 +1934,12 @@ def _build_team_futures_result_item(
         "matched_team": matched,
         "canonical_market_key": market.canonical_market_key,
         "season_year": season_year,
-        "_illiquid_binary": illiquid,
+        "_illiquid_binary": _illiquid,
         "_many_winner_series": _many_winner_series_key(
             market.source,
             getattr(market, "external_id", None),
             field_prob_sum,
-            illiquid,
+            _illiquid,
         ),
     }
 
@@ -2840,7 +2840,7 @@ async def get_team_futures(
         if cached is not None:
             return cached
 
-        result = await db.execute(
+        fav_result = await db.execute(
             select(UserFavorite.team_id)
             .where(
                 and_(
@@ -2850,7 +2850,7 @@ async def get_team_futures(
             )
             .distinct()
         )
-        team_ids = [row[0] for row in result.all()]
+        team_ids = [row[0] for row in fav_result.all()]
 
         if not team_ids:
             return {"items": [], "team_ids": [], "total_count": 0}
