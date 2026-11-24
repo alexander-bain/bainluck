@@ -50,6 +50,7 @@ from app.models.models import (
     RetiredTeamRedirect,
     FuturesMarket,
     FuturesOutcome,
+    OpenFuturesOutcome,
     TeamIdentityMapping,
 )
 from app.services.database import get_db, get_db_rw
@@ -71,6 +72,7 @@ from app.utils.name_normalization import names_match as _names_match
 from app.utils.sport_keys import (
     SPORT_HIERARCHY,
     SPORT_PREFIX_TO_DISPLAY_FAMILY,
+    SPORT_PREFIX_TO_LLM_CATEGORY,
     competition_gender,
     is_season_variant,
     sport_family_key,
@@ -2305,9 +2307,44 @@ async def _query_team_futures(
 
         # ── Query 1: Team matching (team_id FK + team-name ILIKE) ──
         # #1197 (r259): split OR into separate indexed branches.
-        # #13552: on PostgreSQL, keep ILIKE ANY (ARRAY[...]) (single GIN scan instead of
-        # N-way BitmapOr) and route through #4437 `open_futures_outcomes` (~262k open rows
-        # instead of 8.8M closed+open rows) when its maintainer state is current.
+        # #13573: push sport-category scoping down into SQL (matching
+        # `_find_matched_team`: exact match or empty/NULL for name; fail-open
+        # foreign-sport denylist for FK so NON_SPORT_LLM_CATEGORIES / NULL stay
+        # eligible) and materialize candidate outcome ids BEFORE joining/probing
+        # `futures_outcomes` / `futures_markets` (`ofo_hits` filters game props
+        # on `open_futures_outcomes`, `tail_scan` scans only `id > floor` by PK
+        # so the 8.8M trigram GIN is untouched, and `fk_hits` can run Index-Only
+        # over `ix_fo_team_market_id`).
+        all_have_cat = bool(teams) and all(
+            bool(team_sport_categories.get(t.id)) for t in teams.values()
+        )
+        allowed_team_cats = (
+            sorted({team_sport_categories[t.id] for t in teams.values()})
+            if all_have_cat
+            else []
+        )
+        known_sport_cats = frozenset(SPORT_PREFIX_TO_LLM_CATEGORY.values()) | {"handball"}
+        foreign_sport_cats = (
+            sorted(known_sport_cats - set(allowed_team_cats)) if all_have_cat else []
+        )
+        name_sport_filters = []
+        if is_pg and allowed_team_cats:
+            name_sport_filters.append(
+                or_(
+                    FuturesMarket.llm_sport_category.is_(None),
+                    FuturesMarket.llm_sport_category == "",
+                    FuturesMarket.llm_sport_category.in_(allowed_team_cats),
+                )
+            )
+        fk_sport_filters = []
+        if is_pg and foreign_sport_cats:
+            fk_sport_filters.append(
+                or_(
+                    FuturesMarket.llm_sport_category.is_(None),
+                    ~FuturesMarket.llm_sport_category.in_(foreign_sport_cats),
+                )
+            )
+
         _order_by = (
             FuturesOutcome.current_probability.desc().nulls_last(),
             func.abs(FuturesOutcome.probability_change_24h).desc().nulls_last(),
@@ -2362,22 +2399,106 @@ async def _query_team_futures(
             return stmt
 
         _tq = time.perf_counter()
-        rows1 = list((await db.execute(_q1(FuturesOutcome.team_id.in_(team_ids)))).all())
+        if is_pg:
+            fk_hits = (
+                select(FuturesOutcome.id.label("outcome_id"))
+                .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+                .where(
+                    FuturesOutcome.team_id.in_(team_ids),
+                    *market_base_filters,
+                    *fk_sport_filters,
+                )
+                .cte("fk_hits")
+                .prefix_with("MATERIALIZED")
+            )
+            fk_stmt = _q1(
+                FuturesOutcome.id
+                == any_(func.array(select(fk_hits.c.outcome_id).scalar_subquery()))
+            )
+        else:
+            fk_stmt = _q1(FuturesOutcome.team_id.in_(team_ids))
+        rows1 = list((await db.execute(fk_stmt)).all())
         if team_patterns:
             if is_pg:
-                from app.utils.open_futures_outcomes import outcome_ids_named
+                from app.utils.open_futures_outcomes import open_outcomes_floor
 
                 pats = [f"%{p}%" for p in team_patterns]
-                pg_name_cond = FuturesOutcome.name.ilike(any_(literal(pats, ARRAY(Text))))
-                open_candidates = outcome_ids_named(pg_name_cond)
-                name_cond = (
-                    pg_name_cond
-                    if open_candidates is None
-                    else FuturesOutcome.id == any_(func.array(open_candidates.scalar_subquery()))
-                )
+                pats_expr = literal(pats, ARRAY(Text))
+                floor = open_outcomes_floor()
+                if floor is not None:
+                    ofo_hits = (
+                        select(OpenFuturesOutcome.outcome_id.label("outcome_id"))
+                        .join(
+                            FuturesMarket,
+                            FuturesMarket.id == OpenFuturesOutcome.market_id,
+                        )
+                        .where(
+                            OpenFuturesOutcome.name.ilike(any_(pats_expr)),
+                            *market_base_filters,
+                            *name_sport_filters,
+                        )
+                        .cte("ofo_hits")
+                        .prefix_with("MATERIALIZED")
+                    )
+                    tail_scan = (
+                        select(
+                            FuturesOutcome.id.label("outcome_id"),
+                            FuturesOutcome.market_id.label("market_id"),
+                            FuturesOutcome.name.label("name"),
+                        )
+                        .where(FuturesOutcome.id > floor)
+                        .cte("tail_scan")
+                        .prefix_with("MATERIALIZED")
+                    )
+                    tail_hits = (
+                        select(tail_scan.c.outcome_id.label("outcome_id"))
+                        .join(FuturesMarket, FuturesMarket.id == tail_scan.c.market_id)
+                        .where(
+                            tail_scan.c.name.ilike(any_(pats_expr)),
+                            *market_base_filters,
+                            *name_sport_filters,
+                        )
+                    )
+                    name_hits = (
+                        select(ofo_hits.c.outcome_id.label("outcome_id"))
+                        .union_all(tail_hits)
+                        .cte("name_hits")
+                        .prefix_with("MATERIALIZED")
+                    )
+                    name_stmt = _q1(
+                        FuturesOutcome.id
+                        == any_(
+                            func.array(select(name_hits.c.outcome_id).scalar_subquery())
+                        )
+                    )
+                else:
+                    pg_name_cond = FuturesOutcome.name.ilike(any_(pats_expr))
+                    name_stmt = (
+                        select(
+                            FuturesOutcome,
+                            FuturesMarket,
+                            Sport.key.label("market_sport_key"),
+                        )
+                        .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+                        .outerjoin(Sport, FuturesMarket.sport_id == Sport.id)
+                        .where(
+                            and_(
+                                *market_base_filters,
+                                *name_sport_filters,
+                                pg_name_cond,
+                            )
+                        )
+                        .order_by(*_order_by)
+                        .limit(limit * 5)
+                    )
+                    if isinstance(db, AsyncSession):
+                        name_stmt = name_stmt.options(_outcome_load_opts, _market_load_opts)
             else:
-                name_cond = or_(*[FuturesOutcome.name.ilike(f"%{p}%") for p in team_patterns])
-            name_rows = (await db.execute(_q1(name_cond))).all()
+                name_cond = or_(
+                    *[FuturesOutcome.name.ilike(f"%{p}%") for p in team_patterns]
+                )
+                name_stmt = _q1(name_cond)
+            name_rows = (await db.execute(name_stmt)).all()
             _seen_oids = {o.id for o, _m, _sk in rows1}
             rows1.extend(r for r in name_rows if r[0].id not in _seen_oids)
         if timings is not None:
