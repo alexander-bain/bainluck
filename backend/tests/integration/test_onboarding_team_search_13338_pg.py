@@ -544,6 +544,39 @@ async def test_issue_and_additional_onboarding_queries_return_real_clubs(
         assert all(row["id"] not in range(1229, 1241) for row in response.json()), city
 
 
+async def test_new_york_applies_the_cap_after_folding_season_registrations(
+    sessions, writer, client,
+):
+    async with sessions.begin() as db:
+        sports = dict((await db.execute(select(Sport.key, Sport.id))).all())
+        summer_key = "basketball_nba_summer_league"
+        if summer_key not in sports:
+            sports[summer_key] = max(sports.values()) + 1
+            db.add(Sport(id=sports[summer_key], key=summer_key, name="NBA Summer League"))
+        await db.execute(update(Team).where(Team.id == 1020).values(location="New York"))
+        db.add_all(
+            Team(id=tid, name="New York Knicks", sport_id=sports[summer_key], location="New York")
+            for tid in range(2100, 2160)
+        )
+        db.add(Team(
+            id=2160, name="New York Rangers", sport_id=sports["icehockey_nhl"],
+            location="New York",
+        ))
+        await db.flush()
+        db.add(Event(
+            sport_id=sports["icehockey_nhl"], home_team_id=2160, home_team_name="New York Rangers",
+            away_team_name="Opponent", commence_time=datetime(2024, 1, 1, tzinfo=timezone.utc),
+        ))
+    await rebuild(sessions, writer)
+
+    response = await client.get("/api/me/teams/by-location", params={"q": "New York"})
+    assert response.status_code == 200, response.text
+    rows = response.json()
+    assert len(rows) <= 50
+    assert [row["id"] for row in rows if row["name"] == "New York Knicks"] == [1020]
+    assert [row["id"] for row in rows if row["name"] == "New York Rangers"] == [2160]
+
+
 async def test_prefixes_keep_other_clubs_separate_and_group_confirmed_spurs_variants(
     warmed_sessions,
 ):

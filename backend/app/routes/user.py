@@ -1236,7 +1236,9 @@ async def teams_by_location(
         .join(Sport, Team.sport_id == Sport.id)
         .where(or_(*location_matches, and_(~college, or_(*brand_matches))), *filters)
         .order_by(relevance, Team.name, Team.id)
-        .limit(50)
+        # A named metro has a bounded league scope. Its raw registrations
+        # can exceed the reader's cap before they fold into actual clubs.
+        .limit(None if scoped_metro else 50)
     )
     rows = result.all()
     if not rows:
@@ -1282,7 +1284,7 @@ async def teams_by_location(
             )
         )
 
-    return results
+    return results[:50]
 
 
 # =============================================================================
