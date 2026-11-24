@@ -206,6 +206,8 @@ final class GameAlertsPinPrompt13084Tests: XCTestCase {
         XCTAssertTrue(combined.contains("starts"))
         XCTAssertTrue(combined.contains("close late"))
         XCTAssertTrue(combined.contains("final"))
+        XCTAssertTrue(GameAlertsPinPromptSheet13084.bodyCopy.contains("in Preferences"))
+        XCTAssertFalse(GameAlertsPinPromptSheet13084.bodyCopy.contains("in Settings"))
     }
 
     func testContextualAskRenders390pxLightAndDarkAtDefaultAndXXXLarge() async throws {

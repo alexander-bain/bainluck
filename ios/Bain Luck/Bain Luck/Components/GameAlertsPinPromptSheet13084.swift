@@ -12,7 +12,7 @@ struct GameAlertsPinPromptSheet13084: View {
     @State private var choiceHandled = false
 
     static let titleCopy = "Get alerts for games you pin?"
-    static let bodyCopy = "We can buzz you when a pinned game starts, when it is close late, and when it goes final. You can change this anytime in Settings."
+    static let bodyCopy = "We can buzz you when a pinned game starts, when it is close late, and when it goes final. You can change this anytime in Preferences."
     static let turnOnTitle = "Turn on"
     static let notNowTitle = "Not now"
 
