@@ -3850,6 +3850,7 @@ _PROPER_WORDS_KEEP = frozenset(
         "oscars",
         "senate",
         "house",
+        "ap",
         "january",
         "february",
         "march",
@@ -3953,10 +3954,12 @@ def _prose_market_phrase(title: str, *, capitalize_first: bool = False) -> str:
             if exact_cased is not None:
                 words.append(exact_cased + w[len(w.rstrip("(),.:;")) :])
             elif core.lower() in _PROPER_WORDS_KEEP or any(ch.isdigit() for ch in core):
-                if core.upper() in {"NFL", "NBA", "MLB", "NHL", "WNBA", "AFC", "NFC", "GDP", "CPI", "FOMC", "IPO", "US"}:
+                if core.upper() in {"NFL", "NBA", "MLB", "NHL", "WNBA", "AFC", "NFC", "GDP", "CPI", "FOMC", "IPO", "US", "AP"}:
                     words.append(w.upper())
                 elif core.lower() == "u.s.":
                     words.append("U.S.")
+                elif any(ch.isdigit() for ch in core) and not core[0].isalpha():
+                    words.append(w)
                 else:
                     words.append(core.capitalize())
             else:
@@ -5333,7 +5336,7 @@ async def produce_container_machinery(
     if (
         not hide_row_art
         and card_visual_rows
-        and vb_form in {"benchmark_strip", "sibling_fields_grid", "leader_bars", "probability_history_chart"}
+        and vb_form in {"benchmark_strip", "sibling_fields_grid", "leader_bars", "contender_spotlight", "probability_history_chart"}
         and not card_scale_ordered
     ):
         row_has_url = [

@@ -75,18 +75,27 @@ export function RoundupCard({
           set={paired}
           surface="discover"
         />
-        {isMachinerySlice1Enabled() && destination && contract?.machinery_card && (
-          <Link
-            href={destination.href}
-            data-testid="paired-card-machinery-link"
-            className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-card border border-surface-border bg-surface-card px-3.5 py-2 text-xs font-semibold text-accent-brand transition-colors hover:bg-surface-elevated"
-          >
-            <span className="min-w-0 text-text-secondary">{destination.name}</span>
-            <span className="ml-auto shrink-0 whitespace-nowrap">
-              {machineryCardOpenLabel(contract.machinery_card)}
-            </span>
-          </Link>
-        )}
+        {isMachinerySlice1Enabled() && destination && contract?.machinery_card && (() => {
+          const normCopy = (v: string | null | undefined) =>
+            String(v ?? "").replace(/\s+/g, " ").trim().toLowerCase();
+          const destLabel = destination.name.trim();
+          const showDestLabel =
+            Boolean(destLabel) && normCopy(destLabel) !== normCopy(paired.title);
+          return (
+            <Link
+              href={destination.href}
+              data-testid="paired-card-machinery-link"
+              className="mt-2 flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-card border border-surface-border bg-surface-card px-3.5 py-2 text-xs font-semibold text-accent-brand transition-colors hover:bg-surface-elevated"
+            >
+              {showDestLabel && (
+                <span className="min-w-0 text-text-secondary">{destLabel}</span>
+              )}
+              <span className="ml-auto shrink-0 whitespace-nowrap">
+                {machineryCardOpenLabel(contract.machinery_card)}
+              </span>
+            </Link>
+          );
+        })()}
         {!previewOnly && (
           <div className="mt-[10px]">
             <BundleActionBar
