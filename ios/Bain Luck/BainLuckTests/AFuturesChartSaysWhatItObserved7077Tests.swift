@@ -318,15 +318,20 @@ final class AFuturesChartSaysWhatItObserved7077Tests: XCTestCase {
             at: root.appendingPathComponent("Bain Luck/Components/EvolutionChartView.swift"))
 
         // #4445 moved the planning into `axisLayout` (the drawn size picks the
-        // stride, or the window's endpoints) — still fed the DRAWN points, and both
-        // arms still print the plan's own format.
+        // stride, or the window's endpoints) and futures date labels now use
+        // `axisTicks` + `ChartTimeAxisLabels` so adjacent dates never crowd.
         XCTAssertTrue(
-            chart.contains("let axis = Self.axisLayout(\n                for: entries.map(\\.date)"),
+            chart.contains("let axis = Self.axisLayout(\n            for: entries.map(\\.date)"),
             "the axis must be planned from the points it DRAWS")
-        XCTAssertEqual(
-            chart.components(separatedBy: "AxisValueLabel(\n                        format: plan.format,").count - 1,
-            2,
-            "…and both axis arms must print the plan's own format")
+        XCTAssertTrue(
+            chart.contains("let ticks = Self.axisTicks(\n            for: entries.map(\\.date)"),
+            "ticks must be planned from the drawn points")
+        XCTAssertTrue(
+            chart.contains("ChartTimeAxisLabels.reservedRow(\n                    format: axis.plan.format,"),
+            "reserved axis row must use the plan's own format")
+        XCTAssertTrue(
+            chart.contains("ChartTimeAxisLabels(\n                    ticks: ticks,\n                    plan: axis.plan,"),
+            "visible time labels must render from the same planned ticks and format")
         XCTAssertFalse(
             chart.contains(".automatic(desiredCount: 5)"),
             "the pre-fix tick rule: six labels across a 20-hour chart")

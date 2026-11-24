@@ -1221,6 +1221,15 @@ struct DiscoverView: View {
                             )
                     }
                 }
+                .contextMenu {
+                    discoverGroupCardMenu(
+                        title: title,
+                        items: items,
+                        kind: kind,
+                        theme: theme,
+                        collectionRef: collectionRef
+                    )
+                }
             case .single(let item):
                 if let pairedSet = item.pairedMetricSet, !pairedSet.entries.isEmpty {
                     SwipeToDismiss(
@@ -1459,7 +1468,7 @@ struct DiscoverView: View {
                 }
             }
         }
-        .id(gi.id)
+        .modifier(ConditionalScrollAnchorModifier(anchorId: isGuessSlot ? gi.id : nil))
         .onDisappear { vm.setPriceCardsVisible(owner: gi.id, cards: [], visible: false) }
         .onChange(of: DiscoverPriceRefresh.leaves(gi.priceCards).map(\.id)) { _, _ in
             vm.updateVisiblePriceCards(owner: gi.id, cards: gi.priceCards)
@@ -2113,6 +2122,55 @@ struct DiscoverView: View {
         return nil
     }
 
+    static func groupCollectionSlug(
+        title: String,
+        kind: String?,
+        theme: String?,
+        collectionRef: FeedThemeCollectionRef?,
+        groupItems: [FeedItem],
+        feedItems: [FeedItem]
+    ) -> String? {
+        if let slug = collectionRef?.slug.trimmingCharacters(in: .whitespacesAndNewlines), !slug.isEmpty {
+            return slug
+        }
+        if kind == "roundup",
+           let roundupBundle = resolveRoundupBundle(
+               title: title,
+               collectionRef: collectionRef,
+               groupItems: groupItems,
+               feedItems: feedItems
+           ) {
+            if let slug = roundupBundle.roundupContract?.machineryCard?.slug.trimmingCharacters(in: .whitespacesAndNewlines), !slug.isEmpty {
+                return slug
+            }
+            if let slug = roundupBundle.roundupCollectionRef?.slug.trimmingCharacters(in: .whitespacesAndNewlines), !slug.isEmpty {
+                return slug
+            }
+        }
+        if let groupBundle = resolveGroupBundle(
+            title: title,
+            kind: kind,
+            theme: theme,
+            collectionRef: collectionRef,
+            groupItems: groupItems,
+            feedItems: feedItems
+        ) {
+            if let slug = groupBundle.themeCollectionRef?.slug.trimmingCharacters(in: .whitespacesAndNewlines), !slug.isEmpty {
+                return slug
+            }
+            if let slug = groupBundle.roundupCollectionRef?.slug.trimmingCharacters(in: .whitespacesAndNewlines), !slug.isEmpty {
+                return slug
+            }
+            if let slug = groupBundle.roundupContract?.machineryCard?.slug.trimmingCharacters(in: .whitespacesAndNewlines), !slug.isEmpty {
+                return slug
+            }
+            if let setId = groupBundle.pairedMetricSet?.setId, setId.hasPrefix("oscars-") {
+                return "oscars-2027"
+            }
+        }
+        return nil
+    }
+
     /// Bundles and futures groups for one already-spaced list (#1221's grouping,
     /// unchanged; extracted so #5105 and #11984 can run it per section or delta chunk).
     static func groupRelatedItems(
@@ -2551,40 +2609,44 @@ struct DiscoverView: View {
                 let blocks = Self.sectionBlocks(
                     cardCount: pageGrouped.count,
                     continuationStart: groupedPresentation.continuationStart)
-                ScrollViewReader { proxy in
-                    VStack(spacing: 0) {
-                        ForEach(blocks, id: \.range.lowerBound) { block in
-                            let range = block.range
-                            if block.isContinuation {
-                                continuationHeading(leads: range.lowerBound == 0)
-                            }
-                            HStack(alignment: .top, spacing: DiscoverMasonry.spacing) {
-                                ForEach(Array(DiscoverMasonry.columns(
-                                    cardCount: range.count, columnCount: columnCount
-                                ).enumerated()), id: \.offset) { _, indices in
-                                    LazyVStack(spacing: DiscoverMasonry.spacing) {
-                                        ForEach(indices.map { $0 + range.lowerBound }, id: \.self) { idx in
-                                            discoverCard(
-                                                idx: idx,
-                                                gi: pageGrouped[idx],
-                                                pageGrouped: pageGrouped,
-                                                totalCount: grouped.count,
-                                                proxy: proxy
-                                            )
-                                        }
-                                    }
-                                    .frame(maxWidth: .infinity)
+                VStack(spacing: 0) {
+                    ForEach(blocks, id: \.range.lowerBound) { block in
+                        let range = block.range
+                        if block.isContinuation {
+                            continuationHeading(leads: range.lowerBound == 0)
+                        }
+                        if columnCount <= 1 {
+                            LazyVStack(spacing: DiscoverMasonry.spacing) {
+                                ForEach(range, id: \.self) { idx in
+                                    discoverCard(
+                                        idx: idx,
+                                        gi: pageGrouped[idx],
+                                        pageGrouped: pageGrouped,
+                                        totalCount: grouped.count,
+                                        proxy: feedProxy
+                                    )
                                 }
+                            }
+                            .frame(maxWidth: .infinity)
+                        } else {
+                            LazyMasonryColumns(
+                                range: range,
+                                columnCount: columnCount,
+                                spacing: DiscoverMasonry.spacing,
+                                horizontalAlignment: .center,
+                                cardAlignment: .center
+                            ) { idx in
+                                discoverCard(
+                                    idx: idx,
+                                    gi: pageGrouped[idx],
+                                    pageGrouped: pageGrouped,
+                                    totalCount: grouped.count,
+                                    proxy: feedProxy
+                                )
                             }
                         }
                     }
                 }
-                // The card area's own width, which is what decides the column
-                // count. Read from a `.background` so it cannot influence the
-                // layout it measures, and taken BEFORE `.padding(.horizontal)`
-                // so it is the width the cards actually get. There is no
-                // feedback loop: this width comes from the enclosing column, not
-                // from the cards, so `columnCount` never changes it.
                 .background(
                     GeometryReader { geo in
                         Color.clear
@@ -3355,6 +3417,64 @@ struct DiscoverView: View {
     }
 
     @ViewBuilder
+    private func discoverGroupCardMenu(
+        title: String,
+        items: [FeedItem],
+        kind: String?,
+        theme: String?,
+        collectionRef: FeedThemeCollectionRef?
+    ) -> some View {
+        let lessLikeThisAction: () -> Void = {
+            guard case .signedIn = feedbackAuthState else {
+                inviteSignInForFeedback()
+                return
+            }
+            if let primary = items.first {
+                recordInteraction(for: primary, action: .unlike, source: "context_menu")
+            }
+            hideForSession(ids: Self.dismissKeys(forGroupOf: items))
+        }
+
+        if let setSlug = Self.groupCollectionSlug(
+            title: title,
+            kind: kind,
+            theme: theme,
+            collectionRef: collectionRef,
+            groupItems: items,
+            feedItems: vm.items
+        ) {
+            CollectionContextMenuItems(
+                slug: setSlug,
+                onCopyLink: {
+                    if let primary = items.first {
+                        recordInteraction(for: primary, action: .share, source: "copy_link")
+                    }
+                },
+                onShare: {
+                    if let primary = items.first {
+                        recordInteraction(for: primary, action: .share, source: ShareSurface.discoverCard.rawValue)
+                    } else {
+                        ShareInstrumentation.recordShareOpened(
+                            itemType: "collection",
+                            itemId: setSlug,
+                            itemName: title,
+                            category: nil,
+                            surface: .discoverCard
+                        )
+                    }
+                },
+                onLessLikeThis: lessLikeThisAction
+            )
+        } else {
+            Button {
+                lessLikeThisAction()
+            } label: {
+                Label("Less Like This", systemImage: "hand.thumbsdown")
+            }
+        }
+    }
+
+    @ViewBuilder
     private func discoverCardMenu(_ item: FeedItem) -> some View {
         CardContextMenu(
             item: item,
@@ -3362,6 +3482,9 @@ struct DiscoverView: View {
             showsShareSectionDivider: false,
             onCopyLink: { _ in
                 recordInteraction(for: item, action: .share, source: "copy_link")
+            },
+            onShare: { _ in
+                recordInteraction(for: item, action: .share, source: ShareSurface.discoverCard.rawValue)
             },
             onLessLikeThis: {
                 guard case .signedIn = feedbackAuthState else {
@@ -4757,6 +4880,19 @@ struct MovementBadge: View {
             .padding(.vertical, 2)
             .background((up ? Color.green : Color.red).opacity(0.15))
             .clipShape(Capsule())
+        }
+    }
+}
+
+private struct ConditionalScrollAnchorModifier: ViewModifier {
+    let anchorId: String?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let anchorId {
+            content.id(anchorId)
+        } else {
+            content
         }
     }
 }

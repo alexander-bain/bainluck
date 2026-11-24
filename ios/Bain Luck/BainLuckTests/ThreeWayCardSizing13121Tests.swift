@@ -323,4 +323,73 @@ final class ThreeWayCardSizing13121Tests: XCTestCase {
             try XCTUnwrap(darkImg.pngData()).write(to: URL(fileURLWithPath: "\(outDir)/13121-mystuff-soccer-beside-nba-dark-390.png"))
         }
     }
+
+    func testHyphenatedSoccerClubKeepsScoreInlineAt390And440() async throws {
+        XCTAssertEqual(
+            CardTeamNameSizing.lineBreakSegments(in: "FC Lausanne-Sport"),
+            ["FC", "Lausanne-", "Sport"]
+        )
+
+        let event = try decodeEvent("""
+        {
+          "id": 910805,
+          "external_id": "swiss_lausanne_zurich",
+          "sport": "soccer_switzerland_superleague",
+          "sport_name": "Swiss Super League",
+          "away_team": "FC Lausanne-Sport",
+          "home_team": "FC Zurich",
+          "commence_time": "2026-11-22T15:00:00Z",
+          "status": "live",
+          "away_score": 2,
+          "home_score": 1,
+          "espn": { "period": "2H", "game_clock": "74'" },
+          "current_odds": {
+            "away_probability": 0.48,
+            "home_probability": 0.29,
+            "draw_probability": 0.23,
+            "away_rendered_percent": 48,
+            "home_rendered_percent": 29
+          }
+        }
+        """)
+
+        let suiteName = "Test13121.Lausanne.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let pinManager = PinManager(defaults: defaults)
+
+        for width: CGFloat in [390, 440] {
+            let cardList = List {
+                EventCardView(event: event, reason: nil)
+                    .listRowInsets(EdgeInsets(top: 8, leading: 12, bottom: 8, trailing: 12))
+            }
+            .listStyle(.insetGrouped)
+            .environmentObject(pinManager)
+
+            let img = try await captureSnapshot(cardList, scheme: .light, width: width, height: 320)
+            let obs = try recognizeObservations(in: img)
+            let joined = obs.map(\.text).joined(separator: " | ")
+
+            XCTAssertFalse(joined.contains("…"), "width \(width): truncated '\(joined)'")
+            let lausanne = try XCTUnwrap(
+                obs.first(where: { $0.text.localizedCaseInsensitiveContains("Lausanne") }),
+                "Expected Lausanne in OCR at \(width): \(joined)"
+            )
+            let score2 = try XCTUnwrap(
+                obs.first(where: { $0.text.trimmingCharacters(in: .whitespaces) == "2" }),
+                "Expected away score '2' in OCR at \(width): \(joined)"
+            )
+            XCTAssertLessThan(lausanne.box.maxX, score2.box.minX, "width \(width): name & score sit side-by-side")
+            XCTAssertLessThanOrEqual(
+                abs(lausanne.box.maxY - score2.box.maxY),
+                0.15,
+                "width \(width): FC Lausanne-Sport must share its score line instead of pushing score to a second line (lausanne=\(lausanne.box), score2=\(score2.box))"
+            )
+
+            let att = XCTAttachment(image: img)
+            att.name = "108-lausanne-inline-score-\(Int(width)).png"
+            att.lifetime = .keepAlways
+            add(att)
+        }
+    }
 }

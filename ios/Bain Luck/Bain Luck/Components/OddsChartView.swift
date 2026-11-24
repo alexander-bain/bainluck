@@ -1199,6 +1199,14 @@ struct OddsChartView: View {
                         .foregroundStyle(DS.textSecondaryReadable)
                         .frame(maxWidth: .infinity)
                         .frame(height: chartHeight)
+                    // #12554 — reserve the closed legend / sources-toggle slot when
+                    // enriched points already carry multiple sources so the page
+                    // below does not jump when the second reading draws the line.
+                    legendView(dataPoints: enrichedPoints, sources: history.winProbSources ?? [:],
+                               sourcesOpen: .constant(false), rail: false,
+                               soccerThreeLine: nil)
+                        .hidden()
+                        .accessibilityHidden(true)
                 } else {
                     // #9517 — no readout row here at rest: the hero above says it.
                     // Chart with vertical team labels alongside Y-axis

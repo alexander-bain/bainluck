@@ -68,11 +68,11 @@ final class MacMainWindow10878Tests: XCTestCase {
     func testTheSidebarHasThePhonesFivePlacesInOrder() {
         XCTAssertEqual(
             MacMainWindow10878.destinations.map(\.tab),
-            [.discover, .feed, .leagues, .search, .myStuff]
+            [.myStuff, .discover, .feed, .leagues, .search]
         )
         XCTAssertEqual(
             MacMainWindow10878.destinations.map(\.title),
-            ["Discover", "Sports", "Browse", "Search", "My Stuff"]
+            ["My Stuff", "Discover", "Sports", "Browse", "Search"]
         )
         XCTAssertEqual(MacMainWindow10878.quickLinks.map(\.tab), [.preferences, .calibration])
         XCTAssertEqual(MacMainWindow10878.quickLinks.map(\.title), ["Preferences", CalibrationView.readerTitle])

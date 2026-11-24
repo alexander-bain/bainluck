@@ -85,6 +85,15 @@ struct SportCategoryView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.large)
         #endif
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                FollowButton295A(
+                    subject: .league(slug: categoryKey, sportKey: categoryKey, name: categoryName),
+                    pageContextId: "sport-category:\(categoryKey)",
+                    compact: true
+                )
+            }
+        }
         .onAppear {
             AnalyticsService.trackScreen(name: "sport_category", type: "category")
         }
@@ -120,6 +129,12 @@ struct SportCategoryView: View {
 
     private var categoryList: some View {
         List {
+            Section {
+                GameAlertsInlinePageSlot295A(contextId: "sport-category:\(categoryKey)")
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+            }
+
             if !viewModel.liveNow.isEmpty || !viewModel.leagueLiveGames.isEmpty {
                 // live/048 — the header reads the bucket. See `EventState`.
                 combinedGameSection(

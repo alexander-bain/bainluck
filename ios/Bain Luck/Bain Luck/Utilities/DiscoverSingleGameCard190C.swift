@@ -111,6 +111,7 @@ enum DiscoverSingleGameCard190C {
         let hasAnyWinChanceReading = resolvedPrematch != nil
             || CompactGameCard12616.usableProbability(event.currentOdds?.homeProbability) != nil
             || CompactGameCard12616.usableProbability(event.currentOdds?.awayProbability) != nil
+            || (EventState.isFinished(event.status) && event.pregameProjection != nil)
         return hasAnyWinChanceReading
     }
 

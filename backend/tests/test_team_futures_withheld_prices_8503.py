@@ -251,14 +251,16 @@ async def test_missing_team_futures_price_has_a_reason():
     }
 
 
-async def test_a_failed_screen_fails_open_inside_its_savepoint():
+async def test_a_failed_screen_omits_unscreened_inside_its_savepoint():
     async def _boom(_db, _markets):
         raise RuntimeError("screen down")
 
     with patch.object(futures_route, "withheld_price_outcome_ids_for_markets", _boom):
         data, db = await _run()
-    # Today's numbers, and the savepoint — not the request's transaction — rolled back.
-    assert (QBS.id, "Jalen Hurts") in _served(data)
+    # Unscreened markets are omitted cleanly (not served unscreened), and only the
+    # screen savepoint — not the request's transaction — rolled back (#13552).
+    assert (QBS.id, "Jalen Hurts") not in _served(data)
+    assert data["items"] == []
     assert db.savepoint_log == ["rollback"]
 
 

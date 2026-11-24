@@ -703,6 +703,9 @@ async def test_query_team_futures_collapses_identity_duplicates():
     # scoped market-stats: (market_id, outcome_total, field_prob_sum) — coherent ~1.0.
     stats_rows = [(10, 32, 1.0)]
 
+    screen_empty = MagicMock()
+    screen_empty.scalars.return_value.all.return_value = []
+
     db = AsyncMock()
     db.execute = AsyncMock(side_effect=[
         _result_all(teams_rows),   # 1: load teams
@@ -710,6 +713,7 @@ async def test_query_team_futures_collapses_identity_duplicates():
         _result_all(q1a_rows),     # 3: query1 team_id FK branch
         _result_all(q1b_rows),     # 4: query1 name-ILIKE branch
         _result_all(stats_rows),   # 5: scoped per-market count + field_prob_sum
+        screen_empty,              # 6: price screen reload
     ])
 
     data = await _query_team_futures([574, 12682, 100, 101], db, limit=20)
