@@ -39,18 +39,28 @@ from tests.test_ci_matrix_required_contexts import (
     SEARCH_RECALL,
     _validate_backend_partition,
 )
-from tests.test_ci_supersede_concurrency import DEPLOY_NEEDS
+from tests.test_ci_supersede_concurrency import DEPLOY_AFTER_FULL_NEEDS, DEPLOY_NEEDS
 from tests.test_ci_postgres_groups import _normalize_failure_continuation
 
 ROOT = Path(__file__).resolve().parents[2]
 CI = Path(os.environ.get("CI_WORKFLOW_PATH") or ROOT / ".github/workflows/ci.yml")
+HEROKU_DEPLOY_SH = ROOT / ".github/scripts/heroku-deploy.sh"
 DEPLOY_IF = (
     "always() && github.ref == 'refs/heads/master' && github.event_name == 'push' && "
     "needs.release-required.result == 'success' && needs.release-required.outputs.required != 'false' && "
-    "needs.change-scope.result == 'success' && needs.fast-gate.result == 'success' && "
-    "needs.backend-tests.result == 'success' && needs.e2e-contract.result == 'success' && "
-    "(needs.change-scope.outputs.live == 'true' || (needs.shard-completeness.result == 'success' && "
-    "needs.database-integration.result == 'success' && needs.frontend-build.result == 'success'))"
+    "needs.release-required.outputs.wait_full == 'false' && needs.change-scope.result == 'success' && "
+    "(needs.change-scope.outputs.scope == 'full' || needs.change-scope.outputs.scope == 'frontend') && "
+    "needs.fast-gate.result == 'success'"
+)
+DEPLOY_AFTER_FULL_IF = (
+    "always() && github.ref == 'refs/heads/master' && github.event_name == 'push' && "
+    "needs.release-required.result == 'success' && needs.release-required.outputs.required != 'false' && "
+    "!(needs.release-required.outputs.wait_full == 'false' && (needs.change-scope.outputs.scope == 'full' || "
+    "needs.change-scope.outputs.scope == 'frontend')) && needs.change-scope.result == 'success' && "
+    "needs.fast-gate.result == 'success' && needs.backend-tests.result == 'success' && "
+    "needs.e2e-contract.result == 'success' && (needs.change-scope.outputs.live == 'true' || "
+    "(needs.shard-completeness.result == 'success' && needs.database-integration.result == 'success' && "
+    "needs.frontend-build.result == 'success'))"
 )
 
 # Exact approved shell grammar prevents overwriting FILES, component-only tests
@@ -84,6 +94,7 @@ JOB_ENV_KEYS = {
     "database-integration": {"DATABASE_URL", "SEARCH_TEST_DATABASE_URL"},
     "flaky-canary": {"DATABASE_URL", "SEARCH_TEST_DATABASE_URL"},
     "deploy": {"HEROKU_API_KEY", "GH_TOKEN"},
+    "deploy-after-full": {"HEROKU_API_KEY", "GH_TOKEN"},
 }
 STEP_ENV_KEYS = {
     ("change-scope", "Validate prior exact-commit evidence"): {"GH_TOKEN"},
@@ -154,11 +165,11 @@ STEP_ENV_KEYS = {
 }
 
 # Live eligibility and attempt guards carry only these reviewed inputs.
-for _guard_job in ("fast-gate", "backend-tests", "e2e-contract", "golden-baseline-floor", "deploy"):
+for _guard_job in ("fast-gate", "backend-tests", "e2e-contract", "golden-baseline-floor", "deploy", "deploy-after-full"):
     STEP_ENV_KEYS[(_guard_job, "Require this run's change-scope attempt")] = {
         "SCOPE_ATTEMPT", "CURRENT_ATTEMPT",
     }
-for _fast_job in ("fast-gate", "deploy"):
+for _fast_job in ("fast-gate", "deploy", "deploy-after-full"):
     STEP_ENV_KEYS[(_fast_job, "Recheck current fast eligibility")] = {
         "GH_TOKEN", "SCOPE_ATTEMPT", "SCOPE_HEAD",
     }
@@ -196,10 +207,19 @@ for _receipt_job in (
         "REUSE_BASE",
     }
 
-# #13283: dry-run post-deploy smoke step passes workflow inputs as env data.
+# #13283 + Ruling 394c: live post-deploy smoke step passes workflow inputs as env data.
 STEP_ENV_KEYS[
-    ("post-deploy-smoke-dry-run", "Post-deploy smoke rollback check (dry-run only)")
-] = {"AUTO_ROLLBACK_ENABLED", "EXPECTED_SHA", "PREV_LIVE_SHA"}
+    ("post-deploy-smoke", "Post-deploy smoke rollback check (#13283, Ruling 394c)")
+] = {
+    "AUTO_ROLLBACK_ENABLED",
+    "HEROKU_API_KEY",
+    "GH_TOKEN",
+    "REPO",
+    "NOW_LINES_ISSUE",
+    "EXPECTED_SHA",
+    "PREV_LIVE_SHA",
+    "RUN_URL",
+}
 
 
 def _allowed_environment(env, allowed, scope):
@@ -246,7 +266,7 @@ def _current_checkout(job):
 
 
 def _validate_current_composed_promotion(
-    jobs, *, workflow_defaults=None, workflow_env=None
+    jobs, *, workflow_defaults=None, workflow_env=None, deploy_script_text=None
 ):
     """A narrow current-workflow contract, not an arbitrary shell interpreter."""
     jobs = copy.deepcopy(jobs)
@@ -287,12 +307,15 @@ def _validate_current_composed_promotion(
         ), f"{name} step shell"
     _validate_backend_partition(jobs)
     deploy = jobs["deploy"]
-    assert set(deploy["needs"]) == DEPLOY_NEEDS, "all broad gates precede promotion"
-    assert deploy.get("if") == DEPLOY_IF, "only the guarded full or live promotion paths"
+    deploy_full = jobs["deploy-after-full"]
+    assert set(deploy["needs"]) == DEPLOY_NEEDS, "fast release waits only on quick gates"
+    assert deploy.get("if") == DEPLOY_IF, "only the guarded fast-release path"
+    assert set(deploy_full["needs"]) == DEPLOY_AFTER_FULL_NEEDS, "fail-closed release waits on all broad gates"
+    assert deploy_full.get("if") == DEPLOY_AFTER_FULL_IF, "only the fail-closed full-wait release path"
     # #10708: the one reviewed job condition never reads the scope, so the
     # backend matrix always expands.
     assert jobs["backend-tests"].get("if") == JOB_IF, "backend matrix must expand"
-    for name in DEPLOY_NEEDS | {"change-scope", "database-integration", "deploy"}:
+    for name in DEPLOY_AFTER_FULL_NEEDS | {"change-scope", "database-integration", "deploy", "deploy-after-full"}:
         job = jobs[name]
         assert "continue-on-error" not in job, f"{name} failure cannot be waived"
         for step in job["steps"]:
@@ -395,13 +418,15 @@ def _validate_current_composed_promotion(
     # 75-A: only the explicitly labelled never-merge study skips this runner.
     # Keep the ordinary scope/live predicates and every master promotion gate.
     assert aggregate["if"] == SEARCH_RECALL
-    for name in ("frontend-build", "e2e-contract", "release-required", "deploy", "native-backend-readers"):
+    for name in ("frontend-build", "e2e-contract", "release-required", "deploy", "deploy-after-full", "native-backend-readers"):
         _current_checkout(jobs[name])
     assert jobs["frontend-build"].get("if") == f"{LIVE} && needs.change-scope.outputs.scope != 'native'"
     assert jobs["e2e-contract"].get("if") is None
-    assert len(deploy["steps"]) == 4, "no artifact substitution step"
-    assert _current_checkout(deploy) is deploy["steps"][1]
-    program = _step(deploy, "Deploy to Heroku")["run"]
+    for release_job in (deploy, deploy_full):
+        assert len(release_job["steps"]) == 4, "no artifact substitution step"
+        assert _current_checkout(release_job) is release_job["steps"][1]
+        assert _step(release_job, "Deploy to Heroku")["run"].strip() == "bash .github/scripts/heroku-deploy.sh"
+    program = deploy_script_text if deploy_script_text is not None else HEROKU_DEPLOY_SH.read_text(encoding="utf-8")
     lines = [
         s.strip()
         for s in program.splitlines()
@@ -455,8 +480,10 @@ def test_actual_workflow_requires_current_composed_source_before_main_promotion(
 def test_current_source_guard_rejects_substituted_or_partial_promotion(mutation):
     jobs = copy.deepcopy(_jobs())
     backend, deploy = jobs["backend-tests"], jobs["deploy"]
+    deploy_full = jobs["deploy-after-full"]
+    deploy_script_text = None
     if mutation == "lost_backend_dependency":
-        deploy["needs"].remove("backend-tests")
+        deploy_full["needs"].remove("backend-tests")
     elif mutation in ("job_allow_failure", "deploy_allow_failure"):
         (backend if mutation == "job_allow_failure" else deploy)[
             "continue-on-error"
@@ -505,13 +532,13 @@ def test_current_source_guard_rejects_substituted_or_partial_promotion(mutation)
         else:
             step["run"] += "true\n"
     elif mutation in ("wrong_app", "component_push"):
-        step = _step(deploy, "Deploy to Heroku")
+        raw = HEROKU_DEPLOY_SH.read_text(encoding="utf-8")
         old, new = (
             ("/bainluck.git", "/other-app.git")
             if mutation == "wrong_app"
             else ("$GITHUB_SHA:refs/heads/master", "component-a:refs/heads/master")
         )
-        step["run"] = step["run"].replace(old, new)
+        deploy_script_text = raw.replace(old, new)
     elif mutation == "artifact_substitution":
         deploy["steps"].insert(
             1,
@@ -529,7 +556,7 @@ def test_current_source_guard_rejects_substituted_or_partial_promotion(mutation)
     else:
         jobs["shard-completeness"]["steps"][-1]["if"] = "false"
     with pytest.raises(AssertionError):
-        _validate_current_composed_promotion(jobs)
+        _validate_current_composed_promotion(jobs, deploy_script_text=deploy_script_text)
 
 
 @pytest.mark.parametrize(

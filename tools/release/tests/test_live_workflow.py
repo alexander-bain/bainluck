@@ -24,9 +24,11 @@ class WorkflowTests(unittest.TestCase):
 
     def test_normal_ci_is_retained_and_live_deploy_cannot_ignore_failed_fast_gate(self):
         jobs = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())['jobs']
-        self.assertIn("needs.fast-gate.result == 'success'", jobs['deploy']['if'])
-        self.assertIn("github.event_name == 'push'", jobs['deploy']['if'])
-        self.assertIn("github.ref == 'refs/heads/master'", jobs['deploy']['if'])
+        for name in ('deploy', 'deploy-after-full'):
+            self.assertIn('fast-gate', jobs[name]['needs'])
+            self.assertIn("needs.fast-gate.result == 'success'", jobs[name]['if'])
+            self.assertIn("github.event_name == 'push'", jobs[name]['if'])
+            self.assertIn("github.ref == 'refs/heads/master'", jobs[name]['if'])
         for job in ['shard-completeness', 'database-integration', 'frontend-build']:
             self.assertIn("needs.change-scope.outputs.live != 'true'", jobs[job]['if'])
 
@@ -71,14 +73,16 @@ class WorkflowTests(unittest.TestCase):
 
     def test_heroku_push_refuses_a_durable_failed_source(self):
         workflow = yaml.safe_load((ROOT / '.github/workflows/ci.yml').read_text())
-        job = workflow['jobs']['deploy']
-        run = job['steps'][-1]['run']
+        for job_name in ('deploy', 'deploy-after-full'):
+            job = workflow['jobs'][job_name]
+            self.assertEqual(job['steps'][-1]['run'].strip(), 'bash .github/scripts/heroku-deploy.sh')
+            self.assertEqual(job['env']['GH_TOKEN'], '${{ github.token }}')
+        run = (ROOT / '.github/scripts/heroku-deploy.sh').read_text()
         self.assertIn("python3 - <<'SOURCE_VETO'", run, 'Heroku release ignores failed-source receipts')
         code = run.split("python3 - <<'SOURCE_VETO'\n", 1)[1].split('\nSOURCE_VETO', 1)[0]
         self.assertLess(run.index("python3 - <<'SOURCE_VETO'"), run.index('if git push heroku'))
         self.assertGreaterEqual(run.count('check_source_veto'),4)
         self.assertEqual(workflow['permissions']['deployments'], 'read')
-        self.assertEqual(job['env']['GH_TOKEN'], '${{ github.token }}')
         with tempfile.TemporaryDirectory() as tmp:
             module = Path(tmp) / 'tools/release/discover.py'
             module.parent.mkdir(parents=True)

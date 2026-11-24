@@ -33,16 +33,24 @@ REQUIRED_JOBS = {
     "e2e-contract",
     "release-required",
     "deploy",
+    "deploy-after-full",
+    "post-deploy-smoke",
 }
 DEPLOY_NEEDS = {
+    "release-required",
+    "change-scope",
+    "fast-gate",
+}
+DEPLOY_AFTER_FULL_NEEDS = {
     "backend-tests",
     "shard-completeness",
-    # Fable, Wed Nov 18: deploy reads the integration groups itself, not via search-recall.
+    # Fable, Wed Nov 18: deploy-after-full reads the integration groups itself, not via search-recall.
     "database-integration",
     "frontend-build",
     "e2e-contract",
     "release-required",
-    "change-scope", "fast-gate",
+    "change-scope",
+    "fast-gate",
 }
 
 
@@ -143,10 +151,13 @@ def test_a_rerun_of_a_master_run_rejoins_the_master_group__known_and_operational
 
 
 def test_deploy_keeps_never_backwards_guard():
-    deploy_steps = _workflow()["jobs"]["deploy"]["steps"]
-    deploy_run = next(s["run"] for s in deploy_steps if "Deploy to Heroku" in s.get("name", ""))
-    assert 'git merge-base --is-ancestor "$GITHUB_SHA" "$LIVE"' in deploy_run
-    assert 'git merge-base --is-ancestor "$GITHUB_SHA" "$LIVE_NOW"' in deploy_run
+    deploy_script = (REPO_ROOT / ".github" / "scripts" / "heroku-deploy.sh").read_text()
+    assert 'git merge-base --is-ancestor "$GITHUB_SHA" "$LIVE"' in deploy_script
+    assert 'git merge-base --is-ancestor "$GITHUB_SHA" "$LIVE_NOW"' in deploy_script
+    for job_name in ("deploy", "deploy-after-full"):
+        deploy_steps = _workflow()["jobs"][job_name]["steps"]
+        deploy_run = next(s["run"] for s in deploy_steps if "Deploy to Heroku" in s.get("name", ""))
+        assert deploy_run.strip() == "bash .github/scripts/heroku-deploy.sh"
 
 
 def test_rerunning_an_OLD_pr_sha_cancels_that_prs_head_run__known_and_fail_closed():
@@ -207,8 +218,14 @@ def test_triggers_jobs_and_release_serialization_are_untouched():
         "group": "heroku-deploy",
         "cancel-in-progress": False,
     }
+    deploy_full = wf["jobs"]["deploy-after-full"]
+    assert set(deploy_full["needs"]) == DEPLOY_AFTER_FULL_NEEDS
+    assert deploy_full["concurrency"] == {
+        "group": "heroku-deploy",
+        "cancel-in-progress": False,
+    }
     assert not any(
-        "concurrency" in job for name, job in wf["jobs"].items() if name != "deploy"
+        "concurrency" in job for name, job in wf["jobs"].items() if name not in ("deploy", "deploy-after-full")
     )
 
 
@@ -235,5 +252,5 @@ def test_compose_pushes_are_independent_and_cannot_release():
     assert _slot(a)[0] == _slot(b)[0] == "ci-push-refs/heads/integrator/compose-example"
     assert _slot(a)[0] != _slot(c)[0] != _slot(_push("four", 33))[0]
     assert _slot(a)[1] is False
-    for name in ("release-required", "deploy"):
+    for name in ("release-required", "deploy", "deploy-after-full"):
         assert "github.ref == 'refs/heads/master'" in _workflow()["jobs"][name]["if"]

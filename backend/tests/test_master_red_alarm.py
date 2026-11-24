@@ -89,25 +89,38 @@ def test_the_line_is_the_stuck_shape_fable_asked_for():
 
 
 def test_a_red_job_outside_deploys_needs_reports_without_holding_the_server():
-    """The bot's point on #12788: when the run's own `deploy` job succeeded, the server
-    got the change, so the line reports the failure and must not freeze server merges."""
+    """When ONLY non-blocking `flaky-canary` failed while release succeeded, do not hold."""
     line = _line(failed_jobs=["flaky-canary"], deployed=True)
     first = line.splitlines()[0]
     assert first.startswith("stuck: master red, `tests/test_ci_shard.py::")
     assert "HOLD" not in line
     assert "Ruling 241: A" not in line
-    assert "`deploy` job still succeeded, so the server slot is not held" in line
+    assert "only non-blocking canary failed" in line
     held = _line(deployed=False)
     assert "HOLD (server)" in held.splitlines()[0]
     assert "`deploy` job did not succeed" in held
 
 
+def test_ruling_394d_red_full_suite_beside_release_holds_merges_until_fable_posts():
+    """Ruling 394(d): when full-suite jobs fail beside a shipped release, post ONE line naming run & release and HOLD."""
+    line = _line(failed_jobs=["backend-tests (4)"], deployed=True)
+    first = line.splitlines()[0]
+    assert "stuck: master red beside release `0e3c5e4aa5`" in first
+    assert "HOLD (no further merges until Fable posts a line)" in first
+    assert "[run 43797011147](https://github.com/o/r/actions/runs/43797011147)" in first
+    assert "Ruling 394(d)" in line
+    assert "No further merge happens until Fable posts a line" in line
+
+
 def test_main_reads_deploy_from_the_runs_own_jobs(monkeypatch, capsys):
     monkeypatch.setenv("REPO", "o/r")
-    monkeypatch.setenv("NOW_LINES_ISSUE", "12779")
+    monkeypatch.setenv("NOW_LINES_ISSUE", "13580")
     monkeypatch.setenv("RUN_ID", "1")
-    """`deployed` comes from the run's jobs list: a failed shard with deploy skipped holds,
-    a failed canary with deploy green does not. Dry-run never triggers a re-run."""
+    """`deployed` comes from the run's jobs list (`deploy` or `deploy-after-full`):
+    - failed shard + deploy skipped -> HOLD (server)
+    - failed canary only + deploy green -> no HOLD
+    - failed shard beside deploy green -> HOLD until Fable posts a line (Ruling 394d)
+    """
     calls = []
 
     def fake_gh(jobs):
@@ -140,34 +153,46 @@ def test_main_reads_deploy_from_the_runs_own_jobs(monkeypatch, capsys):
     assert alarm.main(["--dry-run"]) == 0
     assert "HOLD" not in capsys.readouterr().out
 
+    monkeypatch.setattr(alarm, "_gh", fake_gh([
+        {"id": 7, "name": "backend-tests (6)", "conclusion": "failure"},
+        {"id": 8, "name": "deploy", "conclusion": "success"},
+    ]))
+    assert alarm.main(["--dry-run"]) == 0
+    out_394 = capsys.readouterr().out
+    assert "beside release `aaaaaaaaaa`" in out_394
+    assert "no further merges until Fable posts a line" in out_394
+    assert "[run 1](https://github.com/o/r/actions/runs/1)" in out_394
+    assert "HOLD" not in capsys.readouterr().out
+
 
 def test_main_reruns_failed_jobs_once_on_attempt_1_and_never_on_attempt_2(monkeypatch):
-    """Ruling 241: A: attempt 1 triggers rerun-failed-jobs once and says so in the stuck line;
-    attempt 2 never re-runs again, and a duplicate alarm never double-triggers."""
+    """Ruling 241: A + Ruling 394(d): attempt 1 triggers rerun when deploy did not run;
+    attempt 2 never re-runs; canary-only with deploy green does not hold; full-suite failure
+    beside deploy green holds until Fable posts a line and never auto-reruns."""
     monkeypatch.setenv("REPO", "o/r")
-    monkeypatch.setenv("NOW_LINES_ISSUE", "12779")
+    monkeypatch.setenv("NOW_LINES_ISSUE", "13580")
     monkeypatch.setenv("RUN_ID", "99")
 
-    def run_once(attempt, *, comments=(), rerun_error=None, deployed=False):
+    def run_once(attempt, *, comments=(), rerun_error=None, deployed=False, failed_job="backend-tests (2)"):
         posted = []
         reruns = []
 
         def fake_gh(path, *rest, body=None):
             if path.endswith("/jobs?filter=latest&per_page=100"):
                 return json.dumps({"jobs": [
-                    {"id": 7, "name": "backend-tests (2)", "conclusion": "failure"},
+                    {"id": 7, "name": failed_job, "conclusion": "failure"},
                     {"id": 8, "name": "deploy", "conclusion": "success" if deployed else "skipped"},
                 ]})
             if "/logs" in path:
                 return "FAILED tests/test_x.py::test_t - AssertionError\n"
-            if "/issues/12779/comments?per_page=100" in path:
+            if "/issues/13580/comments?per_page=100" in path:
                 return "\n".join(json.dumps(c) for c in comments)
             if path.endswith("/rerun-failed-jobs"):
                 reruns.append((path, rest))
                 if rerun_error:
                     raise RuntimeError(rerun_error)
                 return ""
-            if path.endswith("/issues/12779/comments"):
+            if path.endswith("/issues/13580/comments"):
                 posted.append(body["body"])
                 return "{}"
             return json.dumps({
@@ -194,9 +219,15 @@ def test_main_reruns_failed_jobs_once_on_attempt_1_and_never_on_attempt_2(monkey
     assert reruns3 == [] and len(posted3) == 1
     assert "no further auto-rerun" in posted3[0] and "(attempt 2)" in posted3[0]
 
-    # Deploy succeeded (non-blocking job red): no HOLD and no re-run.
-    reruns4, posted4 = run_once(1, deployed=True)
+    # Deploy succeeded with non-blocking canary only: no HOLD and no re-run.
+    reruns4, posted4 = run_once(1, deployed=True, failed_job="flaky-canary")
     assert reruns4 == [] and len(posted4) == 1 and "HOLD" not in posted4[0]
+
+    # Ruling 394(d): Deploy succeeded, full-suite job failed -> posts HOLD until Fable posts a line; no re-run.
+    reruns4b, posted4b = run_once(1, deployed=True, failed_job="backend-tests (2)")
+    assert reruns4b == [] and len(posted4b) == 1
+    assert "HOLD (no further merges until Fable posts a line)" in posted4b[0]
+    assert "beside release `bbbbbbbbbb`" in posted4b[0]
 
     # Rerun API failure still posts the stuck line so nobody is blind.
     reruns5, posted5 = run_once(1, rerun_error="gh api exited 403")
@@ -240,6 +271,6 @@ def test_the_workflow_fires_only_on_a_red_push_to_master_and_posts_to_one_issue(
     ):
         assert clause in cond
     assert "cancelled" not in cond
-    assert wf["env"]["NOW_LINES_ISSUE"] == "12779"
+    assert wf["env"]["NOW_LINES_ISSUE"] == "13580"
     assert wf["permissions"] == {"actions": "write", "contents": "read", "issues": "write"}
     assert alarm.RED_CONCLUSIONS == ("failure", "timed_out")

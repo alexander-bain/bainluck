@@ -28,9 +28,8 @@ permissions:
   issues: write
 
 env:
-  # Where lane status lines go. #11852 filled at 2,500 comments on Nov 15;
-  # repoint here when #12779 fills.
-  NOW_LINES_ISSUE: "12779"
+  # Where lane status lines go (#13580 is the current NOW-lines issue).
+  NOW_LINES_ISSUE: "13580"
 
 jobs:
   alarm:

@@ -124,7 +124,8 @@ def _validate_backend_partition(jobs):
     )
     assert "--of ${{ strategy.job-total }}" in command
     assert "python -m pytest $FILES" in command
-    assert "backend-tests" in jobs["deploy"]["needs"]
+    assert "backend-tests" in jobs["deploy-after-full"]["needs"]
+    assert "backend-tests" not in jobs["deploy"]["needs"]
 
 
 def test_backend_tests_keeps_required_contexts_and_checks_the_actual_partition():
@@ -149,7 +150,7 @@ def test_backend_partition_guard_rejects_lost_work_or_failed_matrix_bypass(mutat
     elif mutation == "waived_failure":
         job["continue-on-error"] = True
     else:
-        jobs["deploy"]["needs"].remove("backend-tests")
+        jobs["deploy-after-full"]["needs"].remove("backend-tests")
     with pytest.raises(AssertionError):
         _validate_backend_partition(jobs)
 
@@ -201,14 +202,13 @@ def test_a_frontend_scope_runs_only_the_marker_and_anything_else_runs_everything
 
 def test_deploy_still_waits_on_the_sibling_gates_that_skip_on_frontend():
     jobs = _jobs()
-    # Fable, Wed Nov 18: deploy reads every database integration group itself and
-    # requires `needs.database-integration.result == 'success'` (a skipped group is not
-    # success), instead of waiting for `search-recall`'s runner to re-check it.
-    # `search-recall` stays the required pull-request context, so its shape is still pinned.
+    # Fable, Wed Nov 18 (+ Ruling 394b): deploy-after-full waits on every database integration
+    # group itself and requires `needs.database-integration.result == 'success'` when full-wait
+    # applies; fast deploy on merge waits on quick gates while full suite runs beside it.
     assert {"backend-tests", "shard-completeness", "database-integration"} <= set(
-        jobs["deploy"]["needs"]
+        jobs["deploy-after-full"]["needs"]
     )
-    assert "needs.database-integration.result == 'success'" in jobs["deploy"]["if"]
+    assert "needs.database-integration.result == 'success'" in jobs["deploy-after-full"]["if"]
     for name in ("shard-completeness", "search-recall"):
         job = jobs[name]
         assert not (job.get("strategy") or {}).get(
