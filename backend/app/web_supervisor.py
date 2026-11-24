@@ -364,6 +364,7 @@ def run_cli(argv: Sequence[str] | None = None) -> None:
         else:
             server.run()
     except KeyboardInterrupt:
+        # Clean Ctrl+C shutdown matches uvicorn.run().
         pass
     finally:
         if config.uds and os.path.exists(config.uds):
