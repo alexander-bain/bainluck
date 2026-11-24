@@ -120,6 +120,7 @@ def _curl_fetch(url: str, *, retries: int = 3) -> tuple[int, str]:
             except ValueError:
                 # Non-numeric HTTP code trailer falls through to retry/error return.
                 last_err = f"invalid_http_code:{code_str.strip()}"
+                continue
         last_err = proc.stderr.strip() or f"rc={proc.returncode}"
     return 0, last_err
 
