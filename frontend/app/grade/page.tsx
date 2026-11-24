@@ -351,6 +351,10 @@ function Shell({ children, tally }: { children: React.ReactNode; tally?: string 
           <Link href="/grade/containers" className="hover:underline">
             Containers blind 20 (363: A) →
           </Link>
+          {" · "}
+          <Link href="/grade/sets-v2" className="hover:underline">
+            Sets blind 40 v2 (#13544) →
+          </Link>
         </p>
       </div>
     </div>
