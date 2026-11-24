@@ -1883,12 +1883,10 @@ def _try_build_scoreboard_grid(
     market_cols: list[tuple[str, str, dict[str, tuple[str, int]]]] = []
     col1_order: dict[str, int] = {}
     row_secondary: dict[str, str] = {}
-    is_single_race = True
-    explicit_paired = False
-    leading_label = "Contender"
+    leading_label: str
 
     if winner_election_m is not None and len(nominee_ms) >= 2:
-        explicit_paired = True
+        is_single_race = True
         out_p: dict[str, tuple[str, int]] = {}
         for idx_o, o in enumerate(_market_outcomes(winner_election_m)):
             nm = str(o.get("name") or "").strip()
@@ -1908,11 +1906,10 @@ def _try_build_scoreboard_grid(
                     if nk not in out_n or pct > out_n[nk][1]:
                         out_n[nk] = (nm, pct)
         col1_title = "Presidential" if "presidential" in _market_name(winner_election_m).lower() else "General election"
-        market_cols = [("pres", col1_title, out_p), ("nom", "Wins party nomination", out_n)]
+        market_cols.extend([("pres", col1_title, out_p), ("nom", "Wins party nomination", out_n)])
         leading_label = "Candidate"
-        is_single_race = True
     elif len(rank1_ms) >= 3 and len(top5_ms) >= 3:
-        explicit_paired = True
+        is_single_race = False
         col1: dict[str, tuple[str, int]] = {}
         col2: dict[str, tuple[str, int]] = {}
         for idx_m, m in enumerate(rank1_ms):
@@ -1938,11 +1935,10 @@ def _try_build_scoreboard_grid(
                     nk = _norm_entity_match(nm)
                     if nk not in col2 or pct > col2[nk][1]:
                         col2[nk] = (nm, pct)
-        market_cols = [("top1", "#1 in its list", col1), ("top5", "Top 5 in its list", col2)]
+        market_cols.extend([("top1", "#1 in its list", col1), ("top5", "Top 5 in its list", col2)])
         leading_label = "Subject"
-        is_single_race = False
     elif mc_form == "paired_stage_bars":
-        explicit_paired = True
+        is_single_race = True
         pair: tuple[dict[str, Any], dict[str, Any]] | None = None
         wins_ms = [m for m in all_markets if "winner" in _market_name(m).lower()]
         noms_ms = [m for m in all_markets if "nominee" in _market_name(m).lower() or "nominated" in _market_name(m).lower()]
@@ -1982,9 +1978,8 @@ def _try_build_scoreboard_grid(
             else "Team" if any(k in first_low for k in ("football", "championship", "playoff", "nba", "nfl", "nhl"))
             else "Contender"
         )
-        is_single_race = True
     elif qual_m is not None and champ_m is not None:
-        explicit_paired = True
+        is_single_race = True
         for m, col_label in ((champ_m, "National"), (qual_m, "Playoff")):
             c = m.get("card") or {}
             m_id = str(c.get("id") or len(market_cols) + 1)
@@ -1999,7 +1994,6 @@ def _try_build_scoreboard_grid(
                         col1_order[nk] = idx_o
             market_cols.append((m_id, col_label, out_map))
         leading_label = "Team"
-        is_single_race = True
     else:
         return None, None
 
@@ -2009,18 +2003,14 @@ def _try_build_scoreboard_grid(
     c0, c1 = market_cols[0], market_cols[1]
     col1_ordered = sorted(c0[2].keys(), key=lambda nk: (-c0[2][nk][1], col1_order.get(nk, 999), nk))
     if len(col1_ordered) < 3:
-        if explicit_paired:
-            return None, f"Primary market ({c0[1]!r}) has fewer than 3 contenders"
-        return None, None
+        return None, f"Primary market ({c0[1]!r}) has fewer than 3 contenders"
 
     shared_keys = [nk for nk in col1_ordered if nk in c1[2]]
     if len(shared_keys) < 3:
-        if explicit_paired:
-            return (
-                None,
-                f"Paired markets ({c0[1]!r} vs {c1[1]!r}) share only {len(shared_keys)} overlapping contenders in top outcomes (need >= 3)",
-            )
-        return None, None
+        return (
+            None,
+            f"Paired markets ({c0[1]!r} vs {c1[1]!r}) share only {len(shared_keys)} overlapping contenders in top outcomes (need >= 3)",
+        )
 
     # Strict Column-1 ranking: never silently skip a top-4 contender missing from Column 2
     top_col1 = col1_ordered[:4] if len(col1_ordered) >= 4 else col1_ordered[:3]
