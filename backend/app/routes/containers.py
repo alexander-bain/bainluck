@@ -737,6 +737,48 @@ async def get_kit_v1_preview(
     return build_kit_v1_worked_examples()
 
 
+@router.get("/preview/kit-pages")
+async def get_kit_container_pages_preview(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Admin-only preview of Decision 386: A dynamic Kit container pages (preview only)."""
+    import json
+    from app.routes.admin_utils import _check_admin_auth
+    from app.tasks.container_proposer import (
+        CONTAINER_PREVIEWS_REDIS_KEY,
+        run_nightly_container_proposer,
+    )
+    from app.tasks.redis_state import get_redis_client
+
+    if not await _check_admin_auth(None, request, db):
+        raise HTTPException(status_code=403, detail="Admin authentication required")
+
+    try:
+        rc = get_redis_client()
+        cached_raw = rc.get(CONTAINER_PREVIEWS_REDIS_KEY) if rc is not None else None
+        if cached_raw:
+            cached = json.loads(cached_raw)
+            if isinstance(cached, dict) and cached.get("pages"):
+                return {
+                    "kit_page_version": 1,
+                    "snapshot_captured_at": cached.get("updated_at"),
+                    "count": len(cached.get("pages") or []),
+                    "pages": cached.get("pages") or [],
+                }
+    except Exception:
+        pass
+
+    res = await run_nightly_container_proposer(session=db, max_proposals=5, audit_top_n=10)
+    return {
+        "kit_page_version": 1,
+        "snapshot_captured_at": res["snapshot_captured_at"],
+        "count": res["proposed_count"],
+        "pages": res["pages"],
+        "ranked_audit": res["ranked_audit"],
+    }
+
+
 @router.get("/{slug}")
 async def get_container(
     slug: str = Path(..., min_length=1, max_length=200),
