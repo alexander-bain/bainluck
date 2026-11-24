@@ -1,0 +1,133 @@
+name: Nightly Standing Scores
+
+on:
+  schedule:
+    - cron: "15 9 * * *"
+  workflow_dispatch:
+    inputs:
+      max_games:
+        description: "Maximum live/upcoming games to audit (default 60)"
+        required: false
+        default: "60"
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: nightly-standing-scores
+  cancel-in-progress: false
+
+jobs:
+  standing-scores:
+    name: Nightly standing scores (#13514)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install runtime dependency
+        run: python3 -m pip install --no-cache-dir httpx
+
+      - name: Run standing scores check
+        id: audit
+        env:
+          BL_AGENT: ci-nightly-standing-scores
+          MAX_GAMES: ${{ github.event.inputs.max_games || '60' }}
+        run: |
+          mkdir -p standing_scores_out
+          RUN_DATE="$(date -u +%Y-%m-%d)"
+          echo "run_date=${RUN_DATE}" >> "$GITHUB_OUTPUT"
+          set +e
+          python3 backend/scripts/nightly_standing_scores.py \
+            --date "${RUN_DATE}" \
+            --max-games "${MAX_GAMES}" \
+            --out-dir standing_scores_out \
+            --fail-on-findings
+          EXIT_CODE=$?
+          set -e
+          OVERALL_STATUS="$(python3 -c 'import json; d=json.load(open("standing_scores_out/latest.json")); print(d.get("overall_status",""))')"
+          STATUS_SUMMARY="$(python3 -c 'import json; d=json.load(open("standing_scores_out/latest.json")); print(d.get("status_summary",""))')"
+          echo "exit_code=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
+          echo "overall_status=${OVERALL_STATUS}" >> "$GITHUB_OUTPUT"
+          {
+            echo "status_summary<<__STATUS_EOF__"
+            echo "${STATUS_SUMMARY}"
+            echo "__STATUS_EOF__"
+          } >> "$GITHUB_OUTPUT"
+          cat standing_scores_out/"${RUN_DATE}.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload dated standing scores artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: standing-scores-${{ steps.audit.outputs.run_date || github.run_id }}
+          path: standing_scores_out/
+          retention-days: 90
+
+      - name: Persist dated results to standing-scores-data branch
+        id: persist
+        if: always() && hashFiles('standing_scores_out/latest.json') != ''
+        env:
+          RUN_DATE: ${{ steps.audit.outputs.run_date }}
+          CURRENT_STATUS: ${{ steps.audit.outputs.overall_status }}
+        run: |
+          DATA_DIR="$(mktemp -d)"
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --heads origin standing-scores-data >/dev/null 2>&1; then
+            git clone --branch standing-scores-data --single-branch --depth 1 \
+              "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" \
+              "${DATA_DIR}"
+          else
+            git init "${DATA_DIR}"
+            git -C "${DATA_DIR}" checkout --orphan standing-scores-data
+            git -C "${DATA_DIR}" remote add origin \
+              "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          fi
+          PREV_STATUS=""
+          if [ -f "${DATA_DIR}/standing-scores/latest.json" ]; then
+            PREV_STATUS="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("overall_status", ""))' "${DATA_DIR}/standing-scores/latest.json")"
+          fi
+          CONSECUTIVE_INCOMPLETE="false"
+          if [ "${CURRENT_STATUS}" = "INCOMPLETE" ] && [ "${PREV_STATUS}" = "INCOMPLETE" ]; then
+            CONSECUTIVE_INCOMPLETE="true"
+          fi
+          echo "previous_status=${PREV_STATUS}" >> "$GITHUB_OUTPUT"
+          echo "consecutive_incomplete=${CONSECUTIVE_INCOMPLETE}" >> "$GITHUB_OUTPUT"
+          mkdir -p "${DATA_DIR}/standing-scores"
+          cp "standing_scores_out/${RUN_DATE}.json" "${DATA_DIR}/standing-scores/${RUN_DATE}.json"
+          cp "standing_scores_out/${RUN_DATE}.md" "${DATA_DIR}/standing-scores/${RUN_DATE}.md"
+          cp "standing_scores_out/latest.json" "${DATA_DIR}/standing-scores/latest.json"
+          git -C "${DATA_DIR}" add standing-scores/
+          if ! git -C "${DATA_DIR}" diff --cached --quiet; then
+            git -C "${DATA_DIR}" commit -m "chore(standing-scores): record ${RUN_DATE} [skip ci]"
+            git -C "${DATA_DIR}" push origin standing-scores-data
+          fi
+
+      - name: Open or update single findings issue (FAIL or two consecutive INCOMPLETE runs)
+        if: github.event_name == 'schedule' && (steps.audit.outputs.overall_status == 'FAIL' || steps.persist.outputs.consecutive_incomplete == 'true')
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_DATE: ${{ steps.audit.outputs.run_date }}
+        run: |
+          ISSUE_TITLE="Nightly check: list and page disagree, or sportsbook prices older than 72 hours"
+          EXISTING_NUM="$(gh issue list -R "${{ github.repository }}" --state open --search "\"${ISSUE_TITLE}\" in:title" --json number,title --jq '.[] | select(.title == "'"${ISSUE_TITLE}"'") | .number' | head -n1)"
+          if [ -n "${EXISTING_NUM}" ]; then
+            gh issue comment "${EXISTING_NUM}" -R "${{ github.repository }}" --body-file "standing_scores_out/${RUN_DATE}.md"
+          else
+            gh issue create -R "${{ github.repository }}" --title "${ISSUE_TITLE}" --body-file "standing_scores_out/${RUN_DATE}.md"
+          fi
+
+      - name: Warn on incomplete reads
+        if: steps.audit.outputs.overall_status == 'INCOMPLETE'
+        run: |
+          echo "::warning::Nightly standing scores INCOMPLETE: ${{ steps.audit.outputs.status_summary }}"
+
+      - name: Enforce pass status
+        if: steps.audit.outputs.overall_status == 'FAIL' || (steps.audit.outputs.overall_status != 'INCOMPLETE' && steps.audit.outputs.exit_code != '0')
+        run: exit "${{ steps.audit.outputs.exit_code }}"

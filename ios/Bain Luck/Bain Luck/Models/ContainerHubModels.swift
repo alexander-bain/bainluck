@@ -258,6 +258,7 @@ nonisolated struct ContainerHubSection: Decodable, Sendable {
     let count: Int
     let slots: [ContainerHubMemberSlot]
     let visualBlock: MachineryVisualBlock?
+    let kitBlock: KitCardEnvelope366B?
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -269,6 +270,10 @@ nonisolated struct ContainerHubSection: Decodable, Sendable {
         count = try c.decodeIfPresent(Int.self, forKey: .count) ?? slots.count
         visualBlock = (try? c.decodeIfPresent(MachineryVisualBlock.self, forKey: .visualBlock))
             ?? (try? c.decodeIfPresent(MachineryVisualBlock.self, forKey: .visualBlockSnake))
+        kitBlock = (try? c.decodeIfPresent(KitCardEnvelope366B.self, forKey: .kitBlock))
+            ?? (try? c.decodeIfPresent(KitCardEnvelope366B.self, forKey: .kitBlockSnake))
+            ?? (try? c.decodeIfPresent(KitCardEnvelope366B.self, forKey: .kitSpec))
+            ?? (try? c.decodeIfPresent(KitCardEnvelope366B.self, forKey: .kitSpecSnake))
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -276,6 +281,10 @@ nonisolated struct ContainerHubSection: Decodable, Sendable {
         case title, note, layout, count, members
         case visualBlock
         case visualBlockSnake = "visual_block"
+        case kitBlock
+        case kitBlockSnake = "kit_block"
+        case kitSpec
+        case kitSpecSnake = "kit_spec"
     }
 
     init(
@@ -285,7 +294,8 @@ nonisolated struct ContainerHubSection: Decodable, Sendable {
         layout: String? = nil,
         count: Int,
         slots: [ContainerHubMemberSlot],
-        visualBlock: MachineryVisualBlock? = nil
+        visualBlock: MachineryVisualBlock? = nil,
+        kitBlock: KitCardEnvelope366B? = nil
     ) {
         self.sectionClass = sectionClass
         self.title = title
@@ -294,6 +304,7 @@ nonisolated struct ContainerHubSection: Decodable, Sendable {
         self.count = count
         self.slots = slots
         self.visualBlock = visualBlock
+        self.kitBlock = kitBlock
     }
 
     var members: [ContainerHubMember] { slots.compactMap(\.member).filter(\.canOpen) }

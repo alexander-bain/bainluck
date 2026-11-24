@@ -636,6 +636,60 @@ async def test_shared_team_futures_returns_shape(client, mock_db):
     assert "items" in body
     assert "total_count" in body
     assert isinstance(body["items"], list)
+    assert "partial" not in body
+    assert "omitted_count" not in body
+
+
+@pytest.mark.asyncio
+async def test_team_futures_routes_honest_failure_and_partial_metadata(client, mock_db):
+    """Both /api/me/team-futures and /api/shared/team-futures raise 503 when 0 survive and return partial/omitted_count when >=1 survives."""
+    from app.main import app
+    from app.routes import user as user_route
+
+    user_route._team_futures_cache.clear()
+    user_route._shared_team_futures_cache.clear()
+    fake_user = _make_user()
+    app.dependency_overrides[get_current_user] = lambda: fake_user
+    mock_db.execute.return_value = _make_mock_result(all_rows=[(1,)])
+
+    try:
+        with patch.object(
+            user_route,
+            "_query_team_futures",
+            AsyncMock(side_effect=user_route.TeamFuturesScreenUnavailableError()),
+        ):
+            r_me_503 = await client.get("/api/me/team-futures")
+            r_sh_503 = await client.get("/api/shared/team-futures?team_ids=1")
+        assert r_me_503.status_code == 503
+        assert r_sh_503.status_code == 503
+        assert user_route._team_futures_cache == {}
+        assert user_route._shared_team_futures_cache == {}
+
+        partial_data = {
+            "items": [{"market_id": 99, "probability": 0.42}],
+            "teams": [],
+            "team_ids": [1],
+            "total_count": 1,
+            "partial": True,
+            "omitted_count": 4,
+        }
+        with patch.object(
+            user_route,
+            "_query_team_futures",
+            AsyncMock(return_value=partial_data),
+        ):
+            r_me_200 = await client.get("/api/me/team-futures")
+            r_sh_200 = await client.get("/api/shared/team-futures?team_ids=1")
+        assert r_me_200.status_code == 200
+        assert r_me_200.json()["partial"] is True
+        assert r_me_200.json()["omitted_count"] == 4
+        assert r_sh_200.status_code == 200
+        assert r_sh_200.json()["partial"] is True
+        assert r_sh_200.json()["omitted_count"] == 4
+        assert user_route._team_futures_cache == {}
+        assert user_route._shared_team_futures_cache == {}
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
 
 
 # ===========================================================================

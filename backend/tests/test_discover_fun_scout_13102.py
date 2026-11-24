@@ -1763,3 +1763,212 @@ class TestStep3SetRulesAndRun3946Fixtures:
             "City-by-city snow odds for Denver, NYC, Philadelphia and Seattle.",
             groups["white-christmas"],
         ) is None
+
+
+class TestScoutRecallAndPromptFixes13514:
+    def test_batch_size_45_keeps_4400_title_tag_cost_under_five_cents(self):
+        from app.utils import discover_fun_scout as dfs
+
+        assert dfs._TAG_BATCH_SIZE == 45
+        est = dfs.estimate_fun_scout_spend(4400)
+        assert est["tag_cost_usd"] < 0.05
+        assert est["estimated_run_cost_usd"] < 0.40
+
+    def test_blurb_leading_starters_allow_sentence_openers_near_proper_nouns(self):
+        from app.utils.discover_fun_scout import check_scout_blurb_matches_members
+
+        gtavi = _mk(27594646, "GTA VI released by...?", category="gaming")
+        avengers = _mk(68365230, '"Avengers: Doomsday" Opening Weekend Box Office', category="movies")
+        other = _mk(70733323, "Will Dune: Part Three be delayed?", category="movies")
+        assert (
+            check_scout_blurb_matches_members(
+                "When GTA VI ships and whether Avengers: Doomsday wins opening weekend; Add the Doomsday delay risk.",
+                [gtavi, avengers, other],
+            )
+            is None
+        )
+
+    def test_set_writing_prompt_includes_tagged_group_counts(self):
+        from unittest.mock import MagicMock
+
+        from app.utils.discover_fun_scout import ScoutTaggedMarket, run_scout_set_writing_pass
+
+        captured: dict[str, object] = {}
+
+        def _fake_create(**kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                content=[SimpleNamespace(text=json.dumps({"sets": []}))],
+                usage=SimpleNamespace(input_tokens=100, output_tokens=50),
+                stop_reason="end_turn",
+            )
+
+        client = MagicMock()
+        client.messages.create.side_effect = _fake_create
+        catalog = {
+            1: _mk(1, "Will Taylor Swift headline Super Bowl?", category="music"),
+            2: _mk(2, "Will James Bond be Aaron Taylor-Johnson?", category="movies"),
+        }
+        tagged = [
+            ScoutTaggedMarket(market_id=1, fun_group="taylor-swift", is_fun_single=False, set_hint=None, reason="match"),
+            ScoutTaggedMarket(market_id=2, fun_group="james-bond", is_fun_single=False, set_hint=None, reason="match"),
+        ]
+        run_scout_set_writing_pass(
+            tagged,
+            catalog,
+            [],
+            anthropic_client=client,
+            approved_examples=[],
+            now=FROZEN_NOW,
+        )
+        msgs = captured["messages"]
+        assert "Tagged group counts (2 themes):" in msgs[0]["content"]
+        assert '"james-bond": 1' in msgs[0]["content"]
+        assert '"taylor-swift": 1' in msgs[0]["content"]
+        assert "20 to 26 crisp, shareable sets" in captured["system"]
+        assert "prefer 4 to 6 `member_ids`" in captured["system"]
+
+    def test_blurb_acronyms_generic_phrases_and_unlisted_rejections(self):
+        from app.utils.discover_fun_scout import check_scout_blurb_matches_members
+
+        snl = _mk(62368061, "Who will host Saturday Night Live Season 52?", category="tv")
+        seattle = _mk(65536370, "Snow in Seattle in Dec 2026?", category="weather")
+        album = _mk(113335, "Which artists will release a new song in 2026?", category="music")
+        assert (
+            check_scout_blurb_matches_members(
+                "Tracking the SNL Season hosts, Pacific Northwest winter odds and Rap and R&B drops.",
+                [snl, seattle, album],
+            )
+            is None
+        )
+        assert (
+            check_scout_blurb_matches_members(
+                "Tracking Blake Lively rumors and SNL Season hosts.",
+                [snl, seattle, album],
+            )
+            == "blurb_mentions_unlisted_member:Blake Lively"
+        )
+        assert (
+            check_scout_blurb_matches_members(
+                "Tracking Winds of Winter alongside SNL Season hosts.",
+                [snl, seattle, album],
+            )
+            == "blurb_mentions_unlisted_member:Winds of Winter"
+        )
+
+    def test_set_writing_pass_dedupes_cross_venue_twins_before_prompt(self):
+        from unittest.mock import MagicMock
+
+        from app.utils.discover_fun_scout import ScoutTaggedMarket, run_scout_set_writing_pass
+
+        captured: dict[str, object] = {}
+
+        def _fake_create(**kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                content=[SimpleNamespace(text=json.dumps({"sets": []}))],
+                usage=SimpleNamespace(input_tokens=100, output_tokens=50),
+                stop_reason="end_turn",
+            )
+
+        client = MagicMock()
+        client.messages.create.side_effect = _fake_create
+        catalog = {
+            1: _mk(1, "Klay Thompson and Megan Thee Stallion: Engaged?", source="kalshi", volume=31_000, canonical="engage:klay"),
+            2: _mk(2, "Megan Thee Stallion and Klay Thompson engaged in 2026?", source="polymarket", volume=20_000, canonical="engage:klay"),
+            3: _mk(3, "Timothee Chalamet and Kylie Jenner: Engaged in 2026?", source="kalshi", volume=32_000),
+            4: _mk(4, "Katy Perry and Justin Trudeau: Engaged in 2026?", source="kalshi", volume=27_500),
+        }
+        tagged = [
+            ScoutTaggedMarket(market_id=mid, fun_group="engagements", is_fun_single=False, set_hint=None, reason="match")
+            for mid in (1, 2, 3, 4)
+        ]
+        run_scout_set_writing_pass(
+            tagged,
+            catalog,
+            [],
+            anthropic_client=client,
+            approved_examples=[],
+            now=FROZEN_NOW,
+        )
+        prompt_text = captured["messages"][0]["content"]
+        assert "1 | kalshi" in prompt_text
+        assert "2 | polymarket" not in prompt_text
+        assert '"engagements": 3' in prompt_text
+
+    def test_benchmark_reuse_tagged_and_dump_validated_json(self, tmp_path, monkeypatch):
+        from scripts import run_fun_scout_benchmark_13102 as bench
+
+        fixture_path = tmp_path / "fixture.json"
+        fixture_path.write_text(
+            json.dumps(
+                {
+                    "captured_at": FROZEN_NOW.isoformat(),
+                    "markets": [
+                        {"market_id": 101, "source": "kalshi", "title": "Will GTA VI release in 2026?", "status": "open", "volume": 50_000, "resolution_date": "2027-01-01T00:00:00Z"},
+                        {"market_id": 102, "source": "kalshi", "title": "Will Half-Life 3 launch?", "status": "open", "volume": 40_000, "resolution_date": "2027-01-01T00:00:00Z"},
+                        {"market_id": 103, "source": "polymarket", "title": "Will Elder Scrolls VI launch?", "status": "open", "volume": 35_000, "resolution_date": "2027-01-01T00:00:00Z"},
+                    ],
+                    "uncovered_families": [],
+                }
+            ),
+            encoding="utf-8",
+        )
+        tagged_path = tmp_path / "tagged.json"
+        tagged_path.write_text(
+            json.dumps(
+                [
+                    {"market_id": 101, "fun_group": "long-awaited", "is_fun_single": False, "set_hint": None, "reason": "wait"},
+                    {"market_id": 102, "fun_group": "long-awaited", "is_fun_single": False, "set_hint": None, "reason": "wait"},
+                    {"market_id": 103, "fun_group": "long-awaited", "is_fun_single": False, "set_hint": None, "reason": "wait"},
+                ]
+            ),
+            encoding="utf-8",
+        )
+        validated_out = tmp_path / "validated.json"
+        fake_vset = SimpleNamespace(
+            slug="will-it-drop",
+            name="Will It Drop?",
+            kicker="LONG WAIT",
+            category="entertainment",
+            why_better_together="Three delayed titles on one board.",
+            look="bars",
+            members=(
+                _mk(101, "Will GTA VI release in 2026?"),
+                _mk(102, "Will Half-Life 3 launch?"),
+                _mk(103, "Will Elder Scrolls VI launch?"),
+            ),
+        )
+        monkeypatch.setattr(bench, "build_scout_openai_client", lambda: (_ for _ in ()).throw(AssertionError("should not build openai client")))
+        monkeypatch.setattr(bench, "build_scout_anthropic_client", lambda: object())
+        monkeypatch.setattr(
+            bench,
+            "run_nightly_fun_scout",
+            lambda *a, **kw: {
+                "spend_line": "[discover-fun-scout] ok",
+                "actual_set_cost_usd": 0.12,
+                "proposed_set_count": 1,
+                "validated_sets": [fake_vset],
+                "rejected_sets": [],
+                "verified_singles": [],
+            },
+        )
+        rc = bench.main(
+            [
+                "--execute",
+                "--fixture",
+                str(fixture_path),
+                "--models",
+                CLAUDE_SONNET_MODEL,
+                "--reuse-tagged-json",
+                str(tagged_path),
+                "--dump-validated-json",
+                str(validated_out),
+            ]
+        )
+        assert rc == 0
+        dumped = json.loads(validated_out.read_text(encoding="utf-8"))
+        assert len(dumped[CLAUDE_SONNET_MODEL]) == 1
+        assert dumped[CLAUDE_SONNET_MODEL][0]["slug"] == "will-it-drop"
+        assert len(dumped[CLAUDE_SONNET_MODEL][0]["members"]) == 3
+

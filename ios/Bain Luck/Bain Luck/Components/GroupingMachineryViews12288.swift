@@ -1702,7 +1702,7 @@ struct MachineryDiscoverEntryCardView: View {
     @ViewBuilder
     private var openSectionsPill: some View {
         let label = HStack {
-            Text("Open all \(card.sectionCount) sections")
+            Text(card.openContainerCallToAction)
                 .font(.footnote.weight(.semibold))
             Spacer(minLength: 6)
             Image(systemName: "chevron.right")
@@ -1810,7 +1810,7 @@ struct MachineryDiscoverCardView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 HStack(spacing: 4) {
-                    Text("Open all \(card.sectionCount) sections")
+                    Text(card.openContainerCallToAction)
                     Image(systemName: "chevron.right").font(.caption2.weight(.bold))
                 }
                 .font(.system(size: min(subSize, 18), weight: .semibold))

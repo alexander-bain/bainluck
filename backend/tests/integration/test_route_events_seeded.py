@@ -844,6 +844,9 @@ class TestGameMarketsPopulatedShape:
             "observed_at": None,
             "threshold": 4.5,
             "probability": 0.54,
+            # #13529 — every served row declares whether its baseline is a kickoff pin or opening reading.
+            "pregame_mark": 0.49,
+            "pregame_mark_source": "opening",
             "source": "kalshi",
             "is_winner": None,
             "resolution_source": None,

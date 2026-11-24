@@ -399,8 +399,20 @@ nonisolated struct FeedBundle: Decodable, Sendable {
     /// True when this `roundup` bundle has both a verified `collection_ref` and a
     /// readable `FeedRoundupContract` or `MachineryCardContract` (`RoundupCard`: no container, no card).
     var admitsRoundupCard: Bool {
-        guard kind == "roundup", roundupCollectionRef != nil else { return false }
+        guard kind == "roundup", let ref = roundupCollectionRef else { return false }
         if roundupContract?.machineryCard != nil { return true }
+        if roundupContract?.hasUnknownLookFallback == true || roundupContract?.kitCard != nil {
+            if DiscoverRoundupCardModel.build(
+                title: title,
+                contract: roundupContract,
+                fallbackKicker: ref.name,
+                fallbackFooter: DiscoverRoundupCardModel.fallbackFooter(for: ref),
+                allowFlexibleRowCount: true
+            ) != nil {
+                return true
+            }
+            return items.contains { $0.futures != nil || $0.event != nil }
+        }
         return DiscoverRoundupCardModel.build(title: title, contract: roundupContract) != nil
     }
 }
