@@ -224,6 +224,7 @@ class RoundupMembers:
     paired_metric_set: Optional[dict[str, Any]] = None
     machinery_card: Optional[dict[str, Any]] = None
     covered_market_ids: tuple[int, ...] = ()
+    art_audit: Optional[dict[str, Any]] = None
 
     def __init__(
         self,
@@ -246,6 +247,7 @@ class RoundupMembers:
         paired_metric_set: Optional[Mapping[str, Any]] = None,
         machinery_card: Optional[Mapping[str, Any]] = None,
         covered_market_ids: Sequence[int] = (),
+        art_audit: Optional[Mapping[str, Any]] = None,
     ) -> None:
         object.__setattr__(self, "members", tuple(members))
         object.__setattr__(self, "rows", tuple(rows))
@@ -308,6 +310,11 @@ class RoundupMembers:
             self,
             "covered_market_ids",
             tuple(int(cid) for cid in (covered_market_ids or ())),
+        )
+        object.__setattr__(
+            self,
+            "art_audit",
+            copy.deepcopy(dict(art_audit)) if isinstance(art_audit, Mapping) else None,
         )
 
 

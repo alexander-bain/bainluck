@@ -629,13 +629,72 @@ _TEAM_CLUB_PREFIX_RE = re.compile(r"^(?:fc|cf|sc|ac|afc|sv|fk)\s+", re.IGNORECAS
 _TEAM_CLUB_SUFFIX_RE = re.compile(r"\s+(?:fc|cf|sc|ac|afc)$", re.IGNORECASE)
 _TEAM_STATIC_LOGO_KINDS: frozenset[str] = frozenset({"team_logo", "espn_team_logo"})
 _PERSON_ART_KINDS: frozenset[str] = frozenset(
-    {"person", "headshot", "portrait", "tmdb_headshot", "tmdb_person"}
+    {"person", "headshot", "portrait", "tmdb_headshot", "tmdb_person", "wikimedia_portrait"}
 )
 _CAST_AS_SPLIT_RE = re.compile(r"\s+as\s+", re.IGNORECASE)
 _PORTRAIT_DETAIL_SUFFIX_RE = re.compile(
-    r"\s+(?:tmdb\s+portrait|espn\s+headshot|wikimedia\s+commons\s+portrait|portrait|headshot)$",
+    r"\s+(?:tmdb\s+portrait|espn\s+headshot|wikimedia\s+commons\s+portrait|wikimedia\s+portrait|commons\s+portrait|portrait|headshot)$",
     re.IGNORECASE,
 )
+_SURNAME_SUFFIX_TOKENS: frozenset[str] = frozenset({"jr", "sr", "ii", "iii", "iv", "v"})
+_COMMON_FIRST_NAMES_NO_SOLO: frozenset[str] = frozenset(
+    {
+        "chris", "john", "james", "david", "michael", "robert", "kevin", "ryan",
+        "mark", "paul", "tom", "alex", "daniel", "andrew", "matt", "adam", "ben",
+        "sam", "jack", "luke", "nick", "eric", "scott", "steve", "joe", "tim",
+        "dan", "jeff", "will", "emma", "sarah", "anna", "kate", "laura", "emily",
+        "jessica", "rachel", "hannah", "claire", "elizabeth", "jennifer",
+        "taylor", "jordan", "morgan", "cameron", "casey",
+    }
+)
+_ICONIC_SOLO_GIVEN_NAMES: frozenset[str] = frozenset(
+    {
+        "lebron", "beyonce", "zendaya", "rihanna", "madonna", "oprah", "drake",
+        "kanye", "elon", "shohei", "giannis", "nikola", "luka", "kylian",
+        "erling", "novak", "rafael", "serena", "simone", "shakira", "adele",
+        "usher", "lorde", "bjork", "grimes",
+    }
+)
+_ROLE_BOILERPLATE_TOKENS: frozenset[str] = frozenset(
+    {
+        "tmdb", "espn", "wikimedia", "commons", "portrait", "headshot", "person",
+        "american", "british", "canadian", "australian", "verified", "official",
+        "the", "and", "for", "with", "from", "into", "that", "this", "who", "was",
+    }
+)
+_ROLE_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "federal": ("fed",),
+    "fed": ("federal",),
+    "president": ("presidential",),
+    "nba": ("basketball",),
+    "nfl": ("football",),
+    "nhl": ("hockey",),
+}
+
+
+def _extract_role_tokens(text: str) -> set[str]:
+    folded = _ascii_fold_key(text)
+    if not folded:
+        return set()
+    tokens: set[str] = set()
+    for tok in folded.split():
+        if len(tok) >= 3 and tok not in _ROLE_BOILERPLATE_TOKENS:
+            tokens.add(tok)
+            for syn in _ROLE_SYNONYMS.get(tok, ()):
+                tokens.add(syn)
+    return tokens
+
+
+def _person_surname_and_given(folded_name: str, role_tokens: set[str]) -> Optional[tuple[str, str]]:
+    parts = [p for p in folded_name.split() if p]
+    if len(parts) < 2:
+        return None
+    if len(parts) >= 3 and parts[-1] in _SURNAME_SUFFIX_TOKENS:
+        surname = parts[-2]
+    else:
+        surname = parts[-1]
+    given = parts[0]
+    return surname, given
 _NUMERIC_RANGE_OUTCOME_RE = re.compile(r"\d+(?:\s*(?:[-–]|to)\s*\d+)?%?")
 _NON_ENTITY_EXACT_LABELS: frozenset[str] = frozenset(
     {
@@ -964,8 +1023,12 @@ class SubjectArtResolver:
         self._team_keys_by_norm: dict[str, list[str]] = {}
         self._team_prefix_unique: dict[str, str] = {}
         self._person_names_by_url: dict[str, set[str]] = {}
+        self._person_surnames_to_urls: dict[str, set[str]] = {}
+        self._person_surname_first_names: dict[str, dict[str, set[str]]] = {}
+        self._person_role_tokens_by_url: dict[str, set[str]] = {}
         if _static_by_norm is not None:
             self._by_norm = _static_by_norm
+            self._rebuild_person_indexes_from_static()
         else:
             self._by_norm: dict[str, dict[str, Any]] = {}
             self._load_catalogs()
@@ -1131,6 +1194,23 @@ class SubjectArtResolver:
 
         return None
 
+    def _rebuild_person_indexes_from_static(self) -> None:
+        seen_ids: set[int] = set()
+        for rec in self._by_norm.values():
+            rid = id(rec)
+            if rid in seen_ids or not isinstance(rec, Mapping):
+                continue
+            seen_ids.add(rid)
+            names = rec.get("subject_aliases") or (
+                (rec["subject_name"],) if rec.get("subject_name") else ()
+            )
+            self._record_person_url_aliases(
+                rec.get("url"),
+                [str(n) for n in names if n],
+                kind=rec.get("kind"),
+                detail=rec.get("subject_role") or rec.get("detail"),
+            )
+
     def _record_person_url_aliases(
         self,
         url: Optional[str],
@@ -1152,6 +1232,7 @@ class SubjectArtResolver:
             candidates.append(det_name)
         elif "," in d_str and k_low in _PERSON_ART_KINDS:
             candidates.append(d_str.split(",", 1)[0].strip())
+        name_words: set[str] = set()
         for raw in candidates:
             s = str(raw or "").strip()
             if not s:
@@ -1161,6 +1242,17 @@ class SubjectArtResolver:
                 s = actor_prefix
             if s:
                 bucket.add(s)
+                fk = _ascii_fold_key(s)
+                for w in fk.split():
+                    name_words.add(w)
+                sg = _person_surname_and_given(fk, set())
+                if sg is not None:
+                    surname, given = sg
+                    self._person_surnames_to_urls.setdefault(surname, set()).add(url)
+                    self._person_surname_first_names.setdefault(surname, {}).setdefault(url, set()).add(given)
+        role_toks = _extract_role_tokens(d_str) - name_words
+        if role_toks:
+            self._person_role_tokens_by_url.setdefault(url, set()).update(role_toks)
 
     def _register(
         self,
@@ -1170,13 +1262,31 @@ class SubjectArtResolver:
         display_aliases: Optional[Sequence[str]] = None,
     ) -> None:
         disp_list = [str(a) for a in (display_aliases if display_aliases is not None else aliases) if str(a).strip()]
+        role_text = str(record.get("subject_role") or record.get("detail") or "")
         self._record_person_url_aliases(
             record.get("url"),
             disp_list,
             kind=record.get("kind"),
-            detail=record.get("detail"),
+            detail=role_text,
         )
         primary_disp = disp_list[0] if disp_list else None
+        k_low = str(record.get("kind") or "").strip().lower()
+        u_str = str(record.get("url") or "")
+        is_person_rec = (
+            k_low in _PERSON_ART_KINDS
+            or _portrait_name_from_detail(str(record.get("detail") or "")) is not None
+            or "/headshots/" in u_str.lower()
+        )
+        base_rec = dict(record)
+        if is_person_rec:
+            if primary_disp and not base_rec.get("subject_name"):
+                base_rec["subject_name"] = primary_disp
+            elif not base_rec.get("subject_name"):
+                det_fallback = _portrait_name_from_detail(str(base_rec.get("detail") or ""))
+                if det_fallback:
+                    base_rec["subject_name"] = det_fallback
+            if disp_list and not base_rec.get("subject_aliases"):
+                base_rec["subject_aliases"] = tuple(disp_list)
         by_fold: dict[str, list[str]] = {}
         for raw in disp_list:
             fk = _ascii_fold_key(raw)
@@ -1184,8 +1294,8 @@ class SubjectArtResolver:
                 by_fold.setdefault(fk, []).append(str(raw))
         for raw in aliases:
             fk = _ascii_fold_key(raw)
-            rec_for_alias = record
-            if fk and len(by_fold.get(fk, ())) > 1 and "canonical_name" not in record:
+            rec_for_alias = base_rec
+            if fk and len(by_fold.get(fk, ())) > 1 and "canonical_name" not in base_rec:
                 prim_for_fold = (
                     primary_disp
                     if primary_disp and _ascii_fold_key(primary_disp) == fk
@@ -1193,7 +1303,7 @@ class SubjectArtResolver:
                 )
                 pref = _pick_preferred_subject_spelling(by_fold[fk], primary_display=prim_for_fold)
                 if pref:
-                    rec_for_alias = {**record, "canonical_name": pref}
+                    rec_for_alias = {**base_rec, "canonical_name": pref}
             for nk in (_norm_key(raw), fk):
                 if nk and nk not in self._by_norm:
                     self._by_norm[nk] = rec_for_alias
@@ -1288,6 +1398,7 @@ class SubjectArtResolver:
                         "url": str(entry["url"]),
                         "kind": str(entry.get("kind") or "person"),
                         "detail": str(entry.get("verified_subject") or "")[:44],
+                        "subject_role": str(entry.get("verified_subject") or ""),
                         "accent_color": "",
                         "author": entry.get("author"),
                         "license": entry.get("license"),
@@ -1354,6 +1465,8 @@ class SubjectArtResolver:
         }
         if hit and hit.get("canonical_name"):
             out["canonical_name"] = str(hit["canonical_name"])
+        if hit and hit.get("subject_name"):
+            out["subject_name"] = str(hit["subject_name"])
         return out
 
 
@@ -1368,24 +1481,41 @@ def _extract_portrait_person_names(
     kind = str(art.get("kind") or "").strip().lower()
     detail = str(art.get("detail") or "").strip()
     det_name = _portrait_name_from_detail(detail)
+    explicit_record_names: list[str] = []
+    for fld in ("subject_name", "person_name", "name"):
+        val = str(art.get(fld) or "").strip()
+        if val:
+            explicit_record_names.append(val)
+    raw_aliases = art.get("subject_aliases")
+    if isinstance(raw_aliases, (list, tuple)):
+        for a in raw_aliases:
+            s = str(a or "").strip()
+            if s:
+                explicit_record_names.append(s)
+
+    resolver_names = sorted(resolver._person_names_by_url.get(url, ())) if resolver is not None else []
+    non_person_kinds = {"team_logo", "espn_team_logo", "flag", "organization", "film", "tmdb_poster", "poster", "monogram"}
     is_portrait = (
         kind in _PERSON_ART_KINDS
-        or det_name is not None
         or "/headshots/" in url.lower()
+        or bool(explicit_record_names and kind not in non_person_kinds)
+        or bool(resolver_names and kind not in non_person_kinds)
+        or det_name is not None
     )
     if not is_portrait:
         return [], set()
 
+    # Follow-up 2 (#13591): read record name fields / catalog aliases BEFORE falling back to description prose.
     raw_names: list[str] = []
-    if det_name:
-        raw_names.append(det_name)
-        if "," in det_name:
-            raw_names.append(det_name.split(",", 1)[0].strip())
-    elif "," in detail and kind in _PERSON_ART_KINDS:
-        raw_names.append(detail.split(",", 1)[0].strip())
-    if resolver is not None:
-        for reg_name in sorted(resolver._person_names_by_url.get(url, ())):
-            raw_names.append(reg_name)
+    raw_names.extend(explicit_record_names)
+    raw_names.extend(resolver_names)
+    if not raw_names:
+        if det_name:
+            raw_names.append(det_name)
+            if "," in det_name:
+                raw_names.append(det_name.split(",", 1)[0].strip())
+        elif "," in detail and kind in _PERSON_ART_KINDS:
+            raw_names.append(detail.split(",", 1)[0].strip())
 
     display_names: list[str] = []
     folded_names: set[str] = set()
@@ -1396,6 +1526,66 @@ def _extract_portrait_person_names(
             folded_names.add(fk)
             display_names.append(cleaned)
     return display_names, folded_names
+
+
+def _single_name_disambiguated(
+    p_fold: str,
+    hay_tokens: set[str],
+    art: Mapping[str, Any],
+    *,
+    resolver: Optional[SubjectArtResolver],
+) -> bool:
+    """Allow unambiguous single-token surname/iconic given-name matches (#13591 follow-up 1)."""
+    sg = _person_surname_and_given(p_fold, set())
+    if sg is None:
+        return False
+    surname, given = sg
+    url = str(art.get("url") or "").strip()
+    parts_set = set(p_fold.split())
+
+    # 1. Distinctive surname present in row text
+    if len(surname) >= 5 and surname not in _COMMON_FIRST_NAMES_NO_SOLO and surname in hay_tokens:
+        if resolver is not None:
+            urls_for_surname = resolver._person_surnames_to_urls.get(surname, set())
+            sibling_map = resolver._person_surname_first_names.get(surname, {})
+            sibling_firsts = {
+                fn
+                for other_url, fns in sibling_map.items()
+                if other_url != url
+                for fn in fns
+                if fn not in parts_set
+            }
+            if sibling_firsts & hay_tokens:
+                return False
+            if len(urls_for_surname) <= 1:
+                return True
+            role_tokens = set(resolver._person_role_tokens_by_url.get(url, ()))
+            extra_role = _extract_role_tokens(str(art.get("subject_role") or art.get("detail") or "")) - parts_set
+            role_tokens.update(extra_role)
+            if role_tokens & hay_tokens:
+                return True
+        else:
+            return True
+
+    # 2. Iconic mononym / unique famous given name (e.g. LeBron)
+    if (
+        len(given) >= 5
+        and given in _ICONIC_SOLO_GIVEN_NAMES
+        and given not in _COMMON_FIRST_NAMES_NO_SOLO
+        and given in hay_tokens
+    ):
+        if resolver is not None:
+            conflicting = [
+                other_url
+                for other_url, other_names in resolver._person_names_by_url.items()
+                if other_url != url
+                and any(given in _ascii_fold_key(onm).split() for onm in other_names)
+            ]
+            if conflicting:
+                return False
+        return True
+
+    return False
 
 
 def art_subject_mismatch_reason(
@@ -1427,6 +1617,8 @@ def art_subject_mismatch_reason(
         tokens = [t for t in p_fold.split() if len(t) >= 3]
         if tokens and all(t in hay_tokens for t in tokens):
             return None
+        if _single_name_disambiguated(p_fold, hay_tokens, art, resolver=resolver):
+            return None
 
     primary_subj = next((str(t).strip() for t in subject_texts if str(t or "").strip()), "")
     return f"Portrait depicts {', '.join(display_names)} rather than {primary_subj!r}"
@@ -1439,6 +1631,9 @@ def _gate_outcome_art(
     *,
     resolver: Optional[SubjectArtResolver] = None,
     fallback_subject: Optional[str] = None,
+    art_drops: Optional[list[dict[str, Any]]] = None,
+    market_id: Optional[int] = None,
+    surface: str = "outcome",
 ) -> dict[str, Any]:
     """Strip any mismatched person portrait so a row serves no picture rather than a wrong face."""
     clean_out = str(outcome_name or "").strip()
@@ -1449,8 +1644,21 @@ def _gate_outcome_art(
     check_texts: Sequence[str] = (
         [clean_out, *context_texts] if is_non_entity_outcome_label(clean_out) else [clean_out]
     )
-    if art_subject_mismatch_reason(check_texts, art, resolver=resolver) is None:
+    reason = art_subject_mismatch_reason(check_texts, art, resolver=resolver)
+    if reason is None:
         return dict(art)
+    if art_drops is not None:
+        art_drops.append(
+            {
+                "surface": surface,
+                "market_id": market_id,
+                "outcome_name": clean_out,
+                "subject": str(fallback_subject or clean_out or ""),
+                "dropped_url": str(art.get("url") or ""),
+                "dropped_subject_name": str(art.get("subject_name") or art.get("detail") or ""),
+                "reason": reason,
+            }
+        )
     return _monogram_art(str(fallback_subject or clean_out or "Subject"))
 
 
@@ -2251,6 +2459,7 @@ def _hydrate_market_visual_item(
     allow_team_lookup: Optional[bool] = None,
     now_dt: Optional[datetime] = None,
     date_ladder_pick: Optional[str] = None,
+    art_drops: Optional[list[dict[str, Any]]] = None,
 ) -> dict[str, Any]:
     mid = int(market["id"])
     if "top_outcomes" in market and isinstance(market["top_outcomes"], (list, tuple)):
@@ -2520,6 +2729,9 @@ def _hydrate_market_visual_item(
                     if shape_is_yes
                     else str(oc.get("name") or display_title or clean_raw_name or f"Market {mid}")
                 ),
+                art_drops=art_drops,
+                market_id=mid,
+                surface=str(content_kind or "futures"),
             )
 
     headline_phrase: Optional[str] = None
@@ -4784,6 +4996,9 @@ async def produce_container_machinery(
     seen_twin_keys: set[str] = set()
     covered_twin_market_ids: list[int] = []
     lead_paired_set: Optional[dict[str, Any]] = None
+    gate_drops: list[dict[str, Any]] = []
+    hidden_sections: list[dict[str, Any]] = []
+    card_hidden: Optional[dict[str, Any]] = None
 
     def _record_covered_twins(item: Mapping[str, Any]) -> None:
         t_key = _twin_market_key(str(item.get("title") or ""))
@@ -5109,6 +5324,7 @@ async def produce_container_machinery(
                     allow_team_lookup=_is_sports_context(m, definition),
                     now_dt=now_dt,
                     date_ladder_pick=date_ladder_pick_val,
+                    art_drops=gate_drops,
                 )
                 for m in all_markets
                 if (MEMBER_MARKET, int(m["id"])) not in seen_member_keys
@@ -5273,6 +5489,7 @@ async def produce_container_machinery(
                 allow_team_lookup=_is_sports_context(m, definition),
                 now_dt=now_dt,
                 date_ladder_pick=date_ladder_pick_val,
+                art_drops=gate_drops,
             )
             for m in all_markets
             if (MEMBER_MARKET, int(m["id"])) not in seen_member_keys
@@ -5563,6 +5780,25 @@ async def produce_container_machinery(
 
     hide_row_art = bool(rule.get("hide_row_art"))
     if hide_row_art and card_visual_rows:
+        card_has_url_pre = [
+            isinstance(r, Mapping) and _has_verified_art(r) for r in card_visual_rows
+        ]
+        found_urls = [
+            _missing_art_subject_label(r, vb)
+            for r, has_art in zip(card_visual_rows, card_has_url_pre)
+            if isinstance(r, Mapping) and has_art
+        ]
+        if found_urls:
+            card_hidden = {
+                "surface": "card",
+                "reason": "hide_row_art",
+                "rows": len(card_visual_rows),
+                "pictures_found": len(found_urls),
+                "pictures_hidden": len(found_urls),
+                "missing_rows": [],
+                "hidden_per_missing_row": None,
+                "hidden_items": found_urls,
+            }
         card_visual_rows = _strip_visual_row_art(card_visual_rows)
 
     # All-or-nothing row art parity with iOS (`GroupingMachineryViews12288`):
@@ -5581,18 +5817,35 @@ async def produce_container_machinery(
             str(definition.get("stage") or "").strip().lower() == "public"
             or definition.get("stage") is None
         )
+        missing_subjects = [
+            _missing_art_subject_label(r, vb)
+            for r, has_art in zip(card_visual_rows, row_has_url)
+            if isinstance(r, Mapping) and not has_art
+        ]
         if not all(row_has_url) and is_public_stage and _is_sports_definition(definition):
-            missing_subjects = [
-                _missing_art_subject_label(r, vb)
-                for r, has_art in zip(card_visual_rows, row_has_url)
-                if isinstance(r, Mapping) and not has_art
-            ]
             logger.warning(
                 "Public sports card %s dropped row pictures; missing art for subjects=%s",
                 slug,
                 missing_subjects,
             )
         if any(row_has_url) and not all(row_has_url):
+            hidden_card_items = [
+                _missing_art_subject_label(r, vb)
+                for r, has_art in zip(card_visual_rows, row_has_url)
+                if isinstance(r, Mapping) and has_art
+            ]
+            pics_found = len(hidden_card_items)
+            miss_cnt = len(missing_subjects)
+            card_hidden = {
+                "surface": "card",
+                "reason": "all_or_nothing",
+                "rows": len(card_visual_rows),
+                "pictures_found": pics_found,
+                "pictures_hidden": pics_found,
+                "missing_rows": missing_subjects,
+                "hidden_per_missing_row": round(pics_found / miss_cnt, 2) if miss_cnt else None,
+                "hidden_items": hidden_card_items,
+            }
             card_visual_rows = _strip_visual_row_art(card_visual_rows)
 
     has_card_art = any(_has_verified_art(r) for r in card_visual_rows if isinstance(r, Mapping))
@@ -5692,13 +5945,28 @@ async def produce_container_machinery(
     if mini_chart is not None:
         machinery_card["mini_chart"] = mini_chart
 
-    _enforce_section_all_or_nothing_art(built_sections, hide_row_art=hide_row_art)
+    _enforce_section_all_or_nothing_art(
+        built_sections,
+        hide_row_art=hide_row_art,
+        hidden_collector=hidden_sections,
+    )
 
     card_paired_set: Optional[dict[str, Any]] = None
     if vb_form == "paired_stage_bars" and lead_paired_set is not None:
         card_paired_set = copy.deepcopy(lead_paired_set)
         card_paired_set["title"] = dynamic_title
         card_paired_set["entries"] = list(card_paired_set.get("entries") or ())[:card_rows_limit]
+
+    all_hidden_count = sum(int(s.get("pictures_hidden") or 0) for s in hidden_sections) + (
+        int(card_hidden.get("pictures_hidden") or 0) if isinstance(card_hidden, Mapping) else 0
+    )
+    art_audit: dict[str, Any] = {
+        "gate_dropped_count": len(gate_drops),
+        "gate_drops": gate_drops,
+        "card_hidden": card_hidden,
+        "all_or_nothing_hidden_count": all_hidden_count,
+        "hidden_sections": hidden_sections,
+    }
 
     return RoundupMembers(
         all_member_envelopes,
@@ -5713,6 +5981,7 @@ async def produce_container_machinery(
         paired_metric_set=card_paired_set,
         machinery_card=machinery_card,
         covered_market_ids=covered_twin_market_ids,
+        art_audit=art_audit,
     )
 
 
@@ -5899,6 +6168,7 @@ def _enforce_section_all_or_nothing_art(
     built_sections: Sequence[dict[str, Any]],
     *,
     hide_row_art: bool,
+    hidden_collector: Optional[list[dict[str, Any]]] = None,
 ) -> None:
     """Enforce per-section all-or-nothing row art on set-page sections (#12288 Item 4).
 
@@ -5916,33 +6186,53 @@ def _enforce_section_all_or_nothing_art(
             continue
 
         should_strip = False
-        if hide_row_art and s_form in {
-            "benchmark_strip",
-            "sibling_fields_grid",
-            "leader_bars",
-            "contender_spotlight",
-            "duel_bar",
-        }:
-            should_strip = True
-        elif s_form == "benchmark_strip":
-            has_urls = [
-                bool((it.get("outcomes") or ()) and _has_verified_art(it["outcomes"][0]))
-                for it in items
-                if isinstance(it, Mapping)
-            ]
-            should_strip = any(has_urls) and not all(has_urls)
+        has_urls: list[bool] = []
+        row_labels: list[str] = []
+        if s_form == "benchmark_strip":
+            for it in items:
+                if not isinstance(it, Mapping):
+                    continue
+                outs = it.get("outcomes") or ()
+                has_pic = bool(outs and _has_verified_art(outs[0]))
+                has_urls.append(has_pic)
+                row_labels.append(str(it.get("title") or (outs[0].get("name") if outs else "") or ""))
+            should_strip = (hide_row_art and any(has_urls)) or (any(has_urls) and not all(has_urls))
         elif s_form in {"sibling_fields_grid", "leader_bars", "contender_spotlight", "duel_bar"}:
-            has_urls = [
-                _has_verified_art(o)
-                for it in items
-                if isinstance(it, Mapping) and not it.get("scale_ordered")
-                for o in (it.get("outcomes") or ())
-                if isinstance(o, Mapping)
-            ]
-            should_strip = any(has_urls) and not all(has_urls)
+            for it in items:
+                if not isinstance(it, Mapping) or it.get("scale_ordered"):
+                    continue
+                for o in it.get("outcomes") or ():
+                    if not isinstance(o, Mapping):
+                        continue
+                    has_urls.append(_has_verified_art(o))
+                    lbl = str(o.get("name") or "").strip()
+                    if not lbl or lbl.lower() in {"yes", "no"}:
+                        lbl = str(it.get("title") or "").strip()
+                    row_labels.append(lbl)
+            should_strip = (hide_row_art and any(has_urls)) or (any(has_urls) and not all(has_urls))
 
         if not should_strip:
             continue
+
+        if hidden_collector is not None and any(has_urls):
+            pics_found = sum(1 for x in has_urls if x)
+            missing_names = [lbl for lbl, h in zip(row_labels, has_urls) if not h]
+            hidden_names = [lbl for lbl, h in zip(row_labels, has_urls) if h]
+            hidden_collector.append(
+                {
+                    "surface": "section",
+                    "section_key": str(sec.get("class") or ""),
+                    "section_title": str(sec.get("title") or ""),
+                    "form_id": s_form,
+                    "reason": "hide_row_art" if hide_row_art else "all_or_nothing",
+                    "rows": len(has_urls),
+                    "pictures_found": pics_found,
+                    "pictures_hidden": pics_found,
+                    "missing_rows": missing_names,
+                    "hidden_per_missing_row": round(pics_found / len(missing_names), 2) if missing_names else None,
+                    "hidden_items": hidden_names,
+                }
+            )
 
         stripped_items: list[dict[str, Any]] = []
         for it in items:

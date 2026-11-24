@@ -26,9 +26,15 @@ def test_resolver_matches_cast_actor_prefix_only_when_actor_is_verified() -> Non
     assert str(benedict.get("url") or "").startswith("https://image.tmdb.org/")
 
     jackman = resolver.resolve("Hugh Jackman as Wolverine?", allow_team_lookup=False)
-    assert jackman["url"] is None
-    assert jackman["kind"] == "monogram"
+    assert jackman["kind"] == "person"
+    assert jackman["subject_name"] == "Hugh Jackman"
+    assert "4Xujtewxqt6aU0Y81tsS9gkjizk.jpg" in str(jackman.get("url") or "")
     assert "Cumberbatch" not in str(jackman.get("detail") or "")
+
+    unverified = resolver.resolve("Unverified Cast Actor as Sentry?", allow_team_lookup=False)
+    assert unverified["url"] is None
+    assert unverified["kind"] == "monogram"
+    assert "Cumberbatch" not in str(unverified.get("detail") or "")
 
 
 def test_art_subject_mismatch_gate_allows_artist_work_and_stage_names_but_blocks_wrong_face() -> None:
@@ -133,15 +139,16 @@ async def test_cast_delayed_cancelled_never_shows_cumberbatch_on_hugh_jackman_ro
     sec_items = res.sections[0]["visual_block"]["items"]
     jackman_item = next(it for it in sec_items if int(it["market_id"]) == 109214)
     jackman_art = jackman_item["outcomes"][0]["art"]
-    assert jackman_art["url"] is None
-    assert jackman_art["kind"] == "monogram"
-    assert jackman_art["initials"] == "HJ"
+    assert str(jackman_art.get("url") or "").endswith("4Xujtewxqt6aU0Y81tsS9gkjizk.jpg")
+    assert jackman_art["kind"] == "person"
+    assert jackman_art["subject_name"] == "Hugh Jackman"
     assert "Cumberbatch" not in str(jackman_art.get("detail") or "")
 
-    card_row0_art = res.machinery_card["rows"][0]["art"]
-    assert card_row0_art["url"] is None
-    assert card_row0_art["kind"] == "monogram"
-    assert "Cumberbatch" not in str(card_row0_art.get("detail") or "")
+    card_rows = res.machinery_card["rows"]
+    assert len(card_rows) == 3
+    assert all(r["art"].get("url") for r in card_rows)
+    assert any(str(r["art"].get("url") or "").endswith("4Xujtewxqt6aU0Y81tsS9gkjizk.jpg") for r in card_rows)
+    assert all("Cumberbatch" not in str(r["art"].get("detail") or "") for r in card_rows)
 
 
 @pytest.mark.asyncio
@@ -210,7 +217,7 @@ async def test_set_page_art_gate_drops_mismatched_explicit_person_portrait(monke
             "source": "kalshi",
             "llm_sport_category": "entertainment",
             "volume": 90000.0,
-            "outcomes": [{"id": 10921401, "name": "Hugh Jackman as Wolverine?", "probability": 0.94}],
+            "outcomes": [{"id": 10921401, "name": "Unverified Actor as Sentry?", "probability": 0.94}],
         },
         {
             "id": 108506,
@@ -238,3 +245,59 @@ async def test_set_page_art_gate_drops_mismatched_explicit_person_portrait(monke
     )
     assert item["outcomes"][0]["art"]["url"] is None
     assert item["outcomes"][0]["art"]["kind"] == "monogram"
+    assert res.art_audit is not None
+    assert res.art_audit["gate_dropped_count"] >= 1
+    assert any(d["market_id"] == 109214 for d in res.art_audit["gate_drops"])
+    assert res.art_audit["all_or_nothing_hidden_count"] >= 2
+    assert res.art_audit["hidden_sections"]
+
+
+def test_gate_13591_followups_single_name_record_field_and_disambiguation() -> None:
+    resolver = SubjectArtResolver()
+
+    trump = resolver.resolve("Donald Trump", allow_team_lookup=False)
+    vanessa = resolver.resolve("Vanessa Trump", allow_team_lookup=False)
+    powell = resolver.resolve("Jerome Powell", allow_team_lookup=False)
+    glen_powell = resolver.resolve("Glen Powell", allow_team_lookup=False)
+    lebron_record = {
+        "url": "https://a.espncdn.com/i/headshots/nba/players/full/1966.png",
+        "kind": "person",
+        "subject_name": "LeBron James",
+        "detail": "NBA forward portrait",
+    }
+
+    # Follow-up 1: unambiguous single names pass
+    assert art_subject_mismatch_reason(["Trump out as President before 2027?"], trump, resolver=resolver) is None
+    assert art_subject_mismatch_reason(["Fed Chair on Dec 31: Powell"], powell, resolver=resolver) is None
+    assert art_subject_mismatch_reason(["LeBron retires before 2027?"], lebron_record, resolver=resolver) is None
+
+    # Disambiguation stops wrong-person surname collisions
+    assert art_subject_mismatch_reason(["Trump out as President before 2027?"], vanessa, resolver=resolver) is not None
+    assert art_subject_mismatch_reason(["Fed Chair on Dec 31: Powell"], glen_powell, resolver=resolver) is not None
+    assert art_subject_mismatch_reason(["Glen Powell wins Best Actor"], powell, resolver=resolver) is not None
+
+    # Common first name alone is never enough
+    chris_pratt = {
+        "url": "https://image.tmdb.org/t/p/w185/chrispratt.jpg",
+        "kind": "person",
+        "subject_name": "Chris Pratt",
+        "detail": "Actor portrait",
+    }
+    assert art_subject_mismatch_reason(["Chris Evans"], chris_pratt, resolver=resolver) is not None
+
+    # Follow-up 2: non-standard description text still works via record's own name field (or Wikimedia suffix)
+    wikimedia_trump = {
+        "url": trump["url"],
+        "kind": "person",
+        "subject_name": "Donald Trump",
+        "detail": "Presidential portrait from Wikimedia Commons 2025",
+    }
+    assert art_subject_mismatch_reason(["Donald Trump wins nomination"], wikimedia_trump) is None
+    assert art_subject_mismatch_reason(["Joe Biden"], wikimedia_trump) is not None
+
+    wikimedia_desc_only = {
+        "url": "https://upload.wikimedia.org/commons/example_trump.jpg",
+        "kind": "person",
+        "detail": "Donald Trump Wikimedia portrait",
+    }
+    assert art_subject_mismatch_reason(["Trump out as President before 2027?"], wikimedia_desc_only) is None

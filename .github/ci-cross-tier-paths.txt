@@ -164,3 +164,7 @@ frontend/components/FeedCard.tsx
 frontend/components/discover/EventCard.tsx
 frontend/lib/eventKeyStats.ts
 frontend/lib/servedDuelPercents.ts
+
+# #13551 / #13603: test_member_art_and_truth_13572 reads the synced frontend art manifest
+# to verify backend member_art_13551 entries stay aligned with frontend Discover art.
+frontend/lib/discover/verifiedDiscoverArt.json
