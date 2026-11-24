@@ -94,7 +94,7 @@ _CITY_CLUBS = {
         ("Kansas City Chiefs", NFL, "Kansas City"),
         ("Kansas City Royals", MLB, "Kansas City"),
         ("Sporting Kansas City", MLS, "Kansas City, KS"),
-        ("Kansas City Current", "soccer_usa_nwsl", "Kansas City"),
+        ("Kansas City Current", "soccer_usa_nwsl", "Riverside"),
     ),
     "SF": (
         ("San Francisco Giants", MLB, "San Francisco"),
@@ -103,7 +103,7 @@ _CITY_CLUBS = {
         ("Golden State Valkyries", "basketball_wnba", "San Francisco"),
         ("San Jose Sharks", "icehockey_nhl", "San Jose"),
         ("San Jose Earthquakes", MLS, "San Jose"),
-        ("Bay FC", "soccer_usa_nwsl", "San Jose"),
+        ("Bay FC", "soccer_usa_nwsl", None),
     ),
     "Vegas": (
         ("Vegas Golden Knights", "icehockey_nhl", "Vegas"),
@@ -128,7 +128,7 @@ _CITY_CLUBS = {
         ("Washington Wizards", NBA, "Washington"),
         ("Washington Capitals", "icehockey_nhl", "Washington"),
         ("Washington Mystics", "basketball_wnba", "Washington"),
-        ("Washington Spirit", "soccer_usa_nwsl", "Washington, DC"),
+        ("Washington Spirit", "soccer_usa_nwsl", "Audi Field"),
         ("D.C. United", MLS, "Washington"),
     ),
     "Twin Cities": (
@@ -461,6 +461,17 @@ async def test_issue_and_additional_onboarding_queries_return_real_clubs(
         (1226, "New Orleans Pelicans", NBA, "New Orleans"),
         (1227, "Indianapolis Colts", NFL, "Indianapolis"),
         (1228, "Oklahoma City Thunder", NBA, "Oklahoma City"),
+        (1229, "Boston Celtics", "basketball_nba_summer_league", "Boston"),
+        (1230, "Boston College Eagles", "basketball_wncaab", "Iowa"),
+        (1231, "Boston College Eagles", NCAAF, "Boston College"),
+        (1232, "Oakland Golden Grizzlies", "basketball_wncaab", "Oakland"),
+        (1233, "Santa Clara", "soccer_portugal_primeira_liga", None),
+        (1234, "Washington State Cougars", "basketball_wncaab", "Washington State"),
+        (1235, "Washington Huskies", "basketball_wncaab", "Washington"),
+        (1236, "Boston Cannons", "lacrosse_pll", "Boston"),
+        (1237, "Philadelphia Union", "soccer_concacaf_leagues_cup", "Philadelphia"),
+        (1238, "Los Angeles FC", "soccer_concacaf_leagues_cup", "Los Angeles"),
+        (1239, "Sporting Kansas City", "soccer_concacaf_leagues_cup", "Kansas City"),
         *((tid, *club) for tid, club in enumerate(
             (club for region in _CITY_CLUBS.values() for club in region), start=1300
         )),
@@ -526,6 +537,7 @@ async def test_issue_and_additional_onboarding_queries_return_real_clubs(
         assert len(names) == len(wanted) and set(names) == wanted, (
             city, sorted(names), sorted(wanted)
         )
+        assert all(row["id"] not in range(1229, 1240) for row in response.json()), city
 
 
 async def test_prefixes_keep_other_clubs_separate_and_group_confirmed_spurs_variants(
