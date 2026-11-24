@@ -382,16 +382,19 @@ def test_342b_no_live_game_keeps_first_ten_identical_to_before() -> None:
     seating = seat_opening(mixed, now=NFL_NOW)
     assert seating.status == COMPLIANT
 
+    # 353: A: legacy roundups/themes now stamp visual_form ("benchmark_strip" vs
+    # "theme_compact_rows"), so the opening form cap promotes the distinct-form
+    # AI theme card to index 1 instead of packing four benchmark_strip roundups ahead of it.
     top10_ids = [(c.get("type"), (c.get("data") or {}).get("id")) for c in seating.items[:10]]
     assert top10_ids == [
         ("bundle", "roundup:machinery-elon-musk-side-quests"),
-        ("bundle", "roundup:machinery-2026-summed-up"),
+        ("bundle", "theme:story:ai:1006-1007"),
         ("bundle", "roundup:machinery-google-year-in-search-2026"),
+        ("bundle", "roundup:machinery-2026-summed-up"),
         ("futures", 68948432),
+        ("bundle", "roundup:machinery-long-shots"),
         ("bundle", "roundup:machinery-next-james-bond"),
         ("bundle", "roundup:cfp-picture"),
-        ("bundle", "theme:story:ai:1006-1007"),
-        ("bundle", "roundup:machinery-long-shots"),
         ("bundle", "theme:story:ipo_markets:1009-1010"),
         ("bundle", "theme:story:middle_east_conflict:1011-1012"),
     ]
