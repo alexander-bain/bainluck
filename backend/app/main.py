@@ -59,8 +59,7 @@ if sentry_dsn:
         environment=os.getenv("SENTRY_ENVIRONMENT", "production"),
         release=os.getenv("HEROKU_SLUG_COMMIT"),
         traces_sample_rate=0.1,
-        profile_session_sample_rate=0.1,
-        profile_lifecycle="trace",
+        # Continuous profiling stays OFF until Alex's explicit pricing ruling (#13541).
         data_collection=SENTRY_NO_PII_DATA_COLLECTION,
         before_send=_before_send,
     )

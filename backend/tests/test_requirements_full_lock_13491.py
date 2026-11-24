@@ -3,9 +3,10 @@
 ``#13494`` (351: A) pinned the 33 direct declarations in ``backend/requirements.txt``.
 Follow-up ``#13491`` locks all 106 packages at the freshly resolved versions upgraded
 from the ``41de6f5c`` (``v6586``) production baseline (``anthropic 2.13.0``,
-``google-cloud-storage 3.17.2``, ``openai 3.58.0``, ``PyYAML 6.0.4``, ``redis 8.2.0``,
-and ``sentry-sdk 3.0.0``) so future ``pip install -r`` runs on Heroku and CI resolve
-the exact same 106-package graph without unannounced drift.
+``google-cloud-storage 3.17.2``, ``openai 3.58.0``, ``PyYAML 6.0.4``,
+and ``sentry-sdk 3.0.0``, with ``redis`` held at ``8.1.0`` per review) so future
+``pip install -r`` runs on Heroku and CI resolve the exact same 106-package graph
+without unannounced drift.
 """
 
 from __future__ import annotations
@@ -108,7 +109,7 @@ EXPECTED_41DE6F5C_LOCK: dict[str, str] = {
     "python-json-logger": "4.2.0",
     "pytokens": "0.4.1",
     "pyyaml": "6.0.4",
-    "redis": "8.2.0",
+    "redis": "8.1.0",
     "requests": "2.34.2",
     "ruff": "0.17.6",
     "sentry-sdk": "3.0.0",

@@ -828,10 +828,13 @@ class SentryVolumeFilter:
         self, event: dict[str, Any], hint: dict[str, Any] | None = None
     ) -> dict[str, Any] | None:
         try:
-            return self._decide(event, hint)
+            decision = self._decide(event, hint)
         except Exception:  # never let the filter break error reporting
             logger.exception("sentry_filter failed open")
-            return event
+            decision = event
+        if decision is None:
+            return None
+        return _scrub_event_pii(decision)
 
     def _decide(
         self, event: dict[str, Any], hint: dict[str, Any] | None
@@ -916,14 +919,136 @@ def install_logger_ignores() -> tuple[str, ...]:
 
 
 #: Explicit zero-PII posture replacing removed ``send_default_pii=False`` in sentry-sdk 3.x.
-#: Without ``data_collection``, sentry-sdk 3.0.0 defaults to collecting user_info, cookies,
-#: request/response bodies, and gen_ai inputs/outputs.
+#: Without explicit ``data_collection``, sentry-sdk 3.0.0 defaults to collecting user_info,
+#: cookies, http_headers, http_bodies, url_query_params, gen_ai inputs/outputs, queues, and
+#: stack_frame_variables. Disable every PII-bearing category explicitly at collection time AND
+#: run :func:`_scrub_event_pii` inside ``before_send`` as defense-in-depth (#13491).
 SENTRY_NO_PII_DATA_COLLECTION: dict[str, Any] = {
     "user_info": False,
     "cookies": {"mode": "off"},
+    "http_headers": {"request": {"mode": "off"}},
     "http_bodies": [],
+    "url_query_params": {"mode": "off"},
+    "graphql": {"document": False, "variables": False},
     "gen_ai": {"inputs": False, "outputs": False},
+    "mcp": {"inputs": False, "outputs": False},
+    "database_query_data": False,
+    "queues": False,
+    "stack_frame_variables": False,
 }
+
+_SENSITIVE_EVENT_KEYS = frozenset({
+    "cookie",
+    "cookies",
+    "authorization",
+    "http_authorization",
+    "proxy_authorization",
+    "http_proxy_authorization",
+    "http_cookie",
+    "set-cookie",
+    "x-forwarded-for",
+    "x_forwarded_for",
+    "http_x_forwarded_for",
+    "x-real-ip",
+    "x_real_ip",
+    "http_x_real_ip",
+    "remote_addr",
+    "client_ip",
+    "ip_address",
+    "query_string",
+    "body",
+    "json_body",
+    "request_body",
+    "email",
+    "password",
+    "passwd",
+    "secret",
+    "token",
+    "jwt",
+    "session_id",
+    "args",
+    "kwargs",
+    "headers",
+})
+
+_USER_PII_KEYS = ("ip_address", "email", "username", "id", "name")
+
+
+def _strip_query_from_url(value: Any) -> Any:
+    if isinstance(value, str) and "?" in value:
+        return value.split("?", 1)[0]
+    return value
+
+
+def _scrub_mapping_in_place(mapping: Any, *, depth: int = 0) -> None:
+    if depth > 8 or not isinstance(mapping, dict):
+        return
+    for key in list(mapping.keys()):
+        key_l = str(key).strip().lower()
+        if key_l in _SENSITIVE_EVENT_KEYS:
+            mapping.pop(key, None)
+            continue
+        val = mapping.get(key)
+        if isinstance(val, dict):
+            _scrub_mapping_in_place(val, depth=depth + 1)
+        elif isinstance(val, list):
+            for item in val:
+                if isinstance(item, dict):
+                    _scrub_mapping_in_place(item, depth=depth + 1)
+
+
+def _scrub_event_pii(event: dict[str, Any]) -> dict[str, Any]:
+    """Strip request, user, breadcrumb, and worker PII fields before transport (#13491)."""
+    try:
+        req = event.get("request")
+        if isinstance(req, dict):
+            for k in ("cookies", "headers", "data", "query_string", "inferred_content_type"):
+                req.pop(k, None)
+            if "url" in req:
+                req["url"] = _strip_query_from_url(req["url"])
+            env = req.get("env")
+            if isinstance(env, dict):
+                _scrub_mapping_in_place(env, depth=1)
+
+        user = event.get("user")
+        if isinstance(user, dict):
+            for k in _USER_PII_KEYS:
+                user.pop(k, None)
+            if not user:
+                event.pop("user", None)
+
+        crumbs = event.get("breadcrumbs")
+        crumb_list = (
+            crumbs.get("values")
+            if isinstance(crumbs, dict)
+            else (crumbs if isinstance(crumbs, list) else None)
+        )
+        if isinstance(crumb_list, list):
+            for crumb in crumb_list:
+                if isinstance(crumb, dict) and isinstance(crumb.get("data"), dict):
+                    cdata = crumb["data"]
+                    if "url" in cdata:
+                        cdata["url"] = _strip_query_from_url(cdata["url"])
+                    _scrub_mapping_in_place(cdata, depth=1)
+
+        for container_key in ("extra", "contexts"):
+            container = event.get(container_key)
+            if isinstance(container, dict):
+                _scrub_mapping_in_place(container, depth=0)
+
+        exc_block = event.get("exception")
+        if isinstance(exc_block, dict) and isinstance(exc_block.get("values"), list):
+            for exc_item in exc_block["values"]:
+                if not isinstance(exc_item, dict):
+                    continue
+                st = exc_item.get("stacktrace")
+                if isinstance(st, dict) and isinstance(st.get("frames"), list):
+                    for frame in st["frames"]:
+                        if isinstance(frame, dict):
+                            frame.pop("vars", None)
+    except Exception:  # never drop or crash an error report while scrubbing
+        logger.debug("sentry_filter PII scrub hit unexpected shape", exc_info=True)
+    return event
 
 
 def build_before_send() -> Callable[[dict, dict | None], dict | None]:

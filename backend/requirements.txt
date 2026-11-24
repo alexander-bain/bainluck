@@ -37,7 +37,8 @@ cryptography==50.0.2
 # Background Tasks
 # Keep the reviewed task-binding contract; 5.7 requires a separate upgrade.
 celery==5.6.3
-redis==8.2.0
+# Hold at 8.1.0 per #13541 review (revisit 8.2+ after two weeks of stability).
+redis==8.1.0
 
 # Rate Limiting
 limits==5.8.0

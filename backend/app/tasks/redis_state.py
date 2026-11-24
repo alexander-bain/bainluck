@@ -207,14 +207,37 @@ def _async_redis_retry():
     Matches ``_redis_retry()`` (3 attempts, equal-jitter backoff cap 1s) using
     ``redis.asyncio.retry.Retry`` directly so ``redis>=8.2`` emits no sync-to-async
     conversion warning, and skips retry sleeps on immediate ``ECONNREFUSED``.
+    Subclasses ``Retry.call_with_retry`` rather than passing ``is_retryable=`` to
+    ``__init__`` so it works identically on both pinned ``redis==8.1.0`` and ``8.2+``.
     """
     from redis.asyncio.retry import Retry as AsyncRetry
     from redis.backoff import EqualJitterBackoff
 
-    return AsyncRetry(
+    class _FailFastConnectionRefusedAsyncRetry(AsyncRetry):
+        async def call_with_retry(
+            self,
+            do,
+            fail,
+            is_retryable=None,
+            with_failure_count=False,
+            **kwargs,
+        ):
+            def _combined_is_retryable(exc: Exception) -> bool:
+                if _is_connection_refused(exc):
+                    return False
+                return True if is_retryable is None else bool(is_retryable(exc))
+
+            return await super().call_with_retry(
+                do,
+                fail,
+                is_retryable=_combined_is_retryable,
+                with_failure_count=with_failure_count,
+                **kwargs,
+            )
+
+    return _FailFastConnectionRefusedAsyncRetry(
         EqualJitterBackoff(cap=1.0, base=0.05),
         3,
-        is_retryable=lambda exc: not _is_connection_refused(exc),
     )
 
 
