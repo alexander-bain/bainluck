@@ -18,8 +18,10 @@ Strict hard bounds:
   and `captured_at < TIMESTAMPTZ '2026-11-06T00:00:00Z'`.
 - ZERO queries to `probability_publications` (zero held-out games read).
 - Read-only Postgres session (`default_transaction_read_only = on`,
-  `SET LOCAL transaction_read_only = on`, `SET LOCAL statement_timeout = '120s'`),
-  and ZERO retries on any statement timeout.
+  `SET LOCAL transaction_read_only = on`, `SET LOCAL statement_timeout = '120s'`
+  on events/win-prob and `'30s'` on odds), `1.0s` pause between batches,
+  `30-minute` max read wall clock, two-phase stratified seeded-random order,
+  partial-read scoring on stop/timeout, and ZERO retries on any statement timeout.
 """
 
 from __future__ import annotations
@@ -29,6 +31,7 @@ import asyncio
 import json
 import math
 import os
+import random
 import subprocess
 import sys
 import time
@@ -59,12 +62,26 @@ from scripts.evals.blend_replay_export import rebuild_betting  # noqa: E402
 _PT = ZoneInfo("America/Los_Angeles")
 _EARLIEST_PROD_PT = datetime(2026, 11, 23, 20, 45, 0, tzinfo=_PT)
 _PRE_NOV6_ISO = "2026-11-06T00:00:00Z"
-_STMT_TIMEOUT_S = 120
+_EVENTS_STMT_TIMEOUT_S = 120
+_WP_STMT_TIMEOUT_S = 120
+_ODDS_STMT_TIMEOUT_S = 30
+_INTER_BATCH_PAUSE_S = 1.0
+_MAX_READ_DURATION_S = 1800.0
+_NON_PM_ODDS_SAMPLE_LIMIT = 4000
 _BATCH_SIZE = 200
 _SERIES_MAX_GAP = timedelta(days=4)
 _LOG_LOSS_CLIP = 1e-15
 _BOOTSTRAP_SEED = 12108
 _BOOTSTRAP_REPLICATES = 1000
+_DB_ROLE_NOTE = "primary postgresql-globular-51563 (Heroku Standard 3 — no follower attached)"
+
+REPLAY_LIMITS: tuple[str, ...] = (
+    "1. **Unrecorded historical blends:** `probability_publications` was off before `v6185` (`2026-11-06T05:52:44Z`), so we replay today's `compute_aggregate_probability_tiered(..., \"scheduled\")` on stored snapshots rather than reading served blends.",
+    "2. **Write-time deduplication (`captured_at` vs `valid_until`):** `win_prob_snapshots` and `odds_snapshots` bump `valid_until` in place on repeated values and leave `valid_until = NULL` when a final value changed once; quiet dark periods cannot always be separated from unchanged quotes.",
+    "3. **Per-bookmaker lookback vs simultaneous poll board:** reconstruction takes each bookmaker's latest `odds_snapshots` row with `captured_at <= cutoff`, pooling books over a trailing window if individual books went quiet earlier.",
+    "4. **Tier-2 mutable fallback omitted:** `Event.espn_win_prob_home` is overwritten post-game and cannot supply historical pre-game cutoffs whenever `win_prob_snapshots(source='espn')` is absent.",
+    "5. **Pre-existing proportional de-vig & binary home-win target:** stored `odds_snapshots.home_win_probability` is already proportionally de-vigged at poll time, and `outcome = (home_score > away_score)` scores 3-way draws as `0`.",
+)
 
 HORIZON_DISPLAY_ORDER: tuple[str, ...] = (
     "start",
@@ -449,12 +466,69 @@ def score_paired_comparison(
     }
 
 
-async def read_pre_nov6_observations(db_url: str) -> dict[str, Any]:
-    """Read pre-Nov-6 events and source readings in indexed 200-event batches.
+def _stratified_seed_order(
+    events: list[dict[str, Any]], *, seed: int = _BOOTSTRAP_SEED
+) -> list[dict[str, Any]]:
+    """Order events in a seeded random order evenly spread across sport groups."""
+    if not events:
+        return []
+    rng = random.Random(seed)
+    by_group: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for ev in events:
+        by_group[str(ev["sport_group"])].append(ev)
 
-    Strict 120s statement timeout per query with ZERO retries on timeout.
+    ranked: list[tuple[float, int, int, dict[str, Any]]] = []
+    for g_idx, sg in enumerate(sorted(by_group)):
+        grp = list(by_group[sg])
+        rng.shuffle(grp)
+        n_g = len(grp)
+        for i, ev in enumerate(grp):
+            ranked.append(((i + 0.5) / n_g, g_idx, int(ev["event_id"]), ev))
+    ranked.sort(key=lambda item: (item[0], item[1], item[2]))
+    return [item[3] for item in ranked]
+
+
+def _interleave_odds_targets(
+    pm_events: list[dict[str, Any]],
+    non_pm_sample: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Interleave PM-covered events and non-PM cutoff sample proportionally."""
+    n_pm = len(pm_events)
+    n_non = len(non_pm_sample)
+    if n_pm == 0:
+        return list(non_pm_sample)
+    if n_non == 0:
+        return list(pm_events)
+    tagged: list[tuple[float, int, dict[str, Any]]] = []
+    for i, ev in enumerate(pm_events):
+        tagged.append(((i + 0.5) / n_pm, 0, ev))
+    for i, ev in enumerate(non_pm_sample):
+        tagged.append(((i + 0.5) / n_non, 1, ev))
+    tagged.sort(key=lambda item: (item[0], item[1], int(item[2]["event_id"])))
+    return [item[2] for item in tagged]
+
+
+async def read_pre_nov6_observations(
+    db_url: str,
+    *,
+    batch_pause_s: float = _INTER_BATCH_PAUSE_S,
+    odds_stmt_timeout_s: int = _ODDS_STMT_TIMEOUT_S,
+    wp_stmt_timeout_s: int = _WP_STMT_TIMEOUT_S,
+    max_read_duration_s: float = _MAX_READ_DURATION_S,
+    non_pm_sample_limit: int = _NON_PM_ODDS_SAMPLE_LIMIT,
+    db_role_note: str = _DB_ROLE_NOTE,
+    force_stop_after_odds_batches: int | None = None,
+) -> dict[str, Any]:
+    """Two-phase read of pre-Nov-6 observations with load bounds and partial-read survival.
+
+    Phase 1: win_prob_snapshots across all pre-Nov-6 completed games (stratified seeded-random).
+    Phase 2: odds_snapshots ONLY for games with >=1 Kalshi/Polymarket reading at any cutoff,
+             plus a seeded-random stratified sample of up to 4,000 remaining Phase-1 games.
+    Stops cleanly on any statement timeout (zero retries) or after `max_read_duration_s`
+    and keeps every batch read so far for scoring.
     """
     started = time.monotonic()
+    deadline = started + max_read_duration_s
     engine = create_async_engine(
         _async_db_url(db_url),
         connect_args={
@@ -464,60 +538,173 @@ async def read_pre_nov6_observations(db_url: str) -> dict[str, Any]:
         },
     )
     Session = async_sessionmaker(engine, expire_on_commit=False)
+    stopped_early = False
+    stop_reason: str | None = None
+    stop_stage: str | None = None
+
+    def _assemble_horizon_records(
+        wp_events: list[dict[str, Any]],
+        wp_by_eh: dict[tuple[int, str], dict[str, dict[str, Any]]],
+        odds_fetched_eids: set[int],
+        books_by_eb: dict[int, dict[str, tuple[list[datetime], list[dict[str, Any]]]]],
+        cutoffs_by_eid: dict[int, list[tuple[str, datetime]]],
+        cluster_by_eid: dict[int, str],
+    ) -> dict[str, dict[int, dict[str, Any]]]:
+        records_by_horizon: dict[str, dict[int, dict[str, Any]]] = {
+            h: {} for h in HORIZON_DISPLAY_ORDER
+        }
+        for ev in wp_events:
+            eid = int(ev["event_id"])
+            y = 1 if int(ev["home_score"]) > int(ev["away_score"]) else 0
+            sport_group = str(ev["sport_group"])
+            league = str(ev["league"])
+            cid = cluster_by_eid[eid]
+            has_odds = eid in odds_fetched_eids
+            ev_books = books_by_eb.get(eid, {}) if has_odds else {}
+
+            for h_name, cutoff in cutoffs_by_eid[eid]:
+                sources_payload: dict[str, dict[str, Any]] = {}
+                raw_probs: dict[str, float] = {}
+
+                for src, info in wp_by_eh.get((eid, h_name), {}).items():
+                    raw_probs[src] = info["prob"]
+                    stamp = _effective_stamp(info["captured_at"], info["valid_until"], cutoff)
+                    sources_payload[src] = {
+                        "value": info["prob"],
+                        "updated_at": stamp.isoformat(),
+                    }
+
+                if has_odds:
+                    active_books: list[dict[str, Any]] = []
+                    active_stamps: list[datetime] = []
+                    for _bm, (caps, rows_list) in ev_books.items():
+                        idx_pos = bisect_right(caps, cutoff) - 1
+                        if idx_pos >= 0:
+                            row_sel = rows_list[idx_pos]
+                            active_books.append(row_sel)
+                            active_stamps.append(
+                                _effective_stamp(
+                                    row_sel["captured_at"], row_sel["valid_until"], cutoff
+                                )
+                            )
+                    betting = rebuild_betting(active_books)
+                    if betting["value"] is not None and active_stamps:
+                        raw_probs["betting"] = float(betting["value"])
+                        sources_payload["betting"] = {
+                            "value": float(betting["value"]),
+                            "updated_at": max(active_stamps).isoformat(),
+                        }
+
+                if not raw_probs:
+                    continue
+
+                if "kalshi" in raw_probs and "polymarket" in raw_probs:
+                    raw_probs["pm_avg"] = 0.5 * (raw_probs["kalshi"] + raw_probs["polymarket"])
+
+                blend_prob: float | None = None
+                if has_odds and sources_payload:
+                    computed, _ = compute_aggregate_probability_tiered(
+                        SimpleNamespace(
+                            win_probability_sources=sources_payload,
+                            status="scheduled",
+                            espn_win_prob_home=None,
+                            opening_home_probability=None,
+                        ),
+                        "scheduled",
+                    )
+                    if computed is not None:
+                        blend_prob = float(computed)
+
+                records_by_horizon[h_name][eid] = {
+                    "event_id": eid,
+                    "cluster_id": cid,
+                    "sport_group": sport_group,
+                    "league": league,
+                    "outcome": y,
+                    "odds_read": has_odds,
+                    "n_sources_blended": len(sources_payload) if blend_prob is not None else 0,
+                    "sources": raw_probs,
+                    "blend": blend_prob,
+                }
+        return records_by_horizon
+
     try:
         async with Session() as s:
             await s.execute(text("SET LOCAL transaction_read_only = on"))
-            await s.execute(text(f"SET LOCAL statement_timeout = '{_STMT_TIMEOUT_S}s'"))
+            await s.execute(text(f"SET LOCAL statement_timeout = '{_EVENTS_STMT_TIMEOUT_S}s'"))
             try:
                 res = await s.execute(text(EVENTS_SQL))
-                event_rows = [dict(r) for r in res.mappings()]
+                raw_event_rows = [dict(r) for r in res.mappings()]
                 await s.rollback()
             except Exception as exc:  # noqa: BLE001
                 await s.rollback()
                 return {
                     "timed_out": is_statement_timeout(exc),
                     "stage": "events_scan",
-                    "statement_timeout_s": _STMT_TIMEOUT_S,
+                    "statement_timeout_s": _EVENTS_STMT_TIMEOUT_S,
                     "elapsed_s": round(time.monotonic() - started, 2),
+                    "database": db_role_note,
                     "error": str(exc),
                 }
 
-        cluster_by_eid = assign_series_clusters(event_rows)
-        records_by_horizon: dict[str, dict[int, dict[str, Any]]] = {
-            h: {} for h in HORIZON_DISPLAY_ORDER
-        }
+        cluster_by_eid = assign_series_clusters(raw_event_rows)
+        ordered_events = _stratified_seed_order(raw_event_rows, seed=_BOOTSTRAP_SEED)
+
+        cutoffs_by_eid: dict[int, list[tuple[str, datetime]]] = {}
+        for ev in ordered_events:
+            eid = int(ev["event_id"])
+            st = _as_utc(ev["start"])
+            cutoffs_by_eid[eid] = [(h_name, st - offset) for h_name, offset in HORIZONS]
+
         statements_executed = 1
-        batches_total = math.ceil(len(event_rows) / _BATCH_SIZE) if event_rows else 0
+        wp_batches_total = math.ceil(len(ordered_events) / _BATCH_SIZE) if ordered_events else 0
+        wp_batches_done = 0
+        wp_events_read: list[dict[str, Any]] = []
+        wp_by_eh: dict[tuple[int, str], dict[str, dict[str, Any]]] = defaultdict(dict)
+        pm_eids: set[int] = set()
+
+        odds_fetched_eids: set[int] = set()
+        books_by_eb: dict[int, dict[str, tuple[list[datetime], list[dict[str, Any]]]]] = defaultdict(dict)
+        odds_target_pm = 0
+        odds_target_non_pm_pool = 0
+        odds_target_non_pm_sample = 0
+        odds_batches_total = 0
+        odds_batches_done = 0
 
         async with Session() as s:
             wp_stmt = text(WIN_PROB_BATCH_SQL)
             odds_stmt = text(ODDS_BATCH_SQL)
-            for b_idx in range(batches_total):
-                batch = event_rows[b_idx * _BATCH_SIZE : (b_idx + 1) * _BATCH_SIZE]
-                eids_param = [int(ev["event_id"]) for ev in batch]
-                # Pre-index events & build horizon parameter vectors.
-                ev_map: dict[int, dict[str, Any]] = {}
+
+            # ── Phase 1: win_prob_snapshots across ALL pre-Nov-6 games ──
+            for b_idx in range(wp_batches_total):
+                if time.monotonic() >= deadline:
+                    stopped_early = True
+                    stop_reason = f"max_read_duration_{int(max_read_duration_s)}s"
+                    stop_stage = "win_prob_batch"
+                    break
+
+                if b_idx > 0 and batch_pause_s > 0:
+                    await asyncio.sleep(batch_pause_s)
+                    if time.monotonic() >= deadline:
+                        stopped_early = True
+                        stop_reason = f"max_read_duration_{int(max_read_duration_s)}s"
+                        stop_stage = "win_prob_batch"
+                        break
+
+                batch = ordered_events[b_idx * _BATCH_SIZE : (b_idx + 1) * _BATCH_SIZE]
                 u_eids: list[int] = []
                 u_cutoffs: list[datetime] = []
                 u_horizons: list[str] = []
-                cutoffs_by_eid: dict[int, list[tuple[str, datetime]]] = {}
                 for ev in batch:
                     eid = int(ev["event_id"])
-                    ev_map[eid] = ev
-                    st = _as_utc(ev["start"])
-                    c_list: list[tuple[str, datetime]] = []
-                    for h_name, offset in HORIZONS:
-                        cutoff = st - offset
+                    for h_name, cutoff in cutoffs_by_eid[eid]:
                         u_eids.append(eid)
                         u_cutoffs.append(cutoff)
                         u_horizons.append(h_name)
-                        c_list.append((h_name, cutoff))
-                    cutoffs_by_eid[eid] = c_list
 
-                # Query 2: WIN_PROB_BATCH_SQL
                 await s.rollback()
                 await s.execute(text("SET LOCAL transaction_read_only = on"))
-                await s.execute(text(f"SET LOCAL statement_timeout = '{_STMT_TIMEOUT_S}s'"))
+                await s.execute(text(f"SET LOCAL statement_timeout = '{wp_stmt_timeout_s}s'"))
                 try:
                     wp_res = await s.execute(
                         wp_stmt,
@@ -528,41 +715,17 @@ async def read_pre_nov6_observations(db_url: str) -> dict[str, Any]:
                     await s.rollback()
                 except Exception as exc:  # noqa: BLE001
                     await s.rollback()
-                    return {
-                        "timed_out": is_statement_timeout(exc),
-                        "stage": "win_prob_batch",
-                        "batch_index": b_idx,
-                        "batches_total": batches_total,
-                        "statement_timeout_s": _STMT_TIMEOUT_S,
-                        "events_total": len(event_rows),
-                        "elapsed_s": round(time.monotonic() - started, 2),
-                        "error": str(exc),
-                    }
+                    stopped_early = True
+                    stop_reason = (
+                        f"statement_timeout_{wp_stmt_timeout_s}s"
+                        if is_statement_timeout(exc)
+                        else f"error:{type(exc).__name__}"
+                    )
+                    stop_stage = "win_prob_batch"
+                    break
 
-                # Query 3: ODDS_BATCH_SQL
-                await s.rollback()
-                await s.execute(text("SET LOCAL transaction_read_only = on"))
-                await s.execute(text(f"SET LOCAL statement_timeout = '{_STMT_TIMEOUT_S}s'"))
-                try:
-                    odds_res = await s.execute(odds_stmt, {"event_ids": eids_param})
-                    odds_rows = odds_res.mappings().all()
-                    statements_executed += 1
-                    await s.rollback()
-                except Exception as exc:  # noqa: BLE001
-                    await s.rollback()
-                    return {
-                        "timed_out": is_statement_timeout(exc),
-                        "stage": "odds_batch",
-                        "batch_index": b_idx,
-                        "batches_total": batches_total,
-                        "statement_timeout_s": _STMT_TIMEOUT_S,
-                        "events_total": len(event_rows),
-                        "elapsed_s": round(time.monotonic() - started, 2),
-                        "error": str(exc),
-                    }
-
-                # Assemble per-(event, horizon) snapshot maps.
-                wp_by_eh: dict[tuple[int, str], dict[str, dict[str, Any]]] = defaultdict(dict)
+                wp_batches_done += 1
+                wp_events_read.extend(batch)
                 for r in wp_rows:
                     eid = int(r["event_id"])
                     h_name = str(r["horizon"])
@@ -571,109 +734,122 @@ async def read_pre_nov6_observations(db_url: str) -> dict[str, Any]:
                     if prob is None:
                         continue
                     key_src = "mlb" if src == "fangraphs" else src
-                    # Prefer explicit 'mlb' over legacy 'fangraphs' if both exist.
                     if src == "fangraphs" and "mlb" in wp_by_eh[(eid, h_name)]:
                         continue
+                    if key_src in ("kalshi", "polymarket"):
+                        pm_eids.add(eid)
                     wp_by_eh[(eid, h_name)][key_src] = {
                         "prob": prob,
                         "captured_at": _as_utc(r["captured_at"]),
                         "valid_until": _as_utc(r["valid_until"]) if r["valid_until"] else None,
                     }
 
-                # Group odds rows by (event_id, bookmaker) sorted by (captured_at, id).
-                books_by_eb: dict[int, dict[str, tuple[list[datetime], list[dict[str, Any]]]]] = defaultdict(dict)
-                for r in odds_rows:
-                    eid = int(r["event_id"])
-                    bm = str(r["bookmaker"])
-                    cap = _as_utc(r["captured_at"])
-                    entry = books_by_eb[eid].get(bm)
-                    if entry is None:
-                        entry = ([], [])
-                        books_by_eb[eid][bm] = entry
-                    entry[0].append(cap)
-                    entry[1].append(
-                        {
-                            "home_win_probability": float(r["home_win_probability"]),
-                            "captured_at": cap,
-                            "valid_until": _as_utc(r["valid_until"]) if r["valid_until"] else None,
-                        }
-                    )
+            # ── Phase 2: odds_snapshots ONLY for PM-covered games + seeded-random 4,000 non-PM games ──
+            if not stopped_early and wp_events_read:
+                pm_events = [ev for ev in wp_events_read if int(ev["event_id"]) in pm_eids]
+                non_pm_pool = [ev for ev in wp_events_read if int(ev["event_id"]) not in pm_eids]
+                non_pm_strat = _stratified_seed_order(non_pm_pool, seed=_BOOTSTRAP_SEED + 1)
+                non_pm_sample = non_pm_strat[: min(non_pm_sample_limit, len(non_pm_strat))]
+                pm_strat = _stratified_seed_order(pm_events, seed=_BOOTSTRAP_SEED + 2)
+                odds_targets = _interleave_odds_targets(pm_strat, non_pm_sample)
 
-                for ev in batch:
-                    eid = int(ev["event_id"])
-                    y = 1 if int(ev["home_score"]) > int(ev["away_score"]) else 0
-                    sport_group = str(ev["sport_group"])
-                    league = str(ev["league"])
-                    cid = cluster_by_eid[eid]
-                    ev_books = books_by_eb.get(eid, {})
+                odds_target_pm = len(pm_strat)
+                odds_target_non_pm_pool = len(non_pm_pool)
+                odds_target_non_pm_sample = len(non_pm_sample)
+                odds_batches_total = math.ceil(len(odds_targets) / _BATCH_SIZE) if odds_targets else 0
 
-                    for h_name, cutoff in cutoffs_by_eid[eid]:
-                        sources_payload: dict[str, dict[str, Any]] = {}
-                        raw_probs: dict[str, float] = {}
+                for b_idx in range(odds_batches_total):
+                    if force_stop_after_odds_batches is not None and b_idx >= force_stop_after_odds_batches:
+                        stopped_early = True
+                        stop_reason = f"simulated_stop_after_{force_stop_after_odds_batches}_odds_batches"
+                        stop_stage = "odds_batch"
+                        break
+                    if time.monotonic() >= deadline:
+                        stopped_early = True
+                        stop_reason = f"max_read_duration_{int(max_read_duration_s)}s"
+                        stop_stage = "odds_batch"
+                        break
 
-                        for src, info in wp_by_eh.get((eid, h_name), {}).items():
-                            raw_probs[src] = info["prob"]
-                            stamp = _effective_stamp(info["captured_at"], info["valid_until"], cutoff)
-                            sources_payload[src] = {
-                                "value": info["prob"],
-                                "updated_at": stamp.isoformat(),
-                            }
+                    if batch_pause_s > 0:
+                        await asyncio.sleep(batch_pause_s)
+                        if time.monotonic() >= deadline:
+                            stopped_early = True
+                            stop_reason = f"max_read_duration_{int(max_read_duration_s)}s"
+                            stop_stage = "odds_batch"
+                            break
 
-                        # Reconstruct `betting` through producer's rebuild_betting() rule.
-                        active_books: list[dict[str, Any]] = []
-                        active_stamps: list[datetime] = []
-                        for _bm, (caps, rows_list) in ev_books.items():
-                            idx_pos = bisect_right(caps, cutoff) - 1
-                            if idx_pos >= 0:
-                                row_sel = rows_list[idx_pos]
-                                active_books.append(row_sel)
-                                active_stamps.append(
-                                    _effective_stamp(row_sel["captured_at"], row_sel["valid_until"], cutoff)
-                                )
-                        betting = rebuild_betting(active_books)
-                        if betting["value"] is not None and active_stamps:
-                            raw_probs["betting"] = float(betting["value"])
-                            sources_payload["betting"] = {
-                                "value": float(betting["value"]),
-                                "updated_at": max(active_stamps).isoformat(),
-                            }
-
-                        if not sources_payload:
-                            continue
-
-                        if "kalshi" in raw_probs and "polymarket" in raw_probs:
-                            raw_probs["pm_avg"] = 0.5 * (raw_probs["kalshi"] + raw_probs["polymarket"])
-
-                        blend_prob, _ = compute_aggregate_probability_tiered(
-                            SimpleNamespace(
-                                win_probability_sources=sources_payload,
-                                status="scheduled",
-                                espn_win_prob_home=None,
-                                opening_home_probability=None,
-                            ),
-                            "scheduled",
+                    batch = odds_targets[b_idx * _BATCH_SIZE : (b_idx + 1) * _BATCH_SIZE]
+                    eids_param = [int(ev["event_id"]) for ev in batch]
+                    await s.rollback()
+                    await s.execute(text("SET LOCAL transaction_read_only = on"))
+                    await s.execute(text(f"SET LOCAL statement_timeout = '{odds_stmt_timeout_s}s'"))
+                    try:
+                        odds_res = await s.execute(odds_stmt, {"event_ids": eids_param})
+                        odds_rows = odds_res.mappings().all()
+                        statements_executed += 1
+                        await s.rollback()
+                    except Exception as exc:  # noqa: BLE001
+                        await s.rollback()
+                        stopped_early = True
+                        stop_reason = (
+                            f"statement_timeout_{odds_stmt_timeout_s}s"
+                            if is_statement_timeout(exc)
+                            else f"error:{type(exc).__name__}"
                         )
-                        if blend_prob is None:
-                            continue
+                        stop_stage = "odds_batch"
+                        break
 
-                        records_by_horizon[h_name][eid] = {
-                            "event_id": eid,
-                            "cluster_id": cid,
-                            "sport_group": sport_group,
-                            "league": league,
-                            "outcome": y,
-                            "n_sources_blended": len(sources_payload),
-                            "sources": raw_probs,
-                            "blend": float(blend_prob),
-                        }
+                    odds_batches_done += 1
+                    odds_fetched_eids.update(eids_param)
+                    for r in odds_rows:
+                        eid = int(r["event_id"])
+                        bm = str(r["bookmaker"])
+                        cap = _as_utc(r["captured_at"])
+                        entry = books_by_eb[eid].get(bm)
+                        if entry is None:
+                            entry = ([], [])
+                            books_by_eb[eid][bm] = entry
+                        entry[0].append(cap)
+                        entry[1].append(
+                            {
+                                "home_win_probability": float(r["home_win_probability"]),
+                                "captured_at": cap,
+                                "valid_until": _as_utc(r["valid_until"]) if r["valid_until"] else None,
+                            }
+                        )
 
+        records_by_horizon = _assemble_horizon_records(
+            wp_events_read,
+            wp_by_eh,
+            odds_fetched_eids,
+            books_by_eb,
+            cutoffs_by_eid,
+            cluster_by_eid,
+        )
         return {
-            "timed_out": False,
+            "timed_out": stopped_early and (stop_reason or "").startswith("statement_timeout"),
+            "stopped_early": stopped_early,
+            "stop_reason": stop_reason,
+            "stop_stage": stop_stage,
+            "database": db_role_note,
             "ceiling": _PRE_NOV6_ISO,
-            "statement_timeout_s": _STMT_TIMEOUT_S,
-            "events_read": len(event_rows),
-            "clusters_read": len(set(cluster_by_eid.values())),
-            "batches_total": batches_total,
+            "wp_statement_timeout_s": wp_stmt_timeout_s,
+            "odds_statement_timeout_s": odds_stmt_timeout_s,
+            "batch_pause_s": batch_pause_s,
+            "max_read_duration_s": max_read_duration_s,
+            "events_total": len(ordered_events),
+            "wp_events_read": len(wp_events_read),
+            "wp_batches_done": wp_batches_done,
+            "wp_batches_total": wp_batches_total,
+            "odds_target_pm": odds_target_pm,
+            "odds_target_non_pm_pool": odds_target_non_pm_pool,
+            "odds_target_non_pm_sample": odds_target_non_pm_sample,
+            "odds_events_read": len(odds_fetched_eids),
+            "odds_batches_done": odds_batches_done,
+            "odds_batches_total": odds_batches_total,
+            "events_read": len(wp_events_read),
+            "clusters_read": len({cluster_by_eid[int(ev["event_id"])] for ev in wp_events_read}),
+            "batches_total": wp_batches_total + odds_batches_total,
             "statements_executed": statements_executed,
             "elapsed_s": round(time.monotonic() - started, 2),
             "records_by_horizon": records_by_horizon,
@@ -685,7 +861,11 @@ async def read_pre_nov6_observations(db_url: str) -> dict[str, Any]:
 def _build_pairwise_and_common(
     records: list[dict[str, Any]], *, multi_only: bool
 ) -> dict[str, Any]:
-    pool = [r for r in records if (not multi_only or r["n_sources_blended"] >= 2)]
+    pool = [
+        r
+        for r in records
+        if r["blend"] is not None and (not multi_only or r["n_sources_blended"] >= 2)
+    ]
     pairwise: dict[str, dict[str, Any]] = {}
     for comp in COMPARATORS:
         pairs = [
@@ -849,7 +1029,25 @@ def compute_analysis_report(obs: dict[str, Any]) -> dict[str, Any]:
 
     return {
         "meta": {
+            "database": obs["database"],
+            "stopped_early": obs["stopped_early"],
+            "stop_reason": obs["stop_reason"],
+            "stop_stage": obs["stop_stage"],
             "ceiling": obs["ceiling"],
+            "wp_statement_timeout_s": obs["wp_statement_timeout_s"],
+            "odds_statement_timeout_s": obs["odds_statement_timeout_s"],
+            "batch_pause_s": obs["batch_pause_s"],
+            "max_read_duration_s": obs["max_read_duration_s"],
+            "events_total": obs["events_total"],
+            "wp_events_read": obs["wp_events_read"],
+            "wp_batches_done": obs["wp_batches_done"],
+            "wp_batches_total": obs["wp_batches_total"],
+            "odds_target_pm": obs["odds_target_pm"],
+            "odds_target_non_pm_pool": obs["odds_target_non_pm_pool"],
+            "odds_target_non_pm_sample": obs["odds_target_non_pm_sample"],
+            "odds_events_read": obs["odds_events_read"],
+            "odds_batches_done": obs["odds_batches_done"],
+            "odds_batches_total": obs["odds_batches_total"],
             "events_read": obs["events_read"],
             "clusters_read": obs["clusters_read"],
             "batches_total": obs["batches_total"],
@@ -875,14 +1073,21 @@ def _fmt_val_ci(val: float | None, ci: list[float] | None, *, fmt: str, unit: st
 
 
 def format_markdown_summary(report: dict[str, Any]) -> str:
-    """Render concise Markdown tables for Items 1 & 2."""
+    """Render concise Markdown tables for Items 1 & 2 with DB, counts, stop state, and replay limits."""
     m = report["meta"]
+    stop_line = (
+        f"PARTIAL STOP (`{m['stop_stage']}` / `{m['stop_reason']}`): scored `{m['wp_events_read']}/{m['events_total']}` win-prob games and `{m['odds_events_read']}` odds+blend games"
+        if m["stopped_early"]
+        else f"COMPLETE: `{m['wp_events_read']}/{m['events_total']}` win-prob games and `{m['odds_events_read']}` odds+blend games"
+    )
     lines = [
-        f"**Pre-Nov-6 Scope:** `events_read={m['events_read']}`, `clusters={m['clusters_read']}`, "
-        f"`statements={m['statements_executed']}`, `elapsed={m['elapsed_s']}s`, "
-        f"`ceiling < {m['ceiling']}`, `95% cluster bootstrap (seed={m['bootstrap_seed']}, B={m['bootstrap_replicates']})`",
+        f"**Database Read:** `{m['database']}`",
+        f"**Run Coverage & Bounds:** {stop_line} · `odds_target_pm={m['odds_target_pm']}` + `odds_target_non_pm_sample={m['odds_target_non_pm_sample']}` (from `{m['odds_target_non_pm_pool']}` non-PM games) · `wp_batches={m['wp_batches_done']}/{m['wp_batches_total']}` · `odds_batches={m['odds_batches_done']}/{m['odds_batches_total']}` · `pause={m['batch_pause_s']}s` · `timeouts=120s wp / {m['odds_statement_timeout_s']}s odds` · `cap={int(m['max_read_duration_s'])}s` · `elapsed={m['elapsed_s']}s` · `ceiling < {m['ceiling']}`",
         "",
-        "### Item 1 & Item 2 — Paired Log Loss (first) & Typical Miss / ECE (second), Multi-Source Blended Games (`>= 2` sources)",
+        "### Replay Limits (Section 3 — kept at top)",
+        *REPLAY_LIMITS,
+        "",
+        "### Item 1 & Item 2 — Paired Log Loss (first) & Typical Miss / ECE (second), Multi-Source Blended Games (`>= 2` sources, `odds_read` games)",
     ]
 
     for h_name in HORIZON_DISPLAY_ORDER:
@@ -983,9 +1188,8 @@ async def _run_self_test() -> None:
                         "(3, 'soccer_epl', 'EPL', 'Soccer', true)"
                     )
                 )
-                # 6 allowed pre-Nov-6 games across 3 sports + 3 Nov-6 ceiling controls
+                # Seed 6 PM games (3 NBA + 2 MLB + 1 EPL) + 3 non-PM pre-Nov-6 games + 3 Nov-6 excluded controls
                 events_spec = [
-                    # NBA 2-game series + standalone NBA
                     (71001, 1, "st-1", "Team Alpha", "Team Beta",
                      datetime(2026, 10, 20, 20, 0, tzinfo=timezone.utc),
                      datetime(2026, 10, 20, 22, 30, tzinfo=timezone.utc), 110, 104),
@@ -995,26 +1199,31 @@ async def _run_self_test() -> None:
                     (71003, 1, "st-3", "Team Gamma", "Team Delta",
                      datetime(2026, 10, 28, 20, 0, tzinfo=timezone.utc),
                      datetime(2026, 10, 28, 22, 30, tzinfo=timezone.utc), 115, 102),
-                    # MLB 2-game series (tests `mlb` source + `stat_model`)
                     (71004, 2, "st-4", "Clubs North", "Clubs South",
                      datetime(2026, 10, 10, 19, 0, tzinfo=timezone.utc),
                      datetime(2026, 10, 10, 22, 15, tzinfo=timezone.utc), 5, 2),
                     (71005, 2, "st-5", "Clubs South", "Clubs North",
                      datetime(2026, 10, 11, 19, 0, tzinfo=timezone.utc),
                      datetime(2026, 10, 11, 22, 15, tzinfo=timezone.utc), 1, 4),
-                    # Soccer EPL
                     (71006, 3, "st-6", "City FC", "United FC",
                      datetime(2026, 10, 18, 15, 0, tzinfo=timezone.utc),
                      datetime(2026, 10, 18, 17, 0, tzinfo=timezone.utc), 2, 0),
-                    # Nov-6 exclusion control 1: commence_time == 2026-11-06T00:00:00Z
+                    # 3 non-PM pre-Nov-6 games (tests non_pm sampling cap!)
+                    (71007, 1, "nonpm-1", "NonPM A", "NonPM B",
+                     datetime(2026, 10, 15, 20, 0, tzinfo=timezone.utc),
+                     datetime(2026, 10, 15, 22, 30, tzinfo=timezone.utc), 108, 101),
+                    (71008, 2, "nonpm-2", "NonPM C", "NonPM D",
+                     datetime(2026, 10, 16, 19, 0, tzinfo=timezone.utc),
+                     datetime(2026, 10, 16, 22, 0, tzinfo=timezone.utc), 6, 3),
+                    (71009, 3, "nonpm-3", "NonPM E", "NonPM F",
+                     datetime(2026, 10, 17, 15, 0, tzinfo=timezone.utc),
+                     datetime(2026, 10, 17, 17, 0, tzinfo=timezone.utc), 3, 1),
                     (71901, 1, "ex-start", "Holdout A", "Holdout B",
                      datetime(2026, 11, 6, 0, 0, tzinfo=timezone.utc),
                      datetime(2026, 11, 6, 2, 30, tzinfo=timezone.utc), 100, 99),
-                    # Nov-6 exclusion control 2: commenced Nov 5, completed_at == 2026-11-06T00:00:00Z
                     (71902, 1, "ex-comp", "Holdout C", "Holdout D",
                      datetime(2026, 11, 5, 22, 0, tzinfo=timezone.utc),
                      datetime(2026, 11, 6, 0, 0, tzinfo=timezone.utc), 105, 97),
-                    # Nov-6 exclusion control 3: commenced/completed Nov 5, score_observed_at == Nov 6
                     (71903, 1, "ex-obs", "Holdout E", "Holdout F",
                      datetime(2026, 11, 5, 19, 0, tzinfo=timezone.utc),
                      datetime(2026, 11, 5, 21, 30, tzinfo=timezone.utc), 101, 103),
@@ -1059,10 +1268,13 @@ async def _run_self_test() -> None:
                             )
                         srcs = [
                             ("espn", round(base - 0.04 + shift, 4)),
-                            ("kalshi", round(base + 0.02 + shift, 4)),
-                            ("polymarket", round(base - 0.02 + shift, 4)),
                             ("stat_model", round(base - 0.01 + shift, 4)),
                         ]
+                        if eid not in (71007, 71008, 71009):
+                            srcs.extend([
+                                ("kalshi", round(base + 0.02 + shift, 4)),
+                                ("polymarket", round(base - 0.02 + shift, 4)),
+                            ])
                         if sid == 2:
                             srcs.append(("mlb", round(base + 0.01 + shift, 4)))
                         for src_name, p_val in srcs:
@@ -1080,31 +1292,46 @@ async def _run_self_test() -> None:
 
     try:
         await _seed()
-        obs = await read_pre_nov6_observations(db_url)
-        assert obs["timed_out"] is False, obs
-        # All 3 Nov-6 control events (71901, 71902, 71903) MUST be excluded -> 6 events read.
-        assert obs["events_read"] == 6, obs
-        assert obs["clusters_read"] == 4, obs  # 2-game NBA series + 1 NBA + 2-game MLB series + 1 EPL
+        # Verify full two-phase run with non_pm_sample_limit=2 (out of 3 non-PM games -> 6 + 2 = 8 odds games!)
+        obs = await read_pre_nov6_observations(
+            db_url,
+            batch_pause_s=0.0,
+            non_pm_sample_limit=2,
+        )
+        assert obs["stopped_early"] is False, obs
+        assert obs["events_read"] == 9, obs
+        assert obs["odds_target_pm"] == 6 and obs["odds_target_non_pm_sample"] == 2 and obs["odds_events_read"] == 8, obs
+        # One game without odds read must have blend=None (never a fake no-books blend)
+        no_odds = [r for r in obs["records_by_horizon"]["start"].values() if not r["odds_read"]]
+        assert len(no_odds) == 1 and no_odds[0]["blend"] is None, no_odds
         report = compute_analysis_report(obs)
         start_pw = report["horizons"]["start"]["overall"]["multi_source"]["pairwise"]
-        for comp in COMPARATORS:
-            if comp == "mlb":
-                assert start_pw[comp]["n_games"] == 2
-            else:
-                assert start_pw[comp]["n_games"] == 6
-            assert start_pw[comp]["a"]["log_loss"] is not None
-            assert start_pw[comp]["b"]["log_loss"] is not None
+        assert start_pw["kalshi"]["n_games"] == 6
+        assert start_pw["espn"]["n_games"] == 8
         md = format_markdown_summary(report)
-        assert "Sportsbooks" in md and "MLB Model" in md
+        assert "postgresql-globular-51563" in md and "Replay Limits" in md
+
+        # Verify early stop keeps batches already read and scores cleanly
+        obs_part = await read_pre_nov6_observations(
+            db_url,
+            batch_pause_s=0.0,
+            non_pm_sample_limit=2,
+            force_stop_after_odds_batches=0,
+        )
+        assert obs_part["stopped_early"] is True and obs_part["wp_events_read"] == 9
+        rep_part = compute_analysis_report(obs_part)
+        assert "PARTIAL STOP" in format_markdown_summary(rep_part)
         print(
             json.dumps(
                 {
                     "self_test": "PASSED",
                     "events_read": obs["events_read"],
                     "nov6_controls_excluded": 3,
-                    "clusters_read": obs["clusters_read"],
-                    "start_n_events": report["horizons"]["start"]["n_events"],
-                    "cutoff_pairs_checked": list(report["cutoff_gaps"]["overall"].keys()),
+                    "odds_target_pm": obs["odds_target_pm"],
+                    "odds_target_non_pm_pool": obs["odds_target_non_pm_pool"],
+                    "odds_target_non_pm_sample": obs["odds_target_non_pm_sample"],
+                    "odds_events_read": obs["odds_events_read"],
+                    "partial_stop_verified": True,
                 },
                 indent=2,
             )
@@ -1152,7 +1379,7 @@ def main() -> int:
 
     url = os.environ["DATABASE_URL"]
     obs = asyncio.run(read_pre_nov6_observations(url))
-    if obs.get("timed_out") or "records_by_horizon" not in obs:
+    if "records_by_horizon" not in obs or obs.get("wp_events_read", 0) == 0:
         out = {k: v for k, v in obs.items() if k != "records_by_horizon"}
         print(json.dumps(out, indent=2, default=str))
         return 1
