@@ -6,6 +6,22 @@ import SwiftUI
 /// Light/Dark contrast floors match existing native Discover cards.
 enum KitTones366B {
 
+    // MARK: - Contrast Floor Constants (WCAG AA: 4.5:1 text, 3.0:1 marks/bars)
+
+    /// Exact card, elevated, and bar-track sRGB hexes used for WCAG 2.1 verification in Light & Dark.
+    static let lightCardHex = "#FFFFFF"
+    static let lightElevatedHex = "#F5F5F7"
+    static let lightTrackHex = "#F3F4F6"
+    static let darkCardHex = "#1C1C1E"
+    static let darkElevatedHex = "#2C2C2E"
+    /// `Color.white.opacity(0.11)` over `#1C1C1E`.
+    static let darkTrackHex = "#353537"
+
+    static let lightMutedHex = "#59606D"     // 6.33:1 on #FFFFFF, 5.81:1 on #F5F5F7
+    static let darkMutedHex = "#9CA4B2"      // 6.55:1 on #1C1C1E, 5.32:1 on #2C2C2E
+    static let lightWarnHex = "#9A4D00"      // 6.11:1 on #FFFFFF, 5.61:1 on #F5F5F7
+    static let darkWarnHex = "#FBBF24"       // 9.86:1 on #1C1C1E, 8.00:1 on #2C2C2E
+
     // MARK: - Surfaces & Chrome
 
     static func cardBackground(for scheme: ColorScheme) -> Color {
@@ -32,35 +48,39 @@ enum KitTones366B {
         scheme == .dark ? DS.emerald : DS.greenReadable
     }
 
-    // MARK: - Text Tones
+    // MARK: - Text Tones (all >= 4.5:1 on card & elevated surfaces)
 
     static func textColor(for tone: KitV1Tone?, scheme: ColorScheme) -> Color {
+        Color(hex: textHex(for: tone, scheme: scheme))
+    }
+
+    static func textHex(for tone: KitV1Tone?, scheme: ColorScheme) -> String {
         switch tone ?? .primary {
         case .primary:
-            return scheme == .dark ? DS.textPrimary : DS.textPrimary
+            return scheme == .dark ? "#F3F4F6" : "#111827"
         case .secondary:
-            return DS.textSecondaryReadable
+            return scheme == .dark ? "#B0B7C3" : "#5E6370"
         case .muted:
-            return DS.textMuted
+            return scheme == .dark ? darkMutedHex : lightMutedHex
         case .accent:
-            return brandAccent(for: scheme)
+            return scheme == .dark ? "#10B981" : "#047857"
         case .warn:
-            return DS.amber
+            return scheme == .dark ? darkWarnHex : lightWarnHex
         }
     }
 
-    // MARK: - Palette c2..c6 (contrast-checked fallbacks for multi-series marks)
+    // MARK: - Palette c2..c6 (contrast-checked >= 3.0:1 against card & track surfaces)
 
-    private static let fallbackHexLight: [String] = [
+    static let fallbackHexLight: [String] = [
         "#047857", // accent
         "#005CC2", // c2 blue
         "#7C3AED", // c3 purple
-        "#D97706", // c4 amber
+        "#B45309", // c4 amber (4.56:1 on light track)
         "#0891B2", // c5 cyan
         "#DC2626", // c6 red
     ]
 
-    private static let fallbackHexDark: [String] = [
+    static let fallbackHexDark: [String] = [
         "#34D399", // accent
         "#60A5FA", // c2 blue
         "#A78BFA", // c3 purple
@@ -75,9 +95,8 @@ enum KitTones366B {
     }
 
     /// Resolves a bar or series color for Light or Dark mode:
-    /// - Uses `darkHex` verbatim on Dark mode when present and readable.
-    /// - Lightens dark raw team colors on Dark mode via `TeamTextContrast.lightenedForDarkSurface`
-    ///   so dark navy/purple hexes (`#0a2240`, `#29127a`, `#1d428a`) stay distinct on dark cards.
+    /// - Uses `darkHex` verbatim on Dark mode when present and readable against card & track.
+    /// - Adapts raw hex colors to clear `>= 3.05:1` against BOTH card and track surfaces.
     static func barColor(
         hex: String?,
         darkHex: String? = nil,
@@ -95,25 +114,62 @@ enum KitTones366B {
     ) -> String {
         if scheme == .dark {
             if let explicitDark = darkHex,
-               TeamTextContrast.readableOnSurface(explicitDark, surfaceLuminance: TeamTextContrast.darkSurfaceLuminance) {
-                return TeamTextContrast.canonicalHex(explicitDark) ?? explicitDark
+               let canonical = TeamTextContrast.canonicalHex(explicitDark) {
+                return ensureMarkContrast(canonical, scheme: .dark)
             }
             if let lightHex = hex,
                let adapted = TeamTextContrast.usableOnDarkSurface(
                    primaryHex: lightHex,
                    surfaceLuminance: TeamTextContrast.darkSurfaceLuminance
                ) {
-                return adapted
+                return ensureMarkContrast(adapted, scheme: .dark)
             }
             return seriesHex(at: fallbackIndex, scheme: .dark)
         }
         if let raw = hex, let canonical = TeamTextContrast.canonicalHex(raw) {
-            return canonical
+            return ensureMarkContrast(canonical, scheme: .light)
         }
         return seriesHex(at: fallbackIndex, scheme: .light)
     }
 
-    /// Resolves a paired two-segment split bar using the repo's hue-separation & contrast rules.
+    /// Clamps any parsed sRGB hex so its contrast against BOTH `cardBackground` and `trackBackground`
+    /// is at least `minRatio` (default `3.05:1`), preserving hue cleanly.
+    static func ensureMarkContrast(_ hex: String, scheme: ColorScheme, minRatio: Double = 3.05) -> String {
+        guard let rgb = ProbabilityBarPalette.rgb(hex) else {
+            return seriesHex(at: 0, scheme: scheme)
+        }
+        let cardHex = scheme == .dark ? darkCardHex : lightCardHex
+        let trackHex = scheme == .dark ? darkTrackHex : lightTrackHex
+        func passes(_ candidate: String) -> Bool {
+            guard let c1 = contrastRatio(candidate, against: cardHex),
+                  let c2 = contrastRatio(candidate, against: trackHex) else {
+                return false
+            }
+            return min(c1, c2) >= minRatio
+        }
+        if passes(hex) { return hex }
+        let target: (r: Double, g: Double, b: Double) = scheme == .dark ? (255, 255, 255) : (0, 0, 0)
+        for step in 1...40 {
+            let t = Double(step) / 40.0
+            let r = Int((Double(rgb.r) * (1 - t) + target.r * t).rounded())
+            let g = Int((Double(rgb.g) * (1 - t) + target.g * t).rounded())
+            let b = Int((Double(rgb.b) * (1 - t) + target.b * t).rounded())
+            let cand = String(format: "#%02X%02X%02X", min(255, max(0, r)), min(255, max(0, g)), min(255, max(0, b)))
+            if passes(cand) { return cand }
+        }
+        return seriesHex(at: 0, scheme: scheme)
+    }
+
+    static func contrastRatio(_ fgHex: String, against bgHex: String) -> Double? {
+        guard let l1 = TeamTextContrast.relativeLuminance(fgHex),
+              let l2 = TeamTextContrast.relativeLuminance(bgHex) else {
+            return nil
+        }
+        return (max(l1, l2) + 0.05) / (min(l1, l2) + 0.05)
+    }
+
+    /// Resolves a paired two-segment split bar using the repo's hue-separation & contrast rules,
+    /// flooring both sides cleanly to `>= 3.05:1` against card and track surfaces.
     static func splitBarColors(
         leftHex: String?,
         leftDarkHex: String?,
@@ -127,12 +183,15 @@ enum KitTones366B {
             return (l, r)
         }
         if let leftHex, let rightHex {
-            let pair = TeamTextContrast.surfaceColors(
+            let hexes = TeamTextContrast.surfaceColorHexes(
                 awayHex: leftHex,
                 homeHex: rightHex,
                 colorScheme: scheme
             )
-            return (left: pair.away, right: pair.home)
+            return (
+                left: Color(hex: ensureMarkContrast(hexes.away, scheme: scheme)),
+                right: Color(hex: ensureMarkContrast(hexes.home, scheme: scheme))
+            )
         }
         return (
             barColor(hex: leftHex, darkHex: leftDarkHex, fallbackIndex: 0, scheme: scheme),
@@ -159,8 +218,8 @@ enum KitTones366B {
             return TilePalette(
                 background: elevatedBackground(for: scheme),
                 border: cardBorder(for: scheme),
-                foreground: DS.textMuted,
-                secondaryForeground: DS.textMuted
+                foreground: textColor(for: .muted, scheme: scheme),
+                secondaryForeground: textColor(for: .muted, scheme: scheme)
             )
         }
         let accent = brandAccent(for: scheme)
@@ -168,14 +227,14 @@ enum KitTones366B {
             return TilePalette(
                 background: accent,
                 border: accent,
-                foreground: scheme == .dark ? Color.black.opacity(0.92) : .white,
-                secondaryForeground: scheme == .dark ? Color.black.opacity(0.75) : .white.opacity(0.9)
+                foreground: scheme == .dark ? Color(hex: "#0B0E11") : .white,
+                secondaryForeground: scheme == .dark ? Color(hex: "#111827") : .white
             )
         }
         if shade >= 0.3 {
             return TilePalette(
                 background: accent.opacity(scheme == .dark ? 0.24 : 0.18),
-                border: accent.opacity(0.45),
+                border: accent.opacity(0.65),
                 foreground: textColor(for: .primary, scheme: scheme),
                 secondaryForeground: textColor(for: .secondary, scheme: scheme)
             )
@@ -183,7 +242,7 @@ enum KitTones366B {
         if shade >= 0.12 {
             return TilePalette(
                 background: accent.opacity(scheme == .dark ? 0.14 : 0.10),
-                border: accent.opacity(0.30),
+                border: accent.opacity(0.45),
                 foreground: textColor(for: .primary, scheme: scheme),
                 secondaryForeground: textColor(for: .secondary, scheme: scheme)
             )
