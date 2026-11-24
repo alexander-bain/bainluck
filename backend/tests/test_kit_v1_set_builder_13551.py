@@ -412,3 +412,234 @@ def test_v4_box_office_posters_countdown_client_iso_and_zero_slug_branches() -> 
     assert "secs[1]" not in builder_src and "secs[3]" not in builder_src
     assert "mixed non-comparable questions" not in builder_src
     assert "distinct question shapes" not in builder_src
+
+
+def test_v5_yearless_deadline_market_end_date_and_market_3484764() -> None:
+    from datetime import date
+
+    # Yearless deadline is the last such calendar date on or before the market's end (#13584 v5).
+    end_dt = date(2027, 7, 1)
+    assert _parse_outcome_deadline("June 30, 2027", market_end_date=end_dt) == ((2027, 6, 30), "Jun 30 '27")
+    assert _parse_outcome_deadline("December 31", market_end_date=end_dt) == ((2026, 12, 31), "Dec 31 '26")
+    assert _parse_outcome_deadline("November 30", market_end_date=end_dt) == ((2026, 11, 30), "Nov 30 '26")
+    assert _parse_outcome_deadline("Before 2035") == ((2034, 12, 31), "before 2035")
+
+    # End-to-end dated_tiles build for market 3484764's exact three labels + companion lane
+    bundle = {
+        "type": "bundle",
+        "data": {
+            "id": "middle-east",
+            "title": "Middle East",
+            "kind": "theme",
+            "collection_ref": {"id": 99, "slug": "middle-east"},
+            "roundup": {"kicker": "WORLD", "headline": "Middle East"},
+            "items": [
+                {
+                    "type": "futures",
+                    "data": {
+                        "id": 3484764,
+                        "name": "Iran leadership change by June 30, 2027?",
+                        "resolution_date": "2027-07-01T03:59:00+00:00",
+                        "top_outcomes": [
+                            {"name": "June 30, 2027", "probability": 0.235, "rendered_percent": 24},
+                            {"name": "December 31", "probability": 0.065, "rendered_percent": 7},
+                            {"name": "November 30", "probability": 0.0085, "rendered_percent": 1},
+                        ],
+                    },
+                },
+                {
+                    "type": "futures",
+                    "data": {
+                        "id": 69603905,
+                        "name": "US–Iran Effective Ceasefire begins by November 30?",
+                        "resolution_date": "2026-12-31T20:29:00+00:00",
+                        "top_outcomes": [
+                            {"name": "December 31", "probability": 0.815},
+                            {"name": "November 30", "probability": 0.64},
+                        ],
+                    },
+                },
+            ],
+        },
+    }
+    res = build_kit_card_for_real_set(
+        bundle,
+        None,
+        now=datetime(2026, 11, 24, 9, 55, tzinfo=timezone.utc),
+        resolver=_default_art_resolver(),
+    )
+    assert res["fits"] is True
+    assert res["variant"] == "dated_tiles"
+    iran_row = res["kit_card"]["body"]["rows"][0]
+    tiles = [(c["marks"][0]["top_label"], c["marks"][0]["center_label"]) for c in iran_row["cells"]]
+    assert tiles == [("by Nov 30 '26", "1%"), ("by Dec 31 '26", "7%"), ("by Jun 30 '27", "24%")]
+
+
+def test_v5_dated_tiles_refuses_non_monotonic_lane_and_audits_reason() -> None:
+    snap = {
+        "bundles": [
+            {
+                "type": "bundle",
+                "data": {
+                    "id": "bad-dates",
+                    "title": "Bad Dates",
+                    "kind": "theme",
+                    "collection_ref": {"id": 100, "slug": "bad-dates"},
+                    "roundup": {"kicker": "WORLD", "headline": "Bad Dates"},
+                    "items": [
+                        {
+                            "type": "futures",
+                            "data": {
+                                "id": 1,
+                                "name": "Bad lane with inverted year",
+                                "resolution_date": "2027-07-01T03:59:00+00:00",
+                                "top_outcomes": [
+                                    {"name": "June 30, 2027", "probability": 0.24},
+                                    {"name": "November 30, 2027", "probability": 0.01},
+                                    {"name": "December 31, 2027", "probability": 0.07},
+                                ],
+                            },
+                        },
+                        {
+                            "type": "futures",
+                            "data": {
+                                "id": 2,
+                                "name": "One point tolerance lane",
+                                "resolution_date": "2027-12-31T20:00:00+00:00",
+                                "top_outcomes": [
+                                    {"name": "April 1, 2027", "probability": 0.62},
+                                    {"name": "July 1, 2027", "probability": 0.61},
+                                ],
+                            },
+                        },
+                    ],
+                },
+            }
+        ],
+        "containers": {},
+    }
+    report = build_real_sets_audit_report(
+        snap,
+        now=datetime(2026, 11, 24, 9, 55, tzinfo=timezone.utc),
+        resolver=_default_art_resolver(),
+    )
+    assert report["fitting_count"] == 0
+    assert report["kept_today_count"] == 1
+    assert "Non-monotonic lane" in (report["kept_today"][0]["refusal_reason"] or "")
+    lanes = report["dated_tiles_left_off"]["bad-dates"]
+    bad_lane = next(ln for ln in lanes if ln["lane"] == "Bad lane with inverted year")
+    assert bad_lane["dropped"] is True
+    assert "Non-monotonic lane" in (bad_lane.get("refusal_reason") or "")
+    assert all("non_monotonic_drop" in o["reason"] for o in bad_lane["left_off"])
+
+
+def test_v5_routes_year_only_dated_tiles_and_shared_date_countdown() -> None:
+    # Year-only Before YYYY -> dated_tiles without "by before YYYY"
+    year_only_bundle = {
+        "type": "bundle",
+        "data": {
+            "id": "roundup:science-years",
+            "title": "Unsolved Big Problems",
+            "kind": "roundup",
+            "collection_ref": {"id": 101, "slug": "machinery-unsolved-big-problems"},
+            "roundup": {
+                "kicker": "TECH · SCIENCE",
+                "headline": "Science milestones stretch across the 2030s",
+                "machinery_card": {"form_id": "benchmark_strip", "rows": []},
+            },
+            "items": [
+                {
+                    "type": "futures",
+                    "data": {
+                        "id": 9001,
+                        "name": "When will the Riemann hypothesis win the Millennium Prize?",
+                        "resolution_date": "2035-01-01T15:00:00+00:00",
+                        "top_outcomes": [
+                            {"name": "Before 2035", "probability": 0.90},
+                            {"name": "Before 2030", "probability": 0.60},
+                            {"name": "Before 2028", "probability": 0.02},
+                        ],
+                    },
+                },
+                {
+                    "type": "futures",
+                    "data": {
+                        "id": 9002,
+                        "name": "When will nuclear fusion be achieved?",
+                        "resolution_date": "2040-01-01T04:59:00+00:00",
+                        "top_outcomes": [
+                            {"name": "Before 2040", "probability": 0.84},
+                            {"name": "Before 2035", "probability": 0.64},
+                            {"name": "Before 2030", "probability": 0.39},
+                        ],
+                    },
+                },
+            ],
+        },
+    }
+    res_yr = build_kit_card_for_real_set(
+        year_only_bundle,
+        None,
+        now=datetime(2026, 11, 24, 9, 55, tzinfo=timezone.utc),
+        resolver=_default_art_resolver(),
+    )
+    assert res_yr["fits"] is True
+    assert res_yr["variant"] == "dated_tiles"
+    assert "by before" not in json.dumps(res_yr["kit_card"]).lower()
+
+    # Shared PT resolution date across >= 3 markets -> countdown with deadline_iso
+    xmas_bundle = {
+        "type": "bundle",
+        "data": {
+            "id": "roundup:white-christmas",
+            "title": "White Christmas",
+            "kind": "roundup",
+            "collection_ref": {"id": 102, "slug": "machinery-white-christmas"},
+            "roundup": {
+                "kicker": "WEATHER · CHRISTMAS",
+                "headline": "Snow on Christmas leads at 50% in Pittsburgh",
+                "machinery_card": {"form_id": "benchmark_strip", "rows": []},
+            },
+            "items": [
+                {
+                    "type": "futures",
+                    "data": {
+                        "id": 9101,
+                        "name": "Will it snow in Pittsburgh on Christmas?",
+                        "resolution_date": "2026-12-26T04:59:00+00:00",
+                        "top_outcomes": [{"name": "Above 0 inches", "probability": 0.50}],
+                    },
+                },
+                {
+                    "type": "futures",
+                    "data": {
+                        "id": 9102,
+                        "name": "Will it snow in Chicago on Christmas?",
+                        "resolution_date": "2026-12-26T05:59:00+00:00",
+                        "top_outcomes": [{"name": "Above 0 inches", "probability": 0.38}],
+                    },
+                },
+                {
+                    "type": "futures",
+                    "data": {
+                        "id": 9103,
+                        "name": "Will it snow in Seattle on Christmas?",
+                        "resolution_date": "2026-12-26T07:59:00+00:00",
+                        "top_outcomes": [{"name": "Above 0 inches", "probability": 0.10}],
+                    },
+                },
+            ],
+        },
+    }
+    res_cd = build_kit_card_for_real_set(
+        xmas_bundle,
+        None,
+        now=datetime(2026, 11, 24, 9, 55, tzinfo=timezone.utc),
+        resolver=_default_art_resolver(),
+    )
+    assert res_cd["fits"] is True
+    assert res_cd["variant"] == "countdown"
+    hdr = res_cd["kit_card"]["body"]["header_marks"]
+    assert hdr[0]["value"] == 31
+    assert hdr[0]["deadline_iso"] == "2026-12-26T04:59:00+00:00"
+    assert hdr[1]["secondary_text"] == "all of these end on Dec 25"

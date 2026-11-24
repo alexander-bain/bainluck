@@ -326,8 +326,11 @@ def _present_tense_restatement(phrase: str) -> str:
         (" begin ", " begins "),
         (" resign ", " resigns "),
         (" launch ", " launches "),
+        (" win ", " wins "),
+        (" be ", " is "),
     ):
         s = re.sub(rf"\b{bare.strip()}\b", conjugated.strip(), s, count=1)
+    s = re.sub(r"^It\s+snow(?:s)?\s+in\s+", "Snow in ", s, flags=re.IGNORECASE)
     if s.lower().startswith("a 7.0+ earthquake occurs"):
         s = "Worldwide 7.0+ earthquake"
     return s
@@ -525,7 +528,10 @@ def _row_requires_picture(
             if query == cand and pk in {"person", "team", "film"}:
                 return True, pk, None
     low = row_label.lower()
-    if any(
+    is_abstract_milestone = any(
+        tok in low for tok in ("hypothesis", "conjecture", "theorem", "millennium prize")
+    )
+    if not is_abstract_milestone and any(
         tok in low
         for tok in (
             "best actor",
@@ -1163,6 +1169,7 @@ def _parse_outcome_deadline(
     label: str,
     *,
     reference_year: int | None = None,
+    market_end_date: date | None = None,
 ) -> tuple[tuple[int, int, int], str] | None:
     s = (label or "").strip().rstrip("?").strip()
     fallback_year = reference_year if reference_year is not None else datetime.now(PT_TZ).year
@@ -1173,8 +1180,20 @@ def _parse_outcome_deadline(
     )
     if m_full:
         mon = _MONTH_NUMS[m_full.group(1).lower()]
-        day = int(m_full.group(2))
-        yr = int(m_full.group(3)) if m_full.group(3) else fallback_year
+        raw_day = int(m_full.group(2))
+        if m_full.group(3):
+            yr = int(m_full.group(3))
+            day = min(raw_day, calendar.monthrange(yr, mon)[1])
+        elif market_end_date is not None:
+            # A deadline with no year is the last such calendar date on or before the market's end (#13584).
+            yr = market_end_date.year
+            day = min(raw_day, calendar.monthrange(yr, mon)[1])
+            if date(yr, mon, day) > market_end_date:
+                yr -= 1
+                day = min(raw_day, calendar.monthrange(yr, mon)[1])
+        else:
+            yr = fallback_year
+            day = min(raw_day, calendar.monthrange(yr, mon)[1])
         return (yr, mon, day), f"{_MONTH_ABBR[mon]} {day} '{str(yr)[2:]}"
     m_mon_yr = re.match(
         r"^(?:(?:before|by|in)\s+)?(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\s+(\d{4})$",
@@ -1186,7 +1205,20 @@ def _parse_outcome_deadline(
         yr = int(m_mon_yr.group(2))
         last_day = calendar.monthrange(yr, mon)[1]
         return (yr, mon, last_day), f"{_MONTH_ABBR[mon]} '{str(yr)[2:]}"
+    m_yr = re.match(r"^(before|by|in)\s+(\d{4})$", s, re.IGNORECASE)
+    if m_yr:
+        prep = m_yr.group(1).lower()
+        yr = int(m_yr.group(2))
+        eff_yr = yr - 1 if prep == "before" else yr
+        return (eff_yr, 12, 31), f"{prep} {yr}"
     return None
+
+
+def _tile_deadline_label(col_lbl: str) -> str:
+    low = col_lbl.strip().lower()
+    if low.startswith(("before ", "by ", "in ")):
+        return col_lbl
+    return f"by {col_lbl}"
 
 
 def _select_chronological_tiles_with_peak(
@@ -1229,14 +1261,19 @@ def _try_build_dated_tiles(
     for m in markets:
         outs = m.get("top_outcomes") or []
         res_dt = _parse_iso_dt(m.get("resolution_date"))
-        ref_year = (res_dt.astimezone(PT_TZ).year if res_dt is not None else today_pt.year)
+        res_pt_date = res_dt.astimezone(PT_TZ).date() if res_dt is not None else None
+        ref_year = res_pt_date.year if res_pt_date is not None else today_pt.year
         by_col: dict[str, tuple[tuple[int, int, int], str, int]] = {}
         expired_items: list[dict[str, Any]] = []
         raw_dated_count = 0
 
         for o in outs:
             nm = str(o.get("name") or "").strip()
-            parsed = _parse_outcome_deadline(nm, reference_year=ref_year)
+            parsed = _parse_outcome_deadline(
+                nm,
+                reference_year=ref_year,
+                market_end_date=res_pt_date,
+            )
             pct = _safe_pct(o.get("probability"), o.get("rendered_percent"))
             if parsed and pct is not None:
                 raw_dated_count += 1
@@ -1256,17 +1293,52 @@ def _try_build_dated_tiles(
         ).strip(" ·-?")
         short_title = re.sub(r"\s*\(.*?\)$", "", short_title).rstrip("?").strip()
 
+        mono_refusal: str | None = None
         if len(by_col) >= 2:
+            sorted_open = sorted(by_col.items(), key=lambda kv: kv[1][0])
+            for (_p_ck, (_p_sk, p_cl, p_pct)), (_c_ck, (_c_sk, c_cl, c_pct)) in zip(
+                sorted_open, sorted_open[1:]
+            ):
+                if c_pct < p_pct - 1:
+                    p_txt = _tile_deadline_label(p_cl)
+                    c_txt = _tile_deadline_label(c_cl)
+                    mono_refusal = (
+                        f"Non-monotonic lane {short_title!r}: {c_txt} ({c_pct}%) "
+                        f"is lower than earlier {p_txt} ({p_pct}%) by > 1pt"
+                    )
+                    drop_reason = f"non_monotonic_drop ({p_txt} {p_pct}% -> {c_txt} {c_pct}%)"
+                    dropped_lanes_audit.append(
+                        {
+                            "lane": short_title,
+                            "shown": [],
+                            "left_off": list(expired_items)
+                            + [
+                                {
+                                    "outcome": _tile_deadline_label(cl),
+                                    "date": ck,
+                                    "pct": pct,
+                                    "reason": drop_reason,
+                                }
+                                for ck, (_sk, cl, pct) in sorted_open
+                            ],
+                            "dropped": True,
+                            "refusal_reason": mono_refusal,
+                        }
+                    )
+                    break
+
+        if mono_refusal is None and len(by_col) >= 2:
             dated_rows.append((short_title, by_col, expired_items))
-        elif raw_dated_count >= 2:
+        elif mono_refusal is None and raw_dated_count >= 2:
             dropped_left_off = list(expired_items) + [
-                {"outcome": f"by {cl}", "date": ck, "pct": pct, "reason": "fewer_than_2_open_deadlines"}
+                {"outcome": _tile_deadline_label(cl), "date": ck, "pct": pct, "reason": "fewer_than_2_open_deadlines"}
                 for ck, (_sk, cl, pct) in sorted(by_col.items(), key=lambda kv: kv[1][0])
             ]
             dropped_lanes_audit.append({"lane": short_title, "shown": [], "left_off": dropped_left_off, "dropped": True})
 
     if len(dated_rows) < 2:
-        return None, None, []
+        mono_msg = next((d["refusal_reason"] for d in dropped_lanes_audit if d.get("refusal_reason")), None)
+        return None, mono_msg, (dropped_lanes_audit if mono_msg else [])
     # Only promote roundup sets to dated_tiles when a majority (>= half) of served markets are multi-deadline
     has_machinery_card = bool((((bundle or {}).get("data") or {}).get("roundup") or {}).get("machinery_card"))
     if has_machinery_card and len(dated_rows) * 2 < len(markets):
@@ -1331,7 +1403,7 @@ def _try_build_dated_tiles(
                         "marks": [
                             _mark_tile(
                                 shade=0.0 if val is None else val / 100.0,
-                                top_label=f"by {cl}",
+                                top_label=_tile_deadline_label(cl),
                                 center_label="—" if val is None else f"{val}%",
                                 muted=(val is None),
                             )
@@ -1347,7 +1419,7 @@ def _try_build_dated_tiles(
                     "marks": [
                         _mark_tile(
                             shade=val / 100.0,
-                            top_label=f"by {cl}",
+                            top_label=_tile_deadline_label(cl),
                             center_label=f"{val}%",
                             muted=False,
                         )
@@ -1360,11 +1432,11 @@ def _try_build_dated_tiles(
         left_off = list(expired_items)
         for ck, (_sk, cl, val) in sorted(cmap.items(), key=lambda kv: kv[1][0]):
             if ck not in shown_key_set:
-                left_off.append({"outcome": f"by {cl}", "date": ck, "pct": val, "reason": "trimmed_to_3"})
+                left_off.append({"outcome": _tile_deadline_label(cl), "date": ck, "pct": val, "reason": "trimmed_to_3"})
         lanes_audit.append(
             {
                 "lane": row_title,
-                "shown": [{"outcome": f"by {cl}", "date": ck, "pct": val} for ck, cl, val in shown_entries],
+                "shown": [{"outcome": _tile_deadline_label(cl), "date": ck, "pct": val} for ck, cl, val in shown_entries],
                 "left_off": left_off,
                 "dropped": False,
             }
@@ -1378,11 +1450,11 @@ def _try_build_dated_tiles(
             }
         )
         best_shown = max(shown_entries, key=lambda tup: (tup[2], tup[0]))
-        summaries.append(f"{row_title}: {best_shown[2]}% by {best_shown[1]}")
+        summaries.append(f"{row_title}: {best_shown[2]}% {_tile_deadline_label(best_shown[1])}")
 
     for row_title, cmap, expired_items in dated_rows[3:]:
         lane_left = list(expired_items) + [
-            {"outcome": f"by {cl}", "date": ck, "pct": val, "reason": "beyond_3_lanes"}
+            {"outcome": _tile_deadline_label(cl), "date": ck, "pct": val, "reason": "beyond_3_lanes"}
             for ck, (_sk, cl, val) in sorted(cmap.items(), key=lambda kv: kv[1][0])
         ]
         lanes_audit.append({"lane": row_title, "shown": [], "left_off": lane_left, "dropped": True})
@@ -1429,16 +1501,46 @@ def _try_build_countdown(
     bundle: dict[str, Any] | None,
     now: datetime,
     resolver: Any,
+    allow_shared_date: bool = False,
 ) -> tuple[dict[str, Any] | None, str | None]:
     d = (bundle or {}).get("data") or {}
     ru = d.get("roundup") or {}
+    items_raw = d.get("items") or []
+    is_shared_near_deadline = False
+    if allow_shared_date and len(items_raw) >= 3:
+        item_dts: list[datetime] = []
+        all_have_dt = True
+        for it in items_raw:
+            dt = _parse_iso_dt((it.get("data") or {}).get("resolution_date"))
+            if dt is None:
+                all_have_dt = False
+                break
+            item_dts.append(dt)
+        today_pt = now.astimezone(PT_TZ).date()
+        shared_pt_dates = {dt.astimezone(PT_TZ).date() for dt in item_dts} if all_have_dt else set()
+        shared_target_date = next(iter(shared_pt_dates)) if len(shared_pt_dates) == 1 else None
+        all_binary_or_threshold = all(
+            len((it.get("data") or {}).get("top_outcomes") or []) <= 2
+            for it in items_raw
+        )
+        is_year_end_placeholder = (
+            shared_target_date is not None
+            and shared_target_date.month == 12
+            and shared_target_date.day == 31
+        )
+        is_shared_near_deadline = (
+            shared_target_date is not None
+            and not is_year_end_placeholder
+            and all_binary_or_threshold
+            and 0 <= (shared_target_date - today_pt).days <= 60
+        )
     is_same_deadline = (
-        str(ru.get("kicker") or "").upper() == "SAME DEADLINE" or slug.startswith("by-")
+        str(ru.get("kicker") or "").upper() == "SAME DEADLINE"
+        or slug.startswith("by-")
+        or is_shared_near_deadline
     )
     if not is_same_deadline:
         return None, None
-
-    items_raw = d.get("items") or []
     res_dates: list[datetime] = []
     candidate_rows: list[tuple[str, int, str, str | None]] = []
     seen_entities: set[str] = set()
@@ -1510,7 +1612,12 @@ def _try_build_countdown(
         )
         items.append({"id": f"cd-{idx}", "marks": marks})
 
-    date_short = common.replace("By ", "")
+    target_pt_date = target_date.astimezone(PT_TZ).date()
+    date_short = (
+        common[3:]
+        if common.startswith("By ")
+        else f"{_MONTH_ABBR[target_pt_date.month]} {target_pt_date.day}"
+    )
     if not stat or _is_boilerplate_stat(stat.lower()) or stat.lower() == common.lower():
         stat = f"{shown[0][0]} leads {date_short} deadlines at {shown[0][1]}%, ahead of {shown[1][0]} ({shown[1][1]}%)."
 
@@ -2299,13 +2406,13 @@ def build_kit_card_for_real_set(
             source_count=source_count, container=container, resolver=active_resolver,
         ),
         _detect_dated_tiles,
-        lambda: _try_build_countdown(
-            slug=slug, kicker=kicker, common=common, stat=stat, route=route,
-            source_count=source_count, bundle=bundle, now=resolved_now, resolver=active_resolver,
-        ),
         lambda: _try_build_shared_scale(
             slug=slug, kicker=kicker, common=common, stat=stat, route=route,
             source_count=source_count, container=container, resolver=active_resolver,
+        ),
+        lambda: _try_build_countdown(
+            slug=slug, kicker=kicker, common=common, stat=stat, route=route,
+            source_count=source_count, bundle=bundle, now=resolved_now, resolver=active_resolver,
         ),
         lambda: _try_build_one_in_n(
             slug=slug, kicker=kicker, common=common, stat=stat, route=route,
@@ -2321,39 +2428,66 @@ def build_kit_card_for_real_set(
         ),
     ]
 
+    def _accept_kit_card(card: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+        ok, errs = validate_kit_v1_card(card)
+        if not ok:
+            return None, f"Validator rejected card: {'; '.join(errs)}"
+        probe = dict(card, variant="future_unknown_variant_probe")
+        ok_probe, errs_probe = validate_kit_v1_card(probe)
+        if not ok_probe:
+            return None, f"Validator rejected unknown-variant probe: {'; '.join(errs_probe)}"
+        out: dict[str, Any] = {
+            "slug": slug,
+            "common_headline": str(card.get("common_headline") or common),
+            "stat_caption": str(card.get("stat_caption") or stat),
+            "fits": True,
+            "layout": card["layout"],
+            "variant": card.get("variant"),
+            "refusal_reason": None,
+            "kit_card": card,
+        }
+        if card.get("variant") == "dated_tiles" and dated_lanes_audit:
+            out["dated_tiles_lanes"] = dated_lanes_audit
+        return out, None
+
     refusal: str | None = None
     for run in detectors:
         card, msg = run()
         if card is not None:
-            ok, errs = validate_kit_v1_card(card)
-            if ok:
-                probe = dict(card, variant="future_unknown_variant_probe")
-                ok_probe, errs_probe = validate_kit_v1_card(probe)
-                if ok_probe:
-                    out: dict[str, Any] = {
-                        "slug": slug,
-                        "common_headline": str(card.get("common_headline") or common),
-                        "stat_caption": str(card.get("stat_caption") or stat),
-                        "fits": True,
-                        "layout": card["layout"],
-                        "variant": card.get("variant"),
-                        "refusal_reason": None,
-                        "kit_card": card,
-                    }
-                    if card.get("variant") == "dated_tiles" and dated_lanes_audit:
-                        out["dated_tiles_lanes"] = dated_lanes_audit
-                    return out
-                refusal = f"Validator rejected unknown-variant probe: {'; '.join(errs_probe)}"
-            else:
-                refusal = f"Validator rejected card: {'; '.join(errs)}"
+            accepted, val_err = _accept_kit_card(card)
+            if accepted is not None:
+                return accepted
+            refusal = val_err
             break
         if msg:
             refusal = msg
             break
 
+    # Non-picture shared-deadline sets only fall back to countdown after pictured/specific shapes decline.
+    if refusal is None or "has no verified picture" in refusal:
+        fallback_cd, cd_msg = _try_build_countdown(
+            slug=slug,
+            kicker=kicker,
+            common=common,
+            stat=stat,
+            route=route,
+            source_count=source_count,
+            bundle=bundle,
+            now=resolved_now,
+            resolver=active_resolver,
+            allow_shared_date=True,
+        )
+        if fallback_cd is not None:
+            accepted, val_err = _accept_kit_card(fallback_cd)
+            if accepted is not None:
+                return accepted
+            refusal = val_err
+        elif cd_msg and not refusal:
+            refusal = cd_msg
+
     reason = refusal or _explain_non_fit(bundle, container)
     fb = build_fallback_today(reason)
-    return {
+    fb_out: dict[str, Any] = {
         "slug": slug,
         "common_headline": common,
         "stat_caption": stat,
@@ -2363,6 +2497,9 @@ def build_kit_card_for_real_set(
         "refusal_reason": reason,
         "kit_card": fb,
     }
+    if dated_lanes_audit:
+        fb_out["dated_tiles_lanes"] = dated_lanes_audit
+    return fb_out
 
 
 def _summarize_today_card(
@@ -2494,16 +2631,17 @@ def build_real_sets_audit_report(
             extra_fitting_entries.append(entry)
 
         if not result["fits"]:
-            kept_today.append(
-                {
-                    "rank": idx,
-                    "in_top_10": idx <= 10,
-                    "slug": slug,
-                    "name": result["common_headline"],
-                    "today_form": today_card["form_id"],
-                    "refusal_reason": result["refusal_reason"],
-                }
-            )
+            kept_entry = {
+                "rank": idx,
+                "in_top_10": idx <= 10,
+                "slug": slug,
+                "name": result["common_headline"],
+                "today_form": today_card["form_id"],
+                "refusal_reason": result["refusal_reason"],
+            }
+            if result.get("dated_tiles_lanes"):
+                kept_entry["dated_tiles_lanes"] = result["dated_tiles_lanes"]
+            kept_today.append(kept_entry)
 
     extra_rank = len(bundles)
     for c_slug in sorted(containers):
@@ -2524,23 +2662,24 @@ def build_real_sets_audit_report(
         if result["fits"]:
             extra_fitting_entries.append(entry)
         else:
-            kept_today.append(
-                {
-                    "rank": extra_rank,
-                    "in_top_10": False,
-                    "slug": result["slug"],
-                    "name": result["common_headline"],
-                    "today_form": today_card["form_id"],
-                    "refusal_reason": result["refusal_reason"],
-                }
-            )
+            kept_entry = {
+                "rank": extra_rank,
+                "in_top_10": False,
+                "slug": result["slug"],
+                "name": result["common_headline"],
+                "today_form": today_card["form_id"],
+                "refusal_reason": result["refusal_reason"],
+            }
+            if result.get("dated_tiles_lanes"):
+                kept_entry["dated_tiles_lanes"] = result["dated_tiles_lanes"]
+            kept_today.append(kept_entry)
 
     fitting_count = sum(1 for e in top10_entries if e["fits"]) + len(extra_fitting_entries)
     total_sets = len(bundles) + sum(1 for s in containers if s not in seen_slugs)
     dated_tiles_left_off = {
         e["slug"]: e["dated_tiles_lanes"]
-        for e in (top10_entries + extra_fitting_entries)
-        if e.get("fits") and e.get("dated_tiles_lanes")
+        for e in (top10_entries + extra_fitting_entries + kept_today)
+        if e.get("dated_tiles_lanes")
     }
     return {
         "kit_version": 1,
