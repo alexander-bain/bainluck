@@ -24,7 +24,6 @@
     ],
     "card_rows": 3,
     "card_section_key": "tv_gaming",
-    "hide_row_art": true,
     "suppress_card_photo": true,
     "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/00/Stand_In_%28Unsplash%29.jpg/960px-Stand_In_%28Unsplash%29.jpg",
     "card_image_alt": "Studio camera and colorful stage lights during a television shoot",
@@ -37,14 +36,31 @@
         "key": "tv_gaming",
         "title": "Awards, Contests & Showrunners",
         "item_noun": "shows",
-        "note": "Critics Choice comedy acting, competition TV champions, Saturday Night Live succession, and scripted series races.",
+        "note": "Critics Choice comedy acting, Dancing with the Stars, and Saturday Night Live succession races.",
         "atom_query": {
           "kind": "markets",
           "fun_sub_tag": "batch8-tv-and-gaming-2026",
           "shape": "any",
           "order_by": "lead_prob_desc",
           "min_items": 3,
-          "max_items": 10,
+          "max_items": 6,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      },
+      {
+        "key": "tv_more",
+        "title": "More TV & Streaming Races",
+        "item_noun": "shows",
+        "note": "The Voice Season 30 and AI scripted television milestones.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch8-tv-other-races",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 1,
+          "max_items": 4,
           "max_outcomes": 1,
           "initial_visible_limit": 3,
           "min_lifetime_volume": 1

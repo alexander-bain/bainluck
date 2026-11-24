@@ -1792,15 +1792,23 @@ struct EventAtlasGolfJourneyCardView11666: View {
             plotHeight: EventAtlasGolfTournament11666.firstScreenChartHeight - plotBottomInset
         )
 
+        let labels = plotted.map { EventAtlasGolfTournament11666.shortChartEndLabel(for: $0, phase: phase) }
+        let sharedLabelFontSize = CardTeamNameSizing.sharedSingleLineFontSize(
+            names: labels,
+            baseSize: 10.5,
+            weight: .bold,
+            availableWidth: 94,
+            minimumScale: 0.68
+        )
+
         return ZStack(alignment: .topLeading) {
             ForEach(Array(plotted.enumerated()), id: \.element.id) { idx, contender in
                 let color = EventAtlasGolfTournament11666.palette[contender.colorIndex % EventAtlasGolfTournament11666.palette.count]
-                let label = EventAtlasGolfTournament11666.shortChartEndLabel(for: contender, phase: phase)
-                Text(label)
-                    .font(.system(size: 10.5, weight: .bold).monospacedDigit())
+                Text(labels[idx])
+                    .font(.system(size: sharedLabelFontSize, weight: .bold).monospacedDigit())
                     .foregroundStyle(color)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.68)
+                    .minimumScaleFactor(0.9)
                     .allowsTightening(true)
                     .frame(width: 96, alignment: .leading)
                     .position(x: 49, y: yPositions[idx])

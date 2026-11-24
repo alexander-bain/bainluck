@@ -1,5 +1,90 @@
 import SwiftUI
 
+extension Notification.Name {
+    static let devSourcesOverlayDidChange11920 = Notification.Name("BainLuck.DevSourcesOverlayDidChange11920")
+}
+
+private struct DevSourcesOverlayKey11920: EnvironmentKey {
+    static let defaultValue: Bool? = nil
+}
+
+extension EnvironmentValues {
+    var devSourcesOverlay11920: Bool? {
+        get { self[DevSourcesOverlayKey11920.self] }
+        set { self[DevSourcesOverlayKey11920.self] = newValue }
+    }
+}
+
+/// Hidden owner-only dev setting (`#11920` rev 2, Dev Signal C, iOS counterpart to web `?dev=sources`):
+/// - Default `false` (`off`), visible ONLY to the owner account (`GroupingMachineryGate12288.isOwnerUser`).
+/// - Non-owner and signed-out readers ALWAYS evaluate `false`, so single-source, multi-source, and
+///   settled cards remain indistinguishable on their face in the public product.
+enum DevSourcesOverlay11920 {
+    private static let defaultsPrefix = "bainluck_owner_dev_sources_overlay_"
+
+    nonisolated static func defaultsName(for user: AuthUser) -> String {
+        "\(defaultsPrefix)\(user.id)"
+    }
+
+    nonisolated static func isSwitchEnabled(
+        for user: AuthUser? = GroupingMachineryGate12288.activeUser,
+        defaults: UserDefaults = .standard
+    ) -> Bool {
+        guard let user, GroupingMachineryGate12288.isOwnerUser(user) else { return false }
+        return defaults.bool(forKey: defaultsName(for: user))
+    }
+
+    nonisolated static func setSwitchEnabled(
+        _ enabled: Bool,
+        for user: AuthUser?,
+        defaults: UserDefaults = .standard
+    ) {
+        guard let user, GroupingMachineryGate12288.isOwnerUser(user) else { return }
+        defaults.set(enabled, forKey: defaultsName(for: user))
+        NotificationCenter.default.post(name: .devSourcesOverlayDidChange11920, object: nil)
+    }
+
+    nonisolated static func badgeText(for mark: SourceMark) -> String {
+        switch mark.state {
+        case .settled:
+            return "✓"
+        case .blend, .single:
+            if let total = mark.dev?.of, total > 0 {
+                return "\(mark.sources.count)/\(total)"
+            }
+            return "\(mark.sources.count)s"
+        case .none, .unknown:
+            return ""
+        }
+    }
+
+    nonisolated static func sheetSummaryLines(for mark: SourceMark) -> [String] {
+        var out: [String] = []
+        if mark.state == .settled {
+            out.append("Dev · settled result")
+        } else if let total = mark.dev?.of, total > 0 {
+            out.append("Dev · \(mark.sources.count) of \(total) source families contributing")
+        } else {
+            let noun = mark.sources.count == 1 ? "source" : "sources"
+            out.append("Dev · \(mark.sources.count) contributing \(noun)")
+        }
+        if let missing = mark.dev?.missing, !missing.isEmpty {
+            let named = missing.map { SourceLabels.label(for: $0) ?? $0 }
+            out.append("Missing: \(named.joined(separator: ", "))")
+        }
+        if let weights = mark.dev?.weights, !weights.isEmpty {
+            let parts = mark.sources.compactMap { src -> String? in
+                guard let w = weights[src.key] else { return nil }
+                return "\(src.name) \(Int((w * 100).rounded()))%"
+            }
+            if !parts.isEmpty {
+                out.append("Weights: \(parts.joined(separator: " · "))")
+            }
+        }
+        return out
+    }
+}
+
 /// #12581 / 137-A — the source mark (Alex, Nov 3, recorded on #11920; the glyph
 /// is the ⓘ ring, 139-A, Nov 11): one quiet ⓘ after a number, the same on every
 /// row whatever stands behind it. A tap opens "Where this number comes from".
@@ -27,6 +112,8 @@ struct SourceMarkButton: View {
     var showsTenths: Bool = false
 
     @State private var open = false
+    @State private var devOverlayRevision = 0
+    @Environment(\.devSourcesOverlay11920) private var envDevOverlay
 
     /// The ring's share of the number's type size (Alex's ruling: about 0.7).
     static let ringScale: CGFloat = 0.7
@@ -54,19 +141,40 @@ struct SourceMarkButton: View {
         self.showsTenths = showsTenths
     }
 
+    private var isDevOverlayActive: Bool {
+        _ = devOverlayRevision
+        return envDevOverlay ?? DevSourcesOverlay11920.isSwitchEnabled()
+    }
+
     var body: some View {
+        let devActive = isDevOverlayActive
+        let devBadge = devActive ? DevSourcesOverlay11920.badgeText(for: mark) : ""
         Button { open = true } label: {
-            Image(systemName: "info.circle")
-                .font(.system(size: numberSize * Self.ringScale))
-                .foregroundStyle(Color.secondary.opacity(0.55))
-                // A 44pt tap target around a ring that stays quiet (compact rows keep
-                // visual height tight and extend hit testing via negative inset).
-                .frame(minWidth: compactRow ? 22 : 28, minHeight: compactRow ? 20 : 44)
-                .contentShape(Rectangle().inset(by: compactRow ? -10 : 0))
+            HStack(spacing: 2) {
+                Image(systemName: "info.circle")
+                    .font(.system(size: numberSize * Self.ringScale))
+                    .foregroundStyle(Color.secondary.opacity(0.55))
+                if !devBadge.isEmpty {
+                    Text(devBadge)
+                        .font(.system(size: max(9, numberSize * 0.56), weight: .semibold).monospacedDigit())
+                        .foregroundStyle(Color.secondary.opacity(0.75))
+                        .padding(.horizontal, 3)
+                        .padding(.vertical, 1)
+                        .background(Color.secondary.opacity(0.12), in: Capsule())
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+            }
+            // A 44pt tap target around a ring that stays quiet (compact rows keep
+            // visual height tight and extend hit testing via negative inset).
+            .frame(minWidth: compactRow ? 22 : 28, minHeight: compactRow ? 20 : 44)
+            .contentShape(Rectangle().inset(by: compactRow ? -10 : 0))
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Where this number comes from")
         .accessibilityIdentifier("source-mark-12581")
+        .onReceive(NotificationCenter.default.publisher(for: .devSourcesOverlayDidChange11920)) { _ in
+            devOverlayRevision &+= 1
+        }
         .sheet(isPresented: $open) {
             SourceMarkSheet(
                 mark: mark,
@@ -77,6 +185,7 @@ struct SourceMarkButton: View {
                 isPregame: isPregame,
                 showsTenths: showsTenths
             )
+            .environment(\.devSourcesOverlay11920, envDevOverlay)
             .presentationDetents([.medium, .large])
         }
     }
@@ -97,6 +206,11 @@ struct SourceMarkSheet: View {
     var showsTenths: Bool = false
     var now: Date = Date()
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.devSourcesOverlay11920) private var envDevOverlay
+
+    private var isDevOverlayActive: Bool {
+        envDevOverlay ?? DevSourcesOverlay11920.isSwitchEnabled()
+    }
 
     static let title = "Where this number comes from"
 
@@ -253,6 +367,21 @@ struct SourceMarkSheet: View {
                         rows
                         if let method = Self.method(mark) {
                             Text(method).font(.footnote).foregroundStyle(.secondary)
+                        }
+                    }
+                    if isDevOverlayActive {
+                        let devLines = DevSourcesOverlay11920.sheetSummaryLines(for: mark)
+                        if !devLines.isEmpty {
+                            Divider().padding(.top, 4)
+                            VStack(alignment: .leading, spacing: 4) {
+                                ForEach(devLines, id: \.self) { line in
+                                    Text(line)
+                                        .font(.caption.monospacedDigit())
+                                        .foregroundStyle(.secondary)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                            .accessibilityIdentifier("source-mark-dev-summary-11920")
                         }
                     }
                 }

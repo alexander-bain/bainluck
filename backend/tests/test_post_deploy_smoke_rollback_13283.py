@@ -336,7 +336,7 @@ def test_default_health_wait_handles_preboot_cutover():
     assert len(endpoint_paths) == 2
 
 
-def test_health_commit_mismatch_after_full_wait_returns_inconclusive_never_pass_or_rollback():
+def test_health_commit_mismatch_after_full_wait_returns_failed_never_pass_or_inconclusive():
     mod = _load_module()
     for failing_endpoints in (False, True):
         clock = 0.0
@@ -362,18 +362,19 @@ def test_health_commit_mismatch_after_full_wait_returns_inconclusive_never_pass_
             sleep_fn=fake_sleep,
             monotonic_fn=lambda: clock,
         )
-        assert report.verdict == "inconclusive"
+        assert report.verdict == "failed"
         assert report.health_commit == "old11111"
         assert report.endpoints == ()
         assert probed_endpoints == []
         assert sum(sleeps) >= 360.0
-        assert "INCONCLUSIVE" in report.summary
+        assert report.summary.startswith("FAIL:")
+        assert "INCONCLUSIVE" not in report.summary
         assert "commit read=old11111, expected=new22222" in report.summary
         assert "PASS" not in report.summary.upper()
         assert "would roll back" not in report.summary.lower()
 
 
-def test_health_never_answers_returns_inconclusive_with_read_none():
+def test_health_never_answers_returns_failed_with_read_none():
     mod = _load_module()
     clock = 0.0
     sleeps: list[float] = []
@@ -396,11 +397,37 @@ def test_health_never_answers_returns_inconclusive_with_read_none():
         sleep_fn=fake_sleep,
         monotonic_fn=lambda: clock,
     )
-    assert report.verdict == "inconclusive"
+    assert report.verdict == "failed"
     assert report.health_commit is None
     assert report.endpoints == ()
     assert sum(sleeps) >= 360.0
-    assert "INCONCLUSIVE" in report.summary
+    assert report.summary.startswith("FAIL:")
+    assert "INCONCLUSIVE" not in report.summary
     assert "commit read=none, expected=new22222" in report.summary
     assert "PASS" not in report.summary.upper()
     assert "would roll back" not in report.summary.lower()
+
+
+def test_cli_exits_nonzero_when_commit_never_matches_even_under_dry_run(monkeypatch):
+    mod = _load_module()
+    failed_report = mod.SmokeReport(
+        verdict="failed",
+        endpoints=(),
+        changed_migrations=(),
+        prior_release_state="ok",
+        expected_sha="new22222abcdef12",
+        prev_sha="old11111",
+        health_commit="old11111",
+        summary="FAIL: /api/health did not serve expected commit within 360s (commit read=old11111, expected=new22222; dry-run; no rollback).",
+    )
+    monkeypatch.setattr(mod, "run_smoke_check", lambda **kwargs: failed_report)
+    exit_code = mod.main(
+        [
+            "--dry-run",
+            "--base-url",
+            "http://standin.local",
+            "--expected-sha",
+            "new22222abcdef12",
+        ]
+    )
+    assert exit_code == 1

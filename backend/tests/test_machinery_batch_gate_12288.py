@@ -588,3 +588,77 @@ def test_scripts_discover_changed_machinery_slugs(
     assert check_machinery_batch_pr.discover_changed_machinery_slugs(repo_root=tmp_path) == (
         "machinery-long-shots",
     )
+
+
+def test_wording_rejects_duplicate_card_headline_in_footer_or_subslots() -> None:
+    """343: A gate rule: a card must never print its headline twice."""
+    headline = (
+        "Julianne Moore leads Best Actress (Comedy or Musical) at 78%, "
+        "with 4 contenders at 75%+ to be nominated"
+    )
+    bad_paired_feed_item = {
+        "type": "bundle",
+        "headline": headline,
+        "data": {
+            "collection_ref": {
+                "slug": "machinery-golden-globes-2027",
+                "href": "/collections/machinery-golden-globes-2027",
+                "name": headline,
+            },
+            "roundup": {
+                "paired_metric_set": {
+                    "kicker": "GOLDEN GLOBES 2027 · BEST ACTRESS",
+                    "title": headline,
+                    "subtitle": "84th Golden Globes · Nominated % beside Winner %",
+                }
+            },
+        },
+    }
+    bad_res = check_machinery_wording(
+        card={"slug": "machinery-golden-globes-2027", "title": headline, "subtitle": "84th Golden Globes"},
+        feed_item=bad_paired_feed_item,
+    )
+    assert not bad_res.ok
+    assert any(
+        err.rule == "duplicate_card_headline" and err.location == "collection_ref.name"
+        for err in bad_res.errors
+    )
+
+    good_paired_feed_item = {
+        "type": "bundle",
+        "headline": headline,
+        "data": {
+            "collection_ref": {
+                "slug": "machinery-golden-globes-2027",
+                "href": "/collections/machinery-golden-globes-2027",
+                "name": "Golden Globes 2027",
+            },
+            "roundup": {
+                "paired_metric_set": {
+                    "kicker": "GOLDEN GLOBES 2027 · BEST ACTRESS",
+                    "title": headline,
+                    "subtitle": "84th Golden Globes · Nominated % beside Winner %",
+                }
+            },
+        },
+    }
+    assert check_machinery_wording(
+        card={"slug": "machinery-golden-globes-2027", "title": headline, "subtitle": "84th Golden Globes"},
+        feed_item=good_paired_feed_item,
+    ).ok
+
+    bad_card_res = check_machinery_wording(
+        card={
+            "slug": "test-dup",
+            "title": "Houston leads the Dec 7 AP poll #1 team at 54%",
+            "subtitle": "Houston leads the Dec 7 AP poll #1 team at 54%",
+            "footer": "Houston leads the Dec 7 AP poll #1 team at 54%",
+        }
+    )
+    assert not bad_card_res.ok
+    assert {
+        err.location
+        for err in bad_card_res.errors
+        if err.rule == "duplicate_card_headline"
+    } == {"card.subtitle", "card.footer"}
+

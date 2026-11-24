@@ -78,7 +78,7 @@ class EndpointResult:
 class SmokeReport:
     """Full decision record for a dry-run smoke check."""
 
-    verdict: str  # "disabled", "inconclusive", "passed", "empty_list_report", "alert_only", "would_roll_back"
+    verdict: str  # "disabled", "failed", "passed", "empty_list_report", "alert_only", "would_roll_back"
     endpoints: tuple[EndpointResult, ...]
     changed_migrations: tuple[str, ...]
     prior_release_state: str
@@ -391,7 +391,7 @@ def run_smoke_check(
         commit_ctx = _commit_context(health_commit, expected_sha)
         if not _sha_matches(health_commit, expected_sha):
             return SmokeReport(
-                verdict="inconclusive",
+                verdict="failed",
                 endpoints=(),
                 changed_migrations=changed_migrations,
                 prior_release_state=resolved_prior_state,
@@ -399,7 +399,7 @@ def run_smoke_check(
                 prev_sha=prev_sha,
                 health_commit=health_commit,
                 summary=(
-                    f"INCONCLUSIVE: /api/health did not serve expected commit within "
+                    f"FAIL: /api/health did not serve expected commit within "
                     f"{int(health_wait_seconds)}s ({commit_ctx}; dry-run; no rollback)."
                 ),
             )
@@ -613,6 +613,8 @@ def main(argv: list[str] | None = None) -> int:
         prior_state_file=args.prior_state_file,
     )
     print(report.summary)
+    if report.verdict == "failed":
+        return 1
     if args.fail_on_would_rollback and report.verdict in {"would_roll_back", "alert_only"}:
         return 1
     return 0

@@ -32,12 +32,18 @@ private final class TraitOverrideContainer13417: UIViewController {
     }
 }
 
+private final class LoadSignal13417: @unchecked Sendable {
+    var didStartLoad = false
+}
+
 private struct MockContainerHubService13417: ContainerHubLoading {
     let response: ContainerHubResponse
     let pairedSets: [PairedMetricSet]
+    var loadSignal: LoadSignal13417? = nil
 
     nonisolated func load(slug: String) async throws -> ContainerHubResponse {
-        response
+        loadSignal?.didStartLoad = true
+        return response
     }
 
     nonisolated func loadPairedMetrics(slug: String) async -> [PairedMetricSet] {
@@ -139,6 +145,101 @@ final class ContainerHubTwoColumnIPad13417Tests: XCTestCase {
         XCTAssertEqual(DiscoverMasonry.columns(cardCount: 1, columnCount: 2), [[0], []])
     }
 
+    func testInnerContentWidthAndZeroOrNegativeWidthNeverFlashesTwoColumns() {
+        XCTAssertEqual(ContainerHubGridLayout13417.innerContentWidth(containerWidth: 0), 0)
+        XCTAssertEqual(ContainerHubGridLayout13417.innerContentWidth(containerWidth: -10), 0)
+        XCTAssertEqual(
+            ContainerHubGridLayout13417.columnCount(
+                horizontalSizeClass: .regular,
+                dynamicTypeSize: .large,
+                availableWidth: 0
+            ),
+            1
+        )
+        XCTAssertEqual(ContainerHubGridLayout13417.innerContentWidth(containerWidth: 700), 664)
+        XCTAssertEqual(
+            ContainerHubGridLayout13417.columnCount(
+                horizontalSizeClass: .regular,
+                dynamicTypeSize: .large,
+                availableWidth: ContainerHubGridLayout13417.innerContentWidth(containerWidth: 700)
+            ),
+            1
+        )
+        XCTAssertEqual(ContainerHubGridLayout13417.innerContentWidth(containerWidth: 731), 695)
+        XCTAssertEqual(
+            ContainerHubGridLayout13417.columnCount(
+                horizontalSizeClass: .regular,
+                dynamicTypeSize: .large,
+                availableWidth: ContainerHubGridLayout13417.innerContentWidth(containerWidth: 731)
+            ),
+            1
+        )
+        XCTAssertEqual(ContainerHubGridLayout13417.innerContentWidth(containerWidth: 732), 696)
+        XCTAssertEqual(
+            ContainerHubGridLayout13417.columnCount(
+                horizontalSizeClass: .regular,
+                dynamicTypeSize: .large,
+                availableWidth: ContainerHubGridLayout13417.innerContentWidth(containerWidth: 732)
+            ),
+            2
+        )
+        XCTAssertEqual(ContainerHubGridLayout13417.innerContentWidth(containerWidth: 834), 798)
+        XCTAssertEqual(ContainerHubGridLayout13417.innerContentWidth(containerWidth: 1376), 864)
+    }
+
+    func testFirstLoadedFrameAt700PtRendersOneColumnWithoutTwoColumnFlash() async throws {
+        let nflData = try fixtureData("live_nfl_week12_13417")
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let nflResp = try decoder.decode(ContainerHubResponse.self, from: nflData)
+        let firstTwoEvents: [(away: String, home: String)] = nflResp.sections.first?.members.prefix(2).compactMap {
+            guard case .event(let e) = $0.card else { return nil }
+            return (e.awayTeam, e.homeTeam)
+        } ?? []
+        XCTAssertEqual(firstTwoEvents.count, 2)
+        let game0Token = firstTwoEvents[0].away.split(separator: " ").last.map(String.init) ?? firstTwoEvents[0].away
+        let game1Token = firstTwoEvents[1].away.split(separator: " ").last.map(String.init) ?? firstTwoEvents[1].away
+        let narrowSignal = LoadSignal13417()
+        let narrowService = MockContainerHubService13417(response: nflResp, pairedSets: [], loadSignal: narrowSignal)
+        // Frame 1 at 700 pt .regular must already render 1 column (never flash 2 columns before measure).
+        let frame1Narrow = await captureFirstLoadedFrame(
+            ContainerHubView(slug: "nfl-2026-week-12", displayName: "NFL Week 12", service: narrowService),
+            width: 700,
+            height: 1000,
+            loadSignal: narrowSignal
+        )
+        try maybeSave(frame1Narrow, "13417-frame1-700pt.png")
+        let obsNarrow = try ocrObservations(frame1Narrow)
+        let g0Narrow = obsNarrow.first { $0.text.localizedCaseInsensitiveContains(game0Token) }
+        let g1Narrow = obsNarrow.first { $0.text.localizedCaseInsensitiveContains(game1Token) }
+        XCTAssertNotNil(g0Narrow, "Frame 1 700pt missing \(game0Token)")
+        XCTAssertNotNil(g1Narrow, "Frame 1 700pt missing \(game1Token)")
+        if let g0Narrow, let g1Narrow {
+            XCTAssertLessThan(g0Narrow.midX, 0.50, "700pt Frame 1 card 0 midX=\(g0Narrow.midX)")
+            XCTAssertLessThan(g1Narrow.midX, 0.50, "700pt Frame 1 card 1 must already be 1 column, got midX=\(g1Narrow.midX)")
+        }
+
+        // Frame 1 at 834 pt .regular already renders 2 columns immediately.
+        let regSignal = LoadSignal13417()
+        let regService = MockContainerHubService13417(response: nflResp, pairedSets: [], loadSignal: regSignal)
+        let frame1Regular = await captureFirstLoadedFrame(
+            ContainerHubView(slug: "nfl-2026-week-12", displayName: "NFL Week 12", service: regService),
+            width: 834,
+            height: 1210,
+            loadSignal: regSignal
+        )
+        try maybeSave(frame1Regular, "13417-frame1-834pt.png")
+        let obsReg = try ocrObservations(frame1Regular)
+        let g0Reg = obsReg.first { $0.text.localizedCaseInsensitiveContains(game0Token) }
+        let g1Reg = obsReg.first { $0.text.localizedCaseInsensitiveContains(game1Token) }
+        XCTAssertNotNil(g0Reg, "Frame 1 834pt missing \(game0Token)")
+        XCTAssertNotNil(g1Reg, "Frame 1 834pt missing \(game1Token)")
+        if let g0Reg, let g1Reg {
+            XCTAssertLessThan(g0Reg.midX, 0.48, "834pt Frame 1 card 0 midX=\(g0Reg.midX)")
+            XCTAssertGreaterThan(g1Reg.midX, 0.50, "834pt Frame 1 card 1 midX=\(g1Reg.midX)")
+        }
+    }
+
     // MARK: - Rendered Set Page Tests & Evidence Sheets
 
     func testNFLWeek12AndOscarsCultureSetLayoutsAndZeroTruncationAcrossIPadAndIPhone() async throws {
@@ -160,6 +261,10 @@ final class ContainerHubTwoColumnIPad13417Tests: XCTestCase {
         XCTAssertEqual(firstTwoEvents.count, 2, "NFL Week 12 fixture must contain at least 2 game cards")
         let game0Token = firstTwoEvents[0].away.split(separator: " ").last.map(String.init) ?? firstTwoEvents[0].away
         let game1Token = firstTwoEvents[1].away.split(separator: " ").last.map(String.init) ?? firstTwoEvents[1].away
+
+        if let dir = ProcessInfo.processInfo.environment["BAINLUCK_13417_RENDER_DIR"], !dir.isEmpty {
+            await prewarmTeamCrests(for: nflResp)
+        }
 
         let nflService = MockContainerHubService13417(response: nflResp, pairedSets: [])
         let oscarsService = MockContainerHubService13417(response: oscarsResp, pairedSets: pairedSets)
@@ -184,7 +289,7 @@ final class ContainerHubTwoColumnIPad13417Tests: XCTestCase {
             .init(tag: "ipad11-portrait-dark", label: "iPad 11\" Portrait · Dark", width: 834, height: 1210, sizeClass: .regular, scheme: .dark, dynamicType: .large, expectTwoColumns: true),
             .init(tag: "ipad11-landscape-light", label: "iPad 11\" Landscape · Light", width: 1210, height: 834, sizeClass: .regular, scheme: .light, dynamicType: .large, expectTwoColumns: true),
             .init(tag: "ipad11-landscape-dark", label: "iPad 11\" Landscape · Dark", width: 1210, height: 834, sizeClass: .regular, scheme: .dark, dynamicType: .large, expectTwoColumns: true),
-            .init(tag: "ipad11-portrait-ax5-light", label: "iPad 11\" Portrait · AX5 (1 col)", width: 834, height: 1210, sizeClass: .regular, scheme: .light, dynamicType: .accessibility5, expectTwoColumns: false),
+            .init(tag: "ipad11-portrait-ax5-light", label: "iPad 11\" Portrait · AX5 (1 col)", width: 834, height: 1650, sizeClass: .regular, scheme: .light, dynamicType: .accessibility5, expectTwoColumns: false),
             .init(tag: "ipad11-portrait-xxxLarge-light", label: "iPad 11\" Portrait · XXXLarge (2 col)", width: 834, height: 1210, sizeClass: .regular, scheme: .light, dynamicType: .xxxLarge, expectTwoColumns: true),
             .init(tag: "iphone-390-light", label: "iPhone 390 · Light (1 col)", width: 390, height: 844, sizeClass: .compact, scheme: .light, dynamicType: .large, expectTwoColumns: false),
             .init(tag: "iphone-390-dark", label: "iPhone 390 · Dark (1 col)", width: 390, height: 844, sizeClass: .compact, scheme: .dark, dynamicType: .large, expectTwoColumns: false),
@@ -323,6 +428,31 @@ final class ContainerHubTwoColumnIPad13417Tests: XCTestCase {
         return try Data(contentsOf: url)
     }
 
+    private func prewarmTeamCrests(for response: ContainerHubResponse) async {
+        var urls: [URL] = []
+        for section in response.sections {
+            for member in section.members {
+                if case .event(let event) = member.card {
+                    for candidate in [
+                        teamAvatarURL(servedURL: event.awayImageUrl ?? event.awayTeamData?.logoSmall, teamName: event.awayTeam, sportKey: event.sport),
+                        teamAvatarURL(servedURL: event.homeImageUrl ?? event.homeTeamData?.logoSmall, teamName: event.homeTeam, sportKey: event.sport),
+                    ] {
+                        if let candidate, let u = URL(string: candidate) {
+                            urls.append(u)
+                        }
+                    }
+                }
+            }
+        }
+        await withTaskGroup(of: Void.self) { group in
+            for url in urls {
+                group.addTask {
+                    _ = await ImageCache.shared.image(for: url)
+                }
+            }
+        }
+    }
+
     private func captureHub<V: View>(
         _ view: V,
         width: CGFloat,
@@ -365,6 +495,62 @@ final class ContainerHubTwoColumnIPad13417Tests: XCTestCase {
             container.view.layoutIfNeeded()
             try? await Task.sleep(nanoseconds: 50_000_000)
         }
+
+        let format = UIGraphicsImageRendererFormat()
+        format.scale = 1.0
+        let renderer = UIGraphicsImageRenderer(size: container.view.bounds.size, format: format)
+        let img = renderer.image { _ in
+            container.view.drawHierarchy(in: container.view.bounds, afterScreenUpdates: true)
+        }
+        window.isHidden = true
+        window.rootViewController = nil
+        return img
+    }
+
+    private func captureFirstLoadedFrame<V: View>(
+        _ view: V,
+        width: CGFloat,
+        height: CGFloat,
+        loadSignal: LoadSignal13417? = nil
+    ) async -> UIImage {
+        let root = NavigationStack {
+            view.navigationBarTitleDisplayMode(.inline)
+        }
+        .frame(width: width, height: height, alignment: .topLeading)
+        .background(Color(UIColor.systemGroupedBackground))
+        .environment(\.horizontalSizeClass, .regular)
+        .environment(\.colorScheme, .light)
+        .environment(\.dynamicTypeSize, .large)
+        .environmentObject(NavigationCoordinator())
+        .environmentObject(PinManager())
+        .environmentObject(AuthManager())
+
+        let traits = UITraitCollection(traitsFrom: [
+            UITraitCollection(horizontalSizeClass: .regular),
+            UITraitCollection(userInterfaceStyle: .light)
+        ])
+        let host = hostForMeasurement(root, at: .large)
+        let container = TraitOverrideContainer13417(child: host, traits: traits)
+        container.view.frame = CGRect(x: 0, y: 0, width: width, height: height)
+
+        let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        let window: UIWindow = scene.map { UIWindow(windowScene: $0) } ?? UIWindow(frame: container.view.frame)
+        window.frame = container.view.frame
+        window.overrideUserInterfaceStyle = .light
+        window.rootViewController = container
+        window.makeKeyAndVisible()
+
+        // Allow async .task {} mock load to deliver .loaded state, then capture on the single layout pass.
+        container.view.setNeedsLayout()
+        container.view.layoutIfNeeded()
+        for _ in 0..<20 {
+            if loadSignal?.didStartLoad == true { break }
+            try? await Task.sleep(nanoseconds: 25_000_000)
+        }
+        await Task.yield()
+        try? await Task.sleep(nanoseconds: 80_000_000)
+        container.view.setNeedsLayout()
+        container.view.layoutIfNeeded()
 
         let format = UIGraphicsImageRendererFormat()
         format.scale = 1.0

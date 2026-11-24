@@ -188,7 +188,7 @@ async function captureMode(browser, { webUrl, feedBody, slugs, colorScheme, scal
     await page.setViewportSize({ width: VIEWPORT_WIDTH, height: docHeight + 120 });
     await page.waitForTimeout(350);
 
-    // Wait for every image inside rendered machinery/paired roundup cards to finish loading cleanly.
+    // Wait for every image inside rendered roundup cards (both native machinery and paired-stage cards) to finish loading cleanly.
     const imgStatus = await page.evaluate(async (expectedSlugs) => {
       const imgs = [
         ...document.querySelectorAll(
