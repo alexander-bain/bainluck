@@ -11,7 +11,7 @@ import subprocess
 from urllib.request import Request, urlopen
 
 from model import PACIFIC, STATIONS, instant
-from notes import COLLECTOR_DAILY_CALLS, MONTHLY_COST_MICROS
+from notes import COLLECTOR_DAILY_CALLS, MONTHLY_COST_MICROS, next_picture_draw
 from signals import on_floor
 from llm_models import UnsupportedModelError, image_model_for_task
 
@@ -33,6 +33,7 @@ ART_DIRECTION = (
     "Use simple shapes, solid colors, bare wood, and unmarked tools and crates. "
     "Leave the walls, wood and metal as uninterrupted areas of solid color. "
     "Use no lettering, digits, logos, signatures, watermarks or shapes that imitate writing. "
+    "Keep the picture free of signs, labels, words, letters, numbers and rows of tiny marks. "
     "Keep any figures as simple cartoons."
 )
 CRATE_SCENES = {
@@ -263,6 +264,22 @@ def no_lettering(content):
     return not re.search(rb"[A-Za-z0-9]", result.stdout)
 
 
+def checked_picture(response, check, sample):
+    try:
+        content = picture_bytes(response)
+    except PictureRefused as refusal:
+        return None, str(refusal)
+    if sample:
+        return content, "measured"
+    try:
+        has_no_lettering = check(content)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None, "lettering-check-failed"
+    if not has_no_lettering:
+        return None, "lettering-found"
+    return content, "drawn"
+
+
 def metered_picture(snapshot, budget, key, *, sample=False, enabled=DAILY_PICTURE_ENABLED,
                     request=request_image, prepare=prepare_text_check, check=no_lettering):
     if not sample and not enabled:
@@ -276,7 +293,7 @@ def metered_picture(snapshot, budget, key, *, sample=False, enabled=DAILY_PICTUR
         return None, {"status": "input-unavailable", "mode": mode}
     if sample and (enabled or meter.get("picture_sample")):
         return None, {"status": "sample-unavailable", "mode": mode}
-    if not sample and (local.hour < 18 or meter.get("picture_day") == local.date().isoformat()):
+    if not sample and (local.hour < 18 or next_picture_draw(meter, local.date().isoformat()) is None):
         return None, {"status": "outside-daily-turn"}
 
     try:
@@ -307,6 +324,8 @@ def metered_picture(snapshot, budget, key, *, sample=False, enabled=DAILY_PICTUR
     if not reservation:
         return None, {**receipt, "status": "no-reservation"}
     receipt["month_before_micros"] = reservation[0]["month_micros"]
+    if not sample:
+        receipt.update(day=record["day"], attempt=reservation[1]["picture_draws"])
     try:
         response, request_id = request(payload, key)
     except Exception:
@@ -319,28 +338,17 @@ def metered_picture(snapshot, budget, key, *, sample=False, enabled=DAILY_PICTUR
     receipt.update(tokens=tokens, used_micros=spent)
     if request_id and re.fullmatch(r"[A-Za-z0-9_-]{1,128}", request_id):
         receipt["request_id"] = request_id
+    content, status = None, "price-over-reservation"
+    if spent <= reserve:
+        content, status = checked_picture(response, check, sample)
     try:
-        budget.settle(reservation, spent)
+        budget.settle(reservation, spent, picture_rejected=status == "lettering-found")
     except Exception:
         return None, {**receipt, "status": "reservation-retained", **budget.stats()}
     receipt.update(budget.stats())
     receipt["tokens_in"] = tokens["input_text"] + tokens["input_image"]
     receipt["tokens_out"] = tokens["output_image"]
-    if spent > reserve:
-        return None, {**receipt, "status": "price-over-reservation"}
-    try:
-        content = picture_bytes(response)
-    except PictureRefused as refusal:
-        return None, {**receipt, "status": str(refusal)}
-    if sample:
-        return (record, content), {**receipt, "status": "measured"}
-    try:
-        has_no_lettering = check(content)
-    except (OSError, ValueError, subprocess.SubprocessError):
-        return None, {**receipt, "status": "lettering-check-failed"}
-    if not has_no_lettering:
-        return None, {**receipt, "status": "lettering-found"}
-    return (record, content), {**receipt, "status": "drawn"}
+    return ((record, content) if content else None), {**receipt, "status": status}
 
 
 if __name__ == "__main__":
