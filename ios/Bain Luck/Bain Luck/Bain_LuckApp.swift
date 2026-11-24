@@ -367,6 +367,8 @@ struct Bain_LuckApp: App {
             }
             // #10874 — saved/recent Spotlight index + opening a tapped result.
             .spotlight10874(userID: authManager.activeFeedUserId, pins: pinManager, navigation: navCoordinator)
+            // #12304 — an App Store rating, asked once at a calm moment.
+            .reviewPrompt12304(navigation: navCoordinator)
     }
 
     #if os(macOS)
