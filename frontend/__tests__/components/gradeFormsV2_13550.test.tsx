@@ -2,6 +2,8 @@
  * #13550 (363: A) — /grade/forms v2 blind pile-sort UI, copy, empty Pile 1,
  * Start over reset, and stale pre-fix row filtering tests.
  */
+import fs from "node:fs";
+import path from "node:path";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -163,5 +165,24 @@ describe("#13550 (363: A) — /grade/forms v2 pile sort", () => {
         "2026-11-24T22:10:00Z",
       ),
     ).toBe(true);
+  });
+
+  test("POST payload strings fit RankingJudgment VARCHAR column limits", () => {
+    const pageSrc = fs.readFileSync(
+      path.resolve(__dirname, "../../app/grade/forms/page.tsx"),
+      "utf-8",
+    );
+    const surfaceMatch = pageSrc.match(/surface:\s*"([^"]+)"/);
+    const itemTypeMatch = pageSrc.match(/item_type:\s*"([^"]+)"/);
+    const reviewerMatch = pageSrc.match(/reviewer:\s*"([^"]+)"/);
+    expect(surfaceMatch?.[1]).toBe("grade_forms_deck");
+    expect(surfaceMatch![1].length).toBeLessThanOrEqual(50);
+    expect(itemTypeMatch?.[1]).toBe("forms_pile_sort");
+    expect(itemTypeMatch![1].length).toBeLessThanOrEqual(20);
+    expect(reviewerMatch![1].length).toBeLessThanOrEqual(100);
+    expect(pageSrc).toContain('label: allPlaced ? "complete" : "draft"');
+    for (const label of ["complete", "draft"]) {
+      expect(label.length).toBeLessThanOrEqual(10);
+    }
   });
 });

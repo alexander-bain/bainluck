@@ -294,11 +294,12 @@ function FormsPileSortSession() {
           surface: "grade_forms_deck",
           item_type: "forms_pile_sort",
           market_name: FORMS_DECK.deck_id,
-          label: allPlaced ? "pile_sort_complete" : "pile_sort_draft",
+          label: allPlaced ? "complete" : "draft",
           reviewer: "alex",
           notes: `${sortedCount}/${orderedForms.length} cards in ${finalPiles.length} piles`,
           label_metadata: {
             ui_version: 2,
+            sort_state: allPlaced ? "pile_sort_complete" : "pile_sort_draft",
             deck_id: FORMS_DECK.deck_id,
             seed: FORMS_DECK.seed,
             timestamp: ts,
