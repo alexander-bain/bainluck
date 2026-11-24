@@ -158,7 +158,7 @@ function GameNuggetsGradeSession() {
     setLoadingEventId(activeEventId);
     setGameError(null);
     const params = new URLSearchParams({ limit: "8", slate: deck.slate_id });
-    const init = grader ? { headers: { "X-Grader-Name": encodeURIComponent(grader) } } : undefined;
+    const init = { headers: { "X-Grader-Name": encodeURIComponent(grader) } };
     adminFetchJSON<SingleGameNuggetsResponse>(
       `/api/admin/ranking/game-nuggets/games/${activeEventId}?${params.toString()}`,
       secret,
