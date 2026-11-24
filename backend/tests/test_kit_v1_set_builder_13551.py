@@ -936,3 +936,115 @@ def test_v7_387a_388a_389c_live_caption_and_split_bar_parity() -> None:
     assert "61%" not in res_live["stat_caption"] and "39%" not in res_live["stat_caption"]
     split_bar = next(m for m in res_live["kit_card"]["body"]["items"][0]["marks"] if m["mark"] == "bar")
     assert split_bar["segments"][0]["color"] != split_bar["segments"][1]["color"]
+
+
+def test_three_kept_grid_suited_sets_render_as_scoreboard_grid() -> None:
+    """Item 8 / #13631 Fable 5 points: Big Tech (MS/NV initials, scoped icons), AI Leaderboard (Text Arena), Fed (Direction 228 order, no #, 388: A)."""
+    resolver = _default_art_resolver()
+
+    def _market(mid: int, title: str, outs: list[tuple[str, int, float]]) -> dict:
+        return {
+            "type": "market",
+            "card": {
+                "id": mid,
+                "name": title,
+                "top_outcomes": [
+                    {"name": nm, "rendered_percent": pct, "probability": prob}
+                    for nm, pct, prob in outs
+                ],
+            },
+        }
+
+    # 1. AI & Big Tech Race: Largest / 2nd Largest / 3rd Largest Company (symbols + MS/NV initials)
+    big_tech = build_kit_card_for_real_set(
+        {"type": "bundle", "data": {"id": "roundup:machinery-ai-and-big-tech-race", "title": "The AI & Big Tech Race", "roundup": {"kicker": "TECH · BUSINESS"}}},
+        {
+            "container": {"id": 3784574905, "slug": "machinery-ai-and-big-tech-race", "title": "The AI & Big Tech Race", "source_count": 1},
+            "sections": [
+                {
+                    "class": "ai_and_big_tech_race",
+                    "members": [
+                        _market(113318, "Largest Company end of December 2026?", [("Apple", 84, 0.8425), ("NVIDIA", 15, 0.1505), ("Microsoft", 1, 0.0045), ("Alphabet", 1, 0.0035)]),
+                        _market(68806125, "2nd Largest Company end of November 2026?", [("NVIDIA", 82, 0.8167), ("Microsoft", 15, 0.1465), ("Alphabet", 2, 0.0189), ("Apple", 1, 0.0133)]),
+                        _market(68806126, "3rd Largest Company end of November 2026?", [("Microsoft", 64, 0.6338), ("Alphabet", 19, 0.1848), ("NVIDIA", 13, 0.1268), ("Apple", 1, 0.0131)]),
+                    ],
+                }
+            ],
+        },
+        now=FIXED_NOW,
+        resolver=resolver,
+    )
+    assert big_tech["fits"] is True, big_tech
+    assert big_tech["layout"] == "grid" and big_tech["variant"] == "scoreboard_grid"
+    assert [c["label"] for c in big_tech["kit_card"]["body"]["columns"]] == ["1st", "2nd", "3rd"]
+    bt_rows = big_tech["kit_card"]["body"]["rows"]
+    assert len(bt_rows) == 4
+    bt_pics = {next(m["text"] for m in r["leading"] if m.get("style") == "row"): next(m for m in r["leading"] if m["mark"] == "picture") for r in bt_rows}
+    assert bt_pics["Apple"]["url"] and bt_pics["Alphabet"]["url"]
+    assert bt_pics["NVIDIA"]["url"] is None and bt_pics["NVIDIA"]["initials"] == "NV"
+    assert bt_pics["Microsoft"]["url"] is None and bt_pics["Microsoft"]["initials"] == "MS"
+    assert validate_kit_v1_card(big_tech["kit_card"])[0]
+
+    # 2. AI Model Leaderboard: Overall / Coding / Text Arena across canonical labs
+    ai_lb = build_kit_card_for_real_set(
+        {"type": "bundle", "data": {"id": "roundup:machinery-ai-model-leaderboard-2026", "title": "The 2026 AI Model Leaderboard", "roundup": {"kicker": "TECH · AI"}}},
+        {
+            "container": {"id": 4001, "slug": "machinery-ai-model-leaderboard-2026", "title": "The 2026 AI Model Leaderboard", "source_count": 1},
+            "sections": [
+                {
+                    "class": "ai_model_leaderboard_2026",
+                    "members": [
+                        _market(109596, "Best AI at the end of 2026?", [("Gemini", 80, 0.7968), ("Claude", 14, 0.1396), ("ChatGPT", 4, 0.0402), ("Grok", 1, 0.0083)]),
+                        _market(109623, "Which AI company will have the best coding model at the end of 2026?", [("Anthropic", 57, 0.57), ("Google", 25, 0.25), ("OpenAI", 16, 0.155)]),
+                        _market(109322, "Which AI will be the first to hit 1550 on Text Arena?", [("Gemini", 30, 0.295), ("Claude", 8, 0.075), ("ChatGPT", 5, 0.045)]),
+                    ],
+                }
+            ],
+        },
+        now=FIXED_NOW,
+        resolver=resolver,
+    )
+    assert ai_lb["fits"] is True, ai_lb
+    assert [c["label"] for c in ai_lb["kit_card"]["body"]["columns"]] == ["Overall", "Coding", "Text Arena"]
+    assert len(ai_lb["kit_card"]["body"]["rows"]) == 3
+    assert validate_kit_v1_card(ai_lb["kit_card"])[0]
+
+    # 3. Fed & U.S. Macro: Direction 228 value order, no # rank col, two-meeting wording, allowed by 388: A
+    fed = build_kit_card_for_real_set(
+        {"type": "bundle", "data": {"id": "roundup:machinery-fed-and-macro", "title": "Fed & U.S. Macro", "roundup": {"kicker": "ECONOMICS · FEDERAL RESERVE"}}},
+        {
+            "container": {"id": 3913944771, "slug": "machinery-fed-and-macro", "title": "Fed & U.S. Macro", "source_count": 1},
+            "sections": [
+                {
+                    "class": "jan_fomc",
+                    "members": [
+                        _market(57574217, "Fed Decision in January?", [("Quarter-point increase", 53, 0.525), ("No change", 45, 0.445), ("Quarter-point cut", 2, 0.017), ("Half-point or larger increase", 1, 0.01)]),
+                    ],
+                },
+                {
+                    "class": "rate_path",
+                    "members": [
+                        _market(57574250, "Fed Decision in December?", [("Quarter-point increase", 93, 0.9322), ("No change", 4, 0.0329), ("Half-point or larger increase", 3, 0.0309), ("Quarter-point cut", 0, 0.0025)]),
+                    ],
+                },
+            ],
+        },
+        now=FIXED_NOW,
+        resolver=resolver,
+    )
+    assert fed["fits"] is True, fed
+    assert [c["label"] for c in fed["kit_card"]["body"]["columns"]] == ["Dec FOMC", "Jan FOMC"]
+    fed_rows = fed["kit_card"]["body"]["rows"]
+    assert [next(m["text"] for m in r["leading"] if m.get("style") == "row") for r in fed_rows] == [
+        "Quarter-point cut",
+        "No change",
+        "Quarter-point increase",
+        "Half-point or larger increase",
+    ]
+    assert all(all(m.get("style") != "rank" for m in r["leading"]) for r in fed_rows)
+    assert fed["stat_caption"] == "Quarter-point increase leads December FOMC at 93% (53% in January); no change is 4% for December and 45% for January."
+    assert "rising from" not in fed["stat_caption"].lower()
+    fed_blob = json.dumps(fed["kit_card"])
+    assert "<1%" in fed_blob
+    assert '"center_label": "0%"' not in fed_blob
+    assert validate_kit_v1_card(fed["kit_card"])[0]

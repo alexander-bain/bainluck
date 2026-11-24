@@ -245,7 +245,7 @@ function alignClass(align?: string): string {
 }
 
 function wordWidthClass(width?: string): string {
-  if (width === "flex") return "min-w-0 flex-1";
+  if (width === "flex") return "min-w-0 flex-1 break-words";
   if (width === "xs") return "w-8 shrink-0";
   if (width === "sm") return "w-16 shrink-0";
   return "shrink-0";
@@ -612,9 +612,11 @@ function GridLayout({ body }: { body: KitV1GridBody }) {
       firstLeading.length > 0 &&
       firstLeading[0]?.mark === "word" &&
       firstLeading[0]?.style === "rank";
+    const isDenseMatrix = body.columns.length >= 3;
+    const colWidthPx = isDenseMatrix ? "40px" : "66px";
     const gridCols = hasRank
-      ? `16px minmax(0,1fr) repeat(${body.columns.length}, 66px)`
-      : `minmax(0,1fr) repeat(${body.columns.length}, 66px)`;
+      ? `18px minmax(0,1fr) repeat(${body.columns.length}, ${colWidthPx})`
+      : `minmax(0,1fr) repeat(${body.columns.length}, ${colWidthPx})`;
 
     return (
       <div className="space-y-1.5">
@@ -643,7 +645,11 @@ function GridLayout({ body }: { body: KitV1GridBody }) {
               style={{ gridTemplateColumns: gridCols }}
             >
               {rankMark && <KitMarkView mark={rankMark} />}
-              <div className="flex min-w-0 items-center gap-1.5">
+              <div
+                className={`flex min-w-0 items-center gap-1.5 overflow-hidden ${
+                  isDenseMatrix ? "[&>span]:text-[11px]" : ""
+                }`}
+              >
                 {entityMarks.map((lm, lIdx) => (
                   <KitMarkView key={`${row.id}-l-${lIdx}`} mark={lm} />
                 ))}
