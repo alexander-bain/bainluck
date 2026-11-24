@@ -38,27 +38,30 @@
       "entries": [
         {
           "id": 61321725,
-          "short_label": "CoreWeave filing for bankruptcy",
-          "headline_phrase": "CoreWeave filing for bankruptcy {answer}",
-          "headline_with_phrase": "CoreWeave bankruptcy {answer}"
+          "short_label": "CoreWeave",
+          "art_subject": "CoreWeave",
+          "headline_phrase": "CoreWeave bankruptcy {answer}",
+          "headline_with_phrase": "CoreWeave"
         },
         {
           "id": 61321727,
-          "short_label": "Anthropic filing for bankruptcy",
-          "headline_phrase": "Anthropic filing for bankruptcy {answer}",
-          "headline_with_phrase": "Anthropic bankruptcy {answer}"
+          "short_label": "Anthropic",
+          "art_subject": "Anthropic",
+          "headline_phrase": "Anthropic bankruptcy {answer}",
+          "headline_with_phrase": "Anthropic"
         },
         {
           "id": 61321742,
-          "short_label": "OpenAI filing for bankruptcy",
-          "headline_phrase": "OpenAI filing for bankruptcy {answer}",
-          "headline_with_phrase": "OpenAI bankruptcy {answer}"
+          "short_label": "OpenAI",
+          "art_subject": "OpenAI",
+          "headline_phrase": "OpenAI bankruptcy {answer}",
+          "headline_with_phrase": "OpenAI"
         },
         {
           "id": 61321726,
-          "short_label": "NuScale filing for bankruptcy",
-          "headline_phrase": "NuScale filing for bankruptcy {answer}",
-          "headline_with_phrase": "NuScale bankruptcy {answer}"
+          "short_label": "NuScale",
+          "headline_phrase": "NuScale bankruptcy {answer}",
+          "headline_with_phrase": "NuScale"
         }
       ]
     },

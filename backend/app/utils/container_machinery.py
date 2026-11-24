@@ -2624,6 +2624,7 @@ def _hydrate_market_visual_item(
     return {
         "market_id": mid,
         "title": display_title,
+        "_short_label_base": base_title,
         "headline_phrase": headline_phrase,
         "headline_with_phrase": headline_with_phrase,
         "raw_title": clean_raw_name,
@@ -4509,7 +4510,8 @@ def _build_dynamic_title_from_set(
             lead_p = int(d_outs[0]["rendered_percent"])
             trail_p = int(d_outs[1]["rendered_percent"])
             du_phrase = _prose_market_phrase(str(duel_item["title"]))
-            return f"{lead_name} leads {trail_name} {lead_p}% to {trail_p}% in {du_phrase}"
+            sep = " to " if len(d_outs_all) >= 3 else "–"
+            return f"{lead_name} leads {trail_name} {lead_p}%{sep}{trail_p}% in {du_phrase}"
 
     if history_items and (
         lead_sec_form == "probability_history_chart"
@@ -5350,6 +5352,17 @@ async def produce_container_machinery(
         matched = matched[:max_items]
         if len(matched) < min_items:
             return RoundupRefusal((("container_machinery", f"too_few_markets:{sec_key}"),))
+        if bool(aq.get("omit_shared_date_suffix_on_rows")) and matched:
+            shared_date_answers = {
+                _norm_key(str((it.get("outcomes") or [{}])[0].get("name") or ""))
+                for it in matched
+                if it.get("is_date_timing_row") and (it.get("outcomes") or ())
+            }
+            if len(shared_date_answers) == 1 and all(it.get("is_date_timing_row") for it in matched):
+                for it in matched:
+                    plain_lbl = str(it.get("_short_label_base") or "").strip()
+                    if plain_lbl:
+                        it["title"] = plain_lbl
 
         sec_allow_3way_duel = bool(sec_cfg.get("allow_three_way_duel"))
         form_id = choose_section_form(
@@ -5400,7 +5413,7 @@ async def produce_container_machinery(
                 {
                     k: v
                     for k, v in it.items()
-                    if k not in ("card", "_twin_market_ids", "_volume")
+                    if k not in ("card", "_twin_market_ids", "_volume", "_short_label_base")
                 }
                 for it in matched
             ],

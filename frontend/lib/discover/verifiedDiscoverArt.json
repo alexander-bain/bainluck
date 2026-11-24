@@ -3903,6 +3903,53 @@
       "author": "Airman 1st Class Kerelin Molina",
       "license": "Public domain",
       "source_page": "https://commons.wikimedia.org/wiki/File:Black_boxing_gloves.jpg"
+    },
+    {
+      "entity_key": "anthropic-pbc",
+      "aliases": [
+        "Anthropic",
+        "Claude",
+        "Claude Opus"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "Anthropic / Claude official symbol mark",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b0/Claude_AI_symbol.svg/330px-Claude_AI_symbol.svg.png",
+      "credit": "Wikimedia Commons",
+      "author": "Anthropic PBC",
+      "license": "CC0",
+      "source_page": "https://commons.wikimedia.org/wiki/File:Claude_AI_symbol.svg"
+    },
+    {
+      "entity_key": "openai-inc",
+      "aliases": [
+        "OpenAI",
+        "OpenAI IPO",
+        "ChatGPT"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "OpenAI / ChatGPT blossom mark",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/66/OpenAI_logo_2025_%28symbol%29.svg/330px-OpenAI_logo_2025_%28symbol%29.svg.png",
+      "credit": "Wikimedia Commons",
+      "author": "OpenAI",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:OpenAI_logo_2025_(symbol).svg"
+    },
+    {
+      "entity_key": "coreweave-inc",
+      "aliases": [
+        "CoreWeave",
+        "CoreWeave Inc"
+      ],
+      "kind": "organization",
+      "presentation": "photo",
+      "verified_subject": "CoreWeave corporate logo mark",
+      "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/25/CoreWeave_logo.svg/330px-CoreWeave_logo.svg.png",
+      "credit": "Wikimedia Commons",
+      "author": "CoreWeave, Inc.",
+      "license": "Public domain",
+      "source_page": "https://commons.wikimedia.org/wiki/File:CoreWeave_logo.svg"
     }
   ]
 }

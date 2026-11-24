@@ -233,6 +233,10 @@ async def test_batch9_six_preview_groupings_build_with_form_diversity(caplog: py
 
     tech_card = by_slug["machinery-tech-shocks-and-ai-bankruptcies"][2]
     assert "by by" not in tech_card["title"]
+    assert "bankruptcy by Dec 31, 2027" in tech_card["title"]
+    assert [r["name"] for r in tech_card["rows"]] == ["CoreWeave", "Anthropic", "OpenAI"]
+    for row in tech_card["rows"]:
+        assert row["art"]["url"], row
 
     for slug in BATCH9_SLUGS:
         hl = str(by_slug[slug][2]["title"])
