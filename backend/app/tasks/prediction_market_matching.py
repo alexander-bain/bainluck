@@ -8001,13 +8001,11 @@ async def _phase2_persist_group_reading(
     # its rows earlier than the stored one did, and commit on refusal so the
     # lock is never carried into the next group.
     _pm_r = await session.execute(
-        select(Event.win_probability_sources, Event.status)
+        select(Event.win_probability_sources)
         .where(Event.id == anchor.event_id)
         .with_for_update()
     )
-    _pm_row = _pm_r.first()
-    stored_sources = _pm_row[0] if _pm_row else None
-    _pm_status = _pm_row[1] if _pm_row else None
+    stored_sources = _pm_r.scalar_one_or_none()
     basis = observation_basis(reading.contributing_outcomes or (reading.outcome,))
     if reading_regresses_stored_observation(stored_sources, anchor.source, basis):
         stats["stale_readings_refused"] = stats.get("stale_readings_refused", 0) + 1
@@ -8026,7 +8024,7 @@ async def _phase2_persist_group_reading(
             home_win_probability=round(home_prob, 4),
             away_win_probability=round(away_prob, 4),
             draw_probability=None if draw_prob is None else round(draw_prob, 4),
-            is_completed=(_pm_status in ("completed", "closed")),
+            is_completed=bool(getattr(anchor, "event_has_result", False)),
             game_state={
                 # `reading.market`, NOT the group's primary. The primary is only
                 # the row picked to iterate once per (event, source); since the
@@ -13205,13 +13203,11 @@ async def _poll_live_prediction_market_prices():
                 # Held until `_commit_boundary()`; event row before snapshot is
                 # the order the WS lane already takes.
                 _pm_r2 = await session.execute(
-                    select(Event.win_probability_sources, Event.status)
+                    select(Event.win_probability_sources)
                     .where(Event.id == event.id)
                     .with_for_update()
                 )
-                _pm_row2 = _pm_r2.first()
-                _stored_wps2 = _pm_row2[0] if _pm_row2 else None
-                _pm_status2 = _pm_row2[1] if _pm_row2 else getattr(event, "status", None)
+                _stored_wps2 = _pm_r2.scalar_one_or_none()
                 _basis_of_reading2 = _basis2(
                     reading.contributing_outcomes or (reading.outcome,)
                 )
@@ -13279,7 +13275,7 @@ async def _poll_live_prediction_market_prices():
                         if (event.status or "").lower() == "live"
                         else None
                     ),
-                    is_completed=(_pm_status2 in ("completed", "closed")),
+                    is_completed=(getattr(event, "status", None) in ("completed", "closed")),
                 )
 
                 if is_new:

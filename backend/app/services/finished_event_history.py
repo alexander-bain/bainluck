@@ -15,8 +15,6 @@ Serves BOTH `range="all"` (iPhone `?hours=N` with no `range` + Web "All") and
   * The two large unindexed-by-id history tables (`win_prob_snapshots`,
     `odds_snapshots`) invalidate directly at every writer via
     `invalidate_finished_event_history` / `invalidate_finished_event_history_sync`.
-  * Note: `venue_history_points` (#11929 / 371:A) and `futures_odds_snapshots`
-    are NOT read by `get_event_odds_history`, so they require neither check.
 - Retention (Condition 2): no age expiry or 30-day pruning in this version;
   revisit at 10 GB (`measure_finished_event_history_storage` reports size).
 - Day-1 materializer cap (Condition 3): default 5 events per run with explicit
