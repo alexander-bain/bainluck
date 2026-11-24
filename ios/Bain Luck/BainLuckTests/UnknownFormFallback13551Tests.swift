@@ -482,6 +482,51 @@ final class UnknownFormFallback13551Tests: XCTestCase {
         #endif
     }
 
+    func testStandardGameRowShowsTeamNamesBesidePercentsInLightAndDark() async throws {
+        let gameJSON = """
+        {
+          "type": "event",
+          "score": 92.0,
+          "data": {
+            "id": 1357901,
+            "sport": "basketball_nba",
+            "sport_name": "NBA",
+            "away_team": "Miami Heat",
+            "home_team": "Boston Celtics",
+            "away_team_data": {"team_id": 14, "slug": "miami-heat", "abbreviation": "MIA"},
+            "home_team_data": {"team_id": 2, "slug": "boston-celtics", "abbreviation": "BOS"},
+            "status": "scheduled",
+            "current_odds": {
+              "away_probability": 0.36,
+              "home_probability": 0.64,
+              "away_rendered_percent": 36,
+              "home_rendered_percent": 64
+            }
+          }
+        }
+        """
+        let gameItem = try decoder().decode(FeedItem.self, from: Data(gameJSON.utf8))
+
+        #if canImport(UIKit)
+        for (scheme, suffix) in [(ColorScheme.light, "light"), (ColorScheme.dark, "dark")] {
+            let img = await renderInWindow(width: 390, height: 440, scheme: scheme) {
+                NativeGroupCard(
+                    title: "NBA Tonight",
+                    items: [gameItem],
+                    kind: "sports",
+                    navigationPath: .constant(NavigationPath())
+                )
+                .padding(16)
+                .frame(width: 390, alignment: .topLeading)
+            }
+            let ocr = recognizeText(in: img).replacingOccurrences(of: " | ", with: " ")
+            XCTAssertTrue(ocr.contains("MIA 36%"), "Game row missing away team beside percent (\(suffix)): \(ocr)")
+            XCTAssertTrue(ocr.contains("BOS 64%"), "Game row missing home team beside percent (\(suffix)): \(ocr)")
+            XCTAssertFalse(ocr.contains("…"), "Zero ellipsis on game row (\(suffix)): \(ocr)")
+        }
+        #endif
+    }
+
     #if canImport(UIKit)
     private func renderInWindow<V: View>(
         width: CGFloat,

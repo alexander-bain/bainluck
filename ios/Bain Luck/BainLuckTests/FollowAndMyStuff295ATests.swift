@@ -149,6 +149,7 @@ final class FollowAndMyStuff295ATests: XCTestCase {
         )
 
         let teamPage = try makeSampleTeamPage()
+        let sampleNow = ISO8601DateFormatter().date(from: "2026-11-21T12:00:00Z")!
         let vm = MyStuffLandingViewModel295A(
             defaults: defaults,
             subjectHydrator: { subjects in
@@ -162,7 +163,8 @@ final class FollowAndMyStuff295ATests: XCTestCase {
             },
             discoverFetcher: {
                 emptyDiscover
-            }
+            },
+            nowProvider: { sampleNow }
         )
 
         await vm.refresh(
@@ -177,6 +179,60 @@ final class FollowAndMyStuff295ATests: XCTestCase {
         XCTAssertEqual(vm.nextEvents.map { $0.event.id }, [15400201, 15400202])
         XCTAssertEqual(vm.nextEvents.first?.event.awayTeam, "Boston Celtics")
         XCTAssertEqual(vm.nextEvents.first?.event.homeTeam, "Washington Wizards")
+    }
+
+    func testPastDatedScheduledGameIsExcludedFromNextForYouEvenWhenStatusIsScheduled() async throws {
+        let defaults = makeIsolatedDefaults()
+        let pastGame = try decodeEvent("""
+        {
+          "id": 90101,
+          "sport": "basketball_nba",
+          "sport_name": "NBA",
+          "away_team": "Boston Celtics",
+          "home_team": "Washington Wizards",
+          "commence_time": "2026-11-22T00:00:00Z",
+          "status": "scheduled",
+          "current_odds": {"away_probability": 0.82, "home_probability": 0.18}
+        }
+        """)
+        let futureGame = try decodeEvent("""
+        {
+          "id": 90102,
+          "sport": "basketball_nba",
+          "sport_name": "NBA",
+          "away_team": "Miami Heat",
+          "home_team": "Boston Celtics",
+          "commence_time": "2026-11-25T23:30:00Z",
+          "status": "scheduled",
+          "current_odds": {"away_probability": 0.36, "home_probability": 0.64}
+        }
+        """)
+        let emptyDiscoverDecoder = JSONDecoder()
+        emptyDiscoverDecoder.keyDecodingStrategy = .convertFromSnakeCase
+        let emptyDiscover = try emptyDiscoverDecoder.decode(
+            FeedResponse.self,
+            from: Data(#"{"items":[],"total":0,"limit":20,"offset":0,"has_more":false}"#.utf8)
+        )
+        let tueNov24 = ISO8601DateFormatter().date(from: "2026-11-24T18:00:00Z")!
+        let celtics = FollowedSubject295A.team(slug: "boston-celtics", teamId: 2, name: "Boston Celtics", sportKey: "basketball_nba")
+        let vm = MyStuffLandingViewModel295A(
+            defaults: defaults,
+            subjectHydrator: { _ in
+                [MyStuffLandingViewModel295A.HydratedSubjectPack(events: [(pastGame, true), (futureGame, true)])]
+            },
+            discoverFetcher: { emptyDiscover },
+            nowProvider: { tueNov24 }
+        )
+
+        await vm.refresh(
+            followedSubjects: [celtics],
+            savedPins: [],
+            pinContent: [:],
+            signedInItems: [],
+            signedInTeamFutures: nil
+        )
+
+        XCTAssertEqual(vm.nextEvents.map(\.event.id), [90102], "Past-dated Sun Nov 22 game must never sit under Next for you")
     }
 
     func testGameAlertsPromptOffersOnceAndShares13083Keys() {
@@ -592,6 +648,7 @@ final class FollowAndMyStuff295ATests: XCTestCase {
         )
 
         let defaults = makeIsolatedDefaults()
+        let nov21 = ISO8601DateFormatter().date(from: "2026-11-21T12:00:00Z")!
         let vm = MyStuffLandingViewModel295A(
             defaults: defaults,
             singleSubjectHydrator: { subject in
@@ -617,7 +674,8 @@ final class FollowAndMyStuff295ATests: XCTestCase {
             },
             discoverFetcher: {
                 emptyDiscover
-            }
+            },
+            nowProvider: { nov21 }
         )
 
         let refreshTask = Task {

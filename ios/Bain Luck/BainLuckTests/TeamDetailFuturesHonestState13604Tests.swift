@@ -256,5 +256,59 @@ final class TeamDetailFuturesHonestState13604Tests: XCTestCase {
             try afterImg.pngData()?.write(to: dirURL.appendingPathComponent("13604-recovered-light-390.png"))
         }
     }
+
+    func testUnavailableFlagWithNonEmptyFuturesShowsOneLineNoteAndTryAgainUnderRows() async throws {
+        let json = """
+        {
+          "team": {
+            "id": 12,
+            "slug": "boston-celtics",
+            "name": "Boston Celtics",
+            "abbreviation": "BOS",
+            "location": "Boston",
+            "sport_key": "basketball_nba",
+            "sport_name": "NBA",
+            "primary_color": "#007A33"
+          },
+          "upcoming_events": [],
+          "recent_events": [],
+          "futures": [
+            {
+              "outcome_id": 901,
+              "outcome_name": "Jayson Tatum",
+              "market_id": 60901,
+              "market_name": "NBA: 2026-27 Regular Season MVP",
+              "market_tier": 2,
+              "category": "awards",
+              "source": "polymarket",
+              "probability": 0.184,
+              "probability_change_24h": 0.012,
+              "rank": 3,
+              "total_outcomes": 30,
+              "resolution_date": null,
+              "is_winner": null,
+              "matched_team": null,
+              "canonical_market_key": null,
+              "state": null
+            }
+          ],
+          "championship_path": [],
+          "futures_unavailable": true
+        }
+        """
+        let page = try decodeTeamPage(json)
+        XCTAssertEqual(page.futuresUnavailable, true)
+        XCTAssertNil(page.futuresPartial)
+        XCTAssertEqual(page.futures.count, 1)
+
+        for scheme in [ColorScheme.light, ColorScheme.dark] {
+            let (_, lines) = try await renderAndRecognize(page: page, scheme: scheme)
+            let joined = lines.joined(separator: " ")
+            XCTAssertTrue(joined.contains("Jayson Tatum"), "Must keep arrived futures row (\(scheme)): \(joined)")
+            XCTAssertTrue(joined.contains("Some season futures couldn't be loaded right now."), "Must show note under rows when unavailable=true with rows (\(scheme)): \(joined)")
+            XCTAssertTrue(joined.contains("Try again"), "Must show Try again under rows (\(scheme)): \(joined)")
+            XCTAssertFalse(lines.contains(where: { $0.contains("…") || $0.contains("...") }), "Zero ellipsis (\(scheme)): \(lines)")
+        }
+    }
     #endif
 }

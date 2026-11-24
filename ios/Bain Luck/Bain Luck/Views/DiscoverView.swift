@@ -3921,11 +3921,11 @@ struct NativeGroupCard: View {
             if let awayProb = cardOdds?.awayProbability, let homeProb = cardOdds?.homeProbability {
                 let awayText = formatProbability(awayProb, renderedPercent: cardOdds?.awayRenderedPercent)
                 let homeText = formatProbability(homeProb, renderedPercent: cardOdds?.homeRenderedPercent)
-                Text("\(awayText) · \(homeText)")
+                Text("\(short.away) \(awayText) · \(short.home) \(homeText)")
                     .font(.subheadline.weight(.bold).monospacedDigit())
                     .foregroundStyle(primaryInk)
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
+                    .lineLimit(isAX ? 2 : 1)
+                    .fixedSize(horizontal: !isAX, vertical: true)
             }
         }
         .contentShape(Rectangle())

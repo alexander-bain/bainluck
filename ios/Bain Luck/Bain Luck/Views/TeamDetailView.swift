@@ -434,7 +434,7 @@ struct TeamDetailView: View {
                             .accessibilityIdentifier("teamDetail.retryFutures")
                         }
                         .padding(.vertical, 6)
-                    } else if isPartial {
+                    } else if isPartial || isUnavailable {
                         VStack(alignment: .leading, spacing: 8) {
                             Text(TeamFuturesAvailabilityCopy13604.partialMessage(omittedCount: data.futuresOmittedCount))
                                 .font(.caption)
