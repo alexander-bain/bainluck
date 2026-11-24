@@ -317,7 +317,9 @@ final class FirstRunViewModel212A: ObservableObject {
                 try? await Task.sleep(nanoseconds: delay)
             }
             guard let self, !Task.isCancelled else { return }
-            if self.sentenceParser != nil && FirstRunSentenceMode359A.looksLikePlainSentence(trimmed) {
+            if FirstRunSentenceMode359A.isEnabledInBuild,
+               self.sentenceParser != nil,
+               FirstRunSentenceMode359A.looksLikePlainSentence(trimmed) {
                 await self.performSentenceParse(query: trimmed, followManager: followManager)
             } else {
                 self.sentenceState = .idle

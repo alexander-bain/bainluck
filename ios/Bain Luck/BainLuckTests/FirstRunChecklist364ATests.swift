@@ -388,7 +388,7 @@ final class FirstRunChecklist364ATests: XCTestCase {
         XCTAssertEqual(content.lookupExamples.count, 3)
         XCTAssertEqual(content.lookupExamples.map(\.kind), [.game, .award, .election])
         let gameExample = try XCTUnwrap(content.lookupExamples.first { $0.kind == .game })
-        XCTAssertEqual(gameExample.title, "76ers tonight", "Game lookup chip attaches the team holding that %")
+        XCTAssertEqual(gameExample.title, "San Francisco tonight", "Point 3: Row 1 chip skips rankedGames[0] reserved for Biggest game")
         let awardExample = try XCTUnwrap(content.lookupExamples.first { $0.kind == .award })
         XCTAssertEqual(awardExample.id, "lookup-award-6173044", "Non-sports award (Oscars) preferred and concisely titled")
         XCTAssertEqual(awardExample.title, "The Odyssey \u{00B7} Oscars", "Fix a: award chip names top outcome with contest")
@@ -399,6 +399,7 @@ final class FirstRunChecklist364ATests: XCTestCase {
         for row in FirstRunChecklistRowID364A.allCases {
             XCTAssertNil(content.rowPreviews[row]?.percentText, "Fix a: never render a bare floating percent beside checklist row \(row)")
         }
+        XCTAssertFalse((content.setsRowPreview?.subtitle ?? "").contains("tap sets"), "Point 6: remove internal 'tap sets' copy")
         for ex in content.lookupExamples {
             XCTAssertTrue((5...95).contains(ex.percent), "Out-of-bounds % on lookup example \(ex)")
         }
@@ -407,10 +408,15 @@ final class FirstRunChecklist364ATests: XCTestCase {
         XCTAssertEqual(content.startWithTonight.map(\.slotLabel), ["Biggest game", "Biggest mover", "Odd one"])
         let oddCard = try XCTUnwrap(content.startWithTonight.first { $0.slotLabel == "Odd one" })
         XCTAssertEqual(oddCard.percent, 12, "Yes/No odd card must show Yes side (12%), never No (88%)")
-        XCTAssertFalse(oddCard.subjectLabel.isEmpty, "Fix a: tonight cards must carry subjectLabel alongside percent")
+        XCTAssertEqual(oddCard.title, "Elon Musk visits Mars in his lifetime", "Point 5: declarative odd-one statement")
+        XCTAssertFalse(oddCard.title.contains("?"), "Point 5: no question mark on odd-one statement")
+        XCTAssertTrue(oddCard.subtitle.isEmpty, "Point 5: no stray Yes subtitle under odd-one")
+        XCTAssertTrue(oddCard.subjectLabel.isEmpty, "Point 5: no duplicate Yes label on odd-one card")
         for card in content.startWithTonight {
             XCTAssertTrue((5...95).contains(card.percent))
-            XCTAssertFalse(card.subjectLabel.isEmpty)
+            if card.slotLabel != "Odd one" {
+                XCTAssertFalse(card.subjectLabel.isEmpty)
+            }
             if let delta = card.deltaText {
                 XCTAssertFalse(delta.contains("pts"))
                 XCTAssertTrue(
@@ -559,11 +565,101 @@ final class FirstRunChecklist364ATests: XCTestCase {
         // Fix d: lookup examples hidden when query is non-empty
         XCTAssertTrue(viewSrc.contains("trimmedQuery.isEmpty"))
 
-        // Fix f: small copy fixes
+        // Fix f: small copy fixes + Fable #13593 review guards
         XCTAssertTrue(viewSrc.contains("or just type what you like"))
         XCTAssertFalse(viewSrc.contains("or a plain note"))
         XCTAssertTrue(viewSrc.contains("We\\u{2019}ll ask before any alert"))
         XCTAssertFalse(viewSrc.contains("prompt appears only after you tap Turn on"))
+        XCTAssertFalse(FirstRunSentenceMode359A.isEnabledInBuild, "Point 1: sentence box stays off in build until Alex rules")
+        XCTAssertTrue(sentenceSrc.contains("static let isEnabledInBuild: Bool = false"))
+        XCTAssertFalse(modelsSrc.contains("\"Open forecast\""))
+        XCTAssertFalse(modelsSrc.contains("tap sets"))
+    }
+
+    func testSentenceBoxOffInBuildUsesPlainTypeaheadInstead() async throws {
+        XCTAssertFalse(FirstRunSentenceMode359A.isEnabledInBuild)
+        let suite = "Checklist364A.SentenceOff.\(UUID().uuidString)"
+        let def = UserDefaults(suiteName: suite)!
+        defer { def.removePersistentDomain(forName: suite) }
+
+        final class SentenceSpy: @unchecked Sendable {
+            var called = false
+        }
+        let famJSON = #"{"query":"Boston Celtics, Oscars","teams":[],"event_concepts":[],"results":[],"futures_families":[{"family_key":"story:oscars","label":"Oscars","headline":{"id":6173044,"name":"Oscar Winner: Best Picture","llm_sport_category":"entertainment","category":"entertainment","status":"open"},"members":[]}],"futures":[]}"#
+        let teamsJSON = #"[{"id":100,"name":"Boston Celtics","location":"Boston","sport_key":"basketball_nba","logo_url":null,"abbreviation":"BOS","sports":[]}]"#
+        let decodedResp = try makeDecoder().decode(SearchResponse.self, from: Data(famJSON.utf8))
+        let teams = try makeDecoder().decode([TeamSearchResult].self, from: Data(teamsJSON.utf8))
+        let spy = SentenceSpy()
+        let vm = FirstRunViewModel212A(
+            initialStep: 3,
+            defaults: def,
+            debounceNs: 0,
+            searchLocationTeams: { _ in [] },
+            searchTeamsByName: { _ in teams },
+            searchGlobal: { _ in decodedResp },
+            sentenceParser: { s in
+                spy.called = true
+                return try await FirstRunSentenceSampleProvider359A.parseSampleSentence(s)
+            }
+        )
+        let followMgr = FollowManager295A(defaults: def, initialSubjects: [])
+        vm.searchQuery = "Boston Celtics, Oscars, Spurs, and inflation"
+        vm.onQueryChange(followManager: followMgr)
+        try await Task.sleep(nanoseconds: 120_000_000)
+
+        XCTAssertFalse(spy.called, "Sentence parser must stay dark while isEnabledInBuild == false")
+        if case .idle = vm.sentenceState {
+            // Expected while sentence box is gated off in the build.
+        } else {
+            XCTFail("Expected sentenceState == .idle, got \(vm.sentenceState)")
+        }
+        XCTAssertFalse(vm.suggestions.isEmpty, "Plain lookup continues serving suggestions")
+    }
+
+    func testMyStuffNeverPlacesFinishedGameUnderNextForYou() async throws {
+        let suite = "Checklist364A.NoFinalNext.\(UUID().uuidString)"
+        let def = UserDefaults(suiteName: suite)!
+        defer { def.removePersistentDomain(forName: suite) }
+
+        let finishedJSON = #"{"id":14780582,"sport":"americanfootball_nfl","sport_name":"NFL","home_team":"Washington Commanders","away_team":"Cincinnati Bengals","status":"completed","commence_time":"2026-11-23T18:00:00Z","home_score":22,"away_score":20}"#
+        let upcomingJSON = #"{"id":15353145,"sport":"basketball_nba","sport_name":"NBA","home_team":"Philadelphia 76ers","away_team":"Portland Trail Blazers","status":"scheduled","commence_time":"2026-11-24T00:00:00Z"}"#
+        let finishedEvent = try makeDecoder().decode(FeedEventData.self, from: Data(finishedJSON.utf8))
+        let upcomingEvent = try makeDecoder().decode(FeedEventData.self, from: Data(upcomingJSON.utf8))
+        XCTAssertEqual(EventState.section(of: finishedEvent), .finished)
+        XCTAssertEqual(EventState.section(of: upcomingEvent), .upcoming)
+
+        // 1. Preloaded snapshot path must strip finished events from nextEvents into movedEntries.
+        var snap = MyStuffLandingViewModel295A.PreloadedSnapshot()
+        snap.nextEvents = [(event: finishedEvent, awayVerified: true), (event: upcomingEvent, awayVerified: true)]
+        let preloadedVM = MyStuffLandingViewModel295A(defaults: def, preloaded: snap)
+        XCTAssertEqual(preloadedVM.nextEvents.map(\.event.id), [15353145])
+        XCTAssertTrue(preloadedVM.movedEntries.contains(where: { $0.id == "moved-final-14780582" }))
+
+        // 2. Refresh hydration path (including non-sports .subject) must never put finished games in nextEvents.
+        let emptyFeed = try makeDecoder().decode(FeedResponse.self, from: Data(#"{"items":[],"total":0,"limit":12,"offset":0,"has_more":false}"#.utf8))
+        let liveVM = MyStuffLandingViewModel295A(
+            defaults: def,
+            subjectHydrator: { _ in
+                [MyStuffLandingViewModel295A.HydratedSubjectPack(events: [(finishedEvent, true), (upcomingEvent, true)], markets: [])]
+            },
+            discoverFetcher: { emptyFeed }
+        )
+        await liveVM.refresh(
+            followedSubjects: [FollowedSubject295A.subject(slug: "story:oscars", name: "Oscars", affinityCategory: "entertainment")],
+            savedPins: [],
+            pinContent: [:],
+            signedInItems: [],
+            signedInTeamFutures: nil
+        )
+        XCTAssertEqual(liveVM.nextEvents.map(\.event.id), [15353145])
+        XCTAssertTrue(liveVM.movedEntries.contains(where: { $0.id == "moved-final-14780582" }))
+    }
+
+    func testStartWithTonightShowsAllThreeCardsWhenPregameMoverExists() throws {
+        let items = try makeSampleFeedItems()
+        let content = FirstRunChecklistExtractor364A.buildContent(from: items, now: Self.fixtureNow)
+        XCTAssertEqual(content.startWithTonight.map(\.slotLabel), ["Biggest game", "Biggest mover", "Odd one"])
+        XCTAssertEqual(content.startWithTonight.first(where: { $0.slotLabel == "Biggest mover" })?.deltaText, "▲ up 33 points since pregame")
     }
 
     #if os(iOS)
@@ -615,7 +711,7 @@ final class FirstRunChecklist364ATests: XCTestCase {
             ? [(.light, "light")]
             : [(.light, "light"), (.dark, "dark")]
 
-        let liveEventSample = feedItems.compactMap(\.event).first(where: { $0.id == 15353145 }) ?? feedItems.compactMap(\.event).first
+        let liveEventSample = feedItems.compactMap(\.event).first(where: { EventState.section(of: $0) == .upcoming })
         let fallbackSearchJSON = #"{"query":"Oscars","teams":[],"event_concepts":[],"results":[],"futures_families":[{"family_key":"story:oscars","label":"Oscars","headline":{"id":6173044,"name":"Oscar Winner: Best Picture","llm_sport_category":"entertainment","category":"entertainment","status":"open"},"members":[]},{"family_key":"story:macro_rates","label":"Fed & Rates","headline":{"id":57574250,"name":"Fed & Rates","llm_sport_category":"economics","category":"economics","status":"open"},"members":[]}],"futures":[]}"#
         let fallbackSearch = try decoder.decode(SearchResponse.self, from: Data(fallbackSearchJSON.utf8))
         let mergedSearchResp: SearchResponse = {
@@ -729,7 +825,7 @@ final class FirstRunChecklist364ATests: XCTestCase {
                 let msFollow = FollowManager295A(defaults: defMS, initialSubjects: [
                     FollowedSubject295A.team(slug: "100", teamId: 100, name: "Boston Celtics", sportKey: "basketball_nba")
                 ])
-                _ = try await renderAndOCR(
+                let ocr04 = try await renderAndOCR(
                     view: MyStuffWithChecklistPreview364A(
                         state: .constant(twoDone),
                         landingVM: landingVM
@@ -742,6 +838,7 @@ final class FirstRunChecklist364ATests: XCTestCase {
                     height: 844,
                     colorScheme: scheme
                 )
+                XCTAssertFalse(ocr04.joined(separator: " ").contains("Final"), "Point 2: Next for you must never contain a finished game")
 
                 // 05: Row 1 step ("Look anything up" — real Oscars search results, no duplicated examples)
                 let oscarSearchResp = loadFixture("search_oscars.json").flatMap { try? decoder.decode(SearchResponse.self, from: $0) } ?? fallbackSearch
@@ -767,7 +864,7 @@ final class FirstRunChecklist364ATests: XCTestCase {
                 XCTAssertFalse(ocr05.joined(separator: " ").contains("Try tonight"), "Fix d: examples must hide once query is non-empty")
                 XCTAssertFalse(ocr05.joined(separator: " ").contains("Live served"), "Fix c: never show Live served")
 
-                // 06: Row 2 step ("Follow what you care about" — logos + subject pictures + 359: A)
+                // 06: Row 2 step ("Follow what you care about" — logos + subject pictures, sentence box OFF)
                 let suiteFollow = "Checklist364A.Follow.\(UUID().uuidString)"
                 let defFollow = UserDefaults(suiteName: suiteFollow)!
                 defer { defFollow.removePersistentDomain(forName: suiteFollow) }
@@ -779,11 +876,16 @@ final class FirstRunChecklist364ATests: XCTestCase {
                     searchLocationTeams: { _ in [] },
                     searchTeamsByName: { _ in bostonOrBrownTeams },
                     searchGlobal: { _ in mergedSearchResp },
-                    sentenceParser: { s in try await FirstRunSentenceSampleProvider359A.parseSampleSentence(s) }
+                    sentenceParser: nil
                 )
-                followVM.searchQuery = "Boston Celtics, Oscars, Spurs, and inflation"
-                await followVM.performSentenceParse(query: followVM.searchQuery, followManager: followMgr)
+                followVM.searchQuery = "Boston"
                 await followVM.performTypeahead(query: followVM.searchQuery)
+                if let boston = followVM.suggestions.first(where: { $0.name.lowercased().contains("boston") }) {
+                    followVM.toggleSuggestion(boston, followManager: followMgr)
+                }
+                if let oscar = followVM.suggestions.first(where: { $0.name.lowercased().contains("oscar") }) {
+                    followVM.toggleSuggestion(oscar, followManager: followMgr)
+                }
                 let ocr06 = try await renderAndOCR(
                     view: FirstRunFollowStepView364A(
                         vm: followVM,
@@ -800,6 +902,7 @@ final class FirstRunChecklist364ATests: XCTestCase {
                 let joined06 = ocr06.joined(separator: " ")
                 XCTAssertFalse(joined06.contains("Sample preview"))
                 XCTAssertFalse(joined06.contains("or a plain note"))
+                XCTAssertFalse(joined06.contains("Confirm your picks"), "Point 1: sentence box stays off until Alex rules")
                 XCTAssertTrue(joined06.contains("or just type what you like"))
 
                 // 07: Row 3 step ("See what the world expects" — real sets)
@@ -923,6 +1026,48 @@ final class FirstRunChecklist364ATests: XCTestCase {
                 XCTAssertTrue(joinedAX12.contains("Bain Luck"))
                 XCTAssertTrue(joinedAX12.contains("5 of 5 done"))
 
+                // Largest Accessibility Size (AX5 at 390pt)
+                let ocrAX16 = try await renderAndOCR(
+                    view: FirstRunChecklistView364A(
+                        content: content,
+                        state: .constant(.untouched),
+                        inlineSearchQuery: .constant("")
+                    ),
+                    filename: "364a-16-ax5-untouched-\(sTag)-390.png",
+                    exportDir: exportDir,
+                    preloaded: preloaded,
+                    width: 390,
+                    height: 844,
+                    colorScheme: scheme,
+                    dynamicTypeSize: .accessibility5,
+                    sizeClass: .compact
+                )
+                let joinedAX16 = ocrAX16.joined(separator: " ")
+                XCTAssertTrue(joinedAX16.contains("Look anything up"))
+                XCTAssertFalse(joinedAX16.contains("Bain..."), "AX5 0/5 must not truncate Bain Luck wordmark: \(joinedAX16)")
+                XCTAssertTrue(joinedAX16.contains("Bain Luck"))
+
+                let ocrAX17 = try await renderAndOCR(
+                    view: FirstRunChecklistView364A(
+                        content: content,
+                        state: .constant(.allDone),
+                        inlineSearchQuery: .constant("")
+                    ),
+                    filename: "364a-17-ax5-all-done-\(sTag)-390.png",
+                    exportDir: exportDir,
+                    preloaded: preloaded,
+                    width: 390,
+                    height: 844,
+                    colorScheme: scheme,
+                    dynamicTypeSize: .accessibility5,
+                    sizeClass: .compact
+                )
+                let joinedAX17 = ocrAX17.joined(separator: " ")
+                XCTAssertFalse(joinedAX17.contains("Bain Lu..."), "AX5 All-Done must not truncate Bain Luck wordmark: \(joinedAX17)")
+                XCTAssertFalse(joinedAX17.contains("tonigh..."), "AX5 row subtitle must wrap cleanly rather than truncate: \(joinedAX17)")
+                XCTAssertTrue(joinedAX17.contains("Bain Luck"))
+                XCTAssertTrue(joinedAX17.contains("5 of 5 done"))
+
                 // iPad regular-width (820x1024)
                 _ = try await renderAndOCR(
                     view: FirstRunChecklistView364A(
@@ -988,7 +1133,11 @@ final class FirstRunChecklist364ATests: XCTestCase {
     ) async throws -> [String] {
         let uiStyle: UIUserInterfaceStyle = colorScheme == .dark ? .dark : .light
         let uiSizeClass: UIUserInterfaceSizeClass = sizeClass == .regular ? .regular : .compact
-        let uiCategory: UIContentSizeCategory = (dynamicTypeSize == .accessibility3) ? .accessibilityExtraExtraExtraLarge : .large
+        let uiCategory: UIContentSizeCategory = switch dynamicTypeSize {
+        case .accessibility5: .accessibilityExtraExtraExtraLarge
+        case .accessibility3: .accessibilityExtraLarge
+        default: .large
+        }
         let auth = AuthManager()
         let suite = "Checklist364A.Render.\(UUID().uuidString)"
         let renderDefaults = UserDefaults(suiteName: suite)!

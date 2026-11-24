@@ -138,7 +138,7 @@ struct FirstRunChecklistView364A: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 10) {
                     brandWordmark
-                        .minimumScaleFactor(0.85)
+                        .fixedSize(horizontal: true, vertical: false)
                     Spacer(minLength: 6)
                     if state.completedCount < state.totalCount {
                         skipButton
@@ -146,6 +146,14 @@ struct FirstRunChecklistView364A: View {
                 }
                 if state.completedCount > 0 {
                     progressBadgeView
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                brandWordmark
+                    .fixedSize(horizontal: true, vertical: false)
+                HStack(spacing: 8) {
+                    topBarTrailingControls
                 }
             }
         }
@@ -281,15 +289,16 @@ struct FirstRunChecklistView364A: View {
                         Text(FirstRunChecklistRowID364A.lookUp.title)
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(DS.textPrimary)
-                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
-                            .minimumScaleFactor(0.84)
-                            .truncationMode(.tail)
+                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                            .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1.0 : 0.84)
+                            .fixedSize(horizontal: false, vertical: dynamicTypeSize.isAccessibilitySize)
                             .layoutPriority(1)
                         Text(preview?.subtitle ?? "No account needed")
                             .font(.caption)
                             .foregroundStyle(DS.textSecondaryReadable)
-                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
-                            .minimumScaleFactor(0.84)
+                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                            .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1.0 : 0.84)
+                            .fixedSize(horizontal: false, vertical: dynamicTypeSize.isAccessibilitySize)
                     }
                     Spacer(minLength: 6)
                     rowStatusIcon(isDone: isDone)
@@ -336,16 +345,16 @@ struct FirstRunChecklistView364A: View {
                         Button {
                             onTapLookupExample(ex)
                         } label: {
-                            HStack(spacing: 4) {
+                            (
                                 Text(ex.title)
                                     .font(.caption.weight(.medium))
                                     .foregroundStyle(DS.textPrimary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                Text("\(ex.percent)%")
+                                + Text(" \(ex.percent)%")
                                     .font(.caption.weight(.bold).monospacedDigit())
                                     .foregroundStyle(DS.blueReadable)
-                                    .fixedSize(horizontal: true, vertical: false)
-                            }
+                            )
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
                             .padding(.horizontal, 8)
                             .padding(.vertical, 4)
                             .background(DS.trackBg, in: Capsule())
@@ -386,9 +395,9 @@ struct FirstRunChecklistView364A: View {
                     Text(row.title)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(isRowLit ? DS.textPrimary : DS.textSecondaryReadable)
-                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
-                        .minimumScaleFactor(0.84)
-                        .truncationMode(.tail)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                        .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1.0 : 0.84)
+                        .fixedSize(horizontal: false, vertical: dynamicTypeSize.isAccessibilitySize)
                         .layoutPriority(1)
 
                     HStack(spacing: 6) {
@@ -396,8 +405,9 @@ struct FirstRunChecklistView364A: View {
                             Text(note)
                                 .font(.caption)
                                 .foregroundStyle(isRowLit && row == .syncDevices ? DS.blueReadable : DS.textSecondaryReadable)
-                                .lineLimit(dynamicTypeSize.isAccessibilitySize ? 2 : 1)
-                                .minimumScaleFactor(0.84)
+                                .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
+                                .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1.0 : 0.84)
+                                .fixedSize(horizontal: false, vertical: dynamicTypeSize.isAccessibilitySize)
                         }
                         if let badgePillText {
                             Text(badgePillText)
@@ -468,31 +478,48 @@ struct FirstRunChecklistView364A: View {
                                             .foregroundStyle(DS.greenReadable)
                                     }
                                 }
-                                Text(card.title)
-                                    .font(.subheadline.weight(.semibold))
-                                    .foregroundStyle(DS.textPrimary)
+                                if card.slotLabel == "Odd one" && card.subjectLabel.isEmpty {
+                                    (
+                                        Text(card.title)
+                                            .font(.subheadline.weight(.semibold))
+                                            .foregroundStyle(DS.textPrimary)
+                                        + Text(", \(card.percent)%")
+                                            .font(.subheadline.weight(.bold).monospacedDigit())
+                                            .foregroundStyle(DS.textPrimary)
+                                    )
                                     .multilineTextAlignment(.leading)
                                     .fixedSize(horizontal: false, vertical: true)
-                                Text(card.subtitle)
-                                    .font(.caption)
-                                    .foregroundStyle(DS.textSecondaryReadable)
-                                    .fixedSize(horizontal: false, vertical: true)
+                                } else {
+                                    Text(card.title)
+                                        .font(.subheadline.weight(.semibold))
+                                        .foregroundStyle(DS.textPrimary)
+                                        .multilineTextAlignment(.leading)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                                if !card.subtitle.isEmpty {
+                                    Text(card.subtitle)
+                                        .font(.caption)
+                                        .foregroundStyle(DS.textSecondaryReadable)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
                             }
 
                             Spacer(minLength: 8)
 
-                            HStack(spacing: 4) {
-                                if !card.subjectLabel.isEmpty {
-                                    Text(card.subjectLabel)
-                                        .font(.caption.weight(.semibold))
-                                        .foregroundStyle(DS.textSecondaryReadable)
-                                        .lineLimit(1)
+                            if card.slotLabel != "Odd one" || !card.subjectLabel.isEmpty {
+                                HStack(spacing: 4) {
+                                    if !card.subjectLabel.isEmpty {
+                                        Text(card.subjectLabel)
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(DS.textSecondaryReadable)
+                                            .lineLimit(1)
+                                    }
+                                    Text("\(card.percent)%")
+                                        .font(.headline.weight(.heavy).monospacedDigit())
+                                        .foregroundStyle(DS.textPrimary)
                                 }
-                                Text("\(card.percent)%")
-                                    .font(.headline.weight(.heavy).monospacedDigit())
-                                    .foregroundStyle(DS.textPrimary)
+                                .fixedSize(horizontal: true, vertical: false)
                             }
-                            .fixedSize(horizontal: true, vertical: false)
                         }
                         .padding(.horizontal, 10)
                         .padding(.vertical, 8)
@@ -518,6 +545,9 @@ struct FirstRunChecklistView364A: View {
                 Text("Go to Discover \u{2192}")
                     .font(.headline)
                     .foregroundStyle(solidButtonForeground)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .padding(.horizontal, 12)
                     .frame(maxWidth: .infinity, minHeight: 46)
                     .background(DS.blueReadable, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
             }
@@ -771,7 +801,7 @@ struct FirstRunLookupStepView364A: View {
                                                     .foregroundStyle(DS.textPrimary)
                                                     .multilineTextAlignment(.leading)
                                                     .fixedSize(horizontal: false, vertical: true)
-                                                Text("\(row.badgeText) \u{00B7} \(row.subtitle)")
+                                                Text(row.subtitle.isEmpty ? row.badgeText : "\(row.badgeText) \u{00B7} \(row.subtitle)")
                                                     .font(.caption)
                                                     .foregroundStyle(DS.textSecondaryReadable)
                                                     .fixedSize(horizontal: false, vertical: true)
@@ -915,7 +945,7 @@ struct FirstRunFollowStepView364A: View {
                         Image(systemName: "magnifyingglass")
                             .font(.subheadline)
                             .foregroundStyle(DS.textSecondaryReadable)
-                        TextField("Type a city, school, team, or sentence", text: $vm.searchQuery, axis: .vertical)
+                        TextField("Type a city, school, team, or topic", text: $vm.searchQuery, axis: .vertical)
                             .textFieldStyle(.plain)
                             .lineLimit(1...3)
                             .onChange(of: vm.searchQuery) { _, _ in
@@ -949,7 +979,9 @@ struct FirstRunFollowStepView364A: View {
                         }
                     }
 
-                    sentenceCardSection
+                    if FirstRunSentenceMode359A.isEnabledInBuild {
+                        sentenceCardSection
+                    }
 
                     if vm.isSearching && picturedSuggestions.isEmpty {
                         HStack(spacing: 10) {

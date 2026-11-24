@@ -186,11 +186,7 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         }
         if let preloaded {
             self.isPreloaded = true
-            self.liveEvents = preloaded.liveEvents
-            self.nextEvents = preloaded.nextEvents
-            self.nextMarkets = preloaded.nextMarkets
-            self.movedEntries = preloaded.movedEntries
-            self.discoverItems = Self.stripModelWrittenText(preloaded.discoverItems, limit: 3)
+            applyPreloadedSnapshot(preloaded)
             self.loading = false
             self.loadFailed = preloaded.loadFailed
             self.hydratingRemainingCount = preloaded.hydratingRemainingCount
@@ -203,10 +199,46 @@ final class MyStuffLandingViewModel295A: ObservableObject {
 
     /// Seeds sections for unit tests exercising refresh failure preservation.
     func seedSectionsForTesting(_ snapshot: PreloadedSnapshot) {
-        self.liveEvents = snapshot.liveEvents
-        self.nextEvents = snapshot.nextEvents
+        applyPreloadedSnapshot(snapshot)
+    }
+
+    /// Applies preloaded snapshots while enforcing the section contract: finished games
+    /// belong in `"Moved since your last visit"`, never `"Next for you"`.
+    private func applyPreloadedSnapshot(_ snapshot: PreloadedSnapshot) {
+        var live = snapshot.liveEvents
+        var liveIds = Set(live.map(\.event.id))
+        var upcoming: [(event: FeedEventData, awayVerified: Bool)] = []
+        var moved = snapshot.movedEntries
+        var seenMovedIds = Set(moved.map(\.id))
+
+        for pair in snapshot.nextEvents {
+            switch EventState.section(of: pair.event) {
+            case .live:
+                if liveIds.insert(pair.event.id).inserted {
+                    live.append(pair)
+                }
+            case .upcoming:
+                upcoming.append(pair)
+            case .finished:
+                let movedId = "moved-final-\(pair.event.id)"
+                if seenMovedIds.insert(movedId).inserted {
+                    moved.append(
+                        MyStuffMovedEntry295A(
+                            id: movedId,
+                            movementSummary: "Finished",
+                            magnitudePoints: 0,
+                            isFinishedResult: true,
+                            payload: .event(pair.event, awayVerified: pair.awayVerified)
+                        )
+                    )
+                }
+            }
+        }
+
+        self.liveEvents = live
+        self.nextEvents = upcoming
         self.nextMarkets = snapshot.nextMarkets
-        self.movedEntries = snapshot.movedEntries
+        self.movedEntries = moved
         self.discoverItems = Self.stripModelWrittenText(snapshot.discoverItems, limit: 3)
         self.loadFailed = snapshot.loadFailed
         self.hydratingRemainingCount = snapshot.hydratingRemainingCount

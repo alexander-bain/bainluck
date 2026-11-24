@@ -10,6 +10,10 @@ import Foundation
 /// ambiguity-disambiguation, and could-not-read fallback states (using clearly marked sample
 /// data for design preview and state verification without holding the first-run pull request).
 nonisolated enum FirstRunSentenceMode359A {
+    /// Gate keeping the 359: A sentence parser OFF in builds until Alex rules on the
+    /// server endpoint (#13545 / Fable #13593 review).
+    static let isEnabledInBuild: Bool = false
+
     /// Builder B's certified sentence endpoint (nil until certified under 359: A).
     static let serverEndpointPath: String? = nil
 

@@ -587,7 +587,9 @@ nonisolated enum FirstRunChecklistExtractor364A {
 
         var previews: [FirstRunChecklistRowID364A: FirstRunChecklistRowPreview364A] = [:]
 
-        // Fix a & e: never emit a bare percent beside a checklist row title; keep subtitles concise so 390pt never truncates.
+        // Point 3 & Fix a & e: reserve `rankedGames[0]` (`Start with tonight` Biggest game)
+        // so its team/percent appears once; give every other row its own distinct game/subject
+        // and name what each number is for.
         if let leadGame = lookupExamples.first(where: { $0.kind == .game }) ?? lookupExamples.first {
             previews[.lookUp] = FirstRunChecklistRowPreview364A(
                 subtitle: "No account \u{00B7} \(leadGame.title) \(leadGame.percent)%",
@@ -598,10 +600,10 @@ nonisolated enum FirstRunChecklistExtractor364A {
             )
         }
 
-        if let secondGame = (rankedGames.dropFirst().first ?? rankedGames.first) {
+        if let secondGame = rankedGames.dropFirst(2).first ?? rankedGames.dropFirst().first ?? rankedGames.first {
             let art = FirstRunSubjectArt364A.cleanHTTPS(secondGame.event.homeTeamData?.logoSmall ?? secondGame.event.homeTeamData?.logoLarge)
             previews[.follow] = FirstRunChecklistRowPreview364A(
-                subtitle: "\(secondGame.favoredTeam) \(secondGame.pct)% \u{00B7} teams & topics",
+                subtitle: "\(secondGame.favoredTeam) tonight \(secondGame.pct)% \u{00B7} teams & topics",
                 percentText: nil,
                 imageUrl: art,
                 sfSymbol: FirstRunCard212A.sfSymbol(forCategory: DiscoverCategory.token(forSport: secondGame.event.sport), isSports: true),
@@ -611,8 +613,15 @@ nonisolated enum FirstRunChecklistExtractor364A {
 
         if let leadSet = sets.first {
             let leadSubj = leadSetSubjectName(for: leadSet)
-            let setSubtitle = leadSubj.map { "\($0) \(leadSet.leadPercent)% \u{00B7} tap sets" }
-                ?? "Tap the ones you\u{2019}d open"
+            let contest = conciseSetContestPhrase(for: leadSet)
+            let setSubtitle: String
+            if let leadSubj, let contest, !contest.isEmpty {
+                setSubtitle = "\(leadSubj) \(leadSet.leadPercent)% \(contest)"
+            } else if let leadSubj {
+                setSubtitle = "\(leadSubj) \(leadSet.leadPercent)% to win"
+            } else {
+                setSubtitle = "Pick topics to browse"
+            }
             previews[.exploreSets] = FirstRunChecklistRowPreview364A(
                 subtitle: setSubtitle,
                 percentText: nil,
@@ -630,11 +639,21 @@ nonisolated enum FirstRunChecklistExtractor364A {
             accentHex: "#005CC2"
         )
 
-        if let mover = tonight.first(where: { $0.slotLabel == "Biggest mover" }) ?? tonight.first {
+        if let mover = tonight.first(where: { $0.slotLabel == "Biggest mover" }) {
+            let subj = mover.subjectLabel.isEmpty ? "" : "\(mover.subjectLabel) "
             previews[.alerts] = FirstRunChecklistRowPreview364A(
-                subtitle: "\(mover.subjectLabel) \(mover.percent)% \u{00B7} starts & moves",
+                subtitle: "\(subj)\(mover.percent)% now \u{00B7} game alerts",
                 percentText: nil,
                 imageUrl: mover.imageUrl,
+                sfSymbol: "bell.badge.fill",
+                accentHex: "#D97706"
+            )
+        } else if let fourthGame = rankedGames.dropFirst(3).first ?? rankedGames.dropFirst().last ?? rankedGames.first {
+            let art = FirstRunSubjectArt364A.cleanHTTPS(fourthGame.event.homeTeamData?.logoSmall ?? fourthGame.event.homeTeamData?.logoLarge)
+            previews[.alerts] = FirstRunChecklistRowPreview364A(
+                subtitle: "\(fourthGame.favoredTeam) tonight \(fourthGame.pct)% \u{00B7} alerts",
+                percentText: nil,
+                imageUrl: art,
                 sfSymbol: "bell.badge.fill",
                 accentHex: "#D97706"
             )
@@ -659,6 +678,24 @@ nonisolated enum FirstRunChecklistExtractor364A {
         if let first = set.machineryCard.eventRows.first?.homeTeam, !first.isEmpty {
             return first
         }
+        return nil
+    }
+
+    private static func conciseSetContestPhrase(for set: FirstRunSetChoice364A) -> String? {
+        let parts = set.category
+            .split(separator: "\u{00B7}")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        if parts.count >= 2, let rawContest = parts.last {
+            let formatted = rawContest == rawContest.uppercased() ? rawContest.capitalized : rawContest
+            if formatted.count <= 24 {
+                return "for \(formatted)"
+            }
+        }
+        let lower = set.bundleTitle.lowercased()
+        if lower.contains("best picture") { return "for Best Picture" }
+        if lower.contains("james bond") { return "for Bond theme" }
+        if lower.contains("president") { return "for President" }
         return nil
     }
 
@@ -727,8 +764,8 @@ nonisolated enum FirstRunChecklistExtractor364A {
     ) -> [FirstRunLookupExample364A] {
         var out: [FirstRunLookupExample364A] = []
 
-        // 1. Tonight's game — always attach the exact team (`"Lakers tonight"`, never ambiguous `"Away at Home 87%"`)
-        if let g = rankedGames.first {
+        // 1. Tonight's game — prefer index 1 so rankedGames[0] stays unique to "Start with tonight"
+        if let g = rankedGames.dropFirst().first ?? rankedGames.first {
             out.append(FirstRunLookupExample364A(
                 id: "lookup-game-\(g.event.id)",
                 kind: .game,
@@ -914,15 +951,18 @@ nonisolated enum FirstRunChecklistExtractor364A {
                 guard !FirstRunPair212A.isGrimOrSensitiveTopic(title: fut.name) else { continue }
                 guard let resolved = FirstRunPair212A.resolvePrimaryOutcome(for: fut),
                       (5...95).contains(resolved.percent) else { continue }
-                let subTitle = resolved.outcomeName ?? "Yes"
+                let outcomeRaw = (resolved.outcomeName ?? "Yes").trimmingCharacters(in: .whitespacesAndNewlines)
+                let outcomeLower = outcomeRaw.lowercased()
+                let isYesNoBinary = (outcomeLower == "yes" || outcomeLower == "no")
+                let statement = Self.declarativeOddStatement(from: fut.name)
                 let img = FirstRunSubjectArt364A.cleanHTTPS(fut.imageUrl ?? bundle.roundupContract?.machineryCard?.imageUrl ?? bundle.imageUrl)
                     ?? subjectArt[FirstRunPair212A.classifyFuturesCategory(fut).categoryKey]
                 cards.append(FirstRunTonightCard364A(
                     id: "tonight-odd-\(fut.id)",
                     slotLabel: "Odd one",
-                    title: fut.name,
-                    subtitle: subTitle,
-                    subjectLabel: subTitle,
+                    title: statement,
+                    subtitle: "",
+                    subjectLabel: isYesNoBinary ? "" : outcomeRaw,
                     percent: resolved.percent,
                     deltaText: nil,
                     imageUrl: img,
@@ -935,6 +975,53 @@ nonisolated enum FirstRunChecklistExtractor364A {
         }
 
         return cards
+    }
+
+    /// Converts an interrogative Yes/No market headline (`"Will Elon Musk visit Mars in his lifetime?"`)
+    /// into a plain declarative statement (`"Elon Musk visits Mars in his lifetime"`) per Point 5.
+    static func declarativeOddStatement(from raw: String) -> String {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        while text.hasSuffix("?") || text.hasSuffix(".") {
+            text.removeLast()
+            text = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let words = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
+        guard words.count >= 4, words[0].lowercased() == "will" else {
+            return text
+        }
+        let body = Array(words.dropFirst())
+        // Locate the first lowercase main verb after the subject phrase (e.g. "Elon Musk" + "visit").
+        if let verbIndex = body.firstIndex(where: { word in
+            guard let first = word.first else { return false }
+            return first.isLowercase
+        }), verbIndex > 0 {
+            var rewritten = body
+            rewritten[verbIndex] = thirdPersonSingularVerb(body[verbIndex])
+            return rewritten.joined(separator: " ")
+        }
+        return body.joined(separator: " ")
+    }
+
+    private static func thirdPersonSingularVerb(_ verb: String) -> String {
+        let lower = verb.lowercased()
+        switch lower {
+        case "be": return "is"
+        case "have": return "has"
+        case "do": return "does"
+        case "go": return "goes"
+        default:
+            if lower.hasSuffix("s") || lower.hasSuffix("sh") || lower.hasSuffix("ch")
+                || lower.hasSuffix("x") || lower.hasSuffix("z") || lower.hasSuffix("o") {
+                return verb + "es"
+            }
+            if lower.hasSuffix("y"), lower.count >= 2 {
+                let prev = lower[lower.index(lower.endIndex, offsetBy: -2)]
+                if !"aeiou".contains(prev) {
+                    return String(verb.dropLast()) + "ies"
+                }
+            }
+            return verb + "s"
+        }
     }
 
     /// Maps `/api/events/search` responses into real live Row 1 lookup cards (Fable fix c & d).
@@ -1009,7 +1096,7 @@ nonisolated enum FirstRunChecklistExtractor364A {
                 id: rowId,
                 badgeText: badge,
                 title: titleToShow,
-                subtitle: "Open forecast",
+                subtitle: "",
                 subjectLabel: leadSubject.isEmpty ? "Yes" : leadSubject,
                 percent: pct,
                 imageUrl: img,
