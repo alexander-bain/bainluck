@@ -81,10 +81,13 @@ enum KitCardStandInSwitch366B {
     }
 
     /// Maps a `KitV1Route` emitted by `KitCardView366B` onto existing native navigation routes.
+    /// Never uses a raw `slug` as the destination page title; falls back to `kitCardHeadline` and
+    /// refuses navigation (`nil`) if no non-empty title or big line exists.
     static func resolveRoute(
         _ kitRoute: KitV1Route,
         fallbackCollectionRef: FeedThemeCollectionRef?,
-        fallbackTitle: String
+        fallbackTitle: String,
+        kitCardHeadline: String? = nil
     ) -> Route? {
         switch kitRoute.kind {
         case .collection:
@@ -93,8 +96,18 @@ enum KitCardStandInSwitch366B {
                 if let ref = fallbackCollectionRef, ref.slug == slug {
                     return DiscoverGroupRows.collectionRoute(for: ref)
                 }
-                let displayName = (fallbackCollectionRef?.slug == slug ? fallbackCollectionRef?.name : nil)
-                    ?? (!fallbackTitle.isEmpty ? fallbackTitle : slug)
+                let titleCandidate = fallbackTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+                let headlineCandidate = kitCardHeadline?.trimmingCharacters(in: .whitespacesAndNewlines)
+                let displayName: String? = {
+                    if !titleCandidate.isEmpty {
+                        return titleCandidate
+                    }
+                    if let headlineCandidate, !headlineCandidate.isEmpty {
+                        return headlineCandidate
+                    }
+                    return nil
+                }()
+                guard let displayName else { return nil }
                 return .containerHub(slug: slug, name: displayName)
             }
             return fallbackCollectionRef.map { DiscoverGroupRows.collectionRoute(for: $0) }

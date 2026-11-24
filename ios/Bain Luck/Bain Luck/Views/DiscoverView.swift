@@ -1147,7 +1147,8 @@ struct DiscoverView: View {
                                 navigationPath.append(Route.containerHub(slug: slug, name: name))
                             }
                         )
-                    } else if kind == "roundup",
+                    } else if KitCardStandInSwitch366B.isEnabled,
+                              kind == "roundup",
                               let roundupBundle = Self.resolveRoundupBundle(
                                   title: title,
                                   collectionRef: collectionRef,
@@ -1166,7 +1167,8 @@ struct DiscoverView: View {
                                       if let dest = KitCardStandInSwitch366B.resolveRoute(
                                           kitRoute,
                                           fallbackCollectionRef: roundupBundle.roundupCollectionRef ?? collectionRef,
-                                          fallbackTitle: roundupBundle.title
+                                          fallbackTitle: roundupBundle.title,
+                                          kitCardHeadline: kitSpec.commonHeadline
                                       ) {
                                           navigationPath.append(dest)
                                       }

@@ -151,7 +151,8 @@ final class KitCardStandInSwitch366BTests: XCTestCase {
         let item = try decoder().decode(FeedItem.self, from: Data(makeRoundupFeedItemJSON(kitCardJSON: validStackKitCardJSON()).utf8))
         let bundle = try XCTUnwrap(item.bundle)
         let contract = try XCTUnwrap(bundle.roundupContract)
-        XCTAssertNotNil(contract.kitCardSpec, "Decoded contract preserves KitV1CardSpec even while switch is OFF")
+        XCTAssertNotNil(contract.kitCard, "Envelope validation from #13579 remains single source of truth")
+        XCTAssertNil(contract.kitCardSpec, "With switch OFF, FeedRoundupContract skips full KitV1CardSpec decode")
         XCTAssertEqual(
             KitCardStandInSwitch366B.resolveDiscoverStandIn(contract: contract),
             .standardCard,
@@ -170,6 +171,15 @@ final class KitCardStandInSwitch366BTests: XCTestCase {
         let kitCallSites = discoverSource.components(separatedBy: "KitCardView366B(").count - 1
         XCTAssertEqual(kitCallSites, 1, "DiscoverView must have exactly one KitCardView366B entry point behind KitCardStandInSwitch366B")
         XCTAssertTrue(discoverSource.contains("KitCardStandInSwitch366B.resolveDiscoverStandIn"))
+        guard let switchFirstRange = discoverSource.range(of: "} else if KitCardStandInSwitch366B.isEnabled,"),
+              let kitResolveRange = discoverSource.range(of: "KitCardStandInSwitch366B.resolveDiscoverStandIn") else {
+            return XCTFail("Expected DiscoverView to gate kit stand-in with KitCardStandInSwitch366B.isEnabled first")
+        }
+        XCTAssertLessThan(
+            switchFirstRange.lowerBound,
+            kitResolveRange.lowerBound,
+            "DiscoverView must check KitCardStandInSwitch366B.isEnabled before calling resolveRoundupBundle"
+        )
 
         let prefsSource = try String(contentsOf: iosRoot.appendingPathComponent("Views/PreferencesView.swift"))
         XCTAssertFalse(prefsSource.contains("KitCardStandInSwitch366B"), "PreferencesView must not expose a Kit toggle before 363:A blind grading")
@@ -179,7 +189,10 @@ final class KitCardStandInSwitch366BTests: XCTestCase {
     // MARK: - 2. Switch ON renders Kit stand-in and maps all 4 route kinds
 
     func testSwitchOnStandsInValidKitCardAndMapsAllFourRouteKinds() throws {
-        let item = try decoder().decode(FeedItem.self, from: Data(makeRoundupFeedItemJSON(kitCardJSON: validStackKitCardJSON()).utf8))
+        let rawData = Data(makeRoundupFeedItemJSON(kitCardJSON: validStackKitCardJSON()).utf8)
+        let item = try KitCardStandInSwitch366B.withOverrideForTesting(true) {
+            try decoder().decode(FeedItem.self, from: rawData)
+        }
         let bundle = try XCTUnwrap(item.bundle)
         let contract = try XCTUnwrap(bundle.roundupContract)
         let ref = try XCTUnwrap(bundle.roundupCollectionRef)
@@ -213,6 +226,34 @@ final class KitCardStandInSwitch366BTests: XCTestCase {
                 fallbackTitle: "Custom Set Title"
             ),
             .containerHub(slug: "custom-kit-set", name: "Custom Set Title")
+        )
+        XCTAssertEqual(
+            KitCardStandInSwitch366B.resolveRoute(
+                KitV1Route(kind: .collection, id: nil, slug: "custom-kit-set"),
+                fallbackCollectionRef: nil,
+                fallbackTitle: "   ",
+                kitCardHeadline: "Big Kit Headline"
+            ),
+            .containerHub(slug: "custom-kit-set", name: "Big Kit Headline"),
+            "Empty card title must fall back to the kit card's own big line, never raw slug"
+        )
+        XCTAssertNil(
+            KitCardStandInSwitch366B.resolveRoute(
+                KitV1Route(kind: .collection, id: nil, slug: "never-use-slug-as-title"),
+                fallbackCollectionRef: nil,
+                fallbackTitle: "   ",
+                kitCardHeadline: "   "
+            ),
+            "Must never use raw slug as page title when both title and kit headline are empty"
+        )
+        XCTAssertNil(
+            KitCardStandInSwitch366B.resolveRoute(
+                KitV1Route(kind: .collection, id: nil, slug: "never-use-slug-as-title"),
+                fallbackCollectionRef: nil,
+                fallbackTitle: "",
+                kitCardHeadline: nil
+            ),
+            "Must never use raw slug as page title when headline is nil"
         )
         XCTAssertEqual(
             KitCardStandInSwitch366B.resolveRoute(
@@ -355,10 +396,20 @@ final class KitCardStandInSwitch366BTests: XCTestCase {
     // MARK: - 4. 390pt Light & Dark Render Comparison (OFF vs ON vs Refused Fallback)
 
     func testRenderStandInSwitchOffOnAndRefusedAt390LightAndDark() async throws {
-        let validItem = try decoder().decode(FeedItem.self, from: Data(makeRoundupFeedItemJSON(kitCardJSON: validStackKitCardJSON()).utf8))
+        let validRaw = Data(makeRoundupFeedItemJSON(kitCardJSON: validStackKitCardJSON()).utf8)
+        let offItem = try KitCardStandInSwitch366B.withOverrideForTesting(false) {
+            try decoder().decode(FeedItem.self, from: validRaw)
+        }
+        let offBundle = try XCTUnwrap(offItem.bundle)
+        let offContract = try XCTUnwrap(offBundle.roundupContract)
+        let offRef = try XCTUnwrap(offBundle.roundupCollectionRef)
+        XCTAssertNil(offContract.kitCardSpec, "Switch OFF skips KitV1CardSpec decode")
+
+        let validItem = try KitCardStandInSwitch366B.withOverrideForTesting(true) {
+            try decoder().decode(FeedItem.self, from: validRaw)
+        }
         let validBundle = try XCTUnwrap(validItem.bundle)
         let validContract = try XCTUnwrap(validBundle.roundupContract)
-        let validRef = try XCTUnwrap(validBundle.roundupCollectionRef)
 
         let refusedJSON = """
         {
@@ -371,13 +422,15 @@ final class KitCardStandInSwitch366BTests: XCTestCase {
           }
         }
         """
-        let refusedItem = try decoder().decode(FeedItem.self, from: Data(makeRoundupFeedItemJSON(kitCardJSON: refusedJSON).utf8))
+        let refusedItem = try KitCardStandInSwitch366B.withOverrideForTesting(true) {
+            try decoder().decode(FeedItem.self, from: Data(makeRoundupFeedItemJSON(kitCardJSON: refusedJSON).utf8))
+        }
         let refusedBundle = try XCTUnwrap(refusedItem.bundle)
         let refusedContract = try XCTUnwrap(refusedBundle.roundupContract)
         let refusedRef = try XCTUnwrap(refusedBundle.roundupCollectionRef)
 
         let offResolution = KitCardStandInSwitch366B.withOverrideForTesting(false) {
-            KitCardStandInSwitch366B.resolveDiscoverStandIn(contract: validContract)
+            KitCardStandInSwitch366B.resolveDiscoverStandIn(contract: offContract)
         }
         let onResolution = KitCardStandInSwitch366B.withOverrideForTesting(true) {
             KitCardStandInSwitch366B.resolveDiscoverStandIn(contract: validContract)
@@ -393,11 +446,11 @@ final class KitCardStandInSwitch366BTests: XCTestCase {
         XCTAssertEqual(refusedResolution, .standardCard)
 
         let offStandardModel = try XCTUnwrap(DiscoverRoundupCardModel.build(
-            title: validBundle.title,
-            contract: validContract,
-            fallbackKicker: validRef.name,
-            fallbackFooter: DiscoverRoundupCardModel.fallbackFooter(for: validRef),
-            allowFlexibleRowCount: (validContract.hasUnknownLookFallback || validContract.kitCard != nil)
+            title: offBundle.title,
+            contract: offContract,
+            fallbackKicker: offRef.name,
+            fallbackFooter: DiscoverRoundupCardModel.fallbackFooter(for: offRef),
+            allowFlexibleRowCount: (offContract.hasUnknownLookFallback || offContract.kitCard != nil)
         ))
         let refusedStandardModel = try XCTUnwrap(DiscoverRoundupCardModel.build(
             title: refusedBundle.title,
@@ -414,7 +467,7 @@ final class KitCardStandInSwitch366BTests: XCTestCase {
 
             let columnView = VStack(alignment: .leading, spacing: 14) {
                 sectionHeader("1. Switch OFF (default) -> Today's card", scheme: scheme)
-                DiscoverRoundupCardView(model: offStandardModel, collectionRef: validRef)
+                DiscoverRoundupCardView(model: offStandardModel, collectionRef: offRef)
 
                 sectionHeader("2. Switch ON + valid kit_card -> Kit stand-in", scheme: scheme)
                 KitCardView366B(spec: activeKitSpec)

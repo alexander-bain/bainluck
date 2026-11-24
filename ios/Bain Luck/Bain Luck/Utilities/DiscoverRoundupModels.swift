@@ -251,10 +251,14 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
             ?? (try? c.decodeIfPresent(KitCardEnvelope366B.self, forKey: .kitCardSnake))
             ?? (try? c.decodeIfPresent(KitCardEnvelope366B.self, forKey: .kitSpec))
             ?? (try? c.decodeIfPresent(KitCardEnvelope366B.self, forKey: .kitSpecSnake))
-        kitCardSpec = (try? c.decodeIfPresent(KitV1CardSpec.self, forKey: .kitCard))
-            ?? (try? c.decodeIfPresent(KitV1CardSpec.self, forKey: .kitCardSnake))
-            ?? (try? c.decodeIfPresent(KitV1CardSpec.self, forKey: .kitSpec))
-            ?? (try? c.decodeIfPresent(KitV1CardSpec.self, forKey: .kitSpecSnake))
+        if KitCardStandInSwitch366B.isEnabled {
+            kitCardSpec = (try? c.decodeIfPresent(KitV1CardSpec.self, forKey: .kitCard))
+                ?? (try? c.decodeIfPresent(KitV1CardSpec.self, forKey: .kitCardSnake))
+                ?? (try? c.decodeIfPresent(KitV1CardSpec.self, forKey: .kitSpec))
+                ?? (try? c.decodeIfPresent(KitV1CardSpec.self, forKey: .kitSpecSnake))
+        } else {
+            kitCardSpec = nil
+        }
         hasUnknownLookFallback = ((machineryCard == nil) && hasMachineryPayload) || ((kitCard == nil) && hasKitPayload)
         pairedMetricSet = (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSet))
             ?? (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSetSnake))
