@@ -436,6 +436,30 @@ async def test_cu_v2_visits_an_eligible_null_category_and_skips_crypto(pg_engine
     assert DISCOVER_LLM_METADATA_KEY not in rows[M2]["market_metadata"]
 
 
+async def test_cu_v2_preserves_metadata_changed_while_classifying(pg_engine, monkeypatch):
+    from app.tasks import enrich_markets
+
+    async def write_concurrent_metadata(*args, **kwargs):
+        async with pg_engine.begin() as conn:
+            await conn.execute(
+                text("UPDATE futures_markets SET market_metadata = CAST(:metadata AS jsonb) WHERE id = :id"),
+                {"metadata": json.dumps({"provider_identity": {"external_id": "new"}}), "id": M1},
+            )
+        return {}
+
+    stub = _LLMStub(_cu_payload())
+    _install(monkeypatch, stub)
+    monkeypatch.setattr(enrich_markets, "_resolve_entity_refs", write_concurrent_metadata)
+
+    stats = await enrich_markets.enrich_cu_v2_profiles(limit=1)
+
+    rows = await _rows(pg_engine)
+    assert stats["generated"] == 1
+    metadata = rows[M1]["market_metadata"]
+    assert metadata["provider_identity"] == {"external_id": "new"}
+    assert metadata[enrich_markets.DISCOVER_LLM_METADATA_KEY]["subject_ref"].startswith("unresolved:")
+
+
 async def test_cu_v2_a_failed_llm_call_rolls_back_only_its_own_market(pg_engine, monkeypatch):
     from app.tasks.enrich_markets import DISCOVER_LLM_METADATA_KEY, enrich_cu_v2_profiles
 

@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import httpx
-from sqlalchemy import DateTime, Integer, String, column as sa_column, select, table as sa_table, update, func
+from sqlalchemy import DateTime, Integer, String, bindparam, case, column as sa_column, select, table as sa_table, update, func
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.services.llm_models import resolve_model
@@ -64,7 +64,8 @@ DISCOVER_LLM_SCHEMA_VERSION = 1
 #: generates nothing (CU-NEXT's named tell).
 # rev 7 (#12273): numeric values, canonical measure names, window dates and
 # persisted validation reasons. Unclassified markets still face the volume/tier bar.
-CU_WRITER_REV = 7
+# rev 8 (#1809): grounded aliases must be unique and compatible with the mention.
+CU_WRITER_REV = 8
 CU_V2_SCHEMA_VERSION = 2
 #: Per-run spend ceiling for ``enrich_cu_v2_profiles`` (USD).
 CU_V2_COST_CAP_USD = 30.0
@@ -1403,7 +1404,9 @@ def _compute_liveness(outcome_probs: list[float] | None, status: str | None) -> 
     return "active"
 
 
-async def _resolve_entity_refs(session, names: list[str]) -> dict[str, dict[str, Any]]:
+async def _resolve_entity_refs(
+    session, names: list[str], *, mention_types: dict[str, str] | None = None
+) -> dict[str, dict[str, Any]]:
     """Resolve free-text entity mentions to registry refs — string/alias match ONLY.
 
     No LLM call anywhere in this path (#1809): grounding uses what the registry
@@ -1435,8 +1438,14 @@ async def _resolve_entity_refs(session, names: list[str]) -> dict[str, dict[str,
     if not wanted:
         return out
 
-    entities = await resolve_aliases(session, wanted)
+    mention_types = mention_types or {}
+    ambiguous_names: set[str] = set()
+    entities = await resolve_aliases(session, wanted, ambiguous_names=ambiguous_names)
     for name, entity in entities.items():
+        mention_type = mention_types.get(name)
+        compatible_event = mention_type == "event" and entity.kind in {"competition", "event_concept"}
+        if mention_type and entity.kind != mention_type and not compatible_event:
+            continue
         out[name] = {
             "ref": f"entity:{int(entity.id)}",
             "entity_id": int(entity.id),
@@ -1444,7 +1453,11 @@ async def _resolve_entity_refs(session, names: list[str]) -> dict[str, dict[str,
             "source": "registry_alias",
         }
 
-    missing = [n for n in wanted if n not in out]
+    missing = [
+        name for name in wanted
+        if name not in entities and name not in ambiguous_names
+        and mention_types.get(name, "") in {"", "team"}
+    ]
     if not missing:
         return out
 
@@ -1709,7 +1722,8 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                 mentions = clean_entity_mentions(raw.get("entities"))
                 try:
                     resolved_refs = await _resolve_entity_refs(
-                        resolve_session, [m["name"] for m in mentions]
+                        resolve_session, [m["name"] for m in mentions],
+                        mention_types={m["name"]: m["type"] for m in mentions},
                     )
                 except Exception as resolve_exc:
                     # An empty map here would be indistinguishable from "nothing
@@ -1778,16 +1792,26 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                     "subject_resolved": subject_resolved,
                 }
 
-                next_metadata = dict(item["metadata"])
-                next_metadata[DISCOVER_LLM_METADATA_KEY] = profile
-
                 # One statement: a second UPDATE of the row this transaction
                 # just wrote would run the `event_id` FK check (above).
                 # `story_key` is not mapped on FuturesMarket, so the write goes
                 # through a table clause that names it.
                 # The table clause carries no `onupdate`, so the bump the ORM
                 # UPDATE made (`updated_at=now()`) is written here by name.
-                values = {"market_metadata": next_metadata, "updated_at": func.now()}
+                metadata = _FUTURES_MARKETS_CU_WRITE.c.market_metadata
+                base_metadata = case(
+                    (func.jsonb_typeof(metadata) == "object", metadata),
+                    (func.jsonb_typeof(metadata) == "string",
+                     bindparam("cu_legacy_metadata", item["metadata"], type_=JSONB)),
+                    else_=bindparam("cu_empty_metadata", {}, type_=JSONB),
+                )
+                profile_patch = bindparam(
+                    "cu_profile_patch", {DISCOVER_LLM_METADATA_KEY: profile}, type_=JSONB
+                )
+                values = {
+                    "market_metadata": base_metadata.op("||")(profile_patch),
+                    "updated_at": func.now(),
+                }
                 story_key = raw.get("story_key")
                 if story_key:
                     values["story_key"] = story_key
