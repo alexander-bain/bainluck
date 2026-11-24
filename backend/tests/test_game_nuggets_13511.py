@@ -19,8 +19,8 @@ from app.services import get_db, get_db_rw
 from app.utils.game_nuggets import (
     NUGGET_FIRST_EIGHT,
     NUGGET_KINDS,
-    NUGGET_MAX_EVEN_LINES_FIRST_EIGHT,
     NUGGET_MAX_PER_KIND_FIRST_EIGHT,
+    match_claim_template,
     rank_game_nuggets,
 )
 
@@ -349,7 +349,7 @@ def test_pregame_ignores_opening_probability_and_uses_plain_claims_only() -> Non
     )
     claims = [n["claim"] for n in pre_res["nuggets"]]
     assert "The total is set at 53.5 points" in claims
-    assert "Under 13.5 points in the third quarter" in claims
+    assert "The third quarter total is set at 13.5 points" in claims
     assert "Mike Gesicki scores the first touchdown" in claims
     assert all("Oddity Foo" not in c for c in claims)
     assert pre_res["excluded_counts"]["unreadable_claim"] >= 1
@@ -371,7 +371,7 @@ def test_pregame_ignores_opening_probability_and_uses_plain_claims_only() -> Non
         now=NOW,
     )
     total_live = next(n for n in live_res["nuggets"] if n["source_market_id"] == 1099)
-    assert total_live["claim"] == "Over 53.5 total points"
+    assert total_live["claim"] == "Over 53.5 total points, up 8 points since pregame"
     assert total_live["form"] == "pregame_vs_now"
     assert total_live["change_since"] == "pregame"
     assert total_live["pregame_percent"] == 44
@@ -434,7 +434,7 @@ def test_pregame_ignores_opening_probability_and_uses_plain_claims_only() -> Non
         now=NOW,
     )
     untyped_claims = [n["claim"] for n in untyped_res["nuggets"]]
-    assert "Jayden Daniels 50+ rushing yards" in untyped_claims
+    assert "Jayden Daniels's rushing line is 50 yards" in untyped_claims
     assert all("props" not in c.lower() for c in untyped_claims)
     assert all("no 18" not in c.lower() for c in untyped_claims)
     assert untyped_claims.count("Ja'Marr Chase scores the first touchdown") == 1
@@ -816,7 +816,7 @@ def test_round_three_eliminates_betting_slip_wording() -> None:
 
     res = rank_game_nuggets(
         event_info=_EVENT_INFO,
-        game_markets=gm,
+        game_markets={**gm, "spreads": [gm["spreads"][0]]},
         related_futures={},
         team_progression=tp,
         limit=12,
@@ -824,7 +824,6 @@ def test_round_three_eliminates_betting_slip_wording() -> None:
     )
     claims = [n["claim"] for n in res["nuggets"]]
     assert "Cincinnati Bengals win by 7 or more" in claims
-    assert "Washington Commanders win or lose by 3 or fewer" in claims
     assert "Cincinnati Bengals lead by 4 or more at halftime" in claims
     assert "Cincinnati Bengals win the AFC" in claims
     assert "Washington Commanders win the NFC" in claims
@@ -832,6 +831,18 @@ def test_round_three_eliminates_betting_slip_wording() -> None:
     assert all("cover" not in c.lower() for c in claims)
     assert all("win conference" not in c.lower() for c in claims)
     assert all("nfl super bowl" not in c.lower() for c in claims)
+
+    dog_res = rank_game_nuggets(
+        event_info=_EVENT_INFO,
+        game_markets={"spreads": [gm["spreads"][1]]},
+        related_futures={},
+        team_progression={},
+        limit=12,
+        now=NOW,
+    )
+    dog_claims = [n["claim"] for n in dog_res["nuggets"]]
+    assert "Washington Commanders win or lose by 3 or fewer" in dog_claims
+    assert all("cover" not in c.lower() for c in dog_claims)
 
 
 def test_round_three_caps_even_set_lines_drops_close_to_even_and_states_ou_line() -> None:
@@ -939,15 +950,14 @@ def test_round_three_caps_even_set_lines_drops_close_to_even_and_states_ou_line(
         now=NOW,
     )
     first8 = res["nuggets"][:NUGGET_FIRST_EIGHT]
-    even_in_first8 = [
-        n for n in first8
-        if n["source_surface"] == "game_markets"
-        and 48 <= n["percent"] <= 52
-        and abs(n["change_points"] or 0) < 3
-    ]
-    assert len(even_in_first8) <= NUGGET_MAX_EVEN_LINES_FIRST_EIGHT
+    claims_joined = " | ".join(n["claim"] for n in res["nuggets"])
+    assert "Player 5" not in claims_joined
+    assert "Player 6" not in claims_joined
+    assert res["excluded_counts"]["far_rung_unmoved"] >= 2
     assert all("close to even" not in n["rank_reason"].lower() for n in res["nuggets"])
+    assert all("long shot" not in n["rank_reason"].lower() for n in res["nuggets"])
     assert any(n["claim"] == "The total is set at 54.5 points" for n in res["nuggets"])
+    assert any(n["claim"] == "Player 0's passing line is 250 yards" for n in res["nuggets"])
     assert any(n["claim"] == "Cincinnati Bengals win the Super Bowl" for n in first8)
 
 
@@ -1043,3 +1053,129 @@ def test_round_three_kickoff_pin_source_distinguished_from_opening_fallback() ->
     assert by_mid[7403]["pregame_mark_source"] is None
     assert by_mid[7403]["change_since"] is None
     assert by_mid[7403]["form"] != "pregame_vs_now"
+
+
+def test_round_four_bengals_commanders_fixture_middle_of_ladder_and_named_templates() -> None:
+    """Fable Round Four (comment-7123124444): one middle rung per ladder, movement exception, named templates."""
+    gm = {
+        "totals": [
+            {"_market_id": 8001, "market_name": "Bengals vs Commanders: O/U 47.5", "outcome_name": "Over", "over_probability": 0.76, "threshold": 47.5, "observed_at": _fresh_ts(0.2), "source_mark": {"state": "single"}},
+            {"_market_id": 8002, "market_name": "Bengals vs Commanders: O/U 53.5", "outcome_name": "Over", "over_probability": 0.50, "threshold": 53.5, "observed_at": _fresh_ts(0.2), "source_mark": {"state": "blend"}},
+            {"_market_id": 8003, "market_name": "Bengals vs Commanders: O/U 67.5", "outcome_name": "Over", "over_probability": 0.18, "threshold": 67.5, "pregame_mark": 0.10, "pregame_mark_source": "kickoff_pin", "observed_at": _fresh_ts(0.2), "source_mark": {"state": "single"}},
+        ],
+        "spreads": [
+            {"_market_id": 8010, "market_name": "Spread: Bengals (-3.5)", "outcome_name": "Cincinnati Bengals", "probability": 0.51, "threshold": -3.5, "observed_at": _fresh_ts(0.2), "source_mark": {"state": "blend"}},
+            # Kalshi phrasing that broke Round Three: must resolve team + negative margin, not leak raw phrase
+            {"_market_id": 8011, "market_name": "Spread", "outcome_name": "Washington wins by over 3.5 points", "probability": 0.16, "threshold": 3.5, "observed_at": _fresh_ts(0.2), "source_mark": {"state": "single"}},
+            {"_market_id": 8012, "market_name": "Spread", "outcome_name": "Mystery Club wins by over 3.5 points", "probability": 0.25, "threshold": 3.5, "observed_at": _fresh_ts(0.2), "source_mark": {"state": "single"}},
+        ],
+        "team_totals": [
+            {"_market_id": 8020, "team_name": "Cincinnati Bengals", "team_side": "away", "threshold": 27.5, "over_probability": 0.50, "observed_at": _fresh_ts(0.2), "source_mark": {"state": "blend"}},
+            {"_market_id": 8021, "team_name": "Cincinnati Bengals", "team_side": "away", "threshold": 38.5, "over_probability": 0.20, "observed_at": _fresh_ts(0.2), "source_mark": {"state": "single"}},
+            {"_market_id": 8022, "team_name": "Washington Commanders", "team_side": "home", "threshold": 24.5, "over_probability": 0.49, "observed_at": _fresh_ts(0.2), "source_mark": {"state": "blend"}},
+            {"_market_id": 8023, "team_name": "Washington Commanders", "team_side": "home", "threshold": 31.5, "over_probability": 0.19, "observed_at": _fresh_ts(0.2), "source_mark": {"state": "single"}},
+        ],
+        "player_props": [
+            # Joe Burrow passing yards ladder -> nearest 50% (265.5)
+            {"_market_id": 8030, "player": {"key": "joe burrow", "name": "Joe Burrow"}, "player_headshot": "https://cdn.example/burrow.png", "stat": {"key": "passing_yards", "label": "Passing Yards"}, "line": {"kind": "total", "value": 265.5, "label": "265.5"}, "over_probability": 0.50, "side": "over", "source_count": 2, "observed_at": _fresh_ts(0.2), "source_mark": {"state": "blend"}},
+            {"_market_id": 8031, "player": {"key": "joe burrow", "name": "Joe Burrow"}, "player_headshot": "https://cdn.example/burrow.png", "stat": {"key": "passing_yards", "label": "Passing Yards"}, "line": {"kind": "count_at_least", "value": 300, "label": "300+"}, "over_probability": 0.22, "side": "over", "observed_at": _fresh_ts(0.2), "source_mark": {"state": "single"}},
+            # Joe Burrow passing TDs ladder -> picks 1.5 (52%), never 5+ (9%)
+            {"_market_id": 8032, "player": {"key": "joe burrow", "name": "Joe Burrow"}, "player_headshot": "https://cdn.example/burrow.png", "stat": {"key": "passing_touchdowns", "label": "Passing Touchdowns"}, "line": {"kind": "total", "value": 1.5, "label": "1.5"}, "over_probability": 0.52, "side": "over", "observed_at": _fresh_ts(0.2), "source_mark": {"state": "blend"}},
+            {"_market_id": 8033, "player": {"key": "joe burrow", "name": "Joe Burrow"}, "player_headshot": "https://cdn.example/burrow.png", "stat": {"key": "passing_touchdowns", "label": "Passing Touchdowns"}, "line": {"kind": "count_at_least", "value": 5, "label": "5+"}, "over_probability": 0.09, "side": "over", "observed_at": _fresh_ts(0.2), "source_mark": {"state": "single"}},
+            # Tail-only unmoved ladders: Daniels 3+ passing TDs (21%), Burrow 20+ rushing yds (20%) -> dropped!
+            {"_market_id": 8034, "player": {"key": "jayden daniels", "name": "Jayden Daniels"}, "player_headshot": "https://cdn.example/daniels.png", "stat": {"key": "passing_touchdowns", "label": "Passing Touchdowns"}, "line": {"kind": "count_at_least", "value": 3, "label": "3+"}, "over_probability": 0.21, "side": "over", "observed_at": _fresh_ts(0.2), "source_mark": {"state": "single"}},
+            {"_market_id": 8035, "player": {"key": "joe burrow", "name": "Joe Burrow"}, "player_headshot": "https://cdn.example/burrow.png", "stat": {"key": "rushing_yards", "label": "Rushing Yards"}, "line": {"kind": "count_at_least", "value": 20, "label": "20+"}, "over_probability": 0.20, "side": "over", "observed_at": _fresh_ts(0.2), "source_mark": {"state": "single"}},
+        ],
+        "period_markets": [
+            {"_market_id": 8040, "market_name": "1H Total: O/U 26.5", "outcome_name": "Over", "period": "1H", "threshold": 26.5, "probability": 0.51, "observed_at": _fresh_ts(0.2), "source_mark": {"state": "single"}},
+            # Kalshi 2H far spread: must drop unmoved pregame, and when resolved at middle uses Commanders clean grammar
+            {"_market_id": 8041, "market_name": "2H Spread", "outcome_name": "Washington wins by over 4.5 points", "period": "2H", "threshold": 4.5, "probability": 0.20, "observed_at": _fresh_ts(0.2), "source_mark": {"state": "single"}},
+        ],
+        "other": [
+            {"_market_id": 8050, "market_name": "Weather Delay", "outcome_name": "Yes", "probability": 0.11, "observed_at": _fresh_ts(0.2), "source_mark": {"state": "single"}},
+        ],
+    }
+    tp = {
+        "home_team": {
+            "name": "Washington Commanders",
+            "stages": [{"key": "playoffs", "label": "Make Playoffs", "probability": 0.12}],
+        },
+        "away_team": {
+            "name": "Cincinnati Bengals",
+            "stages": [
+                {"key": "playoffs", "label": "Make Playoffs", "probability": 0.98},
+                {"key": "championship", "label": "NFL Super Bowl", "probability": 0.08},
+            ],
+        },
+    }
+
+    res = rank_game_nuggets(
+        event_info={**_EVENT_INFO, "status": "scheduled"},
+        game_markets=gm,
+        related_futures={},
+        team_progression=tp,
+        limit=12,
+        now=NOW,
+    )
+    claims = [n["claim"] for n in res["nuggets"]]
+    assert claims
+    assert all(match_claim_template(c) is not None for c in claims)
+    assert all("long shot" not in n["rank_reason"].lower() for n in res["nuggets"])
+
+    assert "The total is set at 53.5 points" in claims
+    assert "Joe Burrow's passing line is 265.5 yards" in claims
+    assert "Joe Burrow's passing touchdown line is 1.5" in claims
+    assert "Cincinnati Bengals win by 4 or more" in claims
+    assert "Cincinnati Bengals team total is set at 27.5 points" in claims
+    assert "Washington Commanders team total is set at 24.5 points" in claims
+    assert "The first half total is set at 26.5 points" in claims
+    assert "Washington Commanders make the playoffs" in claims
+    assert "Cincinnati Bengals make the playoffs" in claims
+    assert "Cincinnati Bengals win the Super Bowl" in claims
+
+    joined = " | ".join(claims)
+    for bad in ("Over 67.5", "38.5", "31.5", "5+ passing touchdowns", "3+ passing touchdowns", "20+ rushing yards", "Weather Delay", "wins by over", "stay within"):
+        assert bad not in joined
+    assert res["excluded_counts"]["far_rung_unmoved"] >= 3
+    assert res["excluded_counts"]["unreadable_claim"] >= 2
+
+    # Kalshi spread phrasing at middle probability resolves cleanly (never Frankenstein double-predicate)
+    kalshi_mid = rank_game_nuggets(
+        event_info={**_EVENT_INFO, "status": "scheduled"},
+        game_markets={
+            "spreads": [{**gm["spreads"][1], "probability": 0.50}],
+            "period_markets": [{**gm["period_markets"][1], "probability": 0.50}],
+        },
+        related_futures={},
+        team_progression={},
+        limit=12,
+        now=NOW,
+    )
+    kalshi_claims = [n["claim"] for n in kalshi_mid["nuggets"]]
+    assert "Washington Commanders win by 4 or more" in kalshi_claims
+    assert "Washington Commanders win the second half by 5 or more" in kalshi_claims
+    assert all(match_claim_template(c) is not None for c in kalshi_claims)
+
+    # Rule 1 movement exception: far rung enters ONLY when moved (pin post-kickoff or dated 24h) and movement IS the claim
+    gm_moved = {
+        **gm,
+        "totals": [
+            {**gm["totals"][1]},
+            {**gm["totals"][2], "over_probability": 0.22, "pregame_mark": 0.10, "pregame_mark_source": "kickoff_pin"},
+        ],
+        "player_props": [
+            {**gm["player_props"][4], "over_probability": 0.28, "probability_change_24h": 0.07},
+        ],
+    }
+    moved_res = rank_game_nuggets(
+        event_info={**_EVENT_INFO, "status": "live"},
+        game_markets=gm_moved,
+        related_futures={},
+        team_progression={},
+        limit=12,
+        now=NOW,
+    )
+    moved_claims = [n["claim"] for n in moved_res["nuggets"]]
+    assert "Over 67.5 total points, up 12 points since pregame" in moved_claims
+    assert "Jayden Daniels 3+ passing touchdowns, up 7 points in 24 hours" in moved_claims
+    assert all(match_claim_template(c) is not None for c in moved_claims)
