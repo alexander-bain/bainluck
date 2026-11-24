@@ -34418,7 +34418,6 @@ async def get_event_odds_history(
                 OddsSnapshot.event_id.in_(oriented_series_ids)
             ),
             split_at=event.commence_time,
-            event_id=_series_single_id,
         )
         cutoff = None
     elif is_finished:
@@ -34544,7 +34543,6 @@ async def get_event_odds_history(
                 # Include if valid_until is NULL (snapshot never superseded)
                 OddsSnapshot.valid_until.is_(None),
             ),
-            event_id=_series_single_id,
         )
     snapshots = snapshots_override if snapshots_override is not None else []
     if since_start_pushed:

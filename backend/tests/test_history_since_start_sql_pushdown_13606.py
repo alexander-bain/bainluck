@@ -210,6 +210,7 @@ def test_pushdown_gating_excludes_venue_exp_twins_range_all_and_live(monkeypatch
 
     odds_pushdown_calls = []
     wp_pushdown_calls = []
+    split_event_id_kwargs = []
 
     async def _spy_odds_pg(*args, **kwargs):
         odds_pushdown_calls.append((args, kwargs))
@@ -220,6 +221,7 @@ def test_pushdown_gating_excludes_venue_exp_twins_range_all_and_live(monkeypatch
         return []
 
     async def _noop_split(*args, **kwargs):
+        split_event_id_kwargs.append(kwargs.get("event_id"))
         return []
 
     async def _no_end_cap(*args, **kwargs):
@@ -305,21 +307,49 @@ def test_pushdown_gating_excludes_venue_exp_twins_range_all_and_live(monkeypatch
         box_score_data={},
     )
 
+    # Case 4: Long-open stale event (beyond kickoff + max duration, status still open)
+    ev_stale_open = Event(
+        id=9040,
+        sport_id=1,
+        sport=sport,
+        home_team_name="G",
+        away_team_name="H",
+        commence_time=kickoff - timedelta(days=5),
+        commence_time_source="espn",
+        external_id="espn-9040",
+        status="scheduled",
+        win_probability_sources={},
+        box_score_data={},
+    )
+
+    split_by_case = []
     for ev, series, crange in [
         (ev_kalshi_exp, [901], EVENT_HISTORY_RANGE_SINCE_START),
         (ev_normal, [902, 999], EVENT_HISTORY_RANGE_SINCE_START),
         (ev_normal, [902], "all"),
         (ev_live, [903], EVENT_HISTORY_RANGE_SINCE_START),
+        (ev_stale_open, [9040], EVENT_HISTORY_RANGE_SINCE_START),
     ]:
+        split_event_id_kwargs.clear()
         current_event = ev
         current_series = series
         db = _build_sqlite_fake_pg_route_session(
             event=ev, all_odds=[], series_ids=series
         )
         asyncio.run(get_event_odds_history(ev.id, hours=48, chart_range=crange, db=db))
+        split_by_case.append((ev.id, crange, list(split_event_id_kwargs)))
 
     assert odds_pushdown_calls == []
     assert wp_pushdown_calls == []
+    # Fable ask B: finished range='all' may use per-book pushdown, while live and
+    # long-open stale branches stay on today's statement (event_id=None).
+    assert dict(((eid, cr), kw) for eid, cr, kw in split_by_case) == {
+        (901, EVENT_HISTORY_RANGE_SINCE_START): [901],
+        (902, EVENT_HISTORY_RANGE_SINCE_START): [None],
+        (902, "all"): [902],
+        (903, EVENT_HISTORY_RANGE_SINCE_START): [None],
+        (9040, EVENT_HISTORY_RANGE_SINCE_START): [None],
+    }
 
 
 def test_pushdown_fails_open_when_no_post_start_data(monkeypatch):
