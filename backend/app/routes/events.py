@@ -25414,6 +25414,35 @@ def _pregame_mark_is_pregame(pm, commence_time) -> bool:
     return (captured - commence).total_seconds() <= -_PREGAME_MARK_LEGACY_MARGIN_S
 
 
+def _resolve_pregame_mark_with_source(
+    market, outcome, is_over, is_under, opening_over, commence_time
+) -> tuple[Optional[float], Optional[str]]:
+    """Return ``(pregame_mark, source)`` where source is ``'kickoff_pin'``, ``'opening'``, or ``None``.
+
+    Only a genuineness-verified pin captured into ``market_metadata["pregame_mark"]``
+    before ``commence_time`` carries source ``'kickoff_pin'``; any fallback to the
+    first stored reading carries ``'opening'`` so downstream rankers never confuse an
+    opening fallback with a kickoff pin (#13529).
+    """
+    meta = market.__dict__.get("market_metadata")
+    if isinstance(meta, dict):
+        pm = meta.get("pregame_mark")
+        if isinstance(pm, dict) and _pregame_mark_is_pregame(pm, commence_time):
+            raw = (pm.get("outcomes") or {}).get(str(outcome.id))
+            if raw is not None:
+                try:
+                    rawf = float(raw)
+                    return (
+                        round(rawf if is_over or not is_under else 1.0 - rawf, 4),
+                        "kickoff_pin",
+                    )
+                except (TypeError, ValueError):
+                    pass
+    if opening_over is not None:
+        return opening_over, "opening"
+    return None, None
+
+
 def _resolve_pregame_mark(market, outcome, is_over, is_under, opening_over, commence_time):
     """#195: THE SCRIPT baseline for a prop outcome, as an OVER probability.
 
@@ -25433,18 +25462,9 @@ def _resolve_pregame_mark(market, outcome, is_over, is_under, opening_over, comm
     late pin carry one. ``commence_time`` is REQUIRED rather than defaulted so a
     new call site cannot opt out of that gate by omission.
     """
-    meta = market.__dict__.get("market_metadata")
-    if isinstance(meta, dict):
-        pm = meta.get("pregame_mark")
-        if isinstance(pm, dict) and _pregame_mark_is_pregame(pm, commence_time):
-            raw = (pm.get("outcomes") or {}).get(str(outcome.id))
-            if raw is not None:
-                try:
-                    rawf = float(raw)
-                    return round(rawf if is_over or not is_under else 1.0 - rawf, 4)
-                except (TypeError, ValueError):
-                    pass
-    return opening_over
+    return _resolve_pregame_mark_with_source(
+        market, outcome, is_over, is_under, opening_over, commence_time
+    )[0]
 
 
 def _stored_number(value) -> Optional[float]:
@@ -27694,6 +27714,10 @@ async def _build_game_markets(
                     if o.opening_probability is not None:
                         tt_op = float(o.opening_probability)
                         tt_opening_over = round(tt_op if is_over or not is_under else 1.0 - tt_op, 4)
+                    tt_pregame_mark, tt_pregame_mark_source = _resolve_pregame_mark_with_source(
+                        market, o, is_over, is_under, tt_opening_over,
+                        event.commence_time,
+                    )
                     pp = {
                         "market_name": market.name,
                         "outcome_name": o.name,
@@ -27705,10 +27729,8 @@ async def _build_game_markets(
                         # #5509: the event's own commence_time decides whether
                         # the pin is pregame — a pin stamped after first pitch
                         # is an in-play price and loses to the opening line.
-                        "pregame_mark": _resolve_pregame_mark(
-                            market, o, is_over, is_under, tt_opening_over,
-                            event.commence_time,
-                        ),
+                        "pregame_mark": tt_pregame_mark,
+                        "pregame_mark_source": tt_pregame_mark_source,
                         # #4390: this leg's numbers above are on the OVER axis,
                         # i.e. its sibling's. THE SCRIPT renders the row under
                         # this leg's own name and needs to know that.
@@ -27775,6 +27797,14 @@ async def _build_game_markets(
                         market_type, threshold, _gm_sport_prefix
                     )
                 ):
+                    _rescue_opening = (
+                        round(float(o.opening_probability), 4)
+                        if o.opening_probability is not None
+                        else None
+                    )
+                    _rescue_pm, _rescue_pm_src = _resolve_pregame_mark_with_source(
+                        market, o, True, False, _rescue_opening, event.commence_time,
+                    )
                     other_markets.append({
                         "market_name": market.name,
                         "outcome_name": o.name,
@@ -27783,16 +27813,8 @@ async def _build_game_markets(
                         # Same expression as the `other` branch below, so the
                         # two ways into this section cannot serve two shapes.
                         "probability": round(prob, 4) if prob else None,
-                        "pregame_mark": _resolve_pregame_mark(
-                            market,
-                            o,
-                            True,
-                            False,
-                            round(float(o.opening_probability), 4)
-                            if o.opening_probability is not None
-                            else None,
-                            event.commence_time,
-                        ),
+                        "pregame_mark": _rescue_pm,
+                        "pregame_mark_source": _rescue_pm_src,
                         "source": market.source,
                         **_grade,
                         "_market_id": market.id,
@@ -27801,6 +27823,13 @@ async def _build_game_markets(
 
                 _inverted = bool(is_under and not is_over)
                 _market_settled = market.id in markets_with_a_winner
+                _t_opening_over = None
+                if o.opening_probability is not None:
+                    _t_op = float(o.opening_probability)
+                    _t_opening_over = round(_t_op if is_over or not is_under else 1.0 - _t_op, 4)
+                _t_pm, _t_pm_src = _resolve_pregame_mark_with_source(
+                    market, o, is_over, is_under, _t_opening_over, event.commence_time,
+                )
                 totals_thresholds.append({
                     "threshold": threshold,
                     "over_probability": _settled_over_probability(
@@ -27809,6 +27838,8 @@ async def _build_game_markets(
                         round(over_prob, 4) if over_prob is not None else None,
                         _market_settled,
                     ),
+                    "pregame_mark": _t_pm,
+                    "pregame_mark_source": _t_pm_src,
                     "source": market.source,
                     "market_type": market_type,
                     "market_name": market.name,
@@ -27855,6 +27886,10 @@ async def _build_game_markets(
                     op = float(o.opening_probability)
                     opening_over = round(op if is_over or not is_under else 1.0 - op, 4)
 
+                _pp_pm, _pp_pm_src = _resolve_pregame_mark_with_source(
+                    market, o, is_over, is_under, opening_over,
+                    event.commence_time,
+                )
                 pp = {
                     "market_name": market.name,
                     "outcome_name": o.name,
@@ -27865,10 +27900,8 @@ async def _build_game_markets(
                     "opening_over_probability": opening_over,
                     # #5509: see the team_total branch — a pin stamped after
                     # first pitch is in-play and falls through to the opening.
-                    "pregame_mark": _resolve_pregame_mark(
-                        market, o, is_over, is_under, opening_over,
-                        event.commence_time,
-                    ),
+                    "pregame_mark": _pp_pm,
+                    "pregame_mark_source": _pp_pm_src,
                     # #4390: see the team_total branch — the over-axis numbers
                     # belong to the sibling leg, and THE SCRIPT prints this one's
                     # name beside them.
@@ -27886,6 +27919,14 @@ async def _build_game_markets(
                 threshold = _extract_threshold(o.name)
                 prob = float(o.current_probability) if o.current_probability is not None else None
                 _score_proved = o.id in _score_proved_ids
+                _sp_opening = (
+                    round(float(o.opening_probability), 4)
+                    if o.opening_probability is not None
+                    else None
+                )
+                _sp_pm, _sp_pm_src = _resolve_pregame_mark_with_source(
+                    market, o, True, False, _sp_opening, event.commence_time,
+                )
                 row = {
                     "market_name": market.name,
                     "outcome_name": o.name,
@@ -27900,6 +27941,8 @@ async def _build_game_markets(
                     # be served); it is load-bearing for the rows #6312 readmits,
                     # whose 0.0 IS the answer "this line did not come in".
                     "probability": round(prob, 4) if prob is not None else None,
+                    "pregame_mark": _sp_pm,
+                    "pregame_mark_source": _sp_pm_src,
                     "source": market.source,
                     **_settled_grade_fields(market, o, **_grade_ctx),
                     "_market_id": market.id,
@@ -27946,6 +27989,14 @@ async def _build_game_markets(
             for o in market_outcomes:
                 prob = float(o.current_probability) if o.current_probability is not None else None
                 threshold = _extract_period_threshold(o.name, market_type)
+                _pm_opening = (
+                    round(float(o.opening_probability), 4)
+                    if o.opening_probability is not None
+                    else None
+                )
+                _pm_val, _pm_src = _resolve_pregame_mark_with_source(
+                    market, o, True, False, _pm_opening, event.commence_time,
+                )
                 period_markets.append({
                     "market_name": market.name,
                     "outcome_name": o.name,
@@ -27953,6 +28004,8 @@ async def _build_game_markets(
                     "contributor_outcome_ids": [o.id],
                     "threshold": threshold,
                     "probability": round(prob, 4) if prob else None,
+                    "pregame_mark": _pm_val,
+                    "pregame_mark_source": _pm_src,
                     "source": market.source,
                     "market_type": market_type,
                     "period": market_period,
@@ -28058,6 +28111,10 @@ async def _build_game_markets(
                         if o.opening_probability is not None:
                             op = float(o.opening_probability)
                             opening_over = round(op if is_over or not is_under else 1.0 - op, 4)
+                        _r1_pm, _r1_pm_src = _resolve_pregame_mark_with_source(
+                            market, o, is_over, is_under, opening_over,
+                            event.commence_time,
+                        )
                         pp = {
                             "market_name": market.name,
                             "outcome_name": o.name,
@@ -28066,6 +28123,8 @@ async def _build_game_markets(
                             "threshold": threshold,
                             "over_probability": round(over_prob, 4),
                             "opening_over_probability": opening_over,
+                            "pregame_mark": _r1_pm,
+                            "pregame_mark_source": _r1_pm_src,
                             "source": market.source,
                             "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
                                 if o.opening_probability is not None and o.current_probability is not None else None,
@@ -28110,6 +28169,10 @@ async def _build_game_markets(
                     if o.opening_probability is not None:
                         op = float(o.opening_probability)
                         opening_over = round(op if is_over or not is_under else 1.0 - op, 4)
+                    _r2_pm, _r2_pm_src = _resolve_pregame_mark_with_source(
+                        market, o, is_over, is_under, opening_over,
+                        event.commence_time,
+                    )
                     pp = {
                         "market_name": market.name,
                         "outcome_name": o.name,
@@ -28118,6 +28181,8 @@ async def _build_game_markets(
                         "threshold": threshold,
                         "over_probability": round(over_prob, 4),
                         "opening_over_probability": opening_over,
+                        "pregame_mark": _r2_pm,
+                        "pregame_mark_source": _r2_pm_src,
                         "source": market.source,
                         "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
                             if o.opening_probability is not None and o.current_probability is not None else None,
@@ -28130,6 +28195,14 @@ async def _build_game_markets(
                     continue
                 if _leg_is_a_line_with_no_subject(o.name):
                     continue
+                _om_opening = (
+                    round(float(o.opening_probability), 4)
+                    if o.opening_probability is not None
+                    else None
+                )
+                _om_pm, _om_pm_src = _resolve_pregame_mark_with_source(
+                    market, o, True, False, _om_opening, event.commence_time,
+                )
                 other_markets.append({
                     # #2127: a BTTS row is served under what it ASKS rather than
                     # the venue's abbreviation. Every other market keeps its own
@@ -28143,16 +28216,8 @@ async def _build_game_markets(
                     "observed_at": _observed(o),
                     "contributor_outcome_ids": [o.id],
                     "probability": round(prob, 4) if prob else None,
-                    "pregame_mark": _resolve_pregame_mark(
-                        market,
-                        o,
-                        True,
-                        False,
-                        round(float(o.opening_probability), 4)
-                        if o.opening_probability is not None
-                        else None,
-                        event.commence_time,
-                    ),
+                    "pregame_mark": _om_pm,
+                    "pregame_mark_source": _om_pm_src,
                     "source": market.source,
                     **_settled_grade_fields(market, o, **_grade_ctx),
                     **({"market_type": other_market_type} if other_market_type else {}),

@@ -30,6 +30,7 @@ interface GameNuggetItem {
   change_points: number | null;
   change_since: string | null;
   pregame_percent: number | null;
+  pregame_mark_source?: "kickoff_pin" | "opening" | null;
   form: string;
   rank_reason: string;
   saved_grade?: NuggetGrade;
@@ -434,6 +435,12 @@ function GameNuggetsGradeSession() {
                       absMove === 1 ? "point" : "points"
                     } ${nugget.change_since === "pregame" ? "since pregame" : "in 24h"}`
                   : null;
+              const markSourceText =
+                nugget.pregame_mark_source === "kickoff_pin"
+                  ? "mark: kickoff pin"
+                  : nugget.pregame_mark_source === "opening"
+                    ? "mark: first reading"
+                    : null;
               return (
                 <article
                   key={itemKey}
@@ -444,7 +451,9 @@ function GameNuggetsGradeSession() {
                       <span className="rounded-full bg-surface-elevated px-2 py-0.5 text-xs font-medium text-text-secondary">
                         #{nugget.position} · {nugget.kind_label}
                       </span>
-                      <span className="text-xs text-text-muted">{nugget.form}</span>
+                      <span className="text-xs text-text-muted">
+                        {markSourceText ? `${markSourceText} · ${nugget.form}` : nugget.form}
+                      </span>
                     </div>
 
                     <div className="mt-3 flex items-start gap-3">

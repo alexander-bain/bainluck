@@ -19,6 +19,7 @@ from app.services import get_db, get_db_rw
 from app.utils.game_nuggets import (
     NUGGET_FIRST_EIGHT,
     NUGGET_KINDS,
+    NUGGET_MAX_EVEN_LINES_FIRST_EIGHT,
     NUGGET_MAX_PER_KIND_FIRST_EIGHT,
     rank_game_nuggets,
 )
@@ -272,14 +273,19 @@ def test_six_kinds_diversity_cap_freshness_wording_and_own_prop_exclusion() -> N
     assert res["excluded_counts"]["game_own_props_in_related"] >= 1
     assert all(n["source_market_id"] != 2001 or n["kind"] != "stakes" for n in nuggets)
 
-    # Wording rules: zero venues, zero 'question', zero American odds, zero 'pts', zero colon venue titles
-    forbidden = re.compile(r"\b(?:kalshi|polymarket|draftkings|fanduel|question|pts)\b|[+-]\d{3,5}|:", re.I)
+    # Wording rules: zero venues, zero 'question', zero American odds, zero 'pts',
+    # zero colon venue titles, zero betting-slip 'cover'
+    forbidden = re.compile(
+        r"\b(?:kalshi|polymarket|draftkings|fanduel|question|pts|cover)\b|[+-]\d{3,5}|:",
+        re.I,
+    )
     for n in nuggets:
         assert not forbidden.search(n["claim"]), f"forbidden wording in claim: {n['claim']}"
         assert not forbidden.search(n["rank_reason"]), f"forbidden wording in reason: {n['rank_reason']}"
         assert n["form"] != "pregame_vs_now", f"pregame must never emit pregame_vs_now: {n}"
         assert n["pregame_percent"] is None
         assert n["change_since"] != "pregame"
+        assert "pregame_mark_source" in n
 
 
 def test_pregame_ignores_opening_probability_and_uses_plain_claims_only() -> None:
@@ -295,6 +301,7 @@ def test_pregame_ignores_opening_probability_and_uses_plain_claims_only() -> Non
             "outcome_name": "Over 53.5 points",
             "over_probability": 0.52,
             "pregame_mark": 0.44,
+            "pregame_mark_source": "kickoff_pin",
             "threshold": 53.5,
             "observed_at": _fresh_ts(0.2),
             "source_mark": {"state": "single"},
@@ -308,6 +315,7 @@ def test_pregame_ignores_opening_probability_and_uses_plain_claims_only() -> Non
             "period": "3Q",
             "probability": 0.55,
             "pregame_mark": 0.48,
+            "pregame_mark_source": "kickoff_pin",
             "observed_at": _fresh_ts(0.2),
             "source_mark": {"state": "single"},
         }
@@ -340,7 +348,7 @@ def test_pregame_ignores_opening_probability_and_uses_plain_claims_only() -> Non
         now=NOW,
     )
     claims = [n["claim"] for n in pre_res["nuggets"]]
-    assert "Over 53.5 total points" in claims
+    assert "The total is set at 53.5 points" in claims
     assert "Under 13.5 points in the third quarter" in claims
     assert "Mike Gesicki scores the first touchdown" in claims
     assert all("Oddity Foo" not in c for c in claims)
@@ -353,7 +361,7 @@ def test_pregame_ignores_opening_probability_and_uses_plain_claims_only() -> Non
     assert mvp["change_since"] == "24h"
     assert "Moved +6 points in 24h" in mvp["rank_reason"]
 
-    # Once game is live: game's own markets may use pregame_mark, while stakes stay 24h-only
+    # Once game is live: game's own markets use pregame_mark ONLY when pregame_mark_source == "kickoff_pin"
     live_res = rank_game_nuggets(
         event_info={**_EVENT_INFO, "status": "live"},
         game_markets=gm,
@@ -363,9 +371,11 @@ def test_pregame_ignores_opening_probability_and_uses_plain_claims_only() -> Non
         now=NOW,
     )
     total_live = next(n for n in live_res["nuggets"] if n["source_market_id"] == 1099)
+    assert total_live["claim"] == "Over 53.5 total points"
     assert total_live["form"] == "pregame_vs_now"
     assert total_live["change_since"] == "pregame"
     assert total_live["pregame_percent"] == 44
+    assert total_live["pregame_mark_source"] == "kickoff_pin"
     assert "Moved +8 points since pregame" in total_live["rank_reason"]
     mvp_live = next(n for n in live_res["nuggets"] if n["source_market_id"] == 6002)
     assert mvp_live["form"] == "history_line"
@@ -650,3 +660,386 @@ async def test_http_nuggets_and_admin_grading_scorecard_e2e(
             assert summary["meets_target"] is True
     finally:
         app.dependency_overrides = prior
+
+
+def test_round_three_drops_label_only_claims_and_nfl_btts() -> None:
+    gm = {
+        "totals": [
+            {
+                "_market_id": 7101,
+                "market_name": "Bengals vs Commanders: O/U 54.5",
+                "outcome_name": "Over",
+                "over_probability": 0.62,
+                "threshold": 54.5,
+                "observed_at": _fresh_ts(0.2),
+                "source_mark": {"state": "single"},
+            }
+        ],
+        "spreads": [
+            {
+                "_market_id": 7102,
+                "market_name": "Spread: Bengals (-6.5)",
+                "outcome_name": "Cincinnati Bengals",
+                "probability": 0.50,
+                "threshold": None,
+                "observed_at": _fresh_ts(0.2),
+                "source_mark": {"state": "single"},
+            },
+            {
+                "_market_id": 7103,
+                "market_name": "Point Spread",
+                "outcome_name": "Cincinnati Bengals",
+                "probability": 0.50,
+                "threshold": None,
+                "observed_at": _fresh_ts(0.2),
+                "source_mark": {"state": "single"},
+            },
+        ],
+        "player_props": [
+            {
+                "_market_id": 7104,
+                "market_name": "Fantasy Points (Antonio Williams)",
+                "outcome_name": "Yes",
+                "over_probability": 0.50,
+                "player": None,
+                "stat": None,
+                "line": None,
+                "observed_at": _fresh_ts(0.2),
+                "source_mark": {"state": "single"},
+            },
+            {
+                "_market_id": 7105,
+                "player": {"key": "antonio williams", "name": "Antonio Williams"},
+                "stat": {"key": "fantasy_points", "label": "Fantasy Points"},
+                "line": None,
+                "threshold": None,
+                "over_probability": 0.50,
+                "side": "over",
+                "observed_at": _fresh_ts(0.2),
+                "source_mark": {"state": "single"},
+            },
+        ],
+        "other": [
+            {
+                "_market_id": 7106,
+                "market_name": "Both teams to score",
+                "outcome_name": "Yes",
+                "probability": 0.51,
+                "observed_at": _fresh_ts(0.2),
+                "source_mark": {"state": "single"},
+            }
+        ],
+    }
+
+    nfl_res = rank_game_nuggets(
+        event_info={**_EVENT_INFO, "sport": "americanfootball_nfl"},
+        game_markets=gm,
+        related_futures={},
+        team_progression={},
+        limit=12,
+        now=NOW,
+    )
+    nfl_claims = [n["claim"] for n in nfl_res["nuggets"]]
+    assert "Cincinnati Bengals win by 7 or more" in nfl_claims
+    assert all("fantasy points" not in c.lower() for c in nfl_claims)
+    assert all("antonio williams" not in c.lower() for c in nfl_claims)
+    assert all("point spread" not in c.lower() for c in nfl_claims)
+    assert all("both teams to score" not in c.lower() for c in nfl_claims)
+    assert nfl_res["excluded_counts"]["unreadable_claim"] >= 4
+
+    soccer_res = rank_game_nuggets(
+        event_info={
+            **_EVENT_INFO,
+            "home_team": "Arsenal",
+            "away_team": "Chelsea",
+            "sport": "soccer_epl",
+        },
+        game_markets={"other": gm["other"]},
+        related_futures={},
+        team_progression={},
+        limit=12,
+        now=NOW,
+    )
+    assert any(n["claim"] == "Both teams to score" for n in soccer_res["nuggets"])
+
+
+def test_round_three_eliminates_betting_slip_wording() -> None:
+    gm = {
+        "spreads": [
+            {
+                "_market_id": 7201,
+                "market_name": "Spread: Bengals (-6.5)",
+                "outcome_name": "Cincinnati Bengals",
+                "probability": 0.58,
+                "threshold": -6.5,
+                "observed_at": _fresh_ts(0.2),
+                "source_mark": {"state": "single"},
+            },
+            {
+                "_market_id": 7202,
+                "market_name": "Spread: Bengals (-3.5)",
+                "outcome_name": "Washington Commanders",
+                "probability": 0.55,
+                "threshold": 3.5,
+                "observed_at": _fresh_ts(0.2),
+                "source_mark": {"state": "single"},
+            },
+        ],
+        "period_markets": [
+            {
+                "_market_id": 7203,
+                "market_name": "1H Spread: Bengals (-3.5)",
+                "outcome_name": "Cincinnati Bengals",
+                "period": "1H",
+                "threshold": -3.5,
+                "probability": 0.50,
+                "observed_at": _fresh_ts(0.2),
+                "source_mark": {"state": "single"},
+            }
+        ],
+    }
+    tp = {
+        "home_team": {
+            "name": "Washington Commanders",
+            "stages": [
+                {"key": "conference", "label": "Win Conference", "probability": 0.14},
+            ],
+        },
+        "away_team": {
+            "name": "Cincinnati Bengals",
+            "stages": [
+                {"key": "conference", "label": "Win Conference", "probability": 0.18},
+                {"key": "championship", "label": "NFL Super Bowl", "probability": 0.08},
+            ],
+        },
+    }
+
+    res = rank_game_nuggets(
+        event_info=_EVENT_INFO,
+        game_markets=gm,
+        related_futures={},
+        team_progression=tp,
+        limit=12,
+        now=NOW,
+    )
+    claims = [n["claim"] for n in res["nuggets"]]
+    assert "Cincinnati Bengals win by 7 or more" in claims
+    assert "Washington Commanders win or lose by 3 or fewer" in claims
+    assert "Cincinnati Bengals lead by 4 or more at halftime" in claims
+    assert "Cincinnati Bengals win the AFC" in claims
+    assert "Washington Commanders win the NFC" in claims
+    assert "Cincinnati Bengals win the Super Bowl" in claims
+    assert all("cover" not in c.lower() for c in claims)
+    assert all("win conference" not in c.lower() for c in claims)
+    assert all("nfl super bowl" not in c.lower() for c in claims)
+
+
+def test_round_three_caps_even_set_lines_drops_close_to_even_and_states_ou_line() -> None:
+    gm = {
+        "totals": [
+            {
+                "_market_id": 7301,
+                "market_name": "Bengals vs Commanders: O/U 54.5",
+                "outcome_name": "Over",
+                "over_probability": 0.50,
+                "threshold": 54.5,
+                "observed_at": _fresh_ts(0.2),
+                "source_mark": {"state": "single"},
+            }
+        ],
+        "spreads": [
+            {
+                "_market_id": 7302,
+                "market_name": "Spread: Bengals (-3.5)",
+                "outcome_name": "Cincinnati Bengals",
+                "probability": 0.50,
+                "threshold": -3.5,
+                "observed_at": _fresh_ts(0.2),
+                "source_mark": {"state": "single"},
+            }
+        ],
+        "player_props": [
+            {
+                "_market_id": 7310 + idx,
+                "player": {"key": f"player {idx}", "name": f"Player {idx}"},
+                "player_headshot": f"https://cdn.example/p{idx}.png",
+                "stat": {"key": "passing_yards", "label": "Passing Yards"},
+                "line": {"kind": "count_at_least", "value": 250 + idx, "label": f"{250 + idx}+"},
+                "over_probability": 0.50 if idx < 5 else 0.16,
+                "side": "over",
+                "source_count": 2 if idx >= 5 else 1,
+                "observed_at": _fresh_ts(0.2),
+                "source_mark": {"state": "single"},
+            }
+            for idx in range(7)
+        ],
+        "team_totals": [
+            {
+                "_market_id": 7330,
+                "team_name": "Cincinnati Bengals",
+                "team_side": "away",
+                "threshold": 28.5,
+                "over_probability": 0.51,
+                "observed_at": _fresh_ts(0.2),
+                "source_mark": {"state": "single"},
+            },
+            {
+                "_market_id": 7331,
+                "team_name": "Washington Commanders",
+                "team_side": "home",
+                "threshold": 24.5,
+                "over_probability": 0.49,
+                "observed_at": _fresh_ts(0.2),
+                "source_mark": {"state": "single"},
+            },
+        ],
+        "period_markets": [
+            {
+                "_market_id": 7340,
+                "market_name": "1H Spread: Bengals (-1.5)",
+                "outcome_name": "Cincinnati Bengals",
+                "period": "1H",
+                "threshold": -1.5,
+                "probability": 0.50,
+                "observed_at": _fresh_ts(0.2),
+                "source_mark": {"state": "single"},
+            }
+        ],
+        "other": [
+            {
+                "_market_id": 7350,
+                "market_name": "Cincinnati vs Washington: 1st Touchdown: Mike Gesicki",
+                "outcome_name": "Mike Gesicki",
+                "probability": 0.14,
+                "observed_at": _fresh_ts(0.2),
+                "source_mark": {"state": "single"},
+            }
+        ],
+    }
+    tp = {
+        "home_team": {
+            "name": "Washington Commanders",
+            "stages": [{"key": "playoffs", "label": "Make Playoffs", "probability": 0.12}],
+        },
+        "away_team": {
+            "name": "Cincinnati Bengals",
+            "stages": [
+                {"key": "conference", "label": "Win Conference", "probability": 0.18},
+                {"key": "championship", "label": "NFL Super Bowl", "probability": 0.08},
+            ],
+        },
+    }
+
+    res = rank_game_nuggets(
+        event_info=_EVENT_INFO,
+        game_markets=gm,
+        related_futures={},
+        team_progression=tp,
+        limit=12,
+        now=NOW,
+    )
+    first8 = res["nuggets"][:NUGGET_FIRST_EIGHT]
+    even_in_first8 = [
+        n for n in first8
+        if n["source_surface"] == "game_markets"
+        and 48 <= n["percent"] <= 52
+        and abs(n["change_points"] or 0) < 3
+    ]
+    assert len(even_in_first8) <= NUGGET_MAX_EVEN_LINES_FIRST_EIGHT
+    assert all("close to even" not in n["rank_reason"].lower() for n in res["nuggets"])
+    assert any(n["claim"] == "The total is set at 54.5 points" for n in res["nuggets"])
+    assert any(n["claim"] == "Cincinnati Bengals win the Super Bowl" for n in first8)
+
+
+def test_round_three_kickoff_pin_source_distinguished_from_opening_fallback() -> None:
+    commence = datetime(2026, 11, 24, 1, 15, tzinfo=timezone.utc)
+    pinned_mkt = SimpleNamespace(
+        market_metadata={
+            "pregame_mark": {
+                "captured_at": "2026-11-24T01:10:00+00:00",
+                "outcomes": {"7": 0.37},
+            }
+        }
+    )
+    late_mkt = SimpleNamespace(
+        market_metadata={
+            "pregame_mark": {
+                "captured_at": "2026-11-24T01:30:00+00:00",
+                "outcomes": {"7": 0.51},
+            }
+        }
+    )
+    bare_mkt = SimpleNamespace(market_metadata=None)
+    out = SimpleNamespace(id=7)
+
+    assert events_route._resolve_pregame_mark_with_source(
+        pinned_mkt, out, True, False, 0.25, commence
+    ) == (0.37, "kickoff_pin")
+    assert events_route._resolve_pregame_mark_with_source(
+        late_mkt, out, True, False, 0.25, commence
+    ) == (0.25, "opening")
+    assert events_route._resolve_pregame_mark_with_source(
+        bare_mkt, out, True, False, None, commence
+    ) == (None, None)
+
+    gm = {
+        "player_props": [
+            {
+                "_market_id": 7401,
+                "player": {"key": "joe burrow", "name": "Joe Burrow"},
+                "stat": {"key": "passing_yards", "label": "Passing Yards"},
+                "line": {"kind": "count_at_least", "value": 300, "label": "300+"},
+                "over_probability": 0.535,
+                "pregame_mark": 0.37,
+                "pregame_mark_source": "opening",
+                "side": "over",
+                "observed_at": _fresh_ts(0.1),
+                "source_mark": {"state": "single"},
+            },
+            {
+                "_market_id": 7402,
+                "player": {"key": "jayden daniels", "name": "Jayden Daniels"},
+                "stat": {"key": "rushing_yards", "label": "Rushing Yards"},
+                "line": {"kind": "count_at_least", "value": 50, "label": "50+"},
+                "over_probability": 0.54,
+                "pregame_mark": 0.37,
+                "pregame_mark_source": "kickoff_pin",
+                "side": "over",
+                "observed_at": _fresh_ts(0.1),
+                "source_mark": {"state": "single"},
+            },
+            {
+                "_market_id": 7403,
+                "player": {"key": "terry mclaurin", "name": "Terry McLaurin"},
+                "stat": {"key": "receiving_yards", "label": "Receiving Yards"},
+                "line": {"kind": "count_at_least", "value": 75, "label": "75+"},
+                "over_probability": 0.45,
+                "pregame_mark": 0.30,
+                "side": "over",
+                "observed_at": _fresh_ts(0.1),
+                "source_mark": {"state": "single"},
+            },
+        ]
+    }
+    live_res = rank_game_nuggets(
+        event_info={**_EVENT_INFO, "status": "live"},
+        game_markets=gm,
+        related_futures={},
+        team_progression={},
+        limit=12,
+        now=NOW,
+    )
+    by_mid = {n["source_market_id"]: n for n in live_res["nuggets"]}
+    assert by_mid[7401]["pregame_mark_source"] == "opening"
+    assert by_mid[7401]["change_since"] is None
+    assert by_mid[7401]["form"] != "pregame_vs_now"
+
+    assert by_mid[7402]["pregame_mark_source"] == "kickoff_pin"
+    assert by_mid[7402]["change_since"] == "pregame"
+    assert by_mid[7402]["pregame_percent"] == 37
+    assert by_mid[7402]["change_points"] == 17
+    assert by_mid[7402]["form"] == "pregame_vs_now"
+
+    assert by_mid[7403]["pregame_mark_source"] is None
+    assert by_mid[7403]["change_since"] is None
+    assert by_mid[7403]["form"] != "pregame_vs_now"

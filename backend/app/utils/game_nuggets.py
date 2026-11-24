@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime, timezone
+import math
 import re
 from typing import Any, Mapping, Optional
 
@@ -53,6 +54,7 @@ NUGGET_FIRST_EIGHT = 8
 NUGGET_DEFAULT_LIMIT = 12
 NUGGET_MAX_PER_KIND_FIRST_EIGHT = 2
 NUGGET_MAX_PER_KIND_EXTENDED = 3
+NUGGET_MAX_EVEN_LINES_FIRST_EIGHT = 2
 NUGGET_MAX_OBSERVED_AGE_HOURS = 48.0
 NUGGET_LIVE_MAX_OBSERVED_AGE_HOURS = 6.0
 
@@ -166,20 +168,33 @@ def _format_num(val: Any) -> str:
     return f"{f:g}"
 
 
+def _normalize_pregame_mark_source(raw: Any) -> Optional[str]:
+    if raw in ("kickoff_pin", "opening"):
+        return str(raw)
+    return None
+
+
 def _extract_movement(
     *,
     prob: float,
     pregame_mark: Any = None,
+    pregame_mark_source: Any = None,
     change_24h: Any = None,
     allow_pregame_mark: bool = False,
 ) -> tuple[Optional[int], Optional[str], Optional[int]]:
     """Return ``(change_points, change_since, pregame_percent)`` using dated readings only.
 
-    Never reads placeholder ``opening_probability``; ``pregame_mark`` is only
-    honored on a game's own markets once kickoff has passed.
+    Never uses placeholder ``opening_probability`` or opening fallback marks;
+    ``pregame_mark`` is only honored on a game's own markets after kickoff when
+    its provenance explicitly confirms ``pregame_mark_source == "kickoff_pin"``.
     """
     now_pct = int(round(prob * 100.0))
-    if allow_pregame_mark and not isinstance(pregame_mark, bool) and isinstance(pregame_mark, (int, float)):
+    if (
+        allow_pregame_mark
+        and _normalize_pregame_mark_source(pregame_mark_source) == "kickoff_pin"
+        and not isinstance(pregame_mark, bool)
+        and isinstance(pregame_mark, (int, float))
+    ):
         ref = float(pregame_mark)
         if 0.0 <= ref <= 1.0:
             ref_pct = int(round(ref * 100.0))
@@ -202,8 +217,16 @@ def _select_nugget_form(
     return default_form
 
 
-def _closeness_score(prob: float) -> float:
-    return max(0.0, 1.0 - 2.0 * abs(prob - 0.5))
+def _is_even_set_line(
+    prob: float,
+    change_points: Optional[int],
+    *,
+    is_set_line: bool,
+) -> bool:
+    if not is_set_line:
+        return False
+    pct = int(round(prob * 100.0))
+    return 48 <= pct <= 52 and (change_points is None or abs(change_points) < 3)
 
 
 def _compute_score(
@@ -216,6 +239,7 @@ def _compute_score(
     has_picture: bool = False,
     stakes_tier: Optional[int] = None,
     base_bonus: float = 0.0,
+    is_set_line: bool = False,
 ) -> tuple[float, str]:
     reasons: list[str] = []
     score = base_bonus
@@ -229,10 +253,13 @@ def _compute_score(
         when = "since pregame" if change_since == "pregame" else "in 24h"
         reasons.append(f"Moved {sign}{change_points} {pt_word} {when}")
 
-    close = _closeness_score(prob)
-    score += close * 18.0
-    if close >= 0.7:
-        reasons.append("close to even")
+    is_even_line = _is_even_set_line(prob, change_points, is_set_line=is_set_line)
+    if prob <= 0.22:
+        score += 10.0
+        reasons.append("long shot")
+    elif prob >= 0.72:
+        score += 8.0
+        reasons.append("strong favorite")
 
     if is_live and 0.15 <= prob <= 0.85:
         score += 6.0
@@ -246,11 +273,11 @@ def _compute_score(
         score += 4.0
 
     if stakes_tier is not None and stakes_tier <= 2:
-        score += 10.0 if stakes_tier == 1 else 6.0
+        score += 16.0 if stakes_tier == 1 else 12.0
         reasons.append("season stakes")
 
     if not reasons:
-        reasons.append("top active market")
+        reasons.append("set line" if is_even_line else "top active market")
 
     return score, " · ".join(reasons[:3])
 
@@ -344,6 +371,7 @@ def _candidate_dict(
     change_points: Optional[int],
     change_since: Optional[str],
     pregame_percent: Optional[int],
+    pregame_mark_source: Optional[str] = None,
     form: str,
     rank_reason: str,
     score: float,
@@ -352,6 +380,7 @@ def _candidate_dict(
     source_market_id: Optional[int] = None,
     source_outcome_id: Optional[int] = None,
     dedup_key: Optional[str] = None,
+    is_even_line: bool = False,
 ) -> dict[str, Any]:
     clean_claim = sanitize_nugget_text(claim)
     clean_reason = sanitize_nugget_text(rank_reason)
@@ -366,6 +395,7 @@ def _candidate_dict(
         "change_points": change_points,
         "change_since": change_since,
         "pregame_percent": pregame_percent,
+        "pregame_mark_source": pregame_mark_source,
         "form": form,
         "rank_reason": clean_reason,
         "score": round(score, 2),
@@ -374,6 +404,7 @@ def _candidate_dict(
         "source_market_id": source_market_id,
         "source_outcome_id": source_outcome_id,
         "_dedup_key": dedup_key or nid,
+        "_is_even_line": is_even_line,
     }
 
 
@@ -395,6 +426,101 @@ _OU_LINE_RE = re.compile(
 _PAREN_LINE_RE = re.compile(r"\(([+-]?[0-9]+(?:\.[0-9]+)?)\)")
 _SIDE_PAREN_RE = re.compile(r"\(\s*(over|under)\s*\)", re.IGNORECASE)
 _UNREADABLE_CLAIM_RE = re.compile(r"[:?]|\bo/u\b|\bover/under\b|\bvs\.?\b", re.IGNORECASE)
+_SPREAD_PAREN_TEAM_RE = re.compile(
+    r"([A-Za-z0-9'.-]+(?:\s+[A-Za-z0-9'.-]+){0,3})\s*\(\s*([+-]?\d+(?:\.\d+)?)\s*\)"
+)
+_SPREAD_INLINE_TEAM_RE = re.compile(
+    r"([A-Za-z0-9'.-]+(?:\s+[A-Za-z0-9'.-]+){0,3})\s+([+-]\d+(?:\.\d+)?)\b"
+)
+_BINARY_EVENT_PROP_RE = re.compile(
+    r"\b(?:touchdown|double[\s-]double|triple[\s-]double|hole in one|hat trick|clean sheet|home run)\b",
+    re.IGNORECASE,
+)
+_GOAL_SPORT_TOKENS = ("soccer", "hockey", "nhl", "ahl", "khl")
+
+_LEAGUE_CONFERENCE_TEAMS: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
+    "nfl": (
+        (
+            "the AFC",
+            (
+                "buffalo bills", "miami dolphins", "new england patriots", "new york jets",
+                "baltimore ravens", "cincinnati bengals", "cleveland browns", "pittsburgh steelers",
+                "houston texans", "indianapolis colts", "jacksonville jaguars", "tennessee titans",
+                "denver broncos", "kansas city chiefs", "las vegas raiders", "los angeles chargers",
+            ),
+        ),
+        (
+            "the NFC",
+            (
+                "dallas cowboys", "new york giants", "philadelphia eagles", "washington commanders",
+                "chicago bears", "detroit lions", "green bay packers", "minnesota vikings",
+                "atlanta falcons", "carolina panthers", "new orleans saints", "tampa bay buccaneers",
+                "arizona cardinals", "los angeles rams", "san francisco 49ers", "seattle seahawks",
+            ),
+        ),
+    ),
+    "nba": (
+        (
+            "the Eastern Conference",
+            (
+                "boston celtics", "brooklyn nets", "new york knicks", "philadelphia 76ers",
+                "toronto raptors", "chicago bulls", "cleveland cavaliers", "detroit pistons",
+                "indiana pacers", "milwaukee bucks", "atlanta hawks", "charlotte hornets",
+                "miami heat", "orlando magic", "washington wizards",
+            ),
+        ),
+        (
+            "the Western Conference",
+            (
+                "dallas mavericks", "houston rockets", "memphis grizzlies", "new orleans pelicans",
+                "san antonio spurs", "denver nuggets", "minnesota timberwolves", "oklahoma city thunder",
+                "portland trail blazers", "utah jazz", "golden state warriors", "los angeles clippers",
+                "los angeles lakers", "phoenix suns", "sacramento kings",
+            ),
+        ),
+    ),
+    "nhl": (
+        (
+            "the Eastern Conference",
+            (
+                "boston bruins", "buffalo sabres", "detroit red wings", "florida panthers",
+                "montreal canadiens", "ottawa senators", "tampa bay lightning", "toronto maple leafs",
+                "carolina hurricanes", "columbus blue jackets", "new jersey devils", "new york islanders",
+                "new york rangers", "philadelphia flyers", "pittsburgh penguins", "washington capitals",
+            ),
+        ),
+        (
+            "the Western Conference",
+            (
+                "chicago blackhawks", "colorado avalanche", "dallas stars", "minnesota wild",
+                "nashville predators", "st. louis blues", "utah hockey club", "utah mammoth",
+                "winnipeg jets", "anaheim ducks", "calgary flames", "edmonton oilers",
+                "los angeles kings", "san jose sharks", "seattle kraken", "vancouver canucks",
+                "vegas golden knights",
+            ),
+        ),
+    ),
+    "mlb": (
+        (
+            "the AL",
+            (
+                "baltimore orioles", "boston red sox", "new york yankees", "tampa bay rays",
+                "toronto blue jays", "chicago white sox", "cleveland guardians", "detroit tigers",
+                "kansas city royals", "minnesota twins", "houston astros", "los angeles angels",
+                "athletics", "oakland athletics", "seattle mariners", "texas rangers",
+            ),
+        ),
+        (
+            "the NL",
+            (
+                "atlanta braves", "miami marlins", "new york mets", "philadelphia phillies",
+                "washington nationals", "chicago cubs", "cincinnati reds", "milwaukee brewers",
+                "pittsburgh pirates", "st. louis cardinals", "arizona diamondbacks",
+                "colorado rockies", "los angeles dodgers", "san diego padres", "san francisco giants",
+            ),
+        ),
+    ),
+}
 
 
 def _strip_matchup_prefix(raw: str) -> str:
@@ -465,7 +591,172 @@ def _resolve_team_display(raw: str, *, home_team: str, away_team: str) -> str:
 def _looks_like_clean_claim(claim: str) -> bool:
     if not claim or len(claim.strip()) < 6:
         return False
+    if "(" in claim or ")" in claim:
+        return False
     return not _UNREADABLE_CLAIM_RE.search(claim)
+
+
+def _plain_spread_claim(
+    team: str,
+    spread: float,
+    *,
+    period_in: Optional[str] = None,
+    period_noun: Optional[str] = None,
+) -> str:
+    mag = abs(spread)
+    is_half_point = abs(mag - math.floor(mag) - 0.5) < 1e-6
+    is_first_half = period_in == "in the first half"
+
+    if abs(spread) < 1e-9:
+        if period_in is None:
+            return f"{team} win"
+        if is_first_half:
+            return f"{team} lead at halftime"
+        return f"{team} win {period_noun or period_in}"
+
+    if spread < 0:
+        if is_half_point:
+            need = int(math.floor(mag)) + 1
+            if period_in is None:
+                return f"{team} win by {need} or more"
+            if is_first_half:
+                return f"{team} lead by {need} or more at halftime"
+            return f"{team} win {period_noun} by {need} or more"
+        n_s = _format_num(mag)
+        if period_in is None:
+            return f"{team} win by more than {n_s}"
+        if is_first_half:
+            return f"{team} lead by more than {n_s} at halftime"
+        return f"{team} win {period_noun} by more than {n_s}"
+
+    if is_half_point:
+        margin = int(math.floor(mag))
+        if period_in is None:
+            return f"{team} win or tie" if margin == 0 else f"{team} win or lose by {margin} or fewer"
+        if is_first_half:
+            return (
+                f"{team} lead or tie at halftime"
+                if margin == 0
+                else f"{team} stay within {margin} at halftime"
+            )
+        return (
+            f"{team} win or tie {period_noun}"
+            if margin == 0
+            else f"{team} stay within {margin} {period_in}"
+        )
+
+    n_s = _format_num(mag)
+    if period_in is None:
+        return f"{team} win or lose by fewer than {n_s}"
+    if is_first_half:
+        return f"{team} trail by fewer than {n_s} at halftime"
+    return f"{team} trail by fewer than {n_s} {period_in}"
+
+
+def _parse_spread_threshold(
+    row: Mapping[str, Any],
+    *,
+    subj_name: str,
+    home_team: str,
+    away_team: str,
+) -> Optional[float]:
+    thresh = row.get("threshold")
+    if isinstance(thresh, (int, float)) and not isinstance(thresh, bool):
+        return float(thresh)
+
+    out_name = sanitize_nugget_text(str(row.get("outcome_name") or "")).strip()
+    out_m = re.search(r"([+-]\d+(?:\.\d+)?)", out_name)
+    if out_m:
+        try:
+            return float(out_m.group(1))
+        except ValueError:
+            pass
+
+    mname_clean = _strip_matchup_prefix(str(row.get("market_name") or ""))
+    for pattern in (_SPREAD_PAREN_TEAM_RE, _SPREAD_INLINE_TEAM_RE):
+        m = pattern.search(mname_clean)
+        if not m:
+            continue
+        raw_team = re.sub(r"^(?:1H|2H|1Q|2Q|3Q|4Q|spread|point\s+spread)\b[:\s-]*", "", m.group(1), flags=re.I).strip()
+        try:
+            val = float(m.group(2))
+        except ValueError:
+            continue
+        named_team = _resolve_team_display(raw_team, home_team=home_team, away_team=away_team)
+        if named_team and subj_name:
+            if named_team.lower() == subj_name.lower():
+                return val
+            if (
+                home_team
+                and away_team
+                and {named_team.lower(), subj_name.lower()} == {home_team.lower(), away_team.lower()}
+            ):
+                return -val
+        return val
+    return None
+
+
+def _resolve_team_conference(team: str, *, sport: str = "") -> str:
+    low_t = sanitize_nugget_text(team or "").strip().lower()
+    low_s = (sport or "").lower()
+    if "nfl" in low_s or "football" in low_s:
+        families = ("nfl",)
+    elif "nba" in low_s or "basketball" in low_s:
+        families = ("nba",)
+    elif "nhl" in low_s or "hockey" in low_s:
+        families = ("nhl",)
+    elif "mlb" in low_s or "baseball" in low_s:
+        families = ("mlb",)
+    else:
+        families = ("nfl", "nba", "nhl", "mlb")
+
+    for fam in families:
+        for conf_name, teams in _LEAGUE_CONFERENCE_TEAMS[fam]:
+            for canonical in teams:
+                mascot = canonical.rsplit(" ", 1)[-1]
+                if low_t == canonical or (len(low_t) >= 4 and (low_t in canonical or mascot == low_t or canonical.endswith(f" {low_t}"))):
+                    return conf_name
+    return "their conference"
+
+
+def _normalize_prize_phrase(prize: str, *, team: str, sport: str = "") -> str:
+    clean = _MULTISPACE_RE.sub(" ", prize).strip(" :-–—")
+    low = clean.lower()
+    if low in {"conference", "conference champion", "conference championship", "conference title"}:
+        return _resolve_team_conference(team, sport=sport)
+    if low in {"nfl super bowl", "super bowl"}:
+        return "the Super Bowl"
+    if low in {"nhl stanley cup", "stanley cup", "stanley cup finals"}:
+        return "the Stanley Cup"
+    if low in {"mlb world series", "world series"}:
+        return "the World Series"
+    if low in {"nba championship", "nba finals"}:
+        return "the NBA Finals"
+    if low == "nba cup":
+        return "the NBA Cup"
+    if low in {"afc champion", "afc championship", "afc title"}:
+        return "the AFC"
+    if low in {"nfc champion", "nfc championship", "nfc title"}:
+        return "the NFC"
+    if low in {"eastern conference champion", "eastern conference championship", "eastern conference"}:
+        return "the Eastern Conference"
+    if low in {"western conference champion", "western conference championship", "western conference"}:
+        return "the Western Conference"
+    if low in {"al champion", "american league champion", "american league"}:
+        return "the AL"
+    if low in {"nl champion", "national league champion", "national league"}:
+        return "the NL"
+    if re.fullmatch(r"(?:afc|nfc|al|nl)\s+(?:north|south|east|west|central)", low):
+        parts = clean.split()
+        return f"the {parts[0].upper()} {parts[1].capitalize()}"
+    if low in {"playoffs", "postseason"}:
+        return "the playoffs"
+    if low in {"division", "the division", "division winner", "division title"}:
+        return "the division"
+    cleaned_label = re.sub(r"\bDivision Winner\b", "the division", clean, flags=re.I)
+    cleaned_label = re.sub(r"\bChampion\b", "title", cleaned_label, flags=re.I)
+    cleaned_label = _MULTISPACE_RE.sub(" ", re.sub(r"\bWinner\b", "", cleaned_label, flags=re.I)).strip(" :-–—")
+    return cleaned_label
 
 
 def _plain_moment_claim(
@@ -474,6 +765,8 @@ def _plain_moment_claim(
     home_team: str,
     away_team: str,
     unit: str,
+    prob: float,
+    change_points: Optional[int],
 ) -> Optional[str]:
     period_raw = str(row.get("period") or "").strip()
     mname_clean = _strip_matchup_prefix(str(row.get("market_name") or ""))
@@ -498,19 +791,30 @@ def _plain_moment_claim(
     ou_m = _OU_LINE_RE.search(mname_no_side)
     num_str = _format_num(row.get("threshold")) or (ou_m.group(1) if ou_m else "")
     if side_word and num_str:
+        if _is_even_set_line(prob, change_points, is_set_line=True):
+            return f"The {period_noun} total is set at {num_str} {unit}"
         return f"{side_word} {num_str} {unit} {period_in}"
 
-    # 2. Period spreads (e.g. "1Q Spread: Bengals (-0.5)" + "Cincinnati Bengals")
+    # 2. Period spreads (e.g. "1H Spread: Bengals (-3.5)" -> "Cincinnati Bengals lead by 4 or more at halftime")
     low_m = mname_no_side.lower()
     if "spread" in low_m or row.get("threshold") is not None:
-        paren_m = _PAREN_LINE_RE.search(mname_no_side)
-        sp_num = _format_num(row.get("threshold")) or (paren_m.group(1) if paren_m else "")
         team_raw = oname_clean
         if not team_raw or team_raw.lower() in {"yes", "no"}:
             team_raw = _PAREN_LINE_RE.sub("", mname_no_side.split(":", 1)[-1]).strip()
         team_disp = _resolve_team_display(team_raw, home_team=home_team, away_team=away_team)
-        if team_disp and sp_num:
-            return f"{team_disp} cover {sp_num} {unit} {period_in}"
+        sp_val = _parse_spread_threshold(
+            row,
+            subj_name=team_disp,
+            home_team=home_team,
+            away_team=away_team,
+        )
+        if team_disp and sp_val is not None:
+            return _plain_spread_claim(
+                team_disp,
+                sp_val,
+                period_in=period_in,
+                period_noun=period_noun,
+            )
 
     # 3. Period winner / tie / moneyline
     if oname_clean:
@@ -531,6 +835,7 @@ def _plain_oddity_claim(
     home_team: str,
     away_team: str,
     unit: str,
+    sport: str = "",
 ) -> Optional[str]:
     mname = _strip_matchup_prefix(str(row.get("market_name") or ""))
     oname = sanitize_nugget_text(str(row.get("outcome_name") or ""))
@@ -565,6 +870,11 @@ def _plain_oddity_claim(
     if any(k in low_m for k in ("two-point", "two point", "2-point", "2 point")) and low_o in {"yes", ""}:
         return "A two-point conversion succeeds"
 
+    # "Both teams to score" without an explicit qualifier only makes literal sense in goal sports
+    is_goal_sport = any(tok in (sport or "").lower() for tok in _GOAL_SPORT_TOKENS)
+    if ("both teams to score" in low_m or "both teams score" in low_m or "btts" in low_m) and not is_goal_sport:
+        return None
+
     # Period-like O/U inside other section
     ou_m = _OU_LINE_RE.search(mname)
     if ou_m and low_o in {"over", "under"}:
@@ -582,7 +892,14 @@ def _plain_oddity_claim(
     return None
 
 
-def _plain_stakes_claim(s_name: str, raw_label: str, out_name: str, *, is_player: bool = False) -> str:
+def _plain_stakes_claim(
+    s_name: str,
+    raw_label: str,
+    out_name: str,
+    *,
+    is_player: bool = False,
+    sport: str = "",
+) -> str:
     label = sanitize_nugget_text(raw_label or "").strip()
     out_clean = sanitize_nugget_text(out_name or "").strip()
     target = out_clean if (out_clean and out_clean.lower() not in {"yes", "no"}) else s_name
@@ -600,20 +917,27 @@ def _plain_stakes_claim(s_name: str, raw_label: str, out_name: str, *, is_player
         award = re.sub(r"\bfinalists?\b", "", label, flags=re.I).strip()
         return f"{target} {be_verb} an {award} finalist" if award else f"{target} {be_verb} a finalist"
     if low_l.startswith("win "):
-        return f"{target} {win_verb} {label[4:].strip()}"
+        prize = _normalize_prize_phrase(label[4:].strip(), team=target, sport=sport)
+        return f"{target} {win_verb} {prize}" if prize else target
     if low_l.startswith("make "):
-        return f"{target} {make_verb} {label[5:].strip()}"
+        dest = _normalize_prize_phrase(label[5:].strip(), team=target, sport=sport)
+        return f"{target} {make_verb} {dest}" if dest else target
     if target.lower() in low_l:
         rest = re.sub(re.escape(target), "", label, flags=re.I).strip(" :-–—")
         if rest:
-            return f"{target} {win_verb} {rest}"
+            prize = _normalize_prize_phrase(rest, team=target, sport=sport)
+            return f"{target} {win_verb} {prize}" if prize else target
         return label
-    cleaned_label = re.sub(r"\bDivision Winner\b", "division", label, flags=re.I)
-    cleaned_label = re.sub(r"\bChampion\b", "title", cleaned_label, flags=re.I)
-    cleaned_label = _MULTISPACE_RE.sub(" ", re.sub(r"\bWinner\b", "", cleaned_label, flags=re.I)).strip(" :-–—")
-    if not cleaned_label:
+    mascot = target.rsplit(" ", 1)[-1].lower()
+    if len(mascot) >= 4 and re.match(rf"^{re.escape(mascot)}\s+(?:win|wins|to\s+win)\s+(.+)$", low_l):
+        rest_m = re.match(rf"^{re.escape(mascot)}\s+(?:win|wins|to\s+win)\s+(.+)$", label, flags=re.I)
+        if rest_m:
+            prize = _normalize_prize_phrase(rest_m.group(1), team=target, sport=sport)
+            return f"{target} {win_verb} {prize}" if prize else target
+    prize = _normalize_prize_phrase(label, team=target, sport=sport)
+    if not prize:
         return target
-    return f"{target} {win_verb} {cleaned_label}"
+    return f"{target} {win_verb} {prize}"
 
 
 def _extract_candidates(
@@ -679,16 +1003,28 @@ def _extract_candidates(
             excluded["unreadable_claim"] += 1
             continue
         eligible_counts["game_flow"] += 1
+        pm_src = _normalize_pregame_mark_source(row.get("pregame_mark_source"))
         chg, since, pre = _extract_movement(
             prob=p,
             pregame_mark=row.get("pregame_mark"),
+            pregame_mark_source=pm_src,
             change_24h=row.get("probability_change_24h", row.get("change_24h")),
             allow_pregame_mark=is_post_kickoff,
         )
-        claim = f"{side_word} {t_str} total {unit}".strip()
+        is_even = _is_even_set_line(p, chg, is_set_line=True)
+        claim = (
+            f"The total is set at {t_str} {unit}"
+            if is_even
+            else f"{side_word} {t_str} total {unit}".strip()
+        )
         form = _select_nugget_form(change_points=chg, change_since=since, default_form="duel_bar")
         sc, why = _compute_score(
-            prob=p, change_points=chg, change_since=since, is_live=is_live, base_bonus=10.0
+            prob=p,
+            change_points=chg,
+            change_since=since,
+            is_live=is_live,
+            base_bonus=10.0,
+            is_set_line=True,
         )
         key = ("total", thresh)
         cand = _candidate_dict(
@@ -700,6 +1036,7 @@ def _extract_candidates(
             change_points=chg,
             change_since=since,
             pregame_percent=pre,
+            pregame_mark_source=pm_src,
             form=form,
             rank_reason=why,
             score=sc,
@@ -707,6 +1044,7 @@ def _extract_candidates(
             source_surface="game_markets",
             source_market_id=row.get("_market_id"),
             dedup_key="game_flow:total",
+            is_even_line=is_even,
         )
         if key not in best_totals or cand["score"] > best_totals[key]["score"]:
             best_totals[key] = cand
@@ -725,7 +1063,6 @@ def _extract_candidates(
         )
         if p is None:
             continue
-        eligible_counts["game_flow"] += 1
         out_name = sanitize_nugget_text(str(row.get("outcome_name") or "")).strip()
         mname = _strip_matchup_prefix(str(row.get("market_name") or ""))
         subj = _team_subject(
@@ -735,20 +1072,26 @@ def _extract_candidates(
             home_logo=home_logo,
             away_logo=away_logo,
         )
-        thresh = row.get("threshold")
-        t_str = _format_num(thresh)
-        if t_str:
-            claim = f"{subj['name']} cover {t_str} {unit}"
-        elif mname and _looks_like_clean_claim(mname):
-            claim = f"{out_name} on {mname}" if out_name and out_name.lower() not in mname.lower() else mname
-        else:
-            claim = f"{subj['name']} point spread"
+        sp_val = _parse_spread_threshold(
+            row,
+            subj_name=subj["name"],
+            home_team=home_team,
+            away_team=away_team,
+        )
+        if sp_val is None or not subj["name"]:
+            excluded["unreadable_claim"] += 1
+            continue
+        eligible_counts["game_flow"] += 1
+        claim = _plain_spread_claim(subj["name"], sp_val)
+        pm_src = _normalize_pregame_mark_source(row.get("pregame_mark_source"))
         chg, since, pre = _extract_movement(
             prob=p,
             pregame_mark=row.get("pregame_mark"),
+            pregame_mark_source=pm_src,
             change_24h=row.get("probability_change_24h", row.get("change_24h")),
             allow_pregame_mark=is_post_kickoff,
         )
+        is_even = _is_even_set_line(p, chg, is_set_line=True)
         form = _select_nugget_form(change_points=chg, change_since=since, default_form="duel_bar")
         sc, why = _compute_score(
             prob=p,
@@ -757,6 +1100,7 @@ def _extract_candidates(
             is_live=is_live,
             has_picture=bool(subj["image_url"]),
             base_bonus=9.5,
+            is_set_line=True,
         )
         cand = _candidate_dict(
             nid=f"game_flow:spread:{row.get('_market_id') or mname}:{out_name.lower()}",
@@ -767,6 +1111,7 @@ def _extract_candidates(
             change_points=chg,
             change_since=since,
             pregame_percent=pre,
+            pregame_mark_source=pm_src,
             form=form,
             rank_reason=why,
             score=sc,
@@ -774,6 +1119,7 @@ def _extract_candidates(
             source_surface="game_markets",
             source_market_id=row.get("_market_id"),
             dedup_key=f"game_flow:spread:{row.get('_market_id') or mname}",
+            is_even_line=is_even,
         )
         dkey = cand["_dedup_key"]
         if dkey not in best_spreads or cand["score"] > best_spreads[dkey]["score"]:
@@ -806,6 +1152,10 @@ def _extract_candidates(
             if isinstance(line_field, Mapping)
             else _format_num(row.get("threshold"))
         )
+        raw_thresh = row.get("threshold")
+        has_num_line = bool(re.search(r"\d", line_label or "")) or (
+            isinstance(raw_thresh, (int, float)) and not isinstance(raw_thresh, bool)
+        )
         if isinstance(player_field, Mapping):
             player_name = sanitize_nugget_text(str(player_field.get("name") or "")).strip()
             player_key = str(player_field.get("key") or player_name).lower()
@@ -819,14 +1169,18 @@ def _extract_candidates(
                 if isinstance(stat_field, Mapping)
                 else stat_label.lower()
             )
-            if not player_name:
+            if not player_name or "(" in player_name or ")" in player_name:
+                excluded["unreadable_claim"] += 1
                 continue
             if "touchdown" in stat_key and not line_label:
                 claim = f"{player_name} scores a touchdown"
-            elif line_label:
+            elif line_label and has_num_line:
                 claim = f"{player_name} {line_label} {stat_label.lower()}"
-            else:
+            elif _BINARY_EVENT_PROP_RE.search(stat_label or stat_key):
                 claim = f"{player_name} {stat_label.lower()}"
+            else:
+                excluded["unreadable_claim"] += 1
+                continue
         else:
             raw_out = sanitize_nugget_text(str(row.get("outcome_name") or "")).split(":")[0].strip()
             mname_clean = _strip_matchup_prefix(str(row.get("market_name") or ""))
@@ -839,18 +1193,32 @@ def _extract_candidates(
                 ).strip()
                 stat_key = stat_label.lower() or "prop"
                 if not stat_label:
-                    claim = mname_clean if _looks_like_clean_claim(mname_clean) else ""
-                elif line_label:
+                    claim = (
+                        mname_clean
+                        if _looks_like_clean_claim(mname_clean)
+                        and (bool(re.search(r"\d", mname_clean)) or bool(_BINARY_EVENT_PROP_RE.search(mname_clean)))
+                        else ""
+                    )
+                elif line_label and has_num_line:
                     claim = f"{player_name} {line_label} {stat_label.lower()}"
-                else:
+                elif _BINARY_EVENT_PROP_RE.search(stat_label):
                     claim = f"{player_name} {stat_label.lower()}"
+                else:
+                    excluded["unreadable_claim"] += 1
+                    continue
             elif mname_clean and _looks_like_clean_claim(mname_clean):
-                # Untyped prop fallback: use clean market title ("Jayden Daniels 50+ rushing yards"),
-                # never generic "Over 50 props".
+                # Untyped prop fallback: use clean market title with a real number
+                # ("Jayden Daniels 50+ rushing yards"), never label-only "Fantasy Points (Antonio Williams)".
                 name_words = re.match(r"^([A-Z][A-Za-z'.-]+(?:\s+[A-Z][A-Za-z'.-]+){1,2})\s+(.+)$", mname_clean)
                 if name_words:
                     player_name = name_words.group(1).strip()
                     rest = name_words.group(2).strip().lower()
+                    if player_name.lower() in {"fantasy points", "passing yards", "rushing yards", "receiving yards"}:
+                        excluded["unreadable_claim"] += 1
+                        continue
+                    if not (re.search(r"\d", rest) or _BINARY_EVENT_PROP_RE.search(rest)):
+                        excluded["unreadable_claim"] += 1
+                        continue
                     claim = f"{player_name} {rest}"
                     stat_key = rest
                 else:
@@ -874,12 +1242,15 @@ def _extract_candidates(
         else:
             subj = {"name": player_name, "image_url": headshot, "image_kind": "headshot"}
 
+        pm_src = _normalize_pregame_mark_source(row.get("pregame_mark_source"))
         chg, since, pre = _extract_movement(
             prob=p,
             pregame_mark=row.get("pregame_mark"),
+            pregame_mark_source=pm_src,
             change_24h=row.get("probability_change_24h", row.get("change_24h")),
             allow_pregame_mark=is_post_kickoff,
         )
+        is_even = _is_even_set_line(p, chg, is_set_line=True)
         src_cnt = int(row.get("source_count") or 1)
         form = _select_nugget_form(
             change_points=chg,
@@ -894,6 +1265,7 @@ def _extract_candidates(
             source_count=src_cnt,
             has_picture=bool(headshot),
             base_bonus=8.0,
+            is_set_line=True,
         )
         cand = _candidate_dict(
             nid=f"players:{row.get('_market_id') or player_key}:{stat_key}:{line_label}",
@@ -904,6 +1276,7 @@ def _extract_candidates(
             change_points=chg,
             change_since=since,
             pregame_percent=pre,
+            pregame_mark_source=pm_src,
             form=form,
             rank_reason=why,
             score=sc,
@@ -911,6 +1284,7 @@ def _extract_candidates(
             source_surface="game_markets",
             source_market_id=row.get("_market_id"),
             dedup_key=f"players:{player_key}:{stat_key}",
+            is_even_line=is_even,
         )
         pair = (player_key, stat_key)
         if pair not in best_props or cand["score"] > best_props[pair]["score"]:
@@ -931,6 +1305,10 @@ def _extract_candidates(
         )
         if p is None:
             continue
+        t_str = _format_num(row.get("threshold"))
+        if not t_str:
+            excluded["unreadable_claim"] += 1
+            continue
         eligible_counts["teams"] += 1
         t_name = str(row.get("team_name") or "").strip()
         if not t_name:
@@ -942,18 +1320,20 @@ def _extract_candidates(
             home_logo=home_logo,
             away_logo=away_logo,
         )
-        t_str = _format_num(row.get("threshold"))
         tt_side = "under" if "under" in str(row.get("side") or row.get("outcome_name") or "").lower() else "over"
-        if t_str:
-            claim = f"{subj['name']} score {tt_side} {t_str} {unit}"
-        else:
-            raw_tt = _strip_matchup_prefix(str(row.get("outcome_name") or row.get("market_name") or ""))
-            claim = raw_tt or subj["name"]
+        pm_src = _normalize_pregame_mark_source(row.get("pregame_mark_source"))
         chg, since, pre = _extract_movement(
             prob=p,
             pregame_mark=row.get("pregame_mark"),
+            pregame_mark_source=pm_src,
             change_24h=row.get("probability_change_24h", row.get("change_24h")),
             allow_pregame_mark=is_post_kickoff,
+        )
+        is_even = _is_even_set_line(p, chg, is_set_line=True)
+        claim = (
+            f"{subj['name']} team total is set at {t_str} {unit}"
+            if is_even
+            else f"{subj['name']} score {tt_side} {t_str} {unit}"
         )
         form = _select_nugget_form(change_points=chg, change_since=since, default_form="ladder")
         sc, why = _compute_score(
@@ -963,6 +1343,7 @@ def _extract_candidates(
             is_live=is_live,
             has_picture=bool(subj["image_url"]),
             base_bonus=7.5,
+            is_set_line=True,
         )
         tkey = str(row.get("team_side") or subj["name"]).lower()
         cand = _candidate_dict(
@@ -974,6 +1355,7 @@ def _extract_candidates(
             change_points=chg,
             change_since=since,
             pregame_percent=pre,
+            pregame_mark_source=pm_src,
             form=form,
             rank_reason=why,
             score=sc,
@@ -981,6 +1363,7 @@ def _extract_candidates(
             source_surface="game_markets",
             source_market_id=row.get("_market_id"),
             dedup_key=f"teams:{tkey}",
+            is_even_line=is_even,
         )
         if tkey not in best_team_totals or cand["score"] > best_team_totals[tkey]["score"]:
             best_team_totals[tkey] = cand
@@ -1000,7 +1383,22 @@ def _extract_candidates(
         )
         if p is None:
             continue
-        claim = _plain_moment_claim(row, home_team=home_team, away_team=away_team, unit=unit)
+        pm_src = _normalize_pregame_mark_source(row.get("pregame_mark_source"))
+        chg, since, pre = _extract_movement(
+            prob=p,
+            pregame_mark=row.get("pregame_mark"),
+            pregame_mark_source=pm_src,
+            change_24h=row.get("probability_change_24h", row.get("change_24h")),
+            allow_pregame_mark=is_post_kickoff,
+        )
+        claim = _plain_moment_claim(
+            row,
+            home_team=home_team,
+            away_team=away_team,
+            unit=unit,
+            prob=p,
+            change_points=chg,
+        )
         if claim is None:
             excluded["unreadable_claim"] += 1
             continue
@@ -1017,15 +1415,15 @@ def _extract_candidates(
         )
         if subj["name"] == matchup_label:
             subj = {"name": period or matchup_label, "image_url": home_logo or away_logo, "image_kind": "logo" if (home_logo or away_logo) else None}
-        chg, since, pre = _extract_movement(
-            prob=p,
-            pregame_mark=row.get("pregame_mark"),
-            change_24h=row.get("probability_change_24h", row.get("change_24h")),
-            allow_pregame_mark=is_post_kickoff,
-        )
+        is_even = _is_even_set_line(p, chg, is_set_line=True)
         form = _select_nugget_form(change_points=chg, change_since=since, default_form="duel_bar")
         sc, why = _compute_score(
-            prob=p, change_points=chg, change_since=since, is_live=is_live, base_bonus=6.5
+            prob=p,
+            change_points=chg,
+            change_since=since,
+            is_live=is_live,
+            base_bonus=6.5,
+            is_set_line=True,
         )
         mkey = f"{row.get('_market_id') or mname}:{period}"
         cand = _candidate_dict(
@@ -1037,6 +1435,7 @@ def _extract_candidates(
             change_points=chg,
             change_since=since,
             pregame_percent=pre,
+            pregame_mark_source=pm_src,
             form=form,
             rank_reason=why,
             score=sc,
@@ -1044,6 +1443,7 @@ def _extract_candidates(
             source_surface="game_markets",
             source_market_id=row.get("_market_id"),
             dedup_key=f"moments:{period or mname}",
+            is_even_line=is_even,
         )
         if cand["_dedup_key"] not in best_moments or cand["score"] > best_moments[cand["_dedup_key"]]["score"]:
             best_moments[cand["_dedup_key"]] = cand
@@ -1097,17 +1497,19 @@ def _extract_candidates(
                 nid=f"stakes:prog:{side_key}:{s_key}",
                 kind="stakes",
                 subject=subj,
-                claim=_plain_stakes_claim(t_name, s_label, "", is_player=False),
+                claim=_plain_stakes_claim(t_name, s_label, "", is_player=False, sport=sport),
                 prob=p,
                 change_points=chg,
                 change_since=since,
                 pregame_percent=pre,
+                pregame_mark_source=None,
                 form=form,
                 rank_reason=why,
                 score=sc,
                 observed_at=None,
                 source_surface="team_progression",
                 dedup_key=f"stakes:{t_name.lower()}:{s_label.lower()}",
+                is_even_line=False,
             )
             if cand["_dedup_key"] not in best_stakes or cand["score"] > best_stakes[cand["_dedup_key"]]["score"]:
                 best_stakes[cand["_dedup_key"]] = cand
@@ -1160,7 +1562,7 @@ def _extract_candidates(
                 bool(out_name)
                 and out_name.lower() not in {"yes", "no", home_team.lower(), away_team.lower()}
             )
-            claim = _plain_stakes_claim(s_name, label, out_name, is_player=is_player_stake)
+            claim = _plain_stakes_claim(s_name, label, out_name, is_player=is_player_stake, sport=sport)
 
             chg, since, pre = _extract_movement(
                 prob=p,
@@ -1180,6 +1582,7 @@ def _extract_candidates(
                 has_picture=bool(s_img),
                 stakes_tier=tier_int,
                 base_bonus=6.0 + float(row.get("relevance_score") or 0.0) * 0.05,
+                is_set_line=False,
             )
             mid = row.get("market_id")
             oid = row.get("outcome_id")
@@ -1193,6 +1596,7 @@ def _extract_candidates(
                 change_points=chg,
                 change_since=since,
                 pregame_percent=pre,
+                pregame_mark_source=None,
                 form=form,
                 rank_reason=why,
                 score=sc,
@@ -1201,6 +1605,7 @@ def _extract_candidates(
                 source_market_id=mid if isinstance(mid, int) else None,
                 source_outcome_id=oid if isinstance(oid, int) else None,
                 dedup_key=dkey,
+                is_even_line=False,
             )
             if dkey not in best_stakes or cand["score"] > best_stakes[dkey]["score"]:
                 best_stakes[dkey] = cand
@@ -1229,21 +1634,31 @@ def _extract_candidates(
         )
         if p is None:
             continue
-        claim = _plain_oddity_claim(row, home_team=home_team, away_team=away_team, unit=unit)
+        claim = _plain_oddity_claim(
+            row, home_team=home_team, away_team=away_team, unit=unit, sport=sport
+        )
         if claim is None:
             excluded["unreadable_claim"] += 1
             continue
         eligible_counts["oddities"] += 1
         subj = {"name": matchup_label, "image_url": home_logo or away_logo, "image_kind": "logo" if (home_logo or away_logo) else None}
+        pm_src = _normalize_pregame_mark_source(row.get("pregame_mark_source"))
         chg, since, pre = _extract_movement(
             prob=p,
             pregame_mark=row.get("pregame_mark"),
+            pregame_mark_source=pm_src,
             change_24h=row.get("probability_change_24h", row.get("change_24h")),
             allow_pregame_mark=is_post_kickoff,
         )
+        is_even = _is_even_set_line(p, chg, is_set_line=True)
         form = _select_nugget_form(change_points=chg, change_since=since, default_form="duel_bar")
         sc, why = _compute_score(
-            prob=p, change_points=chg, change_since=since, is_live=is_live, base_bonus=5.5
+            prob=p,
+            change_points=chg,
+            change_since=since,
+            is_live=is_live,
+            base_bonus=5.5,
+            is_set_line=True,
         )
         mid = row.get("_market_id")
         dkey = f"oddities:{claim.lower()}"
@@ -1256,6 +1671,7 @@ def _extract_candidates(
             change_points=chg,
             change_since=since,
             pregame_percent=pre,
+            pregame_mark_source=pm_src,
             form=form,
             rank_reason=why,
             score=sc,
@@ -1263,6 +1679,7 @@ def _extract_candidates(
             source_surface="game_markets",
             source_market_id=mid if isinstance(mid, int) else None,
             dedup_key=dkey,
+            is_even_line=is_even,
         )
         if dkey not in best_oddities or cand["score"] > best_oddities[dkey]["score"]:
             best_oddities[dkey] = cand
@@ -1307,30 +1724,43 @@ def rank_game_nuggets(
     selected_ids: set[str] = set()
     kind_counts: Counter[str] = Counter()
     seen_subject_kinds: set[tuple[str, str]] = set()
+    even_lines_first_eight = 0
 
     def _take(item: dict[str, Any]) -> None:
+        nonlocal even_lines_first_eight
         selected_ids.add(item["id"])
         kind_counts[item["kind"]] += 1
         seen_subject_kinds.add((item["kind"], str(item["subject"]["name"]).lower()))
-        clean = {k: v for k, v in item.items() if k != "_dedup_key"}
+        if item.get("_is_even_line") and len(selected) < NUGGET_FIRST_EIGHT:
+            even_lines_first_eight += 1
+        clean = {k: v for k, v in item.items() if k not in {"_dedup_key", "_is_even_line"}}
         clean["position"] = len(selected) + 1
         selected.append(clean)
 
     # Pass 1 (variety guarantee): pick the top-scoring nugget from each available kind
-    # in score order so >= 4 kinds always enter the first eight when data exists.
+    # in score order so >= 4 kinds always enter the first eight while staying within
+    # <= 2 even (48%-52%) set lines in seats 1..8.
     top_per_kind: dict[str, dict[str, Any]] = {}
+    top_non_even_per_kind: dict[str, dict[str, Any]] = {}
     for item in pool:
         k = item["kind"]
         if k not in top_per_kind:
             top_per_kind[k] = item
-    for item in sorted(top_per_kind.values(), key=lambda c: (-float(c["score"]), c["kind"], c["id"])):
-        if len(selected) >= min(clamped_limit, NUGGET_FIRST_EIGHT):
-            break
-        _take(item)
-
-    # Pass 2 (first 8): fill remaining slots up to 8 respecting <= 2 per kind,
-    # preferring distinct (kind, subject) before allowing a second item on the same subject.
+        if not item.get("_is_even_line") and k not in top_non_even_per_kind:
+            top_non_even_per_kind[k] = item
     first_eight_cap = min(clamped_limit, NUGGET_FIRST_EIGHT)
+    for item in sorted(top_per_kind.values(), key=lambda c: (-float(c["score"]), c["kind"], c["id"])):
+        if len(selected) >= first_eight_cap:
+            break
+        pick = item
+        if pick.get("_is_even_line") and even_lines_first_eight >= NUGGET_MAX_EVEN_LINES_FIRST_EIGHT:
+            pick = top_non_even_per_kind.get(item["kind"])  # type: ignore[assignment]
+            if pick is None or pick["id"] in selected_ids:
+                continue
+        _take(pick)
+
+    # Pass 2 (first 8): fill remaining slots up to 8 respecting <= 2 per kind
+    # and <= 2 even (48%-52%) set lines, preferring distinct (kind, subject).
     for avoid_same_subject in (True, False):
         if len(selected) >= first_eight_cap:
             break
@@ -1341,20 +1771,34 @@ def rank_game_nuggets(
                 continue
             if kind_counts[item["kind"]] >= NUGGET_MAX_PER_KIND_FIRST_EIGHT:
                 continue
+            if item.get("_is_even_line") and even_lines_first_eight >= NUGGET_MAX_EVEN_LINES_FIRST_EIGHT:
+                continue
             sk_pair = (item["kind"], str(item["subject"]["name"]).lower())
             if avoid_same_subject and sk_pair in seen_subject_kinds:
                 continue
             _take(item)
 
-    # Pass 3 (seats 9..limit): extend by score up to limit (<= 3 per kind, no padding).
-    for item in pool:
+    # Pass 3 (seats 9..limit): extend by score up to limit (<= 3 per kind, non-even lines first,
+    # never allowing > 2 even set lines into seats 1..8).
+    for allow_even in (False, True):
         if len(selected) >= clamped_limit:
             break
-        if item["id"] in selected_ids:
-            continue
-        if kind_counts[item["kind"]] >= NUGGET_MAX_PER_KIND_EXTENDED:
-            continue
-        _take(item)
+        for item in pool:
+            if len(selected) >= clamped_limit:
+                break
+            if item["id"] in selected_ids:
+                continue
+            if not allow_even and item.get("_is_even_line"):
+                continue
+            if (
+                item.get("_is_even_line")
+                and len(selected) < NUGGET_FIRST_EIGHT
+                and even_lines_first_eight >= NUGGET_MAX_EVEN_LINES_FIRST_EIGHT
+            ):
+                continue
+            if kind_counts[item["kind"]] >= NUGGET_MAX_PER_KIND_EXTENDED:
+                continue
+            _take(item)
 
     everything_map = [
         {
