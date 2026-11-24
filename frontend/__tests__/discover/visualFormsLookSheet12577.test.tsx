@@ -12,9 +12,6 @@ import {
   OSCARS_CONTAINER_LOOK_SHEET_OPTIONS,
   PAIRED_METRIC_REGISTER,
   SERVER_BLEND_AUTHORITY,
-  TMDB_ATTRIBUTION_LINE,
-  TMDB_ATTRIBUTION_URL,
-  TMDB_OFFICIAL_LOGO_PATH,
   VISUAL_FORM_LIBRARY,
   VISUAL_FORM_LOOK_SHEET_CARDS,
   VISUAL_FORM_SHEET_2_CARDS,
@@ -296,16 +293,12 @@ describe("#12577 / #12523 Visual Form Library & Look Sheet (Sheet 1 + Sheet 2)",
     expect(html).toContain('data-testid="visual-form-card-barbell-race-track"');
     expect(html).toContain('data-testid="visual-form-card-ballot-quadrant-map"');
 
-    // TMDB attribution line + official TMDB SVG logo mark linked to themoviedb.org are visible
-    expect(html).toContain('data-testid="tmdb-attribution-line"');
-    expect(html).toContain('data-testid="tmdb-attribution-link"');
-    expect(html).toContain('data-testid="tmdb-official-logo"');
-    expect(html).toContain(`src="${TMDB_OFFICIAL_LOGO_PATH}"`);
-    expect(html).toContain('height="11"');
-    expect(html).toContain(`href="${TMDB_ATTRIBUTION_URL}"`);
-    expect(html).toContain(TMDB_ATTRIBUTION_LINE);
+    // #13644 — TMDB logo and notice live on /about and /picture-credits, not on look-sheet cards
+    expect(html).not.toContain('data-testid="tmdb-attribution-line"');
+    expect(html).not.toContain('data-testid="tmdb-official-logo"');
+    expect(html).not.toContain("tmdb-blue-short.svg");
 
-    // Official TMDB blue_short.svg asset exists unmodified (SHA-256 matches TMDB's asset digest)
+    // Official TMDB blue_short.svg asset exists unmodified (for /about and /picture-credits)
     const tmdbSvgPath = path.resolve(
       __dirname,
       "../../public/tmdb-blue-short.svg",

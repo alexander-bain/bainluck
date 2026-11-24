@@ -1483,7 +1483,7 @@ export default function DiscoverPage() {
     };
   }, []);
 
-  const handleDismiss = useCallback((itemId: string) => {
+  const handleDismiss = useCallback((itemIdOrIds: string | string[]) => {
     // #9643 — the card already asked `handleFeedbackAttempt`; this is the page's
     // own write, so it checks again rather than trusting every caller to.
     if (learningStateRef.current !== "learn") return;
@@ -1495,12 +1495,13 @@ export default function DiscoverPage() {
     // any subsequent card open, so this reflects the FINAL action, not "a
     // dismiss happened at some point".
     lastActionWasDismissRef.current = true;
+    const ids = Array.isArray(itemIdOrIds) ? itemIdOrIds : [itemIdOrIds];
     // Persist this reader's exact dismissals across refreshes.
     const uid = learningAuthRef.current.uid;
     const reuseDismissals = dismissedOwnerRef.current === uid;
     setDismissedOwner(uid);
     setDismissed((prev) => {
-      const next = new Set([...(reuseDismissals ? prev : []), itemId]);
+      const next = new Set([...(reuseDismissals ? prev : []), ...ids]);
       saveDismissed(next);
       return next;
     });
@@ -1944,7 +1945,11 @@ export default function DiscoverPage() {
       ? () => {
           handleDismiss(getItemId(gi.item!));
         }
-      : undefined;
+      : gi.type === "group" && gi.items?.length
+        ? () => {
+            handleDismiss(gi.items!.map(getItemId));
+          }
+        : undefined;
 
     // One first-card concept, two consumers: the existing peek animation
     // (swipe-hint cohort) and Queue 309's hero label (first-run cohort).

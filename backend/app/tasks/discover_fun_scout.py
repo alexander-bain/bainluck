@@ -44,6 +44,7 @@ from app.utils.discover_fun_scout import (
     build_scout_openai_client,
     build_scout_rule_file_definition,
     is_fun_scout_enabled,
+    load_reader_dismissed_sets,
     load_retired_scout_sets,
     run_nightly_fun_scout,
 )
@@ -590,6 +591,16 @@ async def fetch_open_non_sports_markets_for_scout(
     ]
 
 
+async def fetch_reader_dismissed_sets_for_scout(
+    *, lookback_days: int = 30, now: Optional[datetime] = None
+) -> dict[str, int]:
+    """Read grouped-card ('not for me') dismissals by set for the Fun Scout (#13644)."""
+    async with async_session_maker() as db:
+        return await load_reader_dismissed_sets(
+            db, lookback_days=lookback_days, now=now
+        )
+
+
 async def _run_discover_fun_scout(
     *,
     force: bool = False,
@@ -619,6 +630,15 @@ async def _run_discover_fun_scout(
         }
 
     markets = await fetch_open_non_sports_markets_for_scout()
+    try:
+        reader_dismissed = await fetch_reader_dismissed_sets_for_scout(now=run_now)
+    except Exception as exc:
+        logger.warning(
+            "Fun scout continuing without reader dismissed sets (%s: %s)",
+            type(exc).__name__,
+            exc,
+        )
+        reader_dismissed = {}
     licence = _load_licence_state(SCOUT_LICENCE_STATE_PATH)
 
     openai_client = build_scout_openai_client()
@@ -631,6 +651,7 @@ async def _run_discover_fun_scout(
         anthropic_client=anthropic_client,
         output_dir=output_dir,
         retired_sets=retired,
+        reader_dismissed_sets=reader_dismissed,
         licence_state=licence,
         prior_monthly_spend_usd=prior_spend,
         now=run_now,

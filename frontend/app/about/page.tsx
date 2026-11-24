@@ -335,6 +335,31 @@ export default function AboutPage() {
               </EmbedAwareLink>
             </p>
           </div>
+
+          <div
+            data-testid="tmdb-attribution-block"
+            className="rounded-xl border border-surface-border bg-surface-card px-4 py-3 flex flex-wrap items-center gap-3 text-caption text-text-secondary"
+          >
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/tmdb-blue-short.svg"
+              alt="TMDB"
+              className="h-3.5 w-auto shrink-0"
+            />
+            <p className="leading-snug">
+              Film posters and screen contender portraits are provided by{" "}
+              <a
+                href="https://www.themoviedb.org/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="text-accent-brand hover:underline font-medium"
+              >
+                TMDB
+              </a>
+              . This product uses the TMDB API but is not endorsed or certified by
+              TMDB.
+            </p>
+          </div>
         </section>
       </RevealSection>
 
