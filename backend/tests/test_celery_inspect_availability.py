@@ -307,3 +307,50 @@ class TestTheMemoCannotPermanentlyHideABrokenBroker:
             return ac._INSPECT_CACHE["data"]
 
         assert _run(main()) is None
+
+
+class TestFiveSecondBudgetCap:
+    """`/api/admin/celery/inspect` must never hold web workers for 25s."""
+
+    def test_default_timeouts_keep_five_broadcasts_under_five_seconds(self):
+        from unittest.mock import MagicMock
+
+        seen_kw = {}
+
+        def _make_inspector(**kw):
+            seen_kw.update(kw)
+            return _SlowInspector(**kw)
+
+        fake = MagicMock()
+        fake.control.inspect.side_effect = _make_inspector
+        _SlowInspector.per_call_s = 0.0
+
+        async def main():
+            with patch("app.tasks.celery_app", fake, create=True):
+                return await ac._inspect_snapshot()
+
+        _run(main())
+        assert ac._INSPECT_TOTAL_TIMEOUT_S <= 5.0
+        assert seen_kw["timeout"] <= 1.0
+        assert seen_kw["timeout"] * 5 <= ac._INSPECT_TOTAL_TIMEOUT_S
+
+    def test_hung_broadcasts_give_up_at_total_budget_without_caching(self):
+        from unittest.mock import MagicMock
+
+        fake = MagicMock()
+        fake.control.inspect.side_effect = lambda **kw: _SlowInspector(**kw)
+        _SlowInspector.per_call_s = 0.20
+
+        t0 = time.perf_counter()
+
+        async def main():
+            with patch("app.tasks.celery_app", fake, create=True):
+                return await ac._inspect_snapshot(timeout=0.20, total_timeout=0.30)
+
+        with pytest.raises(TimeoutError):
+            _run(main())
+
+        elapsed = time.perf_counter() - t0
+        assert elapsed < 0.8
+        assert ac._INSPECT_CACHE["data"] is None
+        assert _SlowInspector.calls < 5

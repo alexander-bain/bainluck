@@ -218,6 +218,38 @@ class TestCeleryInspect:
         body = resp.json()
         assert isinstance(body, dict)
 
+    async def test_returns_504_when_inspect_times_out(self, client, monkeypatch):
+        import app.routes.admin_celery as ac
+
+        monkeypatch.setenv("ADMIN_TOKEN", "test-secret")
+        monkeypatch.setattr(ac, "_INSPECT_TOTAL_TIMEOUT_S", 0.15)
+        monkeypatch.setattr(ac, "_INSPECT_PER_CALL_TIMEOUT_S", 0.05)
+
+        def _slow_call():
+            import time
+            time.sleep(0.10)
+            return {}
+
+        mock_inspect = MagicMock()
+        mock_inspect.active = _slow_call
+        mock_inspect.reserved = _slow_call
+        mock_inspect.registered = _slow_call
+        mock_inspect.ping = _slow_call
+        mock_inspect.stats = _slow_call
+
+        mock_app = MagicMock()
+        mock_app.control.inspect.return_value = mock_inspect
+
+        ac._INSPECT_CACHE["at"] = 0.0
+        ac._INSPECT_CACHE["data"] = None
+        with patch("app.tasks.celery_app", mock_app):
+            resp = await client.get(
+                "/api/admin/celery/inspect", headers={"Authorization": "Bearer test-secret"}
+            )
+
+        assert resp.status_code == 504
+        assert ac._INSPECT_CACHE["data"] is None
+
 
 class TestCeleryPurgeBackground:
     """POST /api/admin/celery-purge-background."""
