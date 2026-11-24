@@ -26,7 +26,7 @@ from __future__ import annotations
 import calendar
 import json
 import re
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -720,23 +720,52 @@ def _collect_event_members(bundle: dict[str, Any] | None, container: dict[str, A
 def _collect_market_entries(bundle: dict[str, Any] | None, container: dict[str, Any] | None) -> list[dict[str, Any]]:
     """Collect market dicts across bundle items and container sections without duplicates."""
     markets: list[dict[str, Any]] = []
-    seen_names: set[str] = set()
+    by_name: dict[str, dict[str, Any]] = {}
     for it in ((bundle or {}).get("data") or {}).get("items") or []:
         if isinstance(it, dict) and it.get("type") != "event":
-            cd = it.get("data") or {}
+            cd = dict(it.get("data") or {})
             nm = str(cd.get("name") or cd.get("title") or "").strip()
-            if nm and nm.lower() not in seen_names:
-                seen_names.add(nm.lower())
+            key = nm.lower()
+            if nm and key not in by_name:
+                by_name[key] = cd
                 markets.append(cd)
     for sec in (container or {}).get("sections") or []:
         for m in sec.get("members") or []:
             if m.get("type") == "market":
                 cd = m.get("card") or {}
                 nm = str(cd.get("name") or "").strip()
-                if nm and nm.lower() not in seen_names:
-                    seen_names.add(nm.lower())
-                    markets.append(cd)
+                key = nm.lower()
+                if not nm:
+                    continue
+                if key not in by_name:
+                    copy_cd = dict(cd)
+                    by_name[key] = copy_cd
+                    markets.append(copy_cd)
+                elif not by_name[key].get("discover_card") and cd.get("discover_card"):
+                    by_name[key]["discover_card"] = cd["discover_card"]
     return markets
+
+
+def _caption_has_unshown_numbers(stat: str, body: dict[str, Any], shown_count: int) -> bool:
+    """Reject captions quoting percentages or entity counts that are not shown on the card (#13584)."""
+    if not stat:
+        return True
+    body_blob = json.dumps(body, ensure_ascii=False)
+    for m in re.finditer(r"\b(\d+)%", stat):
+        token = f"{m.group(1)}%"
+        if token not in body_blob:
+            return True
+    for m in re.finditer(
+        r"\b(\d+)\s+(?:contenders?|candidates?|matchups?|games?|teams?|films?|movies?)\b",
+        stat,
+        re.IGNORECASE,
+    ):
+        prefix = stat[max(0, m.start() - 4) : m.start()].lower()
+        if prefix.endswith("of "):
+            continue
+        if int(m.group(1)) > shown_count:
+            return True
+    return False
 
 
 def _extract_event_home_pct(card: dict[str, Any]) -> int | None:
@@ -923,10 +952,16 @@ def _try_build_single_sport_slate(
     if len(active) < 2:
         return None, "All matchups in this week/slate are already settled"
 
-    shown = active[:3]
+    shown = sorted(
+        active[:3],
+        key=lambda g: (
+            _parse_iso_dt(g.get("commence_time")) or datetime.max.replace(tzinfo=timezone.utc),
+            str(g.get("away_team") or ""),
+        ),
+    )
     sport_label = _SPORT_META[sport_key]
     total_count = max(len(active), int(mc.get("item_count") or 0), len(shown))
-    headline = _format_date_span_headline(sport_label, active, slug)
+    headline = _format_date_span_headline(sport_label, shown, slug)
 
     items: list[dict[str, Any]] = []
     for g in shown:
@@ -988,10 +1023,34 @@ def _try_build_single_sport_slate(
             }
         )
 
-    if not stat or _is_boilerplate_stat(stat.lower()) or stat.lower() == headline.lower():
+    body = {
+        "single_sport_key": sport_key,
+        "header_layout": "split",
+        "header_marks": [
+            _mark_word(sport_label, style="kicker", tone="muted", align="left", bold=True),
+            _mark_word(
+                f"{len(shown)} OF {total_count} GAMES" if total_count > len(shown) else f"{len(shown)} GAMES",
+                style="kicker",
+                tone="muted",
+                align="right",
+                bold=True,
+            ),
+        ],
+        "items": items,
+    }
+
+    if (
+        not stat
+        or _is_boilerplate_stat(stat.lower())
+        or stat.lower() == headline.lower()
+        or _caption_has_unshown_numbers(stat, body, len(shown))
+    ):
         g0 = shown[0]
         p_home = _extract_event_home_pct(g0) or 50
-        stat = f"{g0.get('away_team')} ({100 - p_home}%) at {g0.get('home_team')} ({p_home}%) headlines {total_count} matchups."
+        count_phrase = (
+            f"{len(shown)} of {total_count} matchups" if total_count > len(shown) else f"{len(shown)} matchups"
+        )
+        stat = f"{g0.get('away_team')} ({100 - p_home}%) at {g0.get('home_team')} ({p_home}%) headlines {count_phrase}."
 
     card = _make_kit_card(
         card_id=f"kit-{slug}",
@@ -1004,15 +1063,7 @@ def _try_build_single_sport_slate(
         route_kind="collection",
         route_id=route.get("id"),
         route_slug=route.get("slug"),
-        body={
-            "single_sport_key": sport_key,
-            "header_layout": "split",
-            "header_marks": [
-                _mark_word(sport_label, style="kicker", tone="muted", align="left", bold=True),
-                _mark_word(f"{total_count} GAMES", style="kicker", tone="muted", align="right", bold=True),
-            ],
-            "items": items,
-        },
+        body=body,
     )
     return card, None
 
@@ -1174,15 +1225,16 @@ def _parse_outcome_deadline(
     s = (label or "").strip().rstrip("?").strip()
     fallback_year = reference_year if reference_year is not None else datetime.now(PT_TZ).year
     m_full = re.match(
-        r"^(?:(?:before|by)\s+)?(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\s+(\d{1,2})(?:,\s*(\d{4}))?$",
+        r"^(?:(before|by)\s+)?(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\s+(\d{1,2})(?:,\s*(\d{4}))?$",
         s,
         re.IGNORECASE,
     )
     if m_full:
-        mon = _MONTH_NUMS[m_full.group(1).lower()]
-        raw_day = int(m_full.group(2))
-        if m_full.group(3):
-            yr = int(m_full.group(3))
+        prep = (m_full.group(1) or "").lower()
+        mon = _MONTH_NUMS[m_full.group(2).lower()]
+        raw_day = int(m_full.group(3))
+        if m_full.group(4):
+            yr = int(m_full.group(4))
             day = min(raw_day, calendar.monthrange(yr, mon)[1])
         elif market_end_date is not None:
             # A deadline with no year is the last such calendar date on or before the market's end (#13584).
@@ -1194,17 +1246,24 @@ def _parse_outcome_deadline(
         else:
             yr = fallback_year
             day = min(raw_day, calendar.monthrange(yr, mon)[1])
-        return (yr, mon, day), f"{_MONTH_ABBR[mon]} {day} '{str(yr)[2:]}"
+        base_lbl = f"{_MONTH_ABBR[mon]} {day} '{str(yr)[2:]}"
+        return (yr, mon, day), (f"before {base_lbl}" if prep == "before" else base_lbl)
     m_mon_yr = re.match(
-        r"^(?:(?:before|by|in)\s+)?(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\s+(\d{4})$",
+        r"^(?:(before|by|in)\s+)?(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\s+(\d{4})$",
         s,
         re.IGNORECASE,
     )
     if m_mon_yr:
-        mon = _MONTH_NUMS[m_mon_yr.group(1).lower()]
-        yr = int(m_mon_yr.group(2))
+        prep = (m_mon_yr.group(1) or "").lower()
+        mon = _MONTH_NUMS[m_mon_yr.group(2).lower()]
+        yr = int(m_mon_yr.group(3))
+        base_lbl = f"{_MONTH_ABBR[mon]} '{str(yr)[2:]}"
+        if prep == "before":
+            # "Before Month YYYY" closes at end of prior month, and always prints "before ..." (#13584 v6).
+            prev_day = date(yr, mon, 1) - timedelta(days=1)
+            return (prev_day.year, prev_day.month, prev_day.day), f"before {base_lbl}"
         last_day = calendar.monthrange(yr, mon)[1]
-        return (yr, mon, last_day), f"{_MONTH_ABBR[mon]} '{str(yr)[2:]}"
+        return (yr, mon, last_day), (f"in {base_lbl}" if prep == "in" else base_lbl)
     m_yr = re.match(r"^(before|by|in)\s+(\d{4})$", s, re.IGNORECASE)
     if m_yr:
         prep = m_yr.group(1).lower()
@@ -1212,6 +1271,39 @@ def _parse_outcome_deadline(
         eff_yr = yr - 1 if prep == "before" else yr
         return (eff_yr, 12, 31), f"{prep} {yr}"
     return None
+
+
+def _parse_threshold_point_deadline(
+    tp: dict[str, Any],
+    *,
+    today_pt: date,
+    reference_year: int,
+    market_end_date: date | None,
+) -> tuple[tuple[int, int, int], str] | None:
+    """Resolve a threshold_point ladder entry using value YYYYMMDD when >= current year."""
+    if not isinstance(tp, dict):
+        return None
+    nm = str(tp.get("label") or tp.get("name") or "").strip()
+    raw_val = tp.get("value")
+    if isinstance(raw_val, int) and 10000101 <= raw_val <= 99991231:
+        vy, vm, vd = raw_val // 10000, (raw_val // 100) % 100, raw_val % 100
+        if vy >= today_pt.year:
+            try:
+                date(vy, vm, vd)
+            except ValueError:
+                return _parse_outcome_deadline(
+                    nm, reference_year=reference_year, market_end_date=market_end_date
+                )
+            parsed_nm = (
+                _parse_outcome_deadline(nm, reference_year=vy, market_end_date=None) if nm else None
+            )
+            if parsed_nm is not None:
+                return parsed_nm
+            lbl = f"{_MONTH_ABBR[vm]} {vd} '{str(vy)[2:]}"
+            return (vy, vm, vd), (f"before {lbl}" if nm.lower().startswith("before ") else lbl)
+    return _parse_outcome_deadline(
+        nm, reference_year=reference_year, market_end_date=market_end_date
+    )
 
 
 def _tile_deadline_label(col_lbl: str) -> str:
@@ -1260,12 +1352,36 @@ def _try_build_dated_tiles(
 
     for m in markets:
         outs = m.get("top_outcomes") or []
+        tp_list = (m.get("discover_card") or {}).get("threshold_points") or []
         res_dt = _parse_iso_dt(m.get("resolution_date"))
         res_pt_date = res_dt.astimezone(PT_TZ).date() if res_dt is not None else None
         ref_year = res_pt_date.year if res_pt_date is not None else today_pt.year
         by_col: dict[str, tuple[tuple[int, int, int], str, int]] = {}
-        expired_items: list[dict[str, Any]] = []
+        expired_by_key: dict[str, dict[str, Any]] = {}
         raw_dated_count = 0
+
+        for tp in tp_list:
+            if not isinstance(tp, dict):
+                continue
+            unit_val = str(tp.get("unit") or "").lower()
+            if unit_val and unit_val != "date":
+                continue
+            nm = str(tp.get("label") or tp.get("name") or "").strip()
+            parsed = _parse_threshold_point_deadline(
+                tp,
+                today_pt=today_pt,
+                reference_year=ref_year,
+                market_end_date=res_pt_date,
+            )
+            pct = _safe_pct(tp.get("probability"), tp.get("rendered_percent"))
+            if parsed and pct is not None:
+                raw_dated_count += 1
+                sort_k, col_lbl = parsed
+                col_key = f"{sort_k[0]:04d}-{sort_k[1]:02d}-{sort_k[2]:02d}"
+                if date(*sort_k) < today_pt:
+                    expired_by_key[col_key] = {"outcome": nm, "date": col_key, "pct": pct, "reason": "expired"}
+                else:
+                    by_col[col_key] = (sort_k, col_lbl, pct)
 
         for o in outs:
             nm = str(o.get("name") or "").strip()
@@ -1280,9 +1396,11 @@ def _try_build_dated_tiles(
                 sort_k, col_lbl = parsed
                 col_key = f"{sort_k[0]:04d}-{sort_k[1]:02d}-{sort_k[2]:02d}"
                 if date(*sort_k) < today_pt:
-                    expired_items.append({"outcome": nm, "date": col_key, "pct": pct, "reason": "expired"})
+                    expired_by_key[col_key] = {"outcome": nm, "date": col_key, "pct": pct, "reason": "expired"}
                     continue
                 by_col[col_key] = (sort_k, col_lbl, pct)
+
+        expired_items = sorted(expired_by_key.values(), key=lambda e: e["date"])
 
         raw_title = _scrub_card_copy(_restate_source_question(str(m.get("name") or m.get("title") or "")))
         short_title = re.sub(
@@ -1344,28 +1462,9 @@ def _try_build_dated_tiles(
     if has_machinery_card and len(dated_rows) * 2 < len(markets):
         return None, None, []
 
-    all_cols: dict[str, tuple[tuple[int, int, int], str]] = {}
-    for _t, col_map, _exp in dated_rows[:3]:
-        for ck, (sk, cl, _p) in col_map.items():
-            all_cols[ck] = (sk, cl)
-
-    all_sorted_cols = sorted(all_cols.items(), key=lambda kv: kv[1][0])
-    if len(all_sorted_cols) <= 3:
-        sorted_cols = all_sorted_cols
-    else:
-        sorted_cols = [all_sorted_cols[0], all_sorted_cols[len(all_sorted_cols) // 2], all_sorted_cols[-1]]
-    col_keys = {ck for ck, _ in sorted_cols}
-
-    # Check if shared matrix columns cover >= 2 rows cleanly, else use per-row chronological tiles
-    aligned = sum(
-        1 for _t, cmap, _exp in dated_rows[:3] if len(set(cmap.keys()) & col_keys) >= 2
-    )
-    use_shared_matrix = aligned == len(dated_rows[:3])
-
     rows: list[dict[str, Any]] = []
     summaries: list[str] = []
     lanes_audit: list[dict[str, Any]] = []
-    any_missing = False
 
     for idx, (row_title, cmap, expired_items) in enumerate(dated_rows[:3], 1):
         art_req, s_kind, valid_art = _row_requires_picture(row_title, None, resolver)
@@ -1387,46 +1486,23 @@ def _try_build_dated_tiles(
             leading.append(_mark_picture(url=pic_url, alt=row_title, subject_kind=pic_kind, size="xs", contain=True))
         leading.append(_mark_word(row_title, style="row", tone="primary", width="flex", bold=True))
 
-        shown_entries: list[tuple[str, str, int]] = []
-        if use_shared_matrix:
-            cells = []
-            for ck, (_sk, cl) in sorted_cols:
-                entry = cmap.get(ck)
-                val = entry[2] if entry else None
-                if val is None:
-                    any_missing = True
-                else:
-                    shown_entries.append((ck, entry[1], val))
-                cells.append(
-                    {
-                        "column_key": ck,
-                        "marks": [
-                            _mark_tile(
-                                shade=0.0 if val is None else val / 100.0,
-                                top_label=_tile_deadline_label(cl),
-                                center_label="—" if val is None else f"{val}%",
-                                muted=(val is None),
-                            )
-                        ],
-                    }
-                )
-        else:
-            row_dates = _select_chronological_tiles_with_peak(cmap)
-            shown_entries = [(ck, cl, val) for ck, (_sk, cl, val) in row_dates]
-            cells = [
-                {
-                    "column_key": f"slot-{ci}",
-                    "marks": [
-                        _mark_tile(
-                            shade=val / 100.0,
-                            top_label=_tile_deadline_label(cl),
-                            center_label=f"{val}%",
-                            muted=False,
-                        )
-                    ],
-                }
-                for ci, (_ck, (_sk, cl, val)) in enumerate(row_dates)
-            ]
+        # Each lane keeps only its own open deadlines (no dash filler tiles or footnote legend; #13584 v6).
+        row_dates = _select_chronological_tiles_with_peak(cmap)
+        shown_entries = [(ck, cl, val) for ck, (_sk, cl, val) in row_dates]
+        cells = [
+            {
+                "column_key": f"slot-{ci}",
+                "marks": [
+                    _mark_tile(
+                        shade=val / 100.0,
+                        top_label=_tile_deadline_label(cl),
+                        center_label=f"{val}%",
+                        muted=False,
+                    )
+                ],
+            }
+            for ci, (_ck, (_sk, cl, val)) in enumerate(row_dates)
+        ]
 
         shown_key_set = {ck for ck, _cl, _val in shown_entries}
         left_off = list(expired_items)
@@ -1460,13 +1536,9 @@ def _try_build_dated_tiles(
         lanes_audit.append({"lane": row_title, "shown": [], "left_off": lane_left, "dropped": True})
     lanes_audit.extend(dropped_lanes_audit)
 
-    cols = (
-        [{"key": ck, "label": cl} for ck, (_sk, cl) in sorted_cols]
-        if use_shared_matrix
-        else [{"key": f"slot-{i}", "label": f"Checkpoint {i + 1}"} for i in range(3)]
-    )
+    max_tiles = max((len(r["cells"]) for r in rows), default=3)
+    cols = [{"key": f"slot-{i}", "label": f"Checkpoint {i + 1}"} for i in range(max_tiles)]
     stat_sentence = "; ".join(summaries[:2]) + "."
-    footnote = "Dash (—) means no market is open for that deadline." if any_missing else None
 
     card = _make_kit_card(
         card_id=f"kit-{slug}",
@@ -1479,7 +1551,7 @@ def _try_build_dated_tiles(
         route_kind="collection",
         route_id=route.get("id"),
         route_slug=route.get("slug"),
-        footnote=footnote,
+        footnote=None,
         body={
             "show_column_headers": False,
             "row_layout": "stacked_cells",
@@ -1618,7 +1690,38 @@ def _try_build_countdown(
         if common.startswith("By ")
         else f"{_MONTH_ABBR[target_pt_date.month]} {target_pt_date.day}"
     )
-    if not stat or _is_boilerplate_stat(stat.lower()) or stat.lower() == common.lower():
+    cd_body = {
+        "header_layout": "banner",
+        "header_marks": [
+            _mark_number(
+                num_val,
+                num_display,
+                unit="days",
+                tone="accent",
+                prominence="hero",
+                align="left",
+                width="auto",
+                deadline_iso=deadline_iso,
+            ),
+            _mark_word(
+                hero_text,
+                style="hero_label",
+                tone="primary",
+                align="left",
+                width="flex",
+                bold=True,
+                secondary_text=f"all of these end on {date_short}",
+                deadline_iso=deadline_iso,
+            ),
+        ],
+        "items": items,
+    }
+    if (
+        not stat
+        or _is_boilerplate_stat(stat.lower())
+        or stat.lower() == common.lower()
+        or _caption_has_unshown_numbers(stat, cd_body, len(items))
+    ):
         stat = f"{shown[0][0]} leads {date_short} deadlines at {shown[0][1]}%, ahead of {shown[1][0]} ({shown[1][1]}%)."
 
     card = _make_kit_card(
@@ -1632,32 +1735,7 @@ def _try_build_countdown(
         route_kind="collection",
         route_id=route.get("id"),
         route_slug=route.get("slug"),
-        body={
-            "header_layout": "banner",
-            "header_marks": [
-                _mark_number(
-                    num_val,
-                    num_display,
-                    unit="days",
-                    tone="accent",
-                    prominence="hero",
-                    align="left",
-                    width="auto",
-                    deadline_iso=deadline_iso,
-                ),
-                _mark_word(
-                    hero_text,
-                    style="hero_label",
-                    tone="primary",
-                    align="left",
-                    width="flex",
-                    bold=True,
-                    secondary_text=f"all of these end on {date_short}",
-                    deadline_iso=deadline_iso,
-                ),
-            ],
-            "items": items,
-        },
+        body=cd_body,
     )
     return card, None
 
@@ -1895,7 +1973,8 @@ def _try_build_one_in_n(
         )
         items.append({"id": f"oin-{idx}", "marks": marks})
 
-    if not stat or _is_boilerplate_stat(stat.lower()):
+    oin_body = {"header_layout": "none", "header_marks": [], "items": items}
+    if not stat or _is_boilerplate_stat(stat.lower()) or _caption_has_unshown_numbers(stat, oin_body, len(items)):
         stat = f"{rows_data[0][0]} leads at {rows_data[0][1]}% (1 in {compute_one_in_n(rows_data[0][1])})."
 
     card = _make_kit_card(
@@ -1909,7 +1988,7 @@ def _try_build_one_in_n(
         route_kind="collection",
         route_id=route.get("id"),
         route_slug=route.get("slug"),
-        body={"header_layout": "none", "header_marks": [], "items": items},
+        body=oin_body,
     )
     return card, None
 
@@ -2196,9 +2275,17 @@ def _try_build_scoreboard_grid(
         )
 
     cols = [{"key": ck, "label": cl} for ck, cl, _ in market_cols[:2]]
-    if not stat or _is_boilerplate_stat(stat.lower()):
+    grid_body = {
+        "leading_label": leading_label,
+        "show_column_headers": True,
+        "row_layout": "matrix",
+        "columns": cols,
+        "rows": rows,
+    }
+    if not stat or _is_boilerplate_stat(stat.lower()) or _caption_has_unshown_numbers(stat, grid_body, len(rows)):
         top_nm, top_p0 = c0[2][shown_keys[0]]
-        stat = f"{top_nm} {_lead_verb(top_nm, top_row_kind)} {cols[0]['label']} at {top_p0}% across {len(shared_keys)} shared contenders."
+        sec_nm, sec_p0 = c0[2][shown_keys[1]]
+        stat = f"{top_nm} {_lead_verb(top_nm, top_row_kind)} {common} at {top_p0}%, ahead of {sec_nm} ({sec_p0}%)."
 
     card = _make_kit_card(
         card_id=f"kit-{slug}",
@@ -2211,13 +2298,7 @@ def _try_build_scoreboard_grid(
         route_kind="collection",
         route_id=route.get("id"),
         route_slug=route.get("slug"),
-        body={
-            "leading_label": leading_label,
-            "show_column_headers": True,
-            "row_layout": "matrix",
-            "columns": cols,
-            "rows": rows,
-        },
+        body=grid_body,
     )
     return card, None
 
@@ -2300,12 +2381,6 @@ def _try_build_casting_sheet(
     if len(candidate_rows) < 3:
         return None, "Fewer than 3 verified pictured rows"
 
-    if not stat or _is_boilerplate_stat(stat.lower()) or stat.lower() == common.lower():
-        stat = (
-            f"{candidate_rows[0][0]} {_lead_verb(candidate_rows[0][0], candidate_rows[0][3])} at {candidate_rows[0][1]}%, "
-            f"with {candidate_rows[1][0]} at {candidate_rows[1][1]}%."
-        )
-
     all_teams = all(sk == "team" for _nm, _p, _u, sk, _hex in candidate_rows)
     items: list[dict[str, Any]] = []
     for idx, (nm, pct, url, s_kind, c_hex) in enumerate(candidate_rows, 1):
@@ -2320,6 +2395,18 @@ def _try_build_casting_sheet(
         ]
         items.append({"id": f"row-{idx}", "marks": marks})
 
+    cs_body = {"header_layout": "none", "header_marks": [], "items": items}
+    if (
+        not stat
+        or _is_boilerplate_stat(stat.lower())
+        or stat.lower() == common.lower()
+        or _caption_has_unshown_numbers(stat, cs_body, len(items))
+    ):
+        stat = (
+            f"{candidate_rows[0][0]} {_lead_verb(candidate_rows[0][0], candidate_rows[0][3])} at {candidate_rows[0][1]}%, "
+            f"with {candidate_rows[1][0]} at {candidate_rows[1][1]}%."
+        )
+
     card = _make_kit_card(
         card_id=f"kit-{slug}",
         layout="stack",
@@ -2331,7 +2418,7 @@ def _try_build_casting_sheet(
         route_kind="collection",
         route_id=route.get("id"),
         route_slug=route.get("slug"),
-        body={"header_layout": "none", "header_marks": [], "items": items},
+        body=cs_body,
     )
     return card, None
 
@@ -2592,14 +2679,98 @@ def _summarize_today_card(
     }
 
 
+def _build_plain_bar_stack_example(
+    bundle: dict[str, Any] | None,
+    container: dict[str, Any] | None,
+    *,
+    resolver: Any,
+) -> dict[str, Any] | None:
+    """Build an uncounted plain bar-stack example strictly when all shown rows are non-(person/team/film)."""
+    d = (bundle or {}).get("data") or {}
+    ru = d.get("roundup") or {}
+    mc_rows = (ru.get("machinery_card") or {}).get("rows") or []
+    if len(mc_rows) < 3:
+        return None
+    slug, kicker, common, stat, route = _derive_slug_and_copy(bundle, container)
+    source_count = _source_count_from_bundle(bundle, container)
+    rows_out: list[tuple[str, int]] = []
+    for r in mc_rows[:3]:
+        nm = str(r.get("name") or "").strip()
+        pct = _safe_pct(r.get("probability"), r.get("rendered_percent"))
+        art = r.get("art") if isinstance(r.get("art"), dict) else None
+        if not nm or pct is None:
+            return None
+        art_req, _sk, _verified = _row_requires_picture(nm, art, resolver)
+        if art_req:
+            return None
+        cand = _extract_entity_candidate(nm)
+        # Exclude proper-name contender sets (e.g. players/actors/films lacking resolver entries).
+        if re.fullmatch(r"[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2}", cand):
+            return None
+        low_nm = nm.lower()
+        if any(tok in low_nm for tok in ("championship winner", "best actor", "best actress", "best game", "grammy", "emmy", "critics choice")):
+            return None
+        rows_out.append((nm, pct))
+
+    items = [
+        {
+            "id": f"pb-{idx}",
+            "marks": [
+                _mark_word(nm, style="row", tone="primary", align="left", width="flex", bold=False),
+                _mark_bar_single(pct / 100.0, width="sm"),
+                _mark_number(pct, f"{pct}%", width="sm"),
+            ],
+        }
+        for idx, (nm, pct) in enumerate(rows_out, 1)
+    ]
+    body = {"header_layout": "none", "header_marks": [], "items": items}
+    if not stat or _is_boilerplate_stat(stat.lower()) or stat.lower() == common.lower() or _caption_has_unshown_numbers(stat, body, len(items)):
+        stat = f"{rows_out[0][0]} leads at {rows_out[0][1]}%, ahead of {rows_out[1][0]} ({rows_out[1][1]}%)."
+
+    card = _make_kit_card(
+        card_id=f"kit-{slug}-question",
+        layout="stack",
+        variant="plain_bar_stack",
+        kicker=kicker,
+        common_headline=common,
+        stat_caption=stat,
+        source_count=source_count,
+        route_kind="collection",
+        route_id=route.get("id"),
+        route_slug=route.get("slug"),
+        body=body,
+    )
+    ok, _ = validate_kit_v1_card(card)
+    ok_probe, _ = validate_kit_v1_card(dict(card, variant="future_unknown_variant_probe"))
+    if not (ok and ok_probe):
+        return None
+    return {
+        "slug": slug,
+        "common_headline": common,
+        "stat_caption": stat,
+        "fits": True,
+        "layout": "stack",
+        "variant": "plain_bar_stack",
+        "refusal_reason": None,
+        "kit_card": card,
+    }
+
+
 def build_real_sets_audit_report(
     snapshot: dict[str, Any],
     *,
     now: datetime | None = None,
     resolver: Any | None = None,
+    snapshot_captured_at: str | None = None,
 ) -> dict[str, Any]:
     """Run deterministic Kit v1 conversion across Top 10 + all public sets in snapshot."""
     resolved_now = now or datetime.now(timezone.utc)
+    captured_at = (
+        snapshot_captured_at
+        or snapshot.get("captured_at")
+        or snapshot.get("generated_at")
+        or resolved_now.isoformat()
+    )
     active_resolver = resolver if resolver is not None else _NullResolver()
     bundles = snapshot.get("bundles") or []
     containers = snapshot.get("containers") or {}
@@ -2607,6 +2778,7 @@ def build_real_sets_audit_report(
     top10_entries: list[dict[str, Any]] = []
     extra_fitting_entries: list[dict[str, Any]] = []
     kept_today: list[dict[str, Any]] = []
+    alex_question_examples: list[dict[str, Any]] = []
     seen_slugs: set[str] = set()
 
     for idx, b in enumerate(bundles, 1):
@@ -2631,6 +2803,17 @@ def build_real_sets_audit_report(
             extra_fitting_entries.append(entry)
 
         if not result["fits"]:
+            if not alex_question_examples:
+                q_res = _build_plain_bar_stack_example(b, container, resolver=active_resolver)
+                if q_res is not None:
+                    alex_question_examples.append(
+                        {
+                            "rank": idx,
+                            "in_top_10": idx <= 10,
+                            "today": today_card,
+                            **q_res,
+                        }
+                    )
             kept_entry = {
                 "rank": idx,
                 "in_top_10": idx <= 10,
@@ -2684,12 +2867,14 @@ def build_real_sets_audit_report(
     return {
         "kit_version": 1,
         "generated_at": resolved_now.isoformat(),
+        "snapshot_captured_at": captured_at,
         "total_sets": total_sets,
         "fitting_count": fitting_count,
         "kept_today_count": len(kept_today),
         "dated_tiles_left_off": dated_tiles_left_off,
         "top_10": top10_entries,
         "fitting_beyond_top_10": extra_fitting_entries,
+        "alex_question_examples": alex_question_examples,
         "kept_today": kept_today,
     }
 

@@ -59,12 +59,30 @@ interface KeptTodayRow {
 interface KitV1RealSetsReport {
   kit_version: number;
   generated_at: string;
+  snapshot_captured_at?: string | null;
   total_sets: number;
   fitting_count: number;
   kept_today_count: number;
   top_10: RealSetComparisonEntry[];
   fitting_beyond_top_10: RealSetComparisonEntry[];
+  alex_question_examples?: RealSetComparisonEntry[];
   kept_today: KeptTodayRow[];
+}
+
+function formatCaptureTimePT(rawIso: string | null | undefined): string | null {
+  if (!rawIso) return null;
+  const parsed = new Date(rawIso);
+  if (Number.isNaN(parsed.getTime())) return rawIso;
+  const formatted = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/Los_Angeles",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+    hour12: true,
+  }).format(parsed);
+  return `${formatted} PT`;
 }
 
 export default function AdminKitV1RealSetsPage() {
@@ -137,7 +155,13 @@ function TodayCardBox({ today, rank }: { today: TodayCardSummary; rank: number }
   );
 }
 
-function ComparisonRow({ entry }: { entry: RealSetComparisonEntry }) {
+function ComparisonRow({
+  entry,
+  kitBadgeText,
+}: {
+  entry: RealSetComparisonEntry;
+  kitBadgeText?: string;
+}) {
   return (
     <div
       data-comparison-slug={entry.slug}
@@ -148,9 +172,8 @@ function ComparisonRow({ entry }: { entry: RealSetComparisonEntry }) {
           #{entry.rank} · <code className="text-text-primary">{entry.slug}</code>
         </span>
         <span>
-          {entry.fits
-            ? `Kit: ${entry.layout} (${entry.variant ?? "none"})`
-            : "Kept today's card"}
+          {kitBadgeText ??
+            (entry.fits ? `Kit: ${entry.layout} (${entry.variant ?? "none"})` : "Kept today's card")}
         </span>
       </div>
       <div className="flex flex-col items-center gap-3 md:grid md:grid-cols-[390px_390px] md:items-start md:justify-center md:gap-4">
@@ -221,6 +244,13 @@ function KitV1RealSetsBody() {
           </p>
           {report && (
             <div className="mt-2.5 flex flex-wrap gap-2 text-[11px] font-semibold">
+              <span
+                data-testid="snapshot-captured-at"
+                className="rounded-full border border-surface-border bg-surface-elevated px-2.5 py-0.5 text-text-primary"
+              >
+                Saved set captured:{" "}
+                {formatCaptureTimePT(report.snapshot_captured_at ?? report.generated_at)}
+              </span>
               <span className="rounded-full border border-surface-border bg-surface-elevated px-2.5 py-0.5 text-text-primary">
                 Total sets: {report.total_sets}
               </span>
@@ -265,6 +295,21 @@ function KitV1RealSetsBody() {
                 <ComparisonRow key={`extra-${entry.rank}-${entry.slug}`} entry={entry} />
               ))}
             </section>
+
+            {report.alex_question_examples && report.alex_question_examples.length > 0 && (
+              <section className="space-y-3 pt-2" data-testid="alex-question-examples">
+                <h2 className="px-1 text-xs font-bold uppercase tracking-wide text-accent-brand">
+                  Question for Alex (Not Counted) — Plain Bar Stack for Non-(Person, Team, Film) Rows
+                </h2>
+                {report.alex_question_examples.map((entry) => (
+                  <ComparisonRow
+                    key={`question-${entry.rank}-${entry.slug}`}
+                    entry={entry}
+                    kitBadgeText="Question for Alex · Not counted (plain_bar_stack)"
+                  />
+                ))}
+              </section>
+            )}
 
             <section className="space-y-2 pt-2">
               <h2 className="px-1 text-xs font-bold uppercase tracking-wide text-text-muted">

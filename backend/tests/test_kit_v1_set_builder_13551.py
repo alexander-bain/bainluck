@@ -344,8 +344,8 @@ def test_v4_year_in_search_lists_headers_and_no_rank_marks() -> None:
 
 
 def test_v4_dated_tiles_drops_expired_keeps_quoted_peak_and_uses_resolution_year() -> None:
-    # Yearless deadline inherits market's resolution_date year instead of hardcoded 2026
-    assert _parse_outcome_deadline("Before Mar 1", reference_year=2027) == ((2027, 3, 1), "Mar 1 '27")
+    # Yearless deadline inherits market's resolution_date year instead of hardcoded 2026 (#13584 v4/v6).
+    assert _parse_outcome_deadline("Before Mar 1", reference_year=2027) == ((2027, 3, 1), "before Mar 1 '27")
 
     snap = _load_fixture()
     now_nov24 = datetime(2026, 11, 24, 17, 20, tzinfo=timezone.utc)
@@ -359,14 +359,14 @@ def test_v4_dated_tiles_drops_expired_keeps_quoted_peak_and_uses_resolution_year
     assert "Mar 31 '26" not in ai_blob
     assert "Oct 31 '26" not in ai_blob
     assert "solution is " not in ai_card["stat_caption"]
-    assert "43% by Jun 1 '27" in ai_card["stat_caption"]
+    assert "43% before Jun 1 '27" in ai_card["stat_caption"]
     shown_labels = {
         m.get("center_label") + " " + (m.get("top_label") or "")
         for rw in ai_card["body"]["rows"]
         for cell in rw["cells"]
         for m in cell["marks"]
     }
-    assert "43% by Jun 1 '27" in shown_labels
+    assert "43% before Jun 1 '27" in shown_labels
     assert "62% by Dec 31 '27" in shown_labels
     assert "ai" in report["dated_tiles_left_off"]
 
@@ -643,3 +643,152 @@ def test_v5_routes_year_only_dated_tiles_and_shared_date_countdown() -> None:
     assert hdr[0]["value"] == 31
     assert hdr[0]["deadline_iso"] == "2026-12-26T04:59:00+00:00"
     assert hdr[1]["secondary_text"] == "all of these end on Dec 25"
+
+
+def test_v6_before_labels_threshold_ladder_no_dash_captions_slates_and_alex_example() -> None:
+    from app.utils.kit_v1_set_builder import _parse_iso_dt
+
+    # 1. "Before X" stays "before X" on exact market 109349 labels + AGI "Before Jan 1, 2031"
+    assert _parse_outcome_deadline("Before 2027") == ((2026, 12, 31), "before 2027")
+    assert _parse_outcome_deadline("Before February 2027") == ((2027, 1, 31), "before Feb '27")
+    assert _parse_outcome_deadline("Before March 2027") == ((2027, 2, 28), "before Mar '27")
+    assert _parse_outcome_deadline("Before April 2027") == ((2027, 3, 31), "before Apr '27")
+    assert _parse_outcome_deadline("Before Jan 1, 2031") == ((2031, 1, 1), "before Jan 1 '31")
+
+    snap = _load_fixture()
+
+    # 2. threshold_points + top_outcomes ladder merge (Russia-Ukraine 14 points -> nearest, middle, last)
+    # and fallback on year 2000 (Middle East 69603905), with no dash tile or footnote on Middle East.
+    ru_bundle = {
+        "type": "bundle",
+        "data": {
+            "id": "russia-ukraine",
+            "title": "Russia–Ukraine",
+            "kind": "theme",
+            "collection_ref": {"id": 80, "slug": "russia-ukraine"},
+            "roundup": {"kicker": "WORLD", "headline": "Russia–Ukraine"},
+            "items": [
+                {
+                    "type": "futures",
+                    "data": {
+                        "id": 20569379,
+                        "name": "Russia x Ukraine ceasefire agreement by May 31, 2027?",
+                        "resolution_date": "2027-07-01T03:59:00+00:00",
+                        "top_outcomes": [
+                            {"name": "December 31, 2027", "probability": 0.685, "rendered_percent": 69},
+                            {"name": "November 30, 2027", "probability": 0.675, "rendered_percent": 68},
+                            {"name": "October 31, 2027", "probability": 0.67, "rendered_percent": 67},
+                        ],
+                        "discover_card": {
+                            "threshold_points": [
+                                {"label": "November 30", "value": 20261130, "unit": "date", "probability": 0.0155},
+                                {"label": "January 31, 2027", "value": 20270131, "unit": "date", "probability": 0.185},
+                                {"label": "May 31, 2027", "value": 20270531, "unit": "date", "probability": 0.53},
+                                {"label": "June 30, 2027", "value": 20270630, "unit": "date", "probability": 0.56},
+                                {"label": "October 31, 2027", "value": 20271031, "unit": "date", "probability": 0.67},
+                            ]
+                        },
+                    },
+                },
+                {
+                    "type": "futures",
+                    "data": {
+                        "id": 112896,
+                        "name": "Putin out as President of Russia by June 30, 2027?",
+                        "resolution_date": "2027-07-01T03:59:00+00:00",
+                        "top_outcomes": [
+                            {"name": "June 30, 2027", "probability": 0.085, "rendered_percent": 9},
+                            {"name": "March 31, 2027", "probability": 0.055, "rendered_percent": 6},
+                            {"name": "December 31, 2026", "probability": 0.0125, "rendered_percent": 1},
+                        ],
+                    },
+                },
+            ],
+        },
+    }
+    res_ru = build_kit_card_for_real_set(
+        ru_bundle,
+        None,
+        now=datetime(2026, 11, 24, 9, 55, tzinfo=timezone.utc),
+        resolver=_default_art_resolver(),
+    )
+    assert res_ru["fits"] is True
+    ru_row0 = [(c["marks"][0]["top_label"], c["marks"][0]["center_label"]) for c in res_ru["kit_card"]["body"]["rows"][0]["cells"]]
+    assert ru_row0 == [("by Nov 30 '26", "2%"), ("by Jun 30 '27", "56%"), ("by Dec 31 '27", "69%")]
+
+    # Year-2000 threshold_points value falls back to market_end_date rule
+    me_res = build_kit_card_for_real_set(
+        {
+            "type": "bundle",
+            "data": {
+                "id": "middle-east",
+                "title": "Middle East",
+                "kind": "theme",
+                "collection_ref": {"id": 81, "slug": "middle-east"},
+                "roundup": {"kicker": "WORLD", "headline": "Middle East"},
+                "items": [
+                    {
+                        "type": "futures",
+                        "data": {
+                            "id": 69603905,
+                            "name": "US x Iran Effective Ceasefire begins?",
+                            "resolution_date": "2026-12-31T20:29:00+00:00",
+                            "top_outcomes": [
+                                {"name": "December 31", "probability": 0.815, "rendered_percent": 82},
+                                {"name": "November 30", "probability": 0.64, "rendered_percent": 64},
+                            ],
+                            "discover_card": {
+                                "threshold_points": [
+                                    {"label": "November 30", "value": 20001130, "unit": "date", "probability": 0.64},
+                                    {"label": "December 31", "value": 20001231, "unit": "date", "probability": 0.815},
+                                ]
+                            },
+                        },
+                    },
+                    {
+                        "type": "futures",
+                        "data": {
+                            "id": 3484764,
+                            "name": "Iran leadership change by June 30, 2027?",
+                            "resolution_date": "2027-07-01T03:59:00+00:00",
+                            "top_outcomes": [
+                                {"name": "June 30, 2027", "probability": 0.235, "rendered_percent": 24},
+                                {"name": "December 31", "probability": 0.065, "rendered_percent": 7},
+                                {"name": "November 30", "probability": 0.0085, "rendered_percent": 1},
+                            ],
+                        },
+                    },
+                ],
+            },
+        },
+        None,
+        now=datetime(2026, 11, 24, 9, 55, tzinfo=timezone.utc),
+        resolver=_default_art_resolver(),
+    )
+    assert me_res["fits"] is True
+    assert me_res["kit_card"].get("footnote") is None
+    me_rows = me_res["kit_card"]["body"]["rows"]
+    assert len(me_rows[0]["cells"]) == 2 and len(me_rows[1]["cells"]) == 3
+    assert "—" not in json.dumps(me_res["kit_card"])
+
+    # 3. Audit invariants across fixture: 0 unshown % in captions, slate headers + time sort, captured_at, 1 uncounted example
+    snap_plus = json.loads(json.dumps(snap))
+    report = build_real_sets_audit_report(
+        snap_plus,
+        now=datetime(2026, 11, 24, 9, 55, tzinfo=timezone.utc),
+        resolver=_default_art_resolver(),
+        snapshot_captured_at="2026-11-23T22:35:00-08:00",
+    )
+    assert report["snapshot_captured_at"] == "2026-11-23T22:35:00-08:00"
+    for e in [x for x in report["top_10"] if x["fits"]] + report["fitting_beyond_top_10"]:
+        card = e["kit_card"]
+        body_blob = json.dumps(card["body"])
+        for m in re.finditer(r"\b(\d+)%", card["stat_caption"] or ""):
+            assert f"{m.group(1)}%" in body_blob, f"{e['slug']} caption quoted unshown {m.group(0)}"
+        if card["variant"] == "single_sport_slate":
+            hdr_text = card["body"]["header_marks"][1]["text"]
+            n_shown = len(card["body"]["items"])
+            if n_shown == 3 and "16" in hdr_text:
+                assert hdr_text == "3 OF 16 GAMES"
+            times = [it["sub_marks"][0]["text"] for it in card["body"]["items"]]
+            assert len(times) == n_shown and _parse_iso_dt("2026-11-24T00:00:00Z") is not None
