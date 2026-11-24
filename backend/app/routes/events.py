@@ -5543,7 +5543,7 @@ async def _fetch_futures_window(
 
 
 def _futures_refill_in_hand(
-    arm_state: str, spare_rows: list, *, row_is_traded=None
+    arm_state: str, spare_rows: list, row_is_traded=None
 ) -> list | None:
     """#8704: the collapse refill, when the window's own statement already has it.
 
@@ -5593,7 +5593,6 @@ def _sunk_slot_spare_rows(
     over_cap_ids: set,
     answer_rows: int,
     refill_source: str,
-    *,
     row_is_traded=None,
 ) -> list:
     """#9724 r2: the name matches ranked 21-60, for the slots sunk rows would ship.
@@ -13231,7 +13230,7 @@ async def search_events(
         refill_rows = _futures_refill_in_hand(
             _futures_outcome_arm,
             _futures_spare_rows,
-            row_is_traded=_futures_row_is_traded,
+            _futures_row_is_traded,
         )
         _futures_refill_source = "window" if refill_rows is not None else "query"
         if refill_rows is None:
@@ -13345,7 +13344,7 @@ async def search_events(
         _over_match_cap_ids,
         _spare_answer_rows,
         _futures_refill_source,
-        row_is_traded=_futures_row_is_traded,
+        _futures_row_is_traded,
     )
     if _spare_for_sunk:
         _futures_refill_source = "spare"
