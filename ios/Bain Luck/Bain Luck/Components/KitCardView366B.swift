@@ -700,7 +700,7 @@ struct KitGridBodyView366B: View {
                     if dynamicTypeSize.isAccessibilitySize {
                         VStack(alignment: .leading, spacing: 6) {
                             ForEach(row.cells, id: \.columnKey) { cell in
-                                let lbl = colLookup[cell.columnKey] ?? cell.columnKey
+                                let lbl = colLookup[cell.columnKey] ?? ""
                                 gridCellView(cell, row: row, columnLabel: lbl, rowIndex: index)
                                     .frame(maxWidth: .infinity, minHeight: 44)
                             }
@@ -708,7 +708,7 @@ struct KitGridBodyView366B: View {
                     } else {
                         HStack(alignment: .top, spacing: 6) {
                             ForEach(row.cells, id: \.columnKey) { cell in
-                                let lbl = colLookup[cell.columnKey] ?? cell.columnKey
+                                let lbl = colLookup[cell.columnKey] ?? ""
                                 gridCellView(cell, row: row, columnLabel: lbl, rowIndex: index)
                                     .frame(maxWidth: .infinity, minHeight: 44)
                             }

@@ -521,10 +521,11 @@ final class KitV1AccessibilityAuditTests: XCTestCase {
                         )
                         XCTAssertFalse(rowSpeech.contains("%"), "Grid row left unexpanded '%' on \(w.id)/\(row.id): \(rowSpeech)")
                         XCTAssertTrue(rowSpeech.localizedCaseContains("percent"), "Grid row missing 'percent' on \(w.id)/\(row.id): \(rowSpeech)")
+                        XCTAssertFalse(rowSpeech.contains("jan28") || rowSpeech.contains("jan29") || rowSpeech.contains("jan31"), "Grid row leaked raw column key on \(w.id)/\(row.id): \(rowSpeech)")
                         reportLines.append("- `\(w.id)` gridRow[\(rIdx + 1)]: \(rowSpeech)")
                     }
                     for cell in row.cells {
-                        let colLabel = gb.columns.first(where: { $0.key == cell.columnKey })?.label ?? cell.columnKey
+                        let colLabel = gb.columns.first(where: { $0.key == cell.columnKey })?.label ?? ""
                         let cellSpeech = KitAccessibilitySpeech366B.gridCellSpeech(
                             row: row,
                             cell: cell,
@@ -538,6 +539,7 @@ final class KitV1AccessibilityAuditTests: XCTestCase {
                             "Grid cell missing place on \(w.id)/\(row.id)/\(cell.columnKey): \(cellSpeech)"
                         )
                         XCTAssertFalse(cellSpeech.contains("%"), "Grid cell left unexpanded '%' on \(w.id)/\(row.id): \(cellSpeech)")
+                        XCTAssertFalse(cellSpeech.contains("jan28") || cellSpeech.contains("jan29") || cellSpeech.contains("jan31"), "Grid cell leaked raw column key on \(w.id)/\(row.id): \(cellSpeech)")
                         if !cellSpeech.isEmpty {
                             reportLines.append("- `\(w.id)` gridCell[\(rIdx + 1).\(cell.columnKey)]: \(cellSpeech)")
                         }
@@ -580,6 +582,12 @@ final class KitV1AccessibilityAuditTests: XCTestCase {
                     )
                     XCTAssertFalse(ss.contains("%"), "Axis series left raw '%' on \(w.id): \(ss)")
                     XCTAssertTrue(ss.contains("\(sIdx + 1) of \(seriesList.count)"), "Axis series missing place on \(w.id): \(ss)")
+                    if w.id == "kit-batch1-box-office-scale" && sIdx == 0 {
+                        XCTAssertTrue(ss.contains("$400M") && ss.contains("$460M"), "Box office axis series must format scale coordinates in $M: \(ss)")
+                    }
+                    if w.id == "kit-batch1-deadline-race" && sIdx == 0 {
+                        XCTAssertTrue(ss.contains("14 percent") && ss.contains("85 percent"), "Deadline race axis series must format percent endpoints: \(ss)")
+                    }
                     reportLines.append("- `\(w.id)` axisSeries[\(sIdx + 1)]: \(ss)")
                 }
 

@@ -103,7 +103,7 @@ nonisolated enum KitAccessibilitySpeech366B {
             return (col.label, cell)
         }
         let pairs = orderedCells.isEmpty
-            ? row.cells.map { (colLookup[$0.columnKey] ?? $0.columnKey, $0) }
+            ? row.cells.map { (colLookup[$0.columnKey] ?? "", $0) }
             : orderedCells
 
         for (colLabel, cell) in pairs {
@@ -115,7 +115,12 @@ nonisolated enum KitAccessibilitySpeech366B {
                 .map { expandPercent($0) }
                 .filter { !$0.isEmpty }
             if !cellParts.isEmpty {
-                numbers.append("\(expandPercent(colLabel)) \(cellParts.joined(separator: " "))")
+                let prefix = expandPercent(colLabel)
+                if prefix.isEmpty {
+                    numbers.append(cellParts.joined(separator: " "))
+                } else {
+                    numbers.append("\(prefix) \(cellParts.joined(separator: " "))")
+                }
             }
         }
 
@@ -144,10 +149,15 @@ nonisolated enum KitAccessibilitySpeech366B {
         var numbers: [String] = []
 
         collectMarks(row.leading, names: &names, details: &details, numbers: &numbers)
-        details.insert(expandPercent(columnLabel), at: 0)
+        let expandedCol = expandPercent(columnLabel)
+        let hasColumnLabel = !expandedCol.isEmpty
+        if hasColumnLabel {
+            details.insert(expandedCol, at: 0)
+        }
         collectMarks(cell.marks, names: &names, details: &details, numbers: &numbers)
 
-        if details.count <= 1, let context = topicContext(for: spec), !context.isEmpty {
+        let detailsWithoutColCount = hasColumnLabel ? details.count - 1 : details.count
+        if detailsWithoutColCount <= 0, let context = topicContext(for: spec), !context.isEmpty {
             details.append(context)
         }
 
@@ -213,8 +223,9 @@ nonisolated enum KitAccessibilitySpeech366B {
             switch mark {
             case .bar(let bar):
                 if bar.barStyle == .range {
-                    let lo = bar.lo.map { formatAxisPosition($0, scale: axisBody.scale) }
-                    let hi = bar.hi.map { formatAxisPosition($0, scale: axisBody.scale) }
+                    let span = axisBody.scale.max - axisBody.scale.min
+                    let lo = bar.lo.map { formatAxisPosition(axisBody.scale.min + $0 * span, scale: axisBody.scale) }
+                    let hi = bar.hi.map { formatAxisPosition(axisBody.scale.min + $0 * span, scale: axisBody.scale) }
                     if let lo, let hi {
                         positions.append("sits between \(lo) and \(hi)")
                     }
@@ -407,15 +418,23 @@ nonisolated enum KitAccessibilitySpeech366B {
     }
 
     private static func formatAxisPosition(_ value: Double, scale: KitV1AxisScale) -> String {
-        let ticksLookPercent = scale.ticks.contains { $0.label.contains("%") }
-        let unitSuffix = ticksLookPercent ? " percent" : ""
-        if ticksLookPercent && abs(value) <= 1.0 && scale.max <= 1.0 {
-            return "\(Int((value * 100).rounded())) percent"
+        let ticksLookPercent = scale.unit == "%" || scale.ticks.contains { $0.label.contains("%") }
+        let formattedNumber: (Double) -> String = { v in
+            abs(v.rounded() - v) < 0.05 ? "\(Int(v.rounded()))" : String(format: "%.1f", v)
         }
-        if abs(value.rounded() - value) < 0.05 {
-            return "\(Int(value.rounded()))\(unitSuffix)"
+        if ticksLookPercent {
+            let scaled = (abs(value) <= 1.0 && scale.max <= 1.0) ? value * 100.0 : value
+            return "\(formattedNumber(scaled)) percent"
         }
-        return String(format: "%.1f%@", value, unitSuffix)
+        let ticksLookDollarM = scale.unit == "$M" || scale.ticks.contains { $0.label.hasPrefix("$") && $0.label.hasSuffix("M") }
+        if ticksLookDollarM {
+            return "$\(formattedNumber(value))M"
+        }
+        let unit = scale.unit.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !unit.isEmpty {
+            return "\(formattedNumber(value))\(unit)"
+        }
+        return formattedNumber(value)
     }
 
     private static func formatSentence(
