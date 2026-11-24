@@ -256,20 +256,34 @@ export function patchSearchEvent(event: Event, book: SearchEventBook): Event {
     if (
       event.current_odds &&
       game.homeProbability !== null &&
-      game.awayProbability !== null &&
-      (event.current_odds.home_probability !== game.homeProbability ||
-        event.current_odds.away_probability !== game.awayProbability ||
-        event.current_odds.home_rendered_percent !== game.homeRenderedPercent ||
-        event.current_odds.away_rendered_percent !== game.awayRenderedPercent)
+      game.awayProbability !== null
     ) {
-      next.current_odds = {
-        ...event.current_odds,
-        home_probability: game.homeProbability,
-        away_probability: game.awayProbability,
-        home_rendered_percent: game.homeRenderedPercent,
-        away_rendered_percent: game.awayRenderedPercent,
-      } as CurrentOdds;
-      changed = true;
+      const odds = event.current_odds;
+      const hasServedPct =
+        'home_rendered_percent' in odds || 'away_rendered_percent' in odds;
+      const probsChanged =
+        odds.home_probability !== game.homeProbability ||
+        odds.away_probability !== game.awayProbability;
+      const pctChanged =
+        hasServedPct &&
+        (odds.home_rendered_percent !== game.homeRenderedPercent ||
+          odds.away_rendered_percent !== game.awayRenderedPercent);
+      if (probsChanged || pctChanged) {
+        next.current_odds = hasServedPct
+          ? ({
+              ...odds,
+              home_probability: game.homeProbability,
+              away_probability: game.awayProbability,
+              home_rendered_percent: game.homeRenderedPercent,
+              away_rendered_percent: game.awayRenderedPercent,
+            } as CurrentOdds)
+          : ({
+              ...odds,
+              home_probability: game.homeProbability,
+              away_probability: game.awayProbability,
+            } as CurrentOdds);
+        changed = true;
+      }
     }
     if (game.heroProbability !== null) set('hero_probability', game.heroProbability);
     if (game.heroProbabilityAway !== null) set('hero_probability_away', game.heroProbabilityAway);
