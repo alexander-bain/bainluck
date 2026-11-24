@@ -124,5 +124,43 @@ def test_verified_discover_art_backend_frontend_parity_and_unique_keys() -> None
     assert len(keys) == len(set(keys)), "Duplicate entity_key in verified_discover_art.json"
     # Includes both #13526 portraits and #13572 additive Batch 1 entries
     key_set = set(keys)
-    for expected in ("matthew-rhys", "tina-fey", "apple-inc", "nvidia-corp", "anthropic-pbc"):
+    for expected in (
+        "matthew-rhys",
+        "tina-fey",
+        "apple-inc",
+        "nvidia-corp",
+        "anthropic-pbc",
+        "hugh-jackman",
+        "lana-del-rey",
+    ):
         assert expected in key_set
+
+    urls = [e["url"] for e in backend_data["entries"]]
+    assert len(urls) == len(set(urls)), "Duplicate image url in verified_discover_art.json"
+
+    for e in backend_data["entries"]:
+        if e["entity_key"] in {"hugh-jackman", "lana-del-rey", "google-gemini-brand", "baidu-inc", "sinners-film", "victor-wembanyama-nba"}:
+            assert str(e.get("source_page") or "").startswith("https://"), f"Missing source_page on {e['entity_key']}"
+
+
+def test_short_company_names_match_whole_name_only_not_nature_or_horoscope() -> None:
+    from app.utils.container_machinery import SubjectArtResolver
+
+    resolver = SubjectArtResolver()
+    for positive in ("Amazon", "Apple", "Gemini", "Meta", "Claude", "Tesla"):
+        assert resolve_member_art(positive, resolver=resolver)["url"], f"Expected logo for {positive}"
+        assert resolver.resolve(positive, allow_team_lookup=False)["url"], f"Expected resolver match for {positive}"
+
+    for negative in (
+        "Amazon rainforest",
+        "Amazon River",
+        "Amazon deforestation before 2027",
+        "Apple harvest 2027",
+        "Gemini zodiac sign",
+        "Meta-analysis on sleep",
+        "Claude Monet exhibition",
+    ):
+        art_m = resolve_member_art(negative, resolver=resolver)
+        art_r = resolver.resolve(negative, allow_team_lookup=False)
+        assert art_m["url"] is None, f"Unexpected logo on {negative!r}: {art_m}"
+        assert art_r["url"] is None, f"Unexpected resolver logo on {negative!r}: {art_r}"
