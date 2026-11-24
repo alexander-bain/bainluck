@@ -1032,7 +1032,7 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
     let imageUrl: String?
     var imagePresentation: String? = nil
     var imageMonogram: DiscoverImageMonogram? = nil
-    let hookDescription: String?
+    var hookDescription: String?
     let matchedOutcomes: [MatchedOutcome]?
     let discoverCard: FeedDiscoverCard?
     // #490 (L2-172 native half): confidence signal (1-3 bars). Decoded from
@@ -1117,6 +1117,15 @@ nonisolated struct FeedFuturesData: Decodable, Identifiable, Sendable {
             return sourceMark
         }
         return nil
+    }
+
+    /// True when any rendered number on this futures card already carries a drawable `ⓘ` source mark (`#11920`).
+    var hasDrawableSourceMark: Bool {
+        if sourceMark?.draws == true { return true }
+        if deadlineMember?.sourceMark?.draws == true || deadlineMember?.noSourceMark?.draws == true { return true }
+        if topOutcomes?.contains(where: { $0.sourceMark?.draws == true }) == true { return true }
+        if discoverCard?.distributionOutcomes?.contains(where: { $0.sourceMark?.draws == true }) == true { return true }
+        return false
     }
 }
 
@@ -1251,6 +1260,7 @@ nonisolated struct MatchedOutcome: Decodable, Identifiable, Sendable {
     let probability: Double?
     let rank: Int?
     let movement: Double?
+    var sourceMark: SourceMark? = nil
 
     var id: String { name }
 }

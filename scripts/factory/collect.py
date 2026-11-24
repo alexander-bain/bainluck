@@ -1054,7 +1054,13 @@ def main():
         )
         if args.publish and release:
             assets = list(release.get("assets", []))
-            if DAILY_PICTURE_ENABLED:
+            today = budget.now.astimezone(PACIFIC).date().isoformat()
+            today_asset = asset_name({"day": today})
+            if DAILY_PICTURE_ENABLED and any(
+                asset.get("name") == today_asset and asset.get("state") == "uploaded" for asset in assets
+            ):
+                picture_stats = {"status": "already-published"}
+            elif DAILY_PICTURE_ENABLED:
                 picture, picture_stats = metered_picture(result, budget, key)
                 if picture:
                     try:

@@ -188,7 +188,7 @@ struct FeedView: View {
 
             // League & category chips — navigate to league grids or category pages
             Section {
-                SportFilterChips(selectedCategory: $selectedCategory) { route in
+                SportFilterChips(selectedCategory: $selectedCategory, items: vm.items) { route in
                     path.append(route)
                 }
                 .listRowInsets(EdgeInsets())
@@ -242,29 +242,33 @@ struct FeedView: View {
             }
 
             let live = vm.filteredLiveNow(for: selectedCategory)
+            let up = vm.filteredUpcoming(for: selectedCategory)
+            let happened = vm.filteredJustHappened(for: selectedCategory)
+            let shelfCards = vm.filteredFuturesShelfCards(
+                for: selectedCategory,
+                limit: sizeClass == .regular ? nil : SportsFuturesShelf13013.maxCompactShelfCards
+            )
+            let shelfLeads = vm.futuresShelfLeads(for: selectedCategory)
+
+            if shelfLeads, !shelfCards.isEmpty {
+                futuresShelfSection(cards: shelfCards)
+            }
+
             if !live.isEmpty {
                 // live/048 — the header reads the bucket. See `EventState`.
                 feedSection(title: EventState.liveSectionTitle(hasSuspended: vm.filteredLiveNowHasSuspended(for: selectedCategory)), systemImage: "circle.fill", imageColor: .red, items: live)
             }
 
-            let happened = vm.filteredJustHappened(for: selectedCategory)
-            if !happened.isEmpty {
-                feedSection(title: "Just Happened", systemImage: "clock.arrow.circlepath", imageColor: .secondary, items: happened)
-            }
-
-            let up = vm.filteredUpcoming(for: selectedCategory)
             if !up.isEmpty {
                 feedSection(title: "Upcoming", systemImage: "calendar", imageColor: .blue, items: up)
             }
 
-            let markets = vm.filteredTopMarkets(for: selectedCategory)
-            if !markets.isEmpty {
-                feedSection(title: "Top Markets", systemImage: "chart.bar.fill", imageColor: .purple, items: markets)
+            if !happened.isEmpty {
+                feedSection(title: "Just Happened", systemImage: "clock.arrow.circlepath", imageColor: .secondary, items: happened)
             }
 
-            // Grouped futures (player props, playoff progressions)
-            if !vm.groupedItems.isEmpty {
-                groupedFuturesSection
+            if !shelfLeads, !shelfCards.isEmpty {
+                futuresShelfSection(cards: shelfCards)
             }
         }
         #if os(iOS)
@@ -372,27 +376,30 @@ struct FeedView: View {
         }
     }
 
-    // MARK: - Grouped Futures Section
+    // MARK: - Single Futures Shelf (#13013 `246: A` + `256: B`)
 
-    private var groupedFuturesSection: some View {
+    private var compactShelfCardSurface: Color {
+        #if os(iOS)
+        return Color(uiColor: .secondarySystemGroupedBackground)
+        #else
+        return Color.cardBackgroundDark
+        #endif
+    }
+
+    private func futuresShelfSection(cards: [SportsFuturesShelf13013.ShelfCard]) -> some View {
         Section {
             if sizeClass == .regular {
-                // #3709 — same `LazyVGrid` row-padding defect as the section
-                // above. These cells are all `groupedRow`, so unlike the mixed
-                // feed sections they at least share a builder — but a grouped
-                // futures card is as tall as the outcomes it holds, and two
-                // markets with different outcome counts sit side by side here
-                // routinely. Same treatment, for the same reason.
+                // #3709 — DiscoverMasonry deal for regular iPad/Mac widths.
                 let columnCount = DiscoverMasonry.listColumnCount(availableWidth: gridWidth)
                 let masonryColumns = DiscoverMasonry.columns(
-                    cardCount: vm.groupedItems.count,
+                    cardCount: cards.count,
                     columnCount: columnCount
                 )
                 HStack(alignment: .top, spacing: DiscoverMasonry.listCardSpacing) {
                     ForEach(Array(masonryColumns.enumerated()), id: \.offset) { _, indices in
                         VStack(spacing: DiscoverMasonry.listCardSpacing) {
                             ForEach(indices, id: \.self) { idx in
-                                groupedRow(vm.groupedItems[idx])
+                                shelfCardBody(cards[idx])
                                     .padding(12)
                                     .background(regularGridCardSurface)
                                     .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -419,19 +426,36 @@ struct FeedView: View {
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
             } else {
-                ForEach(vm.groupedItems) { item in
-                    groupedRow(item)
-                        .onAppear { emitSportsFirstRenderIfNeeded() }
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(alignment: .top, spacing: 12) {
+                        ForEach(cards) { card in
+                            shelfCardBody(card)
+                                .padding(12)
+                                .frame(width: 286, alignment: .topLeading)
+                                .background(compactShelfCardSurface)
+                                .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                        .stroke(Color.primary.opacity(0.07), lineWidth: 1)
+                                )
+                                .onAppear { emitSportsFirstRenderIfNeeded() }
+                        }
+                    }
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
                 }
+                .listRowInsets(EdgeInsets(top: 2, leading: 0, bottom: 6, trailing: 0))
+                .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
             }
         } header: {
             HStack(spacing: 6) {
-                Label("Player Props", systemImage: "person.fill")
-                    .foregroundStyle(.green)
+                Label("Futures", systemImage: "chart.bar.fill")
+                    .foregroundStyle(.purple)
                     .font(.subheadline)
                     .fontWeight(.semibold)
                     .textCase(nil)
-                Text("\(vm.groupedItems.count)")
+                Text("\(cards.count)")
                     .font(.caption2)
                     .fontWeight(.medium)
                     .foregroundStyle(DS.textSecondaryReadable)
@@ -444,28 +468,38 @@ struct FeedView: View {
     }
 
     @ViewBuilder
-    private func groupedRow(_ item: GroupedFeedItem) -> some View {
-        if item.type == "stat_prop", let playerName = item.playerName, let statCategory = item.statCategory, let lines = item.lines {
-            PlayerStatCardView(
-                playerName: playerName,
-                statCategory: statCategory,
-                lines: lines,
-                espnPlayerId: item.espnPlayerId,
-                sportKey: item.sportKey,
-                eventMatchup: item.eventMatchup,
-                eventTime: item.eventTime
-            )
-        } else if item.type == "playoff_progression", let entityName = item.entityName, let stages = item.stages {
-            // L2-123: one ladder component everywhere (kernel discipline). The feed's
-            // grouped playoff progression now renders on the shared LadderCardView "2b"
-            // primitive via the LadderRung(stage:) adapter — the compact
-            // ProgressionLadderView is retired.
-            LadderCardView(
-                title: entityName,
-                logoUrl: item.logoUrl,
-                teamColor: item.teamColors?.primary.map { Color(rgb: $0) } ?? DS.emeraldDark,
-                rungs: stages.prefix(5).map { LadderRung(stage: $0) }
-            )
+    private func shelfCardBody(_ card: SportsFuturesShelf13013.ShelfCard) -> some View {
+        switch card {
+        case .futures(let item, let futures):
+            Button {
+                path.append(Route.futuresDetail(id: futures.id))
+            } label: {
+                FuturesCardView(futures: futures)
+            }
+            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .contextMenu { cardContextMenu(item) }
+        case .tournament(_, let tournament):
+            Button {
+                if let slug = tournament.slug, !slug.isEmpty {
+                    path.append(Route.golfTournament(slug: slug, name: tournament.name))
+                } else {
+                    path.append(Route.golfCategory)
+                }
+            } label: {
+                SportsShelfTournamentCardView13013(tournament: tournament)
+            }
+            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+        case .playoffLadder(let group):
+            if let entityName = group.entityName, let stages = group.stages {
+                LadderCardView(
+                    title: entityName,
+                    logoUrl: group.logoUrl,
+                    teamColor: group.teamColors?.primary.map { Color(rgb: $0) } ?? DS.emeraldDark,
+                    rungs: stages.prefix(5).map { LadderRung(stage: $0) }
+                )
+            }
         }
     }
 

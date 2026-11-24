@@ -283,13 +283,21 @@ final class GolfInProgressNotFinal13391Tests: XCTestCase {
         XCTAssertEqual(confirmedFinish.context, "Final · confirmed results")
     }
 
-    func testGolfPageAndDiscoverCardRenderWithoutFinalOrCourseCutoffWhenEnvRequested() throws {
+    func testGolfPageAndDiscoverCardRenderWithoutFinalOrCourseCutoffWhenEnvRequested() async throws {
         let fixture = try makeRSMBetweenRoundsFixture()
-        let atlasData = EventAtlasGolfTournament11666.TournamentAtlasData(
-            winnerMarket: fixture.winMarket,
-            winnerTimeline: fixture.timeline,
-            liveLeaderboard: nil
+        let atlasData = await GolfTournamentViewModel.loadAtlasData(
+            for: fixture.response,
+            fetchMarket: { _ in fixture.winMarket },
+            fetchTimeline: { id in
+                XCTAssertEqual(id, 70709343)
+                return fixture.timeline
+            },
+            fetchTournamentTimeline: { _ in throw URLError(.fileDoesNotExist) }
         )
+        XCTAssertFalse(atlasData.winnerTimelineFailed)
+        XCTAssertEqual(atlasData.winnerTimeline?.source, "kalshi")
+        XCTAssertEqual(atlasData.winnerTimeline?.marketId, 70709343)
+        XCTAssertEqual(atlasData.winnerTimeline?.timeline.count, 3)
 
         let pageSection = EventAtlasGolfTournamentSection11666(
             presentation: fixture.presentation,

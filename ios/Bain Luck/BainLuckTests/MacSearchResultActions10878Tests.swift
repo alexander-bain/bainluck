@@ -64,13 +64,23 @@ final class MacSearchResultActions10878Tests: XCTestCase {
         }
     }
 
-    /// A team, collection, tournament or any other destination has no native
+    /// #13103: a set / collection row offers Copy Link and Share using `collectionShareURL`.
+    func testACollectionOffersCopyLinkAndShareOnly() {
+        XCTAssertEqual(
+            MacSearchResultAction10878.actions(for: .containerHub(slug: "mlb-postseason-2026", name: "MLB Postseason")),
+            [
+                .copyLink("https://bainluck.com/collections/mlb-postseason-2026"),
+                .share(URL(string: "https://bainluck.com/collections/mlb-postseason-2026")!),
+            ]
+        )
+    }
+
+    /// A team, tournament or any other destination has no native
     /// share URL, so its row gets no menu at all.
     func testEveryOtherDestinationGetsNoMenu() {
         let others: [Route] = [
             .teamDetail(slug: "los-angeles-dodgers"),
             .tournamentHub(slug: "us-open", name: "US Open"),
-            .containerHub(slug: "mlb-postseason-2026", name: "MLB Postseason"),
             .golfTournament(slug: "masters", name: "Masters"),
             .conceptCard(key: "event:ufc:ufc-310", name: "UFC 310"),
             .sportCategory(key: "baseball", name: "Baseball"),
@@ -114,7 +124,7 @@ final class MacSearchResultActions10878Tests: XCTestCase {
             if let route = Self.argument(of: ".macKeyboardRow(", in: text, closingBefore: ", in: keyboardSelection)") {
                 let next = index + 1 < lines.count ? lines[index + 1] : ""
                 let menu = Self.argument(of: ".macResultMenu(", in: next, closingBefore: ")")
-                if route.hasPrefix(".eventDetail(") || route.hasPrefix(".futuresDetail(") {
+                if route.hasPrefix(".eventDetail(") || route.hasPrefix(".futuresDetail(") || route == "entry.route" {
                     XCTAssertEqual(menu, route, "the \(route) row has no right-click menu")
                 } else {
                     XCTAssertNil(menu, "the \(route) row offers a menu with no share URL behind it")
@@ -130,7 +140,7 @@ final class MacSearchResultActions10878Tests: XCTestCase {
                 )
             }
         }
-        XCTAssertEqual(menus.count, 7, "two game sites, five market sites — mark any new one")
+        XCTAssertEqual(menus.count, 8, "two game sites, five market sites, one collection site — mark any new one")
         XCTAssertEqual(menus.filter { $0.hasPrefix(".eventDetail(") }.count, 2)
     }
 
