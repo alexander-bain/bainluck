@@ -272,11 +272,104 @@ def test_six_kinds_diversity_cap_freshness_wording_and_own_prop_exclusion() -> N
     assert res["excluded_counts"]["game_own_props_in_related"] >= 1
     assert all(n["source_market_id"] != 2001 or n["kind"] != "stakes" for n in nuggets)
 
-    # Wording rules: zero venues, zero 'question', zero American odds
-    forbidden = re.compile(r"\b(?:kalshi|polymarket|draftkings|fanduel|question)\b|[+-]\d{3,5}", re.I)
+    # Wording rules: zero venues, zero 'question', zero American odds, zero 'pts', zero colon venue titles
+    forbidden = re.compile(r"\b(?:kalshi|polymarket|draftkings|fanduel|question|pts)\b|[+-]\d{3,5}|:", re.I)
     for n in nuggets:
         assert not forbidden.search(n["claim"]), f"forbidden wording in claim: {n['claim']}"
         assert not forbidden.search(n["rank_reason"]), f"forbidden wording in reason: {n['rank_reason']}"
+        assert n["form"] != "pregame_vs_now", f"pregame must never emit pregame_vs_now: {n}"
+        assert n["pregame_percent"] is None
+        assert n["change_since"] != "pregame"
+
+
+def test_pregame_ignores_opening_probability_and_uses_plain_claims_only() -> None:
+    gm, rf, tp = _rich_payloads()
+    # Inject placeholder opening_probability and Fable's exact noisy venue titles
+    rf["home_team_futures"][1]["opening_probability"] = 0.99
+    rf["away_team_futures"][0]["opening_probability"] = 0.50
+    rf["away_team_futures"][0]["probability_change_24h"] = 0.06
+    gm["totals"] = [
+        {
+            "_market_id": 1099,
+            "market_name": "Bengals vs Commanders: O/U 53.5",
+            "outcome_name": "Over 53.5 points",
+            "over_probability": 0.52,
+            "pregame_mark": 0.44,
+            "threshold": 53.5,
+            "observed_at": _fresh_ts(0.2),
+            "source_mark": {"state": "single"},
+        }
+    ]
+    gm["period_markets"] = [
+        {
+            "_market_id": 4099,
+            "market_name": "Bengals vs. Commanders: 3Q O/U 13.5 (Under)",
+            "outcome_name": "Under",
+            "period": "3Q",
+            "probability": 0.55,
+            "pregame_mark": 0.48,
+            "observed_at": _fresh_ts(0.2),
+            "source_mark": {"state": "single"},
+        }
+    ]
+    gm["other"] = [
+        {
+            "_market_id": 5099,
+            "market_name": "Cincinnati vs Washington: 1st Touchdown: Mike Gesicki",
+            "outcome_name": "Mike Gesicki",
+            "probability": 0.08,
+            "observed_at": _fresh_ts(0.2),
+            "source_mark": {"state": "single"},
+        },
+        {
+            "_market_id": 5100,
+            "market_name": "Synthetic Unparseable Venue: Oddity Foo: Bar (Baz)",
+            "outcome_name": "Yes",
+            "probability": 0.25,
+            "observed_at": _fresh_ts(0.2),
+            "source_mark": {"state": "single"},
+        },
+    ]
+
+    pre_res = rank_game_nuggets(
+        event_info={**_EVENT_INFO, "status": "scheduled"},
+        game_markets=gm,
+        related_futures=rf,
+        team_progression=tp,
+        limit=12,
+        now=NOW,
+    )
+    claims = [n["claim"] for n in pre_res["nuggets"]]
+    assert "Over 53.5 total points" in claims
+    assert "Under 13.5 points in the third quarter" in claims
+    assert "Mike Gesicki scores the first touchdown" in claims
+    assert all("Oddity Foo" not in c for c in claims)
+    assert pre_res["excluded_counts"]["unreadable_claim"] >= 1
+    for n in pre_res["nuggets"]:
+        assert n["form"] != "pregame_vs_now"
+        assert "pts" not in n["rank_reason"].lower()
+    mvp = next(n for n in pre_res["nuggets"] if n["source_market_id"] == 6002)
+    assert mvp["change_points"] == 6  # from probability_change_24h, never opening_probability=0.50
+    assert mvp["change_since"] == "24h"
+    assert "Moved +6 points in 24h" in mvp["rank_reason"]
+
+    # Once game is live: game's own markets may use pregame_mark, while stakes stay 24h-only
+    live_res = rank_game_nuggets(
+        event_info={**_EVENT_INFO, "status": "live"},
+        game_markets=gm,
+        related_futures=rf,
+        team_progression=tp,
+        limit=12,
+        now=NOW,
+    )
+    total_live = next(n for n in live_res["nuggets"] if n["source_market_id"] == 1099)
+    assert total_live["form"] == "pregame_vs_now"
+    assert total_live["change_since"] == "pregame"
+    assert total_live["pregame_percent"] == 44
+    assert "Moved +8 points since pregame" in total_live["rank_reason"]
+    mvp_live = next(n for n in live_res["nuggets"] if n["source_market_id"] == 6002)
+    assert mvp_live["form"] == "history_line"
+    assert mvp_live["change_since"] == "24h"
 
 
 def test_number_parity_matches_source_surfaces_and_sparse_sport_never_pads() -> None:
@@ -349,11 +442,22 @@ async def test_related_futures_strips_american_odds_from_fresh_and_cached_payloa
         "away_team_futures": [
             {"market_id": 6002, "outcome_id": 2, "probability": 0.19, "american_odds": 426}
         ],
+        "shared_futures": [
+            {"market_id": 6003, "outcome_id": 3, "probability": 0.31, "american_odds": 222}
+        ],
+        "series_markets": [
+            {
+                "market_id": 6004,
+                "american_odds": -115,
+                "outcomes": [{"outcome_id": 4, "probability": 0.53, "american_odds": -113}],
+            }
+        ],
     }
     monkeypatch.setattr(events_route, "_read_related_futures_memo", lambda _eid: cached_with_odds)
     body = await events_route.get_related_futures(14780582, debug=False, db=SimpleNamespace())
-    for row in body["home_team_futures"] + body["away_team_futures"]:
+    for row in body["home_team_futures"] + body["away_team_futures"] + body["shared_futures"] + body["series_markets"]:
         assert "american_odds" not in row
+    assert "american_odds" not in body["series_markets"][0]["outcomes"][0]
 
 
 async def test_http_nuggets_and_admin_grading_scorecard_e2e(
@@ -448,7 +552,17 @@ async def test_http_nuggets_and_admin_grading_scorecard_e2e(
             assert r_deck.status_code == 200, r_deck.text
             deck = r_deck.json()
             assert deck["games_count"] == 1
-            first8 = deck["games"][0]["nuggets"]
+            assert "nuggets" not in deck["games"][0]
+            # Deck must never walk games or trigger get_game_markets/related_futures builds
+            assert events_route.get_game_markets.await_count == 1
+
+            r_game = await client.get(
+                f"/api/admin/ranking/game-nuggets/games/14780582?limit=8&slate={deck['slate_id']}"
+            )
+            assert r_game.status_code == 200, r_game.text
+            assert events_route.get_game_markets.await_count == 2
+            game_payload = r_game.json()["game"]
+            first8 = game_payload["nuggets"]
             assert len(first8) == 8
 
             # Grade 6 yes + 2 no => 0.75 (3 in 4 target met!)

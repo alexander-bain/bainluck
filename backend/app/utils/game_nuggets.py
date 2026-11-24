@@ -170,26 +170,36 @@ def _extract_movement(
     *,
     prob: float,
     pregame_mark: Any = None,
-    opening_prob: Any = None,
-    movement: Any = None,
     change_24h: Any = None,
+    allow_pregame_mark: bool = False,
 ) -> tuple[Optional[int], Optional[str], Optional[int]]:
-    """Return ``(change_points, change_since, pregame_percent)``."""
+    """Return ``(change_points, change_since, pregame_percent)`` using dated readings only.
+
+    Never reads placeholder ``opening_probability``; ``pregame_mark`` is only
+    honored on a game's own markets once kickoff has passed.
+    """
     now_pct = int(round(prob * 100.0))
-    for raw_ref, label in ((pregame_mark, "pregame"), (opening_prob, "pregame")):
-        if not isinstance(raw_ref, bool) and isinstance(raw_ref, (int, float)):
-            ref = float(raw_ref)
-            if 0.0 <= ref <= 1.0:
-                ref_pct = int(round(ref * 100.0))
-                diff = now_pct - ref_pct
-                return diff, label, ref_pct
-    if not isinstance(movement, bool) and isinstance(movement, (int, float)):
-        diff = int(round(float(movement) * 100.0))
-        return diff, "pregame", None
+    if allow_pregame_mark and not isinstance(pregame_mark, bool) and isinstance(pregame_mark, (int, float)):
+        ref = float(pregame_mark)
+        if 0.0 <= ref <= 1.0:
+            ref_pct = int(round(ref * 100.0))
+            diff = now_pct - ref_pct
+            return diff, "pregame", ref_pct
     if not isinstance(change_24h, bool) and isinstance(change_24h, (int, float)):
         diff = int(round(float(change_24h) * 100.0))
         return diff, "24h", None
     return None, None, None
+
+
+def _select_nugget_form(
+    *,
+    change_points: Optional[int],
+    change_since: Optional[str],
+    default_form: str,
+) -> str:
+    if change_since == "pregame" and change_points is not None and abs(change_points) >= 3:
+        return "pregame_vs_now"
+    return default_form
 
 
 def _closeness_score(prob: float) -> float:
@@ -200,6 +210,7 @@ def _compute_score(
     *,
     prob: float,
     change_points: Optional[int],
+    change_since: Optional[str] = None,
     is_live: bool,
     source_count: int = 1,
     has_picture: bool = False,
@@ -214,7 +225,9 @@ def _compute_score(
         move_w = move_abs * (5.2 if is_live else 4.5)
         score += move_w
         sign = "+" if (change_points or 0) > 0 else ""
-        reasons.append(f"Moved {sign}{change_points} pts")
+        pt_word = "point" if move_abs == 1 else "points"
+        when = "since pregame" if change_since == "pregame" else "in 24h"
+        reasons.append(f"Moved {sign}{change_points} {pt_word} {when}")
 
     close = _closeness_score(prob)
     score += close * 18.0
@@ -364,6 +377,242 @@ def _candidate_dict(
     }
 
 
+_MATCHUP_PREFIX_RE = re.compile(
+    r"^[^:]+?\b(?:vs\.?|versus|@|at)\b[^:]*:\s*",
+    re.IGNORECASE,
+)
+_PERIOD_TOKEN_RE = re.compile(
+    r"\b(1Q|Q1|2Q|Q2|3Q|Q3|4Q|Q4|1H|H1|2H|H2|OT|1P|2P|3P|"
+    r"1st\s+quarter|first\s+quarter|2nd\s+quarter|second\s+quarter|"
+    r"3rd\s+quarter|third\s+quarter|4th\s+quarter|fourth\s+quarter|"
+    r"1st\s+half|first\s+half|2nd\s+half|second\s+half|overtime)\b",
+    re.IGNORECASE,
+)
+_OU_LINE_RE = re.compile(
+    r"\b(?:o/u|over/under|total(?:\s+points|\s+goals|\s+runs)?)\b[^0-9+-]*([0-9]+(?:\.[0-9]+)?)",
+    re.IGNORECASE,
+)
+_PAREN_LINE_RE = re.compile(r"\(([+-]?[0-9]+(?:\.[0-9]+)?)\)")
+_SIDE_PAREN_RE = re.compile(r"\(\s*(over|under)\s*\)", re.IGNORECASE)
+_UNREADABLE_CLAIM_RE = re.compile(r"[:?]|\bo/u\b|\bover/under\b|\bvs\.?\b", re.IGNORECASE)
+
+
+def _strip_matchup_prefix(raw: str) -> str:
+    text = sanitize_nugget_text(raw or "")
+    for _ in range(2):
+        nxt = _MATCHUP_PREFIX_RE.sub("", text).strip(" :-–—|")
+        if nxt == text:
+            break
+        text = nxt
+    return text
+
+
+def _plain_period_phrases(period_raw: str, market_name: str = "") -> Optional[tuple[str, str]]:
+    for src in (period_raw, market_name):
+        if not src:
+            continue
+        m = _PERIOD_TOKEN_RE.search(src)
+        token = (m.group(1) if m else src).strip().lower()
+        token = re.sub(r"\s+", " ", token)
+        mapping = {
+            "1q": ("in the first quarter", "the first quarter"),
+            "q1": ("in the first quarter", "the first quarter"),
+            "1st quarter": ("in the first quarter", "the first quarter"),
+            "first quarter": ("in the first quarter", "the first quarter"),
+            "2q": ("in the second quarter", "the second quarter"),
+            "q2": ("in the second quarter", "the second quarter"),
+            "2nd quarter": ("in the second quarter", "the second quarter"),
+            "second quarter": ("in the second quarter", "the second quarter"),
+            "3q": ("in the third quarter", "the third quarter"),
+            "q3": ("in the third quarter", "the third quarter"),
+            "3rd quarter": ("in the third quarter", "the third quarter"),
+            "third quarter": ("in the third quarter", "the third quarter"),
+            "4q": ("in the fourth quarter", "the fourth quarter"),
+            "q4": ("in the fourth quarter", "the fourth quarter"),
+            "4th quarter": ("in the fourth quarter", "the fourth quarter"),
+            "fourth quarter": ("in the fourth quarter", "the fourth quarter"),
+            "1h": ("in the first half", "the first half"),
+            "h1": ("in the first half", "the first half"),
+            "1st half": ("in the first half", "the first half"),
+            "first half": ("in the first half", "the first half"),
+            "2h": ("in the second half", "the second half"),
+            "h2": ("in the second half", "the second half"),
+            "2nd half": ("in the second half", "the second half"),
+            "second half": ("in the second half", "the second half"),
+            "ot": ("in overtime", "overtime"),
+            "overtime": ("in overtime", "overtime"),
+            "1p": ("in the first period", "the first period"),
+            "2p": ("in the second period", "the second period"),
+            "3p": ("in the third period", "the third period"),
+        }
+        if token in mapping:
+            return mapping[token]
+    return None
+
+
+def _resolve_team_display(raw: str, *, home_team: str, away_team: str) -> str:
+    clean = sanitize_nugget_text(raw or "").strip()
+    low = clean.lower()
+    if not clean:
+        return ""
+    if away_team and (low == away_team.lower() or low in away_team.lower() or away_team.lower() in low):
+        return away_team
+    if home_team and (low == home_team.lower() or low in home_team.lower() or home_team.lower() in low):
+        return home_team
+    return clean
+
+
+def _looks_like_clean_claim(claim: str) -> bool:
+    if not claim or len(claim.strip()) < 6:
+        return False
+    return not _UNREADABLE_CLAIM_RE.search(claim)
+
+
+def _plain_moment_claim(
+    row: Mapping[str, Any],
+    *,
+    home_team: str,
+    away_team: str,
+    unit: str,
+) -> Optional[str]:
+    period_raw = str(row.get("period") or "").strip()
+    mname_clean = _strip_matchup_prefix(str(row.get("market_name") or ""))
+    oname_clean = sanitize_nugget_text(str(row.get("outcome_name") or ""))
+    side_paren = _SIDE_PAREN_RE.search(mname_clean)
+    mname_no_side = _SIDE_PAREN_RE.sub("", mname_clean).strip()
+    phrases = _plain_period_phrases(period_raw, mname_no_side)
+    if phrases is None:
+        return None
+    period_in, period_noun = phrases
+
+    # 1. Period totals (e.g. "3Q O/U 13.5" + Under -> "Under 13.5 points in the third quarter")
+    side_word: Optional[str] = None
+    for cand_side in (oname_clean, str(row.get("side") or ""), side_paren.group(1) if side_paren else ""):
+        low_s = cand_side.strip().lower()
+        if low_s.startswith("under"):
+            side_word = "Under"
+            break
+        if low_s.startswith("over"):
+            side_word = "Over"
+            break
+    ou_m = _OU_LINE_RE.search(mname_no_side)
+    num_str = _format_num(row.get("threshold")) or (ou_m.group(1) if ou_m else "")
+    if side_word and num_str:
+        return f"{side_word} {num_str} {unit} {period_in}"
+
+    # 2. Period spreads (e.g. "1Q Spread: Bengals (-0.5)" + "Cincinnati Bengals")
+    low_m = mname_no_side.lower()
+    if "spread" in low_m or row.get("threshold") is not None:
+        paren_m = _PAREN_LINE_RE.search(mname_no_side)
+        sp_num = _format_num(row.get("threshold")) or (paren_m.group(1) if paren_m else "")
+        team_raw = oname_clean
+        if not team_raw or team_raw.lower() in {"yes", "no"}:
+            team_raw = _PAREN_LINE_RE.sub("", mname_no_side.split(":", 1)[-1]).strip()
+        team_disp = _resolve_team_display(team_raw, home_team=home_team, away_team=away_team)
+        if team_disp and sp_num:
+            return f"{team_disp} cover {sp_num} {unit} {period_in}"
+
+    # 3. Period winner / tie / moneyline
+    if oname_clean:
+        if oname_clean.lower() in {"draw", "tie"}:
+            return f"Game is tied {period_in}"
+        team_disp = _resolve_team_display(oname_clean, home_team=home_team, away_team=away_team)
+        if team_disp.lower() not in {"yes", "no", "over", "under"} and any(
+            tok in low_m for tok in ("winner", "moneyline", "result", "win", "lead", "quarter", "half", "period")
+        ):
+            return f"{team_disp} win {period_noun}"
+
+    return None
+
+
+def _plain_oddity_claim(
+    row: Mapping[str, Any],
+    *,
+    home_team: str,
+    away_team: str,
+    unit: str,
+) -> Optional[str]:
+    mname = _strip_matchup_prefix(str(row.get("market_name") or ""))
+    oname = sanitize_nugget_text(str(row.get("outcome_name") or ""))
+    low_m = mname.lower()
+    low_o = oname.lower()
+
+    # Touchdown scorer markets ("1st Touchdown: Mike Gesicki", "Anytime Touchdown Scorer")
+    if "touchdown" in low_m or "touchdown" in low_o:
+        scorer = ""
+        if ":" in mname:
+            left, right = mname.split(":", 1)
+            if "touchdown" in left.lower() and right.strip():
+                scorer = right.strip()
+        if not scorer and low_o not in {"yes", "no", "over", "under", ""}:
+            scorer = oname
+        if scorer and "total" not in low_m:
+            if any(k in low_m for k in ("1st", "first")):
+                return f"{scorer} scores the first touchdown"
+            if "last" in low_m:
+                return f"{scorer} scores the last touchdown"
+            return f"{scorer} scores a touchdown"
+
+    # Overtime
+    if "overtime" in low_m:
+        if low_o in {"yes", "overtime", ""}:
+            return "Game goes to overtime"
+        return None
+
+    # Safety / two-point conversion
+    if "safety" in low_m and low_o in {"yes", ""}:
+        return "A safety is scored in the game"
+    if any(k in low_m for k in ("two-point", "two point", "2-point", "2 point")) and low_o in {"yes", ""}:
+        return "A two-point conversion succeeds"
+
+    # Period-like O/U inside other section
+    ou_m = _OU_LINE_RE.search(mname)
+    if ou_m and low_o in {"over", "under"}:
+        side = "Over" if low_o == "over" else "Under"
+        phrases = _plain_period_phrases("", mname)
+        if phrases is not None:
+            return f"{side} {ou_m.group(1)} {unit} {phrases[0]}"
+        return f"{side} {ou_m.group(1)} {unit}"
+
+    # Fallback: only keep genuinely clean declarative text
+    candidate = mname if low_o in {"yes", ""} else (f"{oname} {mname}" if mname else oname)
+    candidate = _resolve_team_display(candidate, home_team=home_team, away_team=away_team)
+    if _looks_like_clean_claim(candidate) and not candidate.lower().startswith("will "):
+        return candidate
+    return None
+
+
+def _plain_stakes_claim(s_name: str, raw_label: str, out_name: str, *, is_player: bool = False) -> str:
+    label = sanitize_nugget_text(raw_label or "").strip()
+    out_clean = sanitize_nugget_text(out_name or "").strip()
+    target = out_clean if (out_clean and out_clean.lower() not in {"yes", "no"}) else s_name
+    win_verb = "wins" if is_player else "win"
+    make_verb = "makes" if is_player else "make"
+    be_verb = "is" if is_player else "are"
+    if not label:
+        return target
+    low_l = label.lower()
+    if low_l == "make playoffs":
+        return f"{target} {make_verb} the playoffs"
+    if low_l == "win division":
+        return f"{target} {win_verb} the division"
+    if "finalist" in low_l:
+        award = re.sub(r"\bfinalists?\b", "", label, flags=re.I).strip()
+        return f"{target} {be_verb} an {award} finalist" if award else f"{target} {be_verb} a finalist"
+    if low_l.startswith("win "):
+        return f"{target} {win_verb} {label[4:].strip()}"
+    if low_l.startswith("make "):
+        return f"{target} {make_verb} {label[5:].strip()}"
+    if target.lower() in low_l:
+        rest = re.sub(re.escape(target), "", label, flags=re.I).strip(" :-–—")
+        if rest:
+            return f"{target} {win_verb} {rest}"
+        return label
+    cleaned_label = re.sub(r"\bDivision Winner\b", "division", label, flags=re.I)
+    cleaned_label = re.sub(r"\bChampion\b", "title", cleaned_label, flags=re.I).strip()
+    return f"{target} {win_verb} {cleaned_label}"
+
+
 def _extract_candidates(
     *,
     event_info: Mapping[str, Any],
@@ -381,6 +630,7 @@ def _extract_candidates(
     sport = str(event_info.get("sport") or "")
     status = str(event_info.get("status") or game_markets.get("status") or "").lower()
     is_live = status in {"live", "in_progress"}
+    is_post_kickoff = status in {"live", "in_progress", "completed"}
     max_age = NUGGET_LIVE_MAX_OBSERVED_AGE_HOURS if is_live else NUGGET_MAX_OBSERVED_AGE_HOURS
 
     home_logo = (
@@ -410,23 +660,31 @@ def _extract_candidates(
             continue
         eligible_counts["game_flow"] += 1
         thresh = row.get("threshold")
-        out_name = str(row.get("outcome_name") or "Over").strip()
+        out_name = sanitize_nugget_text(str(row.get("outcome_name") or "Over")).strip()
+        low_out = out_name.lower()
+        side_word = "Under" if "under" in low_out else ("Over" if "over" in low_out else out_name)
         chg, since, pre = _extract_movement(
             prob=p,
             pregame_mark=row.get("pregame_mark"),
-            movement=row.get("movement"),
+            change_24h=row.get("probability_change_24h", row.get("change_24h")),
+            allow_pregame_mark=is_post_kickoff,
         )
         t_str = _format_num(thresh)
-        claim = (
-            f"{out_name} {t_str} total {unit}".strip()
-            if t_str
-            else str(row.get("market_name") or f"{out_name} total {unit}")
+        if not t_str:
+            ou_m = _OU_LINE_RE.search(str(row.get("market_name") or ""))
+            t_str = ou_m.group(1) if ou_m else ""
+        if t_str:
+            claim = f"{side_word} {t_str} total {unit}".strip()
+        else:
+            fallback_m = _strip_matchup_prefix(str(row.get("market_name") or ""))
+            claim = fallback_m or f"{side_word} total {unit}"
+        form = _select_nugget_form(change_points=chg, change_since=since, default_form="duel_bar")
+        sc, why = _compute_score(
+            prob=p, change_points=chg, change_since=since, is_live=is_live, base_bonus=10.0
         )
-        form = "pregame_vs_now" if (chg is not None and abs(chg) >= 3) else "duel_bar"
-        sc, why = _compute_score(prob=p, change_points=chg, is_live=is_live, base_bonus=10.0)
         key = ("total", thresh)
         cand = _candidate_dict(
-            nid=f"game_flow:total:{row.get('_market_id') or t_str}:{out_name.lower()}",
+            nid=f"game_flow:total:{row.get('_market_id') or t_str}:{side_word.lower()}",
             kind="game_flow",
             subject={"name": matchup_label, "image_url": home_logo or away_logo, "image_kind": "logo" if (home_logo or away_logo) else None},
             claim=claim,
@@ -460,8 +718,8 @@ def _extract_candidates(
         if p is None:
             continue
         eligible_counts["game_flow"] += 1
-        out_name = str(row.get("outcome_name") or "").strip()
-        mname = str(row.get("market_name") or "").strip()
+        out_name = sanitize_nugget_text(str(row.get("outcome_name") or "")).strip()
+        mname = _strip_matchup_prefix(str(row.get("market_name") or ""))
         subj = _team_subject(
             out_name or home_team,
             home_team=home_team,
@@ -472,18 +730,26 @@ def _extract_candidates(
         thresh = row.get("threshold")
         t_str = _format_num(thresh)
         if t_str:
-            claim = f"{out_name} to cover {t_str} points"
-        elif mname:
+            claim = f"{subj['name']} cover {t_str} {unit}"
+        elif mname and _looks_like_clean_claim(mname):
             claim = f"{out_name} on {mname}" if out_name and out_name.lower() not in mname.lower() else mname
         else:
-            claim = f"{out_name} point spread"
+            claim = f"{subj['name']} point spread"
         chg, since, pre = _extract_movement(
             prob=p,
             pregame_mark=row.get("pregame_mark"),
-            movement=row.get("movement"),
+            change_24h=row.get("probability_change_24h", row.get("change_24h")),
+            allow_pregame_mark=is_post_kickoff,
         )
-        form = "pregame_vs_now" if (chg is not None and abs(chg) >= 3) else "duel_bar"
-        sc, why = _compute_score(prob=p, change_points=chg, is_live=is_live, has_picture=bool(subj["image_url"]), base_bonus=9.5)
+        form = _select_nugget_form(change_points=chg, change_since=since, default_form="duel_bar")
+        sc, why = _compute_score(
+            prob=p,
+            change_points=chg,
+            change_since=since,
+            is_live=is_live,
+            has_picture=bool(subj["image_url"]),
+            base_bonus=9.5,
+        )
         cand = _candidate_dict(
             nid=f"game_flow:spread:{row.get('_market_id') or mname}:{out_name.lower()}",
             kind="game_flow",
@@ -570,14 +836,19 @@ def _extract_candidates(
         chg, since, pre = _extract_movement(
             prob=p,
             pregame_mark=row.get("pregame_mark"),
-            opening_prob=row.get("opening_over_probability"),
-            movement=row.get("movement"),
+            change_24h=row.get("probability_change_24h", row.get("change_24h")),
+            allow_pregame_mark=is_post_kickoff,
         )
         src_cnt = int(row.get("source_count") or 1)
-        form = "pregame_vs_now" if (chg is not None and abs(chg) >= 3) else ("faces_row" if headshot else "ladder")
+        form = _select_nugget_form(
+            change_points=chg,
+            change_since=since,
+            default_form="faces_row" if headshot else "ladder",
+        )
         sc, why = _compute_score(
             prob=p,
             change_points=chg,
+            change_since=since,
             is_live=is_live,
             source_count=src_cnt,
             has_picture=bool(headshot),
@@ -631,16 +902,23 @@ def _extract_candidates(
             away_logo=away_logo,
         )
         t_str = _format_num(row.get("threshold"))
-        claim = f"{subj['name']} over {t_str} {unit}" if t_str else str(row.get("outcome_name") or row.get("market_name") or subj["name"])
+        tt_side = "under" if "under" in str(row.get("side") or row.get("outcome_name") or "").lower() else "over"
+        if t_str:
+            claim = f"{subj['name']} scores {tt_side} {t_str} {unit}"
+        else:
+            raw_tt = _strip_matchup_prefix(str(row.get("outcome_name") or row.get("market_name") or ""))
+            claim = raw_tt or subj["name"]
         chg, since, pre = _extract_movement(
             prob=p,
             pregame_mark=row.get("pregame_mark"),
-            movement=row.get("movement"),
+            change_24h=row.get("probability_change_24h", row.get("change_24h")),
+            allow_pregame_mark=is_post_kickoff,
         )
-        form = "pregame_vs_now" if (chg is not None and abs(chg) >= 3) else "ladder"
+        form = _select_nugget_form(change_points=chg, change_since=since, default_form="ladder")
         sc, why = _compute_score(
             prob=p,
             change_points=chg,
+            change_since=since,
             is_live=is_live,
             has_picture=bool(subj["image_url"]),
             base_bonus=7.5,
@@ -681,14 +959,14 @@ def _extract_candidates(
         )
         if p is None:
             continue
+        claim = _plain_moment_claim(row, home_team=home_team, away_team=away_team, unit=unit)
+        if claim is None:
+            excluded["unreadable_claim"] += 1
+            continue
         eligible_counts["moments"] += 1
         period = str(row.get("period") or "").strip()
         mname = str(row.get("market_name") or "").strip()
         oname = str(row.get("outcome_name") or "").strip()
-        if oname and oname.lower() not in {"yes", "no", "over", "under"}:
-            claim = f"{oname}: {mname}" if mname and oname.lower() not in mname.lower() else (mname or oname)
-        else:
-            claim = f"{mname} ({oname})" if mname and oname else (mname or oname)
         subj = _team_subject(
             oname if oname.lower() in {home_team.lower(), away_team.lower()} else matchup_label,
             home_team=home_team,
@@ -701,10 +979,13 @@ def _extract_candidates(
         chg, since, pre = _extract_movement(
             prob=p,
             pregame_mark=row.get("pregame_mark"),
-            movement=row.get("movement"),
+            change_24h=row.get("probability_change_24h", row.get("change_24h")),
+            allow_pregame_mark=is_post_kickoff,
         )
-        form = "pregame_vs_now" if (chg is not None and abs(chg) >= 3) else "duel_bar"
-        sc, why = _compute_score(prob=p, change_points=chg, is_live=is_live, base_bonus=6.5)
+        form = _select_nugget_form(change_points=chg, change_since=since, default_form="duel_bar")
+        sc, why = _compute_score(
+            prob=p, change_points=chg, change_since=since, is_live=is_live, base_bonus=6.5
+        )
         mkey = f"{row.get('_market_id') or mname}:{period}"
         cand = _candidate_dict(
             nid=f"moments:{mkey}:{oname.lower()}",
@@ -754,12 +1035,17 @@ def _extract_candidates(
             eligible_counts["stakes"] += 1
             s_key = str(stage.get("key") or stage.get("label") or "stage")
             s_label = str(stage.get("label") or s_key)
-            chg, since, pre = _extract_movement(prob=p, change_24h=stage.get("trend_24h"))
+            chg, since, pre = _extract_movement(
+                prob=p,
+                change_24h=stage.get("trend_24h"),
+                allow_pregame_mark=False,
+            )
             src_cnt = len(stage.get("sources") or ())
-            form = "pregame_vs_now" if (chg is not None and abs(chg) >= 3) else "history_line"
+            form = _select_nugget_form(change_points=chg, change_since=since, default_form="history_line")
             sc, why = _compute_score(
                 prob=p,
                 change_points=chg,
+                change_since=since,
                 is_live=is_live,
                 source_count=src_cnt,
                 has_picture=bool(t_logo),
@@ -770,7 +1056,7 @@ def _extract_candidates(
                 nid=f"stakes:prog:{side_key}:{s_key}",
                 kind="stakes",
                 subject=subj,
-                claim=f"{t_name}: {s_label}",
+                claim=_plain_stakes_claim(t_name, s_label, "", is_player=False),
                 prob=p,
                 change_points=chg,
                 change_since=since,
@@ -814,7 +1100,10 @@ def _extract_candidates(
             eligible_counts["stakes"] += 1
 
             mp = row.get("matched_player")
-            if isinstance(mp, Mapping) and (mp.get("name") or mp.get("headshot_url") or mp.get("image_url")):
+            has_matched_player = isinstance(mp, Mapping) and bool(
+                mp.get("name") or mp.get("headshot_url") or mp.get("image_url")
+            )
+            if has_matched_player and isinstance(mp, Mapping):
                 s_name = str(mp.get("name") or row.get("outcome_name") or side_team)
                 s_img = mp.get("headshot_url") or mp.get("image_url") or side_logo
                 s_kind = "headshot" if (mp.get("headshot_url") or mp.get("image_url")) else ("logo" if s_img else None)
@@ -826,23 +1115,25 @@ def _extract_candidates(
 
             label = str(row.get("clean_label") or row.get("market_name") or "").strip()
             out_name = str(row.get("outcome_name") or "").strip()
-            if out_name and out_name.lower() not in {"yes", "no"} and out_name.lower() not in label.lower():
-                claim = f"{out_name} — {label}" if label else out_name
-            else:
-                claim = f"{s_name}: {label}" if label and s_name.lower() not in label.lower() else (label or s_name)
+            is_player_stake = has_matched_player or (
+                bool(out_name)
+                and out_name.lower() not in {"yes", "no", home_team.lower(), away_team.lower()}
+            )
+            claim = _plain_stakes_claim(s_name, label, out_name, is_player=is_player_stake)
 
             chg, since, pre = _extract_movement(
                 prob=p,
-                opening_prob=row.get("opening_probability"),
-                change_24h=row.get("probability_change_24h"),
+                change_24h=row.get("probability_change_24h", row.get("change_24h")),
+                allow_pregame_mark=False,
             )
             tier = row.get("market_tier")
             tier_int = int(tier) if isinstance(tier, int) and not isinstance(tier, bool) else None
             books = int(row.get("bookmaker_count") or 1)
-            form = "pregame_vs_now" if (chg is not None and abs(chg) >= 3) else "history_line"
+            form = _select_nugget_form(change_points=chg, change_since=since, default_form="history_line")
             sc, why = _compute_score(
                 prob=p,
                 change_points=chg,
+                change_since=since,
                 is_live=is_live,
                 source_count=books,
                 has_picture=bool(s_img),
@@ -897,20 +1188,22 @@ def _extract_candidates(
         )
         if p is None:
             continue
+        claim = _plain_oddity_claim(row, home_team=home_team, away_team=away_team, unit=unit)
+        if claim is None:
+            excluded["unreadable_claim"] += 1
+            continue
         eligible_counts["oddities"] += 1
-        claim = (
-            f"{mname}: {oname}"
-            if mname and oname and oname.lower() not in {"yes"} and oname.lower() not in mname.lower()
-            else (mname or oname)
-        )
         subj = {"name": matchup_label, "image_url": home_logo or away_logo, "image_kind": "logo" if (home_logo or away_logo) else None}
         chg, since, pre = _extract_movement(
             prob=p,
             pregame_mark=row.get("pregame_mark"),
-            movement=row.get("movement"),
+            change_24h=row.get("probability_change_24h", row.get("change_24h")),
+            allow_pregame_mark=is_post_kickoff,
         )
-        form = "pregame_vs_now" if (chg is not None and abs(chg) >= 3) else "duel_bar"
-        sc, why = _compute_score(prob=p, change_points=chg, is_live=is_live, base_bonus=5.5)
+        form = _select_nugget_form(change_points=chg, change_since=since, default_form="duel_bar")
+        sc, why = _compute_score(
+            prob=p, change_points=chg, change_since=since, is_live=is_live, base_bonus=5.5
+        )
         mid = row.get("_market_id")
         dkey = f"oddities:{mid or claim.lower()}"
         cand = _candidate_dict(

@@ -43,13 +43,17 @@ interface KindCountEntry {
   target_section: string;
 }
 
-interface GameNuggetsGame {
+interface GameNuggetsDeckSummaryGame {
   event_id: number;
   home_team: string;
   away_team: string;
   sport: string | null;
   status: string | null;
   commence_time: string | null;
+  graded_count?: number;
+}
+
+interface GameNuggetsGame extends GameNuggetsDeckSummaryGame {
   nuggets: GameNuggetItem[];
   first_eight_kinds: number;
   everything_map: KindCountEntry[];
@@ -68,8 +72,15 @@ interface GameNuggetsDeckResponse {
   slate_id: string;
   surface: string;
   games_count: number;
-  total_nuggets: number;
-  games: GameNuggetsGame[];
+  games: GameNuggetsDeckSummaryGame[];
+  summary: NuggetGradeSummary;
+}
+
+interface SingleGameNuggetsResponse {
+  slate_id: string;
+  surface: string;
+  event_id: number;
+  game: GameNuggetsGame;
   summary: NuggetGradeSummary;
 }
 
@@ -90,6 +101,9 @@ export default function GameNuggetsGradePage() {
 function GameNuggetsGradeSession() {
   const { secret, clearSecret } = useAdminAuth();
   const [deck, setDeck] = useState<GameNuggetsDeckResponse | null>(null);
+  const [gamesById, setGamesById] = useState<Record<number, GameNuggetsGame>>({});
+  const [loadingEventId, setLoadingEventId] = useState<number | null>(null);
+  const [gameError, setGameError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [nameInput, setNameInput] = useState("Alex");
   const [grader, setGrader] = useState<string | null>(null);
@@ -119,8 +133,9 @@ function GameNuggetsGradeSession() {
           init,
         );
         setDeck(data);
+        setGamesById({});
       } catch (e: unknown) {
-        handleGradeDeckReadError(e, "Could not load 20-game nuggets deck", {
+        handleGradeDeckReadError(e, "Could not load 20-game nuggets slate", {
           clearSecret,
           setError,
         });
@@ -132,6 +147,42 @@ function GameNuggetsGradeSession() {
   useEffect(() => {
     void loadDeck(grader);
   }, [grader, loadDeck]);
+
+  const activeSummaryGame = deck?.games[selectedGameIdx] || deck?.games[0] || null;
+  const activeEventId = activeSummaryGame?.event_id ?? null;
+
+  useEffect(() => {
+    if (!deck || !grader || activeEventId === null) return;
+    if (gamesById[activeEventId]) return;
+    let cancelled = false;
+    setLoadingEventId(activeEventId);
+    setGameError(null);
+    const params = new URLSearchParams({ limit: "8", slate: deck.slate_id });
+    const init = grader ? { headers: { "X-Grader-Name": encodeURIComponent(grader) } } : undefined;
+    adminFetchJSON<SingleGameNuggetsResponse>(
+      `/api/admin/ranking/game-nuggets/games/${activeEventId}?${params.toString()}`,
+      secret,
+      init,
+    )
+      .then((res) => {
+        if (cancelled) return;
+        setGamesById((prev) => ({ ...prev, [activeEventId]: res.game }));
+        setDeck((prev) => (prev ? { ...prev, summary: res.summary } : prev));
+      })
+      .catch((e: unknown) => {
+        if (cancelled) return;
+        handleGradeDeckReadError(e, `Could not load game ${activeEventId}`, {
+          clearSecret,
+          setError: setGameError,
+        });
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingEventId((cur) => (cur === activeEventId ? null : cur));
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [deck, grader, activeEventId, gamesById, secret, clearSecret]);
 
   const startSession = () => {
     const cleaned = nameInput.trim();
@@ -180,30 +231,37 @@ function GameNuggetsGradeSession() {
         setError(`Not saved (${res.status}): ${(await res.text()).slice(0, 180)}`);
         return;
       }
-      setDeck((prev) => {
-        if (!prev) return prev;
-        const nextGames = prev.games.map((g) => {
-          if (g.event_id !== game.event_id) return g;
-          return {
-            ...g,
-            nuggets: g.nuggets.map((n) =>
-              n.id === nugget.id ? { ...n, saved_grade: grade, saved_note: noteText || null } : n,
-            ),
-          };
-        });
-        let yesCount = 0;
-        let noCount = 0;
-        for (const g of nextGames) {
-          for (const n of g.nuggets) {
-            if (n.saved_grade === "yes") yesCount += 1;
-            if (n.saved_grade === "no") noCount += 1;
-          }
-        }
-        const total = yesCount + noCount;
-        const rate = total > 0 ? yesCount / total : null;
+      const prevGrade = nugget.saved_grade ?? null;
+      setGamesById((prev) => {
+        const cur = prev[game.event_id] || game;
         return {
           ...prev,
-          games: nextGames,
+          [game.event_id]: {
+            ...cur,
+            nuggets: cur.nuggets.map((n) =>
+              n.id === nugget.id ? { ...n, saved_grade: grade, saved_note: noteText || null } : n,
+            ),
+          },
+        };
+      });
+      setDeck((prev) => {
+        if (!prev) return prev;
+        let yesCount = prev.summary.yes_count;
+        let noCount = prev.summary.no_count;
+        if (prevGrade === "yes") yesCount = Math.max(0, yesCount - 1);
+        if (prevGrade === "no") noCount = Math.max(0, noCount - 1);
+        if (grade === "yes") yesCount += 1;
+        if (grade === "no") noCount += 1;
+        const total = yesCount + noCount;
+        const rate = total > 0 ? yesCount / total : null;
+        const addedNew = prevGrade === null;
+        return {
+          ...prev,
+          games: prev.games.map((g) =>
+            g.event_id === game.event_id
+              ? { ...g, graded_count: (g.graded_count || 0) + (addedNew ? 1 : 0) }
+              : g,
+          ),
           summary: {
             graded_count: total,
             yes_count: yesCount,
@@ -233,7 +291,7 @@ function GameNuggetsGradeSession() {
   if (!deck) {
     return (
       <main className="mx-auto max-w-4xl px-4 py-6">
-        <p className="text-sm text-text-muted animate-pulse">Loading 20 games&apos; nuggets…</p>
+        <p className="text-sm text-text-muted animate-pulse">Loading 20-game slate…</p>
       </main>
     );
   }
@@ -250,9 +308,8 @@ function GameNuggetsGradeSession() {
           Game Page Nuggets Grading (#13511)
         </h1>
         <p className="mt-2 text-sm text-text-secondary">
-          {deck.games_count} games loaded ({deck.total_nuggets} nuggets across first eights). Grade
-          each nugget on one question: &ldquo;Would a fan repeat this?&rdquo; Target: 3 in 4
-          (75%).
+          {deck.games_count} games queued (loaded one game at a time). Grade each nugget on one
+          question: &ldquo;Would a fan repeat this?&rdquo; Target: 3 in 4 (75%).
         </p>
         <div className="mt-4 flex flex-col gap-3 sm:flex-row">
           <input
@@ -273,7 +330,7 @@ function GameNuggetsGradeSession() {
     );
   }
 
-  const currentGame = deck.games[selectedGameIdx] || deck.games[0];
+  const currentGame = activeEventId !== null ? gamesById[activeEventId] : undefined;
   const pct =
     deck.summary.repeat_rate !== null ? Math.round(deck.summary.repeat_rate * 100) : null;
 
@@ -302,7 +359,11 @@ function GameNuggetsGradeSession() {
 
       <div className="mb-5 flex gap-2 overflow-x-auto pb-2">
         {deck.games.map((g, idx) => {
-          const gDone = g.nuggets.filter((n) => n.saved_grade).length;
+          const loaded = gamesById[g.event_id];
+          const gDone = loaded
+            ? loaded.nuggets.filter((n) => n.saved_grade).length
+            : (g.graded_count ?? 0);
+          const gTotal = loaded ? loaded.nuggets.length : 8;
           const active = idx === selectedGameIdx;
           return (
             <button
@@ -319,12 +380,21 @@ function GameNuggetsGradeSession() {
                 {g.away_team} at {g.home_team}
               </div>
               <div className="text-[11px] text-text-muted">
-                {gDone}/{g.nuggets.length} graded
+                {gDone}/{gTotal} graded
               </div>
             </button>
           );
         })}
       </div>
+
+      {activeEventId !== null && loadingEventId === activeEventId && !currentGame && (
+        <p className="text-sm text-text-muted animate-pulse">
+          Loading {activeSummaryGame?.away_team} at {activeSummaryGame?.home_team}…
+        </p>
+      )}
+      {gameError && !currentGame && (
+        <p className="mb-3 text-sm text-text-secondary">{gameError}</p>
+      )}
 
       {currentGame && (
         <section>
@@ -357,11 +427,12 @@ function GameNuggetsGradeSession() {
           <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
             {currentGame.nuggets.map((nugget) => {
               const itemKey = nugget.item_key || `event:${currentGame.event_id}:${nugget.id}`;
+              const absMove = nugget.change_points !== null ? Math.abs(nugget.change_points) : 0;
               const moveText =
                 nugget.change_points !== null && nugget.change_points !== 0
-                  ? `${nugget.change_points > 0 ? "+" : ""}${nugget.change_points} pts since ${
-                      nugget.change_since || "open"
-                    }`
+                  ? `${nugget.change_points > 0 ? "+" : ""}${nugget.change_points} ${
+                      absMove === 1 ? "point" : "points"
+                    } ${nugget.change_since === "pregame" ? "since pregame" : "in 24h"}`
                   : null;
               return (
                 <article

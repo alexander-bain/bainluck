@@ -1935,9 +1935,12 @@ async def get_game_nuggets_deck(
     secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Return 20 games' first 8 ranked nuggets + saved grades for Alex (#13511)."""
-    from app.routes.events import build_event_nuggets
+    """Return lightweight 20-game slate metadata + grade summary (#13511).
 
+    Does NOT build nuggets inside the deck call; the grading UI loads one game
+    per request via ``/game-nuggets/games/{event_id}`` so neither cold latency
+    nor L1 cache eviction hits the web workers.
+    """
     _check_admin_secret(secret, request=request)
     now = datetime.now(timezone.utc)
     slate_id = _game_nugget_slate_id(slate, now)
@@ -1956,18 +1959,73 @@ async def get_game_nuggets_deck(
         )
     ).scalars().all()
 
-    chosen_candidates = _select_eval_events(list(candidate_events), limit=max(limit * 2, limit))
+    chosen_candidates = _select_eval_events(list(candidate_events), limit=limit)
+
+    grade_rows = (
+        await db.execute(
+            select(RankingGrade).where(
+                RankingGrade.surface == SURFACE_GAME_NUGGETS,
+                RankingGrade.slate_id == slate_id,
+            )
+        )
+    ).scalars().all()
+    summary = _summarize_game_nugget_grades(list(grade_rows))
+    grader_header = request.headers.get("X-Grader-Name")
+    active_grader = (
+        " ".join(urllib.parse.unquote(grader_header).split())
+        if grader_header
+        else None
+    )
+    graded_keys_by_event: dict[int, set[str]] = {}
+    for g in summary["grades"]:
+        if active_grader and g["grader"].lower() != active_grader.lower():
+            continue
+        ikey = str(g.get("item_key") or "")
+        if ikey.startswith("event:"):
+            parts = ikey.split(":", 2)
+            if len(parts) >= 2 and parts[1].isdigit():
+                graded_keys_by_event.setdefault(int(parts[1]), set()).add(ikey)
+
     games: list[dict[str, Any]] = []
     for ev in chosen_candidates:
-        if len(games) >= limit:
-            break
-        try:
-            payload = await build_event_nuggets(int(ev.id), db, limit=8, now=now)
-        except Exception:
-            continue
-        if not payload.get("nuggets"):
-            continue
-        games.append(payload)
+        eid = int(ev.id)
+        games.append(
+            {
+                "event_id": eid,
+                "home_team": ev.home_team_name,
+                "away_team": ev.away_team_name,
+                "sport": ev.sport.key if getattr(ev, "sport", None) is not None else None,
+                "status": ev.status,
+                "commence_time": ev.commence_time.isoformat() if ev.commence_time else None,
+                "graded_count": len(graded_keys_by_event.get(eid, ())),
+            }
+        )
+
+    return {
+        "slate_id": slate_id,
+        "surface": SURFACE_GAME_NUGGETS,
+        "games_count": len(games),
+        "games": games,
+        "summary": {k: v for k, v in summary.items() if k != "grades"},
+    }
+
+
+@router.get("/game-nuggets/games/{event_id}")
+async def get_game_nuggets_for_event(
+    event_id: int,
+    request: Request,
+    limit: int = Query(8, ge=1, le=12),
+    slate: str | None = Query(None, max_length=64),
+    secret: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Build ranked nuggets + saved-grade overlay for ONE game per request (#13511)."""
+    from app.routes.events import build_event_nuggets
+
+    _check_admin_secret(secret, request=request)
+    now = datetime.now(timezone.utc)
+    slate_id = _game_nugget_slate_id(slate, now)
+    payload = await build_event_nuggets(int(event_id), db, limit=limit, now=now)
 
     grade_rows = (
         await db.execute(
@@ -1990,24 +2048,20 @@ async def get_game_nuggets_deck(
             continue
         grades_by_key[g["item_key"]] = g
 
-    total_nuggets = 0
-    for g_payload in games:
-        eid = int(g_payload["event_id"])
-        for n in g_payload["nuggets"]:
-            total_nuggets += 1
-            ikey = _game_nugget_item_key(eid, n["id"])
-            n["item_key"] = ikey
-            saved = grades_by_key.get(ikey)
-            if saved is not None:
-                n["saved_grade"] = saved["grade"]
-                n["saved_note"] = saved.get("note")
+    eid = int(payload["event_id"])
+    for n in payload.get("nuggets") or ():
+        ikey = _game_nugget_item_key(eid, n["id"])
+        n["item_key"] = ikey
+        saved = grades_by_key.get(ikey)
+        if saved is not None:
+            n["saved_grade"] = saved["grade"]
+            n["saved_note"] = saved.get("note")
 
     return {
         "slate_id": slate_id,
         "surface": SURFACE_GAME_NUGGETS,
-        "games_count": len(games),
-        "total_nuggets": total_nuggets,
-        "games": games,
+        "event_id": eid,
+        "game": payload,
         "summary": {k: v for k, v in summary.items() if k != "grades"},
     }
 

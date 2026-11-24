@@ -29635,12 +29635,17 @@ def _strip_related_futures_american_odds(payload: Any) -> Any:
     """Ensure no cached or freshly built /related-futures row carries `american_odds` (#13511)."""
     if not isinstance(payload, dict):
         return payload
-    for key in ("home_team_futures", "away_team_futures"):
+    for key in ("home_team_futures", "away_team_futures", "shared_futures", "series_markets"):
         rows = payload.get(key)
         if isinstance(rows, list):
             for row in rows:
                 if isinstance(row, dict):
                     row.pop("american_odds", None)
+                    outcomes = row.get("outcomes")
+                    if isinstance(outcomes, list):
+                        for out in outcomes:
+                            if isinstance(out, dict):
+                                out.pop("american_odds", None)
     return payload
 
 
