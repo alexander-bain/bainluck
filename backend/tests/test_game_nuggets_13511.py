@@ -22,6 +22,7 @@ from app.utils.game_nuggets import (
     NUGGET_MAX_PER_KIND_FIRST_EIGHT,
     match_claim_template,
     rank_game_nuggets,
+    reader_league_name,
 )
 
 NOW = datetime(2026, 11, 23, 18, 0, tzinfo=timezone.utc)
@@ -620,15 +621,19 @@ async def test_http_nuggets_and_admin_grading_scorecard_e2e(
             assert r_deck.status_code == 200, r_deck.text
             deck = r_deck.json()
             assert deck["games_count"] == 1
+            assert deck["requested_limit"] == 20
+            assert deck["games"][0]["sport_name"] == "NFL"
+            assert deck["games"][0]["nugget_count"] >= 6
+            assert deck["games"][0]["kind_count"] >= 3
             assert "nuggets" not in deck["games"][0]
-            # Deck must never walk games or trigger get_game_markets/related_futures builds
-            assert events_route.get_game_markets.await_count == 1
+            # Deck qualifies candidates via build_event_nuggets once, never embedding nuggets
+            assert events_route.get_game_markets.await_count == 2
 
             r_game = await client.get(
                 f"/api/admin/ranking/game-nuggets/games/14780582?limit=8&slate={deck['slate_id']}"
             )
             assert r_game.status_code == 200, r_game.text
-            assert events_route.get_game_markets.await_count == 2
+            assert events_route.get_game_markets.await_count == 3
             game_payload = r_game.json()["game"]
             first8 = game_payload["nuggets"]
             assert len(first8) == 8
@@ -1220,3 +1225,147 @@ def test_round_four_bengals_commanders_fixture_middle_of_ladder_and_named_templa
     assert all("Ben Sinnott" not in c for c in td_claims)
     assert td_res["excluded_counts"]["unreadable_claim"] >= 2
     assert all(match_claim_template(c) is not None for c in td_claims)
+
+
+def test_reader_league_name_uses_plain_labels() -> None:
+    assert reader_league_name(SimpleNamespace(key="basketball_nba", name="basketball_nba")) == "NBA"
+    assert reader_league_name(SimpleNamespace(key="americanfootball_nfl", name=None)) == "NFL"
+    assert reader_league_name(SimpleNamespace(key="basketball_wncaab", name="basketball_wncaab")) == "Women's College Basketball"
+    assert reader_league_name(SimpleNamespace(key="soccer_italy_serie_b", name="soccer_italy_serie_b")) == "Serie B"
+    assert reader_league_name(SimpleNamespace(key="tennis_other", name="tennis_other")) == "Tennis"
+    assert reader_league_name(SimpleNamespace(key="esports_other", name="esports_other")) == "Esports"
+    assert reader_league_name(SimpleNamespace(key="handball_germany_bundesliga", name=None)) == "Handball"
+
+
+async def test_game_nuggets_deck_deals_qualified_best_covered_first_with_league_cap_and_shorter_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _make_ev(eid: int, sport_key: str, sport_name: str, hours_ahead: int, away: str, home: str):
+        return SimpleNamespace(
+            id=eid,
+            home_team_id=eid * 10 + 1,
+            away_team_id=eid * 10 + 2,
+            home_team_name=home,
+            away_team_name=away,
+            sport=SimpleNamespace(key=sport_key, name=sport_name),
+            status="scheduled",
+            win_probability_sources={"betting": {"value": 0.55}},
+            commence_time=NOW + timedelta(hours=hours_ahead),
+        )
+
+    events = [
+        _make_ev(1001, "esports_other", "esports_other", 1, "PuckChamp", "Zero Tenacity"),
+        _make_ev(1002, "soccer_italy_serie_b", "soccer_italy_serie_b", 2, "US Catanzaro", "Juve Stabia"),
+        _make_ev(1003, "tennis_other", "tennis_other", 3, "Player A", "Player B"),
+        # 5 qualified NBA games (+1 unqualified 1-kind NBA game) -> only 4 may enter deck
+        _make_ev(2001, "basketball_nba", "NBA", 6, "Boston Celtics", "Washington Wizards"),
+        _make_ev(2002, "basketball_nba", "NBA", 7, "New York Knicks", "Brooklyn Nets"),
+        _make_ev(2003, "basketball_nba", "NBA", 8, "Denver Nuggets", "Phoenix Suns"),
+        _make_ev(2004, "basketball_nba", "NBA", 9, "Miami Heat", "Orlando Magic"),
+        _make_ev(2005, "basketball_nba", "NBA", 10, "Dallas Mavericks", "Houston Rockets"),
+        _make_ev(2006, "basketball_nba", "NBA", 72, "Los Angeles Lakers", "San Antonio Spurs"),
+        # Later Thursday/Sunday NFL games with rich coverage must still qualify & outrank sparser games
+        _make_ev(3001, "americanfootball_nfl", "NFL", 50, "Chicago Bears", "Detroit Lions"),
+        _make_ev(3002, "americanfootball_nfl", "NFL", 96, "Kansas City Chiefs", "Buffalo Bills"),
+    ]
+    by_id = {ev.id: ev for ev in events}
+    linked_rows = [
+        (2001, 45), (2002, 30), (2003, 25), (2004, 20), (2005, 18), (2006, 8),
+        (3001, 60), (3002, 55), (1002, 4),
+    ]
+    # Payload specs per event: (nugget_count, first_eight_kinds)
+    specs = {
+        1001: (0, 0),   # blank -> excluded
+        1002: (4, 2),   # <6 items -> excluded
+        1003: (0, 0),   # blank -> excluded
+        2001: (8, 5),   # NBA best
+        2002: (8, 4),   # NBA #2
+        2003: (7, 4),   # NBA #3
+        2004: (6, 3),   # NBA #4
+        2005: (6, 3),   # NBA #5 (capped out by max 4 per league)
+        2006: (6, 1),   # <3 kinds -> excluded
+        3001: (8, 5),   # NFL #1 (earlier in sort than NBA #2/#3/#4!)
+        3002: (7, 4),   # NFL #2
+    }
+
+    async def _fake_build(eid: int, _db, *, limit: int = 8, now=None):
+        ev = by_id[eid]
+        n_count, k_count = specs[eid]
+        kinds = ["game_flow", "players", "teams", "moments", "stakes"][: max(k_count, 1)]
+        nuggets = [
+            {
+                "id": f"n{i}",
+                "kind": kinds[i % len(kinds)] if k_count else "game_flow",
+                "claim": f"Claim {i}",
+                "position": i + 1,
+            }
+            for i in range(n_count)
+        ]
+        return {
+            "event_id": eid,
+            "home_team": ev.home_team_name,
+            "away_team": ev.away_team_name,
+            "sport": ev.sport.key,
+            "sport_name": reader_league_name(ev.sport),
+            "status": ev.status,
+            "commence_time": ev.commence_time.isoformat(),
+            "nuggets": nuggets,
+            "first_eight_kinds": k_count,
+            "everything_map": [{"kind": "game_flow", "label": "Game flow", "count": n_count, "target_section": "totals-spreads"}],
+        }
+
+    class _Res:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def scalars(self):
+            return self
+
+        def all(self):
+            return self._rows
+
+    async def _fake_exec(stmt):
+        sql = str(stmt)
+        if "FROM ranking_grades" in sql:
+            return _Res([])
+        if "FROM futures_markets" in sql:
+            return _Res(linked_rows)
+        if "FROM events" in sql:
+            return _Res(events)
+        return _Res([])
+
+    fake_db = SimpleNamespace(execute=AsyncMock(side_effect=_fake_exec))
+    monkeypatch.setattr(events_route, "build_event_nuggets", _fake_build)
+    monkeypatch.setattr(eval_route, "_check_admin_secret", lambda *_a, **_kw: None)
+
+    async def _db_override():
+        yield fake_db
+
+    prior = dict(app.dependency_overrides)
+    app.dependency_overrides[get_db] = _db_override
+    try:
+        async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            resp = await client.get("/api/admin/ranking/game-nuggets/deck?limit=20")
+            assert resp.status_code == 200, resp.text
+            data = resp.json()
+    finally:
+        app.dependency_overrides = prior
+
+    dealt_ids = [g["event_id"] for g in data["games"]]
+    assert data["requested_limit"] == 20
+    # 6 games qualify after max-4 NBA cap: 4 NBA + 2 NFL (shorter deck)
+    assert data["games_count"] == 6
+    assert len(dealt_ids) == 6
+    # Excluded unqualified games (<6 items or <3 kinds or empty)
+    for bad_id in (1001, 1002, 1003, 2006):
+        assert bad_id not in dealt_ids
+    # Max 4 from one league + 5th NBA left out
+    nba_dealt = [g for g in data["games"] if g["sport"] == "basketball_nba"]
+    assert len(nba_dealt) == 4
+    assert 2005 not in dealt_ids
+    # Best-covered first: 5-kind NFL & NBA ahead of 4-kind and 3-kind
+    assert set(dealt_ids[:2]) == {2001, 3001}
+    assert set(dealt_ids[2:5]) == {2002, 2003, 3002}
+    assert dealt_ids[5] == 2004
+    # Plain league names
+    assert all(g["sport_name"] in {"NBA", "NFL"} for g in data["games"])

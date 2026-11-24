@@ -32063,7 +32063,7 @@ async def build_event_nuggets(
     now: Optional[datetime] = None,
 ) -> dict:
     """Build ranked below-the-charts nuggets from existing event sub-surfaces (#13511)."""
-    from app.utils.game_nuggets import NUGGET_DEFAULT_LIMIT, rank_game_nuggets
+    from app.utils.game_nuggets import NUGGET_DEFAULT_LIMIT, rank_game_nuggets, reader_league_name
 
     row = (
         await db.execute(
@@ -32124,6 +32124,7 @@ async def build_event_nuggets(
         "home_logo": home_logo,
         "away_logo": away_logo,
         "sport": event.sport.key if event.sport else None,
+        "sport_name": reader_league_name(event.sport),
         "status": served_event_status(
             event.status, event.commence_time, now or datetime.now(timezone.utc)
         ),
