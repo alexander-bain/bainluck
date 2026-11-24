@@ -1,0 +1,152 @@
+{
+  "deck_id": "forms-blind-deck-2026-11-23",
+  "created_at": "2026-11-23",
+  "ruling": "363: A",
+  "image_width_px": 780,
+  "css_width_px": 390,
+  "color_scheme": "light",
+  "atlas_images_sha": "f164f38c7ff15874b1c7d85c10465dd954302d33",
+  "sheet_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/all-card-forms-390-nov23.png",
+  "forms": [
+    {
+      "item_id": "f01",
+      "form_id": "benchmark_strip",
+      "display_name": "Benchmark Strip (machinery)",
+      "status": "public",
+      "source_slug": "machinery-elon-musk-side-quests",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-01.png",
+      "width_px": 780,
+      "height_px": 1200
+    },
+    {
+      "item_id": "f02",
+      "form_id": "benchmark_strip (legacy)",
+      "display_name": "Benchmark Strip (legacy round-up)",
+      "status": "public",
+      "source_slug": "roundup-cfp-picture",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-02.png",
+      "width_px": 780,
+      "height_px": 940
+    },
+    {
+      "item_id": "f03",
+      "form_id": "theme_compact_rows",
+      "display_name": "Theme Compact Rows",
+      "status": "public",
+      "source_slug": "ai",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-03.png",
+      "width_px": 780,
+      "height_px": 1262
+    },
+    {
+      "item_id": "f04",
+      "form_id": "comparison_compact_rows",
+      "display_name": "Comparison Compact Rows",
+      "status": "public",
+      "source_slug": "comparison:replay:rates",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-04.png",
+      "width_px": 780,
+      "height_px": 1220
+    },
+    {
+      "item_id": "f05",
+      "form_id": "contender_spotlight",
+      "display_name": "Contender Spotlight (podium in #13450)",
+      "status": "public",
+      "source_slug": "machinery-2028-presidential",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-05.png",
+      "width_px": 780,
+      "height_px": 1122
+    },
+    {
+      "item_id": "f06",
+      "form_id": "paired_stage_bars",
+      "display_name": "Paired Stage Bars",
+      "status": "public",
+      "source_slug": "machinery-oscars-best-picture",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-06.png",
+      "width_px": 780,
+      "height_px": 1748
+    },
+    {
+      "item_id": "f07",
+      "form_id": "sibling_fields_grid",
+      "display_name": "Sibling Fields Grid",
+      "status": "public",
+      "source_slug": "machinery-next-james-bond",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-07.png",
+      "width_px": 780,
+      "height_px": 1212
+    },
+    {
+      "item_id": "f08",
+      "form_id": "matchup_strip",
+      "display_name": "Matchup Strip (next N games)",
+      "status": "public",
+      "source_slug": "celtics-next-3-games",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-08.png",
+      "width_px": 780,
+      "height_px": 724
+    },
+    {
+      "item_id": "f09",
+      "form_id": "coin_flip_matchups",
+      "display_name": "Coin-Flip Matchups",
+      "status": "public",
+      "source_slug": "machinery-nhl-this-week",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-09.png",
+      "width_px": 780,
+      "height_px": 798
+    },
+    {
+      "item_id": "f10",
+      "form_id": "matchup_slate",
+      "display_name": "Matchup Slate",
+      "status": "public",
+      "source_slug": "machinery-nba-night",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-10.png",
+      "width_px": 780,
+      "height_px": 766
+    },
+    {
+      "item_id": "f11",
+      "form_id": "deadline_ladder",
+      "display_name": "Deadline Ladder",
+      "status": "public",
+      "source_slug": "theme:story:deadline_family:polymarket:1448088:72067051-72067052",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-11.png",
+      "width_px": 780,
+      "height_px": 894
+    },
+    {
+      "item_id": "f12",
+      "form_id": "party_control_bars",
+      "display_name": "Party Control Bars",
+      "status": "public",
+      "source_slug": "theme:story:us_congress_control:2026:991001-991002",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-12.png",
+      "width_px": 780,
+      "height_px": 734
+    },
+    {
+      "item_id": "f13",
+      "form_id": "probability_history_chart",
+      "display_name": "Probability History Chart",
+      "status": "public",
+      "source_slug": "machinery-tech-and-space-movers",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-13.png",
+      "width_px": 780,
+      "height_px": 1318
+    },
+    {
+      "item_id": "f14",
+      "form_id": "duel_bar",
+      "display_name": "Duel Bar (2-way accepted #13527; 3-way w/ Tie preview #13530)",
+      "status": "preview (PR #13530)",
+      "source_slug": "machinery-golf-majors-and-ryder-cup",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-14.png",
+      "width_px": 780,
+      "height_px": 790
+    }
+  ]
+}

@@ -1,0 +1,96 @@
+{
+  "deck_id": "forms-blind-deck-2026-11-23",
+  "created_at": "2026-11-23",
+  "ruling": "363: A",
+  "blind": true,
+  "seed": 2026112304,
+  "image_width_px": 780,
+  "css_width_px": 390,
+  "color_scheme": "light",
+  "forms": [
+    {
+      "item_id": "f01",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-01.png",
+      "width_px": 780,
+      "height_px": 1200
+    },
+    {
+      "item_id": "f02",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-02.png",
+      "width_px": 780,
+      "height_px": 940
+    },
+    {
+      "item_id": "f03",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-03.png",
+      "width_px": 780,
+      "height_px": 1262
+    },
+    {
+      "item_id": "f04",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-04.png",
+      "width_px": 780,
+      "height_px": 1220
+    },
+    {
+      "item_id": "f05",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-05.png",
+      "width_px": 780,
+      "height_px": 1122
+    },
+    {
+      "item_id": "f06",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-06.png",
+      "width_px": 780,
+      "height_px": 1748
+    },
+    {
+      "item_id": "f07",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-07.png",
+      "width_px": 780,
+      "height_px": 1212
+    },
+    {
+      "item_id": "f08",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-08.png",
+      "width_px": 780,
+      "height_px": 724
+    },
+    {
+      "item_id": "f09",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-09.png",
+      "width_px": 780,
+      "height_px": 798
+    },
+    {
+      "item_id": "f10",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-10.png",
+      "width_px": 780,
+      "height_px": 766
+    },
+    {
+      "item_id": "f11",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-11.png",
+      "width_px": 780,
+      "height_px": 894
+    },
+    {
+      "item_id": "f12",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-12.png",
+      "width_px": 780,
+      "height_px": 734
+    },
+    {
+      "item_id": "f13",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-13.png",
+      "width_px": 780,
+      "height_px": 1318
+    },
+    {
+      "item_id": "f14",
+      "image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/forms-deck-2026-11-23/form-14.png",
+      "width_px": 780,
+      "height_px": 790
+    }
+  ]
+}
