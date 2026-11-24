@@ -75,9 +75,14 @@ export interface KitV1NumberMark {
   width?: "xs" | "sm" | "auto";
 }
 
+export interface KitV1AdaptiveColor {
+  light: string;
+  dark: string;
+}
+
 export interface KitV1BarSegment {
   fill: number;
-  color?: string | null;
+  color?: KitV1AdaptiveColor | null;
   label?: string;
 }
 
@@ -85,7 +90,7 @@ export interface KitV1BarMark {
   mark: "bar";
   bar_style: "single" | "split" | "range";
   fill?: number;
-  fill_color?: string | null;
+  fill_color?: KitV1AdaptiveColor | null;
   segments?: KitV1BarSegment[];
   lo?: number;
   hi?: number;
@@ -117,7 +122,7 @@ export interface KitV1DotMark {
   x: number;
   y_lane?: number | null;
   label: string;
-  color?: string | null;
+  color?: KitV1AdaptiveColor | null;
   in_band?: boolean;
   picture?: KitV1PictureMark | null;
 }
@@ -126,7 +131,7 @@ export interface KitV1LineMark {
   mark: "line";
   points: Array<{ x: number; y: number; label?: string | null }>;
   dashed?: boolean;
-  color?: string | null;
+  color?: KitV1AdaptiveColor | null;
   threshold?: number | null;
 }
 

@@ -291,6 +291,26 @@ def test_ruling_367a_calendar_strip_math_and_dip_refusal() -> None:
         )
 
 
+def test_fable_nov23_overnight_wording_and_adaptive_team_colors() -> None:
+    """PR #13577 review asks 2(a) & 2(b): no 'opens at' wording and adaptive light/dark colors."""
+    payload = build_kit_v1_worked_examples()
+    celtics = payload["items"][3]
+    assert celtics["id"] == "kit-boston-celtics-road"
+    assert "opens" not in celtics["stat_caption"].lower()
+    assert celtics["stat_caption"].startswith("Boston is 79% at Washington on Tuesday")
+
+    fill_col = celtics["body"]["items"][0]["marks"][3]["fill_color"]
+    assert isinstance(fill_col, dict) and set(fill_col.keys()) == {"light", "dark"}
+    assert fill_col["light"] == "#008348"
+    assert fill_col["dark"] != fill_col["light"]
+
+    bad_raw_hex = copy.deepcopy(celtics)
+    bad_raw_hex["body"]["items"][0]["marks"][3]["fill_color"] = "#008348"
+    ok_raw, errs_raw = validate_kit_v1_card(bad_raw_hex)
+    assert not ok_raw
+    assert any("adaptive" in e for e in errs_raw)
+
+
 def test_kit_v1_preview_endpoint_requires_admin_auth(monkeypatch) -> None:
     app = FastAPI()
     app.include_router(containers.router, prefix="/api/containers")

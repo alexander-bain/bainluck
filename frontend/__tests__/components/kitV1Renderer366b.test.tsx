@@ -110,6 +110,22 @@ describe("Kit v1 layout-generic web renderer & fail-closed envelope (366: B, 367
     };
     expect(parseKitCardV1(withUnknownMark)).toBeNull();
 
+    const withBareHex = {
+      ...golden.items[3],
+      body: {
+        ...(golden.items[3].body as KitV1StackBody),
+        items: [
+          {
+            ...(golden.items[3].body as KitV1StackBody).items[0],
+            marks: (golden.items[3].body as KitV1StackBody).items[0].marks.map((m) =>
+              m.mark === "bar" ? { ...m, fill_color: "#008348" } : m,
+            ),
+          },
+        ],
+      },
+    };
+    expect(parseKitCardV1(withBareHex)).toBeNull();
+
     const html = renderToStaticMarkup(
       <KitCardRenderer
         spec={{

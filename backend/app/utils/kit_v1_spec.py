@@ -108,6 +108,94 @@ def compute_one_in_n(pct: int) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Adaptive light/dark team colors (WCAG contrast guaranteed in both themes)
+# ---------------------------------------------------------------------------
+
+_LIGHT_SURFACE_HEX = "#ffffff"
+_DARK_SURFACE_HEX = "#111827"
+_MIN_LIGHT_CONTRAST = 3.0
+_MIN_DARK_CONTRAST = 4.5
+
+
+def _parse_hex_rgb(hex_color: str) -> tuple[int, int, int] | None:
+    if not isinstance(hex_color, str) or len(hex_color) != 7 or not hex_color.startswith("#"):
+        return None
+    try:
+        return (
+            int(hex_color[1:3], 16),
+            int(hex_color[3:5], 16),
+            int(hex_color[5:7], 16),
+        )
+    except ValueError:
+        return None
+
+
+def _linear_channel(channel_8bit: int) -> float:
+    c = channel_8bit / 255.0
+    return c / 12.92 if c <= 0.03928 else ((c + 0.055) / 1.055) ** 2.4
+
+
+def _relative_luminance(hex_color: str) -> float:
+    rgb = _parse_hex_rgb(hex_color)
+    if rgb is None:
+        return 0.0
+    r, g, b = rgb
+    return 0.2126 * _linear_channel(r) + 0.7152 * _linear_channel(g) + 0.0722 * _linear_channel(b)
+
+
+def _contrast_ratio(hex_a: str, hex_b: str) -> float:
+    l1 = _relative_luminance(hex_a)
+    l2 = _relative_luminance(hex_b)
+    hi, lo = max(l1, l2), min(l1, l2)
+    return (hi + 0.05) / (lo + 0.05)
+
+
+def _blend_for_contrast(
+    brand_hex: str,
+    target_rgb: tuple[int, int, int],
+    surface_hex: str,
+    min_ratio: float,
+) -> str:
+    rgb = _parse_hex_rgb(brand_hex)
+    if rgb is None:
+        raise ValueError(f"Invalid #rrggbb hex color: {brand_hex!r}")
+    if _contrast_ratio(brand_hex, surface_hex) >= min_ratio:
+        return brand_hex.lower()
+    tr, tg, tb = target_rgb
+    r0, g0, b0 = rgb
+    for step in range(1, 21):
+        t = step / 20.0
+        cand = f"#{round(r0 + (tr - r0) * t):02x}{round(g0 + (tg - g0) * t):02x}{round(b0 + (tb - b0) * t):02x}"
+        if _contrast_ratio(cand, surface_hex) >= min_ratio:
+            return cand
+    return f"#{tr:02x}{tg:02x}{tb:02x}"
+
+
+def _adaptive_team_color(brand_hex: str) -> dict[str, str]:
+    """Return adaptive light/dark `#rrggbb` pair with verified contrast on both surfaces."""
+    light_hex = _blend_for_contrast(brand_hex, (17, 24, 39), _LIGHT_SURFACE_HEX, _MIN_LIGHT_CONTRAST)
+    dark_hex = _blend_for_contrast(brand_hex, (255, 255, 255), _DARK_SURFACE_HEX, _MIN_DARK_CONTRAST)
+    return {"light": light_hex, "dark": dark_hex}
+
+
+def _validate_adaptive_color(val: Any, label: str, errors: list[str]) -> None:
+    if not isinstance(val, dict) or set(val.keys()) != {"light", "dark"}:
+        errors.append(
+            f"{label} must be an adaptive {{'light', 'dark'}} hex object, never a raw bare hex"
+        )
+        return
+    light_hex = val.get("light")
+    dark_hex = val.get("dark")
+    if _parse_hex_rgb(light_hex or "") is None or _parse_hex_rgb(dark_hex or "") is None:
+        errors.append(f"{label} must contain valid #rrggbb light and dark values")
+        return
+    if _contrast_ratio(light_hex, _LIGHT_SURFACE_HEX) < _MIN_LIGHT_CONTRAST:
+        errors.append(f"{label}.light failed >= {_MIN_LIGHT_CONTRAST} contrast on white")
+    if _contrast_ratio(dark_hex, _DARK_SURFACE_HEX) < _MIN_DARK_CONTRAST:
+        errors.append(f"{label}.dark failed >= {_MIN_DARK_CONTRAST} contrast on dark card")
+
+
+# ---------------------------------------------------------------------------
 # Generic mark constructors (zero `"kind"` or `"type"` keys inside `"marks"`)
 # ---------------------------------------------------------------------------
 
@@ -180,7 +268,7 @@ def _mark_bar_single(
     fill: float,
     *,
     width: str = "sm",
-    fill_color: str | None = None,
+    fill_color: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     out: dict[str, Any] = {
         "mark": "bar",
@@ -231,7 +319,7 @@ def _mark_dot(
     x: float,
     label: str,
     y_lane: int | None = None,
-    color: str | None = None,
+    color: dict[str, str] | None = None,
     in_band: bool = False,
     picture: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
@@ -424,6 +512,15 @@ def _walk_and_validate_marks(
                 stats["saw_person_picture"] = True
         elif mark_val == "number" and node.get("unit") == "%":
             _check_pct(node.get("value"), "number mark", errors)
+        elif mark_val == "bar":
+            if node.get("fill_color") is not None:
+                _validate_adaptive_color(node.get("fill_color"), "bar.fill_color", errors)
+            for idx_seg, seg in enumerate(node.get("segments") or []):
+                if isinstance(seg, dict) and seg.get("color") is not None:
+                    _validate_adaptive_color(seg.get("color"), f"bar.segments[{idx_seg}].color", errors)
+        elif mark_val in {"dot", "line"}:
+            if node.get("color") is not None:
+                _validate_adaptive_color(node.get("color"), f"{mark_val}.color", errors)
 
     for k, child in node.items():
         if k == "route":
@@ -841,7 +938,7 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
             variant="road_ahead",
             kicker="NBA · NEXT 3 GAMES",
             common_headline="Boston Celtics: next 3 games",
-            stat_caption="Boston opens at 79% in Washington before hosting Atlanta at 62% and visiting San Antonio at 40%",
+            stat_caption="Boston is 79% at Washington on Tuesday, then hosts Atlanta at 62% and visits San Antonio at 40%",
             source_count=4,
             route_kind="team",
             route_slug="boston-celtics",
@@ -858,7 +955,7 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
                             _mark_word(day, secondary_text=clock, style="meta", tone="secondary", width="sm"),
                             _mark_picture(url=opp_url, alt=opp_name, subject_kind="team", size="sm", contain=True),
                             _mark_word(f"{loc} {opp_abbr}", style="row", tone="primary", bold=True, width="flex"),
-                            _mark_bar_single(team_p / 100.0, width="md", fill_color="#008348"),
+                            _mark_bar_single(team_p / 100.0, width="md", fill_color=_adaptive_team_color("#008348")),
                             _mark_number(team_p, f"{team_p}%", unit="%", tone="primary", prominence="primary", align="right", width="sm"),
                         ],
                     }
@@ -933,7 +1030,7 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
                 x=float(p_val),
                 y_lane=lane,
                 label=f"{team_name}: {p_val}%",
-                color=color,
+                color=_adaptive_team_color(color),
                 in_band=in_doubt,
                 picture=pic,
             )
@@ -1068,8 +1165,8 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
                     _mark_number(away_p, f"{away_p}%", unit="%", tone="primary", prominence="primary", align="left", width="xs"),
                     _mark_bar_split(
                         [
-                            {"fill": away_p / 100.0, "color": away_c, "label": away_abbr},
-                            {"fill": home_p / 100.0, "color": home_c, "label": home_abbr},
+                            {"fill": away_p / 100.0, "color": _adaptive_team_color(away_c), "label": away_abbr},
+                            {"fill": home_p / 100.0, "color": _adaptive_team_color(home_c), "label": home_abbr},
                         ],
                         width="flex",
                     ),

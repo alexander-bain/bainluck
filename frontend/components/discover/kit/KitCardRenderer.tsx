@@ -13,6 +13,7 @@ import React from "react";
 import {
   ALLOWED_KIT_V1_LAYOUTS,
   ALLOWED_KIT_V1_MARKS,
+  type KitV1AdaptiveColor,
   type KitV1AxisBody,
   type KitV1BarMark,
   type KitV1CalendarBody,
@@ -41,6 +42,30 @@ const MARKS_ARRAY_KEYS = new Set([
   "sub_marks",
 ]);
 
+function isHexSix(val: unknown): val is string {
+  if (typeof val !== "string" || val.length !== 7 || val.charCodeAt(0) !== 35) {
+    return false;
+  }
+  for (let i = 1; i < 7; i++) {
+    const code = val.charCodeAt(i);
+    const isDigit = code >= 48 && code <= 57;
+    const isUpper = code >= 65 && code <= 70;
+    const isLower = code >= 97 && code <= 102;
+    if (!isDigit && !isUpper && !isLower) return false;
+  }
+  return true;
+}
+
+function isAdaptiveColor(val: unknown): val is KitV1AdaptiveColor {
+  if (!val || typeof val !== "object" || Array.isArray(val)) return false;
+  const obj = val as Record<string, unknown>;
+  return isHexSix(obj.light) && isHexSix(obj.dark);
+}
+
+function resolveLightColor(color?: KitV1AdaptiveColor | null): string | undefined {
+  return color?.light;
+}
+
 function validateMarksRecursive(node: unknown, insideMarksArray: boolean): boolean {
   if (Array.isArray(node)) {
     return node.every((el) => validateMarksRecursive(el, insideMarksArray));
@@ -55,6 +80,26 @@ function validateMarksRecursive(node: unknown, insideMarksArray: boolean): boole
     }
     if (obj.mark === "picture") {
       if (typeof obj.url !== "string" || !obj.url.startsWith("https://")) {
+        return false;
+      }
+    }
+    if (obj.mark === "bar") {
+      if (obj.fill_color !== undefined && obj.fill_color !== null && !isAdaptiveColor(obj.fill_color)) {
+        return false;
+      }
+      if (Array.isArray(obj.segments)) {
+        for (const seg of obj.segments) {
+          if (seg && typeof seg === "object") {
+            const segCol = (seg as Record<string, unknown>).color;
+            if (segCol !== undefined && segCol !== null && !isAdaptiveColor(segCol)) {
+              return false;
+            }
+          }
+        }
+      }
+    }
+    if (obj.mark === "dot" || obj.mark === "line") {
+      if (obj.color !== undefined && obj.color !== null && !isAdaptiveColor(obj.color)) {
         return false;
       }
     }
@@ -280,7 +325,7 @@ function BarMarkView({ mark }: { mark: KitV1BarMark }) {
             }`}
             style={{
               width: `${Math.max(0, Math.min(100, seg.fill * 100))}%`,
-              backgroundColor: seg.color ?? undefined,
+              backgroundColor: resolveLightColor(seg.color),
             }}
           />
         ))}
@@ -297,7 +342,7 @@ function BarMarkView({ mark }: { mark: KitV1BarMark }) {
           style={{
             left: `${leftPct}%`,
             width: `${widthPct}%`,
-            backgroundColor: mark.fill_color ?? undefined,
+            backgroundColor: resolveLightColor(mark.fill_color),
           }}
         >
           {mark.pct_label ?? ""}
@@ -314,7 +359,7 @@ function BarMarkView({ mark }: { mark: KitV1BarMark }) {
         className="h-full rounded-full bg-accent-brand"
         style={{
           width: `${pct}%`,
-          backgroundColor: mark.fill_color ?? undefined,
+          backgroundColor: resolveLightColor(mark.fill_color),
         }}
       />
     </div>
@@ -641,7 +686,7 @@ function AxisLayout({ body }: { body: KitV1AxisBody }) {
               style={{
                 left: `${Math.min(98, Math.max(2, toAxisPercent(pt.x, scale.min, scale.max)))}%`,
                 bottom: `${22 + (idx % 3) * 6}px`,
-                backgroundColor: pt.color ?? undefined,
+                backgroundColor: resolveLightColor(pt.color),
               }}
             />
           ))}
