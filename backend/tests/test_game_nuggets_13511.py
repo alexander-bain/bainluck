@@ -371,10 +371,21 @@ def test_pregame_ignores_opening_probability_and_uses_plain_claims_only() -> Non
     assert mvp_live["form"] == "history_line"
     assert mvp_live["change_since"] == "24h"
 
-    # Untyped player_prop fallback never emits "Over 50 props", and duplicate oddity claims deduplicate
+    # Untyped player_prop fallback never emits "Over 50 props", non-Over/Under total row is dropped,
+    # and duplicate oddity claims deduplicate
     untyped_res = rank_game_nuggets(
         event_info={**_EVENT_INFO, "status": "scheduled"},
         game_markets={
+            "totals": [
+                {
+                    "_market_id": 1101,
+                    "market_name": "Will the game go to overtime? (18)",
+                    "outcome_name": "No",
+                    "over_probability": 0.14,
+                    "observed_at": _fresh_ts(0.2),
+                    "source_mark": {"state": "single"},
+                }
+            ],
             "player_props": [
                 {
                     "_market_id": 2101,
@@ -415,6 +426,7 @@ def test_pregame_ignores_opening_probability_and_uses_plain_claims_only() -> Non
     untyped_claims = [n["claim"] for n in untyped_res["nuggets"]]
     assert "Jayden Daniels 50+ rushing yards" in untyped_claims
     assert all("props" not in c.lower() for c in untyped_claims)
+    assert all("no 18" not in c.lower() for c in untyped_claims)
     assert untyped_claims.count("Ja'Marr Chase scores the first touchdown") == 1
 
 

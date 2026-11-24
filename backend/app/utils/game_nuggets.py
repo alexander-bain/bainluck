@@ -661,26 +661,31 @@ def _extract_candidates(
         )
         if p is None:
             continue
-        eligible_counts["game_flow"] += 1
         thresh = row.get("threshold")
         out_name = sanitize_nugget_text(str(row.get("outcome_name") or "Over")).strip()
         low_out = out_name.lower()
-        side_word = "Under" if "under" in low_out else ("Over" if "over" in low_out else out_name)
+        if "under" in low_out:
+            side_word = "Under"
+        elif "over" in low_out:
+            side_word = "Over"
+        else:
+            excluded["unreadable_claim"] += 1
+            continue
+        t_str = _format_num(thresh)
+        if not t_str:
+            ou_m = _OU_LINE_RE.search(str(row.get("market_name") or ""))
+            t_str = ou_m.group(1) if ou_m else ""
+        if not t_str:
+            excluded["unreadable_claim"] += 1
+            continue
+        eligible_counts["game_flow"] += 1
         chg, since, pre = _extract_movement(
             prob=p,
             pregame_mark=row.get("pregame_mark"),
             change_24h=row.get("probability_change_24h", row.get("change_24h")),
             allow_pregame_mark=is_post_kickoff,
         )
-        t_str = _format_num(thresh)
-        if not t_str:
-            ou_m = _OU_LINE_RE.search(str(row.get("market_name") or ""))
-            t_str = ou_m.group(1) if ou_m else ""
-        if t_str:
-            claim = f"{side_word} {t_str} total {unit}".strip()
-        else:
-            fallback_m = _strip_matchup_prefix(str(row.get("market_name") or ""))
-            claim = fallback_m or f"{side_word} total {unit}"
+        claim = f"{side_word} {t_str} total {unit}".strip()
         form = _select_nugget_form(change_points=chg, change_since=since, default_form="duel_bar")
         sc, why = _compute_score(
             prob=p, change_points=chg, change_since=since, is_live=is_live, base_bonus=10.0
@@ -940,7 +945,7 @@ def _extract_candidates(
         t_str = _format_num(row.get("threshold"))
         tt_side = "under" if "under" in str(row.get("side") or row.get("outcome_name") or "").lower() else "over"
         if t_str:
-            claim = f"{subj['name']} scores {tt_side} {t_str} {unit}"
+            claim = f"{subj['name']} score {tt_side} {t_str} {unit}"
         else:
             raw_tt = _strip_matchup_prefix(str(row.get("outcome_name") or row.get("market_name") or ""))
             claim = raw_tt or subj["name"]
