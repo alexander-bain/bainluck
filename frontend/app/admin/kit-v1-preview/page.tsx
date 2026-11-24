@@ -97,7 +97,7 @@ function KitV1PreviewBody() {
                 <div key={`${spec.id || spec.layout}-${idx}`} className="space-y-1.5">
                   <div className="flex items-center justify-between px-1 text-[11px] font-semibold text-text-muted">
                     <span>
-                      {idx + 1}. layout={spec.layout} (variant hint: {spec.variant ?? "none"})
+                      {idx + 1}. layout: {spec.layout} (variant hint: {spec.variant ?? "none"})
                     </span>
                     <button
                       type="button"
