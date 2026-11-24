@@ -54,9 +54,10 @@ from app.utils.settledness import (
 
 # The 69th ceremony's pre-nomination Polymarket boards and Kalshi nominee fields.
 # Ruling 145 keeps the contracts separate because they settle a tie differently.
+_GRAMMY_SONG_OF_THE_YEAR = "KXGRAMMY-SOTY69"
 GRAMMY_NOMINEE_FIELDS = {
     "805148": "KXGRAMBNA-69",
-    "805158": "KXGRAMMY-SOTY69",
+    "805158": _GRAMMY_SONG_OF_THE_YEAR,
     "805159": "KXGRAMMY-ROTY69",
     "805160": "KXGRAMAOTY-69",
 }
@@ -64,6 +65,16 @@ _GRAMMY_PRE_NOMINATION_BOARDS = {
     ticker: external_id for external_id, ticker in GRAMMY_NOMINEE_FIELDS.items()
 }
 GRAMMY_TIE_LABEL = "Tie (co-winners)"
+_GRAMMY_SONG_NOMINEES = frozenset({
+    "berghain",
+    "choosin' texas",
+    "the cure",
+    "hate that i made you love me",
+    "i knew it, i knew you",
+    "man i need",
+    "risk it all",
+    "where is my husband!",
+})
 
 
 def is_grammy_general_field_market(market: Any) -> bool:
@@ -95,6 +106,26 @@ def is_grammy_graded_loss(
 def _grammy_name_key(name: str) -> str:
     text = unicodedata.normalize("NFKC", name).casefold().replace("’", "'")
     return " ".join(text.split()).replace(" – ", " - ").replace(" — ", " - ")
+
+
+def is_grammy_song_of_the_year(market: Any) -> bool:
+    source = getattr(market, "source", None)
+    external_id = getattr(market, "external_id", None)
+    return (
+        (source == "polymarket" and GRAMMY_NOMINEE_FIELDS.get(external_id) == _GRAMMY_SONG_OF_THE_YEAR)
+        or (source == "kalshi" and external_id == _GRAMMY_SONG_OF_THE_YEAR)
+    )
+
+
+def is_grammy_song_contender(name: str | None, source: str) -> bool:
+    if not name:
+        return False
+    key = _grammy_name_key(name)
+    if source == "polymarket":
+        title, _, artist = key.rpartition(" - ")
+        if artist and title in _GRAMMY_SONG_NOMINEES:
+            return True
+    return key in _GRAMMY_SONG_NOMINEES or (source == "kalshi" and is_grammy_tie(name))
 
 
 def append_grammy_out_rows(
@@ -179,6 +210,10 @@ async def grammy_nominee_fields(
             ):
                 continue
             nominees.add(_grammy_name_key(name))
+        if market.external_id == _GRAMMY_SONG_OF_THE_YEAR:
+            if nominees == _GRAMMY_SONG_NOMINEES:
+                found[market.external_id] = market
+            continue
         if len(nominees) == 8 or (market.status == "resolved" and len(nominees) > 8):
             found[market.external_id] = market
     return {market_id: found[ticker] for market_id, ticker in tickers.items() if ticker in found}

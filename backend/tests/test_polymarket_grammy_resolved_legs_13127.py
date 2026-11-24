@@ -145,9 +145,10 @@ def test_detail_puts_the_graded_grammy_loss_after_contenders(
             outcome(1, "the cure", 0.2405),
             outcome(2, "I Just Might", 0.01, "api_settlement"),
             outcome(3, "Man I Need", 0.1165),
-            outcome(4, "A live long shot", 0.004),
+            outcome(4, "Risk It All", 0.004),
             outcome(5, "Tie", 0.2),
-            outcome(6, "Unknown result", 0.0, "ungradeable_result"),
+            outcome(6, "Berghain", 0.0, "ungradeable_result"),
+            outcome(7, "The Fate of Ophelia - Taylor Swift", 0.05),
         ],
     )
     response = futures._format_market_detail(market, normalize_numbers=False)
@@ -157,6 +158,10 @@ def test_detail_puts_the_graded_grammy_loss_after_contenders(
     assert rows[4]["probability"] == 0.004
     assert not rows[4].get("is_out")
     assert not rows[6].get("is_out")
+    if external_id in ("805158", "KXGRAMMY-SOTY69"):
+        assert 7 not in rows
+    else:
+        assert rows[7]["probability"] == 0.05
     if grammy and source == "kalshi":
         assert response["outcomes"][-2]["id"] == 5
         assert rows[5]["name"] == "Tie (co-winners)"

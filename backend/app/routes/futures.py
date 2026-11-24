@@ -29,6 +29,8 @@ from app.utils.event_awards import (
     grammy_pre_nomination_board,
     is_grammy_general_field_market,
     is_grammy_graded_loss,
+    is_grammy_song_contender,
+    is_grammy_song_of_the_year,
     is_grammy_tie,
 )
 from app.utils.observed_span_steps import add_history_steps, add_timeline_steps
@@ -8976,6 +8978,11 @@ async def get_futures_history(
     drawable_outcomes = drop_out_division_legs(
         charted_outcomes, (await out_legs_by_market([market])).get(market.id)
     )
+    if market.status == "open" and is_grammy_song_of_the_year(market):
+        drawable_outcomes = [
+            outcome for outcome in drawable_outcomes
+            if is_grammy_song_contender(outcome.name, market.source)
+        ]
 
     # Get outcome IDs to chart
     if outcome_id:
@@ -10779,8 +10786,15 @@ def _format_market_detail(
                 ):
                     row[field] = None
                 eliminated.append(row)
-        if eliminated:
-            outcomes = [row for row in outcomes if not row.get("is_out")]
+        song_of_the_year = is_grammy_song_of_the_year(market)
+        # A partial intake can leave the August board at the old address.
+        # Only confirmed Song nominees belong in its live field.
+        outcomes = [
+            row for row in outcomes
+            if not row.get("is_out") and (
+                not song_of_the_year or is_grammy_song_contender(row["name"], market.source)
+            )
+        ]
 
     prices_withheld = 0
     if withheld:
