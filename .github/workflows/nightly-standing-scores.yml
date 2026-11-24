@@ -70,9 +70,11 @@ jobs:
           retention-days: 90
 
       - name: Persist dated results to standing-scores-data branch
+        id: persist
         if: always() && hashFiles('standing_scores_out/latest.json') != ''
         env:
           RUN_DATE: ${{ steps.audit.outputs.run_date }}
+          CURRENT_STATUS: ${{ steps.audit.outputs.overall_status }}
         run: |
           DATA_DIR="$(mktemp -d)"
           git config --global user.name "github-actions[bot]"
@@ -87,6 +89,16 @@ jobs:
             git -C "${DATA_DIR}" remote add origin \
               "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
           fi
+          PREV_STATUS=""
+          if [ -f "${DATA_DIR}/standing-scores/latest.json" ]; then
+            PREV_STATUS="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("overall_status", ""))' "${DATA_DIR}/standing-scores/latest.json")"
+          fi
+          CONSECUTIVE_INCOMPLETE="false"
+          if [ "${CURRENT_STATUS}" = "INCOMPLETE" ] && [ "${PREV_STATUS}" = "INCOMPLETE" ]; then
+            CONSECUTIVE_INCOMPLETE="true"
+          fi
+          echo "previous_status=${PREV_STATUS}" >> "$GITHUB_OUTPUT"
+          echo "consecutive_incomplete=${CONSECUTIVE_INCOMPLETE}" >> "$GITHUB_OUTPUT"
           mkdir -p "${DATA_DIR}/standing-scores"
           cp "standing_scores_out/${RUN_DATE}.json" "${DATA_DIR}/standing-scores/${RUN_DATE}.json"
           cp "standing_scores_out/${RUN_DATE}.md" "${DATA_DIR}/standing-scores/${RUN_DATE}.md"
@@ -97,13 +109,13 @@ jobs:
             git -C "${DATA_DIR}" push origin standing-scores-data
           fi
 
-      - name: Open or update single findings issue (FAIL only)
-        if: steps.audit.outputs.overall_status == 'FAIL' && github.event_name == 'schedule'
+      - name: Open or update single findings issue (FAIL or two consecutive INCOMPLETE runs)
+        if: github.event_name == 'schedule' && (steps.audit.outputs.overall_status == 'FAIL' || steps.persist.outputs.consecutive_incomplete == 'true')
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RUN_DATE: ${{ steps.audit.outputs.run_date }}
         run: |
-          ISSUE_TITLE="Nightly standing scores: open list/page or stale-odds findings"
+          ISSUE_TITLE="Nightly check: list and page disagree, or sportsbook prices older than 72 hours"
           EXISTING_NUM="$(gh issue list -R "${{ github.repository }}" --state open --search "\"${ISSUE_TITLE}\" in:title" --json number,title --jq '.[] | select(.title == "'"${ISSUE_TITLE}"'") | .number' | head -n1)"
           if [ -n "${EXISTING_NUM}" ]; then
             gh issue comment "${EXISTING_NUM}" -R "${{ github.repository }}" --body-file "standing_scores_out/${RUN_DATE}.md"

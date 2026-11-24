@@ -447,21 +447,7 @@ def run_standing_scores(
                 or health_body.get("version")
             ) if isinstance(health_body, dict) else None
 
-        # 2. Live + upcoming window (/api/events?days=3&limit=500) for Item 4 parity
-        # Unfiltered /api/events can take >20s when cold, so give it 45s + 1 retry.
-        st, ev_body, err = paced.get_json(
-            "/api/events",
-            params={"days": 3, "limit": 500},
-            timeout=45.0,
-            retries=1,
-        )
-        if err or not isinstance(ev_body, dict):
-            http_errors.append({"path": "/api/events", "status": st, "error": err or "non-dict payload"})
-            all_events: list[dict[str, Any]] = []
-        else:
-            all_events = [e for e in (ev_body.get("events") or ()) if isinstance(e, dict)]
-
-        # 3. Item 7: Standing >72h sportsbook census (ALL scheduled games, including untwinned)
+        # 2. Item 7: Standing >72h sportsbook census (ALL scheduled games, including untwinned)
         scheduled_events: list[dict[str, Any]] = []
         seen_sched_ids: set[int] = set()
         for page_idx in range(4):
@@ -487,17 +473,42 @@ def run_standing_scores(
                 scheduled_events.append(row)
             if len(batch) < 500:
                 break
-        if not scheduled_events and all_events:
-            scheduled_events = all_events
 
         census = compute_stale_sportsbook_census(scheduled_events, now=clock_now, stale_hours=stale_hours)
 
+        # 3. Live games (/api/events?status=live&limit=50); avoid unfiltered /api/events?days=3
+        st_l, live_body, err_l = paced.get_json(
+            "/api/events",
+            params={"status": "live", "limit": 50},
+            timeout=30.0,
+            retries=1,
+        )
+        if err_l or not isinstance(live_body, dict):
+            http_errors.append({"path": "/api/events?status=live", "status": st_l, "error": err_l or "non-dict payload"})
+            live_events: list[dict[str, Any]] = []
+        else:
+            live_events = [e for e in (live_body.get("events") or ()) if isinstance(e, dict)]
+
+        window_end = clock_now + timedelta(days=3)
+        scheduled_3d: list[dict[str, Any]] = []
+        for ev in scheduled_events:
+            ct = _parse_iso_utc(ev.get("commence_time"))
+            if ct is None or ct <= window_end:
+                scheduled_3d.append(ev)
+
         # 4. Select up to max_games live / <=48h scheduled games across all represented sports
         combined_by_id: dict[int, dict[str, Any]] = {}
-        for ev in [*all_events, *scheduled_events]:
+        list_surface_by_id: dict[int, str] = {}
+        for ev in live_events:
             eid = ev.get("id")
             if isinstance(eid, int) and eid not in combined_by_id:
                 combined_by_id[eid] = ev
+                list_surface_by_id[eid] = "GET /api/events?status=live"
+        for ev in scheduled_3d:
+            eid = ev.get("id")
+            if isinstance(eid, int) and eid not in combined_by_id:
+                combined_by_id[eid] = ev
+                list_surface_by_id[eid] = "GET /api/events?status=scheduled"
         selected_games = select_audit_games(list(combined_by_id.values()), now=clock_now, max_games=max_games)
         selected_by_id = {int(g["id"]): g for g in selected_games if isinstance(g.get("id"), int)}
         sports_covered = sorted({str(g.get("sport") or "") for g in selected_games if g.get("sport")})
@@ -506,7 +517,7 @@ def run_standing_scores(
         for g in selected_games:
             gid = g.get("id")
             if isinstance(gid, int):
-                surface_cards[(gid, "GET /api/events")] = g
+                surface_cards[(gid, list_surface_by_id.get(gid, "GET /api/events?status=scheduled"))] = g
 
         # 5. Sports feed (/api/feed?mode=sports&limit=200)
         st, feed_body, err = paced.get_json("/api/feed", params={"mode": "sports", "limit": 200})
@@ -566,8 +577,19 @@ def run_standing_scores(
             surface: str,
             sport_key: str,
         ) -> dict[str, Any] | None:
-            if surface == "GET /api/events":
-                params = {"days": 3, "limit": 200}
+            if surface == "GET /api/events?status=live":
+                params: dict[str, Any] = {"status": "live", "limit": 50}
+                if sport_key:
+                    params["sport"] = sport_key
+                _, b, e = paced.get_json("/api/events", params=params)
+                if e or not isinstance(b, dict):
+                    return None
+                for row in b.get("events") or ():
+                    if isinstance(row, dict) and row.get("id") == eid:
+                        return row
+                return None
+            if surface == "GET /api/events?status=scheduled":
+                params = {"status": "scheduled", "days": 3, "past_days": 0, "limit": 200}
                 if sport_key:
                     params["sport"] = sport_key
                 _, b, e = paced.get_json("/api/events", params=params)
@@ -613,6 +635,7 @@ def run_standing_scores(
         # 8. Game detail reads (/api/events/{id}) + comparisons
         disagreements: list[dict[str, Any]] = []
         live_tick_drifts: list[dict[str, Any]] = []
+        unconfirmed_disagreements: list[dict[str, Any]] = []
         surface_comparisons = 0
         games_verified = 0
         for eid in [int(g["id"]) for g in selected_games if isinstance(g.get("id"), int)]:
@@ -638,34 +661,57 @@ def run_standing_scores(
                 if prob_only:
                     # Back-to-back re-read on ALL games (scheduled and live) so
                     # ordinary line movement between list read and page read is not
-                    # filed as a disagreement.
+                    # filed as a disagreement. If either re-read fails, record it
+                    # as unconfirmed (-> INCOMPLETE) rather than a confirmed diff.
                     re_card = _refetch_surface_card(eid, surface, detail_sport or str(card.get("sport") or ""))
-                    _, re_detail, re_err = paced.get_json(path)
-                    if (
-                        re_card is not None
-                        and not re_err
-                        and isinstance(re_detail, dict)
-                    ):
-                        re_diffs = compare_card_against_detail(
-                            surface=surface, card=re_card, detail=re_detail
+                    if re_card is None:
+                        unconfirmed_disagreements.append(
+                            {
+                                "event_id": eid,
+                                "sport_key": detail_sport,
+                                "matchup": _matchup_label(detail),
+                                "surface": surface,
+                                "is_live": is_live_detail,
+                                "reason": "list_reread_failed",
+                                "initial_diffs": card_diffs,
+                            }
                         )
-                        if not re_diffs:
-                            live_tick_drifts.append(
-                                {
-                                    "event_id": eid,
-                                    "sport_key": detail_sport,
-                                    "matchup": _matchup_label(detail),
-                                    "surface": surface,
-                                    "is_live": is_live_detail,
-                                    "initial_diffs": card_diffs,
-                                }
-                            )
-                            continue
-                        card_diffs = re_diffs
+                        continue
+                    _, re_detail, re_err = paced.get_json(path)
+                    if re_err or not isinstance(re_detail, dict):
+                        unconfirmed_disagreements.append(
+                            {
+                                "event_id": eid,
+                                "sport_key": detail_sport,
+                                "matchup": _matchup_label(detail),
+                                "surface": surface,
+                                "is_live": is_live_detail,
+                                "reason": f"detail_reread_failed:{re_err or 'non-dict payload'}",
+                                "initial_diffs": card_diffs,
+                            }
+                        )
+                        continue
+                    re_diffs = compare_card_against_detail(
+                        surface=surface, card=re_card, detail=re_detail
+                    )
+                    if not re_diffs:
+                        live_tick_drifts.append(
+                            {
+                                "event_id": eid,
+                                "sport_key": detail_sport,
+                                "matchup": _matchup_label(detail),
+                                "surface": surface,
+                                "is_live": is_live_detail,
+                                "initial_diffs": card_diffs,
+                            }
+                        )
+                        continue
+                    card_diffs = re_diffs
                 disagreements.extend(card_diffs)
 
     has_real_findings = bool(disagreements) or census["stale_over_threshold_count"] > 0
-    if has_real_findings or (games_verified == 0 and not http_errors):
+    incomplete_count = len(http_errors) + len(unconfirmed_disagreements)
+    if has_real_findings or (games_verified == 0 and incomplete_count == 0):
         status = "FAIL"
         parts: list[str] = []
         if disagreements:
@@ -675,16 +721,23 @@ def run_standing_scores(
                 f"{census['stale_over_threshold_count']} scheduled game(s) over "
                 f"{census['stale_threshold_hours']:.0f}h stale"
             )
-        if games_verified == 0 and not http_errors:
+        if games_verified == 0 and incomplete_count == 0:
             parts.append("0 games verified")
         if http_errors:
             parts.append(f"{len(http_errors)} read(s) failed")
+        if unconfirmed_disagreements:
+            parts.append(f"{len(unconfirmed_disagreements)} re-read(s) unconfirmed")
         status_summary = "; ".join(parts) + f" across {games_verified} game(s) read."
-    elif http_errors:
+    elif incomplete_count > 0:
         status = "INCOMPLETE"
+        inc_parts: list[str] = []
+        if http_errors:
+            inc_parts.append(f"{len(http_errors)} read(s) failed")
+        if unconfirmed_disagreements:
+            inc_parts.append(f"{len(unconfirmed_disagreements)} re-read(s) unconfirmed")
         status_summary = (
-            f"{len(http_errors)} read(s) failed; no disagreement found in the "
-            f"{games_verified} game(s) read."
+            "; ".join(inc_parts)
+            + f"; no disagreement found in the {games_verified} game(s) read."
         )
     else:
         status = "PASS"
@@ -712,6 +765,8 @@ def run_standing_scores(
             "disagreements": disagreements,
             "live_tick_drifts_count": len(live_tick_drifts),
             "live_tick_drifts": live_tick_drifts,
+            "unconfirmed_disagreements_count": len(unconfirmed_disagreements),
+            "unconfirmed_disagreements": unconfirmed_disagreements,
         },
         "stale_sportsbook_census": census,
         "http_errors_count": len(http_errors),
@@ -737,6 +792,7 @@ def render_markdown_report(result: dict[str, Any]) -> str:
         f"- **Surface Comparisons:** `{lvp['surface_comparisons']}`",
         f"- **List vs Page Disagreements:** `{lvp['disagreements_count']}`",
         f"- **Live Tick Drifts (re-verified equal):** `{lvp.get('live_tick_drifts_count', 0)}`",
+        f"- **Unconfirmed Initial Diffs (re-read failed):** `{lvp.get('unconfirmed_disagreements_count', 0)}`",
         (
             f"- **Scheduled > {census['stale_threshold_hours']:.0f}h Sportsbook Census:** "
             f"`{census['stale_over_threshold_count']} / {census['scheduled_total']}` scheduled "
@@ -759,6 +815,21 @@ def render_markdown_report(result: dict[str, Any]) -> str:
             lines.append(
                 f"| `{d['event_id']}` | `{d['sport_key']}` | {d['matchup']} | `{d['surface']}` | "
                 f"`{d['field']}` | `{d['surface_value']}` | `{d['detail_value']}` |"
+            )
+        lines.append("")
+
+    if lvp.get("unconfirmed_disagreements"):
+        lines.extend(
+            [
+                "## Unconfirmed Initial Diffs (Re-Read Failed)",
+                "",
+                "| Event | Sport | Matchup | Surface | Reason |",
+                "|---|---|---|---|---|",
+            ]
+        )
+        for u in lvp["unconfirmed_disagreements"][:50]:
+            lines.append(
+                f"| `{u['event_id']}` | `{u['sport_key']}` | {u['matchup']} | `{u['surface']}` | `{u['reason']}` |"
             )
         lines.append("")
 

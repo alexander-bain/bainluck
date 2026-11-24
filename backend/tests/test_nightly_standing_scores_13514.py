@@ -231,13 +231,15 @@ def test_workflow_contract_valid_and_read_only():
     assert "standing-scores-data" in raw
     assert "[skip ci]" in raw
     assert "overall_status == 'FAIL'" in raw
-    assert "Nightly standing scores: open list/page or stale-odds findings" in raw
+    assert "steps.persist.outputs.consecutive_incomplete == 'true'" in raw
+    assert "Nightly check: list and page disagree, or sportsbook prices older than 72 hours" in raw
+    assert "github.event_name == 'schedule'" in raw
 
 
 def test_live_game_price_tick_reverified_equal_is_not_flagged_as_disagreement():
     ev_76 = _event_payload(401, sport="basketball_other", status="live", hours_from_now=-1.0, hero=0.76, books=0)
     ev_74 = _event_payload(401, sport="basketball_other", status="live", hours_from_now=-1.0, hero=0.74, books=0)
-    calls: dict[str, int] = {"events": 0}
+    calls: dict[str, int] = {"live": 0}
 
     def _handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -249,10 +251,12 @@ def test_live_game_price_tick_reverified_equal_is_not_flagged_as_disagreement():
                 if isinstance(request.url.query, bytes)
                 else str(request.url.query)
             )
-            if (qs.get("status") or [None])[0] == "scheduled":
+            req_status = (qs.get("status") or [None])[0]
+            assert req_status in {"live", "scheduled"}
+            if req_status == "scheduled":
                 return httpx.Response(200, json={"events": []})
-            calls["events"] += 1
-            return httpx.Response(200, json={"events": [ev_76 if calls["events"] == 1 else ev_74]})
+            calls["live"] += 1
+            return httpx.Response(200, json={"events": [ev_76 if calls["live"] == 1 else ev_74]})
         if path == "/api/feed":
             return httpx.Response(200, json={"items": []})
         if path.startswith("/api/leagues/"):
@@ -300,7 +304,7 @@ def test_live_game_persistent_mismatch_still_fails():
 def test_scheduled_game_movement_reverified_equal_is_not_flagged():
     ev_64 = _event_payload(501, sport="basketball_nba", status="scheduled", hours_from_now=4.0, hero=0.64, books=8)
     ev_63 = _event_payload(501, sport="basketball_nba", status="scheduled", hours_from_now=4.0, hero=0.63, books=8)
-    calls: dict[str, int] = {"events": 0}
+    calls: dict[str, int] = {"scheduled": 0}
 
     def _handler(request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -312,10 +316,12 @@ def test_scheduled_game_movement_reverified_equal_is_not_flagged():
                 if isinstance(request.url.query, bytes)
                 else str(request.url.query)
             )
-            if (qs.get("status") or [None])[0] == "scheduled":
-                return httpx.Response(200, json={"events": [ev_64 if calls["events"] <= 1 else ev_63]})
-            calls["events"] += 1
-            return httpx.Response(200, json={"events": [ev_64 if calls["events"] == 1 else ev_63]})
+            req_status = (qs.get("status") or [None])[0]
+            assert req_status in {"live", "scheduled"}
+            if req_status == "live":
+                return httpx.Response(200, json={"events": []})
+            calls["scheduled"] += 1
+            return httpx.Response(200, json={"events": [ev_64 if calls["scheduled"] == 1 else ev_63]})
         if path == "/api/feed":
             return httpx.Response(200, json={"items": []})
         if path.startswith("/api/leagues/"):
@@ -364,10 +370,10 @@ def test_read_errors_without_disagreement_are_incomplete_not_fail(tmp_path: Path
     good1 = _event_payload(601, sport="basketball_nba", home="Celtics", away="Heat", hero=0.62, books=8)
     good2 = _event_payload(602, sport="basketball_nba", home="Knicks", away="Nets", hero=0.55, books=8)
     bad = _event_payload(603, sport="basketball_nba", home="Lakers", away="Suns", hero=0.58, books=8)
-    events_calls = 0
+    sched_calls = 0
 
     def _handler(request: httpx.Request) -> httpx.Response:
-        nonlocal events_calls
+        nonlocal sched_calls
         path = request.url.path
         if path == "/api/health":
             return httpx.Response(200, json={"status": "ok", "commit": "e1364d7d"})
@@ -377,10 +383,12 @@ def test_read_errors_without_disagreement_are_incomplete_not_fail(tmp_path: Path
                 if isinstance(request.url.query, bytes)
                 else str(request.url.query)
             )
-            if (qs.get("status") or [None])[0] == "scheduled":
-                return httpx.Response(200, json={"events": [good1, good2, bad]})
-            events_calls += 1
-            if events_calls == 1:
+            req_status = (qs.get("status") or [None])[0]
+            assert req_status in {"live", "scheduled"}
+            if req_status == "live":
+                return httpx.Response(200, json={"events": []})
+            sched_calls += 1
+            if sched_calls == 1:
                 raise httpx.ReadTimeout("timed out once")
             return httpx.Response(200, json={"events": [good1, good2, bad]})
         if path == "/api/feed":
@@ -405,7 +413,7 @@ def test_read_errors_without_disagreement_are_incomplete_not_fail(tmp_path: Path
         now_fn=lambda: NOW,
         sleep_fn=lambda _: None,
     )
-    assert events_calls == 2  # initial /api/events timeout retried once and recovered
+    assert sched_calls == 2  # initial scheduled timeout retried once and recovered
     assert result["overall_status"] == "INCOMPLETE"
     assert result["list_vs_page"]["games_verified"] == 2
     assert result["http_errors_count"] == 2  # league + 603; transient /api/events timeout recovered
@@ -417,6 +425,56 @@ def test_read_errors_without_disagreement_are_incomplete_not_fail(tmp_path: Path
     assert rc == 2
 
 
+def test_failed_reread_is_unconfirmed_incomplete_never_disagreement():
+    ev_64 = _event_payload(702, sport="basketball_nba", status="scheduled", hours_from_now=4.0, hero=0.64, books=8)
+    ev_63 = _event_payload(702, sport="basketball_nba", status="scheduled", hours_from_now=4.0, hero=0.63, books=8)
+    sched_calls = 0
+    seen_queries: list[str] = []
+
+    def _handler(request: httpx.Request) -> httpx.Response:
+        nonlocal sched_calls
+        path = request.url.path
+        if path == "/api/health":
+            return httpx.Response(200, json={"status": "ok", "commit": "e1364d7d"})
+        if path == "/api/events":
+            q = request.url.query.decode() if isinstance(request.url.query, bytes) else str(request.url.query)
+            seen_queries.append(q)
+            qs = parse_qs(q)
+            req_status = (qs.get("status") or [None])[0]
+            assert req_status in {"live", "scheduled"}
+            if req_status == "live":
+                return httpx.Response(200, json={"events": []})
+            sched_calls += 1
+            if sched_calls == 1:
+                return httpx.Response(200, json={"events": [ev_64]})
+            return httpx.Response(503, json={"detail": "busy"})
+        if path == "/api/feed":
+            return httpx.Response(200, json={"items": []})
+        if path.startswith("/api/leagues/"):
+            return httpx.Response(200, json={"upcoming_games": []})
+        if path == "/api/events/search":
+            return httpx.Response(200, json={"results": []})
+        if path == "/api/events/702":
+            return httpx.Response(200, json=ev_63)
+        return httpx.Response(404)
+
+    result = run_standing_scores(
+        base_url="http://test",
+        pace_seconds=0.0,
+        run_date="2026-11-23",
+        transport=httpx.MockTransport(_handler),
+        now_fn=lambda: NOW,
+        sleep_fn=lambda _: None,
+    )
+    assert all("status=live" in q or "status=scheduled" in q for q in seen_queries)
+    assert result["overall_status"] == "INCOMPLETE"
+    assert result["list_vs_page"]["disagreements_count"] == 0
+    assert result["list_vs_page"]["unconfirmed_disagreements_count"] == 1
+    assert result["list_vs_page"]["unconfirmed_disagreements"][0]["reason"] == "list_reread_failed"
+    assert "1 re-read(s) unconfirmed" in result["status_summary"]
+    assert "Unconfirmed Initial Diffs (Re-Read Failed)" in render_markdown_report(result)
+
+
 def test_read_errors_with_real_disagreement_remain_fail(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     card = _event_payload(701, sport="basketball_nba", hero=0.64, books=8)
     detail = _event_payload(701, sport="basketball_nba", hero=0.69, books=10)
@@ -426,7 +484,14 @@ def test_read_errors_with_real_disagreement_remain_fail(tmp_path: Path, monkeypa
         if path == "/api/health":
             return httpx.Response(200, json={"status": "ok"})
         if path == "/api/events":
-            return httpx.Response(200, json={"events": [card]})
+            qs = parse_qs(
+                request.url.query.decode()
+                if isinstance(request.url.query, bytes)
+                else str(request.url.query)
+            )
+            req_status = (qs.get("status") or [None])[0]
+            assert req_status in {"live", "scheduled"}
+            return httpx.Response(200, json={"events": [card] if req_status == "scheduled" else []})
         if path == "/api/feed":
             return httpx.Response(503)
         if path.startswith("/api/leagues/"):
