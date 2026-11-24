@@ -42,6 +42,10 @@ from uvicorn.supervisors.multiprocess import Multiprocess, Process
 
 logger = logging.getLogger("uvicorn.error")
 
+_STARTUP_FAILURE = getattr(uvicorn, "STARTUP_FAILURE", 3)
+_MULTIPROCESS_TAKES_TARGET = "target" in inspect.signature(Multiprocess.__init__).parameters
+_PROCESS_TAKES_TARGET = "target" in inspect.signature(Process.__init__).parameters
+
 DEFAULT_WORKER_MAX_AGE_SECONDS = 1800.0
 DEFAULT_WORKER_MIN_STAGGER_SECONDS = 300.0
 DEFAULT_SHUTDOWN_JOIN_TIMEOUT_SECONDS = 25.0
@@ -83,7 +87,11 @@ class StaggeredClockMultiprocess(Multiprocess):
         shutdown_join_timeout_seconds: float | None = None,
         monotonic_fn: Callable[[], float] = time.monotonic,
     ) -> None:
-        super().__init__(config, target, sockets)
+        self.target = target
+        if _MULTIPROCESS_TAKES_TARGET:
+            super().__init__(config, target, sockets)  # type: ignore[call-arg]
+        else:
+            super().__init__(config, sockets)  # type: ignore[call-arg]
         self._monotonic = monotonic_fn
         self.max_age_seconds = (
             _env_nonneg_float("WEB_WORKER_MAX_AGE_SECONDS", DEFAULT_WORKER_MAX_AGE_SECONDS)
@@ -115,7 +123,10 @@ class StaggeredClockMultiprocess(Multiprocess):
         self._last_event_at: float | None = None
 
     def _spawn_process(self) -> Process:
-        process = Process(self.config, self.target, self.sockets)
+        if _PROCESS_TAKES_TARGET:
+            process = Process(self.config, self.target, self.sockets)  # type: ignore[call-arg]
+        else:
+            process = Process(self.config, self.sockets)  # type: ignore[call-arg]
         process.start()
         return process
 
@@ -213,6 +224,11 @@ class StaggeredClockMultiprocess(Multiprocess):
 
             process.kill()
             process.join()
+
+            if getattr(process, "exitcode", None) == _STARTUP_FAILURE:
+                logger.error("Child process [%s] failed to start, stopping the parent process.", process.pid)
+                self.should_exit.set()
+                return
 
             if self.should_exit.is_set():
                 return  # pragma: full coverage
@@ -354,7 +370,7 @@ def run_cli(argv: Sequence[str] | None = None) -> None:
             os.remove(config.uds)
 
     if not server.started and not config.should_reload and config.workers == 1:
-        sys.exit(uvicorn.STARTUP_FAILURE)
+        sys.exit(_STARTUP_FAILURE)
 
 
 if __name__ == "__main__":

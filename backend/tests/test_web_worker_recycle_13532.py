@@ -225,7 +225,7 @@ class TestStaggeredClockSupervisor13532:
         timeline: list[str] = []
         spawned: list[_FakeWorkerProcess] = []
 
-        def _fake_process(config, target, sockets):
+        def _fake_process(*_args, **_kwargs):
             idx = len(spawned)
             proc = _FakeWorkerProcess(
                 hung_on_terminate=(hung_first and idx == 0),
@@ -405,6 +405,43 @@ class TestStaggeredClockSupervisor13532:
             assert hung.process.join_timeouts == [25.0, 5.0]
             assert f"kill:{hung_pid}" in timeline
             assert timeline.index(f"kill:{hung_pid}") < timeline.index(f"start:{sup.processes[0].pid}")
+
+    def test_supports_uvicorn_054_two_arg_multiprocess_and_process(self) -> None:
+        import threading
+
+        cfg = _supervisor_config(workers=2)
+        seen_init: list[tuple[object, object]] = []
+        seen_proc: list[tuple[object, object]] = []
+
+        def _fake_mp_init(self, config, sockets) -> None:
+            seen_init.append((config, sockets))
+            self.config = config
+            self.sockets = sockets
+            self.processes_num = config.workers
+            self.processes = []
+            self.should_exit = threading.Event()
+            self.signal_queue = []
+
+        def _two_arg_proc(config, sockets):
+            seen_proc.append((config, sockets))
+            return _FakeWorkerProcess()
+
+        with (
+            patch.object(web_supervisor.Multiprocess, "__init__", _fake_mp_init),
+            patch.object(web_supervisor, "_MULTIPROCESS_TAKES_TARGET", False),
+            patch.object(web_supervisor, "_PROCESS_TAKES_TARGET", False),
+            patch.object(web_supervisor, "Process", side_effect=_two_arg_proc),
+        ):
+            sup = web_supervisor.StaggeredClockMultiprocess(
+                cfg,
+                target=lambda sockets=None: None,
+                sockets=[],
+                monotonic_fn=_FakeClock(500.0),
+            )
+            sup.init_processes()
+
+        assert len(seen_init) == 1
+        assert len(seen_proc) == 2
 
 
 class TestL1CacheCaps13532:
