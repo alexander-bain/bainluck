@@ -1353,14 +1353,24 @@ enum EventSportHeadlines12472 {
                 event: event,
                 marketSnapshot: marketSnap
             )
-            let pregameTexts = pregameShares.map {
-                soccerThreeWayChanceTexts(
-                    home: $0.home,
-                    draw: $0.draw,
-                    away: $0.away,
+            let pregameTexts: (home: String, draw: String, away: String)? = {
+                guard let shares = pregameShares else { return nil }
+                if let pre = event.prematchOdds,
+                   let servedHome = pre.homeRenderedPercent,
+                   let servedAway = pre.awayRenderedPercent {
+                    let servedDraw = 100 - servedHome - servedAway
+                    if servedHome > 0, servedAway > 0, servedDraw > 0,
+                       abs(Double(servedDraw) - shares.draw * 100.0) <= 1.0 {
+                        return (home: "\(servedHome)%", draw: "\(servedDraw)%", away: "\(servedAway)%")
+                    }
+                }
+                return soccerThreeWayChanceTexts(
+                    home: shares.home,
+                    draw: shares.draw,
+                    away: shares.away,
                     numberStreams: false
                 )
-            }
+            }()
 
             let resolvedOutcome = EventOutcome.resolve(
                 status: event.status,
@@ -1482,6 +1492,14 @@ enum EventSportHeadlines12472 {
                sport: event.sport
            ) {
             if pair.away != nil, let texts = nbaPregameTexts(strictPregame) {
+                awayPre = texts.away
+                homePre = texts.home
+            } else if !strictPregame.awayIsComplement,
+                      strictPregame.awayProbability + pair.home < 0.985,
+                      let texts = nbaPregameTexts(strictPregame) {
+                // #13292 — explicit venue-backed away price (sum < 98.5%, not a
+                // `1 - home` complement) is preserved in the 2-row fallback when
+                // `draw_probability` is absent so the away Pregame cell is not blank.
                 awayPre = texts.away
                 homePre = texts.home
             } else {
