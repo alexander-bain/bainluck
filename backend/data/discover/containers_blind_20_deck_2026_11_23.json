@@ -1,0 +1,201 @@
+{
+  "deck_id": "containers-blind-20-2026-11-23",
+  "created_at": "2026-11-23",
+  "ruling": "363: A",
+  "blind": true,
+  "seed": 2026112303,
+  "universe": "all_public_machinery_sets_origin_master_50a3685949",
+  "universe_count": 41,
+  "sealed_checksum_sha256": "d42a212676cf4fb60e30a2210f38c0a3f01bc82b9a4e475a268acca71d93977b",
+  "image_width_px": 780,
+  "css_width_px": 390,
+  "color_scheme": "light",
+  "atlas_images_sha": "f164f38c7ff15874b1c7d85c10465dd954302d33",
+  "grade_options": [
+    "Keep",
+    "Fix",
+    "Drop"
+  ],
+  "items": [
+    {
+      "item_id": "c01",
+      "card_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c01-card.png",
+      "page_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c01-page.png",
+      "card_width_px": 780,
+      "card_height_px": 1318,
+      "page_width_px": 780,
+      "page_height_px": 3872
+    },
+    {
+      "item_id": "c02",
+      "card_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c02-card.png",
+      "page_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c02-page.png",
+      "card_width_px": 780,
+      "card_height_px": 1318,
+      "page_width_px": 780,
+      "page_height_px": 4388
+    },
+    {
+      "item_id": "c03",
+      "card_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c03-card.png",
+      "page_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c03-page.png",
+      "card_width_px": 780,
+      "card_height_px": 890,
+      "page_width_px": 780,
+      "page_height_px": 4092
+    },
+    {
+      "item_id": "c04",
+      "card_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c04-card.png",
+      "page_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c04-page.png",
+      "card_width_px": 780,
+      "card_height_px": 1280,
+      "page_width_px": 780,
+      "page_height_px": 3836
+    },
+    {
+      "item_id": "c05",
+      "card_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c05-card.png",
+      "page_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c05-page.png",
+      "card_width_px": 780,
+      "card_height_px": 1354,
+      "page_width_px": 780,
+      "page_height_px": 3954
+    },
+    {
+      "item_id": "c06",
+      "card_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c06-card.png",
+      "page_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c06-page.png",
+      "card_width_px": 780,
+      "card_height_px": 1386,
+      "page_width_px": 780,
+      "page_height_px": 3910
+    },
+    {
+      "item_id": "c07",
+      "card_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c07-card.png",
+      "page_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c07-page.png",
+      "card_width_px": 780,
+      "card_height_px": 1354,
+      "page_width_px": 780,
+      "page_height_px": 3872
+    },
+    {
+      "item_id": "c08",
+      "card_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c08-card.png",
+      "page_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c08-page.png",
+      "card_width_px": 780,
+      "card_height_px": 1200,
+      "page_width_px": 780,
+      "page_height_px": 3836
+    },
+    {
+      "item_id": "c09",
+      "card_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c09-card.png",
+      "page_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c09-page.png",
+      "card_width_px": 780,
+      "card_height_px": 1354,
+      "page_width_px": 780,
+      "page_height_px": 3854
+    },
+    {
+      "item_id": "c10",
+      "card_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c10-card.png",
+      "page_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c10-page.png",
+      "card_width_px": 780,
+      "card_height_px": 1354,
+      "page_width_px": 780,
+      "page_height_px": 3954
+    },
+    {
+      "item_id": "c11",
+      "card_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c11-card.png",
+      "page_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c11-page.png",
+      "card_width_px": 780,
+      "card_height_px": 1310,
+      "page_width_px": 780,
+      "page_height_px": 3796
+    },
+    {
+      "item_id": "c12",
+      "card_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c12-card.png",
+      "page_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c12-page.png",
+      "card_width_px": 780,
+      "card_height_px": 1168,
+      "page_width_px": 780,
+      "page_height_px": 5674
+    },
+    {
+      "item_id": "c13",
+      "card_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c13-card.png",
+      "page_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c13-page.png",
+      "card_width_px": 780,
+      "card_height_px": 934,
+      "page_width_px": 780,
+      "page_height_px": 4694
+    },
+    {
+      "item_id": "c14",
+      "card_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c14-card.png",
+      "page_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c14-page.png",
+      "card_width_px": 780,
+      "card_height_px": 1236,
+      "page_width_px": 780,
+      "page_height_px": 3772
+    },
+    {
+      "item_id": "c15",
+      "card_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c15-card.png",
+      "page_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c15-page.png",
+      "card_width_px": 780,
+      "card_height_px": 1342,
+      "page_width_px": 780,
+      "page_height_px": 3912
+    },
+    {
+      "item_id": "c16",
+      "card_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c16-card.png",
+      "page_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c16-page.png",
+      "card_width_px": 780,
+      "card_height_px": 1278,
+      "page_width_px": 780,
+      "page_height_px": 3796
+    },
+    {
+      "item_id": "c17",
+      "card_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c17-card.png",
+      "page_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c17-page.png",
+      "card_width_px": 780,
+      "card_height_px": 1200,
+      "page_width_px": 780,
+      "page_height_px": 3772
+    },
+    {
+      "item_id": "c18",
+      "card_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c18-card.png",
+      "page_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c18-page.png",
+      "card_width_px": 780,
+      "card_height_px": 1386,
+      "page_width_px": 780,
+      "page_height_px": 3912
+    },
+    {
+      "item_id": "c19",
+      "card_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c19-card.png",
+      "page_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c19-page.png",
+      "card_width_px": 780,
+      "card_height_px": 766,
+      "page_width_px": 780,
+      "page_height_px": 7896
+    },
+    {
+      "item_id": "c20",
+      "card_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c20-card.png",
+      "page_image_url": "https://raw.githubusercontent.com/alexander-bain/bainluck/f164f38c7ff15874b1c7d85c10465dd954302d33/containers-deck-2026-11-23/c20-page.png",
+      "card_width_px": 780,
+      "card_height_px": 1200,
+      "page_width_px": 780,
+      "page_height_px": 3772
+    }
+  ]
+}
