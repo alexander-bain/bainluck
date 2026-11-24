@@ -36,6 +36,8 @@ extension MyStuffFeedProviding {
 final class MyStuffViewModel: ObservableObject {
     @Published private(set) var items: [FeedItem] = []
     @Published private(set) var teamFutures: TeamFuturesResponse?
+    @Published private(set) var teamFuturesFailed = false
+    @Published private(set) var teamFuturesLoading = false
     @Published private(set) var loading = true
     @Published private(set) var error: String?
 
@@ -232,6 +234,7 @@ final class MyStuffViewModel: ObservableObject {
         loadTask = nil
         optionalTask?.cancel()
         optionalTask = nil
+        teamFuturesLoading = false
         stopRefresh()
     }
 
@@ -248,6 +251,8 @@ final class MyStuffViewModel: ObservableObject {
         stopRefresh()
         items = []
         teamFutures = nil
+        teamFuturesFailed = false
+        teamFuturesLoading = false
         error = nil
         firstRenderGeneration = nil
         loading = true
@@ -259,6 +264,7 @@ final class MyStuffViewModel: ObservableObject {
         // Terminate any optional sibling still in flight from a prior load body.
         optionalTask?.cancel()
         optionalTask = nil
+        teamFuturesLoading = false
 
         loadGeneration &+= 1
         let generation = loadGeneration
@@ -373,6 +379,44 @@ final class MyStuffViewModel: ObservableObject {
         // hold the first team card, the skeleton, or the owned-load rail. The task
         // is tracked so a supersession or a view disappearance cancels it, and it
         // is abandoned at a wall-clock deadline in case it ignores cancellation.
+        startOptionalTeamFuturesFetch(
+            generation: generation,
+            principalAtDispatch: principalAtDispatch,
+            authReadyMs: authReadyMs,
+            loadStart: loadStart
+        )
+    }
+
+    /// Re-fetches only `/api/me/team-futures` after a failure or deadline timeout,
+    /// without clearing already-loaded team games or mimicking zero follows (#13552).
+    func retryTeamFutures() async {
+        guard !isStopped else { return }
+        loadGeneration &+= 1
+        let generation = loadGeneration
+        let loadStart = clock()
+        let principalAtDispatch = await client.currentMyStuffPrincipal()
+        guard generation == loadGeneration else { return }
+        let authReadyMs = elapsedMs(since: loadStart)
+
+        startOptionalTeamFuturesFetch(
+            generation: generation,
+            principalAtDispatch: principalAtDispatch,
+            authReadyMs: authReadyMs,
+            loadStart: loadStart
+        )
+        await optionalTask?.value
+    }
+
+    private func startOptionalTeamFuturesFetch(
+        generation: Int,
+        principalAtDispatch: String,
+        authReadyMs: Double,
+        loadStart: Date
+    ) {
+        optionalTask?.cancel()
+        optionalTask = nil
+        teamFuturesLoading = true
+
         let optionalStart = clock()
         let deadline = optionalDeadline
         // A merge channel + unstructured fetch, NOT a structured `withTaskGroup`: a
@@ -383,6 +427,7 @@ final class MyStuffViewModel: ObservableObject {
         // simply abandoned (a late `deliver` after `close()` is dropped), with the
         // generation + principal guard as the second backstop. `SportsSiblingMerge`
         // is a plain generic mailbox; it is shared rather than duplicated here.
+        let client = self.client
         let merge = SportsSiblingMerge<TeamFuturesResponse?>()
         let fetchTask = Task { [merge] in
             merge.deliver(try? await client.fetchMyTeamFuturesSection(limit: 100))
@@ -431,12 +476,15 @@ final class MyStuffViewModel: ObservableObject {
             currentGeneration: loadGeneration
         ) else { return }
 
+        teamFuturesLoading = false
         if let response {
             teamFutures = response
+            teamFuturesFailed = false
             emit(
                 .optionalMerge, authReadyMs: authReadyMs, netStart: optionalStart,
                 loadStart: loadStart, count: response.items.count, outcome: .networkSuccess)
         } else {
+            teamFuturesFailed = (teamFutures == nil)
             emit(
                 .optionalMerge, authReadyMs: authReadyMs, netStart: optionalStart,
                 loadStart: loadStart, count: teamFutures?.items.count ?? 0,

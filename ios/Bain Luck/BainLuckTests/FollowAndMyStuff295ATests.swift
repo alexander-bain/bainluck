@@ -253,21 +253,22 @@ final class FollowAndMyStuff295ATests: XCTestCase {
     // MARK: - 3. My Stuff Worth Landing On (Order, Points, Zero Model Text)
 
     func testVisitLedgerFormatsMovesInPointsAndStripsModelText() throws {
-        XCTAssertNil(MyStuffVisitLedger295A.formatPointMove(deltaProbability: 0.01, sinceLastVisit: true))
+        XCTAssertNil(MyStuffVisitLedger295A.formatPointMove(deltaProbability: 0.01, timeframe: .sinceLastVisit))
 
         let upSinceVisit = try XCTUnwrap(
-            MyStuffVisitLedger295A.formatPointMove(deltaProbability: 0.064, sinceLastVisit: true)
+            MyStuffVisitLedger295A.formatPointMove(deltaProbability: 0.064, timeframe: .sinceLastVisit)
         )
         XCTAssertEqual(upSinceVisit.points, 6)
         XCTAssertEqual(upSinceVisit.text, "Up 6 points since your last visit")
         XCTAssertFalse(upSinceVisit.text.contains("%"))
 
-        let downSinceUpdate = try XCTUnwrap(
-            MyStuffVisitLedger295A.formatPointMove(deltaProbability: -0.042, sinceLastVisit: false)
+        let downPregame = try XCTUnwrap(
+            MyStuffVisitLedger295A.formatPointMove(deltaProbability: -0.042, timeframe: .sincePregame)
         )
-        XCTAssertEqual(downSinceUpdate.points, 4)
-        XCTAssertEqual(downSinceUpdate.text, "Down 4 points since last update")
-        XCTAssertFalse(downSinceUpdate.text.contains("today"))
+        XCTAssertEqual(downPregame.points, 4)
+        XCTAssertEqual(downPregame.text, "Down 4 points since pregame")
+        XCTAssertFalse(downPregame.text.contains("today"))
+        XCTAssertFalse(downPregame.text.contains("since last update"))
 
         let up24h = try XCTUnwrap(
             MyStuffVisitLedger295A.formatPointMove(deltaProbability: 0.053, timeframe: .last24Hours)
@@ -300,6 +301,93 @@ final class FollowAndMyStuff295ATests: XCTestCase {
         XCTAssertNil(sanitized[0].headline)
         XCTAssertNil(sanitized[0].contextSummary)
         XCTAssertNil(sanitized[0].futures?.hookDescription)
+    }
+
+    func testUndatedServerMovementPrintsNoLineWhileDated24hAndVisitLedgerPrintRealWindow() async throws {
+        let emptyDiscoverDecoder = JSONDecoder()
+        emptyDiscoverDecoder.keyDecodingStrategy = .convertFromSnakeCase
+        let emptyDiscover = try emptyDiscoverDecoder.decode(
+            FeedResponse.self,
+            from: Data(#"{"items":[],"total":0,"limit":20,"offset":0,"has_more":false}"#.utf8)
+        )
+
+        // 1. Undated server deltas (`/api/me/team-futures` raw `probability_change_24h` without a dated window)
+        //    must NEVER print "since last update" or claim "in the last 24 hours" on a cold open.
+        let futuresDecoder = JSONDecoder()
+        futuresDecoder.keyDecodingStrategy = .convertFromSnakeCase
+        let undatedTeamFutures = try futuresDecoder.decode(
+            TeamFuturesResponse.self,
+            from: Data("""
+            {
+              "items": [
+                {
+                  "outcome_id": 8801,
+                  "outcome_name": "Boston Celtics",
+                  "market_id": 4401,
+                  "market_name": "2027 NBA Championship",
+                  "probability": 0.24,
+                  "probability_change_24h": 0.08,
+                  "matched_team": { "id": 2, "name": "Boston Celtics" }
+                }
+              ],
+              "team_ids": [2],
+              "total_count": 1
+            }
+            """.utf8)
+        )
+
+        let coldDefaults = makeIsolatedDefaults()
+        let coldVM = MyStuffLandingViewModel295A(
+            defaults: coldDefaults,
+            subjectHydrator: { _ in [] },
+            discoverFetcher: { emptyDiscover }
+        )
+        await coldVM.refresh(
+            followedSubjects: [],
+            savedPins: [],
+            pinContent: [:],
+            signedInItems: [],
+            signedInTeamFutures: undatedTeamFutures
+        )
+        XCTAssertTrue(coldVM.movedEntries.isEmpty, "Undated server delta must print no movement entry on cold visit")
+        XCTAssertEqual(coldVM.nextMarkets.count, 1)
+        XCTAssertNil(coldVM.nextMarkets.first?.movementNote)
+
+        // 2. Return visit (after ledger rotation + new reading) prints explicit "since your last visit"
+        MyStuffVisitLedger295A.rotateSessionIfNeeded(defaults: coldDefaults)
+        let movedTeamFutures = try futuresDecoder.decode(
+            TeamFuturesResponse.self,
+            from: Data("""
+            {
+              "items": [
+                {
+                  "outcome_id": 8801,
+                  "outcome_name": "Boston Celtics",
+                  "market_id": 4401,
+                  "market_name": "2027 NBA Championship",
+                  "probability": 0.30,
+                  "probability_change_24h": 0.06,
+                  "matched_team": { "id": 2, "name": "Boston Celtics" }
+                }
+              ],
+              "team_ids": [2],
+              "total_count": 1
+            }
+            """.utf8)
+        )
+        let warmVM = MyStuffLandingViewModel295A(
+            defaults: coldDefaults,
+            subjectHydrator: { _ in [] },
+            discoverFetcher: { emptyDiscover }
+        )
+        await warmVM.refresh(
+            followedSubjects: [],
+            savedPins: [],
+            pinContent: [:],
+            signedInItems: [],
+            signedInTeamFutures: movedTeamFutures
+        )
+        XCTAssertEqual(warmVM.movedEntries.map(\.movementSummary), ["Up 6 points since your last visit"])
     }
 
     func testMovedEventSummaryUsesLastVisitOrPinnedPrematchAndDropsOpeningOddsFallback() throws {
@@ -636,6 +724,7 @@ final class FollowAndMyStuff295ATests: XCTestCase {
             teamId: 2,
             name: "Boston Celtics",
             sportKey: "basketball_nba",
+            logoUrl: "https://a.espncdn.com/i/teamlogos/nba/500/bos.png",
             primaryColor: "#007A33"
         )
         _ = followAfter.toggle(celticsSubject)
@@ -644,6 +733,23 @@ final class FollowAndMyStuff295ATests: XCTestCase {
         let pinDefaults = makeIsolatedDefaults()
         let pinManager = PinManager(defaults: pinDefaults, allowLegacyGuestPins: false)
         _ = pinManager.togglePin(type: "event", id: 15400102)
+
+        // Confirm on a real build that all 4 landing crests load via `ImageCache.shared`
+        // (or fail loudly rather than shipping tinted blank circles) and draw synchronously on frame 1.
+        let crestURLStrings = [
+            "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/bos.png",
+            "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/cle.png",
+            "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/buf.png",
+            "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+            "https://a.espncdn.com/i/teamlogos/nba/500/bos.png"
+        ]
+        for urlString in crestURLStrings {
+            if let u = URL(string: urlString) {
+                let loaded = await ImageCache.shared.image(for: u)
+                XCTAssertNotNil(loaded, "Expected real ESPN crest to load for My Stuff landing: \(urlString)")
+                XCTAssertNotNil(ImageCache.shared.cachedImage(for: u), "Synchronous ImageCache lookup must hit on frame 1: \(urlString)")
+            }
+        }
 
         for scheme in [ColorScheme.light, ColorScheme.dark] {
             let landingImg = renderInWindow(
@@ -1002,8 +1108,22 @@ final class FollowAndMyStuff295ATests: XCTestCase {
           "away_score": 84,
           "home_score": 89,
           "espn": {"period": "Q3", "game_clock": "4:12"},
-          "away_team_data": {"team_id": 5, "slug": "cleveland-cavaliers", "primary_color": "#860038", "abbreviation": "CLE"},
-          "home_team_data": {"team_id": 2, "slug": "boston-celtics", "primary_color": "#007A33", "abbreviation": "BOS"},
+          "away_team_data": {
+            "team_id": 5,
+            "slug": "cleveland-cavaliers",
+            "primary_color": "#860038",
+            "abbreviation": "CLE",
+            "logo_small": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/cle.png",
+            "logo_large": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/cle.png"
+          },
+          "home_team_data": {
+            "team_id": 2,
+            "slug": "boston-celtics",
+            "primary_color": "#007A33",
+            "abbreviation": "BOS",
+            "logo_small": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/bos.png",
+            "logo_large": "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/bos.png"
+          },
           "prematch_odds": {"away_probability": 0.44, "home_probability": 0.56, "away_rendered_percent": 44, "home_rendered_percent": 56},
           "current_odds": {"away_probability": 0.312, "home_probability": 0.688, "projected_away_score": 111.0, "projected_home_score": 116.0}
         }
@@ -1018,8 +1138,22 @@ final class FollowAndMyStuff295ATests: XCTestCase {
           "home_team": "Detroit Lions",
           "commence_time": "2026-11-22T21:25:00Z",
           "status": "scheduled",
-          "away_team_data": {"team_id": 32, "slug": "buffalo-bills", "primary_color": "#00338D", "abbreviation": "BUF"},
-          "home_team_data": {"team_id": 38, "slug": "detroit-lions", "primary_color": "#0076B6", "abbreviation": "DET"},
+          "away_team_data": {
+            "team_id": 32,
+            "slug": "buffalo-bills",
+            "primary_color": "#00338D",
+            "abbreviation": "BUF",
+            "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/buf.png",
+            "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/buf.png"
+          },
+          "home_team_data": {
+            "team_id": 38,
+            "slug": "detroit-lions",
+            "primary_color": "#0076B6",
+            "abbreviation": "DET",
+            "logo_small": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+            "logo_large": "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png"
+          },
           "pregame_projection": {"away": 26, "home": 28},
           "current_odds": {"away_probability": 0.46, "home_probability": 0.54, "away_rendered_percent": 46, "home_rendered_percent": 54}
         }
@@ -1031,7 +1165,7 @@ final class FollowAndMyStuff295ATests: XCTestCase {
             marketTitle: "NBA Championship",
             outcomeLabel: "Boston Celtics",
             subjectName: "Boston Celtics",
-            logoUrl: nil,
+            logoUrl: "https://a.espncdn.com/i/teamlogos/nba/500/bos.png",
             primaryColor: "#007A33",
             probability: 0.24,
             changePoints: 5,

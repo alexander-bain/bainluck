@@ -2095,6 +2095,19 @@ def _build_team_futures_result_item(
     }
 
 
+class TeamFuturesScreenUnavailableError(HTTPException):
+    """Raised when the team-futures price screen fails and zero verified items survive."""
+
+    def __init__(
+        self,
+        detail: str = "Team futures price screen unavailable; no verified markets survived",
+    ) -> None:
+        super().__init__(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=detail,
+        )
+
+
 async def _query_team_futures(
     team_ids: list[int],
     db: AsyncSession,
@@ -3072,6 +3085,9 @@ async def _query_team_futures(
                 break
             depth += 1
 
+    if _screen_incomplete and not items:
+        raise TeamFuturesScreenUnavailableError()
+
     # Build teams list for share link
     teams_list = [
         {
@@ -3083,12 +3099,16 @@ async def _query_team_futures(
         for t in teams.values()
     ]
 
-    return {
+    result: dict[str, Any] = {
         "items": items,
         "teams": teams_list,
         "team_ids": list(teams.keys()),
         "total_count": len(items),
     }
+    if _screen_incomplete:
+        result["partial"] = True
+        result["omitted_count"] = _screen_unscreened_count
+    return result
 
 
 _team_futures_cache: dict[tuple, tuple[float, dict]] = {}
@@ -3149,7 +3169,7 @@ async def get_team_futures(
 
         route_meta: dict[str, Any] = {}
         data = await _query_team_futures(team_ids, db, limit=eff_limit, timings=route_meta)
-        if not route_meta.get("screen_incomplete"):
+        if not route_meta.get("screen_incomplete") and not data.get("partial"):
             _now = time.time()
             award_ts = route_meta.get("_award_cached_at")
             cache_ts = min(_now, float(award_ts)) if award_ts is not None else _now
@@ -3199,7 +3219,7 @@ async def get_shared_team_futures(
 
         route_meta: dict[str, Any] = {}
         data = await _query_team_futures(parsed_ids, db, limit=eff_limit, timings=route_meta)
-        if not route_meta.get("screen_incomplete"):
+        if not route_meta.get("screen_incomplete") and not data.get("partial"):
             _now = time.time()
             award_ts = route_meta.get("_award_cached_at")
             cache_ts = min(_now, float(award_ts)) if award_ts is not None else _now

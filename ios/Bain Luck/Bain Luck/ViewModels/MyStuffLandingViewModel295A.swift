@@ -82,14 +82,12 @@ enum MyStuffVisitLedger295A {
     enum Timeframe: Sendable, Equatable {
         case sinceLastVisit
         case sincePregame
-        case sinceLastUpdate
         case last24Hours
 
         var suffix: String {
             switch self {
             case .sinceLastVisit: return "since your last visit"
             case .sincePregame: return "since pregame"
-            case .sinceLastUpdate: return "since last update"
             case .last24Hours: return "in the last 24 hours"
             }
         }
@@ -105,10 +103,6 @@ enum MyStuffVisitLedger295A {
         let direction = pts > 0 ? "Up" : "Down"
         let noun = absPts == 1 ? "point" : "points"
         return (absPts, "\(direction) \(absPts) \(noun) \(timeframe.suffix)")
-    }
-
-    static func formatPointMove(deltaProbability: Double, sinceLastVisit: Bool) -> (points: Int, text: String)? {
-        formatPointMove(deltaProbability: deltaProbability, timeframe: sinceLastVisit ? .sinceLastVisit : .sinceLastUpdate)
     }
 }
 
@@ -143,6 +137,8 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         var discoverItems: [FeedItem] = []
         var loadFailed: Bool = false
         var hydratingRemainingCount: Int = 0
+        var teamFuturesFailed: Bool = false
+        var teamFuturesRetrying: Bool = false
     }
 
     struct HydratedSubjectPack: Sendable {
@@ -163,6 +159,8 @@ final class MyStuffLandingViewModel295A: ObservableObject {
     @Published private(set) var loading: Bool = false
     @Published private(set) var loadFailed: Bool = false
     @Published private(set) var hydratingRemainingCount: Int = 0
+    @Published private(set) var teamFuturesFailed: Bool = false
+    @Published private(set) var teamFuturesRetrying: Bool = false
 
     private let defaults: UserDefaults
     private let isPreloaded: Bool
@@ -196,6 +194,8 @@ final class MyStuffLandingViewModel295A: ObservableObject {
             self.loading = false
             self.loadFailed = preloaded.loadFailed
             self.hydratingRemainingCount = preloaded.hydratingRemainingCount
+            self.teamFuturesFailed = preloaded.teamFuturesFailed
+            self.teamFuturesRetrying = preloaded.teamFuturesRetrying
         } else {
             self.isPreloaded = false
         }
@@ -210,6 +210,8 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         self.discoverItems = Self.stripModelWrittenText(snapshot.discoverItems, limit: 3)
         self.loadFailed = snapshot.loadFailed
         self.hydratingRemainingCount = snapshot.hydratingRemainingCount
+        self.teamFuturesFailed = snapshot.teamFuturesFailed
+        self.teamFuturesRetrying = snapshot.teamFuturesRetrying
     }
 
     /// Computes the moved-game banner line from the exact `CompactGameCard12616.currentOddsForCard`
@@ -380,7 +382,7 @@ final class MyStuffLandingViewModel295A: ObservableObject {
                 if let prior,
                    let move = MyStuffVisitLedger295A.formatPointMove(
                        deltaProbability: rawMarket.probability - prior,
-                       sinceLastVisit: true
+                       timeframe: .sinceLastVisit
                    ) {
                     item = MyStuffMarketItem295A(
                         id: rawMarket.id,
@@ -417,10 +419,10 @@ final class MyStuffLandingViewModel295A: ObservableObject {
                         let prior = priorSnapshot["market:\(key)"]
                         let moveInfo: (points: Int, text: String)? = {
                             if let prior {
-                                return MyStuffVisitLedger295A.formatPointMove(deltaProbability: prob - prior, sinceLastVisit: true)
+                                return MyStuffVisitLedger295A.formatPointMove(deltaProbability: prob - prior, timeframe: .sinceLastVisit)
                             }
                             if let delta24 {
-                                return MyStuffVisitLedger295A.formatPointMove(deltaProbability: delta24, sinceLastVisit: false)
+                                return MyStuffVisitLedger295A.formatPointMove(deltaProbability: delta24, timeframe: .last24Hours)
                             }
                             return nil
                         }()
@@ -455,8 +457,8 @@ final class MyStuffLandingViewModel295A: ObservableObject {
                     let key = "\(f.id):\(top.0.lowercased())"
                     let prior = priorSnapshot["market:\(key)"]
                     let move = prior != nil
-                        ? MyStuffVisitLedger295A.formatPointMove(deltaProbability: prob - prior!, sinceLastVisit: true)
-                        : top.2.flatMap { MyStuffVisitLedger295A.formatPointMove(deltaProbability: $0, sinceLastVisit: false) }
+                        ? MyStuffVisitLedger295A.formatPointMove(deltaProbability: prob - prior!, timeframe: .sinceLastVisit)
+                        : top.2.flatMap { MyStuffVisitLedger295A.formatPointMove(deltaProbability: $0, timeframe: .last24Hours) }
                     appendMarket(
                         MyStuffMarketItem295A(
                             id: key,
@@ -481,10 +483,8 @@ final class MyStuffLandingViewModel295A: ObservableObject {
                     let key = "\(item.marketId):\(item.outcomeName.lowercased())"
                     let prior = priorSnapshot["market:\(key)"]
                     let move = prior != nil
-                        ? MyStuffVisitLedger295A.formatPointMove(deltaProbability: prob - prior!, sinceLastVisit: true)
-                        : item.probabilityChange24h.flatMap {
-                            MyStuffVisitLedger295A.formatPointMove(deltaProbability: $0, sinceLastVisit: false)
-                        }
+                        ? MyStuffVisitLedger295A.formatPointMove(deltaProbability: prob - prior!, timeframe: .sinceLastVisit)
+                        : nil
                     appendMarket(
                         MyStuffMarketItem295A(
                             id: key,
@@ -667,9 +667,19 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         savedPins: [SavedPin],
         pinContent: [SavedPin: SavedPinContent],
         signedInItems: [FeedItem],
-        signedInTeamFutures: TeamFuturesResponse?
+        signedInTeamFutures: TeamFuturesResponse?,
+        signedInTeamFeedFailed: Bool = false,
+        signedInTeamFuturesFailed: Bool = false,
+        signedInTeamFuturesLoading: Bool = false
     ) async {
         guard !isPreloaded else { return }
+
+        teamFuturesRetrying = signedInTeamFuturesLoading && signedInTeamFutures == nil
+        if signedInTeamFutures != nil {
+            teamFuturesFailed = false
+        } else if signedInTeamFuturesFailed {
+            teamFuturesFailed = true
+        }
 
         if !hasRotatedSession {
             MyStuffVisitLedger295A.rotateSessionIfNeeded(defaults: defaults)
@@ -809,14 +819,21 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         MyStuffVisitLedger295A.recordObservedReadings(finalAcc.newReadings, defaults: defaults)
         let finalPartition = Self.buildPartitionedSections(from: finalAcc, discoverFeed: discoverFeed)
         let newFollowedSectionsEmpty = !finalPartition.hasFollowedContent
+        let teamFuturesDidFail = signedInTeamFuturesFailed && signedInTeamFutures == nil
+        teamFuturesFailed = teamFuturesDidFail
+        teamFuturesRetrying = signedInTeamFuturesLoading && signedInTeamFutures == nil
 
-        if (anyHydrationFailed || discoverFailed) && newFollowedSectionsEmpty && finalPartition.discover.isEmpty {
+        if (anyHydrationFailed || discoverFailed || signedInTeamFeedFailed)
+            && newFollowedSectionsEmpty
+            && finalPartition.discover.isEmpty {
             loadFailed = true
             loading = false
             return
         }
 
-        if anyHydrationFailed && newFollowedSectionsEmpty && !subjectsToHydrate.isEmpty {
+        if (anyHydrationFailed || signedInTeamFeedFailed)
+            && newFollowedSectionsEmpty
+            && (!subjectsToHydrate.isEmpty || signedInTeamFeedFailed) {
             loadFailed = true
             if !hadExistingSections {
                 discoverItems = finalPartition.discover
@@ -941,9 +958,6 @@ final class MyStuffLandingViewModel295A: ObservableObject {
             }
             for entry in page.championshipPath.prefix(3) {
                 guard let prob = entry.probability, prob > 0, entry.state == nil else { continue }
-                let move = entry.movement.flatMap {
-                    MyStuffVisitLedger295A.formatPointMove(deltaProbability: $0, sinceLastVisit: false)
-                }
                 pack.markets.append(
                     MyStuffMarketItem295A(
                         id: "\(entry.marketId):\(page.team.slug)",
@@ -954,17 +968,14 @@ final class MyStuffLandingViewModel295A: ObservableObject {
                         logoUrl: page.team.logoSmall ?? page.team.logoLarge,
                         primaryColor: page.team.primaryColor,
                         probability: prob,
-                        changePoints: move?.points,
-                        movementNote: move?.text,
+                        changePoints: nil,
+                        movementNote: nil,
                         sourceMark: entry.sourceMark
                     )
                 )
             }
             for f in page.futures.prefix(4) {
                 guard let prob = f.probability, prob > 0 else { continue }
-                let move = f.probabilityChange24h.flatMap {
-                    MyStuffVisitLedger295A.formatPointMove(deltaProbability: $0, sinceLastVisit: false)
-                }
                 pack.markets.append(
                     MyStuffMarketItem295A(
                         id: "\(f.marketId):\(f.outcomeName.lowercased())",
@@ -975,8 +986,8 @@ final class MyStuffLandingViewModel295A: ObservableObject {
                         logoUrl: page.team.logoSmall ?? page.team.logoLarge,
                         primaryColor: page.team.primaryColor,
                         probability: prob,
-                        changePoints: move?.points,
-                        movementNote: move?.text,
+                        changePoints: nil,
+                        movementNote: nil,
                         sourceMark: f.sourceMark
                     )
                 )
@@ -999,7 +1010,7 @@ final class MyStuffLandingViewModel295A: ObservableObject {
                     for mover in grid.movers.prefix(3) {
                         guard let move = MyStuffVisitLedger295A.formatPointMove(
                             deltaProbability: mover.change24H,
-                            sinceLastVisit: false
+                            timeframe: .last24Hours
                         ) else { continue }
                         let matchingTeam = grid.teams.first { $0.name == mover.name }
                         let cellProb = matchingTeam?.cells[mover.column]?.mergedProbability
@@ -1047,7 +1058,7 @@ final class MyStuffLandingViewModel295A: ObservableObject {
                         case .question(let feed, _):
                             guard let top = feed.topOutcomes?.first, let prob = top.probability else { continue }
                             let move = top.movement.flatMap {
-                                MyStuffVisitLedger295A.formatPointMove(deltaProbability: $0, sinceLastVisit: false)
+                                MyStuffVisitLedger295A.formatPointMove(deltaProbability: $0, timeframe: .last24Hours)
                             }
                             pack.markets.append(
                                 MyStuffMarketItem295A(
@@ -1083,10 +1094,11 @@ final class MyStuffLandingViewModel295A: ObservableObject {
                     return pack
                 }
                 let prob = leader.probability
-                let timeframe: MyStuffVisitLedger295A.Timeframe = (leader.movementIsDated == true) ? .last24Hours : .sinceLastUpdate
-                let move = leader.movement24h.flatMap {
-                    MyStuffVisitLedger295A.formatPointMove(deltaProbability: $0, timeframe: timeframe)
-                }
+                let move: (points: Int, text: String)? = (leader.movementIsDated == true)
+                    ? leader.movement24h.flatMap {
+                        MyStuffVisitLedger295A.formatPointMove(deltaProbability: $0, timeframe: .last24Hours)
+                    }
+                    : nil
                 pack.markets.append(
                     MyStuffMarketItem295A(
                         id: "\(marketId):\(leader.name.lowercased())",
