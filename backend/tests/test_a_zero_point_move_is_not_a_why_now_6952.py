@@ -106,8 +106,8 @@ class TestARealMoveStillPrints:
     """The fix keys on what ROUNDS to zero, not on a new interest threshold."""
 
     def test_a_move_that_rounds_to_zero_is_suppressed(self):
-        """#13602: moves rounding to 0 whole points (e.g. 0.5 or 0.1) are suppressed."""
-        for sub_point in (-0.001, 0.005, -0.0049):
+        """#13602: moves rounding to 0 whole points (<0.5 pt) are suppressed."""
+        for sub_point in (-0.001, 0.004, -0.004, 0.0049, -0.0049, 0.0):
             copy = _binary(STARS, 0.415, sub_point)
             blob = " ".join(
                 str(getattr(copy, slot, "") or "")
@@ -117,13 +117,14 @@ class TestARealMoveStillPrints:
             assert "since Sep 18" not in blob, (sub_point, copy)
 
     def test_a_one_point_move_prints_singular(self):
-        copy = _binary(STARS, 0.415, 0.014)
-        blob = " ".join(
-            str(getattr(copy, slot, "") or "")
-            for slot in ("headline", "context_summary", "reason")
-        )
-        assert "Up 1 point since Sep 18" in blob
-        assert "1 points" not in blob
+        for one_pt in (0.005, 0.014):
+            copy = _binary(STARS, 0.415, one_pt)
+            blob = " ".join(
+                str(getattr(copy, slot, "") or "")
+                for slot in ("headline", "context_summary", "reason")
+            )
+            assert "Up 1 point since Sep 18" in blob, (one_pt, blob)
+            assert "1 points" not in blob
 
     def test_the_production_taiwan_card_prints_whole_points(self):
         # The strongest why-now shape on the same page, from #6482's specimen (#13602 whole points).
@@ -144,11 +145,11 @@ class TestARealMoveStillPrints:
 
 
 class TestThePredicateItself:
-    @pytest.mark.parametrize("value", [None, 0.0, -0.0, 0.0004, -0.0004, 0.001, -0.001, 0.005, -0.0049])
+    @pytest.mark.parametrize("value", [None, 0.0, -0.0, 0.0004, -0.0004, 0.001, -0.001, 0.004, -0.0049])
     def test_nothing_that_prints_as_zero_is_a_move(self, value):
         assert not _is_printable_move(value)
 
-    @pytest.mark.parametrize("value", [0.006, -0.01, 0.014, 0.077, -0.655, 1.0])
+    @pytest.mark.parametrize("value", [0.005, 0.006, -0.01, 0.014, 0.077, -0.655, 1.0])
     def test_anything_that_prints_a_number_is(self, value):
         assert _is_printable_move(value)
 
@@ -192,7 +193,7 @@ class TestTheMultiOutcomeGeneratorsToo:
         return {"reason": reason, "headline": headline, "context": context}
 
     def test_no_generator_prints_a_zero_move(self):
-        for zeroish in (0.0, 0.005, -0.004):
+        for zeroish in (0.0, 0.004, -0.004, -0.0049):
             for slot, text in self._all_three(zeroish).items():
                 assert "0 points" not in (text or ""), (zeroish, slot, text)
                 assert "0.5 points" not in (text or ""), (zeroish, slot, text)

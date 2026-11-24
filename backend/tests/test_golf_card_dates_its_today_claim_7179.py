@@ -57,6 +57,7 @@ line.
 """
 
 import asyncio
+import math
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -207,7 +208,7 @@ class TestADatedMoveStillSpeaks:
     def test_the_dated_magnitude_is_untouched(self, monkeypatch, movement):
         """This ship changes WHETHER a number may be said, and renders whole points (#13602)."""
         reason = _reason(monkeypatch, _golfer(movement, dated=True))
-        expected = int(round(abs(movement) * 100))
+        expected = int(math.floor(round(abs(movement) * 100, 6) + 0.5))
         assert f"{expected} point" in reason, reason
 
     def test_direction_survives(self, monkeypatch):

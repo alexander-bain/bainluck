@@ -6,6 +6,7 @@ Returns empty string when the card UI already tells the story — avoids
 repeating scores, odds, or team names visible on the card.
 """
 
+import math
 import re
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
@@ -602,8 +603,9 @@ def humanize_outcome_names_for_feed(
 
 
 def _point_change(value: float) -> int:
-    """Convert a probability delta to whole percentage points for display (#13602)."""
-    return int(round(abs(value) * 100))
+    """Convert a probability delta to whole percentage points, half-up (#13602)."""
+    scaled = round(abs(value) * 100, 6)  # 8.499999999999998 -> 8.5
+    return int(math.floor(scaled + 0.5))  # 8.5 -> 9, 4.49 -> 4, 0.49 -> 0
 
 
 def _is_printable_move(value: Optional[float]) -> bool:

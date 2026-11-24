@@ -42,6 +42,7 @@ trap for this exact line.
 """
 
 import asyncio
+import math
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -149,7 +150,7 @@ class TestOnlyTheUnitChanged:
     @pytest.mark.parametrize("movement", [0.1, 0.015, -0.225, 0.078])
     def test_the_magnitude_is_still_delta_times_one_hundred(self, monkeypatch, movement):
         reason = _reason(monkeypatch, movement)
-        expected = int(round(abs(movement) * 100))
+        expected = int(math.floor(round(abs(movement) * 100, 6) + 0.5))
         assert f"{expected} point" in reason, reason
 
 
@@ -170,7 +171,7 @@ class TestTheGolfCardUsesTheSharedFormatter:
 
     def test_the_formatter_is_the_one_the_futures_cards_use(self):
         """Pins the arithmetic the docstring promises, so a change there is seen."""
-        assert _points(0.225) == "22 points"  # #13602 whole points
+        assert _points(0.225) == "23 points"  # #13602 whole points (half-up)
         assert _points(0.1) == "10 points"
 
 

@@ -197,7 +197,7 @@ def test_a_reversed_sign_is_stated_the_way_the_day_actually_went():
 
     assert change == pytest.approx(0.405)
     assert _headline(change, "$745", spy) == (
-        "S&P 500 (SPY) closes above $745 on September 21 odds up 40 points"
+        "S&P 500 (SPY) closes above $745 on September 21 odds up 41 points"
     )
     assert "down" not in (_headline(change, "$745", spy) or "")
 
@@ -442,8 +442,8 @@ def test_refusing_the_today_claim_does_not_take_the_DATED_LIFETIME_one_with_it()
         now=NOW,
     )
 
-    assert copy.headline == "Down 78 points since Sep 15"
-    assert copy.context_summary == "Down 78 points since Sep 15 — now 5% chance"
+    assert copy.headline == "Down 79 points since Sep 15"
+    assert copy.context_summary == "Down 79 points since Sep 15 — now 5% chance"
     assert "today" not in copy.reason
 
 
