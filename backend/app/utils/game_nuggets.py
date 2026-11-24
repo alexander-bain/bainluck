@@ -609,7 +609,10 @@ def _plain_stakes_claim(s_name: str, raw_label: str, out_name: str, *, is_player
             return f"{target} {win_verb} {rest}"
         return label
     cleaned_label = re.sub(r"\bDivision Winner\b", "division", label, flags=re.I)
-    cleaned_label = re.sub(r"\bChampion\b", "title", cleaned_label, flags=re.I).strip()
+    cleaned_label = re.sub(r"\bChampion\b", "title", cleaned_label, flags=re.I)
+    cleaned_label = _MULTISPACE_RE.sub(" ", re.sub(r"\bWinner\b", "", cleaned_label, flags=re.I)).strip(" :-–—")
+    if not cleaned_label:
+        return target
     return f"{target} {win_verb} {cleaned_label}"
 
 
@@ -789,41 +792,74 @@ def _extract_candidates(
         )
         if p is None:
             continue
-        eligible_counts["players"] += 1
 
         player_field = row.get("player")
-        if isinstance(player_field, Mapping):
-            player_name = str(player_field.get("name") or "").strip()
-            player_key = str(player_field.get("key") or player_name).lower()
-        else:
-            player_name = str(row.get("outcome_name") or "").split(":")[0].strip()
-            player_key = player_name.lower()
-        if not player_name:
-            continue
-
         stat_field = row.get("stat")
-        stat_label = (
-            str(stat_field.get("label") or stat_field.get("key") or "props")
-            if isinstance(stat_field, Mapping)
-            else str(stat_field or "props")
-        )
-        stat_key = (
-            str(stat_field.get("key") or stat_label).lower()
-            if isinstance(stat_field, Mapping)
-            else stat_label.lower()
-        )
         line_field = row.get("line")
         line_label = (
             str(line_field.get("label") or "").strip()
             if isinstance(line_field, Mapping)
             else _format_num(row.get("threshold"))
         )
-        if "touchdown" in stat_key and not line_label:
-            claim = f"{player_name} scores a touchdown"
-        elif line_label:
-            claim = f"{player_name} {line_label} {stat_label.lower()}"
+        if isinstance(player_field, Mapping):
+            player_name = sanitize_nugget_text(str(player_field.get("name") or "")).strip()
+            player_key = str(player_field.get("key") or player_name).lower()
+            stat_label = (
+                str(stat_field.get("label") or stat_field.get("key") or "props")
+                if isinstance(stat_field, Mapping)
+                else str(stat_field or "props")
+            )
+            stat_key = (
+                str(stat_field.get("key") or stat_label).lower()
+                if isinstance(stat_field, Mapping)
+                else stat_label.lower()
+            )
+            if not player_name:
+                continue
+            if "touchdown" in stat_key and not line_label:
+                claim = f"{player_name} scores a touchdown"
+            elif line_label:
+                claim = f"{player_name} {line_label} {stat_label.lower()}"
+            else:
+                claim = f"{player_name} {stat_label.lower()}"
         else:
-            claim = f"{player_name} {stat_label.lower()}"
+            raw_out = sanitize_nugget_text(str(row.get("outcome_name") or "")).split(":")[0].strip()
+            mname_clean = _strip_matchup_prefix(str(row.get("market_name") or ""))
+            if raw_out and raw_out.lower() not in {"over", "under", "yes", "no"}:
+                player_name = raw_out
+                stat_label = (
+                    str(stat_field.get("label") or stat_field.get("key") or "")
+                    if isinstance(stat_field, Mapping)
+                    else str(stat_field or "")
+                ).strip()
+                stat_key = stat_label.lower() or "prop"
+                if not stat_label:
+                    claim = mname_clean if _looks_like_clean_claim(mname_clean) else ""
+                elif line_label:
+                    claim = f"{player_name} {line_label} {stat_label.lower()}"
+                else:
+                    claim = f"{player_name} {stat_label.lower()}"
+            elif mname_clean and _looks_like_clean_claim(mname_clean):
+                # Untyped prop fallback: use clean market title ("Jayden Daniels 50+ rushing yards"),
+                # never generic "Over 50 props".
+                name_words = re.match(r"^([A-Z][A-Za-z'.-]+(?:\s+[A-Z][A-Za-z'.-]+){1,2})\s+(.+)$", mname_clean)
+                if name_words:
+                    player_name = name_words.group(1).strip()
+                    rest = name_words.group(2).strip().lower()
+                    claim = f"{player_name} {rest}"
+                    stat_key = rest
+                else:
+                    excluded["unreadable_claim"] += 1
+                    continue
+            else:
+                excluded["unreadable_claim"] += 1
+                continue
+            if not claim or not _looks_like_clean_claim(claim):
+                excluded["unreadable_claim"] += 1
+                continue
+            player_key = player_name.lower()
+
+        eligible_counts["players"] += 1
 
         headshot = row.get("player_headshot")
         if not headshot:
@@ -1205,7 +1241,7 @@ def _extract_candidates(
             prob=p, change_points=chg, change_since=since, is_live=is_live, base_bonus=5.5
         )
         mid = row.get("_market_id")
-        dkey = f"oddities:{mid or claim.lower()}"
+        dkey = f"oddities:{claim.lower()}"
         cand = _candidate_dict(
             nid=f"oddities:{mid or len(best_oddities)}:{oname.lower()}",
             kind="oddities",
