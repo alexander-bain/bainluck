@@ -344,3 +344,60 @@ def test_55a_retry_is_written_only_when_retry_passes(monkeypatch, tmp_path, caps
     assert retries.read_text().splitlines() == [good]
     out = capsys.readouterr().out
     assert "::warning title=Retried once (55-A)::" in out
+
+
+def test_rig_bursts_file_one_rig_issue_per_job_per_day_without_quarantine(filed):
+    burst_tests = [f"tests/integration/test_rig_burst_{idx}_pg.py::test_case" for idx in range(13)]
+    # Five bursts in shared-tail-2 on 2026-11-06 -> 1 Rig issue; 1 burst in shared-tail on 2026-11-06 -> 1 Rig issue;
+    # 1 burst in shared-tail-2 on 2026-11-07 -> 1 distinct Rig issue; plus stale burst (>7d) ignored.
+    events = [
+        fs.Event(t, f"sha{r}", r, 1, "database-integration (shared-tail-2)", f"2026-11-06T0{r}:30:00Z", "retry")
+        for r in range(1, 6)
+        for t in burst_tests
+    ] + [
+        fs.Event(t, "shab1", 11, 1, "database-integration (shared-tail)", "2026-11-06T12:00:00Z", "retry")
+        for t in burst_tests[:4]
+    ] + [
+        fs.Event(t, "shac1", 12, 1, "database-integration (shared-tail-2)", "2026-11-07T02:00:00Z", "retry")
+        for t in burst_tests[:5]
+    ] + [
+        fs.Event(t, "shaold", 13, 1, "database-integration (shared-tail-2)", "2026-10-25T02:00:00Z", "retry")
+        for t in burst_tests[:5]
+    ]
+
+    per_test, bursts = fs.split_rig_bursts(events)
+    assert per_test == []
+    assert len(bursts) == 8
+
+    # Dry run writes nothing
+    dry_lines = fs.file_rig_bursts(bursts, NOW, dry=True)
+    assert filed == []
+    assert len(dry_lines) == 3
+    assert all("would file/update" in ln for ln in dry_lines)
+
+    # Real run files 1 issue per (job, UTC day) within WINDOW_DAYS = 3 issues, NEVER quarantined
+    lines = fs.file_rig_bursts(bursts, NOW, dry=False)
+    assert len(filed) == 3
+    assert len(lines) == 3
+
+    by_title_day = {(c["title"], c["fingerprint"]): c for c in filed}
+    fp_nov6_st2 = fs.rig_fingerprint("database-integration (shared-tail-2)", "2026-11-06")
+    fp_nov6_st1 = fs.rig_fingerprint("database-integration (shared-tail)", "2026-11-06")
+    fp_nov7_st2 = fs.rig_fingerprint("database-integration (shared-tail-2)", "2026-11-07")
+    assert len({fp_nov6_st2, fp_nov6_st1, fp_nov7_st2}) == 3
+
+    nov6_st2 = by_title_day[("Rig: 13 tests failed together in database-integration (shared-tail-2)", fp_nov6_st2)]
+    assert nov6_st2["marker_key"] == fs.RIG_MARKER_KEY
+    assert "alert-intake" in nov6_st2["labels"]
+    assert fs.QUARANTINE_LABEL not in nov6_st2["labels"]
+    assert nov6_st2["red"] is True and nov6_st2["red_body"] == nov6_st2["body"]
+    assert (fs.RIG_MARKER_KEY, fp_nov6_st2) in declared_fingerprints(nov6_st2["body"])
+    assert "run 1" in nov6_st2["red_comment"] and "run 5" in nov6_st2["red_comment"]
+
+    for call in filed:
+        assert call["title"].startswith("Rig: ")
+        assert fs.QUARANTINE_LABEL not in call["labels"]
+
+    summary = fs.report(events, [], [], SimpleNamespace(calls=5), None, rig_bursts=bursts, rig_filed=lines)
+    assert "**Rig burst issues (one per job per day, never quarantined):**" in summary
+    assert "Rig: 13 tests failed together in database-integration (shared-tail-2)" in summary
