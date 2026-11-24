@@ -4,11 +4,13 @@ User data routes: pins, preferences, team search, onboarding.
 All endpoints require authentication unless noted otherwise.
 """
 
+import asyncio
 import logging
 import re
 import time
 from datetime import datetime, timezone
-from typing import Optional
+from types import SimpleNamespace
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status, Request
 from pydantic import BaseModel
@@ -16,15 +18,19 @@ from sqlalchemy import (
     Integer,
     Select,
     String,
+    Text,
     and_,
+    any_,
     bindparam,
     case,
     cast,
     delete,
     false,
     func,
+    literal,
     or_,
     select,
+    text,
     tuple_,
     union,
 )
@@ -1673,6 +1679,271 @@ def _prefer_coherent_team_items(per_team_items: dict[int, list[dict]]) -> None:
             it.pop("_many_winner_series", None)
 
 
+_TEAM_FUTURES_PG_QUERY_TIMEOUT_MS = 8000
+_TEAM_FUTURES_PG_SCREEN_TIMEOUT_MS = 5000
+_SCREEN_WAVE_SIZE = 60
+
+
+class _LiteScreenOutcome:
+    """Lightweight slots container for Postgres screening (avoids selectinload ORM bloat)."""
+
+    __slots__ = (
+        "id",
+        "market_id",
+        "current_probability",
+        "current_yes_bid",
+        "current_yes_ask",
+        "resolution_source",
+        "is_winner",
+        "volume_24h",
+        "volume_24h_at",
+        "last_updated",
+    )
+
+    def __init__(self, row: Any) -> None:
+        (
+            self.id,
+            self.market_id,
+            self.current_probability,
+            self.current_yes_bid,
+            self.current_yes_ask,
+            self.resolution_source,
+            self.is_winner,
+            self.volume_24h,
+            self.volume_24h_at,
+            self.last_updated,
+        ) = row
+
+
+class _LiteScreenMarket:
+    """Lightweight slots container for Postgres screening (avoids selectinload ORM bloat)."""
+
+    __slots__ = (
+        "id",
+        "source",
+        "external_id",
+        "status",
+        "event_id",
+        "market_type",
+        "market_metadata",
+        "updated_at",
+        "name",
+        "outcomes",
+    )
+
+    def __init__(self, row: Any) -> None:
+        (
+            self.id,
+            self.source,
+            self.external_id,
+            self.status,
+            self.event_id,
+            self.market_type,
+            self.market_metadata,
+            self.updated_at,
+            self.name,
+        ) = row
+        self.outcomes: list[_LiteScreenOutcome] = []
+
+
+async def _load_pg_screen_wave(db: AsyncSession, wave_ids: list[int]) -> list[_LiteScreenMarket]:
+    """Fetch minimal screen columns via two flat tuple queries (no ORM IdentityMap overhead)."""
+    m_rows = (
+        await db.execute(
+            select(
+                FuturesMarket.id,
+                FuturesMarket.source,
+                FuturesMarket.external_id,
+                FuturesMarket.status,
+                FuturesMarket.event_id,
+                FuturesMarket.market_type,
+                FuturesMarket.market_metadata,
+                FuturesMarket.updated_at,
+                FuturesMarket.name,
+            ).where(FuturesMarket.id.in_(wave_ids))
+        )
+    ).all()
+    if not m_rows:
+        return []
+    o_rows = (
+        await db.execute(
+            select(
+                FuturesOutcome.id,
+                FuturesOutcome.market_id,
+                FuturesOutcome.current_probability,
+                FuturesOutcome.current_yes_bid,
+                FuturesOutcome.current_yes_ask,
+                FuturesOutcome.resolution_source,
+                FuturesOutcome.is_winner,
+                FuturesOutcome.volume_24h,
+                FuturesOutcome.volume_24h_at,
+                FuturesOutcome.last_updated,
+            ).where(FuturesOutcome.market_id.in_(wave_ids))
+        )
+    ).all()
+    by_market = {row[0]: _LiteScreenMarket(row) for row in m_rows}
+    for row in o_rows:
+        market = by_market.get(row[1])
+        if market is not None:
+            market.outcomes.append(_LiteScreenOutcome(row))
+    return list(by_market.values())
+_AWARD_OUTCOMES_TTL = 60.0
+_AWARD_OUTCOMES_CACHE_MAX = 4
+# (engine_key) -> (monotonic_at, list_of_snapshots)
+_award_outcomes_cache: dict[int, tuple[float, list]] = {}
+_inflight_locks: dict[tuple, asyncio.Lock] = {}
+
+_AWARD_KEYWORDS: tuple[str, ...] = (
+    "MVP",
+    "Player of the Year",
+    "Rookie of the Year",
+    "Defensive Player",
+    "Coach of the Year",
+    "Cy Young",
+    "Heisman",
+    "Most Improved",
+    "Sixth Man",
+    "Clutch",
+    # Note: "Finals MVP" is subsumed by "%MVP%" and is omitted from the PG pattern list.
+    "All-Star",
+)
+
+
+def _is_postgresql_session(db: Any) -> bool:
+    """True only for real AsyncSessions connected to PostgreSQL (never SQLite or mocks)."""
+    if not isinstance(db, AsyncSession):
+        return False
+    try:
+        bind = db.get_bind()
+        return getattr(getattr(bind, "dialect", None), "name", None) == "postgresql"
+    except Exception:
+        return False
+
+
+def _cache_scope_key(db: Any) -> int:
+    """Per-engine scope for real AsyncSessions; per-session-id scope for mocks/SQLite."""
+    if isinstance(db, AsyncSession):
+        try:
+            bind = db.get_bind()
+            if bind is not None:
+                return id(bind)
+        except Exception:
+            return id(db)
+    return id(db)
+
+
+def _get_inflight_lock(namespace: str, cache_key: tuple) -> asyncio.Lock:
+    """Loop-bound singleflight lock (safe across pytest function loops)."""
+    loop_key = (id(asyncio.get_running_loop()), namespace, cache_key)
+    lock = _inflight_locks.get(loop_key)
+    if lock is None:
+        if len(_inflight_locks) > 512:
+            for k in [kk for kk, lk in _inflight_locks.items() if not lk.locked()][:256]:
+                _inflight_locks.pop(k, None)
+        lock = asyncio.Lock()
+        _inflight_locks[loop_key] = lock
+    return lock
+
+
+async def _set_local_timeout_pg(db: AsyncSession, timeout_ms: int) -> None:
+    """Arm SET LOCAL statement_timeout on real PG AsyncSessions only."""
+    if _is_postgresql_session(db):
+        await db.execute(text(f"SET LOCAL statement_timeout = '{int(timeout_ms)}'"))
+
+
+def _snapshot_award_rows(raw_rows: list) -> list[tuple]:
+    """Detach cached Query-2 award rows into plain attribute holders (no session pin)."""
+    snaps: list[tuple] = []
+    for o, m, sk in raw_rows:
+        o_ns = SimpleNamespace(
+            id=o.id,
+            market_id=o.market_id,
+            external_id=getattr(o, "external_id", None),
+            name=o.name,
+            team_id=o.team_id,
+            current_probability=o.current_probability,
+            probability_change_24h=o.probability_change_24h,
+            current_yes_bid=getattr(o, "current_yes_bid", None),
+            current_yes_ask=getattr(o, "current_yes_ask", None),
+            rank=o.rank,
+            is_winner=o.is_winner,
+            resolution_source=getattr(o, "resolution_source", None),
+        )
+        m_ns = SimpleNamespace(
+            id=m.id,
+            source=m.source,
+            external_id=getattr(m, "external_id", None),
+            sport_id=getattr(m, "sport_id", None),
+            event_id=getattr(m, "event_id", None),
+            name=m.name,
+            llm_sport_category=m.llm_sport_category,
+            market_tier=m.market_tier,
+            market_type=getattr(m, "market_type", None),
+            status=getattr(m, "status", "open"),
+            resolution_date=m.resolution_date,
+            canonical_market_key=m.canonical_market_key,
+            market_metadata=getattr(m, "market_metadata", None),
+        )
+        snaps.append((o_ns, m_ns, sk))
+    return snaps
+
+
+def _build_team_futures_result_item(
+    outcome: Any,
+    market: Any,
+    matched: dict,
+    *,
+    outcome_total: int | None,
+    field_prob_sum: float | None,
+) -> dict:
+    prob = float(outcome.current_probability) if outcome.current_probability is not None else None
+    change = (
+        float(outcome.probability_change_24h)
+        if outcome.probability_change_24h is not None
+        else None
+    )
+    season_year = _extract_season_year(market.canonical_market_key, market.name)
+    illiquid = _is_illiquid_binary_field(
+        market.source,
+        field_prob_sum,
+        getattr(outcome, "current_yes_bid", None),
+        getattr(outcome, "current_yes_ask", None),
+        outcome.current_probability,
+    )
+    return {
+        "outcome_id": outcome.id,
+        "outcome_name": reader_outcome_name(
+            getattr(outcome, "external_id", None),
+            outcome.name,
+            market_threshold_label(market),
+            market_name=getattr(market, "name", None),
+        )
+        or outcome.name,
+        "market_id": market.id,
+        "market_name": market.name,
+        "market_tier": market.market_tier,
+        "category": market.llm_sport_category,
+        "source": market.source,
+        "probability": prob,
+        "source_mark": futures_outcome_source_mark(market, outcome, {"probability": prob}),
+        "probability_change_24h": change,
+        "rank": outcome.rank,
+        "total_outcomes": outcome_total,
+        "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
+        "is_winner": bool(outcome.is_winner),
+        "matched_team": matched,
+        "canonical_market_key": market.canonical_market_key,
+        "season_year": season_year,
+        "_illiquid_binary": illiquid,
+        "_many_winner_series": _many_winner_series_key(
+            market.source,
+            getattr(market, "external_id", None),
+            field_prob_sum,
+            illiquid,
+        ),
+    }
+
+
 async def _query_team_futures(
     team_ids: list[int],
     db: AsyncSession,
@@ -1694,12 +1965,30 @@ async def _query_team_futures(
     if not team_ids:
         return {"items": [], "teams": [], "total_count": 0}
 
+    is_pg = _is_postgresql_session(db)
+    await _set_local_timeout_pg(db, _TEAM_FUTURES_PG_QUERY_TIMEOUT_MS)
+
     # Load Team records with their sport for sport-scoped matching (BR53).
-    result = await db.execute(
+    team_stmt = (
         select(Team, Sport.key.label("sport_key"))
         .join(Sport, Team.sport_id == Sport.id)
         .where(Team.id.in_(team_ids))
     )
+    if isinstance(db, AsyncSession):
+        team_stmt = team_stmt.options(
+            load_only(
+                Team.id,
+                Team.sport_id,
+                Team.name,
+                Team.espn_id,
+                Team.logo_url_small,
+                Team.logo_url,
+                Team.primary_color,
+                Team.alternate_names,
+                Team.roster_players,
+            )
+        )
+    result = await db.execute(team_stmt)
     teams: dict[int, Team] = {}
     # team_id → sport category (e.g., "hockey", "baseball")
     team_sport_categories: dict[int, str] = {}
@@ -1740,7 +2029,7 @@ async def _query_team_futures(
             tim_counts[_tid] = _n
 
         def _norm_team_name(nm: str | None) -> str:
-            return _re.sub(r"\s+", " ", (nm or "").strip().lower())
+            return re.sub(r"\s+", " ", (nm or "").strip().lower())
 
         # Union-find over loaded teams (within sport only). Two teams merge when
         # they share a non-null espn_id OR a normalized name (same sport).
@@ -1842,6 +2131,12 @@ async def _query_team_futures(
                 if isinstance(player_name, str) and len(player_name) >= 4:
                     player_to_team_id[player_name.lower()] = t.id
 
+    roster_regex: re.Pattern[str] | None = None
+    if player_to_team_id:
+        # Longest-first single C-engine alternation skips linear ~800-key scans per outcome.
+        roster_keys_desc = sorted(player_to_team_id, key=len, reverse=True)
+        roster_regex = re.compile("|".join(re.escape(k) for k in roster_keys_desc))
+
     # NOTE (#1197 r259 team-route latency): the per-market outcome count + field
     # probability sum ("#3 of 30" context; #237 Item 3 coherence signal) used to be
     # an outcome_count_sq subquery — a GROUP BY over the ENTIRE 1.2M-row
@@ -1860,18 +2155,52 @@ async def _query_team_futures(
     ]
 
     # ── Query 1: Team matching (team_id FK + team-name ILIKE) ──
-    # #1197 (r259): a single `or_(team_id IN (...), name ILIKE '%team%')` defeated
-    # index usage and seq-scanned the 1.2M-row futures_outcomes table (~3s for ~7
-    # rows). Split the OR into two SEPARATELY-INDEXED queries — the FK branch uses
-    # ix_futures_outcomes_team_id, the name branch the GIN trigram on name — and
-    # merge/dedup. Same rows, but each branch hits its index.
+    # #1197 (r259): split OR into separate indexed branches.
+    # #13552: on PostgreSQL, keep ILIKE ANY (ARRAY[...]) (single GIN scan instead of
+    # N-way BitmapOr) and route through #4437 `open_futures_outcomes` (~262k open rows
+    # instead of 8.8M closed+open rows) when its maintainer state is current.
     _order_by = (
         FuturesOutcome.current_probability.desc().nulls_last(),
         func.abs(FuturesOutcome.probability_change_24h).desc().nulls_last(),
+        FuturesOutcome.id.asc(),
+    )
+
+    _outcome_load_opts = load_only(
+        FuturesOutcome.id,
+        FuturesOutcome.market_id,
+        FuturesOutcome.external_id,
+        FuturesOutcome.name,
+        FuturesOutcome.team_id,
+        FuturesOutcome.current_probability,
+        FuturesOutcome.probability_change_24h,
+        FuturesOutcome.current_yes_bid,
+        FuturesOutcome.current_yes_ask,
+        FuturesOutcome.rank,
+        FuturesOutcome.is_winner,
+        FuturesOutcome.resolution_source,
+        FuturesOutcome.last_updated,
+        FuturesOutcome.volume_24h,
+        FuturesOutcome.volume_24h_at,
+    )
+    _market_load_opts = load_only(
+        FuturesMarket.id,
+        FuturesMarket.source,
+        FuturesMarket.external_id,
+        FuturesMarket.sport_id,
+        FuturesMarket.event_id,
+        FuturesMarket.name,
+        FuturesMarket.llm_sport_category,
+        FuturesMarket.market_tier,
+        FuturesMarket.market_type,
+        FuturesMarket.status,
+        FuturesMarket.resolution_date,
+        FuturesMarket.canonical_market_key,
+        FuturesMarket.market_metadata,
+        FuturesMarket.updated_at,
     )
 
     def _q1(cond):
-        return (
+        stmt = (
             select(FuturesOutcome, FuturesMarket, Sport.key.label("market_sport_key"))
             .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
             .outerjoin(Sport, FuturesMarket.sport_id == Sport.id)
@@ -1879,11 +2208,26 @@ async def _query_team_futures(
             .order_by(*_order_by)
             .limit(limit * 5)
         )
+        if isinstance(db, AsyncSession):
+            stmt = stmt.options(_outcome_load_opts, _market_load_opts)
+        return stmt
 
     _tq = time.perf_counter()
     rows1 = list((await db.execute(_q1(FuturesOutcome.team_id.in_(team_ids)))).all())
     if team_patterns:
-        name_cond = or_(*[FuturesOutcome.name.ilike(f"%{p}%") for p in team_patterns])
+        if is_pg:
+            from app.utils.open_futures_outcomes import outcome_ids_named
+
+            pats = [f"%{p}%" for p in team_patterns]
+            pg_name_cond = FuturesOutcome.name.ilike(any_(literal(pats, ARRAY(Text))))
+            open_candidates = outcome_ids_named(pg_name_cond)
+            name_cond = (
+                pg_name_cond
+                if open_candidates is None
+                else FuturesOutcome.id == any_(func.array(open_candidates.scalar_subquery()))
+            )
+        else:
+            name_cond = or_(*[FuturesOutcome.name.ilike(f"%{p}%") for p in team_patterns])
         name_rows = (await db.execute(_q1(name_cond))).all()
         _seen_oids = {o.id for o, _m, _sk in rows1}
         rows1.extend(r for r in name_rows if r[0].id not in _seen_oids)
@@ -1892,53 +2236,65 @@ async def _query_team_futures(
 
     # ── Query 2: Award markets — fetch all outcomes, match players in Python ──
     # Only runs if we have roster players to match against.
-    rows2 = []
+    # Zero team/user inputs: cache on real PG sessions for 60s with singleflight.
+    rows2: list = []
     if player_to_team_id:
-        award_keywords = [
-            "MVP", "Player of the Year", "Rookie of the Year",
-            "Defensive Player", "Coach of the Year", "Cy Young",
-            "Heisman", "Most Improved", "Sixth Man", "Clutch",
-            "Finals MVP", "All-Star",
-        ]
-        award_filters = [FuturesMarket.name.ilike(f"%{kw}%") for kw in award_keywords]
-
-        query2 = (
-            select(FuturesOutcome, FuturesMarket, Sport.key.label("market_sport_key"))
-            .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
-            .outerjoin(Sport, FuturesMarket.sport_id == Sport.id)
-            .where(and_(*market_base_filters, or_(*award_filters)))
-            .order_by(FuturesOutcome.current_probability.desc().nulls_last())
-            .limit(500)  # Award markets are few — fetch all outcomes
-        )
         _tq = time.perf_counter()
-        result2 = await db.execute(query2)
-        rows2 = result2.all()
+        if is_pg:
+            _eng_key = _cache_scope_key(db)
+            _now_mono = time.monotonic()
+            cached_award = _award_outcomes_cache.get(_eng_key)
+            if cached_award is not None and (_now_mono - cached_award[0]) < _AWARD_OUTCOMES_TTL:
+                rows2 = cached_award[1]
+            else:
+                async with _get_inflight_lock("award_q2", (_eng_key,)):
+                    _now_mono = time.monotonic()
+                    cached_award = _award_outcomes_cache.get(_eng_key)
+                    if cached_award is not None and (_now_mono - cached_award[0]) < _AWARD_OUTCOMES_TTL:
+                        rows2 = cached_award[1]
+                    else:
+                        award_pats = [f"%{kw}%" for kw in _AWARD_KEYWORDS]
+                        award_cond = FuturesMarket.name.ilike(any_(literal(award_pats, ARRAY(Text))))
+                        query2 = (
+                            select(FuturesOutcome, FuturesMarket, Sport.key.label("market_sport_key"))
+                            .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+                            .outerjoin(Sport, FuturesMarket.sport_id == Sport.id)
+                            .where(and_(*market_base_filters, award_cond))
+                            .order_by(FuturesOutcome.current_probability.desc().nulls_last(), FuturesOutcome.id.asc())
+                            .limit(500)
+                            .options(_outcome_load_opts, _market_load_opts)
+                        )
+                        raw_award = (await db.execute(query2)).all()
+                        rows2 = _snapshot_award_rows(raw_award)
+                        if len(_award_outcomes_cache) >= _AWARD_OUTCOMES_CACHE_MAX:
+                            oldest_ak = min(_award_outcomes_cache, key=lambda k: _award_outcomes_cache[k][0])
+                            del _award_outcomes_cache[oldest_ak]
+                        _award_outcomes_cache[_eng_key] = (time.monotonic(), rows2)
+        else:
+            award_keywords = [
+                "MVP", "Player of the Year", "Rookie of the Year",
+                "Defensive Player", "Coach of the Year", "Cy Young",
+                "Heisman", "Most Improved", "Sixth Man", "Clutch",
+                "Finals MVP", "All-Star",
+            ]
+            award_filters = [FuturesMarket.name.ilike(f"%{kw}%") for kw in award_keywords]
+            query2 = (
+                select(FuturesOutcome, FuturesMarket, Sport.key.label("market_sport_key"))
+                .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+                .outerjoin(Sport, FuturesMarket.sport_id == Sport.id)
+                .where(and_(*market_base_filters, or_(*award_filters)))
+                .order_by(FuturesOutcome.current_probability.desc().nulls_last())
+                .limit(500)  # Award markets are few — fetch all outcomes
+            )
+            if isinstance(db, AsyncSession):
+                query2 = query2.options(_outcome_load_opts, _market_load_opts)
+            result2 = await db.execute(query2)
+            rows2 = result2.all()
         if timings is not None:
             timings["q2"] = round((time.perf_counter() - _tq) * 1000)
 
-    # #1197: scoped per-market count + field-prob-sum for ONLY the result markets
-    # (replaces the old unfiltered full-table outcome_count_sq — the ~6s culprit).
-    _mkt_ids = {m.id for _o, m, _sk in rows1} | {m.id for _o, m, _sk in rows2}
-    _market_stats: dict[int, tuple[int, float | None]] = {}
-    _tq = time.perf_counter()
-    if _mkt_ids:
-        for _mid, _tot, _fsum in (await db.execute(
-            select(
-                FuturesOutcome.market_id,
-                func.count().label("outcome_total"),
-                func.sum(FuturesOutcome.current_probability).label("field_prob_sum"),
-            )
-            .where(FuturesOutcome.market_id.in_(list(_mkt_ids)))
-            .group_by(FuturesOutcome.market_id)
-        )).all():
-            _market_stats[_mid] = (_tot, _fsum)
-    if timings is not None:
-        timings["stats"] = round((time.perf_counter() - _tq) * 1000)
-        timings["rows1"] = len(rows1)
-        timings["rows2"] = len(rows2)
-
-    # For each outcome, figure out which followed team matched.
-    # Uses strict suffix-word matching + roster player matching.
+    # For each outcome, figure out which followed team matched ONCE (#13552).
+    # Uses strict suffix-word matching + O(1)/regex roster player matching.
     # BR53: name/player matches require the market's sport category to match
     # the team's sport category to prevent cross-sport false positives
     # (e.g., "Aliya Boston" WNBA player under Boston Bruins branding,
@@ -1968,37 +2324,7 @@ async def _query_team_futures(
                 for alias in aliases if isinstance(alias, str)
             )
 
-        # Direct team_id match. Resolve dup ids onto the canonical row so a
-        # market linked to a bare-location dupe still matches the followed
-        # canonical team.
-        #
-        # #2593 — A STORED team_id IS NOT SPORT-SCOPED. This branch used to be
-        # trusted as "always correct", but the link was written by city-name
-        # matching across sports: the Dallas Mavericks' page served "MLS Western
-        # Conference Champion — Dallas 7.5%" (market 23500, outcome linked to NBA
-        # team 37) and the Seattle Storm's the same for "Seattle". Measured over
-        # open season markets 2026-09-27: ~150 links whose market names one sport
-        # and whose team plays another (Big Ten basketball on college football
-        # rows, "Team Specials" on MLB clubs, the Masters on Austin FC); every
-        # one sampled is wrong. So the FK match takes the SAME BR53 test the name
-        # branch below already applies — but only when the market claims a
-        # sport; a non-sport market keeps its link (utils/market_team_sport.py).
-        # A refused link falls through to the name/roster branches, which run
-        # their own sport check.
-        # #9593 — NOR IS IT GENDER-SCOPED, and neither is a name. Arsenal and
-        # Arsenal Women are both `soccer`, so every soccer "Arsenal" leg reached
-        # both pages: the women's hero printed "Championship 59%" (the men's
-        # English Premier League Champion) and the men's page listed the UEFA
-        # Women's Champions League Winner. Every branch below asks
-        # `_crosses_side` before it claims a team.
-        # #9761 — NOR IS A SPORT CATEGORY A LEAGUE. NFL and college football are
-        # both `football`, so a player still on a college roster carried his NFL
-        # props onto the school: LSU listed Mansoor Delane's "Pro Football: AP
-        # Defensive Rookie of the Year" after the linker had unbound the leg, and
-        # Notre Dame the NFL rookie board by Jeremiyah Love's name. The league
-        # the market's own venue id names (Kalshi series, Polymarket event slug)
-        # is the championship path's refusal and the linker's; it joins the side
-        # test here, so every branch asks it.
+        # #2593 / #9593 / #9761: verify sport, gender side, and league on every branch.
         def _crosses_side(team_id: int) -> bool:
             return _link_crosses_gender(
                 market.name,
@@ -2048,203 +2374,388 @@ async def _query_team_futures(
                     "logo_small": t.logo_url_small or t.logo_url,
                     "primary_color": t.primary_color,
                 }
-        # Roster player matching — e.g., "Jayson Tatum" → Celtics
-        outcome_lower = outcome_name.lower()
-        for player_lower, tid in player_to_team_id.items():
-            if player_lower in outcome_lower:
-                t = teams.get(tid)
+        # Roster player matching — O(1) exact check first, single compiled regex for substrings.
+        if player_to_team_id:
+            outcome_lower = outcome_name.lower()
+            exact_tid = player_to_team_id.get(outcome_lower)
+            if exact_tid is not None:
+                t = teams.get(exact_tid)
                 if t:
-                    # BR53: verify sport compatibility for player matches
+                    ok = True
                     if market_sport_cat:
                         team_cat = team_sport_categories.get(t.id)
                         if team_cat and team_cat != market_sport_cat:
-                            continue  # sport mismatch — try next player
-                    if _crosses_side(t.id):
-                        continue  # the other side's market (#9593)
-                    return {
-                        "id": t.id,
-                        "name": t.name,
-                        "logo_small": t.logo_url_small or t.logo_url,
-                        "primary_color": t.primary_color,
-                    }
+                            ok = False
+                    if ok and _crosses_side(t.id):
+                        ok = False
+                    if ok:
+                        return {
+                            "id": t.id,
+                            "name": t.name,
+                            "logo_small": t.logo_url_small or t.logo_url,
+                            "primary_color": t.primary_color,
+                        }
+            if roster_regex is not None and roster_regex.search(outcome_lower):
+                for player_lower, tid in player_to_team_id.items():
+                    if player_lower in outcome_lower:
+                        t = teams.get(tid)
+                        if t:
+                            if market_sport_cat:
+                                team_cat = team_sport_categories.get(t.id)
+                                if team_cat and team_cat != market_sport_cat:
+                                    continue  # sport mismatch — try next player
+                            if _crosses_side(t.id):
+                                continue  # the other side's market (#9593)
+                            return {
+                                "id": t.id,
+                                "name": t.name,
+                                "logo_small": t.logo_url_small or t.logo_url,
+                                "primary_color": t.primary_color,
+                            }
         return None
 
-    # #8503 — A PRICE THE MARKET'S OWN PAGE REFUSES IS NOT PRINTED HERE EITHER.
-    # The Eagles page's Season Futures read "Jalen Hurts — Top 5 Scoring QBs 50%"
-    # and "A.J. Brown — Top 5 Scoring FLEX 50%": untraded Polymarket books
-    # (bid 0.01 / ask 0.98), and `/api/futures/{id}` serves both legs as
-    # `probability: null`. #8480 wired the shared screen into the Prop Races
-    # block of the same page; this list, which also serves "Your Teams'
-    # Futures", never asked it. Same helper, same five arms — no sixth spelling.
-    #
-    # Only markets with a leg that matches a team are screened (a market that
-    # matches nothing never reaches the payload), each reloaded with ALL its legs
-    # because the field arms judge the whole board. Refused legs are skipped
-    # BEFORE the one-outcome-per-market pick, so a priced leg of the same market
-    # still takes the slot. Withheld, never re-priced (gotcha #21).
-    #
-    # FAILS OPEN inside a SAVEPOINT: this lane only reads, so its rollback
-    # expires nothing, and the rows below (plus the caller's `team`) survive. A
-    # board the helper could not evaluate is omitted from its map and served
-    # as-is, the helper's own documented failure direction.
+    candidate_rows = list(rows1) + list(rows2)
+    matched_rows: list[tuple[Any, Any, str | None, dict]] = []
+    matched_oids_by_market: dict[int, set[int]] = {}
+    for _o, _m, _sk in candidate_rows:
+        _matched = _find_matched_team(_o, _m, market_sport_key=_sk)
+        if not _matched:
+            continue
+        matched_rows.append((_o, _m, _sk, _matched))
+        matched_oids_by_market.setdefault(_m.id, set()).add(_o.id)
+
+    # #1197 / #13552: scoped per-market stats ONLY for markets that matched a team.
+    _mkt_ids = sorted(matched_oids_by_market)
+    _market_stats: dict[int, tuple[int, float | None]] = {}
+    _tq = time.perf_counter()
+    if _mkt_ids:
+        for _mid, _tot, _fsum in (await db.execute(
+            select(
+                FuturesOutcome.market_id,
+                func.count().label("outcome_total"),
+                func.sum(FuturesOutcome.current_probability).label("field_prob_sum"),
+            )
+            .where(FuturesOutcome.market_id.in_(_mkt_ids))
+            .group_by(FuturesOutcome.market_id)
+        )).all():
+            _market_stats[_mid] = (_tot, _fsum)
+    if timings is not None:
+        timings["stats"] = round((time.perf_counter() - _tq) * 1000)
+        timings["rows1"] = len(rows1)
+        timings["rows2"] = len(rows2)
+
+    # Pre-build per-row candidate item stubs (reused across early-stop checks + final build).
+    candidate_items: list[tuple[int, int, dict]] = []
+    team_has_coherent_candidate: dict[int, set[int]] = {}
+    for idx, (_o, _m, _sk, _matched) in enumerate(matched_rows):
+        _otot, _fsum = _market_stats.get(_m.id, (None, None))
+        _stub = _build_team_futures_result_item(
+            _o,
+            _m,
+            _matched,
+            outcome_total=_otot,
+            field_prob_sum=_fsum,
+        )
+        candidate_items.append((_o.id, _m.id, _stub))
+        if not _stub["_illiquid_binary"]:
+            team_has_coherent_candidate.setdefault(_matched["id"], set()).add(_m.id)
+
+    def _pick_next_wave_ids(
+        screened_mids: set[int],
+        focus_tids: set[int] | None,
+    ) -> list[int]:
+        """Prioritize coherent-first candidates round-robin per team for the next wave."""
+        per_team_coh: dict[int, list[int]] = {}
+        per_team_ill: dict[int, list[int]] = {}
+        seen_per_team_mid: dict[int, set[int]] = {}
+        for _oid, _mid, _stub in candidate_items:
+            if _mid in screened_mids:
+                continue
+            tid = _stub["matched_team"]["id"]
+            if focus_tids is not None and tid not in focus_tids:
+                continue
+            seen_m = seen_per_team_mid.setdefault(tid, set())
+            if _mid in seen_m:
+                continue
+            seen_m.add(_mid)
+            if not _stub["_illiquid_binary"]:
+                per_team_coh.setdefault(tid, []).append(_mid)
+            else:
+                per_team_ill.setdefault(tid, []).append(_mid)
+
+        wave: list[int] = []
+        wave_set: set[int] = set()
+        tids_order = sorted(
+            set(per_team_coh) | set(per_team_ill),
+            key=lambda tid: (per_team_coh.get(tid) or per_team_ill.get(tid) or [0])[0],
+        )
+        # Re-sort teams by highest unscreened candidate probability desc for fair round-robin order.
+        top_prob_by_tid: dict[int, float] = {}
+        for _oid, _mid, _stub in candidate_items:
+            if _mid in screened_mids:
+                continue
+            tid = _stub["matched_team"]["id"]
+            if focus_tids is not None and tid not in focus_tids:
+                continue
+            p = _stub.get("probability") or 0.0
+            if not _stub["_illiquid_binary"]:
+                p += 10.0  # coherent first in screening order
+            if tid not in top_prob_by_tid or p > top_prob_by_tid[tid]:
+                top_prob_by_tid[tid] = p
+        tids_order = sorted(top_prob_by_tid, key=lambda tid: top_prob_by_tid[tid], reverse=True)
+
+        # Interleave coherent buckets first, then illiquid buckets.
+        for buckets in (per_team_coh, per_team_ill):
+            depth = 0
+            while len(wave) < _SCREEN_WAVE_SIZE:
+                progressed = False
+                for tid in tids_order:
+                    b = buckets.get(tid)
+                    if b and depth < len(b):
+                        mid = b[depth]
+                        progressed = True
+                        if mid not in wave_set:
+                            wave.append(mid)
+                            wave_set.add(mid)
+                            if len(wave) >= _SCREEN_WAVE_SIZE:
+                                break
+                if not progressed:
+                    break
+                depth += 1
+        return sorted(wave)
+
+    def _prefix_cutoff_state(
+        screened_mids: set[int],
+        withheld_map: dict[int, set[int]],
+    ) -> tuple[bool, set[int]]:
+        """Sound certificate proving whether remaining unscreened markets cannot enter items[:limit]."""
+        all_tids = list(
+            dict.fromkeys(_stub["matched_team"]["id"] for _oid, _mid, _stub in candidate_items)
+        )
+        if not all_tids:
+            return True, set()
+
+        mid_has_any_coherent: dict[int, bool] = {}
+        for _oid, _mid, _stub in candidate_items:
+            if not _stub["_illiquid_binary"]:
+                mid_has_any_coherent[_mid] = True
+            else:
+                mid_has_any_coherent.setdefault(_mid, False)
+
+        sim_seen_mids: set[int] = set()
+        screened_all_items: dict[int, list[tuple[int, dict]]] = {}
+        for idx, (oid, mid, _stub) in enumerate(candidate_items):
+            if mid not in screened_mids:
+                continue
+            if mid in sim_seen_mids:
+                continue
+            if oid in withheld_map.get(mid, ()):
+                continue
+            sim_seen_mids.add(mid)
+            tid = _stub["matched_team"]["id"]
+            screened_all_items.setdefault(tid, []).append((idx, _stub))
+
+        coherent_survives_by_tid: dict[int, bool] = {
+            tid: any(not it["_illiquid_binary"] for _i, it in screened_all_items.get(tid, ()))
+            for tid in all_tids
+        }
+        first_unscreened_idx: dict[int, int] = {tid: len(candidate_items) for tid in all_tids}
+        unscreened_coh_exists: dict[int, bool] = {tid: False for tid in all_tids}
+        for idx, (_oid, _mid, _stub) in enumerate(candidate_items):
+            tid = _stub["matched_team"]["id"]
+            if _mid not in screened_mids:
+                if not _stub["_illiquid_binary"]:
+                    unscreened_coh_exists[tid] = True
+                # If this team already has a surviving coherent item AND this market has
+                # NO coherent candidates for ANY team, it can never keep/claim a slot.
+                if coherent_survives_by_tid[tid] and not mid_has_any_coherent.get(_mid, False):
+                    continue
+                if idx < first_unscreened_idx[tid]:
+                    first_unscreened_idx[tid] = idx
+
+        locked_prefix: dict[int, list[dict]] = {}
+        needs_more_tids: set[int] = set()
+        for tid in all_tids:
+            all_t_rows = screened_all_items.get(tid, [])
+            has_unscreened = first_unscreened_idx[tid] < len(candidate_items)
+            coherent_survives = coherent_survives_by_tid[tid]
+            if not coherent_survives and unscreened_coh_exists[tid]:
+                locked_prefix[tid] = []
+                needs_more_tids.add(tid)
+                continue
+
+            prefix = [
+                it for idx, it in all_t_rows if idx < first_unscreened_idx[tid]
+            ]
+            if coherent_survives:
+                prefix = [it for it in prefix if not it["_illiquid_binary"]]
+            seen_series: set[str] = set()
+            deduped: list[dict] = []
+            for it in prefix:
+                ser = it.get("_many_winner_series")
+                if ser:
+                    if ser in seen_series:
+                        continue
+                    seen_series.add(ser)
+                deduped.append(it)
+            locked_prefix[tid] = deduped
+            if has_unscreened and not deduped:
+                needs_more_tids.add(tid)
+
+        if needs_more_tids:
+            return False, needs_more_tids
+
+        unscreened_tids = [
+            tid for tid in all_tids if first_unscreened_idx[tid] < len(candidate_items)
+        ]
+        if not unscreened_tids:
+            return True, set()
+
+        d_safe = min(len(locked_prefix[tid]) for tid in unscreened_tids)
+        non_empty_tids = [tid for tid in all_tids if locked_prefix[tid]]
+        if not non_empty_tids:
+            return False, set(unscreened_tids)
+
+        ordered_tids = sorted(
+            non_empty_tids,
+            key=lambda tid: (locked_prefix[tid][0].get("probability") or 0),
+            reverse=True,
+        )
+        rr_count = 0
+        for depth in range(d_safe):
+            for tid in ordered_tids:
+                if depth < len(locked_prefix[tid]):
+                    rr_count += 1
+                    if rr_count >= limit:
+                        return True, set()
+
+        # Need more items from teams with unscreened markets that ran shallowest first.
+        focus = {tid for tid in unscreened_tids if len(locked_prefix[tid]) <= d_safe}
+        return False, (focus or set(unscreened_tids))
+
+    # #8503 / #11534 / #13552: screen in bounded waves inside SAVEPOINT; run hoisted
+    # staleness BEFORE snapshot trade reads so stopped/dead boards skip 51 GB trade lookups.
     withheld_by_market: dict[int, set[int]] = {}
-    _screen_ids = sorted({
-        m.id for o, m, sk in list(rows1) + list(rows2)
-        if _find_matched_team(o, m, market_sport_key=sk)
-    })
+    _screen_ids = _mkt_ids
+    _screened_mids: set[int] = set()
+    _total_screened = 0
+    _screen_early_stopped = False
     if _screen_ids:
+        from app.routes import prop_families as prop_families_route
         from app.routes.futures import withheld_price_outcome_ids_for_markets
+        from app.utils.futures_price_screen import (
+            _fleet_newest_observation as _shared_fleet_newest,
+        )
+
+        # Capture the original function so monkeypatches in tests are still honored.
+        _orig_staleness_fn = getattr(prop_families_route, "_orig_board_staleness_withheld", None)
+        if _orig_staleness_fn is None:
+            prop_families_route._orig_board_staleness_withheld = prop_families_route._board_staleness_withheld
+            _orig_staleness_fn = prop_families_route._orig_board_staleness_withheld
 
         _tq = time.perf_counter()
-        _screen_savepoint = await db.begin_nested()
-        try:
-            _screen_markets = (
-                await db.execute(
-                    select(FuturesMarket)
-                    .where(FuturesMarket.id.in_(_screen_ids))
-                    .options(selectinload(FuturesMarket.outcomes))
-                )
-            ).scalars().all()
-            withheld_by_market = await withheld_price_outcome_ids_for_markets(
-                db, _screen_markets
-            )
-            # #11534: the six arms are not the whole refusal. The market page
-            # also unions per-leg staleness (#7537) and the stopped-board rule
-            # (#8011), and the Patriots page's Season Futures printed
-            # `KXNFLSBMVP-26` — last season's Super Bowl MVP, every leg last
-            # written 2026-02-04 — as "Drake Maye 27%" while `/api/futures/479`
-            # withheld all 79 legs. Prop Races' composition, called, not re-spelled.
-            from app.routes.prop_families import _board_staleness_withheld
+        _focus_tids: set[int] | None = None
+        _fleet_newest_val: Any = None
+        while len(_screened_mids) < len(_screen_ids):
+            if len(_screen_ids) <= _SCREEN_WAVE_SIZE and not _screened_mids:
+                wave_ids = list(_screen_ids)
+            else:
+                wave_ids = _pick_next_wave_ids(_screened_mids, _focus_tids)
+                if not wave_ids and _focus_tids is not None:
+                    wave_ids = _pick_next_wave_ids(_screened_mids, None)
+                if not wave_ids:
+                    break
 
-            for _m in _screen_markets:
-                _stopped = await _board_staleness_withheld(db, _m)
-                if _stopped:
-                    withheld_by_market[_m.id] = (
-                        withheld_by_market.get(_m.id, set()) | _stopped
+            _screen_savepoint = await db.begin_nested()
+            _wave_markets: list = []
+            try:
+                await _set_local_timeout_pg(db, _TEAM_FUTURES_PG_SCREEN_TIMEOUT_MS)
+                if is_pg:
+                    _wave_markets = await _load_pg_screen_wave(db, wave_ids)
+                else:
+                    screen_stmt = (
+                        select(FuturesMarket)
+                        .where(FuturesMarket.id.in_(wave_ids))
+                        .options(selectinload(FuturesMarket.outcomes))
                     )
-            await _screen_savepoint.commit()
-        except Exception:  # noqa: BLE001 — a price screen never costs the page
-            await _screen_savepoint.rollback()
-            withheld_by_market = {}
-            logger.exception(
-                "team futures: price screen failed for teams %s — serving unscreened",
-                sorted(teams),
-            )
+                    _wave_markets = (await db.execute(screen_stmt)).scalars().all()
+                _total_screened += len(_wave_markets)
+
+                # Run board staleness FIRST with ONE hoisted fleet observation across waves (#13552).
+                _fn = prop_families_route._board_staleness_withheld
+                if _fn is _orig_staleness_fn:
+                    if _fleet_newest_val is None and _wave_markets:
+                        _fleet_newest_val = await _shared_fleet_newest(db, *_wave_markets)
+                    for _m in _wave_markets:
+                        _stopped = await _fn(db, _m, fleet_newest=_fleet_newest_val)
+                        if _stopped:
+                            withheld_by_market[_m.id] = (
+                                withheld_by_market.get(_m.id, set()) | _stopped
+                            )
+                else:
+                    for _m in _wave_markets:
+                        _stopped = await _fn(db, _m)
+                        if _stopped:
+                            withheld_by_market[_m.id] = (
+                                withheld_by_market.get(_m.id, set()) | _stopped
+                            )
+
+                # Skip trade snapshot lookups for boards whose matched outcomes are already all stopped.
+                _surviving_markets = [
+                    _m
+                    for _m in _wave_markets
+                    if not (
+                        matched_oids_by_market.get(_m.id, set())
+                        <= withheld_by_market.get(_m.id, set())
+                    )
+                ]
+                if _surviving_markets:
+                    _price_withheld = await withheld_price_outcome_ids_for_markets(
+                        db, _surviving_markets
+                    )
+                    for _pmid, _poids in _price_withheld.items():
+                        if _poids:
+                            withheld_by_market[_pmid] = (
+                                withheld_by_market.get(_pmid, set()) | _poids
+                            )
+                        else:
+                            withheld_by_market.setdefault(_pmid, set())
+                await _screen_savepoint.commit()
+            except Exception:  # noqa: BLE001 — a price screen never costs the page
+                await _screen_savepoint.rollback()
+                logger.exception(
+                    "team futures: price screen failed for teams %s — serving unscreened",
+                    sorted(teams),
+                )
+                break
+
+            _screened_mids.update(wave_ids)
+            if len(_screened_mids) >= len(_screen_ids):
+                break
+            _done, _focus_tids = _prefix_cutoff_state(_screened_mids, withheld_by_market)
+            if _done:
+                _screen_early_stopped = True
+                break
+            await asyncio.sleep(0)
+
         if timings is not None:
             timings["screen"] = round((time.perf_counter() - _tq) * 1000)
-            timings["screened"] = len(_screen_ids)
+            timings["screened"] = _total_screened
 
-    # Process both result sets: team matches (query 1) + award matches (query 2).
-    # Item 2: bucket candidate items per matched team (preserving the query sort
-    # order — highest-probability headline markets first), then interleave
-    # round-robin up to `limit`. This guarantees every followed team gets its
-    # headline markets in before the limit fills, so one team with many markets
-    # can't starve another (the "Celtics shows 1 of several" truncation).
+    # Process matched result rows in original candidate order using single-pass matched_rows.
     per_team_items: dict[int, list[dict]] = {}
     seen_market_ids: set[int] = set()  # Deduplicate: one outcome per market
-    for outcome, market, mkt_sport_key in list(rows1) + list(rows2):
-        outcome_total, field_prob_sum = _market_stats.get(market.id, (None, None))
-        # Skip if we already have an outcome from this market
-        if market.id in seen_market_ids:
+    for oid, mid, item in candidate_items:
+        if _screen_early_stopped and mid not in _screened_mids:
             continue
-        if outcome.id in withheld_by_market.get(market.id, ()):
+        if mid in seen_market_ids:
+            continue
+        if oid in withheld_by_market.get(mid, ()):
             continue  # #8503: the market page refuses this price
+        seen_market_ids.add(mid)
+        per_team_items.setdefault(item["matched_team"]["id"], []).append(item)
 
-        matched = _find_matched_team(outcome, market, market_sport_key=mkt_sport_key)
-        if not matched:
-            continue  # Skip if we can't determine which team matched
-
-        seen_market_ids.add(market.id)
-
-        prob = float(outcome.current_probability) if outcome.current_probability is not None else None
-        change = float(outcome.probability_change_24h) if outcome.probability_change_24h is not None else None
-
-        # BR52: Extract season/year for card subtitle display.
-        season_year = _extract_season_year(market.canonical_market_key, market.name)
-
-        _illiquid = _is_illiquid_binary_field(
-            market.source,
-            field_prob_sum,
-            getattr(outcome, "current_yes_bid", None),
-            getattr(outcome, "current_yes_ask", None),
-            outcome.current_probability,
-        )
-        per_team_items.setdefault(matched["id"], []).append({
-            "outcome_id": outcome.id,
-            # #2142 — THE CLUB IS SPELLED THE SAME WAY EVERYWHERE ON ONE PAGE.
-            #
-            # Kalshi ships club names truncated (`New York Y`, `Los Angeles D`),
-            # and the Yankees page printed four of them directly beside the
-            # odds-api row spelling the same club `New York Yankees` — under a
-            # footer reading "New York Yankees · 30 markets tracked".
-            #
-            # #6479's engine already repairs this off the rung's OWN id-anchored
-            # ticker (`futures_outcomes.external_id` = `KXMLB-26-NYY`), and
-            # `routes/futures.py`, `routes/feed.py` and `routes/events.py` all
-            # call it. This function — which serves BOTH the team page and
-            # "Your Teams' Futures" — was simply never wired to it, so the fix
-            # that cleaned the Discover card never reached the team page.
-            #
-            # AT THE PAYLOAD BOUNDARY, DELIBERATELY. `_find_matched_team` above
-            # keeps reading the RAW `outcome.name`: repairing before the match
-            # would let `New York Y` newly satisfy `_strict_team_name_matches`
-            # and change WHICH rows reach a team page. That is a different ship
-            # with a different blast radius; this one only changes spelling.
-            #
-            # The helper abstains far more often than it fires, and that is the
-            # safety. Measured over the whole live population (238 team-bound
-            # open Kalshi rows of this shape): 120 repaired across 8 clubs, 110
-            # left alone — including every player carrying a generational suffix
-            # (`James Cook III`, `Pat Surtain II`), whose trailing capitals look
-            # identical but whose ticker leg is a player code, not a team code.
-            # A short name is visibly short; a wrong one is not.
-            "outcome_name": reader_outcome_name(
-                getattr(outcome, "external_id", None),
-                outcome.name,
-                market_threshold_label(market),
-                market_name=getattr(market, "name", None),
-            )
-            or outcome.name,
-            "market_id": market.id,
-            "market_name": market.name,
-            "market_tier": market.market_tier,
-            "category": market.llm_sport_category,
-            "source": market.source,
-            "probability": prob,
-            "source_mark": futures_outcome_source_mark(market, outcome, {"probability": prob}),
-            "probability_change_24h": change,
-            "rank": outcome.rank,
-            "total_outcomes": outcome_total,
-            "resolution_date": market.resolution_date.isoformat() if market.resolution_date else None,
-            # L2-174 Item 3d — the settled-WON grade signal. Kalshi settled markets
-            # stay status='open' (gotcha #33) so these rows surface at ~100% with no
-            # settled framing. is_winner is nullable but defaults to False and
-            # production stores that default for ungraded rows; only the
-            # graded winner gets True, so is_winner=True is a reliable "hit" signal
-            # for the WHAT-HIT label. (False stays ambiguous with a live losing side,
-            # so the frontend only labels the True case.)
-            "is_winner": bool(outcome.is_winner),
-            "matched_team": matched,
-            "canonical_market_key": market.canonical_market_key,
-            "season_year": season_year,
-            # #237 Item 3 (private, stripped before return): illiquid Kalshi
-            # independent-binary award/prop ladder whose field sums far past 100%.
-            "_illiquid_binary": _illiquid,
-            # #10078 (private, stripped before return): the series of a served
-            # over-sum leg, capped to one leg per series per team.
-            "_many_winner_series": _many_winner_series_key(
-                market.source,
-                getattr(market, "external_id", None),
-                field_prob_sum,
-                _illiquid,
-            ),
-        })
-
-    # #237 Item 3: prefer coherent fields. An illiquid Kalshi independent-binary
-    # award ladder (a player's MVP / passing-yards YES markets, field summing far
-    # past 100%) can carry a higher raw YES probability than the team's coherent
-    # odds_api championship/division outcome, so it sorts first and crowds the
-    # legible field out of the per-team bucket.
+    # #237 Item 3: prefer coherent fields.
     _prefer_coherent_team_items(per_team_items)
 
     # Round-robin fill: strongest team (by its top market) leads each round.
@@ -2288,9 +2799,24 @@ async def _query_team_futures(
     }
 
 
-_team_futures_cache: dict[int, tuple[float, dict]] = {}
+_team_futures_cache: dict[tuple, tuple[float, dict]] = {}
+_shared_team_futures_cache: dict[tuple, tuple[float, dict]] = {}
 _TEAM_FUTURES_TTL = 120
 _TEAM_FUTURES_MAX_SIZE = 100
+
+
+def _cache_get(store: dict[tuple, tuple[float, dict]], key: tuple, now: float) -> dict | None:
+    entry = store.get(key)
+    if entry is not None and (now - entry[0]) < _TEAM_FUTURES_TTL:
+        return entry[1]
+    return None
+
+
+def _cache_set(store: dict[tuple, tuple[float, dict]], key: tuple, now: float, data: dict) -> None:
+    if len(store) >= _TEAM_FUTURES_MAX_SIZE and key not in store:
+        oldest = min(store, key=lambda k: store[k][0])
+        del store[oldest]
+    store[key] = (now, data)
 
 
 @router.get("/team-futures")
@@ -2300,36 +2826,38 @@ async def get_team_futures(
     db: AsyncSession = Depends(get_db),
 ):
     """Get futures outcomes for the current user's followed teams."""
-    import time as _time
-    _now = _time.time()
-    if user.id in _team_futures_cache:
-        _cached_at, _cached_resp = _team_futures_cache[user.id]
-        if _now - _cached_at < _TEAM_FUTURES_TTL:
-            return _cached_resp
+    eff_limit = max(1, min(limit, 100))
+    scope = _cache_scope_key(db)
+    cache_key = (scope, user.id, eff_limit)
+    _now = time.time()
+    cached = _cache_get(_team_futures_cache, cache_key, _now)
+    if cached is not None:
+        return cached
 
-    result = await db.execute(
-        select(UserFavorite.team_id)
-        .where(
-            and_(
-                UserFavorite.user_id == user.id,
-                UserFavorite.relation_type != "rival",
+    async with _get_inflight_lock("me_team_futures", cache_key):
+        _now = time.time()
+        cached = _cache_get(_team_futures_cache, cache_key, _now)
+        if cached is not None:
+            return cached
+
+        result = await db.execute(
+            select(UserFavorite.team_id)
+            .where(
+                and_(
+                    UserFavorite.user_id == user.id,
+                    UserFavorite.relation_type != "rival",
+                )
             )
+            .distinct()
         )
-        .distinct()
-    )
-    team_ids = [row[0] for row in result.all()]
+        team_ids = [row[0] for row in result.all()]
 
-    if not team_ids:
-        return {"items": [], "team_ids": [], "total_count": 0}
+        if not team_ids:
+            return {"items": [], "team_ids": [], "total_count": 0}
 
-    data = await _query_team_futures(team_ids, db, limit=min(limit, 100))
-
-    if len(_team_futures_cache) >= _TEAM_FUTURES_MAX_SIZE:
-        oldest = min(_team_futures_cache, key=lambda k: _team_futures_cache[k][0])
-        del _team_futures_cache[oldest]
-    _team_futures_cache[user.id] = (_now, data)
-
-    return data
+        data = await _query_team_futures(team_ids, db, limit=eff_limit)
+        _cache_set(_team_futures_cache, cache_key, time.time(), data)
+        return data
 
 
 # Public share endpoint — mounted separately in main.py at /api/shared
@@ -2358,5 +2886,20 @@ async def get_shared_team_futures(
     if len(parsed_ids) > 50:
         raise HTTPException(status_code=400, detail="Maximum 50 teams")
 
-    data = await _query_team_futures(parsed_ids, db, limit=min(limit, 50))
-    return data
+    eff_limit = max(1, min(limit, 50))
+    scope = _cache_scope_key(db)
+    cache_key = (scope, tuple(sorted(set(parsed_ids))), eff_limit)
+    _now = time.time()
+    cached = _cache_get(_shared_team_futures_cache, cache_key, _now)
+    if cached is not None:
+        return cached
+
+    async with _get_inflight_lock("shared_team_futures", cache_key):
+        _now = time.time()
+        cached = _cache_get(_shared_team_futures_cache, cache_key, _now)
+        if cached is not None:
+            return cached
+
+        data = await _query_team_futures(parsed_ids, db, limit=eff_limit)
+        _cache_set(_shared_team_futures_cache, cache_key, time.time(), data)
+        return data
