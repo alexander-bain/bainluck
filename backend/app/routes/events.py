@@ -21,7 +21,7 @@ from zoneinfo import ZoneInfo
 from typing import Annotated, Optional, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from sqlalchemy import select, and_, or_, union, func, case, cast, any_, literal, Date, Integer, String, literal_column, text, true, false, Interval
+from sqlalchemy import select, and_, or_, union, func, case, cast, any_, literal, Date, Integer, String, literal_column, text, true, false, Interval, exists
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import contains_eager, selectinload, aliased, load_only
 from sqlalchemy.orm.attributes import set_committed_value
@@ -299,6 +299,8 @@ from app.utils.blank_event_cards import not_a_blank_card
 from app.utils.event_list_order import in_reader_order
 from app.utils.settled_prematch_batch import attach_settled_prematch_odds
 from app.utils.feed_market_quality import (
+    EMPTY_BOOK_MIDPOINT_TOLERANCE,
+    EMPTY_BOOK_MIN_SPREAD,
     FEED_MIN_REAL_PROBABILITY,
     has_no_real_price,
     is_bidless_empty_book_midpoint,
@@ -5155,6 +5157,106 @@ async def _search_sliced_window_rows(db, stmt, slice_stmt, over_ids, limit: int)
     return list((await db.execute(stmt)).scalars().unique().all())
 
 
+def _has_positive_activity(obj) -> bool:
+    """True when any liquidity/volume counter on a market or outcome is > 0."""
+    for attr in ("volume", "volume_24h", "open_interest"):
+        val = getattr(obj, attr, None)
+        if val is not None and float(val) > 0:
+            return True
+    return False
+
+
+def _futures_untraded_order_key():
+    """#12818: SQL sort key putting traded markets (0) before untraded ones (1).
+
+    Evaluated ahead of `_futures_name_tier` inside `_futures_window_query` so
+    untraded rows never consume the 60-row window ahead of traded markets:
+    1. Positive market volume, 24h volume, or open interest -> 0 (no subquery).
+    2. Explicit non-positive market ``volume`` (e.g. Polymarket ``0``) -> 1 (no subquery).
+    3. ``source == 'odds_api'`` (sportsbook futures carry no contract volume) -> 0.
+    4. NULL-volume rows (e.g. Kalshi ``or None`` zero-volume contracts or sparse
+       test fixtures): ``0`` iff at least one outcome holds a non-NULL price with
+       positive outcome volume or a book that is not an empty-book midpoint.
+    """
+    _spread_floor = EMPTY_BOOK_MIN_SPREAD - 1e-6
+    _tol = EMPTY_BOOK_MIDPOINT_TOLERANCE + 1e-6
+    _two_sided_empty = and_(
+        FuturesOutcome.current_yes_bid.isnot(None),
+        FuturesOutcome.current_yes_ask.isnot(None),
+        (FuturesOutcome.current_yes_ask - FuturesOutcome.current_yes_bid) >= _spread_floor,
+        func.abs(
+            FuturesOutcome.current_probability
+            - (FuturesOutcome.current_yes_bid + FuturesOutcome.current_yes_ask) / 2.0
+        )
+        <= _tol,
+    )
+    _bidless_empty = and_(
+        FuturesOutcome.current_yes_bid.is_(None),
+        FuturesOutcome.current_yes_ask.isnot(None),
+        FuturesOutcome.current_yes_ask >= _spread_floor,
+        func.abs(
+            FuturesOutcome.current_probability - (FuturesOutcome.current_yes_ask / 2.0)
+        )
+        <= _tol,
+    )
+    _has_traded_outcome = exists(
+        select(literal(1)).where(
+            FuturesOutcome.market_id == FuturesMarket.id,
+            FuturesOutcome.current_probability.isnot(None),
+            or_(
+                and_(
+                    FuturesOutcome.volume.isnot(None),
+                    FuturesOutcome.volume > 0,
+                ),
+                and_(
+                    FuturesOutcome.volume_24h.isnot(None),
+                    FuturesOutcome.volume_24h > 0,
+                ),
+                ~or_(_two_sided_empty, _bidless_empty),
+            ),
+        )
+    )
+    return case(
+        (
+            or_(
+                and_(FuturesMarket.volume.isnot(None), FuturesMarket.volume > 0),
+                and_(FuturesMarket.volume_24h.isnot(None), FuturesMarket.volume_24h > 0),
+                and_(FuturesMarket.open_interest.isnot(None), FuturesMarket.open_interest > 0),
+            ),
+            0,
+        ),
+        (FuturesMarket.volume.isnot(None), 1),
+        (FuturesMarket.source == "odds_api", 0),
+        (_has_traded_outcome, 0),
+        else_=1,
+    )
+
+
+def _futures_row_is_traded(market) -> bool:
+    """Exact Python mirror of ``_futures_untraded_order_key() == 0`` (#12818)."""
+    if _has_positive_activity(market):
+        return True
+    if getattr(market, "volume", None) is not None:
+        return False
+    if getattr(market, "source", None) == "odds_api":
+        return True
+    for outcome in getattr(market, "outcomes", None) or ():
+        prob = getattr(outcome, "current_probability", None)
+        if prob is None:
+            continue
+        for attr in ("volume", "volume_24h"):
+            val = getattr(outcome, attr, None)
+            if val is not None and float(val) > 0:
+                return True
+        bid = getattr(outcome, "current_yes_bid", None)
+        ask = getattr(outcome, "current_yes_ask", None)
+        if not is_empty_book_midpoint(prob, bid, ask) and not is_bidless_empty_book_midpoint(
+            prob, bid, ask
+        ):
+            return True
+    return False
+
+
 async def _fetch_futures_window(
     db,
     window_query,
@@ -5167,6 +5269,7 @@ async def _fetch_futures_window(
     split_report: dict | None = None,
     arm_ms: dict | None = None,
     slice_query=None,
+    row_is_traded=None,
 ) -> tuple[list, str]:
     """The futures window, fetched TIER-ORDERED instead of all at once.
 
@@ -5263,8 +5366,13 @@ async def _fetch_futures_window(
     # WITH the split arms is the exact tier<2 page of the full order, and every
     # proof below (outcome-only rows score 2) reads the rows it always read.
     # Bounded like the outcome arm; over its bound, the page is the rows in hand.
+    _split_filled = (
+        len(tier1_rows)
+        if row_is_traded is None
+        else sum(1 for m in tier1_rows if row_is_traded(m))
+    )
     _split_state = "absent"
-    if split_arms and len(tier1_rows) >= _SEARCH_FUTURES_WINDOW:
+    if split_arms and _split_filled >= _SEARCH_FUTURES_WINDOW:
         _split_state = "skipped"
     elif split_arms:
         _split_state = "shed"
@@ -5300,8 +5408,15 @@ async def _fetch_futures_window(
     if outcome_arm is None:
         # Nothing was split: the tier<=1 arms ARE the whole arm set.
         return tier1_rows, "absent"
+    _untraded_tier1: list = []
+    if row_is_traded is not None:
+        _untraded_tier1 = [m for m in tier1_rows if not row_is_traded(m)]
+        if _untraded_tier1:
+            tier1_rows = [m for m in tier1_rows if row_is_traded(m)]
     if len(tier1_rows) >= _SEARCH_FUTURES_WINDOW:
-        return tier1_rows, "skipped"
+        return (
+            [*tier1_rows, *_untraded_tier1] if _untraded_tier1 else tier1_rows
+        ), "skipped"
 
     # LAT-P271/#1619: the arm runs inside its OWN budget, not the deadline residual.
     # Measurement, the number, and what a shed costs the reader are all at
@@ -5311,7 +5426,9 @@ async def _fetch_futures_window(
         # Nothing left worth starting — an honest "we ran out of time" rather than
         # a statement issued in order to be cancelled. A distinct state from
         # `budget_exceeded`: this arm never touched the database (gotcha #53).
-        return tier1_rows, "shed"
+        return (
+            [*tier1_rows, *_untraded_tier1] if _untraded_tier1 else tier1_rows
+        ), "shed"
     await _apply_search_statement_timeout(db, deadline, bound_ms=bound_ms)
 
     async def _refetch_tier1() -> list:
@@ -5397,22 +5514,37 @@ async def _fetch_futures_window(
         # still the arm's budget and would silently bound every REMAINING stage of
         # the request at it. Put the stage's own bound back.
         await _apply_search_statement_timeout(db, deadline)
-        return tier1_rows, "budget_exceeded"
+        return (
+            [*tier1_rows, *_untraded_tier1] if _untraded_tier1 else tier1_rows
+        ), "budget_exceeded"
     _arm_done("outcome")
     await nested.commit()
     merged = list(tier1_rows)
     seen = {m.id for m in merged}
+    untraded_outcome_rows: list = []
     for m in outcome_rows:
         if m.id in seen:
+            continue
+        if row_is_traded is not None and not row_is_traded(m):
+            untraded_outcome_rows.append(m)
+            seen.add(m.id)
             continue
         seen.add(m.id)
         merged.append(m)
         if len(merged) >= _SEARCH_FUTURES_WINDOW:
             break
+    if len(merged) < _SEARCH_FUTURES_WINDOW and (_untraded_tier1 or untraded_outcome_rows):
+        for extra in (*_untraded_tier1, *untraded_outcome_rows):
+            if extra.id not in seen:
+                seen.add(extra.id)
+                merged.append(extra)
+        merged = merged[:_SEARCH_FUTURES_WINDOW]
     return merged, "merged"
 
 
-def _futures_refill_in_hand(arm_state: str, spare_rows: list) -> list | None:
+def _futures_refill_in_hand(
+    arm_state: str, spare_rows: list, *, row_is_traded=None
+) -> list | None:
     """#8704: the collapse refill, when the window's own statement already has it.
 
     The refill is the full arm set's ranks 21-60. The window statement returns
@@ -5431,7 +5563,10 @@ def _futures_refill_in_hand(arm_state: str, spare_rows: list) -> list | None:
     if arm_state == "absent":
         return list(spare_rows)
     if arm_state == "skipped" and len(spare_rows) >= _SEARCH_FUTURES_REFILL:
-        return list(spare_rows[:_SEARCH_FUTURES_REFILL])
+        head = list(spare_rows[:_SEARCH_FUTURES_REFILL])
+        if row_is_traded is not None and not all(row_is_traded(m) for m in head):
+            return None
+        return head
     return None
 
 
@@ -5458,6 +5593,8 @@ def _sunk_slot_spare_rows(
     over_cap_ids: set,
     answer_rows: int,
     refill_source: str,
+    *,
+    row_is_traded=None,
 ) -> list:
     """#9724 r2: the name matches ranked 21-60, for the slots sunk rows would ship.
 
@@ -5486,6 +5623,8 @@ def _sunk_slot_spare_rows(
         or answer_rows >= _SEARCH_FUTURES_PAGE
     ):
         return []
+    if arm_state == "skipped" and row_is_traded is not None:
+        return [m for m in spare_rows if row_is_traded(m)]
     return list(spare_rows)
 
 
@@ -12772,6 +12911,8 @@ async def search_events(
     if _futures_postseason_key is not None:
         _futures_season_order.append(_futures_postseason_key.asc())
 
+    _futures_untraded_rank = _futures_untraded_order_key()
+
     def _futures_window_query(candidate_filter, open_now=_futures_open_now):
         """The futures window statement over a given candidate filter.
 
@@ -12790,6 +12931,7 @@ async def search_events(
                 *open_now,
             )
             .order_by(
+                _futures_untraded_rank.asc(),
                 _futures_name_tier.asc(),
                 *_futures_season_order,
                 futures_search_rank.desc(),
@@ -12901,6 +13043,7 @@ async def search_events(
                 split_report=_futures_split_report,
                 arm_ms=_futures_arm_ms,
                 slice_query=_futures_slice_query,
+                row_is_traded=_futures_row_is_traded,
             )
             _futures_spare_rows = futures_markets_raw[_SEARCH_FUTURES_WINDOW:]
             futures_markets_raw = futures_markets_raw[:_SEARCH_FUTURES_WINDOW]
@@ -13086,7 +13229,9 @@ async def search_events(
         # could skip. When the window's statement already returned ranks 21-60
         # (see `_futures_refill_in_hand` for when that is exact), use them.
         refill_rows = _futures_refill_in_hand(
-            _futures_outcome_arm, _futures_spare_rows
+            _futures_outcome_arm,
+            _futures_spare_rows,
+            row_is_traded=_futures_row_is_traded,
         )
         _futures_refill_source = "window" if refill_rows is not None else "query"
         if refill_rows is None:
@@ -13200,6 +13345,7 @@ async def search_events(
         _over_match_cap_ids,
         _spare_answer_rows,
         _futures_refill_source,
+        row_is_traded=_futures_row_is_traded,
     )
     if _spare_for_sunk:
         _futures_refill_source = "spare"
