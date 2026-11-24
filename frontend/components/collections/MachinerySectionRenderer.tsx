@@ -43,6 +43,13 @@ export interface MachineryHistoryChartItem {
   series: MachineryHistorySeries[];
 }
 
+export interface MachineryRowContextLine {
+  text: string;
+  as_of: string;
+  source: string;
+  kind?: string | null;
+}
+
 export interface MachineryCardContract {
   slug: string;
   form_id: string;
@@ -50,6 +57,7 @@ export interface MachineryCardContract {
   title: string;
   subtitle: string;
   footer: string;
+  selection_note?: string | null;
   scale_ordered?: boolean;
   section_count: number;
   item_count?: number | null;
@@ -1133,6 +1141,21 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
               const name = String(r.name ?? "");
               const pct = Number(r.rendered_percent ?? 0);
               const art = r.art as MachinerySubjectArt | undefined;
+              const rawCtx = r.row_context as MachineryRowContextLine | null | undefined;
+              const rowCtx =
+                rawCtx &&
+                typeof rawCtx.text === "string" &&
+                rawCtx.text.trim() &&
+                typeof rawCtx.as_of === "string" &&
+                rawCtx.as_of.trim() &&
+                typeof rawCtx.source === "string" &&
+                rawCtx.source.trim()
+                  ? {
+                      text: rawCtx.text.trim(),
+                      as_of: rawCtx.as_of.trim(),
+                      source: rawCtx.source.trim(),
+                    }
+                  : null;
               const isFav = !card.scale_ordered || pct === maxPct;
               return (
                 <div key={oid} className="flex items-center gap-2.5 py-2">
@@ -1162,6 +1185,14 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
                         {pct}%
                       </span>
                     </div>
+                    {rowCtx && (
+                      <div
+                        data-testid="machinery-row-context"
+                        className="mt-0.5 text-[11px] leading-snug text-text-muted"
+                      >
+                        {rowCtx.text} · {rowCtx.source} ({rowCtx.as_of})
+                      </div>
+                    )}
                     <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-surface-elevated">
                       <div
                         className={`h-full rounded-full ${isFav ? "bg-accent-brand" : "bg-slate-400"}`}
@@ -1179,6 +1210,11 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
       )}
 
       <div className="mt-3 flex flex-col gap-1 border-t border-surface-border pt-2.5 text-xs text-text-secondary">
+        {card.selection_note ? (
+          <span data-testid="machinery-selection-note" className="text-[11px] text-text-muted">
+            {card.selection_note}
+          </span>
+        ) : null}
         {card.footer ? <span>{card.footer}</span> : null}
         <span className="font-semibold text-accent-brand">
           {machineryCardOpenLabel(card)}
