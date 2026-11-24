@@ -1411,7 +1411,12 @@ _HORIZON_ROSTER_TIMEOUT_S = 120
 # Content-addressed virtual-question hash buckets (CAL-P016 / CAL-P028): keeping
 # bucket membership keyed by hash(vm_id) % buckets ensures a whole vm_id stays in
 # one unit and slot keys remain stable across 6h beats even as new markets resolve.
-_HORIZON_UNIT_BUCKETS = 256
+# #13518: 256 buckets put ~3,600 markets in each initial unit over the ~923K
+# non-event roster, burning ~315-360s/beat on 45s timeouts while bisecting down to
+# ~231-465 market leaves (and a 462-market split still timed out once to (231, 231)).
+# 4096 cuts each initial unit ~16x (~225 markets/unit), matching the (231, 231)
+# leaf size that completed in ~9.6s with zero 45s timeouts.
+_HORIZON_UNIT_BUCKETS = 4096
 # Periodic WIP checkpoint cadence (units) during a single horizon pass.
 _HORIZON_WIP_SAVE_EVERY = 10
 # Internal deadline (seconds). A step (roster read or chunk query) is only started
