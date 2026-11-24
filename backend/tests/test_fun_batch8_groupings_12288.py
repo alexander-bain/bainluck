@@ -288,16 +288,39 @@ async def test_batch8_eight_public_groupings_build_and_hit_mix(caplog: pytest.Lo
     assert ai_items[2415248]["title"] == "Any lab announces AGI before Jan 1, 2027"
     assert ai_items[2415248]["outcomes"][0]["rendered_percent"] == 5
 
-    # 3. World Chess: 100% chess markets (no Rock Hall or wedding dress)
-    chess_page = by_slug["machinery-chess-milestones-and-curiosities"][1]
-    chess_ids = {int(m["id"]) for m in chess_page["sections"][0]["members"]}
+    # 3. World Chess: 100% chess markets (no Rock Hall or wedding dress), 3/3 card faces & 5/5 GM section faces
+    chess_fi, chess_page, chess_card = by_slug["machinery-chess-milestones-and-curiosities"]
+    chess_ids = {
+        int(m["id"])
+        for sec in chess_page["sections"]
+        for m in (sec.get("members") or ())
+    }
     assert chess_ids == {221, 59165041, 70160273, 59165040, 70160279, 62368048}
+    assert len(chess_card["rows"]) == 3
+    for r in chess_card["rows"]:
+        assert "wikimedia.org" in str((r.get("art") or {}).get("url") or ""), r
+    chess_gm_items = (chess_page["sections"][0].get("visual_block") or {}).get("items") or ()
+    assert len(chess_gm_items) == 5
+    for it in chess_gm_items:
+        assert "wikimedia.org" in str((it["outcomes"][0].get("art") or {}).get("url") or ""), it
 
-    # 4. TV & Late Night Races: leads with TV, zero GTA VI or esports, TV shoot image
-    tv_fi, _, tv_card = by_slug["machinery-tv-and-gaming-2026"]
+    # 4. TV & Late Night Races: leads with TV, zero GTA VI or esports, TV shoot image, 3/3 card & Section 1 faces
+    tv_fi, tv_page, tv_card = by_slug["machinery-tv-and-gaming-2026"]
     assert tv_card["title"].startswith("Matthew Rhys winning Critics Choice Comedy Series Actor")
     assert "Stand_In_%28Unsplash%29.jpg" in str(tv_card.get("image_url") or "")
-    tv_ids = {int(r["market_id"]) for r in tv_card["rows"]}
+    assert len(tv_card["rows"]) == 3
+    for r in tv_card["rows"]:
+        assert "wikimedia.org" in str((r.get("art") or {}).get("url") or ""), r
+    tv_sec1_items = (tv_page["sections"][0].get("visual_block") or {}).get("items") or ()
+    assert len(tv_sec1_items) == 3
+    for it in tv_sec1_items:
+        assert "wikimedia.org" in str((it["outcomes"][0].get("art") or {}).get("url") or ""), it
+    tv_ids = {
+        int(m["id"])
+        for sec in tv_page["sections"]
+        for m in (sec.get("members") or ())
+    }
+    assert {65536362, 60481087, 108480, 70160350, 109441} <= tv_ids
     assert not ({60473244, 63336233, 71176017, 69096405} & tv_ids)
 
     # 5. Global Soccer Races: portrait on Mbappe + crests on Coventry & Guadalajara, Benfica fallback, 0 lesser penalty
@@ -436,3 +459,68 @@ async def test_afc_west_duel_carolina_under_nfc_south_resolves_nfl_panthers_cres
     ]
     assert carolina_arts
     assert all(a["url"] == "https://a.espncdn.com/i/teamlogos/nfl/500/car.png" for a in carolina_arts)
+
+
+@pytest.mark.asyncio
+async def test_climate_melbourne_headline_keeps_full_october() -> None:
+    """Item 5: standalone month answer stays 'October' in Melbourne headline, never 'Oct'."""
+    from pathlib import Path
+
+    clear_fun_markets_cache()
+    defn_path = (
+        Path(__file__).resolve().parents[1]
+        / "data"
+        / "groupings"
+        / "candidates"
+        / "machinery-climate-water-and-energy.json"
+    )
+    defn = load_machinery_definition(defn_path)
+    snap = {
+        "events": [],
+        "teams": [],
+        "markets": [
+            {
+                "id": 63828305,
+                "name": "Melbourne's wettest month of 2026?",
+                "status": "open",
+                "source": "polymarket",
+                "llm_sport_category": "weather",
+                "volume": 25_000,
+                "lifetime_volume": 25_000,
+                "outcomes": [
+                    {"id": 638283051, "name": "October", "probability": 0.91},
+                    {"id": 638283052, "name": "December", "probability": 0.05},
+                ],
+            },
+            {
+                "id": 65521875,
+                "name": "Napa seasonal rainfall by March",
+                "status": "open",
+                "source": "kalshi",
+                "llm_sport_category": "weather",
+                "volume": 25_000,
+                "lifetime_volume": 25_000,
+                "outcomes": [
+                    {"id": 655218751, "name": "Above 10 inches", "probability": 0.87},
+                    {"id": 655218752, "name": "8 to 10 inches", "probability": 0.13},
+                ],
+            },
+            {
+                "id": 61980420,
+                "name": "Lowest Mississippi gauge level at Baton Rouge",
+                "status": "open",
+                "source": "kalshi",
+                "llm_sport_category": "weather",
+                "volume": 25_000,
+                "lifetime_volume": 25_000,
+                "outcomes": [
+                    {"id": 619804201, "name": "6.00 ft or more", "probability": 0.66},
+                    {"id": 619804202, "name": "4.00 to 5.99 ft", "probability": 0.34},
+                ],
+            },
+        ],
+    }
+    res = await produce_container_machinery(snap, defn, now=NOW)
+    title = str(res.machinery_card["title"])
+    assert "October" in title, title
+    assert not title.startswith("Oct "), title

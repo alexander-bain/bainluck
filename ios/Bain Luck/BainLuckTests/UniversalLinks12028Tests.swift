@@ -58,7 +58,7 @@ final class UniversalLinks12028Tests: XCTestCase {
                 futuresNav.handleURL(try XCTUnwrap(URL(string: "https://\(host)/futures/109085"))),
                 "\(host) futures universal link was refused"
             )
-            XCTAssertEqual(futuresNav.selectedTab, .feed)
+            XCTAssertEqual(futuresNav.selectedTab, .leagues)
             let futuresPushed = expectation(description: "futures route published for \(host)")
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { futuresPushed.fulfill() }
             wait(for: [futuresPushed], timeout: 1.0)

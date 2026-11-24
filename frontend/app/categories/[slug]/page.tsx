@@ -1,9 +1,11 @@
 "use client";
 
-import { useMemo, useState, useCallback } from "react";
+import { useMemo, useState, useCallback, type ReactNode } from "react";
 import useSWR from "swr";
 import { fetchFeed } from "@/lib/api";
 import { useAuthContext } from "@/components/AuthProvider";
+import { useDiscoverPriceStream } from "@/hooks/useDiscoverPriceStream";
+import { usePriceVisibility } from "@/hooks/usePriceVisibility";
 import { getCategoryByKey, SPORT_CATEGORIES } from "@/lib/sportCategories";
 import { toTitleCaseAcronymSafe } from "@/lib/titleCase";
 import { groupFeedIntoSections, groupTopMarkets, isGroupedMarket, flattenFeedBundles } from "@/lib/feedSections";
@@ -20,6 +22,21 @@ import {
 } from "@/hooks";
 
 const PAGE_SIZE = 50;
+
+function PricedCategoryCardShell({
+  owner,
+  items,
+  report,
+  children,
+}: {
+  owner: string;
+  items: FeedItem[];
+  report: (owner: string, keys: string[], visible: boolean) => void;
+  children: ReactNode;
+}) {
+  const ref = usePriceVisibility(owner, items, report);
+  return <div ref={ref}>{children}</div>;
+}
 
 export default function CategoryPage({
   params,
@@ -74,6 +91,18 @@ export default function CategoryPage({
     return [...feedData.items, ...extraItems];
   }, [feedData, extraItems]);
 
+  // #10090: project live committed + provisional (< 0.5 s) SSE prices onto visible category cards.
+  const priceGroups = useMemo(
+    () => allItems.map((item) => ({ type: "single" as const, item })),
+    [allItems],
+  );
+  const streamedPrices = useDiscoverPriceStream(priceGroups, user?.uid ?? "anonymous");
+  const setPriceVisibility = streamedPrices.setPriceVisibility;
+  const pricedItems = useMemo(
+    () => streamedPrices.items.flatMap((group) => (group.item ? [group.item] : [])),
+    [streamedPrices.items],
+  );
+
   const loadMore = useCallback(async () => {
     if (loadingMore || !hasMore) return;
     setLoadingMore(true);
@@ -92,21 +121,21 @@ export default function CategoryPage({
   }, [loadingMore, hasMore, allItems.length, slug]);
 
   const feedSections = useMemo(() => {
-    if (allItems.length === 0) return [];
-    return groupFeedIntoSections(allItems);
-  }, [allItems]);
+    if (pricedItems.length === 0) return [];
+    return groupFeedIntoSections(pricedItems);
+  }, [pricedItems]);
 
   const feedStats = useMemo(() => {
-    if (allItems.length === 0) return { events: 0, futures: 0 };
+    if (pricedItems.length === 0) return { events: 0, futures: 0 };
     // #2597 — count the CARDS, not the feed slots. A bundle is one item that
     // renders as several, so the raw filter promised "18 markets" over a page
     // showing 22 and a section badge saying 19: three numbers for one page.
-    const cards = flattenFeedBundles(allItems);
+    const cards = flattenFeedBundles(pricedItems);
     return {
       events: cards.filter((i) => i.type === "event").length,
       futures: cards.filter((i) => i.type === "futures").length,
     };
-  }, [allItems]);
+  }, [pricedItems]);
 
   return (
     <div className="space-y-5">
@@ -192,19 +221,29 @@ export default function CategoryPage({
                       {isMarkets && groupedMarkets
                         ? groupedMarkets.ordered.map((entry) => {
                             if (isGroupedMarket(entry)) {
+                              const owner = `grouped-${entry.canonicalKey}`;
                               return (
-                                <CombinedFeedCard
-                                  key={`grouped-${entry.canonicalKey}`}
-                                  group={entry}
-                                />
+                                <PricedCategoryCardShell
+                                  key={owner}
+                                  owner={owner}
+                                  items={entry.items}
+                                  report={setPriceVisibility}
+                                >
+                                  <CombinedFeedCard group={entry} />
+                                </PricedCategoryCardShell>
                               );
                             }
                             const data = entry.data as FeedFuturesData;
+                            const owner = `cat-futures-${data.id}`;
                             return (
-                              <FeedCard
-                                key={`cat-futures-${data.id}`}
-                                item={entry}
-                              />
+                              <PricedCategoryCardShell
+                                key={owner}
+                                owner={owner}
+                                items={[entry]}
+                                report={setPriceVisibility}
+                              >
+                                <FeedCard item={entry} />
+                              </PricedCategoryCardShell>
                             );
                           })
                         : section.items.map((item) => {
@@ -214,7 +253,16 @@ export default function CategoryPage({
                                 : item.type === "tournament"
                                 ? `cat-tournament-${(item.data as FeedTournamentData).key}`
                                 : `cat-futures-${(item.data as FeedFuturesData).id}`;
-                            return <FeedCard key={key} item={item} />;
+                            return (
+                              <PricedCategoryCardShell
+                                key={key}
+                                owner={key}
+                                items={[item]}
+                                report={setPriceVisibility}
+                              >
+                                <FeedCard item={item} />
+                              </PricedCategoryCardShell>
+                            );
                           })}
                     </div>
                   </section>

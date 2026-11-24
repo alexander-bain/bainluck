@@ -49,11 +49,11 @@ final class StoryContinuationTests: XCTestCase {
 
     @MainActor
     func testReceiverPublishesExactEventAndFuturesRoutesAfterTabTransition() async throws {
-        let cases: [(StoryContinuationDestination, Route)] = [
-            (.event(15323927), .eventDetail(id: 15323927)),
-            (.futures(4935), .futuresDetail(id: 4935))
+        let cases: [(StoryContinuationDestination, Route, AppTab)] = [
+            (.event(15323927), .eventDetail(id: 15323927), .feed),
+            (.futures(4935), .futuresDetail(id: 4935), .leagues)
         ]
-        for (destination, route) in cases {
+        for (destination, route, expectedTab) in cases {
             let coordinator = NavigationCoordinator()
             coordinator.selectedTab = .myStuff
             let published = expectation(description: "Exact story route published: \(destination)")
@@ -63,7 +63,7 @@ final class StoryContinuationTests: XCTestCase {
             let activity = NSUserActivity(activityType: StoryContinuation.activityType)
             StoryContinuation.configure(activity, destination: destination)
             XCTAssertTrue(coordinator.handleStoryContinuation(activity))
-            XCTAssertEqual(coordinator.selectedTab, .feed)
+            XCTAssertEqual(coordinator.selectedTab, expectedTab)
             await fulfillment(of: [published], timeout: 2)
             XCTAssertEqual(coordinator.consumeRoute(), route)
             XCTAssertNil(coordinator.pendingRoute)

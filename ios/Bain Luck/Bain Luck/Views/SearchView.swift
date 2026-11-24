@@ -885,6 +885,7 @@ struct SearchView: View {
                             SearchCollectionRow(entry: entry)
                         }
                         .macKeyboardRow(entry.route, in: keyboardSelection)
+                        .macResultMenu(entry.route)
                     }
                 } header: {
                     Label("Collections", systemImage: "square.stack.3d.up.fill")
