@@ -240,7 +240,8 @@
     "#12288 grouping preview loads every candidate definition on real Postgres",
     "#12612 feed static tag filter (real Postgres)",
     "#12612 calibration real-Postgres contracts",
-    "#13606 history since_start SQL pushdown plans and oracle equivalence (real Postgres)"
+    "#13606 history since_start SQL pushdown plans and oracle equivalence (real Postgres)",
+    "#13573 team futures Q1 rewrite equivalence (real Postgres)"
   ],
   "shared-suffix": [
     "#10024 'dodgers world series' reaches the World Series board, not No results (real Postgres)",
