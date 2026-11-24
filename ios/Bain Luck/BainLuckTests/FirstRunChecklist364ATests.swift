@@ -391,7 +391,7 @@ final class FirstRunChecklist364ATests: XCTestCase {
         XCTAssertEqual(gameExample.title, "San Francisco tonight", "Point 3: Row 1 chip skips rankedGames[0] reserved for Biggest game")
         let awardExample = try XCTUnwrap(content.lookupExamples.first { $0.kind == .award })
         XCTAssertEqual(awardExample.id, "lookup-award-6173044", "Non-sports award (Oscars) preferred and concisely titled")
-        XCTAssertEqual(awardExample.title, "The Odyssey \u{00B7} Oscars", "Fix a: award chip names top outcome with contest")
+        XCTAssertEqual(awardExample.title, "The Odyssey \u{00B7} Best Picture", "Fix a: award chip names specific award with top outcome")
         let electionExample = try XCTUnwrap(content.lookupExamples.first { $0.kind == .election })
         XCTAssertEqual(electionExample.id, "lookup-election-113364", "Conflict bundles must never supply Row 1 election example")
         XCTAssertEqual(electionExample.title, "Marine Le Pen \u{00B7} French Election", "Fix a: election chip names candidate with race")
@@ -401,7 +401,9 @@ final class FirstRunChecklist364ATests: XCTestCase {
         }
         XCTAssertFalse((content.setsRowPreview?.subtitle ?? "").contains("tap sets"), "Point 6: remove internal 'tap sets' copy")
         for ex in content.lookupExamples {
-            XCTAssertTrue((5...95).contains(ex.percent), "Out-of-bounds % on lookup example \(ex)")
+            if let pct = ex.percent {
+                XCTAssertTrue((5...95).contains(pct), "Out-of-bounds % on lookup example \(ex)")
+            }
         }
 
         XCTAssertEqual(content.startWithTonight.count, 3)
@@ -919,7 +921,8 @@ final class FirstRunChecklist364ATests: XCTestCase {
             feedItems = try makeSampleFeedItems()
         }
 
-        let content = FirstRunChecklistExtractor364A.buildContent(from: feedItems, now: Self.fixtureNow)
+        let renderNow = fixDir.isEmpty ? Self.fixtureNow : Date()
+        let content = FirstRunChecklistExtractor364A.buildContent(from: feedItems, now: renderNow)
         XCTAssertGreaterThanOrEqual(content.discoverSets.count, 4, "Need 4-6 sets in real forms")
 
         var preloaded: [String: PairedPlatformImage] = [:]
@@ -943,7 +946,7 @@ final class FirstRunChecklist364ATests: XCTestCase {
             : [(.light, "light"), (.dark, "dark")]
 
         let celticsSampleJSON = """
-        {"id":15359901,"sport":"basketball_nba","sport_name":"NBA","home_team":"Boston Celtics","away_team":"Toronto Raptors","status":"scheduled","commence_time":"2026-11-25T00:30:00Z","home_team_data":{"abbreviation":"BOS","primary_color":"#007A33","logo_small":"https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/bos.png"},"away_team_data":{"abbreviation":"TOR","primary_color":"#CE1141","logo_small":"https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/tor.png"},"current_odds":{"home_probability":0.71,"away_probability":0.29,"home_rendered_percent":71,"away_rendered_percent":29}}
+        {"id":15197757,"sport":"basketball_nba","sport_name":"NBA","home_team":"Washington Wizards","away_team":"Boston Celtics","status":"scheduled","commence_time":"2026-11-25T01:00:00Z","home_team_data":{"team_id":42,"slug":"washington-wizards","abbreviation":"WSH","primary_color":"#E31837","logo_small":"https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/wsh.png"},"away_team_data":{"team_id":100,"slug":"boston-celtics","abbreviation":"BOS","primary_color":"#008348","logo_small":"https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/bos.png"},"current_odds":{"home_probability":0.215,"away_probability":0.785,"home_rendered_percent":21,"away_rendered_percent":79}}
         """
         let liveCelticsSample: FeedEventData = {
             if let fromFeed = feedItems.compactMap(\.event).first(where: {
@@ -1089,14 +1092,22 @@ final class FirstRunChecklist364ATests: XCTestCase {
                     height: 844,
                     colorScheme: scheme
                 )
-                XCTAssertFalse(ocr04.joined(separator: " ").contains("Final"), "Point 2: Next for you must never contain a finished game")
+                let joined04 = ocr04.joined(separator: " ")
+                XCTAssertFalse(joined04.contains("Final"), "Point 2: Next for you must never contain a finished game")
+                XCTAssertTrue(joined04.contains("Following"), "Fable Point 4: followed Celtics must show Following (\(joined04))")
+                XCTAssertFalse(
+                    joined04.contains("Celtics + Follow")
+                        || joined04.contains("Celtics · + Follow")
+                        || joined04.contains("Celtics • + Follow"),
+                    "Fable Point 4: already-followed Celtics must not show + Follow (\(joined04))"
+                )
 
                 // 05: Row 1 step ("Look anything up" — real Oscars search results, no duplicated examples)
                 let oscarSearchResp = loadFixture("search_oscars.json").flatMap { try? decoder.decode(SearchResponse.self, from: $0) } ?? fallbackSearch
                 let lookupResults = FirstRunChecklistExtractor364A.extractLookupResults(
                     from: oscarSearchResp,
                     subjectArt: content.subjectArtByCategory,
-                    now: Self.fixtureNow
+                    now: renderNow
                 )
                 let ocr05 = try await renderAndOCR(
                     view: FirstRunLookupStepView364A(
@@ -1190,9 +1201,12 @@ final class FirstRunChecklist364ATests: XCTestCase {
 
                 // 09: Row 5 step (Get a heads-up)
                 let previewMover = content.startWithTonight.first(where: { $0.slotLabel == "Biggest mover" })
-                    ?? content.startWithTonight.first
+                let previewUpcomingGame = content.startWithTonight.first(where: { $0.slotLabel == "Biggest game" })
                 let ocr09 = try await renderAndOCR(
-                    view: FirstRunAlertsStepView364A(previewMover: previewMover),
+                    view: FirstRunAlertsStepView364A(
+                        previewMover: previewMover,
+                        previewUpcomingGame: previewUpcomingGame
+                    ),
                     filename: "364a-09-row5-alerts-\(sTag)-\(wTag).png",
                     exportDir: exportDir,
                     preloaded: preloaded,
@@ -1202,9 +1216,13 @@ final class FirstRunChecklist364ATests: XCTestCase {
                 )
                 let joined09 = ocr09.joined(separator: " ")
                 XCTAssertFalse(joined09.contains("LIVE EXAMPLE"))
+                XCTAssertFalse(joined09.contains("down 2 points") || joined09.contains("Down 2 points"))
                 XCTAssertTrue(
-                    joined09.contains("since pregame") || joined09.contains("since your last visit"),
-                    "Fix b: Row 5 mover copy must name window (\(joined09))"
+                    joined09.contains("since pregame")
+                        || joined09.contains("since your last visit")
+                        || joined09.contains("Tipoff")
+                        || joined09.contains("Starting soon"),
+                    "Fable Point 2: Row 5 example must obey big-move >=15 or game-start rule (\(joined09))"
                 )
                 XCTAssertTrue(joined09.contains("ask before any alert"))
 
@@ -1487,7 +1505,8 @@ final class FirstRunChecklist364ATests: XCTestCase {
     /// `FollowManager295A`, `MyStuffLandingViewModel295A`, and `GameAlertsPreference13083`
     /// against live `https://api.bainluck.com`.
     func testLiveNetworkEndToEndFiveRowsWhenEnabled() async throws {
-        guard ProcessInfo.processInfo.environment["RUN_LIVE_364A_E2E"] == "1" else {
+        let env = ProcessInfo.processInfo.environment
+        guard (env["RUN_LIVE_364A_E2E"] ?? env["TEST_RUNNER_RUN_LIVE_364A_E2E"]) == "1" else {
             return
         }
 
@@ -1588,6 +1607,259 @@ final class FirstRunChecklist364ATests: XCTestCase {
         XCTAssertEqual(finalReload.state.completedCount, 5)
         XCTAssertEqual(finalReload.state.progressText, "5 of 5 done")
         XCTAssertEqual("Getting started · \(finalReload.state.progressText)", "Getting started · 5 of 5 done")
+    }
+
+    // MARK: - Fable #13593 Verdict Unit Tests
+
+    func testLookupExampleWithNilPercentPrintsNoPercent() async throws {
+        let nilPctExample = FirstRunLookupExample364A(
+            id: "lookup-unpriced",
+            kind: .award,
+            badgeText: "Award",
+            title: "The Odyssey \u{00B7} Best Picture",
+            query: "Oscars",
+            percent: nil,
+            imageUrl: nil,
+            sfSymbol: "trophy.fill"
+        )
+        let content = FirstRunChecklistContent364A(
+            lookupExamples: [nilPctExample],
+            startWithTonight: [],
+            discoverSets: [],
+            rowPreviews: [:],
+            subjectArtByCategory: [:]
+        )
+
+        let chipLines = try await renderAndOCR(
+            view: FirstRunChecklistView364A(
+                content: content,
+                state: .constant(.untouched),
+                inlineSearchQuery: .constant("")
+            ),
+            filename: "",
+            exportDir: "",
+            preloaded: [:],
+            width: 390,
+            height: 844,
+            colorScheme: .light
+        ).joined(separator: " ")
+        XCTAssertTrue(chipLines.contains("The Odyssey"), "Unpriced chip must still print its subject: \(chipLines)")
+        XCTAssertFalse(chipLines.contains("%"), "Unpriced chip must print no percent when subject has no reading: \(chipLines)")
+
+        let stepLines = try await renderAndOCR(
+            view: FirstRunLookupStepView364A(
+                examples: [nilPctExample],
+                query: .constant(""),
+                results: []
+            ),
+            filename: "",
+            exportDir: "",
+            preloaded: [:],
+            width: 390,
+            height: 844,
+            colorScheme: .light
+        ).joined(separator: " ")
+        XCTAssertTrue(stepLines.contains("The Odyssey"), "Step example must print subject: \(stepLines)")
+        XCTAssertFalse(stepLines.contains("%"), "Step example with nil percent must print no %: \(stepLines)")
+    }
+
+    func testOscarsChipNamesAwardAndMatchesRow3Percent() throws {
+        let json = """
+        {
+          "items": [
+            {
+              "type": "bundle",
+              "score": 96,
+              "data": {
+                "id": "theme:story:oscars:57313556",
+                "title": "Oscars",
+                "kind": "story",
+                "items": [
+                  {
+                    "type": "futures",
+                    "score": 96,
+                    "data": {
+                      "id": 57313556,
+                      "name": "Oscars 2027: Best Picture Winner",
+                      "status": "open",
+                      "top_outcomes": [
+                        {"id": 1, "name": "The Odyssey", "probability": 0.498, "rendered_percent": 50}
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            {
+              "type": "bundle",
+              "score": 94,
+              "data": {
+                "id": "roundup:machinery-oscars-best-picture",
+                "title": "The Odyssey leads Best Picture at 52%",
+                "kind": "roundup",
+                "image_url": "https://example.com/odyssey.jpg",
+                "collection_ref": {"slug": "machinery-oscars-best-picture", "name": "Oscars 2027"},
+                "roundup": {
+                  "kicker": "CULTURE · OSCARS",
+                  "rows": [
+                    {"market_id": 6173044, "label": "The Odyssey", "probability": 0.515, "rendered_percent": 52}
+                  ],
+                  "machinery_card": {
+                    "slug": "machinery-oscars-best-picture",
+                    "form_id": "sibling_fields_grid",
+                    "kicker": "CULTURE · OSCARS",
+                    "title": "The Odyssey leads Best Picture at 52%",
+                    "rows": [
+                      {"market_id": 6173044, "name": "The Odyssey", "rendered_percent": 52}
+                    ]
+                  }
+                },
+                "items": [
+                  {
+                    "type": "futures",
+                    "score": 94,
+                    "data": {
+                      "id": 6173044,
+                      "name": "Oscar Winner: Best Picture",
+                      "status": "open",
+                      "top_outcomes": [
+                        {"id": 31537937, "name": "The Odyssey", "probability": 0.515}
+                      ]
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "total": 2, "limit": 10, "offset": 0, "has_more": false
+        }
+        """
+        let items = try makeDecoder().decode(FeedResponse.self, from: Data(json.utf8)).items
+        let content = FirstRunChecklistExtractor364A.buildContent(from: items, now: Self.fixtureNow)
+        let chip = try XCTUnwrap(content.lookupExamples.first { $0.kind == .award })
+        let set = try XCTUnwrap(content.discoverSets.first { $0.slug == "machinery-oscars-best-picture" })
+        XCTAssertEqual(chip.title, "The Odyssey \u{00B7} Best Picture")
+        XCTAssertEqual(chip.percent, set.leadPercent)
+        XCTAssertEqual(chip.percent, 52)
+    }
+
+    func testAlertsStepExampleHonors15PointRuleAndFallsBackToGameStart() async throws {
+        let smallMove = FirstRunTonightCard364A(
+            id: "tonight-mover-2",
+            slotLabel: "Biggest mover",
+            title: "Wright St at St. Bonaventure",
+            subtitle: "College Basketball",
+            subjectLabel: "St. Bonaventure",
+            percent: 47,
+            deltaText: "\u{25BC} down 2 points since pregame",
+            deltaPoints: -2,
+            startTimeText: "7:00 PM",
+            imageUrl: nil,
+            sfSymbol: "basketball.fill",
+            accentHex: "#D97706"
+        )
+        let tonightGame = FirstRunTonightCard364A(
+            id: "tonight-game-nba",
+            slotLabel: "Biggest game",
+            title: "Pistons at Magic",
+            subtitle: "NBA",
+            subjectLabel: "Magic",
+            percent: 55,
+            deltaText: nil,
+            deltaPoints: nil,
+            startTimeText: "4:00 PM",
+            imageUrl: nil,
+            sfSymbol: "basketball.fill",
+            accentHex: "#047857"
+        )
+
+        let fallbackOCR = try await renderAndOCR(
+            view: FirstRunAlertsStepView364A(
+                previewMover: smallMove,
+                previewUpcomingGame: tonightGame
+            ),
+            filename: "",
+            exportDir: "",
+            preloaded: [:],
+            width: 390,
+            height: 844,
+            colorScheme: .light
+        ).joined(separator: " ")
+        XCTAssertFalse(fallbackOCR.contains("down 2 points"), "Moves under 15 pts must never appear as Heads-up example: \(fallbackOCR)")
+        XCTAssertTrue(fallbackOCR.contains("Pistons at Magic"), "Game-start fallback should show tonight's game: \(fallbackOCR)")
+        XCTAssertTrue(fallbackOCR.contains("Tipoff 4:00 PM"), "Game-start example must match Game starts rule: \(fallbackOCR)")
+
+        let bigMove = FirstRunTonightCard364A(
+            id: "tonight-mover-18",
+            slotLabel: "Biggest mover",
+            title: "Celtics at Wizards",
+            subtitle: "NBA",
+            subjectLabel: "Celtics",
+            percent: 79,
+            deltaText: "\u{25B2} up 18 points since pregame",
+            deltaPoints: 18,
+            startTimeText: nil,
+            imageUrl: nil,
+            sfSymbol: "basketball.fill",
+            accentHex: "#D97706"
+        )
+        let bigOCR = try await renderAndOCR(
+            view: FirstRunAlertsStepView364A(
+                previewMover: bigMove,
+                previewUpcomingGame: tonightGame
+            ),
+            filename: "",
+            exportDir: "",
+            preloaded: [:],
+            width: 390,
+            height: 844,
+            colorScheme: .light
+        ).joined(separator: " ")
+        XCTAssertTrue(
+            bigOCR.localizedCaseInsensitiveContains("up 18 points since pregame"),
+            "18-pt mover satisfies >=15 rule: \(bigOCR)"
+        )
+    }
+
+    func testMajorLeagueGameLeadsAheadOfCollegeGameForBiggestGame() throws {
+        let json = """
+        {
+          "items": [
+            {
+              "type": "event",
+              "score": 99,
+              "data": {
+                "id": 9901,
+                "sport": "basketball_ncaab",
+                "home_team": "St. Bonaventure Bonnies",
+                "away_team": "Wright St Raiders",
+                "status": "scheduled",
+                "commence_time": "2026-11-23T23:00:00Z",
+                "current_odds": {"home_probability": 0.47, "away_probability": 0.53, "home_rendered_percent": 47, "away_rendered_percent": 53}
+              }
+            },
+            {
+              "type": "event",
+              "score": 80,
+              "data": {
+                "id": 9902,
+                "sport": "basketball_nba",
+                "home_team": "Orlando Magic",
+                "away_team": "Detroit Pistons",
+                "status": "scheduled",
+                "commence_time": "2026-11-25T00:30:00Z",
+                "current_odds": {"home_probability": 0.55, "away_probability": 0.45, "home_rendered_percent": 55, "away_rendered_percent": 45}
+              }
+            }
+          ],
+          "total": 2, "limit": 10, "offset": 0, "has_more": false
+        }
+        """
+        let items = try makeDecoder().decode(FeedResponse.self, from: Data(json.utf8)).items
+        let content = FirstRunChecklistExtractor364A.buildContent(from: items, now: Self.fixtureNow)
+        let biggest = try XCTUnwrap(content.startWithTonight.first { $0.slotLabel == "Biggest game" })
+        XCTAssertEqual(biggest.subtitle, "NBA")
+        XCTAssertEqual(biggest.title, "Pistons at Magic")
     }
     #endif
 }

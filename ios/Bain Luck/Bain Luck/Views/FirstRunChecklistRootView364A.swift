@@ -142,7 +142,7 @@ final class FirstRunChecklistCoordinatorVM364A: ObservableObject {
             try await APIClient.shared.fetchFeed(limit: 40, cacheTTL: 0).items
         }
         self.sportsLoader = sportsLoader ?? {
-            try await APIClient.shared.fetchFeed(limit: 20, mode: "sports", cacheTTL: 0).items
+            try await APIClient.shared.fetchFeed(limit: 40, mode: "sports", cacheTTL: 0).items
         }
     }
 
@@ -374,8 +374,8 @@ struct FirstRunChecklistRootView364A: View {
 
         case .alerts:
             FirstRunAlertsStepView364A(
-                previewMover: coordinatorVM.content.startWithTonight.first(where: { $0.slotLabel == "Biggest mover" })
-                    ?? coordinatorVM.content.startWithTonight.first,
+                previewMover: coordinatorVM.content.startWithTonight.first(where: { $0.slotLabel == "Biggest mover" }),
+                previewUpcomingGame: coordinatorVM.content.startWithTonight.first(where: { $0.slotLabel == "Biggest game" }),
                 alertsAlreadyOn: GameAlertsPreference13083.shared.isEnabled,
                 isBusy: isRequestingAlerts,
                 onTurnOnAlerts: {

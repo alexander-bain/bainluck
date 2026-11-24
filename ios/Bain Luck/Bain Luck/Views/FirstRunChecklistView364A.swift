@@ -180,9 +180,7 @@ struct FirstRunChecklistView364A: View {
 
     private var brandWordmark: some View {
         HStack(spacing: 6) {
-            Image(systemName: "sparkle")
-                .font(.caption.weight(.bold))
-                .foregroundStyle(DS.greenReadable)
+            BainLuckMarkView(size: 20)
             Text("Bain Luck")
                 .font(.headline.weight(.bold))
                 .foregroundStyle(DS.textPrimary)
@@ -367,14 +365,20 @@ struct FirstRunChecklistView364A: View {
                         Button {
                             onTapLookupExample(ex)
                         } label: {
-                            (
-                                Text(ex.title)
-                                    .font(.caption.weight(.medium))
-                                    .foregroundStyle(DS.textPrimary)
-                                + Text(" \(ex.percent)%")
-                                    .font(.caption.weight(.bold).monospacedDigit())
-                                    .foregroundStyle(DS.blueReadable)
-                            )
+                            Group {
+                                if let pct = ex.percent {
+                                    Text(ex.title)
+                                        .font(.caption.weight(.medium))
+                                        .foregroundStyle(DS.textPrimary)
+                                    + Text(" \(pct)%")
+                                        .font(.caption.weight(.bold).monospacedDigit())
+                                        .foregroundStyle(DS.blueReadable)
+                                } else {
+                                    Text(ex.title)
+                                        .font(.caption.weight(.medium))
+                                        .foregroundStyle(DS.textPrimary)
+                                }
+                            }
                             .multilineTextAlignment(.leading)
                             .fixedSize(horizontal: false, vertical: true)
                             .padding(.horizontal, 8)
@@ -774,7 +778,7 @@ struct FirstRunLookupStepView364A: View {
                                             Text(ex.badgeText.uppercased())
                                                 .font(.caption2.weight(.bold))
                                                 .foregroundStyle(DS.blueReadable)
-                                            Text("\(ex.title) \(ex.percent)%")
+                                            Text(ex.percent.map { "\(ex.title) \($0)%" } ?? ex.title)
                                                 .font(.subheadline.weight(.medium))
                                                 .foregroundStyle(DS.textPrimary)
                                                 .multilineTextAlignment(.leading)
@@ -1379,7 +1383,10 @@ struct FirstRunSignInStepView364A: View {
 }
 
 struct FirstRunAlertsStepView364A: View {
+    static let bigMoveThresholdPoints = 15
+
     var previewMover: FirstRunTonightCard364A? = nil
+    var previewUpcomingGame: FirstRunTonightCard364A? = nil
     var alertsAlreadyOn: Bool = false
     var isBusy: Bool = false
     var onTurnOnAlerts: (() -> Void)? = nil
@@ -1398,20 +1405,34 @@ struct FirstRunAlertsStepView364A: View {
         Color(hex: MyStuffTeamTextColour.probabilityHex("#D97706", colorScheme: colorScheme))
     }
 
-    private var resolvedMover: FirstRunTonightCard364A? {
-        guard let mover = previewMover, mover.deltaText != nil else { return nil }
+    private var qualifyingBigMover: FirstRunTonightCard364A? {
+        guard let mover = previewMover,
+              let pts = mover.deltaPoints,
+              abs(pts) >= Self.bigMoveThresholdPoints,
+              mover.deltaText != nil else {
+            return nil
+        }
         return mover
     }
 
+    private var displayedExampleCard: FirstRunTonightCard364A? {
+        qualifyingBigMover ?? previewUpcomingGame ?? previewMover
+    }
+
     private var exampleTitle: String {
-        resolvedMover?.title ?? "Nevada at San Francisco"
+        displayedExampleCard?.title ?? "Pistons at Magic"
     }
 
     private var exampleBody: String {
-        if let mover = resolvedMover, let shift = mover.deltaText {
-            let subject = mover.subjectLabel.isEmpty ? "San Francisco" : mover.subjectLabel
+        if let mover = qualifyingBigMover, let shift = mover.deltaText {
+            let subject = mover.subjectLabel.isEmpty ? mover.title : mover.subjectLabel
             let capitalizedShift = shift.prefix(1).uppercased() + shift.dropFirst()
             return "\(capitalizedShift) \u{00B7} \(subject) now \(mover.percent)%"
+        }
+        if let game = previewUpcomingGame ?? previewMover {
+            let subject = game.subjectLabel.isEmpty ? game.title : game.subjectLabel
+            let timing = game.startTimeText.map { "Tipoff \($0)" } ?? "Starting soon"
+            return "\(timing) \u{00B7} \(subject) \(game.percent)%"
         }
         return "Up 33 points since pregame \u{00B7} San Francisco now 60%"
     }
@@ -1433,9 +1454,9 @@ struct FirstRunAlertsStepView364A: View {
                     // Show, do not describe: lock-screen style heads-up preview (Fix b & c: zero lab words, explicit window + subject)
                     HStack(spacing: 12) {
                         ChecklistThumbnail364A(
-                            urlString: resolvedMover?.imageUrl,
-                            sfSymbol: "bell.badge.fill",
-                            accentHex: "#D97706",
+                            urlString: displayedExampleCard?.imageUrl,
+                            sfSymbol: qualifyingBigMover != nil ? "bell.badge.fill" : "sportscourt.fill",
+                            accentHex: qualifyingBigMover != nil ? "#D97706" : "#047857",
                             size: 40
                         )
                         VStack(alignment: .leading, spacing: 2) {
@@ -1570,14 +1591,9 @@ struct FirstRunLeaveToDiscoverPreview364A: View {
     var body: some View {
         VStack(spacing: 0) {
             HStack {
-                HStack(spacing: 6) {
-                    Image(systemName: "sparkle")
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(DS.greenReadable)
-                    Text("Discover")
-                        .font(.title3.weight(.bold))
-                        .foregroundStyle(DS.textPrimary)
-                }
+                Text("Discover")
+                    .font(.title3.weight(.bold))
+                    .foregroundStyle(DS.textPrimary)
                 Spacer(minLength: 8)
                 Image(systemName: "magnifyingglass")
                     .font(.subheadline.weight(.semibold))

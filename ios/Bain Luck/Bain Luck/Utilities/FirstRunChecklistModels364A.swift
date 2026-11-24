@@ -240,7 +240,7 @@ nonisolated struct FirstRunLookupExample364A: Identifiable, Equatable, Sendable 
     let badgeText: String
     let title: String
     let query: String
-    let percent: Int
+    let percent: Int?
     let imageUrl: String?
     let sfSymbol: String
     var route: Route? = nil
@@ -270,6 +270,8 @@ nonisolated struct FirstRunTonightCard364A: Identifiable, Equatable, Sendable {
     var subjectLabel: String = ""
     let percent: Int
     let deltaText: String?
+    var deltaPoints: Int? = nil
+    var startTimeText: String? = nil
     let imageUrl: String?
     let sfSymbol: String
     let accentHex: String
@@ -533,6 +535,8 @@ nonisolated enum FirstRunChecklistExtractor364A {
     }
 
     private typealias RankedGameEntry = (
+        isMajorLeague: Bool,
+        isWithin24h: Bool,
         prio: Int,
         seq: Int,
         event: FeedEventData,
@@ -542,8 +546,16 @@ nonisolated enum FirstRunChecklistExtractor364A {
         favoredLogoUrl: String?,
         favoredAccentHex: String?,
         deltaPoints: Int?,
-        deltaWindow: String?
+        deltaWindow: String?,
+        startTimeText: String?
     )
+
+    private static let startTimeFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "h:mm a"
+        return f
+    }()
 
     private static func rankedGamesWithin24h(
         from feedItems: [FeedItem],
@@ -551,7 +563,8 @@ nonisolated enum FirstRunChecklistExtractor364A {
         now: Date
     ) -> [RankedGameEntry] {
         let earliest = now.addingTimeInterval(-4 * 3600)
-        let latest = now.addingTimeInterval(24 * 3600)
+        let cutoff24h = now.addingTimeInterval(24 * 3600)
+        let latest = now.addingTimeInterval(36 * 3600)
         var list: [RankedGameEntry] = []
 
         for (idx, ev) in flattenedEvents(from: feedItems).enumerated() {
@@ -598,21 +611,29 @@ nonisolated enum FirstRunChecklistExtractor364A {
                     deltaWindow = baseline.window
                 }
             }
+            let startLabel: String? = (statusLower == "live" || statusLower == "in_progress")
+                ? nil
+                : startTimeFormatter.string(from: start)
             list.append((
-                prio,
-                idx,
-                ev,
-                favoredTeam,
-                favoredPct,
-                "\(pairs.away) at \(pairs.home)",
-                art.logoUrl,
-                art.accentHex,
-                deltaPts,
-                deltaWindow
+                isMajorLeague: prio <= 3,
+                isWithin24h: start <= cutoff24h,
+                prio: prio,
+                seq: idx,
+                event: ev,
+                favoredTeam: favoredTeam,
+                pct: favoredPct,
+                shortTitle: "\(pairs.away) at \(pairs.home)",
+                favoredLogoUrl: art.logoUrl,
+                favoredAccentHex: art.accentHex,
+                deltaPoints: deltaPts,
+                deltaWindow: deltaWindow,
+                startTimeText: startLabel
             ))
         }
 
         list.sort { lhs, rhs in
+            if lhs.isMajorLeague != rhs.isMajorLeague { return lhs.isMajorLeague && !rhs.isMajorLeague }
+            if lhs.isWithin24h != rhs.isWithin24h { return lhs.isWithin24h && !rhs.isWithin24h }
             if lhs.prio != rhs.prio { return lhs.prio < rhs.prio }
             return lhs.seq < rhs.seq
         }
@@ -640,10 +661,16 @@ nonisolated enum FirstRunChecklistExtractor364A {
     ) -> FirstRunChecklistContent364A {
         let previousSnapshot = MyStuffVisitLedger295A.loadPreviousSnapshot(defaults: defaults)
         let subjectArt = FirstRunSubjectArt364A.extractSubjectArt(from: feedItems)
-        let rankedGames = rankedGamesWithin24h(from: feedItems, previousSnapshot: previousSnapshot, now: now)
-        let lookupExamples = extractLookupExamples(from: feedItems, rankedGames: rankedGames, subjectArt: subjectArt, now: now)
-        let tonight = extractStartWithTonight(from: feedItems, rankedGames: rankedGames, previousSnapshot: previousSnapshot, subjectArt: subjectArt, now: now)
         let sets = extractDiscoverSets(from: feedItems, limit: 5, now: now)
+        let rankedGames = rankedGamesWithin24h(from: feedItems, previousSnapshot: previousSnapshot, now: now)
+        let lookupExamples = extractLookupExamples(
+            from: feedItems,
+            rankedGames: rankedGames,
+            discoverSets: sets,
+            subjectArt: subjectArt,
+            now: now
+        )
+        let tonight = extractStartWithTonight(from: feedItems, rankedGames: rankedGames, previousSnapshot: previousSnapshot, subjectArt: subjectArt, now: now)
 
         var previews: [FirstRunChecklistRowID364A: FirstRunChecklistRowPreview364A] = [:]
 
@@ -790,6 +817,28 @@ nonisolated enum FirstRunChecklistExtractor364A {
             || lower.contains("ukraine")
     }
 
+    private static func extractOscarAwardLabel(from rawTitle: String) -> String {
+        var category = rawTitle
+        if let colon = rawTitle.firstIndex(of: ":") {
+            category = String(rawTitle[rawTitle.index(after: colon)...])
+        }
+        category = category.trimmingCharacters(in: .whitespacesAndNewlines)
+        for suffix in [" Winner", " winner"] {
+            if category.hasSuffix(suffix) {
+                category = String(category.dropLast(suffix.count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            }
+        }
+        let lower = category.lowercased()
+        if lower.contains("best picture") { return "Best Picture" }
+        if lower.contains("best director") { return "Best Director" }
+        if lower.contains("best actor") { return "Best Actor" }
+        if lower.contains("best actress") { return "Best Actress" }
+        if lower.contains("supporting actor") { return "Best Supporting Actor" }
+        if lower.contains("supporting actress") { return "Best Supporting Actress" }
+        if lower.contains("documentary") { return "Best Documentary" }
+        return category.isEmpty ? "Oscars" : category
+    }
+
     private static func conciseChipTitle(
         for rawTitle: String,
         outcomeName: String?,
@@ -804,7 +853,8 @@ nonisolated enum FirstRunChecklistExtractor364A {
                 return subject.map { "\($0) for MVP" } ?? "\(rawTitle) \u{00B7} Yes"
             }
             if lower.hasPrefix("oscar winner: ") || lower.contains("oscar") {
-                return subject.map { "\($0) \u{00B7} Oscars" } ?? "Oscars \u{00B7} Yes"
+                let award = extractOscarAwardLabel(from: rawTitle)
+                return subject.map { "\($0) \u{00B7} \(award)" } ?? "\(award) \u{00B7} Yes"
             }
             return subject.map { "\($0) \u{00B7} \(rawTitle)" } ?? "\(rawTitle) \u{00B7} Yes"
         case .election:
@@ -828,13 +878,21 @@ nonisolated enum FirstRunChecklistExtractor364A {
         now: Date = Date()
     ) -> [FirstRunLookupExample364A] {
         let subjectArt = FirstRunSubjectArt364A.extractSubjectArt(from: feedItems)
+        let sets = extractDiscoverSets(from: feedItems, limit: 5, now: now)
         let games = rankedGamesWithin24h(from: feedItems, previousSnapshot: [:], now: now)
-        return extractLookupExamples(from: feedItems, rankedGames: games, subjectArt: subjectArt, now: now)
+        return extractLookupExamples(
+            from: feedItems,
+            rankedGames: games,
+            discoverSets: sets,
+            subjectArt: subjectArt,
+            now: now
+        )
     }
 
     private static func extractLookupExamples(
         from feedItems: [FeedItem],
         rankedGames: [RankedGameEntry],
+        discoverSets: [FirstRunSetChoice364A],
         subjectArt: [String: String],
         now: Date
     ) -> [FirstRunLookupExample364A] {
@@ -855,28 +913,55 @@ nonisolated enum FirstRunChecklistExtractor364A {
             ))
         }
 
-        // Collect all non-grim, conflict-free unsettled futures in feed order
-        var futuresWithBundle: [(fut: FeedFuturesData, bundleImg: String?)] = []
+        // Collect all non-grim, conflict-free unsettled futures in feed order, preferring roundup bundles
+        // so that an award chip matches Row 3's set market & percent whenever both show the same contest.
+        var futuresWithBundle: [(isFromRoundup: Bool, bundleSlug: String?, fut: FeedFuturesData, bundleImg: String?)] = []
         var seenFutIds: Set<Int> = []
         for item in feedItems {
             if let fut = item.futures, seenFutIds.insert(fut.id).inserted {
                 guard !isConflictOrGrimBundleOrMarket(fut.name) else { continue }
-                futuresWithBundle.append((fut, fut.imageUrl))
+                futuresWithBundle.append((false, nil, fut, fut.imageUrl))
             } else if let bundle = item.bundle {
                 let bundleDescriptor = "\(bundle.id) \(bundle.title) \(bundle.roundupContract?.kicker ?? "")"
                 guard !isConflictOrGrimBundleOrMarket(bundleDescriptor) else { continue }
+                let bSlug = bundle.roundupContract?.machineryCard?.slug ?? bundle.collectionRef?.slug
+                let fromRoundup = bundle.kind == "roundup" || bundle.roundupContract != nil
                 let bImg = bundle.roundupContract?.machineryCard?.imageUrl ?? bundle.imageUrl
                 for child in bundle.items {
                     if let fut = child.futures, seenFutIds.insert(fut.id).inserted {
                         guard !isConflictOrGrimBundleOrMarket(fut.name) else { continue }
-                        futuresWithBundle.append((fut, fut.imageUrl ?? bImg))
+                        futuresWithBundle.append((fromRoundup, bSlug, fut, fut.imageUrl ?? bImg))
                     }
                 }
             }
         }
 
-        // 2. An award (prefer non-sports award like Oscars over sports awards like Heisman/MVP)
-        let awardCandidates = futuresWithBundle.compactMap { entry -> (isNonSports: Bool, fut: FeedFuturesData, img: String?, outcomeName: String?, pct: Int)? in
+        let selectedSetSlugs = Set(discoverSets.map(\.slug))
+        let setPercentByMarketId: [Int: Int] = {
+            var map: [Int: Int] = [:]
+            for set in discoverSets {
+                for row in set.machineryCard.outcomeRows {
+                    if let mid = row.marketId {
+                        map[mid] = row.renderedPercent
+                    }
+                }
+            }
+            for item in feedItems {
+                guard let bundle = item.bundle,
+                      let slug = bundle.roundupContract?.machineryCard?.slug,
+                      selectedSetSlugs.contains(slug) else { continue }
+                for row in bundle.roundupContract?.rows ?? [] {
+                    let pct = row.renderedPercent ?? Int(((row.probability > 1.0 && row.probability <= 100.0) ? row.probability : row.probability * 100.0).rounded())
+                    if let mid = row.marketId {
+                        map[mid] = map[mid] ?? pct
+                    }
+                }
+            }
+            return map
+        }()
+
+        // 2. An award (prefer non-sports award like Oscars, aligning with Row 3's exact market & percent when shared)
+        let awardCandidates = futuresWithBundle.compactMap { entry -> (matchesSet: Bool, isNonSports: Bool, fut: FeedFuturesData, img: String?, outcomeName: String?, pct: Int)? in
             let fut = entry.fut
             guard !FeedLifecycle.futuresIsSettled(fut, now: now) else { return nil }
             let lower = fut.name.lowercased()
@@ -891,9 +976,32 @@ nonisolated enum FirstRunChecklistExtractor364A {
             guard isNonSportsAward || isSportsAward else { return nil }
             guard let resolved = FirstRunPair212A.resolvePrimaryOutcome(for: fut),
                   (5...95).contains(resolved.percent) else { return nil }
-            return (isNonSportsAward, fut, entry.bundleImg, resolved.outcomeName, resolved.percent)
+            let exactMarketMatch = setPercentByMarketId[fut.id] != nil
+            let sameBestPictureMarket = lower.contains("best picture") && discoverSets.contains { set in
+                let titleMatch = set.bundleTitle.lowercased().contains("best picture")
+                    || set.category.lowercased().contains("best picture")
+                let subjMatch = leadSetSubjectName(for: set)?.caseInsensitiveCompare(resolved.outcomeName ?? "") == .orderedSame
+                return titleMatch && subjMatch
+            }
+            let finalPct: Int = {
+                if let exactPct = setPercentByMarketId[fut.id] {
+                    return exactPct
+                }
+                if sameBestPictureMarket,
+                   let matchingSet = discoverSets.first(where: {
+                       ($0.bundleTitle.lowercased().contains("best picture") || $0.category.lowercased().contains("best picture"))
+                           && leadSetSubjectName(for: $0)?.caseInsensitiveCompare(resolved.outcomeName ?? "") == .orderedSame
+                   }) {
+                    return matchingSet.leadPercent
+                }
+                return resolved.percent
+            }()
+            guard (5...95).contains(finalPct) else { return nil }
+            return (exactMarketMatch || sameBestPictureMarket, isNonSportsAward, fut, entry.bundleImg, resolved.outcomeName, finalPct)
         }
-        if let chosenAward = awardCandidates.first(where: \.isNonSports) ?? awardCandidates.first {
+        if let chosenAward = awardCandidates.first(where: { $0.isNonSports && $0.matchesSet })
+            ?? awardCandidates.first(where: \.isNonSports)
+            ?? awardCandidates.first {
             let lower = chosenAward.fut.name.lowercased()
             out.append(FirstRunLookupExample364A(
                 id: "lookup-award-\(chosenAward.fut.id)",
@@ -909,7 +1017,7 @@ nonisolated enum FirstRunChecklistExtractor364A {
         }
 
         // 3. An election (conflict-free, non-grim, 5...95%, subject named on chip)
-        for (fut, img) in futuresWithBundle {
+        for (_, _, fut, img) in futuresWithBundle {
             guard !FeedLifecycle.futuresIsSettled(fut, now: now) else { continue }
             let lower = fut.name.lowercased()
             let isElection = lower.contains("election") || lower.contains("presidential") || lower.contains("prime minister")
@@ -970,6 +1078,8 @@ nonisolated enum FirstRunChecklistExtractor364A {
                 subjectLabel: topGame.favoredTeam,
                 percent: topGame.pct,
                 deltaText: deltaCopy,
+                deltaPoints: topGame.deltaPoints,
+                startTimeText: topGame.startTimeText,
                 imageUrl: topGame.favoredLogoUrl,
                 sfSymbol: FirstRunCard212A.sfSymbol(forCategory: DiscoverCategory.token(forSport: topGame.event.sport), isSports: true),
                 accentHex: topGame.favoredAccentHex ?? "#047857",
@@ -1002,6 +1112,8 @@ nonisolated enum FirstRunChecklistExtractor364A {
                     subjectLabel: pairs.home,
                     percent: pct,
                     deltaText: FirstRunCard212A.shiftText(points: diff, window: baseline.window),
+                    deltaPoints: diff,
+                    startTimeText: parseDate(ev.commenceTime).map { startTimeFormatter.string(from: $0) },
                     imageUrl: FirstRunSubjectArt364A.cleanHTTPS(ev.homeTeamData?.logoSmall ?? ev.homeTeamData?.logoLarge ?? ev.homeImageUrl),
                     sfSymbol: FirstRunCard212A.sfSymbol(forCategory: DiscoverCategory.token(forSport: ev.sport), isSports: true),
                     accentHex: "#D97706",
