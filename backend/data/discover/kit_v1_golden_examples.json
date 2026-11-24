@@ -474,7 +474,8 @@
             "tone": "accent",
             "prominence": "hero",
             "align": "left",
-            "width": "auto"
+            "width": "auto",
+            "deadline_iso": "2026-12-31T23:59:59-08:00"
           },
           {
             "mark": "word",
@@ -484,7 +485,8 @@
             "align": "left",
             "width": "flex",
             "bold": true,
-            "secondary_text": "all of these end on Dec 31"
+            "secondary_text": "all of these end on Dec 31",
+            "deadline_iso": "2026-12-31T23:59:59-08:00"
           }
         ],
         "items": [
@@ -3310,7 +3312,7 @@
                     "mark": "tile",
                     "shade": 0.0,
                     "top_label": null,
-                    "center_label": "0%",
+                    "center_label": "<1%",
                     "bottom_label": null,
                     "muted": true,
                     "highlight_role": null
@@ -3526,14 +3528,14 @@
               {
                 "mark": "picture",
                 "url": "https://a.espncdn.com/i/headshots/nba/players/full/3945274.png",
-                "alt": "Luka Doncic",
+                "alt": "Luka Dončić",
                 "subject_kind": "person",
                 "size": "sm",
                 "contain": false
               },
               {
                 "mark": "word",
-                "text": "Luka Doncic",
+                "text": "Luka Dončić",
                 "style": "row",
                 "tone": "primary",
                 "align": "left",
@@ -3563,7 +3565,7 @@
                     "mark": "tile",
                     "shade": 0.0,
                     "top_label": null,
-                    "center_label": "0%",
+                    "center_label": "<1%",
                     "bottom_label": null,
                     "muted": true,
                     "highlight_role": null
@@ -3713,7 +3715,7 @@
                     "mark": "tile",
                     "shade": 0.0,
                     "top_label": null,
-                    "center_label": "0%",
+                    "center_label": "<1%",
                     "bottom_label": null,
                     "muted": true,
                     "highlight_role": null
@@ -3849,7 +3851,7 @@
                     "mark": "tile",
                     "shade": 0.0,
                     "top_label": null,
-                    "center_label": "0%",
+                    "center_label": "<1%",
                     "bottom_label": null,
                     "muted": true,
                     "highlight_role": null
@@ -3877,7 +3879,7 @@
                     "mark": "tile",
                     "shade": 0.0,
                     "top_label": null,
-                    "center_label": "0%",
+                    "center_label": "<1%",
                     "bottom_label": null,
                     "muted": true,
                     "highlight_role": null
@@ -4089,14 +4091,6 @@
             "id": "agi-near",
             "leading": [
               {
-                "mark": "picture",
-                "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/66/OpenAI_logo_2025_%28symbol%29.svg/330px-OpenAI_logo_2025_%28symbol%29.svg.png",
-                "alt": "OpenAI",
-                "subject_kind": "organization",
-                "size": "xs",
-                "contain": true
-              },
-              {
                 "mark": "word",
                 "text": "Through Jan '28",
                 "style": "row",
@@ -4168,14 +4162,6 @@
           {
             "id": "agi-later",
             "leading": [
-              {
-                "mark": "picture",
-                "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b0/Claude_AI_symbol.svg/330px-Claude_AI_symbol.svg.png",
-                "alt": "Anthropic",
-                "subject_kind": "organization",
-                "size": "xs",
-                "contain": true
-              },
               {
                 "mark": "word",
                 "text": "2028 to 2031",
@@ -4636,14 +4622,14 @@
               {
                 "mark": "picture",
                 "url": "https://image.tmdb.org/t/p/w185/xmkpedcct3ey1d1HGDNsUMQPHcB.jpg",
-                "alt": "Boyd Holbrook & Anthony Mackie",
+                "alt": "Boyd Holbrook",
                 "subject_kind": "person",
                 "size": "sm",
                 "contain": false
               },
               {
                 "mark": "word",
-                "text": "Boyd Holbrook & Anthony Mackie",
+                "text": "Boyd Holbrook",
                 "style": "hero_label",
                 "tone": "primary",
                 "align": "left",
@@ -4660,7 +4646,46 @@
               {
                 "mark": "number",
                 "value": 11,
-                "display": "11% each",
+                "display": "11%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
+          },
+          {
+            "id": "bond-8",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://image.tmdb.org/t/p/w185/vecvTm7SimizluJkyIwBxeLbvRm.jpg",
+                "alt": "Anthony Mackie",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Anthony Mackie",
+                "style": "hero_label",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false,
+                "secondary_text": "Felix Leiter"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.11,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 11,
+                "display": "11%",
                 "unit": "%",
                 "tone": "primary",
                 "prominence": "primary",

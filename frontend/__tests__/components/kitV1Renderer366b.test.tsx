@@ -6,6 +6,7 @@ import path from "node:path";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import {
+  computeCountdownDaysLeft,
   COSMETIC_KIT_V1_FIELDS,
   KitCardRenderer,
   MEANING_CARRYING_KIT_V1_FIELDS,
@@ -45,7 +46,6 @@ describe("Kit v1 layout-generic web renderer & fail-closed envelope (366: B, 367
     expect(rendered[1]).toContain("81%");
     expect(rendered[1]).toContain("US–Iran ceasefire");
     expect(rendered[1]).not.toContain("US x Iran");
-    expect(rendered[2]).toContain("38");
     expect(rendered[2]).toContain("days left");
     expect(rendered[3]).toContain("at WSH");
     expect(rendered[4]).toContain("in doubt");
@@ -64,9 +64,17 @@ describe("Kit v1 layout-generic web renderer & fail-closed envelope (366: B, 367
     expect(rendered[7]).toContain("Dec 4 or later, 10%");
     expect(rendered[7]).not.toContain("Served ladder");
     expect(rendered[8]).toContain("Largest company at the end of 2026");
+    expect(rendered[9]).toContain("&lt;1%");
+    expect(rendered[9]).not.toContain(">0%<");
+    expect(rendered[10]).toContain("Luka Dončić");
+    expect(rendered[10]).toContain("&lt;1%");
+    expect(rendered[10]).not.toContain(">0%<");
     expect(rendered[10]).toContain("Shai Gilgeous-Alexander");
     expect(rendered[10]).toContain("Giannis Antetokounmpo");
-    expect(rendered[14]).toContain("11% each");
+    expect(rendered[12]).not.toContain("<img");
+    expect(rendered[14]).toContain("Boyd Holbrook");
+    expect(rendered[14]).toContain("Anthony Mackie");
+    expect(rendered[14]).not.toContain("Boyd Holbrook &amp; Anthony Mackie");
     expect(rendered[16]).toContain("38% each");
     expect(rendered[16]).toContain("→");
   });
@@ -159,6 +167,21 @@ describe("Kit v1 layout-generic web renderer & fail-closed envelope (366: B, 367
     expect(html).toContain("Slate mixes &gt;1 sport_key");
   });
 
+  test("countdown marks compute live PT days left (1 day left, ends today) and unknown top-level keys are ignored", () => {
+    const deadlineIso = "2026-12-31T23:59:59-08:00";
+    expect(computeCountdownDaysLeft(deadlineIso, new Date("2026-12-30T17:20:00Z"))).toBe(1);
+    expect(computeCountdownDaysLeft(deadlineIso, new Date("2026-12-31T17:20:00Z"))).toBe(0);
+
+    const parsedExtra = parseKitCardV1({
+      ...golden.items[2],
+      some_future_field: { version: 2 },
+    });
+    expect(parsedExtra).not.toBeNull();
+    const baseHtml = renderToStaticMarkup(<KitCardRenderer spec={golden.items[2]} />);
+    const extraHtml = renderToStaticMarkup(<KitCardRenderer spec={parsedExtra!} />);
+    expect(extraHtml).toBe(baseHtml);
+  });
+
   test("cosmetic fields render defaults while meaning-carrying fields fail closed", () => {
     expect(COSMETIC_KIT_V1_FIELDS).toContain("picture.subject_kind");
     expect(MEANING_CARRYING_KIT_V1_FIELDS).toContain("bar.bar_style");
@@ -168,6 +191,7 @@ describe("Kit v1 layout-generic web renderer & fail-closed envelope (366: B, 367
     const stackBody = sample.body as KitV1StackBody;
     const cosmeticMutated = {
       ...sample,
+      some_future_field: "ignored_top_level_value",
       variant: "unknown_future_variant",
       body: {
         ...stackBody,
@@ -192,7 +216,8 @@ describe("Kit v1 layout-generic web renderer & fail-closed envelope (366: B, 367
     expect(parsedCosmetic).not.toBeNull();
     const cosmeticHtml = renderToStaticMarkup(<KitCardRenderer spec={parsedCosmetic!} />);
     expect(cosmeticHtml).toContain("By December 31");
-    expect(cosmeticHtml).toContain("38");
+    expect(cosmeticHtml).toContain("days left");
+    expect(cosmeticHtml).toContain("all of these end on Dec 31");
 
     // Meaning-carrying unknowns fail closed
     const badBarStyle = {

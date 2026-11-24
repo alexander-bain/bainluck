@@ -12,6 +12,7 @@ Builder C (`comment-7122170383`, `KitCardEnvelope366B.swift`) and Fable's 9:40 P
 
 from __future__ import annotations
 
+from datetime import datetime
 import json
 from functools import lru_cache
 from pathlib import Path
@@ -80,6 +81,10 @@ KIT_V1_FIELD_BEHAVIOR_TABLE: dict[str, dict[str, Any]] = {
     "meaning_carrying": {
         "fields": MEANING_CARRYING_KIT_FIELDS,
         "unknown_value_behavior": "fail_closed_fallback_today",
+    },
+    "unknown_top_level_keys": {
+        "fields": ("<any unknown top-level key>",),
+        "unknown_value_behavior": "ignore_and_render_known",
     },
 }
 
@@ -279,6 +284,7 @@ def _mark_word(
     width: str = "auto",
     bold: bool = False,
     secondary_text: str | None = None,
+    deadline_iso: str | None = None,
 ) -> dict[str, Any]:
     out: dict[str, Any] = {
         "mark": "word",
@@ -291,6 +297,8 @@ def _mark_word(
     }
     if secondary_text is not None:
         out["secondary_text"] = secondary_text
+    if deadline_iso is not None:
+        out["deadline_iso"] = deadline_iso
     return out
 
 
@@ -303,8 +311,9 @@ def _mark_number(
     prominence: str = "primary",
     align: str = "right",
     width: str = "sm",
+    deadline_iso: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    out: dict[str, Any] = {
         "mark": "number",
         "value": int(value),
         "display": display,
@@ -314,6 +323,9 @@ def _mark_number(
         "align": align,
         "width": width,
     }
+    if deadline_iso is not None:
+        out["deadline_iso"] = deadline_iso
+    return out
 
 
 def _mark_bar_single(
@@ -586,7 +598,16 @@ def _walk_and_validate_marks(
                 errors.append(f"Unsupported number.unit {unit_val!r}")
             if unit_val == "%":
                 _check_pct(node.get("value"), "number mark", errors)
-        elif mark_val == "bar":
+        if node.get("deadline_iso") is not None:
+            raw_dl = node.get("deadline_iso")
+            if not isinstance(raw_dl, str) or not raw_dl.strip():
+                errors.append(f"{mark_val or 'mark'}.deadline_iso must be a non-empty ISO datetime string")
+            else:
+                try:
+                    datetime.fromisoformat(raw_dl.strip().replace("Z", "+00:00"))
+                except ValueError:
+                    errors.append(f"Invalid deadline_iso {raw_dl!r} on {mark_val or 'mark'}")
+        if mark_val == "bar":
             bar_style = node.get("bar_style")
             if bar_style not in ALLOWED_BAR_STYLES:
                 errors.append(f"Unsupported bar_style {bar_style!r}")
@@ -966,7 +987,16 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
             body={
                 "header_layout": "banner",
                 "header_marks": [
-                    _mark_number(38, "38", unit="days", tone="accent", prominence="hero", align="left", width="auto"),
+                    _mark_number(
+                        38,
+                        "38",
+                        unit="days",
+                        tone="accent",
+                        prominence="hero",
+                        align="left",
+                        width="auto",
+                        deadline_iso="2026-12-31T23:59:59-08:00",
+                    ),
                     _mark_word(
                         "days left",
                         secondary_text="all of these end on Dec 31",
@@ -974,6 +1004,7 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
                         tone="primary",
                         bold=True,
                         width="flex",
+                        deadline_iso="2026-12-31T23:59:59-08:00",
                     ),
                 ],
                 "items": [
@@ -1441,8 +1472,8 @@ def _build_batch1_forms_lab_examples(
                         "marks": [
                             _mark_tile(
                                 shade=v / 100.0,
-                                center_label=f"{v}%",
-                                muted=(v == 0),
+                                center_label="<1%" if v <= 0 else f"{v}%",
+                                muted=(v <= 0),
                                 highlight_role="column_peak" if v > 0 and v == col_peaks[c_idx] else None,
                             )
                         ],
@@ -1476,7 +1507,7 @@ def _build_batch1_forms_lab_examples(
     nba_award_cols = [("mvp", "MVP"), ("dpoy", "DPOY"), ("clutch", "Clutch")]
     nba_award_specs = [
         ("Victor Wembanyama", "https://a.espncdn.com/i/headshots/nba/players/full/5104157.png", [51, 59, 11]),
-        ("Luka Doncic", "https://a.espncdn.com/i/headshots/nba/players/full/3945274.png", [29, 0, 19]),
+        ("Luka Dončić", "https://a.espncdn.com/i/headshots/nba/players/full/3945274.png", [29, 0, 19]),
         ("Shai Gilgeous-Alexander", "https://a.espncdn.com/i/headshots/nba/players/full/4278073.png", [4, 1, 26]),
         ("Nikola Jokic", "https://a.espncdn.com/i/headshots/nba/players/full/3112335.png", [5, 0, 15]),
         ("Giannis Antetokounmpo", "https://a.espncdn.com/i/headshots/nba/players/full/3032977.png", [3, 4, 7]),
@@ -1499,8 +1530,8 @@ def _build_batch1_forms_lab_examples(
                         "marks": [
                             _mark_tile(
                                 shade=v / 100.0,
-                                center_label=f"{v}%",
-                                muted=(v == 0),
+                                center_label="<1%" if v <= 0 else f"{v}%",
+                                muted=(v <= 0),
                                 highlight_role="column_peak" if v > 0 and v == nba_peaks[c_idx] else None,
                             )
                         ],
@@ -1616,7 +1647,6 @@ def _build_batch1_forms_lab_examples(
                     {
                         "id": "agi-near",
                         "leading": [
-                            _mark_picture(url=org_urls["OpenAI"], alt="OpenAI", subject_kind="organization", size="xs", contain=True),
                             _mark_word("Through Jan '28", style="row", tone="primary", bold=True, width="flex"),
                         ],
                         "cells": [
@@ -1630,7 +1660,6 @@ def _build_batch1_forms_lab_examples(
                     {
                         "id": "agi-later",
                         "leading": [
-                            _mark_picture(url=org_urls["Anthropic"], alt="Anthropic", subject_kind="organization", size="xs", contain=True),
                             _mark_word("2028 to 2031", style="row", tone="primary", bold=True, width="flex"),
                         ],
                         "cells": [
@@ -1700,7 +1729,9 @@ def _build_batch1_forms_lab_examples(
         )
     )
 
-    # Batch 1 Item 6a: Stack / casting_sheet — Next James Bond (7 roles, 11% each tie, no "Toss-up")
+    # Batch 1 Item 6a: Stack / casting_sheet — Next James Bond (two rows with separate faces for tied co-favorites)
+    boyd_url, boyd_kind = _art_entry("boyd-holbrook")
+    mackie_url, mackie_kind = _art_entry("anthony-mackie")
     bond_roles = [
         ("Theme Song", "Raye", "person", "https://image.tmdb.org/t/p/w185/zA5WXnyg8iH8DPpuXvsmJpPT2n1.jpg", 42, "42%"),
         ("Bond Girl", "Margaret Qualley", "person", "https://image.tmdb.org/t/p/w185/r5WeMrU4YLJqRRE3joeOrBVicAH.jpg", 31, "31%"),
@@ -1708,7 +1739,8 @@ def _build_batch1_forms_lab_examples(
         ("Q", "Ben Whishaw", "person", "https://image.tmdb.org/t/p/w185/e74Cz65ifeNb9zHfUTvF5rTix0d.jpg", 25, "25%"),
         ("Villain", "Cillian Murphy", "person", "https://image.tmdb.org/t/p/w185/2lKs67r7FI4bPu0AXxMUJZxmUXn.jpg", 17, "17%"),
         ("Moneypenny", "Naomie Harris", "person", "https://image.tmdb.org/t/p/w185/41TVAcYqKKF7PGf3x7QfaLvkLSW.jpg", 12, "12%"),
-        ("Felix Leiter", "Boyd Holbrook & Anthony Mackie", "person", "https://image.tmdb.org/t/p/w185/xmkpedcct3ey1d1HGDNsUMQPHcB.jpg", 11, "11% each"),
+        ("Felix Leiter", "Boyd Holbrook", boyd_kind, boyd_url, 11, "11%"),
+        ("Felix Leiter", "Anthony Mackie", mackie_kind, mackie_url, 11, "11%"),
     ]
     out.append(
         _make_kit_card(

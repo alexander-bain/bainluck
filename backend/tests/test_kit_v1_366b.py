@@ -89,10 +89,21 @@ def test_all_eight_worked_examples_validate_and_match_golden_json() -> None:
         assert "11%–11%" not in blob, card["id"]
         assert "->" not in blob, card["id"]
 
-    assert "11% each" in json.dumps(payload["items"][14])
+    bond_card = json.dumps(payload["items"][14])
+    assert "Boyd Holbrook" in bond_card and "Anthony Mackie" in bond_card
+    assert "Boyd Holbrook & Anthony Mackie" not in bond_card
     assert "38% each" in json.dumps(payload["items"][16])
     assert "Shai Gilgeous-Alexander" in json.dumps(payload["items"][10])
+    assert "Luka Dončić" in json.dumps(payload["items"][10], ensure_ascii=False)
     assert "Giannis Antetokounmpo" in json.dumps(payload["items"][10])
+    # Open markets never print "0%" on tiles/rows (#13599 Fable look)
+    assert '"center_label": "0%"' not in json.dumps(payload["items"][9])
+    assert '"center_label": "0%"' not in json.dumps(payload["items"][10])
+    # AGI timeline lanes carry no org logos (#13599 Fable look)
+    assert '"mark": "picture"' not in json.dumps(payload["items"][12]["body"])
+    # Countdown carries deadline_iso for client PT computation
+    countdown_header = json.dumps(payload["items"][2]["body"]["header_marks"])
+    assert "2026-12-31" in countdown_header
 
     assert GOLDEN_EXAMPLES_PATH.exists(), "Golden JSON must be committed for Swift Codable parity"
     golden = json.loads(GOLDEN_EXAMPLES_PATH.read_text(encoding="utf-8"))
@@ -381,14 +392,19 @@ def test_kit_v1_preview_endpoint_requires_admin_auth(monkeypatch) -> None:
 
 
 def test_cosmetic_vs_meaning_carrying_field_table() -> None:
-    """Agreed #13551 table: unknown cosmetic values pass; unknown meaning-carrying fail closed."""
-    assert set(KIT_V1_FIELD_BEHAVIOR_TABLE.keys()) == {"cosmetic", "meaning_carrying"}
+    """Agreed #13551 table: unknown cosmetic & top-level fields pass; unknown meaning-carrying fail closed."""
+    assert set(KIT_V1_FIELD_BEHAVIOR_TABLE.keys()) == {
+        "cosmetic",
+        "meaning_carrying",
+        "unknown_top_level_keys",
+    }
     assert "picture.subject_kind" in COSMETIC_KIT_FIELDS
     assert "bar.bar_style" in MEANING_CARRYING_KIT_FIELDS
     assert "number.unit" in MEANING_CARRYING_KIT_FIELDS
 
     payload = build_kit_v1_worked_examples()
     stack_card = copy.deepcopy(payload["items"][2])
+    stack_card["some_future_field"] = {"experimental": True}
     stack_card["variant"] = "unknown_cosmetic_variant"
     stack_card["body"]["header_layout"] = "ticker"
     stack_card["body"]["items"][0]["marks"][0]["size"] = "xxl"
