@@ -20,6 +20,40 @@ from sqlalchemy import select
 STAT_MODEL_LIVE_HEARTBEAT_S = 60.0
 
 
+def _identity_map_event_finished(session, event_id: int) -> bool:
+    """Zero-SQL check: True iff `Event(event_id)` is already loaded as completed/closed."""
+    try:
+        from unittest.mock import Base as _MockBase
+
+        from app.models.models import Event
+
+        if session is None or isinstance(session, _MockBase):
+            return False
+        imap = getattr(session, "identity_map", None)
+        if imap is None:
+            sync_sess = getattr(session, "sync_session", None)
+            if sync_sess is not None and not isinstance(sync_sess, _MockBase):
+                imap = getattr(sync_sess, "identity_map", None)
+        if imap is None or isinstance(imap, _MockBase):
+            return False
+        ev = imap.get((Event, (int(event_id),), None))
+        if ev is None:
+            return False
+        return getattr(ev, "status", None) in ("completed", "closed")
+    except Exception:
+        return False
+
+
+async def _invalidate_finished_if_applicable(
+    session, event_id: int, *, is_completed: bool, always: bool = False
+) -> None:
+    if not (always or is_completed or _identity_map_event_finished(session, event_id)):
+        return
+    from app.services.finished_event_history import invalidate_finished_event_history
+
+    await invalidate_finished_event_history(session, [event_id])
+
+
 def _second_slot_same(existing, away_win_probability, draw_probability) -> bool:
     """Do the incoming away/draw members match the ones already on the row?
 
@@ -124,6 +158,7 @@ async def _create_or_update_win_prob_snapshot(
             session, event_id, source, home_win_probability,
             away_win_probability, draw_probability, game_state, observed_at,
             max_gap_seconds,
+            is_completed=is_completed,
         )
     now = datetime.now(timezone.utc)
 
@@ -185,6 +220,9 @@ async def _create_or_update_win_prob_snapshot(
                 existing.game_state = game_state
             existing.valid_until = now
             existing.reading_count = (existing.reading_count or 0) + 1
+            await _invalidate_finished_if_applicable(
+                session, event_id, is_completed=True
+            )
             return existing, False
 
         # Value changed — close out the old row and create a new one
@@ -200,6 +238,9 @@ async def _create_or_update_win_prob_snapshot(
             game_state=game_state,
             reading_count=1,
         )
+        await _invalidate_finished_if_applicable(
+            session, event_id, is_completed=is_completed
+        )
         return snapshot, True
     else:
         # Same value — bump the counter. The second slot is NOT written here:
@@ -209,6 +250,9 @@ async def _create_or_update_win_prob_snapshot(
         # row that the pre-match cutoff then reads as the pre-match favourite.
         existing.reading_count += 1
         existing.valid_until = now
+        await _invalidate_finished_if_applicable(
+            session, event_id, is_completed=is_completed
+        )
         return existing, False
 
 
@@ -222,6 +266,8 @@ async def _create_ordered_win_prob_snapshot(
     game_state,
     observed_at,
     max_gap_seconds,
+    *,
+    is_completed: bool = False,
 ):
     """Insert a delayed WS observation at its original stamp time.
 
@@ -280,6 +326,9 @@ async def _create_ordered_win_prob_snapshot(
                 until = until.replace(tzinfo=timezone.utc)
             if until is None or until < observed_at:
                 previous.valid_until = observed_at
+        await _invalidate_finished_if_applicable(
+            session, event_id, is_completed=is_completed, always=True
+        )
         return previous, False
     # A same-value poll can confirm the tail later without creating another
     # captured_at row. Before splitting that interval, move its last actual
@@ -306,6 +355,9 @@ async def _create_ordered_win_prob_snapshot(
             successor_at = confirmed_at
     if previous is not None:
         previous.valid_until = observed_at
+    await _invalidate_finished_if_applicable(
+        session, event_id, is_completed=is_completed, always=True
+    )
     return (
         WinProbSnapshot(
             event_id=event_id,

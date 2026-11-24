@@ -195,6 +195,8 @@ async def _try_fix_event(session: AsyncSession, event: Event) -> str:
             session, event_id, box_score_plays, score_timestamps, event.commence_time,
         )
         if periods_written >= 2:
+            from app.services.finished_event_history import invalidate_finished_event_history
+            await invalidate_finished_event_history(session, [event_id])
             return "boxscore"
         else:
             # Diagnose why boxscore failed
@@ -211,11 +213,15 @@ async def _try_fix_event(session: AsyncSession, event: Event) -> str:
             session, event, sport_key, score_timestamps,
         )
         if periods_written >= 2:
+            from app.services.finished_event_history import invalidate_finished_event_history
+            await invalidate_finished_event_history(session, [event_id])
             return "espn_fetch"
 
     # 3. Try existing ESPN snapshot period data
     periods_written = await _copy_espn_snapshot_periods(session, event_id)
     if periods_written >= 2:
+        from app.services.finished_event_history import invalidate_finished_event_history
+        await invalidate_finished_event_history(session, [event_id])
         return "espn_snaps"
 
     # 4. Final fallback: write "Start" and "Final" markers using real timestamps.
@@ -224,6 +230,8 @@ async def _try_fix_event(session: AsyncSession, event: Event) -> str:
     #    anchoring context rather than nothing.
     wrote_start_end = await _write_start_end_markers(session, event)
     if wrote_start_end:
+        from app.services.finished_event_history import invalidate_finished_event_history
+        await invalidate_finished_event_history(session, [event_id])
         return "start_end"
 
     return "none"
