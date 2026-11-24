@@ -57,6 +57,7 @@ struct FeedView: View {
                         Spacer()
                     }
                     .padding(.horizontal, 40)
+                    .noteReviewPromptTrouble12304()
                 case .content, .nothingInCategory, .nothingToShow:
                     feedList(state)
                 }
@@ -183,6 +184,7 @@ struct FeedView: View {
                         .buttonStyle(.borderless)
                     }
                     .listRowSeparator(.hidden)
+                    .noteReviewPromptTrouble12304()
                 }
             }
 
@@ -210,6 +212,7 @@ struct FeedView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 24)
                     .listRowBackground(Color.clear)
+                    .noteReviewPromptTrouble12304(when: refreshFailed)
                 }
             } else if case .nothingInCategory(let stillLoading) = state {
                 Section {

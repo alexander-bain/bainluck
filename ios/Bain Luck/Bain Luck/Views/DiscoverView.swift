@@ -2489,6 +2489,7 @@ struct DiscoverView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 60)
+                    .noteReviewPromptTrouble12304()
                 }
 
                 // Honest staleness banner (#1465): we are showing the last-good
@@ -2522,6 +2523,7 @@ struct DiscoverView: View {
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("Showing recent markets. Couldn't refresh.")
                     .accessibilityHint("Double-tap Retry to reload the latest feed")
+                    .noteReviewPromptTrouble12304()
                 }
 
                 // Swipe hint (shown once)
@@ -2716,6 +2718,7 @@ struct DiscoverView: View {
                         .accessibilityElement(children: .combine)
                         .accessibilityLabel("Couldn't find fresh markets")
                         .accessibilityHint("Double-tap to retry")
+                        .noteReviewPromptTrouble12304()
                     } else if vm.hasMore {
                         VStack(spacing: 12) {
                             ProgressView()

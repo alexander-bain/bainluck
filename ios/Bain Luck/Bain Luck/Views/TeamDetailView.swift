@@ -78,6 +78,7 @@ struct TeamDetailView: View {
                 ProgressView()
             } else if let error {
                 ContentUnavailableView("Team Not Found", systemImage: "person.crop.circle.badge.questionmark", description: Text(error))
+                    .noteReviewPromptTrouble12304()
             } else if let data {
                 teamContent(data)
             }

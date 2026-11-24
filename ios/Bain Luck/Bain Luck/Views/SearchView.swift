@@ -1155,6 +1155,7 @@ struct SearchView: View {
                     .buttonStyle(.borderedProminent)
                 }
                 .listRowBackground(Color.clear)
+                .noteReviewPromptTrouble12304()
 
             case .empty:
                 ContentUnavailableView(

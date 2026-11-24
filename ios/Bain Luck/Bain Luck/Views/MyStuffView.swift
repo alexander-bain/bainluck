@@ -510,6 +510,7 @@ struct MyStuffView: View {
                     .buttonStyle(.borderedProminent)
                     .accessibilityIdentifier("myStuff.retryRequiredFeed")
                 }
+                .noteReviewPromptTrouble12304()
             } else if vm.items.isEmpty && (vm.teamFuturesFailed || vm.teamFuturesLoading) {
                 teamFuturesEmptyStateView
             } else if vm.items.isEmpty {
@@ -638,6 +639,7 @@ struct MyStuffView: View {
                     Button("Retry") { Task { await pinContent.load(pinManager.savedPins, retryFailed: true) } }
                         .font(.caption)
                         .buttonStyle(.borderless)
+                        .noteReviewPromptTrouble12304()
                 default:
                     Text("Loading…").font(.caption).foregroundStyle(.secondary)
                 }
@@ -684,6 +686,7 @@ struct MyStuffView: View {
                 .accessibilityIdentifier("myStuff.retryTeamFutures")
             }
             .accessibilityIdentifier("myStuff.teamFuturesEmptyError")
+            .noteReviewPromptTrouble12304()
         } else {
             ProgressView("Loading your teams' futures…")
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -709,6 +712,7 @@ struct MyStuffView: View {
                         .buttonStyle(.bordered)
                         .accessibilityIdentifier("myStuff.retryStatusRowFeed")
                     }
+                    .noteReviewPromptTrouble12304()
                 } else if vm.teamFuturesFailed {
                     HStack(alignment: .center, spacing: 12) {
                         VStack(alignment: .leading, spacing: 2) {
@@ -733,6 +737,7 @@ struct MyStuffView: View {
                         .disabled(vm.teamFuturesLoading)
                         .accessibilityIdentifier("myStuff.retryStatusRowFutures")
                     }
+                    .noteReviewPromptTrouble12304()
                 } else if vm.teamFuturesLoading {
                     HStack(spacing: 8) {
                         ProgressView()
@@ -774,6 +779,7 @@ struct MyStuffView: View {
                 .disabled(vm.teamFuturesLoading)
                 .accessibilityIdentifier("myStuff.retrySectionFutures")
             }
+            .noteReviewPromptTrouble12304()
         } header: {
             Label("Futures", systemImage: "trophy.fill")
         }
