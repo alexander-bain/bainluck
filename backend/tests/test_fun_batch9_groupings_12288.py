@@ -14,6 +14,7 @@ from app.utils.container_machinery import (
     _category_llm_pool_for_definition,
     _compute_member_number_parity,
     build_container_machinery_producer,
+    choose_section_form,
     discover_machinery_candidate_paths,
     load_machinery_definition,
     produce_container_machinery,
@@ -63,24 +64,21 @@ def _sample_batch9_markets() -> list[dict]:
         (58492241, "Oscars 2027: Best Original Score Winner", "entertainment", [("The Odyssey", 0.69), ("Dune: Part Three", 0.12)]),
         (65536307, "Critics Choice Awards: Best Picture", "entertainment", [("You Can See Everything", 0.66), ("The Odyssey", 0.20)]),
         (58495122, "Oscars 2027: Best Adapted Screenplay Winner", "entertainment", [("La Bola Negra", 0.62), ("The Invite", 0.24)]),
-        # 4. The Big One & Cosmic Risks
+        # 4. Meteor Strikes & Impact Odds (one measure: Earth meteor strike)
         (114132, "5kt meteor strike in 2026?", "tech", [("Yes", 0.13)]),
-        (59153600, "Highest earthquake magnitude in 2026?", "weather", [("7.9 or below", 0.67), ("9.0 or above", 0.12)]),
-        (108235, "Will there be an at least 8.0 magnitude earthquake in California before 2035?", "weather", [("Before 2035", 0.21)]),
-        (114083, "Major volcano eruption (VEI >=6) in 2026?", "weather", [("Yes", 0.05)]),
+        (112828, "Will a major meteor strike hit Earth before 2030?", "tech", [("Yes", 0.43)]),
+        (114131, "Major meteor strike (10kt+) in 2026?", "tech", [("Yes", 0.05)]),
         (114162, "1 megaton meteor strike in 2026?", "weather", [("Yes", 0.04)]),
-        # 5. Live Music, Broadway & Box Office
-        (59693546, "How many people will attend Broadway shows during the 2026-27 season?", "entertainment", [("above 13,500,000", 0.96), ("above 13,750,000", 0.86)]),
-        (59693469, "Who Will Perform at Red Rocks in 2027?", "entertainment", [("Mt. Joy", 0.95), ("Rebelution", 0.91)]),
-        (11415154, "Which movie has biggest opening week in 2026?", "entertainment", [("Avengers: Doomsday", 0.89), ("Spider-Man: Brand New Day", 0.11)]),
-        (52755614, "Top U.S. Selling Album: 2026", "entertainment", [("ARIRANG", 0.81), ("GNX", 0.05)]),
-        (59693617, "When will Drake release a new album?", "entertainment", [("Before Jan 1, 2027", 0.06), ("Before Dec 1, 2026", 0.05)]),
-        # 6. Tech Shocks & AI Bankruptcies
-        (7266228, "When will Tesla and SpaceX merge?", "tech", [("Before 2028", 0.87), ("Before May 1, 2027", 0.66)]),
+        # 5. Grammys 2027: Song & Genre Races (one measure: 2027 Grammy category winners)
+        (71652319, "Grammy Winner: Song Of The Year", "entertainment", [("Choosin' Texas", 0.50), ("the cure", 0.30)]),
+        (62368098, "Grammy Winner: Best R&B Solo Performance", "entertainment", [("What You Need", 0.48), ("Out The Window", 0.26)]),
+        (71652300, "Grammy Winner: Best Pop Vocal Album", "entertainment", [("The Art of Loving", 0.38), ("you seem pretty sad for a girl so in love", 0.32)]),
+        (71652304, "Grammy Winner: Best Rock Album", "entertainment", [("Vol.II", 0.35), ("Your Favorite Toy", 0.25)]),
+        # 6. AI & Tech Bankruptcy Watch (one measure: company bankruptcy filing timing ladders)
         (61321725, "CoreWeave announces bankruptcy by...?", "tech", [("December 31, 2027", 0.16), ("December 31, 2028", 0.23)]),
-        (61321727, "Anthropic files for bankruptcy by...?", "tech", [("December 31, 2027", 0.09), ("December 31, 2028", 0.15)]),
-        (61321742, "OpenAI files for bankruptcy by...?", "tech", [("December 31, 2027", 0.06), ("December 31, 2028", 0.12)]),
-        (70733127, "Removed from U.S. defense list by June 30, 2027?", "tech", [("CXMT", 0.25), ("Hesai", 0.17)]),
+        (61321727, "Anthropic announces bankruptcy by...?", "tech", [("December 31, 2027", 0.09), ("December 31, 2028", 0.15)]),
+        (61321742, "OpenAI announces bankruptcy by...?", "tech", [("December 31, 2027", 0.09), ("December 31, 2028", 0.15)]),
+        (61321726, "NuScale announces bankruptcy by...?", "tech", [("December 31, 2027", 0.06), ("December 31, 2028", 0.18)]),
     ]
     return [
         {
@@ -181,16 +179,36 @@ async def test_batch9_six_preview_groupings_build_with_form_diversity(caplog: py
     assert len(set(forms_seen.values())) >= 5
     assert not any("dropped row pictures" in rec.message for rec in caplog.records)
 
-    # Check capitalization, 3-row Ryder Cup with Tie, settled exclusion, timeless copy, and <=3L headlines.
+    # Check explicit opt-in gating for 3-way duel_bar, "53% to 40%" phrasing, neutral Tie color, and clean meteor copy.
+    three_way_draw_sample = [
+        {
+            "outcomes": [
+                {"name": "Team Europe", "probability": 0.53},
+                {"name": "Team USA", "probability": 0.40},
+                {"name": "Tie", "probability": 0.07},
+            ]
+        }
+    ]
+    assert choose_section_form("markets", three_way_draw_sample) == "contender_spotlight"
+    assert (
+        choose_section_form("markets", three_way_draw_sample, allow_three_way_duel=True)
+        == "duel_bar"
+    )
+
     ryder_cp, ryder_card = by_slug["machinery-golf-majors-and-ryder-cup"][1], by_slug["machinery-golf-majors-and-ryder-cup"][2]
     assert "2027 Ryder Cup" in ryder_card["title"]
     assert "Team Europe" in ryder_card["title"] and "Team USA" in ryder_card["title"]
+    assert "53% to 40%" in ryder_card["title"], ryder_card["title"]
+    assert "53%–40%" not in ryder_card["title"]
     assert [r["name"] for r in ryder_card["rows"]] == ["Team Europe", "Team USA", "Tie"]
     for row in ryder_cp["sections"][0]["visual_block"]["items"][0]["outcomes"]:
         if row["name"] == "Tie":
             assert not row["art"]["url"], row
+            assert row["art"]["accent_color"] == "#94A3B8", row
         else:
             assert row["art"]["url"], row
+    tie_card_row = next(r for r in ryder_card["rows"] if r["name"] == "Tie")
+    assert tie_card_row["art"]["accent_color"] == "#94A3B8", tie_card_row
 
     ufc_card = by_slug["machinery-ufc-next-fights-and-boxing"][2]
     assert "Conor McGregor's" in ufc_card["title"]
@@ -207,9 +225,11 @@ async def test_batch9_six_preview_groupings_build_with_form_diversity(caplog: py
 
     cosmic_cp, cosmic_card = by_slug["machinery-the-big-one-and-cosmic-risks"][1], by_slug["machinery-the-big-one-and-cosmic-risks"][2]
     assert cosmic_card["title"].startswith("The chance of a 5-kiloton meteor strike in 2026 ")
+    assert "earthquake" not in str(cosmic_card.get("subtitle") or "").lower()
     assert "shifted over the past week" not in str(cosmic_card.get("subtitle") or "")
     for sec in cosmic_cp["sections"]:
         assert "shifted over the past week" not in str(sec.get("note") or "")
+        assert "earthquake" not in str(sec.get("note") or "").lower()
 
     tech_card = by_slug["machinery-tech-shocks-and-ai-bankruptcies"][2]
     assert "by by" not in tech_card["title"]

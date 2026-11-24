@@ -10,10 +10,10 @@
   ],
   "level": "member",
   "kicker": "ODD · TECH & AI",
-  "name": "Tech Shocks & AI Bankruptcies",
+  "name": "AI & Tech Bankruptcy Watch",
   "category": "tech",
   "tag": "ODD",
-  "section_title": "Mergers, Bankruptcies & Defense Lists",
+  "section_title": "AI & Tech Bankruptcy Filings",
   "footer": "",
   "rule": {
     "producer": "container_machinery",
@@ -35,9 +35,9 @@
     "sections": [
       {
         "key": "tech_shocks",
-        "title": "Mergers, Bankruptcies & Defense Lists",
-        "item_noun": "markets",
-        "note": "From a Tesla-SpaceX merger to AI lab bankruptcies and U.S. defense-list removals.",
+        "title": "AI & Tech Bankruptcy Filings",
+        "item_noun": "companies",
+        "note": "Odds of bankruptcy filings for leading AI labs, compute providers, and energy firms.",
         "atom_query": {
           "kind": "markets",
           "fun_sub_tag": "batch9-tech-shocks-ai-bankruptcies",
@@ -45,7 +45,7 @@
           "shape": "any",
           "order_by": "lead_prob_desc",
           "min_items": 3,
-          "max_items": 6,
+          "max_items": 4,
           "max_outcomes": 1,
           "initial_visible_limit": 3,
           "min_lifetime_volume": 1

@@ -1262,6 +1262,8 @@ _DUEL_DRAW_OUTCOME_NAMES: frozenset[str] = frozenset({"tie", "draw"})
 def choose_section_form(
     atoms_kind: str,
     selected_items: Sequence[Mapping[str, Any]],
+    *,
+    allow_three_way_duel: bool = False,
 ) -> str:
     """Choose a section's visual form strictly from the shape of its atoms (zero topic checks)."""
     if atoms_kind == "paired_stage":
@@ -1288,12 +1290,17 @@ def choose_section_form(
             outcomes = selected_items[0].get("outcomes") or ()
             if len(outcomes) == 2:
                 return "duel_bar"
-            if len(outcomes) == 3 and sum(
-                1
-                for o in outcomes
-                if isinstance(o, Mapping)
-                and str(o.get("name") or "").strip().lower() in _DUEL_DRAW_OUTCOME_NAMES
-            ) == 1:
+            if (
+                allow_three_way_duel
+                and len(outcomes) == 3
+                and sum(
+                    1
+                    for o in outcomes
+                    if isinstance(o, Mapping)
+                    and str(o.get("name") or "").strip().lower() in _DUEL_DRAW_OUTCOME_NAMES
+                )
+                == 1
+            ):
                 return "duel_bar"
             if len(outcomes) >= 3:
                 return "contender_spotlight"
@@ -4261,7 +4268,7 @@ def _build_dynamic_title_from_set(
             lead_p = int(d_outs[0]["rendered_percent"])
             trail_p = int(d_outs[1]["rendered_percent"])
             du_phrase = _prose_market_phrase(str(duel_item["title"]))
-            return f"{lead_name} leads {trail_name} {lead_p}%–{trail_p}% in {du_phrase}"
+            return f"{lead_name} leads {trail_name} {lead_p}% to {trail_p}% in {du_phrase}"
 
     if history_items and (
         lead_sec_form == "probability_history_chart"
@@ -4983,7 +4990,12 @@ async def produce_container_machinery(
                     fm_it["content_kind"] = "futures"
                     if isinstance(fm_it.get("card"), dict):
                         fm_it["card"]["content_kind"] = "futures"
-                form_id = choose_section_form("markets", fallback_matched)
+                sec_allow_3way_duel = bool(sec_cfg.get("allow_three_way_duel"))
+                form_id = choose_section_form(
+                    "markets",
+                    fallback_matched,
+                    allow_three_way_duel=sec_allow_3way_duel,
+                )
                 if form_id in {"sibling_fields_grid", "contender_spotlight"}:
                     tile_cap = 3 if form_id == "contender_spotlight" else 1
                     all_tiles_pictured = all(
@@ -5098,7 +5110,25 @@ async def produce_container_machinery(
         if len(matched) < min_items:
             return RoundupRefusal((("container_machinery", f"too_few_markets:{sec_key}"),))
 
-        form_id = choose_section_form("markets", matched)
+        sec_allow_3way_duel = bool(sec_cfg.get("allow_three_way_duel"))
+        form_id = choose_section_form(
+            "markets",
+            matched,
+            allow_three_way_duel=sec_allow_3way_duel,
+        )
+        if form_id == "duel_bar" and sec_allow_3way_duel:
+            for it in matched:
+                for out_item in it.get("outcomes") or ():
+                    if (
+                        isinstance(out_item, dict)
+                        and str(out_item.get("name") or "").strip().lower()
+                        in _DUEL_DRAW_OUTCOME_NAMES
+                    ):
+                        art = dict(out_item.get("art") or {})
+                        art["url"] = None
+                        art["kind"] = "monogram"
+                        art["accent_color"] = "#94A3B8"
+                        out_item["art"] = art
         eff_title, eff_note = _resolve_section_heading(
             sec_cfg,
             aq_kind="markets",
@@ -5165,6 +5195,15 @@ async def produce_container_machinery(
         (s for s in built_sections if s["class"] == preferred_card_key),
         built_sections[0],
     )
+    card_sec_cfg = next(
+        (
+            s
+            for s in ((rule.get("sections") or ()) if isinstance(rule, Mapping) else ())
+            if isinstance(s, Mapping) and str(s.get("key") or "").strip() == str(card_sec.get("class") or "")
+        ),
+        {},
+    )
+    card_allow_3way_duel = bool(card_sec_cfg.get("allow_three_way_duel"))
     vb = card_sec["visual_block"]
     vb_form = vb["form_id"]
     card_scale_ordered = False
@@ -5315,7 +5354,7 @@ async def produce_container_machinery(
             s_idx = numerical_scale_order_indices(sliced)
             chosen_outs = [sliced[i] for i in s_idx] if s_idx is not None else sliced
             card_scale_ordered = s_idx is not None
-        elif vb_form == "duel_bar":
+        elif vb_form == "duel_bar" and card_allow_3way_duel:
             non_draw_outs = [
                 o
                 for o in all_lead_outs

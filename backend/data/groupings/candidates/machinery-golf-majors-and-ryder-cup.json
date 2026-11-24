@@ -27,6 +27,7 @@
         "key": "ryder_cup_duel",
         "title": "2027 Ryder Cup Showdown",
         "item_noun": "sides",
+        "allow_three_way_duel": true,
         "note": "Team Europe, Team USA, and a tie in the 2027 Ryder Cup.",
         "atom_query": {
           "kind": "markets",

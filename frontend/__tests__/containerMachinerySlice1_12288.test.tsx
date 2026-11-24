@@ -577,4 +577,85 @@ describe("#12288 Slice 1 — topic-free container machinery renderer", () => {
     expect(html).toContain("Tie");
     expect(html).toContain("7%");
   });
+
+  it("renders MachineryDiscoverCard as a horizontal split bar for duel_bar and 3-up podium tiles for contender_spotlight (#13530)", () => {
+    const duelCard = {
+      slug: "machinery-golf-majors-and-ryder-cup",
+      form_id: "duel_bar",
+      kicker: "GOLF · RYDER CUP",
+      title: "Team Europe vs. Team USA opens at 53% to 40%",
+      subtitle: "48% split",
+      footer: "",
+      destination_href: "/collections/machinery-golf-majors-and-ryder-cup",
+      section_count: 2,
+      rows: [
+        {
+          outcome_id: 1,
+          name: "Team Europe",
+          probability: 0.527,
+          rendered_percent: 53,
+          art: { url: null, kind: "flag", detail: "", accent_color: "#2563EB", initials: "EU" },
+        },
+        {
+          outcome_id: 2,
+          name: "Team USA",
+          probability: 0.405,
+          rendered_percent: 40,
+          art: { url: null, kind: "flag", detail: "", accent_color: "#DC2626", initials: "US" },
+        },
+        {
+          outcome_id: 3,
+          name: "Tie",
+          probability: 0.068,
+          rendered_percent: 7,
+          art: { url: null, kind: "monogram", detail: "", accent_color: "#94A3B8", initials: "TI" },
+        },
+      ],
+    };
+    const duelHtml = renderToStaticMarkup(<MachineryDiscoverCard card={duelCard} />);
+    expect(duelHtml).toContain('data-testid="machinery-discover-duel-bar"');
+    expect(duelHtml).toContain("Team Europe");
+    expect(duelHtml).toContain("Team USA");
+    expect(duelHtml).toContain("Tie");
+    expect(duelHtml).toContain("#94A3B8");
+
+    const spotlightCard = {
+      slug: "machinery-boxing-champion-bouts",
+      form_id: "contender_spotlight",
+      kicker: "BOXING",
+      title: "Active title bouts",
+      subtitle: "",
+      footer: "",
+      destination_href: "/collections/machinery-boxing-champion-bouts",
+      section_count: 1,
+      rows: [
+        {
+          outcome_id: 11,
+          name: "Usyk",
+          probability: 0.65,
+          rendered_percent: 65,
+          art: { url: "https://example.com/u.jpg", kind: "person", detail: "", accent_color: "#0D9488", initials: "US" },
+        },
+        {
+          outcome_id: 12,
+          name: "Dubois",
+          probability: 0.25,
+          rendered_percent: 25,
+          art: { url: "https://example.com/d.jpg", kind: "person", detail: "", accent_color: "#2563EB", initials: "DU" },
+        },
+        {
+          outcome_id: 13,
+          name: "Other",
+          probability: 0.1,
+          rendered_percent: 10,
+          art: { url: "https://example.com/o.jpg", kind: "person", detail: "", accent_color: "#D97706", initials: "OT" },
+        },
+      ],
+    };
+    const spotHtml = renderToStaticMarkup(<MachineryDiscoverCard card={spotlightCard} />);
+    expect(spotHtml).toContain('data-testid="machinery-spotlight-tile"');
+    expect(spotHtml).toContain("#1");
+    expect(spotHtml).toContain("#2");
+    expect(spotHtml).toContain("#3");
+  });
 });

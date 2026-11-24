@@ -15,22 +15,16 @@
     "batch9-cosmic-slate": {
       "entries": [
         {
-          "id": 59153600,
-          "short_label": "2026 peak global earthquake magnitude",
-          "headline_phrase": "2026's strongest earthquake topping out at {lower_answer}",
-          "headline_with_phrase": "peak 2026 quake strength at {lower_answer}"
+          "id": 112828,
+          "short_label": "Major meteor strike before 2030",
+          "headline_phrase": "a major meteor impact before 2030",
+          "headline_with_phrase": "a major meteor strike before 2030"
         },
         {
-          "id": 108235,
-          "short_label": "8.0+ California quake before 2035",
-          "headline_phrase": "an 8.0+ California earthquake before 2035",
-          "headline_with_phrase": "a major California quake before 2035"
-        },
-        {
-          "id": 114083,
-          "short_label": "Cataclysmic volcano eruption in 2026",
-          "headline_phrase": "a cataclysmic volcanic eruption in 2026",
-          "headline_with_phrase": "a massive 2026 eruption"
+          "id": 114131,
+          "short_label": "10kt+ meteor strike in 2026",
+          "headline_phrase": "a 10kt+ meteor strike in 2026",
+          "headline_with_phrase": "a major meteor impact this year"
         },
         {
           "id": 114162,
@@ -42,12 +36,6 @@
     },
     "batch9-tech-shocks-ai-bankruptcies": {
       "entries": [
-        {
-          "id": 7266228,
-          "short_label": "Tesla and SpaceX merger",
-          "headline_phrase": "Tesla and SpaceX merging {answer}",
-          "headline_with_phrase": "a Tesla-SpaceX merger {answer}"
-        },
         {
           "id": 61321725,
           "short_label": "CoreWeave filing for bankruptcy",
@@ -67,10 +55,10 @@
           "headline_with_phrase": "OpenAI bankruptcy {answer}"
         },
         {
-          "id": 70733127,
-          "short_label": "Removed from U.S. defense list by June 2027",
-          "headline_phrase": "{answer} leaving the U.S. defense list by June 2027",
-          "headline_with_phrase": "{answer} coming off the defense list"
+          "id": 61321726,
+          "short_label": "NuScale filing for bankruptcy",
+          "headline_phrase": "NuScale filing for bankruptcy {answer}",
+          "headline_with_phrase": "NuScale bankruptcy {answer}"
         }
       ]
     },
@@ -121,34 +109,28 @@
     "batch9-live-music-slate": {
       "entries": [
         {
-          "id": 59693546,
-          "short_label": "Broadway 2026–27 season attendance",
-          "headline_phrase": "Broadway attendance topping 13.5M",
-          "headline_with_phrase": "Broadway attendance topping 13.5 million"
+          "id": 71652319,
+          "short_label": "Grammys Song of the Year",
+          "headline_phrase": "{answer} winning Song of the Year",
+          "headline_with_phrase": "{answer} taking Song of the Year"
         },
         {
-          "id": 59693469,
-          "short_label": "Red Rocks 2027 headliner",
-          "headline_phrase": "{answer} playing Red Rocks in 2027",
-          "headline_with_phrase": "{answer} returning to Red Rocks"
+          "id": 62368098,
+          "short_label": "Grammys Best R&B Solo",
+          "headline_phrase": "{answer} winning Best R&B Solo",
+          "headline_with_phrase": "{answer} taking R&B Solo"
         },
         {
-          "id": 11415154,
-          "short_label": "Biggest opening week movie in 2026",
-          "headline_phrase": "{answer} claiming 2026's biggest opening week",
-          "headline_with_phrase": "{answer} leading box office"
+          "id": 71652300,
+          "short_label": "Grammys Pop Vocal Album",
+          "headline_phrase": "{answer} winning Best Pop Vocal Album",
+          "headline_with_phrase": "{answer} taking Pop Vocal Album"
         },
         {
-          "id": 52755614,
-          "short_label": "Top-selling U.S. album of 2026",
-          "headline_phrase": "{answer} topping 2026 album sales",
-          "headline_with_phrase": "{answer} leading 2026 album sales"
-        },
-        {
-          "id": 59693617,
-          "short_label": "Next Drake album release",
-          "headline_phrase": "Drake dropping a new album {answer}",
-          "headline_with_phrase": "Drake's next album {answer}"
+          "id": 71652304,
+          "short_label": "Grammys Best Rock Album",
+          "headline_phrase": "{answer} winning Best Rock Album",
+          "headline_with_phrase": "{answer} taking Rock Album"
         }
       ]
     },

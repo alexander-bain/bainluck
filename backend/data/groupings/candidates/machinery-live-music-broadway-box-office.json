@@ -5,15 +5,15 @@
   "membership": "computed-produced",
   "kind": "roundup",
   "relations": [
-    "same_window",
+    "same_event",
     "sibling"
   ],
   "level": "member",
-  "kicker": "ENTERTAINMENT · STAGE & MUSIC",
-  "name": "Live Music, Broadway & Box Office",
+  "kicker": "ENTERTAINMENT · MUSIC",
+  "name": "Grammys 2027: Song & Genre Races",
   "category": "entertainment",
   "tag": "ENTERTAINMENT",
-  "section_title": "Concerts, Sales & Box Office Milestones",
+  "section_title": "2027 Grammy Category Leaders",
   "footer": "",
   "rule": {
     "producer": "container_machinery",
@@ -32,16 +32,16 @@
     "sections": [
       {
         "key": "music_box_office_slate",
-        "title": "Concerts, Sales & Box Office Milestones",
-        "item_noun": "markets",
-        "note": "Broadway attendance targets, Red Rocks 2027 headliners, 2026 box-office debuts, top albums, and Drake's release timeline.",
+        "title": "2027 Grammy Category Leaders",
+        "item_noun": "categories",
+        "note": "Leading contenders across Song of the Year, Best R&B Solo Performance, Best Pop Vocal Album, and Best Rock Album.",
         "atom_query": {
           "kind": "markets",
           "fun_sub_tag": "batch9-live-music-slate",
           "shape": "any",
           "order_by": "closeness_to_50",
           "min_items": 3,
-          "max_items": 6,
+          "max_items": 4,
           "max_outcomes": 1,
           "initial_visible_limit": 3,
           "min_lifetime_volume": 1
