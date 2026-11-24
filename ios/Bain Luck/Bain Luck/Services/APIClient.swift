@@ -1526,6 +1526,25 @@ actor APIClient {
         return try await fetch("/api/golf/tournaments/\(slug)", cacheTTL: 60)
     }
 
+    /// Fetches the blended, field-normalized probability history for a golf tournament (#13426).
+    func fetchGolfTournamentProbabilityTimeline(
+        slug: String,
+        top: Int = 20,
+        hours: Int = 168,
+        fullRange: Bool = false
+    ) async throws -> ProbabilityTimelineResponse {
+        let query = [
+            "top": "\(top)",
+            "hours": "\(hours)",
+        ].merging(EvolutionFullRange.query(fullRange: fullRange)) { current, _ in current }
+        return try await fetch(
+            "/api/golf/tournaments/\(slug)/probability-timeline",
+            query: query,
+            requiresNetwork: true,
+            revalidationQuery: ["fresh": "true"]
+        )
+    }
+
     /// One event concept — the JSON behind the web's `/event/<domain>/<slug>`
     /// page (#6667). The key is percent-encoded by `ConceptKey.apiPath`.
     ///

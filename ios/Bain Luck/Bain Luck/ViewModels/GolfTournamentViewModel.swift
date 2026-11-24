@@ -51,7 +51,12 @@ final class GolfTournamentViewModel: ObservableObject {
             let presentation = GolfTournamentPresentation(response: response)
             state = .loaded(presentation)
             if ReleaseSurfaces.isEventPageAtlasEnabled() {
-                atlasData = await Self.loadAtlasData(for: response, includeDefaultLeaderboard: true)
+                atlasData = await Self.loadAtlasData(
+                    for: response,
+                    tournamentSlug: slug,
+                    includeDefaultLeaderboard: true,
+                    includeDefaultTournamentTimeline: true
+                )
             }
             logger.info("Golf tournament \(self.slug, privacy: .public) loaded")
         } catch {
@@ -68,6 +73,7 @@ final class GolfTournamentViewModel: ObservableObject {
 
     nonisolated static func loadAtlasData(
         for response: GolfTournamentDetailResponse,
+        tournamentSlug: String? = nil,
         fetchMarket: @Sendable @escaping (Int) async throws -> FuturesMarketDetail = { id in
             try await APIClient.shared.fetchFuturesDetail(id: id)
         },
@@ -79,8 +85,10 @@ final class GolfTournamentViewModel: ObservableObject {
                 fullRange: true
             )
         },
+        fetchTournamentTimeline: (@Sendable (String) async throws -> ProbabilityTimelineResponse)? = nil,
         fetchLeaderboard: (@Sendable (String) async throws -> GolfLeaderboardResponse)? = nil,
-        includeDefaultLeaderboard: Bool = false
+        includeDefaultLeaderboard: Bool = false,
+        includeDefaultTournamentTimeline: Bool = false
     ) async -> EventAtlasGolfTournament11666.TournamentAtlasData {
         var out = EventAtlasGolfTournament11666.TournamentAtlasData()
         let winnerId = response.evolutionMarketId
@@ -102,6 +110,28 @@ final class GolfTournamentViewModel: ObservableObject {
             }
             return nil
         }()
+        let effectiveTournamentTimelineFetcher: (@Sendable (String) async throws -> ProbabilityTimelineResponse)? = {
+            if let fetchTournamentTimeline { return fetchTournamentTimeline }
+            if includeDefaultTournamentTimeline {
+                return { s in
+                    try await APIClient.shared.fetchGolfTournamentProbabilityTimeline(
+                        slug: s,
+                        top: 20,
+                        hours: 168,
+                        fullRange: true
+                    )
+                }
+            }
+            return nil
+        }()
+        let resolvedSlug: String? = {
+            let candidates = [response.tournament.slug, tournamentSlug]
+            for raw in candidates {
+                let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                if !trimmed.isEmpty { return trimmed }
+            }
+            return nil
+        }()
         let requestedTour = (response.tournament.tour?.trimmingCharacters(in: .whitespacesAndNewlines)).flatMap {
             $0.isEmpty ? nil : $0
         } ?? "pga"
@@ -116,11 +146,30 @@ final class GolfTournamentViewModel: ObservableObject {
             }
         }()
         async let timelineOutcome: (ProbabilityTimelineResponse?, Bool) = {
-            guard let id = winnerId else { return (nil, false) }
+            var tournamentEmptyFallback: ProbabilityTimelineResponse? = nil
+            var tournamentErrored = false
+            if let resolvedSlug, let fetchTournament = effectiveTournamentTimelineFetcher {
+                do {
+                    let tl = try await fetchTournament(resolvedSlug)
+                    if !tl.timeline.isEmpty {
+                        return (tl, false)
+                    }
+                    tournamentEmptyFallback = tl
+                } catch {
+                    tournamentErrored = true
+                    logger.error("Golf tournament blended timeline \(resolvedSlug, privacy: .public) fetch failed: \(error)")
+                }
+            }
+            guard let id = winnerId else {
+                return (tournamentEmptyFallback, tournamentEmptyFallback == nil && tournamentErrored)
+            }
             do {
                 return (try await fetchTimeline(id), false)
             } catch {
                 logger.error("Golf tournament timeline \(id, privacy: .public) fetch failed: \(error)")
+                if let tournamentEmptyFallback {
+                    return (tournamentEmptyFallback, false)
+                }
                 return (nil, true)
             }
         }()

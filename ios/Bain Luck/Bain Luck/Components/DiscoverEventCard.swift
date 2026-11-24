@@ -993,6 +993,8 @@ struct NativeEventDiscoverCard: View {
             return ShareCardRenderer.renderEventCard(
                 homeTeam: event.homeTeam,
                 awayTeam: event.awayTeam,
+                awayAbbreviation: event.awayTeamData?.abbreviation,
+                homeAbbreviation: event.homeTeamData?.abbreviation,
                 homeProbability: pregame?.homeProbability ?? 0.5,
                 awayProbability: awayWithheld ? nil : pregame?.awayProbability,
                 awayRenderedPercent: pregame?.percents.first ?? nil,
@@ -1021,6 +1023,8 @@ struct NativeEventDiscoverCard: View {
         return ShareCardRenderer.renderEventCard(
             homeTeam: event.homeTeam,
             awayTeam: event.awayTeam,
+            awayAbbreviation: event.awayTeamData?.abbreviation,
+            homeAbbreviation: event.homeTeamData?.abbreviation,
             homeProbability: printable.home,
             awayProbability: printable.away,
             // #7998 — the sentence above and the strip in the body both ask
@@ -1038,6 +1042,7 @@ struct NativeEventDiscoverCard: View {
             awayScore: event.awayScore,
             // #4044 — the same reading this card's own `isSuspended` uses above.
             commenceTime: event.commenceTime?.asDate,
+            sportKey: event.sport,
             // #9208 — the stoppage word the card's own summary reads.
             authorityPeriod: event.espn?.period
         )
