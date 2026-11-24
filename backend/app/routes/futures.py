@@ -8978,7 +8978,7 @@ async def get_futures_history(
     drawable_outcomes = drop_out_division_legs(
         charted_outcomes, (await out_legs_by_market([market])).get(market.id)
     )
-    if market.status == "open" and is_grammy_song_of_the_year(market):
+    if is_grammy_song_of_the_year(market) and getattr(market, "status", None) == "open":
         drawable_outcomes = [
             outcome for outcome in drawable_outcomes
             if is_grammy_song_contender(outcome.name, market.source)
