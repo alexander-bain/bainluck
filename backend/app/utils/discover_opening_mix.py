@@ -42,7 +42,10 @@ from app.utils.discover_opening_seating import (
     _parse as _parse_utc_datetime,
     classify_card,
 )
-from app.utils.bundle_visual_form import card_visual_form_id as card_visual_form_id
+from app.utils.bundle_visual_form import (
+    card_visual_form_id as card_visual_form_id,
+    discover_opening_form_look as discover_opening_form_look,
+)
 from app.utils.highlights import get_season_multiplier
 from app.utils.majors_calendar import fixture_marquee_pinned
 from app.utils.roundup_containers import (
@@ -1082,10 +1085,12 @@ def apply_discover_opening_mix(
                 break
 
     distinct_group_forms: set[Optional[str]] = {
-        card_visual_form_id(it) for _, it in sorted_groups
+        discover_opening_form_look(card_visual_form_id(it)) for _, it in sorted_groups
     }
     if chosen_live_sports_group is not None:
-        distinct_group_forms.add(card_visual_form_id(chosen_live_sports_group[1]))
+        distinct_group_forms.add(
+            discover_opening_form_look(card_visual_form_id(chosen_live_sports_group[1]))
+        )
     # Ruling 353: A — when every eligible grouped card shares the exact same non-null
     # visual form, skip the form cap so the rule does nothing rather than starving seats.
     apply_form_cap = not (
@@ -1108,7 +1113,7 @@ def apply_discover_opening_mix(
         if topic_counts[t] >= limit_map.get(t, 0):
             return False
         if enforce_form_cap and apply_form_cap:
-            fid = card_visual_form_id(it)
+            fid = discover_opening_form_look(card_visual_form_id(it))
             if fid is not None and form_counts[fid] >= OPENING_MIX_MAX_PER_FORM:
                 return False
         if _is_sibling_family_bundle(it) and any(
@@ -1121,7 +1126,7 @@ def apply_discover_opening_mix(
         chosen_groups.append((idx, it))
         chosen_indices.add(idx)
         topic_counts[classify_discover_opening_topic(it)] += 1
-        fid = card_visual_form_id(it)
+        fid = discover_opening_form_look(card_visual_form_id(it))
         if fid is not None:
             form_counts[fid] += 1
         if _is_sibling_family_bundle(it):
@@ -1130,7 +1135,7 @@ def apply_discover_opening_mix(
     if chosen_pwm_seat10 is not None:
         chosen_indices.add(chosen_pwm_seat10[0])
         topic_counts[TOPIC_PWM] += 1
-        fid10 = card_visual_form_id(chosen_pwm_seat10[1])
+        fid10 = discover_opening_form_look(card_visual_form_id(chosen_pwm_seat10[1]))
         if fid10 is not None:
             form_counts[fid10] += 1
         if _is_sibling_family_bundle(chosen_pwm_seat10[1]):
@@ -1382,7 +1387,7 @@ def apply_discover_opening_mix(
                         continue
                     if _contains_live_event_signal(it, now=effective_now):
                         continue
-                    fid = card_visual_form_id(it)
+                    fid = discover_opening_form_look(card_visual_form_id(it))
                     if (
                         enforce_form_cap
                         and fid is not None

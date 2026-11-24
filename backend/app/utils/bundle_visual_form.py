@@ -26,6 +26,25 @@ FORM_PARTY_CONTROL_BARS = "party_control_bars"
 FORM_THEME_COMPACT_ROWS = "theme_compact_rows"
 FORM_COMPARISON_COMPACT_ROWS = "comparison_compact_rows"
 
+# Opening-mix look-alike grouping (#13542 / 353: A): cards that draw the same
+# visual layout count as one look under the opening form cap while keeping their
+# distinct wire `form_id` intact.
+OPENING_FORM_LOOK_ALIASES: dict[str, str] = {
+    FORM_THEME_COMPACT_ROWS: "compact_rows",
+    FORM_COMPARISON_COMPACT_ROWS: "compact_rows",
+    FORM_PARTY_CONTROL_BARS: "compact_rows",
+    "coin_flip_matchups": "duel_matchups",
+    "matchup_slate": "duel_matchups",
+}
+
+
+def discover_opening_form_look(form_id: Optional[str]) -> Optional[str]:
+    """Map look-alike visual form names to one counting key for opening mix."""
+    cleaned = _nonempty_str(form_id)
+    if cleaned is None:
+        return None
+    return OPENING_FORM_LOOK_ALIASES.get(cleaned, cleaned)
+
 
 def _nonempty_str(value: Any) -> Optional[str]:
     if isinstance(value, str):
