@@ -756,18 +756,121 @@ async def get_kit_v1_preview(
     return build_kit_v1_worked_examples()
 
 
+async def _build_live_real_sets_audit_report(
+    db: AsyncSession,
+    *,
+    request: Request | None = None,
+    now: datetime | None = None,
+    feed_getter: Callable[..., Awaitable[Any]] | None = None,
+    container_getter: Callable[..., Awaitable[Any]] | None = None,
+    discovery_reader: Callable[..., Awaitable[Any]] | None = None,
+    roundup_producers: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Assemble live Discover bundles + public containers without cross-module import cycles."""
+    from starlette.requests import Request as StarletteRequest
+    from starlette.responses import Response as StarletteResponse
+
+    from app.services.container_discovery import discover_collections
+    from app.utils.container_machinery import _default_art_resolver
+    from app.utils.kit_v1_set_builder import build_real_sets_audit_report
+    from app.utils.roundup_containers import ROUNDUP_PRODUCERS
+
+    feed_fn = feed_getter
+    if feed_fn is None and request is not None:
+        app_obj = getattr(request, "app", None)
+        for route in getattr(app_obj, "routes", None) or ():
+            ep = getattr(route, "endpoint", None)
+            if getattr(ep, "__name__", None) == "get_feed":
+                feed_fn = ep
+                break
+
+    bundles: list[dict[str, Any]] = []
+    if feed_fn is not None:
+        feed_req = request or StarletteRequest(
+            {"type": "http", "method": "GET", "path": "/api/feed", "headers": []}
+        )
+        feed_payload = await feed_fn(
+            response=StarletteResponse(),
+            request=feed_req,
+            limit=200,
+            offset=0,
+            sport=None,
+            category=None,
+            include_events=True,
+            include_futures=True,
+            my_teams_only=False,
+            mode=None,
+            tags=None,
+            event_pct=None,
+            edition=None,
+            debug=False,
+            debug_ground_truth=False,
+            debug_personalization=False,
+            exclude_reviewed=False,
+            reviewer=None,
+            reviewed_surface=None,
+            machinery="1",
+            secret=None,
+            db=db,
+            user=None,
+        )
+        items = (feed_payload.get("items") or []) if isinstance(feed_payload, dict) else []
+        bundles = [it for it in items if isinstance(it, dict) and it.get("type") == "bundle"]
+
+    slugs: list[str] = []
+    seen_slugs: set[str] = set()
+    for b in bundles:
+        c_slug = str(((b.get("data") or {}).get("collection_ref") or {}).get("slug") or "").strip()
+        if c_slug and c_slug not in seen_slugs:
+            seen_slugs.add(c_slug)
+            slugs.append(c_slug)
+    try:
+        disc_fn = discovery_reader or discover_collections
+        disc = await disc_fn(db, limit=60)
+        for col in disc.collections or ():
+            c_slug = str((col or {}).get("slug") or "").strip()
+            if c_slug and c_slug not in seen_slugs:
+                seen_slugs.add(c_slug)
+                slugs.append(c_slug)
+    except Exception:
+        pass
+    for c_slug in sorted(roundup_producers or ROUNDUP_PRODUCERS):
+        if c_slug not in seen_slugs:
+            seen_slugs.add(c_slug)
+            slugs.append(c_slug)
+
+    get_c = container_getter or _get_container
+    containers_map: dict[str, dict[str, Any]] = {}
+    for c_slug in slugs:
+        try:
+            payload = await get_c(
+                c_slug, True, None, None, None, None, None, None, True, db
+            )
+            if isinstance(payload, StarletteResponse):
+                payload = json.loads(bytes(payload.body).decode("utf-8"))
+            if isinstance(payload, dict) and (payload.get("sections") or payload.get("container")):
+                containers_map[c_slug] = payload
+        except (HTTPException, Exception):
+            continue
+
+    return build_real_sets_audit_report(
+        {"bundles": bundles, "containers": containers_map},
+        now=now,
+        resolver=_default_art_resolver(),
+    )
+
+
 @router.get("/preview/kit-v1-real-sets")
 async def get_kit_v1_real_sets_preview(
     request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Admin-only deterministic Kit v1 conversion audit over public Discover sets (#13551)."""
+    """Admin-only live Kit v1 conversion audit over public Discover sets (#13551)."""
     from app.routes.admin_utils import _check_admin_auth
-    from app.utils.kit_v1_set_builder import load_real_sets_audit_report
 
     if not await _check_admin_auth(None, request, db):
         raise HTTPException(status_code=403, detail="Admin authentication required")
-    return load_real_sets_audit_report()
+    return await _build_live_real_sets_audit_report(db, request=request)
 
 
 @router.get("/{slug}")

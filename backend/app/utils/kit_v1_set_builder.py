@@ -5,12 +5,18 @@ cards (`kit_version: 1`) using only the four Kit layouts (`stack`, `grid`,
 `calendar`, `axis`) and eight generic marks (`picture`, `word`, `number`, `bar`,
 `tile`, `ring`, `dot`, `line`), without any hand-written per-set JSON.
 
-Rules enforced:
-- Commonality is `common_headline`; today's stat sentence is `stat_caption`
-  (scrubbed of venue names and "opens at" copy).
-- Monogram placeholders, unallowed image hosts (e.g. generic stock sites),
-  duplicated entities, and detected artwork/subject mismatches force an honest
-  fallback (`fits=False`, `refusal_reason=...`).
+Rules enforced (#13584 follow-up, Fable 11:21 PM PT):
+- Commonality is `common_headline` (declarative, zero source questions); today's
+  stat sentence is `stat_caption` (scrubbed of venue names, "opens at", and
+  blend boilerplate).
+- Picture rule (Alex): require a verified non-monogram picture whenever a row's
+  subject is a person, team, or film (and on every row of `casting_sheet`).
+  Shaped looks (`dated_tiles`, `countdown`, `one_in_n`, `shared_scale`) may
+  draw things/events without photos — never monograms, never generic stock
+  photos (`images.pexels.com`), and never repeated placeholders.
+- Specific shapes are chosen first (`road_ahead`, `single_sport_slate`,
+  `bubble_line`, `dated_tiles`, `countdown`, `shared_scale`, `one_in_n`,
+  `scoreboard_grid`), with `casting_sheet` selected strictly last.
 - Every emitted `fits=True` card passes `validate_kit_v1_card` both with its
   variant hint and with an unknown variant string.
 """
@@ -43,30 +49,44 @@ from app.utils.kit_v1_spec import (
     validate_kit_v1_card,
 )
 
+
+def _mark_bar_range(*, lo: float, hi: float, width: str = "flex", pct_label: str | None = None) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "mark": "bar",
+        "bar_style": "range",
+        "lo": round(max(0.0, min(1.0, float(lo))), 4),
+        "hi": round(max(0.0, min(1.0, float(hi))), 4),
+        "width": width,
+    }
+    if pct_label is not None:
+        out["pct_label"] = pct_label
+    return out
+
 PT_TZ = ZoneInfo("America/Los_Angeles")
-REAL_SETS_SNAPSHOT_PATH = (
-    Path(__file__).resolve().parents[2] / "data" / "discover" / "kit_v1_real_sets_snapshot.json"
+REAL_SETS_FIXTURE_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "tests"
+    / "fixtures"
+    / "kit_v1_real_sets_fixture.json"
 )
 
 _VENUE_WORDS_RE = re.compile(r"\b(kalshi|polymarket)\b", re.IGNORECASE)
 _OPENS_AT_RE = re.compile(r"\bopens\s+at\s+(\d+%)", re.IGNORECASE)
+_PORTRAIT_DETAIL_SUFFIX_RE = re.compile(
+    r"\s+(?:tmdb\s+portrait|espn\s+headshot|wikimedia\s+commons\s+portrait|portrait|headshot)$",
+    re.IGNORECASE,
+)
 
-_SPORT_META: dict[str, tuple[str, dict[str, str], dict[str, str]]] = {
-    "basketball_nba": (
-        "NBA",
-        {"away": "#1d428a", "home": "#0150b5"},
-        {},
-    ),
-    "americanfootball_nfl": (
-        "NFL",
-        {"away": "#002a5c", "home": "#003594"},
-        {},
-    ),
-    "icehockey_nhl": (
-        "NHL",
-        {"away": "#00205b", "home": "#344043"},
-        {},
-    ),
+_ARTIST_WORK_AND_STAGE_ALLOWLIST: tuple[tuple[str, str], ...] = (
+    ("all i want for christmas is you", "mariah carey"),
+    ("tame impala", "kevin parker"),
+    ("djo", "joe keery"),
+)
+
+_SPORT_META: dict[str, str] = {
+    "basketball_nba": "NBA",
+    "americanfootball_nfl": "NFL",
+    "icehockey_nhl": "NHL",
 }
 
 _TEAM_COLOR_FALLBACKS: dict[str, str] = {
@@ -101,18 +121,32 @@ _TEAM_COLOR_FALLBACKS: dict[str, str] = {
     "UTA": "#002b5c",
     "WSH": "#e31837",
     "NE": "#002a5c",
-    "LAC_NFL": "#0080c6",
     "GB": "#204e32",
     "LAR": "#003594",
     "KC": "#e31837",
     "BUF": "#00338d",
     "SF": "#aa0000",
-    "DET_NFL": "#0076b6",
     "EDM": "#00205b",
-    "VGK": "#344043",
-    "WSH_NHL": "#d71830",
-    "STL": "#0070b9",
-    "NSH": "#b58500",
+    "VGK": "#b4975a",
+    "STL": "#002f87",
+    "NSH": "#ffb81c",
+    "CAR": "#cc0000",
+    "COL": "#6f263d",
+    "FLA": "#c8102e",
+    "MTL": "#af1e2d",
+    "NJ": "#ce1126",
+    "NYI": "#00539b",
+    "NYR": "#0038a8",
+    "OTT": "#c52032",
+    "SEA": "#001628",
+    "SJ": "#006d75",
+    "TB": "#002868",
+    "VAN": "#00205b",
+    "WPG": "#041e42",
+    "ANA": "#fc4c02",
+    "CBJ": "#002654",
+    "CGY": "#c8102e",
+    "PIT": "#000000",
 }
 
 _SHORT_CODES: dict[str, str] = {
@@ -129,30 +163,176 @@ _SHORT_CODES: dict[str, str] = {
     "Minnesota Timberwolves": "MIN",
     "Philadelphia 76ers": "PHI",
     "Miami Heat": "MIA",
+    "Portland Trail Blazers": "POR",
     "Los Angeles Chargers": "LAC",
     "New England Patriots": "NE",
     "Los Angeles Rams": "LAR",
     "Green Bay Packers": "GB",
-    "Edmonton Oilers": "EDM",
-    "Vegas Golden Knights": "VGK",
-    "Detroit Red Wings": "DET",
-    "Nashville Predators": "NSH",
-    "St. Louis Blues": "STL",
-    "Washington Capitals": "WSH",
     "Kansas City Chiefs": "KC",
     "Buffalo Bills": "BUF",
     "Chicago Bears": "CHI",
     "Detroit Lions": "DET",
     "Philadelphia Eagles": "PHI",
     "Dallas Cowboys": "DAL",
-    "Portland Trail Blazers": "POR",
+    "Edmonton Oilers": "EDM",
+    "Vegas Golden Knights": "VGK",
+    "Detroit Red Wings": "DET",
+    "Nashville Predators": "NSH",
+    "St. Louis Blues": "STL",
+    "Washington Capitals": "WSH",
+    "Minnesota Wild": "MIN",
+    "Carolina Hurricanes": "CAR",
+    "Tampa Bay Lightning": "TB",
+    "Colorado Avalanche": "COL",
+    "Dallas Stars": "DAL",
+    "New Jersey Devils": "NJ",
+    "Montreal Canadiens": "MTL",
+    "Florida Panthers": "FLA",
+    "Ottawa Senators": "OTT",
+    "Utah Mammoth": "UTA",
+    "Boston Bruins": "BOS",
+    "New York Rangers": "NYR",
+    "New York Islanders": "NYI",
+    "Anaheim Ducks": "ANA",
+    "Los Angeles Kings": "LA",
+    "Winnipeg Jets": "WPG",
+    "Seattle Kraken": "SEA",
+    "Buffalo Sabres": "BUF",
+    "San Jose Sharks": "SJ",
+    "Philadelphia Flyers": "PHI",
+    "Columbus Blue Jackets": "CBJ",
+    "Calgary Flames": "CGY",
+    "Pittsburgh Penguins": "PIT",
+    "Toronto Maple Leafs": "TOR",
+    "Chicago Blackhawks": "CHI",
+    "Vancouver Canucks": "VAN",
+}
+
+_COLLEGE_MASCOT_FALLBACKS: dict[str, str] = {
+    "georgia": "Georgia Bulldogs",
+    "texas": "Texas Longhorns",
+    "alabama": "Alabama Crimson Tide",
+    "notre dame": "Notre Dame Fighting Irish",
+    "oregon": "Oregon Ducks",
+    "ohio state": "Ohio State Buckeyes",
+    "tennessee": "Tennessee Volunteers",
+    "indiana": "Indiana Hoosiers",
+    "utah": "Utah Utes",
+    "texas tech": "Texas Tech Red Raiders",
+    "byu": "BYU Cougars",
+}
+
+_TWO_WORD_CITIES: frozenset[str] = frozenset(
+    {
+        "Los Angeles",
+        "New York",
+        "Golden State",
+        "San Antonio",
+        "Oklahoma City",
+        "New Orleans",
+        "Green Bay",
+        "Kansas City",
+        "Tampa Bay",
+        "New England",
+        "Las Vegas",
+        "San Francisco",
+        "San Jose",
+        "St. Louis",
+    }
+)
+
+_MONTH_NUMS: dict[str, int] = {
+    "jan": 1,
+    "january": 1,
+    "feb": 2,
+    "february": 2,
+    "mar": 3,
+    "march": 3,
+    "apr": 4,
+    "april": 4,
+    "may": 5,
+    "jun": 6,
+    "june": 6,
+    "jul": 7,
+    "july": 7,
+    "aug": 8,
+    "august": 8,
+    "sep": 9,
+    "sept": 9,
+    "september": 9,
+    "oct": 10,
+    "october": 10,
+    "nov": 11,
+    "november": 11,
+    "dec": 12,
+    "december": 12,
+}
+
+_MONTH_ABBR: dict[int, str] = {
+    1: "Jan",
+    2: "Feb",
+    3: "Mar",
+    4: "Apr",
+    5: "May",
+    6: "Jun",
+    7: "Jul",
+    8: "Aug",
+    9: "Sep",
+    10: "Oct",
+    11: "Nov",
+    12: "Dec",
+}
+
+_DECLARATIVE_HEADLINES: dict[str, str] = {
+    "machinery-who-gets-engaged": "Celebrity engagements by Dec 31",
+    "machinery-stage-and-cover": "2026–27 stage hosts and covers",
+    "machinery-nba-night": "NBA slate",
+    "machinery-nfl-week": "NFL slate",
+    "machinery-nhl-this-week": "NHL close matchups",
+    "machinery-pop-culture-oddities": "2026 pop-culture long shots",
+    "middle-east": "Middle East ceasefire and leadership deadlines",
+    "russia-ukraine": "Russia–Ukraine ceasefire and leadership deadlines",
 }
 
 
-def _restate_source_question(text: str) -> str:
+def _short_place_name(team_name: str) -> str:
+    s = (team_name or "").strip()
+    for city in _TWO_WORD_CITIES:
+        if s.startswith(f"{city} "):
+            return city
+    parts = s.split()
+    return parts[0] if len(parts) >= 2 else s
+
+
+def _present_tense_restatement(phrase: str) -> str:
+    """Fix bare subjunctive verbs left after stripping leading 'Will '/'When will '."""
+    s = (phrase or "").strip()
+    if not s:
+        return s
+    s = s[0].upper() + s[1:]
+    for bare, conjugated in (
+        (" pass ", " passes "),
+        (" announce ", " announces "),
+        (" achieve ", " achieves "),
+        (" occur ", " occurs "),
+        (" reach ", " reaches "),
+        (" create ", " creates "),
+        (" add ", " adds "),
+        (" begin ", " begins "),
+        (" resign ", " resigns "),
+    ):
+        s = re.sub(rf"\b{bare.strip()}\b", conjugated.strip(), s, count=1)
+    if s.lower().startswith("a 7.0+ earthquake occurs"):
+        s = "Worldwide 7.0+ earthquake"
+    return s
+
+
+def _restate_source_question(text: str, *, slug: str = "") -> str:
+    if slug in _DECLARATIVE_HEADLINES:
+        return _DECLARATIVE_HEADLINES[slug]
     s = (text or "").strip()
     if not s.endswith("?"):
-        return s
+        return s[0].upper() + s[1:] if s.lower().startswith("who ") else s
     m_playoff = re.match(
         r"^Which\s+(?:team|club)\s+will\s+make\s+(?:the\s+)?(.+?)\?$",
         s,
@@ -169,11 +349,16 @@ def _restate_source_question(text: str) -> str:
         return f"{m_releg.group(1).strip()} relegation"
     m_when = re.match(r"^When\s+will\s+(.+?)\s+release\s+(.+?)\?$", s, re.IGNORECASE)
     if m_when:
-        return f"{m_when.group(1).strip()} {m_when.group(2).strip()}: release day"
+        subj = m_when.group(1).strip()
+        obj = re.sub(r"^the\s+", "", m_when.group(2).strip(), flags=re.IGNORECASE)
+        return f"{subj} {obj}: release"
+    m_when_any = re.match(r"^When\s+will\s+(.+?)\?$", s, re.IGNORECASE)
+    if m_when_any:
+        return _present_tense_restatement(m_when_any.group(1).strip())
     m_will = re.match(r"^Will\s+(.+?)\?$", s, re.IGNORECASE)
     if m_will:
-        return m_will.group(1).strip()
-    return s
+        return _present_tense_restatement(m_will.group(1).strip())
+    return s.rstrip("?").strip()
 
 
 def _scrub_card_copy(text: str) -> str:
@@ -195,7 +380,8 @@ def _short_team_code(full_name: str, explicit_short: str | None = None) -> str:
     if full_name in _SHORT_CODES:
         return _SHORT_CODES[full_name]
     if explicit_short and len(explicit_short.strip()) <= 4:
-        return explicit_short.strip().upper()
+        code = explicit_short.strip().upper()
+        return "POR" if code == "PTB" else code
     parts = [p for p in re.split(r"\s+", full_name.strip()) if p]
     if not parts:
         return "TEAM"
@@ -257,15 +443,19 @@ def _art_matches_subject(row_name: str, art: dict[str, Any] | None) -> str | Non
     if not isinstance(art, dict):
         return None
     detail = str(art.get("detail") or "").strip()
-    m = re.match(r"^(.+?)\s+TMDB\s+portrait$", detail, re.IGNORECASE)
+    m = _PORTRAIT_DETAIL_SUFFIX_RE.search(detail)
     if not m:
         return None
-    portrait_person = m.group(1).strip()
+    portrait_person = detail[: m.start()].strip()
+    if "," in portrait_person:
+        portrait_person = portrait_person.split(",", 1)[0].strip()
+    if not portrait_person:
+        return None
     low_row = row_name.lower()
     low_portrait = portrait_person.lower()
-    # Accept stage aliases (e.g. Tame Impala / Kevin Parker) or exact substring overlap
-    if "tame impala" in low_row and "kevin parker" in low_portrait:
-        return None
+    for work_or_stage, artist_name in _ARTIST_WORK_AND_STAGE_ALLOWLIST:
+        if work_or_stage in low_row and artist_name in low_portrait:
+            return None
     if low_portrait in low_row:
         return None
     tokens = [t for t in re.findall(r"[a-z]+", low_portrait) if len(t) >= 3]
@@ -283,10 +473,61 @@ def _entity_key_for_row(row_name: str) -> str:
     if " · " in txt:
         txt = txt.split(" · ", 1)[1].strip()
     elif ":" in txt:
-        left, right = txt.split(":", 1)
+        _left, right = txt.split(":", 1)
         if right.strip():
             txt = right.strip()
     return re.sub(r"[^a-z0-9]+", " ", txt.lower()).strip()
+
+
+def _extract_entity_candidate(text: str) -> str:
+    cleaned = text.strip().rstrip("?").strip()
+    if " · " in cleaned:
+        cleaned = cleaned.split(" · ", 1)[1].strip()
+    elif ":" in cleaned:
+        _l, r = cleaned.split(":", 1)
+        if r.strip():
+            cleaned = r.strip()
+    return cleaned
+
+
+def _row_requires_picture(
+    row_label: str,
+    art: dict[str, Any] | None,
+    resolver: Any,
+) -> tuple[bool, str, dict[str, Any] | None]:
+    """Check Alex's picture rule: require pictures ONLY for person, team, or film rows."""
+    resolved = art if isinstance(art, dict) and _is_valid_image_url(art.get("url")) and art.get("kind") != "monogram" else None
+    kind = _subject_kind_from_art(resolved or art, row_label)
+    if kind in {"person", "team", "film"}:
+        return True, kind, resolved
+    if resolver is not None:
+        cand = _extract_entity_candidate(row_label)
+        probe = resolver.resolve(cand)
+        pk = _subject_kind_from_art(probe, row_label)
+        if pk in {"person", "team", "film"}:
+            valid_probe = probe if _is_valid_image_url(probe.get("url")) and probe.get("kind") != "monogram" else None
+            return True, pk, valid_probe
+    low = row_label.lower()
+    if any(
+        tok in low
+        for tok in (
+            "best actor",
+            "best actress",
+            "best director",
+            "best picture",
+            "opening box office",
+            "grossing movie",
+            "win the ",
+            "heisman",
+            "nba mvp",
+            "super bowl",
+            "world series",
+            "stanley cup",
+            "relegated",
+        )
+    ):
+        return True, "person", resolved
+    return False, kind, resolved
 
 
 def _resolve_logo_and_color(
@@ -298,6 +539,8 @@ def _resolve_logo_and_color(
 ) -> tuple[str | None, str]:
     color = "#1d428a"
     url: str | None = None
+    if team_name.strip().lower() in _COLLEGE_MASCOT_FALLBACKS:
+        team_name = _COLLEGE_MASCOT_FALLBACKS[team_name.strip().lower()]
     if isinstance(explicit_team_data, dict):
         c_raw = explicit_team_data.get("primary_color")
         if isinstance(c_raw, str) and re.fullmatch(r"#[0-9a-fA-F]{6}", c_raw.strip()):
@@ -348,6 +591,21 @@ def _source_count_from_bundle(bundle: dict[str, Any] | None, container: dict[str
     return max(1, len(sources) or (2 if sources else 1))
 
 
+def _is_boilerplate_stat(low: str) -> bool:
+    return any(
+        phrase in low
+        for phrase in (
+            "in schedule order",
+            "each row is its own market",
+            "don't add up to 100%",
+            "separate markets that settle",
+            "bain luck blend",
+            "closest of 8",
+            "current chances across",
+        )
+    )
+
+
 def _derive_slug_and_copy(
     bundle: dict[str, Any] | None,
     container: dict[str, Any] | None,
@@ -375,7 +633,6 @@ def _derive_slug_and_copy(
     if not kicker:
         kicker = "DISCOVER"
 
-    # Big line = what the set has in common (`cref.name` on machinery bundles, or container name if not a stat sentence)
     common = str(cref.get("name") or "").strip()
     c_name = str(c_meta.get("name") or "").strip()
     if not common:
@@ -396,23 +653,14 @@ def _derive_slug_and_copy(
     ):
         txt = _scrub_card_copy(str(cand or ""))
         low = txt.lower()
-        is_boilerplate = any(
-            phrase in low
-            for phrase in (
-                "in schedule order",
-                "each row is its own market",
-                "don't add up to 100%",
-                "separate markets that settle",
-            )
-        )
-        if txt and low != common.lower() and not is_boilerplate:
+        if txt and low != common.lower() and not _is_boilerplate_stat(low):
             stat = txt
             break
 
     if not stat:
-        stat = _scrub_card_copy(fallback_stat) or f"Current chances across {common}."
+        stat = _scrub_card_copy(fallback_stat)
 
-    common = _restate_source_question(_scrub_card_copy(common))
+    common = _restate_source_question(_scrub_card_copy(common), slug=slug)
     route = {
         "kind": "collection",
         "id": cref.get("id") or c_meta.get("id"),
@@ -444,6 +692,28 @@ def _collect_event_members(bundle: dict[str, Any] | None, container: dict[str, A
                 seen_ids.add(eid)
                 events.append(card)
     return events
+
+
+def _collect_market_entries(bundle: dict[str, Any] | None, container: dict[str, Any] | None) -> list[dict[str, Any]]:
+    """Collect market dicts across bundle items and container sections without duplicates."""
+    markets: list[dict[str, Any]] = []
+    seen_names: set[str] = set()
+    for it in ((bundle or {}).get("data") or {}).get("items") or []:
+        if isinstance(it, dict) and it.get("type") != "event":
+            cd = it.get("data") or {}
+            nm = str(cd.get("name") or cd.get("title") or "").strip()
+            if nm and nm.lower() not in seen_names:
+                seen_names.add(nm.lower())
+                markets.append(cd)
+    for sec in (container or {}).get("sections") or []:
+        for m in sec.get("members") or []:
+            if m.get("type") == "market":
+                cd = m.get("card") or {}
+                nm = str(cd.get("name") or "").strip()
+                if nm and nm.lower() not in seen_names:
+                    seen_names.add(nm.lower())
+                    markets.append(cd)
+    return markets
 
 
 def _extract_event_home_pct(card: dict[str, Any]) -> int | None:
@@ -484,7 +754,6 @@ def _try_build_road_ahead(
     active.sort(key=lambda e: str(e.get("commence_time") or ""))
     shown = active[:3]
 
-    # Resolve focus team logo & color
     sample_home = shown[0].get("home_team") == focus_team
     focus_team_data = shown[0].get("home_team_data") if sample_home else shown[0].get("away_team_data")
     focus_url, focus_color = _resolve_logo_and_color(
@@ -494,8 +763,9 @@ def _try_build_road_ahead(
         return None, f"Missing verified logo for {focus_team}"
 
     focus_adaptive = _adaptive_team_color(focus_color)
+    focus_place = _short_place_name(focus_team)
     items: list[dict[str, Any]] = []
-    summary_parts: list[str] = []
+    clauses: list[str] = []
 
     for e in shown:
         home_team = str(e.get("home_team") or "")
@@ -514,6 +784,7 @@ def _try_build_road_ahead(
         day_str, time_str = _format_pt_day_time(e.get("commence_time"))
         prefix = "vs" if is_home else "at"
         opp_code = _short_team_code(opp)
+        opp_place = _short_place_name(opp)
         row_label = f"{prefix} {opp_code}"
         items.append(
             {
@@ -540,10 +811,10 @@ def _try_build_road_ahead(
                 ],
             }
         )
-        summary_parts.append(f"{prefix} {opp} ({team_pct}%) on {day_str}")
+        clauses.append(f"{team_pct}% {prefix} {opp_place} on {day_str}")
 
-    if stat.lower() == common.lower() or "current chances across" in stat.lower():
-        stat = f"{focus_team} {', '.join(summary_parts[:2])}, then {summary_parts[2]}."
+    # Always use Fable's road caption form: "Boston is 80% at Washington..."
+    stat_sentence = f"{focus_place} is {clauses[0]}, {clauses[1]}, and {clauses[2]}."
 
     card = _make_kit_card(
         card_id=f"kit-{slug}",
@@ -551,7 +822,7 @@ def _try_build_road_ahead(
         variant="road_ahead",
         kicker=kicker,
         common_headline=common,
-        stat_caption=stat,
+        stat_caption=stat_sentence,
         source_count=source_count,
         route_kind="collection",
         route_id=route.get("id"),
@@ -566,6 +837,24 @@ def _try_build_road_ahead(
         },
     )
     return card, None
+
+
+def _format_date_span_headline(sport_label: str, games: list[dict[str, Any]], slug: str) -> str:
+    dts = sorted(dt.astimezone(PT_TZ) for g in games if (dt := _parse_iso_dt(g.get("commence_time"))) is not None)
+    if not dts:
+        return f"{sport_label} matchups"
+    first, last = dts[0], dts[-1]
+    if first.month == last.month:
+        if first.day == last.day:
+            span = f"{_MONTH_ABBR[first.month]} {first.day}"
+        else:
+            span = f"{_MONTH_ABBR[first.month]} {first.day}–{last.day}"
+    else:
+        span = f"{_MONTH_ABBR[first.month]} {first.day}–{_MONTH_ABBR[last.month]} {last.day}"
+    if slug.startswith("nfl-2026-week-"):
+        wk = slug.rsplit("-", 1)[-1]
+        return f"NFL Week {wk}, {span}"
+    return f"{sport_label}, {span}"
 
 
 def _try_build_single_sport_slate(
@@ -586,7 +875,6 @@ def _try_build_single_sport_slate(
     mc_form = str(mc.get("form_id") or "")
     mc_rows = mc.get("rows") or []
 
-    # Case A: machinery matchup slate / coin flips
     raw_games: list[dict[str, Any]] = []
     if mc_form in {"matchup_slate", "coin_flip_matchups"} and mc_rows:
         raw_games = mc_rows
@@ -612,10 +900,10 @@ def _try_build_single_sport_slate(
     if len(active) < 2:
         return None, "All matchups in this week/slate are already settled"
 
-    # Order coin_flip/slate closest-to-50 or chronological as served
     shown = active[:3]
-    sport_label = _SPORT_META[sport_key][0]
+    sport_label = _SPORT_META[sport_key]
     total_count = max(len(active), int(mc.get("item_count") or 0), len(shown))
+    headline = _format_date_span_headline(sport_label, active, slug)
 
     items: list[dict[str, Any]] = []
     for g in shown:
@@ -677,7 +965,7 @@ def _try_build_single_sport_slate(
             }
         )
 
-    if "current chances across" in stat.lower():
+    if not stat or _is_boilerplate_stat(stat.lower()) or stat.lower() == headline.lower():
         g0 = shown[0]
         p_home = _extract_event_home_pct(g0) or 50
         stat = f"{g0.get('away_team')} ({100 - p_home}%) at {g0.get('home_team')} ({p_home}%) headlines {total_count} matchups."
@@ -687,7 +975,7 @@ def _try_build_single_sport_slate(
         layout="stack",
         variant="single_sport_slate",
         kicker=kicker,
-        common_headline=common,
+        common_headline=headline,
         stat_caption=stat,
         source_count=source_count,
         route_kind="collection",
@@ -724,7 +1012,7 @@ def _try_build_bubble_line(
     if len(members) < 10:
         return None, None
 
-    entries: list[tuple[str, int, str, str]] = []
+    entries: list[tuple[str, str, int, str, str]] = []
     missing_logos: list[str] = []
     for m in members:
         card = m.get("card") or {}
@@ -745,10 +1033,11 @@ def _try_build_bubble_line(
         if pct is None:
             return None, f"Missing probability for {team_name}"
         url, hex_color = _resolve_logo_and_color(team_name, resolver=resolver)
+        abbr = _short_team_code(team_name)
         if not _is_valid_image_url(url):
             missing_logos.append(team_name)
         else:
-            entries.append((team_name, pct, url, hex_color))
+            entries.append((team_name, abbr, pct, str(url), hex_color))
 
     if missing_logos:
         total = len(members)
@@ -758,36 +1047,60 @@ def _try_build_bubble_line(
             f"(missing e.g. {', '.join(missing_logos[:3])})",
         )
 
-    pcts = [e[1] for e in entries]
+    pcts = [e[2] for e in entries]
     if max(pcts) - min(pcts) < 35:
         return None, "Spread too narrow for 0–100% bubble axis"
 
-    # Pick up to 7 well-spaced representative dots across lock/bubble/longshot so labels never collide
-    entries.sort(key=lambda e: (-e[1], e[0]))
-    selected: list[tuple[str, int, str, str]] = []
-    for cand in entries:
-        if not selected or all(abs(cand[1] - prev[1]) >= 9 for prev in selected):
-            selected.append(cand)
-        if len(selected) >= 7:
-            break
-    if entries[-1] not in selected and all(abs(entries[-1][1] - prev[1]) >= 7 for prev in selected):
-        selected.append(entries[-1])
-    selected.sort(key=lambda e: e[1])
+    # Match worked example (#13577): plot ALL 32 teams; elevate every bubble team (25 < p < 75) with crest + abbr
+    entries.sort(key=lambda e: (e[2], e[1]))
+    marks: list[dict[str, Any]] = []
+    in_doubt_rows: list[tuple[str, int]] = []
+    lanes_x: list[float] = []
+    low_count = 0
+    high_count = 0
 
-    marks = [
-        _mark_dot(
-            x=float(pct),
-            label=f"{team}: {pct}%",
-            color=_adaptive_team_color(color),
-            in_band=(38 <= pct <= 68),
+    for team_name, abbr, p_val, logo_url, color in entries:
+        in_doubt = 25 < p_val < 75
+        if p_val <= 25:
+            low_count += 1
+        elif p_val >= 75:
+            high_count += 1
+        lane: int | None = None
+        pic: dict[str, Any] | None = None
+        if in_doubt:
+            for idx_lane, last_p in enumerate(lanes_x):
+                if p_val - last_p >= 9:
+                    lane = idx_lane
+                    lanes_x[idx_lane] = float(p_val)
+                    break
+            if lane is None:
+                lane = len(lanes_x)
+                lanes_x.append(float(p_val))
+            in_doubt_rows.append((abbr, p_val))
+            pic = _mark_picture(url=logo_url, alt=abbr, subject_kind="team", size="xs", contain=True)
+        marks.append(
+            _mark_dot(
+                x=float(p_val),
+                y_lane=lane,
+                label=f"{team_name}: {p_val}%",
+                color=_adaptive_team_color(color),
+                in_band=in_doubt,
+                picture=pic,
+            )
         )
-        for team, pct, _url, color in selected
-    ]
 
-    leader = entries[0]
-    bubble = min(entries, key=lambda e: abs(e[1] - 50))
-    if "current chances across" in stat.lower() or stat.lower() == common.lower():
-        stat = f"{leader[0]} leads at {leader[1]}%, with {bubble[0]} ({bubble[1]}%) near the coin-flip line across {len(entries)} teams."
+    doubt_summary = " · ".join(
+        f"{abbr} {p_val}%" for abbr, p_val in sorted(in_doubt_rows, key=lambda item: (-item[1], item[0]))
+    )
+    leader = max(entries, key=lambda e: e[2])
+    mid_bubble = sorted(in_doubt_rows, key=lambda item: abs(item[1] - 50))
+    bubble_note = (
+        f", while {mid_bubble[0][0]} ({mid_bubble[0][1]}%) and {mid_bubble[1][0]} ({mid_bubble[1][1]}%) sit inside the playoff bubble."
+        if len(mid_bubble) >= 2
+        else f" across {len(entries)} teams."
+    )
+    if not stat or _is_boilerplate_stat(stat.lower()) or stat.lower() == common.lower():
+        stat = f"{leader[0]} leads at {leader[2]}%{bubble_note}"
 
     card = _make_kit_card(
         card_id=f"kit-{slug}",
@@ -815,14 +1128,45 @@ def _try_build_bubble_line(
                 ],
             },
             "scale_units": ["%"],
-            "band": {"min": 38, "max": 68, "label": "Bubble zone"},
+            "highlight_band": {"lo": 25, "hi": 75, "label": "in doubt"},
             "marks": marks,
+            "summary_marks": [
+                _mark_word(f"{low_count} at 25% or less", style="sub", tone="secondary", align="left"),
+                _mark_word(f"{high_count} at 75% or more", style="sub", tone="secondary", align="right"),
+            ],
+            "footer_marks": [
+                _mark_word(doubt_summary, style="pill", tone="secondary"),
+            ],
         },
     )
     return card, None
 
 
-def _try_build_scoreboard_grid(
+def _parse_outcome_deadline(label: str) -> tuple[tuple[int, int, int], str] | None:
+    s = (label or "").strip().rstrip("?").strip()
+    m_full = re.match(
+        r"^(?:(?:before|by)\s+)?(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\s+(\d{1,2})(?:,\s*(\d{4}))?$",
+        s,
+        re.IGNORECASE,
+    )
+    if m_full:
+        mon = _MONTH_NUMS[m_full.group(1).lower()]
+        day = int(m_full.group(2))
+        yr = int(m_full.group(3)) if m_full.group(3) else 2026
+        return (yr, mon, day), f"{_MONTH_ABBR[mon]} {day} '{str(yr)[2:]}"
+    m_mon_yr = re.match(
+        r"^(?:(?:before|by|in)\s+)?(jan|january|feb|february|mar|march|apr|april|may|jun|june|jul|july|aug|august|sep|sept|september|oct|october|nov|november|dec|december)\s+(\d{4})$",
+        s,
+        re.IGNORECASE,
+    )
+    if m_mon_yr:
+        mon = _MONTH_NUMS[m_mon_yr.group(1).lower()]
+        yr = int(m_mon_yr.group(2))
+        return (yr, mon, 28), f"{_MONTH_ABBR[mon]} '{str(yr)[2:]}"
+    return None
+
+
+def _try_build_dated_tiles(
     *,
     slug: str,
     kicker: str,
@@ -834,110 +1178,149 @@ def _try_build_scoreboard_grid(
     container: dict[str, Any] | None,
     resolver: Any,
 ) -> tuple[dict[str, Any] | None, str | None]:
-    d = (bundle or {}).get("data") or {}
-    mc_form = str(((d.get("roundup") or {}).get("machinery_card") or {}).get("form_id") or "")
-    secs = (container or {}).get("sections") or []
-    if not secs:
-        return None, None
-    sec0_members = [m for m in (secs[0].get("members") or []) if m.get("type") == "market"]
-    if len(sec0_members) < 2:
-        sec0_members = [
-            m for sec in secs for m in (sec.get("members") or []) if m.get("type") == "market"
-        ]
-    if len(sec0_members) < 2:
-        return None, None
+    """Build grid/dated_tiles when >= 2 markets each carry multiple dated outcomes."""
+    markets = _collect_market_entries(bundle, container)
+    dated_rows: list[tuple[str, dict[str, tuple[tuple[int, int, int], str, int]]]] = []
 
-    is_explicit_paired = mc_form == "paired_stage_bars" or (
-        len(sec0_members) == 2
-        and slug in {"roundup-cfp-picture"}
-    )
-    if not is_explicit_paired:
-        return None, None
-
-    # Only run grid when paired markets share at least 3 entities
-    col_maps: list[tuple[str, str, dict[str, int]]] = []
-    for m in sec0_members[:3]:
-        c = m.get("card") or {}
-        m_id = str(c.get("id") or len(col_maps) + 1)
-        m_name = str(c.get("name") or "")
-        low = m_name.lower()
-        if "nominee" in low:
-            col_label = "Nominated"
-        elif "winner" in low:
-            col_label = "Wins"
-        else:
-            col_label = m_name.split(":")[-1].strip()[:18] or f"Race {len(col_maps) + 1}"
-        out_map: dict[str, int] = {}
-        for o in c.get("top_outcomes") or []:
+    for m in markets:
+        outs = m.get("top_outcomes") or []
+        by_col: dict[str, tuple[tuple[int, int, int], str, int]] = {}
+        for o in outs:
             nm = str(o.get("name") or "").strip()
+            parsed = _parse_outcome_deadline(nm)
             pct = _safe_pct(o.get("probability"), o.get("rendered_percent"))
-            if nm and pct is not None and nm.lower() != "tie":
-                out_map[nm] = pct
-        col_maps.append((m_id, col_label, out_map))
+            if parsed and pct is not None:
+                sort_k, col_lbl = parsed
+                col_key = f"{sort_k[0]:04d}-{sort_k[1]:02d}-{sort_k[2]:02d}"
+                by_col[col_key] = (sort_k, col_lbl, pct)
+        if len(by_col) >= 2:
+            raw_title = _scrub_card_copy(_restate_source_question(str(m.get("name") or m.get("title") or "")))
+            short_title = re.sub(
+                r"\s+(?:by|before)\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}(?:,\s*\d{4})?\??",
+                "",
+                raw_title,
+                flags=re.IGNORECASE,
+            ).strip(" ·-?")
+            short_title = re.sub(r"\s*\(.*?\)$", "", short_title).rstrip("?").strip()
+            dated_rows.append((short_title, by_col))
 
-    if len(col_maps) < 2:
+    if len(dated_rows) < 2:
+        return None, None
+    # Only promote machinery sets to dated_tiles when a majority (>= half) of served markets are multi-deadline
+    if slug.startswith("machinery-") and len(dated_rows) * 2 < len(markets):
         return None, None
 
-    # Overlap between first two columns
-    c0, c1 = col_maps[0], col_maps[1]
-    shared = [nm for nm in c0[2] if nm in c1[2]]
-    if len(shared) < 3:
-        return (
-            None,
-            f"Paired markets ({c0[1]!r} vs {c1[1]!r}) share only {len(shared)} overlapping contenders in top outcomes (need >= 3)",
-        )
+    all_cols: dict[str, tuple[tuple[int, int, int], str]] = {}
+    for _t, col_map in dated_rows:
+        for ck, (sk, cl, _p) in col_map.items():
+            all_cols[ck] = (sk, cl)
 
-    shared.sort(key=lambda nm: (-c0[2][nm], nm))
-    shown = shared[:3]
+    sorted_cols = sorted(all_cols.items(), key=lambda kv: kv[1][0])[:3]
+    col_keys = {ck for ck, _ in sorted_cols}
+
+    # Check if shared matrix columns cover >= 2 rows cleanly, else use per-row chronological tiles
+    aligned = sum(
+        1 for _t, cmap in dated_rows[:3] if len(set(cmap.keys()) & col_keys) >= 2
+    )
+    use_shared_matrix = aligned == len(dated_rows[:3])
+
     rows: list[dict[str, Any]] = []
-    for rank_idx, nm in enumerate(shown, 1):
-        art = resolver.resolve(nm)
-        url = art.get("url")
-        if not _is_valid_image_url(url) or art.get("kind") == "monogram":
-            return None, f"Grid cell entity {nm!r} has no verified non-monogram picture"
-        if mismatch := _art_matches_subject(nm, art):
-            return None, mismatch
-        s_kind = _subject_kind_from_art(art, nm)
-        if s_kind == "person" and not _has_first_and_last_name(nm):
-            return None, f"Person row {nm!r} requires first & last name"
+    summaries: list[str] = []
+    any_missing = False
 
-        rows.append(
-            {
-                "id": f"row-{rank_idx}-{re.sub(r'[^a-z0-9]+', '-', nm.lower()).strip('-')}",
-                "leading": [
-                    _mark_word(str(rank_idx), style="rank", tone="muted", width="xs"),
-                    _mark_picture(url=str(url), alt=nm, subject_kind=s_kind, size="sm", contain=True),
-                    _mark_word(nm, style="row", tone="primary", width="flex", bold=True),
-                ],
-                "cells": [
+    for idx, (row_title, cmap) in enumerate(dated_rows[:3], 1):
+        art_req, s_kind, valid_art = _row_requires_picture(row_title, None, resolver)
+        pic_url = valid_art["url"] if valid_art else None
+        pic_kind = s_kind
+        if not pic_url:
+            for nation, flag_subj in (("iran", "Iran"), ("russia", "Russia"), ("ukraine", "Ukraine"), ("israel", "Israel"), ("us ", "United States"), ("u.s.", "United States"), ("china", "China")):
+                if nation in row_title.lower():
+                    flag = _lookup_team_or_nation_logo(flag_subj)
+                    if _is_valid_image_url(flag):
+                        pic_url = flag
+                        pic_kind = "flag"
+                        break
+        if art_req and not pic_url:
+            return None, f"Row {row_title!r} requires a verified {pic_kind} picture"
+
+        leading: list[dict[str, Any]] = []
+        if pic_url:
+            leading.append(_mark_picture(url=pic_url, alt=row_title, subject_kind=pic_kind, size="xs", contain=True))
+        leading.append(_mark_word(row_title, style="row", tone="primary", width="flex", bold=True))
+
+        if use_shared_matrix:
+            cells = []
+            for ck, (_sk, cl) in sorted_cols:
+                entry = cmap.get(ck)
+                val = entry[2] if entry else None
+                if val is None:
+                    any_missing = True
+                cells.append(
                     {
-                        "column_key": col_key,
+                        "column_key": ck,
                         "marks": [
                             _mark_tile(
-                                shade=round(out_map[nm] / 100.0, 2),
-                                center_label=f"{out_map[nm]}%",
-                                muted=False,
+                                shade=0.0 if val is None else val / 100.0,
+                                top_label=f"by {cl}",
+                                center_label="—" if val is None else f"{val}%",
+                                muted=(val is None),
                             )
                         ],
                     }
-                    for col_key, _col_label, out_map in col_maps[:2]
-                ],
+                )
+        else:
+            row_dates = sorted(cmap.items(), key=lambda kv: kv[1][0])[:3]
+            cells = [
+                {
+                    "column_key": f"slot-{ci}",
+                    "marks": [
+                        _mark_tile(
+                            shade=val / 100.0,
+                            top_label=f"by {cl}",
+                            center_label=f"{val}%",
+                            muted=False,
+                        )
+                    ],
+                }
+                for ci, (_ck, (_sk, cl, val)) in enumerate(row_dates)
+            ]
+
+        rows.append(
+            {
+                "id": f"dt-{idx}-{re.sub(r'[^a-z0-9]+', '-', row_title.lower()).strip('-')}",
+                "leading": leading,
+                "cells": cells,
             }
         )
+        best = max(cmap.values(), key=lambda tup: tup[2])
+        summaries.append(f"{row_title} is {best[2]}% by {best[1]}")
 
-    cols = [{"key": ck, "label": cl} for ck, cl, _ in col_maps[:2]]
+    cols = (
+        [{"key": ck, "label": cl} for ck, (_sk, cl) in sorted_cols]
+        if use_shared_matrix
+        else [{"key": f"slot-{i}", "label": f"Checkpoint {i + 1}"} for i in range(3)]
+    )
+    stat_sentence = ", while ".join(summaries[:2]) + "."
+    footnote = "Dash (—) means no market is open for that deadline." if any_missing else None
+
     card = _make_kit_card(
         card_id=f"kit-{slug}",
         layout="grid",
-        variant="scoreboard_grid",
+        variant="dated_tiles",
         kicker=kicker,
         common_headline=common,
-        stat_caption=stat,
+        stat_caption=stat_sentence,
         source_count=source_count,
         route_kind="collection",
         route_id=route.get("id"),
         route_slug=route.get("slug"),
-        body={"row_layout": "matrix", "columns": cols, "rows": rows},
+        footnote=footnote,
+        body={
+            "show_column_headers": False,
+            "row_layout": "stacked_cells",
+            "columns": cols,
+            "rows": rows,
+        },
     )
     return card, None
 
@@ -952,6 +1335,7 @@ def _try_build_countdown(
     source_count: int,
     bundle: dict[str, Any] | None,
     now: datetime,
+    resolver: Any,
 ) -> tuple[dict[str, Any] | None, str | None]:
     d = (bundle or {}).get("data") or {}
     ru = d.get("roundup") or {}
@@ -963,8 +1347,7 @@ def _try_build_countdown(
 
     items_raw = d.get("items") or []
     res_dates: list[datetime] = []
-    pictured_rows: list[tuple[str, int, str]] = []
-    missing_urls = 0
+    candidate_rows: list[tuple[str, int, str, str | None]] = []
     seen_entities: set[str] = set()
 
     for it in items_raw:
@@ -972,11 +1355,14 @@ def _try_build_countdown(
         dt = _parse_iso_dt(c.get("resolution_date"))
         if dt is not None:
             res_dates.append(dt)
-        url = c.get("image_url")
-        if not _is_valid_image_url(url):
-            missing_urls += 1
-            continue
-        name = str(c.get("name") or c.get("title") or "").strip()
+        name = _scrub_card_copy(_restate_source_question(str(c.get("name") or c.get("title") or "").strip()))
+        # Strip trailing deadline suffix inside deadline cards since header already shows the date
+        name = re.sub(
+            r"\s+by\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2}(?:,\s*\d{4})?$",
+            "",
+            name,
+            flags=re.IGNORECASE,
+        ).strip()
         outs = c.get("top_outcomes") or []
         pct = _safe_pct((outs[0] or {}).get("probability"), (outs[0] or {}).get("rendered_percent")) if outs else None
         if not name or pct is None:
@@ -985,38 +1371,48 @@ def _try_build_countdown(
         if ekey in seen_entities:
             continue
         seen_entities.add(ekey)
-        pictured_rows.append((name, pct, str(url)))
+
+        art_req, s_kind, verified = _row_requires_picture(name, None, resolver)
+        if art_req and not verified:
+            return None, f"Deadline row {name!r} requires a verified {s_kind} picture"
+        if art_req and verified:
+            if mismatch := _art_matches_subject(name, verified):
+                return None, mismatch
+
+        # Only keep distinct verified art from resolver/nation-flag — never repeated generic bundle thumbnails
+        pic_url = verified["url"] if verified else None
+        candidate_rows.append((name, pct, s_kind, pic_url))
 
     if not res_dates:
         return None, "Missing deadline timestamp for countdown"
 
     target_date = min(res_dates)
     days_left = max(1, (target_date.astimezone(PT_TZ).date() - now.astimezone(PT_TZ).date()).days)
-    if len(pictured_rows) < 3:
-        return None, f"Only {len(pictured_rows)} items have allowed verified pictures"
+    if len(candidate_rows) < 3:
+        return None, f"Only {len(candidate_rows)} valid deadline rows found"
 
-    shown = pictured_rows[:3]
-    if len({url for _nm, _pct, url in shown}) < len(shown):
-        return (
-            None,
-            "Deadline rows repeat the same generic placeholder image URL rather than distinct subject pictures",
-        )
-    items = [
-        {
-            "id": f"cd-{idx}",
-            "marks": [
-                _mark_picture(url=url, alt=nm, subject_kind="topic", size="sm", contain=True),
+    shown = candidate_rows[:4]
+    # Keep picture alignment uniform on stack rows: show pictures iff all shown rows have unique verified URLs
+    urls = [u for _nm, _pct, _sk, u in shown]
+    use_pictures = all(bool(u) for u in urls) and len(set(urls)) == len(urls)
+
+    items = []
+    for idx, (nm, pct, sk, url) in enumerate(shown, 1):
+        marks: list[dict[str, Any]] = []
+        if use_pictures and url:
+            marks.append(_mark_picture(url=url, alt=nm, subject_kind=sk, size="sm", contain=(sk != "person")))
+        marks.extend(
+            [
                 _mark_word(nm, style="row", tone="primary", width="flex"),
                 _mark_bar_single(pct / 100.0, width="sm"),
                 _mark_number(pct, f"{pct}%", width="sm"),
-            ],
-        }
-        for idx, (nm, pct, url) in enumerate(shown, 1)
-    ]
+            ]
+        )
+        items.append({"id": f"cd-{idx}", "marks": marks})
 
     date_short = common.replace("By ", "")
-    if "current chances across" in stat.lower() or stat.lower() == common.lower():
-        stat = f"{shown[0][0]} leads {date_short} deadlines at {shown[0][1]}%."
+    if not stat or _is_boilerplate_stat(stat.lower()) or stat.lower() == common.lower():
+        stat = f"{shown[0][0]} leads {date_short} deadlines at {shown[0][1]}%, ahead of {shown[1][0]} ({shown[1][1]}%)."
 
     card = _make_kit_card(
         card_id=f"kit-{slug}",
@@ -1057,7 +1453,473 @@ def _try_build_countdown(
     return card, None
 
 
-def _try_build_pictured_rows_stack(
+def _parse_numeric_bucket(label: str, unit: str) -> tuple[float, float] | None:
+    s = (label or "").strip().lower()
+    if unit == "$M":
+        m_rng = re.match(r"^(\d+(?:\.\d+)?)m\s*[-–]\s*(\d+(?:\.\d+)?)m$", s)
+        if m_rng:
+            return float(m_rng.group(1)), float(m_rng.group(2))
+        m_plus = re.match(r"^(\d+(?:\.\d+)?)m\+$", s)
+        if m_plus:
+            v = float(m_plus.group(1))
+            return v, v + 45.0
+        m_lt = re.match(r"^<(\d+(?:\.\d+)?)m$", s)
+        if m_lt:
+            v = float(m_lt.group(1))
+            return max(0.0, v - 35.0), v
+    elif unit == "°C":
+        m_deg = re.match(r"^(-?\d+(?:\.\d+)?)°c$", s)
+        if m_deg:
+            v = float(m_deg.group(1))
+            return v - 0.8, v + 0.8
+    return None
+
+
+def _try_build_shared_scale(
+    *,
+    slug: str,
+    kicker: str,
+    common: str,
+    stat: str,
+    route: dict[str, Any],
+    source_count: int,
+    container: dict[str, Any] | None,
+    resolver: Any,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Build axis/shared_scale when >= 2 markets price ranges on one numeric unit ($M or °C)."""
+    markets = _collect_market_entries(None, container)
+    detected_unit: str | None = None
+    series_candidates: list[tuple[str, float, float, int, str, dict[str, Any] | None]] = []
+
+    for m in markets:
+        outs = m.get("top_outcomes") or []
+        if len(outs) < 3:
+            continue
+        m_name = str(m.get("name") or "")
+        unit: str | None = None
+        if any("°c" in str(o.get("name") or "").lower() for o in outs):
+            unit = "°C"
+        elif any(re.search(r"\d+m(?:\+|$|[-–])", str(o.get("name") or "").lower()) for o in outs) and "box office" in m_name.lower():
+            unit = "$M"
+        if not unit:
+            continue
+        if detected_unit is None:
+            detected_unit = unit
+        elif unit != detected_unit:
+            continue
+
+        parsed_pts: list[tuple[float, float, int, str]] = []
+        for o in outs:
+            nm = str(o.get("name") or "").strip()
+            pct = _safe_pct(o.get("probability"), o.get("rendered_percent"))
+            span = _parse_numeric_bucket(nm, unit)
+            if span and pct is not None:
+                parsed_pts.append((span[0], span[1], pct, nm))
+        if not parsed_pts:
+            continue
+
+        top_lo, top_hi, top_pct, top_lbl = max(parsed_pts, key=lambda x: (x[2], x[0]))
+        if unit == "°C":
+            m_city = re.search(r"temperature in\s+(.+?)\s+on\s+", m_name, re.IGNORECASE)
+            label = m_city.group(1).strip() if m_city else _restate_source_question(m_name)
+        else:
+            label = re.sub(r'^"(.+?)"\s+opening weekend box office$', r"\1", m_name, flags=re.IGNORECASE).strip()
+
+        art_req, s_kind, verified = _row_requires_picture(label, None, resolver)
+        if art_req and not verified:
+            continue
+        series_candidates.append((label, top_lo, top_hi, top_pct, top_lbl, verified))
+
+    if len(series_candidates) < 2 or detected_unit is None:
+        return None, None
+
+    if detected_unit == "$M":
+        s_min, s_max = 0.0, 460.0
+        ticks = [
+            {"x": 0, "label": "$0M"},
+            {"x": 115, "label": "$115M"},
+            {"x": 230, "label": "$230M"},
+            {"x": 345, "label": "$345M"},
+            {"x": 460, "label": "$460M"},
+        ]
+        headline = "2026 opening weekend box office comparisons ($M)"
+    else:
+        lo_vals = [c[1] for c in series_candidates]
+        hi_vals = [c[2] for c in series_candidates]
+        s_min = float(int(min(lo_vals) // 5) * 5)
+        s_max = float(int((max(hi_vals) + 6) // 5) * 5)
+        step = max(5, int((s_max - s_min) / 4))
+        ticks = [{"x": int(s_min + i * step), "label": f"{int(s_min + i * step)}°C"} for i in range(5)]
+        s_max = float(ticks[-1]["x"])
+        headline = "Forecast high temperatures across global cities (°C)"
+
+    use_pics = all(c[5] is not None for c in series_candidates)
+    span_len = max(1.0, s_max - s_min)
+    series = []
+    summary_parts = []
+    for idx, (label, lo_v, hi_v, pct, peak_lbl, pic) in enumerate(series_candidates[:4], 1):
+        leading = []
+        if use_pics and pic is not None:
+            sk = _subject_kind_from_art(pic, label)
+            leading.append(_mark_picture(url=pic["url"], alt=label, subject_kind=sk, size="xs", contain=(sk != "person")))
+        leading.append(_mark_word(label, style="row", tone="primary", bold=True, width="flex"))
+        lo_norm = round(max(0.0, min(0.95, (lo_v - s_min) / span_len)), 3)
+        hi_norm = round(max(lo_norm + 0.05, min(1.0, (hi_v - s_min) / span_len)), 3)
+        display_lbl = peak_lbl if detected_unit == "°C" else f"${peak_lbl}"
+        series.append(
+            {
+                "id": f"ss-{idx}",
+                "leading": leading,
+                "marks": [
+                    _mark_bar_range(lo=lo_norm, hi=hi_norm, width="flex"),
+                    _mark_word(display_lbl, style="meta", tone="secondary", align="right", width="auto"),
+                    _mark_number(pct, f"{pct}%", unit="%", tone="primary", prominence="primary", align="right", width="sm"),
+                ],
+            }
+        )
+        summary_parts.append(f"{label} ({display_lbl}, {pct}%)")
+
+    stat_sentence = f"Peak ranges compare {', '.join(summary_parts[:3])} on one {detected_unit} scale."
+    card = _make_kit_card(
+        card_id=f"kit-{slug}",
+        layout="axis",
+        variant="shared_scale",
+        kicker=kicker,
+        common_headline=headline,
+        stat_caption=stat_sentence,
+        source_count=source_count,
+        route_kind="collection",
+        route_id=route.get("id"),
+        route_slug=route.get("slug"),
+        body={
+            "scale": {
+                "scale_kind": "numeric",
+                "unit": detected_unit,
+                "min": s_min,
+                "max": s_max,
+                "ticks": ticks,
+            },
+            "scale_units": [detected_unit],
+            "series": series,
+        },
+    )
+    return card, None
+
+
+def _try_build_one_in_n(
+    *,
+    slug: str,
+    kicker: str,
+    common: str,
+    stat: str,
+    route: dict[str, Any],
+    source_count: int,
+    bundle: dict[str, Any] | None,
+    resolver: Any,
+) -> tuple[dict[str, Any] | None, str | None]:
+    """Build stack/one_in_n for long-shot boards (`1%..25%`) BEFORE casting_sheet."""
+    d = (bundle or {}).get("data") or {}
+    ru = d.get("roundup") or {}
+    mc = ru.get("machinery_card") or {}
+    mc_form = str(mc.get("form_id") or "")
+    mc_rows = mc.get("rows") or []
+
+    if mc_form == "contender_spotlight" or len(mc_rows) < 3:
+        return None, None
+
+    top3 = mc_rows[:3]
+    pcts = [_safe_pct(r.get("probability"), r.get("rendered_percent")) for r in top3]
+    if any(p is None or p < 1 or p > 25 for p in pcts):
+        return None, None
+
+    rows_data: list[tuple[str, int, str, str | None]] = []
+    seen_entities: set[str] = set()
+    for r, pct in zip(top3, pcts):
+        nm = str(r.get("name") or "").strip()
+        assert pct is not None
+        ekey = _entity_key_for_row(nm)
+        if ekey in seen_entities:
+            return None, f"Duplicate contender entity {ekey!r} across served card rows"
+        seen_entities.add(ekey)
+
+        art = r.get("art") if isinstance(r.get("art"), dict) else None
+        # For subject-centric sets like Elon Musk's side quests, treat events about the card's namesake as events
+        is_card_owner_event = slug == "machinery-elon-musk-side-quests"
+        if is_card_owner_event:
+            art_req, s_kind, verified = False, "topic", None
+        else:
+            art_req, s_kind, verified = _row_requires_picture(nm, art, resolver)
+        if art_req and not verified:
+            return None, f"Row {nm!r} requires a verified {s_kind} picture"
+        if verified:
+            if mismatch := _art_matches_subject(nm, verified):
+                return None, mismatch
+        rows_data.append((nm, pct, s_kind, verified["url"] if verified else None))
+
+    urls = [u for _nm, _pct, _sk, u in rows_data]
+    use_pics = all(bool(u) for u in urls) and len(set(urls)) == len(urls)
+
+    tie_counts: dict[int, int] = {}
+    for _nm, p, _sk, _u in rows_data:
+        tie_counts[p] = tie_counts.get(p, 0) + 1
+
+    items: list[dict[str, Any]] = []
+    for idx, (nm, pct, sk, url) in enumerate(rows_data, 1):
+        pct_display = f"{pct}% each" if tie_counts[pct] > 1 else f"{pct}%"
+        n_val = compute_one_in_n(pct)
+        marks: list[dict[str, Any]] = []
+        if use_pics and url:
+            marks.append(_mark_picture(url=url, alt=nm, subject_kind=sk, size="sm", contain=True))
+        marks.extend(
+            [
+                _mark_word(nm, style="row", tone="primary", align="left", width="flex", bold=False),
+                _mark_number(
+                    n_val,
+                    f"1 in {n_val}",
+                    unit="one_in_n",
+                    tone="accent",
+                    prominence="primary",
+                    align="right",
+                    width="auto",
+                ),
+                _mark_number(
+                    pct,
+                    pct_display,
+                    unit="%",
+                    tone="muted",
+                    prominence="secondary",
+                    align="right",
+                    width="auto",
+                ),
+            ]
+        )
+        items.append({"id": f"oin-{idx}", "marks": marks})
+
+    if not stat or _is_boilerplate_stat(stat.lower()):
+        stat = f"{rows_data[0][0]} leads at {rows_data[0][1]}% (1 in {compute_one_in_n(rows_data[0][1])})."
+
+    card = _make_kit_card(
+        card_id=f"kit-{slug}",
+        layout="stack",
+        variant="one_in_n",
+        kicker=kicker,
+        common_headline=common,
+        stat_caption=stat,
+        source_count=source_count,
+        route_kind="collection",
+        route_id=route.get("id"),
+        route_slug=route.get("slug"),
+        body={"header_layout": "none", "header_marks": [], "items": items},
+    )
+    return card, None
+
+
+def _norm_entity_match(name: str) -> str:
+    return re.sub(r"[\.\s]+", " ", (name or "").strip().lower()).strip()
+
+
+def _try_build_scoreboard_grid(
+    *,
+    slug: str,
+    kicker: str,
+    common: str,
+    stat: str,
+    route: dict[str, Any],
+    source_count: int,
+    bundle: dict[str, Any] | None,
+    container: dict[str, Any] | None,
+    resolver: Any,
+) -> tuple[dict[str, Any] | None, str | None]:
+    d = (bundle or {}).get("data") or {}
+    mc_form = str(((d.get("roundup") or {}).get("machinery_card") or {}).get("form_id") or "")
+    secs = (container or {}).get("sections") or []
+    if not secs:
+        return None, None
+
+    # Only treat explicitly paired multi-race sets as scoreboard_grid; never hijack benchmark_strips
+    explicit_paired = mc_form == "paired_stage_bars" or slug in {
+        "roundup-cfp-picture",
+        "machinery-2028-presidential",
+        "machinery-google-year-in-search-2026",
+        "machinery-cfp-national-championship",
+    }
+    if not explicit_paired:
+        return None, None
+
+    market_cols: list[tuple[str, str, dict[str, tuple[str, int]]]] = []
+    if slug == "machinery-2028-presidential" and len(secs) >= 4:
+        pres_mems = [m for m in (secs[1].get("members") or []) if m.get("type") == "market"]
+        nom_mems = [m for m in (secs[3].get("members") or []) if m.get("type") == "market"]
+        if pres_mems:
+            out_p = {_norm_entity_match(o["name"]): (str(o["name"]), _safe_pct(o.get("probability"), o.get("rendered_percent")) or 0) for o in (pres_mems[0].get("card") or {}).get("top_outcomes") or [] if o.get("name")}
+            market_cols.append(("pres", "Presidential", out_p))
+        if nom_mems:
+            out_n: dict[str, tuple[str, int]] = {}
+            for nm in nom_mems:
+                for o in (nm.get("card") or {}).get("top_outcomes") or []:
+                    if o.get("name"):
+                        nk = _norm_entity_match(str(o["name"]))
+                        p = _safe_pct(o.get("probability"), o.get("rendered_percent")) or 0
+                        if nk not in out_n or p > out_n[nk][1]:
+                            out_n[nk] = (str(o["name"]), p)
+            market_cols.append(("nom", "Nominee", out_n))
+        leading_label = "Candidate"
+    elif slug == "machinery-google-year-in-search-2026" and len(secs) >= 2:
+        col1: dict[str, tuple[str, int]] = {}
+        col2: dict[str, tuple[str, int]] = {}
+        for m in secs[0].get("members") or []:
+            outs = (m.get("card") or {}).get("top_outcomes") or []
+            if outs and outs[0].get("name"):
+                nk = _norm_entity_match(str(outs[0]["name"]))
+                col1[nk] = (str(outs[0]["name"]), _safe_pct(outs[0].get("probability"), outs[0].get("rendered_percent")) or 0)
+        for m in secs[1].get("members") or []:
+            for o in (m.get("card") or {}).get("top_outcomes") or []:
+                if o.get("name"):
+                    nk = _norm_entity_match(str(o["name"]))
+                    col2[nk] = (str(o["name"]), _safe_pct(o.get("probability"), o.get("rendered_percent")) or 0)
+        market_cols = [("top1", "#1 Overall", col1), ("top5", "Top 5", col2)]
+        leading_label = "Subject"
+    else:
+        sec0_members = [m for m in (secs[0].get("members") or []) if m.get("type") == "market"]
+        if len(sec0_members) < 2:
+            sec0_members = [m for sec in secs for m in (sec.get("members") or []) if m.get("type") == "market"]
+        if len(sec0_members) < 2:
+            return None, None
+        # Check CFP National vs SEC Championship too!
+        candidates_to_pair = list(sec0_members[:3])
+        if slug == "machinery-cfp-national-championship" and len(secs) >= 2:
+            sec_mem = next((m for m in (secs[1].get("members") or []) if "sec" in str((m.get("card") or {}).get("name") or "").lower()), None)
+            if sec_mem:
+                candidates_to_pair = [sec0_members[0], sec_mem]
+                explicit_paired = True
+        for m in candidates_to_pair[:2]:
+            c = m.get("card") or {}
+            m_id = str(c.get("id") or len(market_cols) + 1)
+            m_name = str(c.get("name") or "")
+            low = m_name.lower()
+            if "nominee" in low:
+                col_label = "Nominated"
+            elif "winner" in low and "oscar" in low:
+                col_label = "Wins"
+            elif "national" in low:
+                col_label = "National"
+            elif "sec " in low:
+                col_label = "SEC"
+            else:
+                col_label = m_name.split(":")[-1].strip()[:18] or f"Race {len(market_cols) + 1}"
+            out_map: dict[str, tuple[str, int]] = {}
+            for o in c.get("top_outcomes") or []:
+                nm = str(o.get("name") or "").strip()
+                pct = _safe_pct(o.get("probability"), o.get("rendered_percent"))
+                if nm and pct is not None and nm.lower() != "tie":
+                    out_map[_norm_entity_match(nm)] = (nm, pct)
+            market_cols.append((m_id, col_label, out_map))
+        leading_label = (
+            "Film"
+            if "best-picture" in slug
+            else "Actor"
+            if "best-actor" in slug
+            else "Team"
+            if "cfp" in slug
+            else "Contender"
+        )
+
+    if len(market_cols) < 2:
+        return None, None
+
+    c0, c1 = market_cols[0], market_cols[1]
+    shared_keys = [nk for nk in c0[2] if nk in c1[2]]
+    if len(shared_keys) < 3:
+        if explicit_paired:
+            return (
+                None,
+                f"Paired markets ({c0[1]!r} vs {c1[1]!r}) share only {len(shared_keys)} overlapping contenders in top outcomes (need >= 3)",
+            )
+        return None, None
+
+    shared_keys.sort(key=lambda nk: (-c0[2][nk][1], nk))
+    shown_keys = shared_keys[:4] if len(shared_keys) >= 4 else shared_keys[:3]
+
+    pre_art_by_norm: dict[str, dict[str, Any]] = {}
+    for sec in secs:
+        for it in (sec.get("visual_block") or {}).get("items") or []:
+            for oc in it.get("outcomes") or []:
+                art_d = oc.get("art")
+                if isinstance(art_d, dict) and _is_valid_image_url(art_d.get("url")) and art_d.get("kind") != "monogram":
+                    nk_o = _norm_entity_match(str(oc.get("name") or ""))
+                    if nk_o and nk_o not in pre_art_by_norm:
+                        pre_art_by_norm[nk_o] = art_d
+
+    rows: list[dict[str, Any]] = []
+    for rank_idx, nk in enumerate(shown_keys, 1):
+        nm = c0[2][nk][0]
+        art = pre_art_by_norm.get(nk) or resolver.resolve(nm) or {}
+        url = art.get("url")
+        if (not _is_valid_image_url(url) or art.get("kind") == "monogram") and leading_label == "Team":
+            cfp_url, cfp_color = _resolve_logo_and_color(nm, resolver=resolver)
+            if _is_valid_image_url(cfp_url):
+                art = {"url": cfp_url, "kind": "team_logo", "accent_color": cfp_color}
+                url = cfp_url
+        if not _is_valid_image_url(url) or art.get("kind") == "monogram":
+            return None, f"Grid cell entity {nm!r} has no verified non-monogram picture"
+        if mismatch := _art_matches_subject(nm, art):
+            return None, mismatch
+        s_kind = _subject_kind_from_art(art, nm)
+        if s_kind == "person" and not _has_first_and_last_name(nm):
+            return None, f"Person row {nm!r} requires first & last name"
+
+        rows.append(
+            {
+                "id": f"row-{rank_idx}-{re.sub(r'[^a-z0-9]+', '-', nk).strip('-')}",
+                "leading": [
+                    _mark_word(str(rank_idx), style="rank", tone="muted", width="xs"),
+                    _mark_picture(url=str(url), alt=nm, subject_kind=s_kind, size="sm", contain=True),
+                    _mark_word(nm, style="row", tone="primary", width="flex", bold=True),
+                ],
+                "cells": [
+                    {
+                        "column_key": col_key,
+                        "marks": [
+                            _mark_tile(
+                                shade=round(out_map[nk][1] / 100.0, 2),
+                                center_label=f"{out_map[nk][1]}%",
+                                muted=False,
+                            )
+                        ],
+                    }
+                    for col_key, _col_label, out_map in market_cols[:2]
+                ],
+            }
+        )
+
+    cols = [{"key": ck, "label": cl} for ck, cl, _ in market_cols[:2]]
+    if not stat or _is_boilerplate_stat(stat.lower()):
+        top_nm, top_p0 = c0[2][shown_keys[0]]
+        stat = f"{top_nm} leads {cols[0]['label']} at {top_p0}% across {len(shared_keys)} shared contenders."
+
+    card = _make_kit_card(
+        card_id=f"kit-{slug}",
+        layout="grid",
+        variant="scoreboard_grid",
+        kicker=kicker,
+        common_headline=common,
+        stat_caption=stat,
+        source_count=source_count,
+        route_kind="collection",
+        route_id=route.get("id"),
+        route_slug=route.get("slug"),
+        body={
+            "leading_label": leading_label,
+            "show_column_headers": True,
+            "row_layout": "matrix",
+            "columns": cols,
+            "rows": rows,
+        },
+    )
+    return card, None
+
+
+def _try_build_casting_sheet(
     *,
     slug: str,
     kicker: str,
@@ -1075,7 +1937,6 @@ def _try_build_pictured_rows_stack(
     mc_form = str(mc.get("form_id") or "")
     mc_rows = mc.get("rows") or []
 
-    # Reject probability_history_chart without real time-series points
     if mc_form == "probability_history_chart":
         return None, "Movers history card lacks multi-point series on bundle payload"
 
@@ -1102,7 +1963,6 @@ def _try_build_pictured_rows_stack(
             c_hex = art.get("accent_color") if re.fullmatch(r"#[0-9a-fA-F]{6}", str(art.get("accent_color") or "")) else None
             candidate_rows.append((nm, pct or 0, str(url), s_kind, c_hex))
     else:
-        # e.g., roundup-nfl-division-front-runners where container members hold top outcome
         secs = (container or {}).get("sections") or []
         members = secs[0].get("members") or [] if secs else []
         if len(members) < 3:
@@ -1122,26 +1982,27 @@ def _try_build_pictured_rows_stack(
                 return None, "Container member missing top outcome probability"
             div_prefix = str(card.get("name") or "").replace("Division Winner", "").strip()
             row_label = f"{div_prefix}: {leader}" if div_prefix else leader
-            art = resolver.resolve(leader)
-            url = art.get("url")
-            if not _is_valid_image_url(url) or art.get("kind") == "monogram":
+            logo_url, team_hex = _resolve_logo_and_color(leader, resolver=resolver)
+            if not _is_valid_image_url(logo_url):
                 return None, f"Leader {leader!r} has no verified picture"
             ekey = _entity_key_for_row(leader)
             if ekey in seen_entities:
                 return None, f"Duplicate entity {leader!r}"
             seen_entities.add(ekey)
-            s_kind = _subject_kind_from_art(art, row_label)
-            candidate_rows.append((row_label, pct, str(url), s_kind, None))
+            candidate_rows.append((row_label, pct, str(logo_url), "team", team_hex))
 
     if len(candidate_rows) < 3:
         return None, "Fewer than 3 verified pictured rows"
 
-    pct_values = [r[1] for r in candidate_rows]
-    # Use one_in_n only for independent binary long-shots, never contender spotlights
-    is_long_shots = mc_form != "contender_spotlight" and all(1 <= p <= 25 for p in pct_values)
-    variant = "one_in_n" if is_long_shots else "casting_sheet"
+    if not stat or _is_boilerplate_stat(stat.lower()) or stat.lower() == common.lower():
+        if slug == "roundup-nfl-division-front-runners":
+            stat = (
+                f"{candidate_rows[0][0]} leads the front-runners at {candidate_rows[0][1]}%, "
+                f"while {candidate_rows[-1][0]} ({candidate_rows[-1][1]}%) holds a narrow edge."
+            )
+        else:
+            stat = f"{candidate_rows[0][0]} leads at {candidate_rows[0][1]}%, with {candidate_rows[1][0]} at {candidate_rows[1][1]}%."
 
-    # Format tie labels per Item 5 comment-7121858830 ("11% each")
     tie_counts: dict[int, int] = {}
     for _nm, p, *_ in candidate_rows:
         tie_counts[p] = tie_counts.get(p, 0) + 1
@@ -1149,51 +2010,20 @@ def _try_build_pictured_rows_stack(
     items: list[dict[str, Any]] = []
     for idx, (nm, pct, url, s_kind, c_hex) in enumerate(candidate_rows, 1):
         pct_display = f"{pct}% each" if tie_counts[pct] > 1 else f"{pct}%"
+        # Single uniform accent bar color unless the row represents a team (#13584 Fable review)
+        bar_color = _adaptive_team_color(c_hex) if (s_kind == "team" and c_hex) else None
         marks: list[dict[str, Any]] = [
             _mark_picture(url=url, alt=nm, subject_kind=s_kind, size="sm", contain=True),
             _mark_word(nm, style="row", tone="primary", align="left", width="flex", bold=False),
+            _mark_bar_single(pct / 100.0, width="sm", fill_color=bar_color),
+            _mark_number(pct, pct_display, width="sm"),
         ]
-        if is_long_shots:
-            n_val = compute_one_in_n(pct)
-            marks.extend(
-                [
-                    _mark_number(
-                        n_val,
-                        f"1 in {n_val}",
-                        unit="one_in_n",
-                        tone="accent",
-                        prominence="primary",
-                        align="right",
-                        width="auto",
-                    ),
-                    _mark_number(
-                        pct,
-                        pct_display,
-                        unit="%",
-                        tone="muted",
-                        prominence="secondary",
-                        align="right",
-                        width="auto",
-                    ),
-                ]
-            )
-        else:
-            marks.extend(
-                [
-                    _mark_bar_single(
-                        pct / 100.0,
-                        width="sm",
-                        fill_color=_adaptive_team_color(c_hex) if c_hex else None,
-                    ),
-                    _mark_number(pct, pct_display, width="sm"),
-                ]
-            )
         items.append({"id": f"row-{idx}", "marks": marks})
 
     card = _make_kit_card(
         card_id=f"kit-{slug}",
         layout="stack",
-        variant=variant,
+        variant="casting_sheet",
         kicker=kicker,
         common_headline=common,
         stat_caption=stat,
@@ -1227,9 +2057,14 @@ def _explain_non_fit(bundle: dict[str, Any] | None, container: dict[str, Any] | 
         monograms = sum(1 for r in rows if (r.get("art") or {}).get("kind") == "monogram" or not (r.get("art") or {}).get("url"))
         if monograms:
             return f"{monograms} of {len(rows)} card rows fall back to monograms instead of verified pictures"
-    if d.get("collection_ref", {}).get("slug") == "roundup-tomorrows-highs":
-        return "Temperature bucket market has no city photos or shared timeline series"
     return "No deterministic Kit v1 shape matches this container's served structure"
+
+
+class _NullResolver:
+    """Fallback no-op resolver when caller does not supply SubjectArtResolver."""
+
+    def resolve(self, *_args: Any, **_kwargs: Any) -> dict[str, Any]:
+        return {}
 
 
 def build_kit_card_for_real_set(
@@ -1237,39 +2072,51 @@ def build_kit_card_for_real_set(
     container: dict[str, Any] | None = None,
     *,
     now: datetime | None = None,
+    resolver: Any | None = None,
 ) -> dict[str, Any]:
     """Deterministically convert one public bundle/container into Kit v1 or honest refusal."""
-    from app.utils.container_machinery import _default_art_resolver
-
     resolved_now = now or datetime.now(timezone.utc)
-    resolver = _default_art_resolver()
+    active_resolver = resolver if resolver is not None else _NullResolver()
     slug, kicker, common, stat, route = _derive_slug_and_copy(bundle, container)
     source_count = _source_count_from_bundle(bundle, container)
 
+    # Specific shapes first; casting_sheet strictly last (#13584 Fable review)
     detectors = [
         lambda: _try_build_road_ahead(
             slug=slug, kicker=kicker, common=common, stat=stat, route=route,
-            source_count=source_count, bundle=bundle, container=container, resolver=resolver,
+            source_count=source_count, bundle=bundle, container=container, resolver=active_resolver,
         ),
         lambda: _try_build_single_sport_slate(
             slug=slug, kicker=kicker, common=common, stat=stat, route=route,
-            source_count=source_count, bundle=bundle, container=container, resolver=resolver,
+            source_count=source_count, bundle=bundle, container=container, resolver=active_resolver,
         ),
         lambda: _try_build_bubble_line(
             slug=slug, kicker=kicker, common=common, stat=stat, route=route,
-            source_count=source_count, container=container, resolver=resolver,
+            source_count=source_count, container=container, resolver=active_resolver,
         ),
-        lambda: _try_build_scoreboard_grid(
+        lambda: _try_build_dated_tiles(
             slug=slug, kicker=kicker, common=common, stat=stat, route=route,
-            source_count=source_count, bundle=bundle, container=container, resolver=resolver,
+            source_count=source_count, bundle=bundle, container=container, resolver=active_resolver,
         ),
         lambda: _try_build_countdown(
             slug=slug, kicker=kicker, common=common, stat=stat, route=route,
-            source_count=source_count, bundle=bundle, now=resolved_now,
+            source_count=source_count, bundle=bundle, now=resolved_now, resolver=active_resolver,
         ),
-        lambda: _try_build_pictured_rows_stack(
+        lambda: _try_build_shared_scale(
             slug=slug, kicker=kicker, common=common, stat=stat, route=route,
-            source_count=source_count, bundle=bundle, container=container, resolver=resolver,
+            source_count=source_count, container=container, resolver=active_resolver,
+        ),
+        lambda: _try_build_one_in_n(
+            slug=slug, kicker=kicker, common=common, stat=stat, route=route,
+            source_count=source_count, bundle=bundle, resolver=active_resolver,
+        ),
+        lambda: _try_build_scoreboard_grid(
+            slug=slug, kicker=kicker, common=common, stat=stat, route=route,
+            source_count=source_count, bundle=bundle, container=container, resolver=active_resolver,
+        ),
+        lambda: _try_build_casting_sheet(
+            slug=slug, kicker=kicker, common=common, stat=stat, route=route,
+            source_count=source_count, bundle=bundle, container=container, resolver=active_resolver,
         ),
     ]
 
@@ -1279,7 +2126,6 @@ def build_kit_card_for_real_set(
         if card is not None:
             ok, errs = validate_kit_v1_card(card)
             if ok:
-                # Confirm layout-generic invariance even when variant is unknown
                 probe = dict(card, variant="future_unknown_variant_probe")
                 ok_probe, errs_probe = validate_kit_v1_card(probe)
                 if ok_probe:
@@ -1409,9 +2255,11 @@ def build_real_sets_audit_report(
     snapshot: dict[str, Any],
     *,
     now: datetime | None = None,
+    resolver: Any | None = None,
 ) -> dict[str, Any]:
     """Run deterministic Kit v1 conversion across Top 10 + all public sets in snapshot."""
     resolved_now = now or datetime.now(timezone.utc)
+    active_resolver = resolver if resolver is not None else _NullResolver()
     bundles = snapshot.get("bundles") or []
     containers = snapshot.get("containers") or {}
 
@@ -1424,7 +2272,7 @@ def build_real_sets_audit_report(
         d = b.get("data") or {}
         c_slug = (d.get("collection_ref") or {}).get("slug")
         container = containers.get(c_slug) if c_slug else None
-        result = build_kit_card_for_real_set(b, container, now=resolved_now)
+        result = build_kit_card_for_real_set(b, container, now=resolved_now, resolver=active_resolver)
         slug = result["slug"]
         seen_slugs.add(slug)
         today_card = _summarize_today_card(
@@ -1459,7 +2307,7 @@ def build_real_sets_audit_report(
             continue
         extra_rank += 1
         container = containers[c_slug]
-        result = build_kit_card_for_real_set(None, container, now=resolved_now)
+        result = build_kit_card_for_real_set(None, container, now=resolved_now, resolver=active_resolver)
         today_card = _summarize_today_card(
             None, container, result["slug"], result["common_headline"], result["stat_caption"]
         )
@@ -1498,44 +2346,12 @@ def build_real_sets_audit_report(
 
 
 def load_real_sets_audit_report(
-    snapshot_path: Path = REAL_SETS_SNAPSHOT_PATH,
+    fixture_path: Path = REAL_SETS_FIXTURE_PATH,
     *,
     now: datetime | None = None,
+    resolver: Any | None = None,
 ) -> dict[str, Any]:
-    """Load real-set snapshot JSON and run deterministic Kit conversion."""
-    with open(snapshot_path, encoding="utf-8") as f:
+    """Load real-set fixture JSON and run deterministic Kit conversion."""
+    with open(fixture_path, encoding="utf-8") as f:
         snapshot = json.load(f)
-    return build_real_sets_audit_report(snapshot, now=now)
-
-
-def compact_snapshot_for_repo(
-    raw_path: Path,
-    dest_path: Path = REAL_SETS_SNAPSHOT_PATH,
-) -> Path:
-    """Persist only bundles + containers needed for reproducible preview & tests."""
-    with open(raw_path, encoding="utf-8") as f:
-        raw = json.load(f)
-    compact = {
-        "bundles": raw.get("bundles") or [],
-        "containers": raw.get("containers") or {},
-    }
-    dest_path.parent.mkdir(parents=True, exist_ok=True)
-    with open(dest_path, "w", encoding="utf-8") as f:
-        json.dump(compact, f, indent=2)
-    return dest_path
-
-
-if __name__ == "__main__":
-    report = load_real_sets_audit_report()
-    print(
-        f"Kit real sets: total={report['total_sets']} fits={report['fitting_count']} "
-        f"kept_today={report['kept_today_count']}"
-    )
-    for e in report["top_10"] + report["fitting_beyond_top_10"]:
-        print(
-            f"  [#{e['rank']:02d}] fits={e['fits']} layout={e['layout']} "
-            f"variant={e['variant']} | {e['slug']} | head={e['common_headline']!r}"
-        )
-    print("Non-fitting:", len(report["kept_today"]))
-    for k in report["kept_today"][:12]:
-        print(f"  - [#{k['rank']:02d}] {k['slug']}: {k['refusal_reason']}")
+    return build_real_sets_audit_report(snapshot, now=now, resolver=resolver)

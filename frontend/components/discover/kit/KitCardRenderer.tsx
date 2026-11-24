@@ -653,7 +653,7 @@ function AxisLayout({ body }: { body: KitV1AxisBody }) {
   const elevatedDots = dots.filter((d) => d.picture && typeof d.y_lane === "number");
   const baseDots = dots.filter((d) => !(d.picture && typeof d.y_lane === "number"));
   const maxLane = elevatedDots.reduce((m, d) => Math.max(m, d.y_lane ?? 0), 0);
-  const trackHeight = (maxLane + 1) * 26 + 52;
+  const trackHeight = (maxLane + 1) * 38 + 56;
 
   return (
     <div className="space-y-2.5">
@@ -698,7 +698,7 @@ function AxisLayout({ body }: { body: KitV1AxisBody }) {
               className="absolute flex -translate-x-1/2 flex-col items-center"
               style={{
                 left: `${toAxisPercent(pt.x, scale.min, scale.max)}%`,
-                bottom: `${28 + (pt.y_lane ?? 0) * 24}px`,
+                bottom: `${26 + (pt.y_lane ?? 0) * 36}px`,
               }}
             >
               {pt.picture && (
@@ -707,6 +707,11 @@ function AxisLayout({ body }: { body: KitV1AxisBody }) {
                   alt={pt.picture.alt}
                   className="h-5 w-5 rounded-full border border-surface-border bg-surface-card object-contain p-0.5 shadow-sm"
                 />
+              )}
+              {pt.picture?.alt && pt.picture.alt.length <= 5 && (
+                <span className="mt-0.5 rounded bg-surface-card/90 px-0.5 text-[9px] font-bold leading-none text-text-secondary">
+                  {pt.picture.alt}
+                </span>
               )}
             </div>
           ))}
@@ -747,6 +752,13 @@ function AxisLayout({ body }: { body: KitV1AxisBody }) {
               </div>
             </div>
           ))}
+          {dots.length === 0 && lines.length === 0 && scale.ticks.length > 0 && (
+            <div className="flex justify-between border-t border-surface-border pt-1 text-[10px] tabular-nums text-text-muted">
+              {scale.ticks.map((t) => (
+                <span key={`st-${t.x}-${t.label}`}>{t.label}</span>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
