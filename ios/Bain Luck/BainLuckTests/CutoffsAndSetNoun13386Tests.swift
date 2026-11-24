@@ -190,7 +190,8 @@ final class CutoffsAndSetNoun13386Tests: XCTestCase {
         let made = try XCTUnwrap(WatchMatchupReading217.make(snapshot: snap, now: fixedNow, timeZone: pt, crest: { _ in nil }))
         XCTAssertEqual(made.away.score, 105)
         XCTAssertEqual(made.home.score, 102)
-        XCTAssertEqual(made.smallLine, "TOR pregame · Final")
+        XCTAssertEqual(made.bigOwnerLabel, "TOR")
+        XCTAssertEqual(made.smallLine, "Pregame · Final")
     }
 
     // MARK: - Windowed OCR Checks & Optional Render Exports
