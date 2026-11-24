@@ -920,7 +920,9 @@ export const fetchPulseRankings = fetchEIRankings;
  * Format probability as percentage string
  */
 export async function fetchEventConcept(key: string): Promise<EventConceptResponse> {
-  return apiFetch<EventConceptResponse>(`/api/event/${encodeURIComponent(key)}`);
+  return apiFetch<EventConceptResponse>(`/api/event/${encodeURIComponent(key)}`, {
+    cache: "no-store",
+  });
 }
 
 export function formatProbability(
@@ -3272,6 +3274,7 @@ export async function fetchPairedMetricsByCeremony(
 ): Promise<{ sets: import("@/lib/discover/visualForms").PairedMetricSet[]; count: number }> {
   return apiFetch(`/api/paired-metrics?ceremony=${encodeURIComponent(ceremony)}`, {
     signal,
+    cache: "no-store",
   });
 }
 
