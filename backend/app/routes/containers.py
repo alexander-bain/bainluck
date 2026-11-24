@@ -756,6 +756,20 @@ async def get_kit_v1_preview(
     return build_kit_v1_worked_examples()
 
 
+@router.get("/preview/kit-v1-real-sets")
+async def get_kit_v1_real_sets_preview(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Admin-only deterministic Kit v1 conversion audit over public Discover sets (#13551)."""
+    from app.routes.admin_utils import _check_admin_auth
+    from app.utils.kit_v1_set_builder import load_real_sets_audit_report
+
+    if not await _check_admin_auth(None, request, db):
+        raise HTTPException(status_code=403, detail="Admin authentication required")
+    return load_real_sets_audit_report()
+
+
 @router.get("/{slug}")
 async def get_container(
     slug: str = Path(..., min_length=1, max_length=200),
