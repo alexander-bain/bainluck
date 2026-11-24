@@ -11,10 +11,12 @@ final class AppIcon12314Tests: XCTestCase {
 
     static let expectedSourceRGBASHA256 =
         "620805dcaf0cd80539bdf66d2296ddec8946dedc9dde17a8a5aa6a811147ec59"
-    /// Straight RGBA SHA-256 of `clover-mark-transparent-1024.png` is `4e65804e...3fa42`;
+    /// Source Mac file `handoffs/logo-382b/clover-mark-transparent-1024.png`
+    /// (corrected 12:41 PM PT) SHA-256 `e858f5467c41677f4694cd696ffd156da12514bd578be487bb6d9bb127959629`;
+    /// straight RGBA SHA-256 is `31f17291a0e40243ee10060fb1312dc260d8c199971765d7e71868c96ea28f3a`.
     /// ImageIO decodes PNGs as premultiplied RGBA, whose exact byte hash is below.
     static let expectedTransparentMarkPremulRGBASHA256 =
-        "b3d8ce578c943cf51f38495b093192a3e1c33ce9fc541ff8f83c2ae9d1df2d34"
+        "33d93a2cbc2174391f00d9a5a75cba318d7ed9a1d3306030fc3d71bc7631fc7b"
 
     private var projectDir: URL {
         URL(fileURLWithPath: #filePath)
