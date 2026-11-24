@@ -1,0 +1,776 @@
+.flTheme {
+  --fl-bg: #f6f7f9;
+  --fl-surface: #ffffff;
+  --fl-ink: #0d1117;
+  --fl-muted: #5a6475;
+  --fl-line: #e4e8ee;
+  --fl-track: #edf0f5;
+  --fl-soft: #eef2f7;
+  --fl-accent: #0066cc;
+  --fl-accent-soft: #e6f0fc;
+  --fl-accent-ink: #ffffff;
+  --fl-c2: #0d8a72;
+  --fl-c2-soft: #e6f5f1;
+  --fl-c3: #c75a16;
+  --fl-c3-soft: #fceee6;
+  --fl-warn-bg: #fff5e9;
+  --fl-warn-ink: #8a4b00;
+  --fl-warn-border: #f4d3a1;
+  --fl-logo-plate: #ffffff;
+  --fl-cut-safe-bg: #e8f5ee;
+  --fl-cut-bubble-bg: #fff5e3;
+  --fl-cut-chase-bg: #f3f4f7;
+  --fl-cut-long-bg: #f9fafc;
+  --fl-cal-0: #eef1f6;
+  --fl-cal-1: #dbe8fa;
+  --fl-cal-2: #aacbf5;
+  --fl-cal-3: #5b9ce8;
+  --fl-cal-4: #0066cc;
+  --fl-cal-peak-ink: #ffffff;
+}
+
+.flDark {
+  --fl-bg: #12161e;
+  --fl-surface: #1c222d;
+  --fl-ink: #edf1f7;
+  --fl-muted: #98a2b3;
+  --fl-line: #2d3544;
+  --fl-track: #262e3d;
+  --fl-soft: #222937;
+  --fl-accent: #52a6ff;
+  --fl-accent-soft: #1d324d;
+  --fl-accent-ink: #0c121b;
+  --fl-c2: #3cc6a6;
+  --fl-c2-soft: #173832;
+  --fl-c3: #f28c45;
+  --fl-c3-soft: #3a2719;
+  --fl-warn-bg: #2f2414;
+  --fl-warn-ink: #f6ba68;
+  --fl-warn-border: #63461e;
+  --fl-logo-plate: #f8fafc;
+  --fl-cut-safe-bg: #162e26;
+  --fl-cut-bubble-bg: #322714;
+  --fl-cut-chase-bg: #202735;
+  --fl-cut-long-bg: #191f2a;
+  --fl-cal-0: #222937;
+  --fl-cal-1: #1e334f;
+  --fl-cal-2: #244a7a;
+  --fl-cal-3: #3672b8;
+  --fl-cal-4: #52a6ff;
+  --fl-cal-peak-ink: #0c121b;
+}
+
+.phoneCanvas {
+  flex: 0 0 390px;
+  width: 390px;
+  max-width: 100%;
+  background: var(--fl-bg);
+  color: var(--fl-ink);
+  padding: 12px;
+  border-radius: 16px;
+  border: 1px solid var(--fl-line);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  box-sizing: border-box;
+}
+
+.sheetRow {
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 16px;
+  align-items: flex-start;
+  justify-content: center;
+  min-width: 796px;
+}
+
+@media (max-width: 820px) {
+  .sheetRow {
+    flex-wrap: wrap;
+    min-width: 0;
+  }
+}
+
+.modeBadge {
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fl-muted);
+  margin: 0 0 8px 2px;
+}
+
+.card {
+  background: var(--fl-surface);
+  border: 1px solid var(--fl-line);
+  border-radius: 14px;
+  padding: 13px 14px;
+  margin-bottom: 12px;
+}
+
+.card:last-child {
+  margin-bottom: 0;
+}
+
+.cardTop {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+
+.topicTag {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fl-accent);
+  background: var(--fl-accent-soft);
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+
+.variantTag {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--fl-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.title {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.28;
+  font-weight: 700;
+  color: var(--fl-ink);
+}
+
+.subtitle {
+  margin: 4px 0 10px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--fl-muted);
+}
+
+.footnote {
+  margin: 9px 0 0;
+  padding-top: 7px;
+  border-top: 1px solid var(--fl-line);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 11px;
+  color: var(--fl-muted);
+}
+
+.sourceChip {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--fl-muted);
+  background: var(--fl-soft);
+  padding: 2px 6px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+/* Avatars */
+.avatarLogo {
+  width: 24px;
+  height: 24px;
+  border-radius: 6px;
+  background: var(--fl-logo-plate);
+  border: 1px solid var(--fl-line);
+  padding: 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  overflow: hidden;
+}
+
+.avatarLogoSm {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  padding: 1.5px;
+}
+
+.avatarLogoImg {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.avatarPortrait {
+  display: inline-block;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 1px solid var(--fl-line);
+  overflow: hidden;
+  flex-shrink: 0;
+  background: var(--fl-soft);
+}
+
+.avatarPoster {
+  display: inline-block;
+  width: 26px;
+  height: 34px;
+  border-radius: 5px;
+  border: 1px solid var(--fl-line);
+  overflow: hidden;
+  flex-shrink: 0;
+  background: var(--fl-soft);
+}
+
+.avatarCoverImg {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.monogram {
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--fl-soft);
+  color: var(--fl-ink);
+  font-size: 10px;
+  font-weight: 700;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  border: 1px solid var(--fl-line);
+}
+
+/* Refusal banner + fallback rows */
+.refusalBanner {
+  background: var(--fl-warn-bg);
+  color: var(--fl-warn-ink);
+  border: 1px solid var(--fl-warn-border);
+  border-radius: 8px;
+  padding: 7px 9px;
+  font-size: 11px;
+  line-height: 1.35;
+  margin-bottom: 9px;
+}
+
+.fallbackList {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.fallbackRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--fl-soft);
+}
+
+.fallbackLabel {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fl-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fallbackPct {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--fl-accent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Item 3: Grid of cells */
+.gridTable {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.gridHead th {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fl-muted);
+  text-align: center;
+  padding: 0 3px 6px;
+  border-bottom: 1px solid var(--fl-line);
+}
+
+.gridHead th:first-child {
+  text-align: left;
+  width: 47%;
+  padding-left: 0;
+}
+
+.gridRow td {
+  padding: 4px 3px;
+  border-bottom: 1px solid var(--fl-line);
+  vertical-align: middle;
+}
+
+.gridRow:last-child td {
+  border-bottom: none;
+}
+
+.gridEntity {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.gridEntityName {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--fl-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.gridCell {
+  border-radius: 7px;
+  padding: 5px 4px;
+  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  background: var(--fl-soft);
+  color: var(--fl-ink);
+  border: 1px solid transparent;
+}
+
+.gridCellPeak {
+  background: var(--fl-accent-soft);
+  color: var(--fl-accent);
+  border-color: var(--fl-accent);
+}
+
+.gridCellMuted {
+  color: var(--fl-muted);
+  font-weight: 500;
+}
+
+.gridAliasSub {
+  display: block;
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--fl-muted);
+  line-height: 1.1;
+}
+
+/* Item 4: One axis */
+.axisTrackWrap {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.axisSeriesHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.axisSeriesName {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--fl-ink);
+}
+
+.axisSeriesPeak {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--fl-accent);
+}
+
+.axisLane {
+  position: relative;
+  height: 36px;
+  background: var(--fl-track);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.axisSeg {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  border-radius: 5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--fl-ink);
+  background: var(--fl-soft);
+  border: 1px solid var(--fl-line);
+  white-space: nowrap;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.axisSegAccent {
+  background: var(--fl-accent);
+  color: var(--fl-accent-ink);
+  border-color: var(--fl-accent);
+}
+
+.axisSegC2 {
+  background: var(--fl-c2);
+  color: var(--fl-accent-ink);
+  border-color: var(--fl-c2);
+}
+
+.axisPeakFlag {
+  position: absolute;
+  top: 50%;
+  transform: translate(12px, -50%);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--fl-c2);
+  white-space: nowrap;
+}
+
+.axisTickRow {
+  display: flex;
+  justify-content: space-between;
+  font-size: 10px;
+  color: var(--fl-muted);
+  font-variant-numeric: tabular-nums;
+  padding-top: 3px;
+}
+
+.chartSvg {
+  width: 100%;
+  height: auto;
+  display: block;
+}
+
+.seriesChips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.seriesChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--fl-soft);
+  border: 1px solid var(--fl-line);
+  border-radius: 999px;
+  padding: 3px 8px 3px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--fl-ink);
+}
+
+/* Item 5: Calendar strip */
+.calHeaderRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.calGrid {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+  gap: 4px;
+}
+
+.calTile {
+  border-radius: 7px;
+  padding: 6px 2px;
+  text-align: center;
+  border: 1px solid var(--fl-line);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  min-height: 44px;
+}
+
+.calTileMonth {
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+
+.calTileDay {
+  font-size: 13px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.calTilePeak {
+  outline: 2px solid var(--fl-accent);
+  outline-offset: 1px;
+  color: var(--fl-cal-peak-ink);
+}
+
+.calEnds {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--fl-muted);
+  margin-top: 7px;
+  font-weight: 600;
+}
+
+/* Item 6: Casting sheet */
+.castingList {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.castingRow {
+  display: grid;
+  grid-template-columns: 72px auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 7px;
+  background: var(--fl-soft);
+  border-radius: 10px;
+}
+
+.castingRole {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--fl-muted);
+  line-height: 1.2;
+}
+
+.castingLeaderWrap {
+  min-width: 0;
+}
+
+.castingLeaderName {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--fl-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.castingLeaderNameWrap {
+  white-space: normal;
+  line-height: 1.2;
+}
+
+.castingWord {
+  display: inline-block;
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--fl-muted);
+  margin-top: 1px;
+}
+
+.castingWordTie {
+  color: var(--fl-warn-ink);
+  background: var(--fl-warn-bg);
+  border: 1px solid var(--fl-warn-border);
+  border-radius: 999px;
+  padding: 0 5px;
+}
+
+.castingPct {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--fl-accent);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.coAvatarPair {
+  display: inline-flex;
+  align-items: center;
+}
+
+.coAvatarSecond {
+  margin-left: -8px;
+}
+
+/* Item 7: Bubble line & The cut */
+.bubbleBox {
+  position: relative;
+  height: 126px;
+  border-radius: 10px;
+  background: var(--fl-soft);
+  border: 1px solid var(--fl-line);
+  margin-bottom: 7px;
+  overflow: hidden;
+}
+
+.bubbleZone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--fl-warn-bg);
+  border-left: 1px dashed var(--fl-warn-border);
+  border-right: 1px dashed var(--fl-warn-border);
+}
+
+.bubbleZoneLabel {
+  position: absolute;
+  top: 4px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--fl-warn-ink);
+  white-space: nowrap;
+}
+
+.bubbleDot {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: var(--fl-logo-plate);
+  border: 1.5px solid var(--fl-line);
+  padding: 1.5px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+.bubbleFocusStrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
+}
+
+.bubbleFocusPill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--fl-warn-bg);
+  color: var(--fl-warn-ink);
+  border: 1px solid var(--fl-warn-border);
+  border-radius: 999px;
+  padding: 2px 7px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.bubbleDotDoubt {
+  border-color: var(--fl-warn-ink);
+  box-shadow: 0 0 0 2px var(--fl-warn-bg);
+  z-index: 3;
+}
+
+.bubbleDotTag {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 8.5px;
+  font-weight: 700;
+  color: var(--fl-ink);
+  white-space: nowrap;
+  margin-top: 1px;
+}
+
+.cutGrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.cutColTitle {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--fl-ink);
+  margin: 0 0 5px;
+  display: flex;
+  justify-content: space-between;
+}
+
+.cutRow {
+  display: grid;
+  grid-template-columns: 14px auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 5px;
+  border-radius: 6px;
+  margin-bottom: 2px;
+  font-size: 10.5px;
+}
+
+.cutSafe {
+  background: var(--fl-cut-safe-bg);
+}
+
+.cutBubble {
+  background: var(--fl-cut-bubble-bg);
+}
+
+.cutChase {
+  background: var(--fl-cut-chase-bg);
+}
+
+.cutLong {
+  background: var(--fl-cut-long-bg);
+}
+
+.cutRank {
+  font-size: 9.5px;
+  color: var(--fl-muted);
+  font-weight: 700;
+  text-align: right;
+}
+
+.cutName {
+  font-weight: 600;
+  color: var(--fl-ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cutPct {
+  font-weight: 700;
+  color: var(--fl-ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.cutLine {
+  border-top: 1.5px dashed var(--fl-accent);
+  margin: 4px 0 3px;
+  position: relative;
+  text-align: right;
+}
+
+.cutLineBadge {
+  display: inline-block;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--fl-accent);
+  background: var(--fl-surface);
+  padding: 0 4px;
+  transform: translateY(-9px);
+}

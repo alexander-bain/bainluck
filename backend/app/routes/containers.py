@@ -742,6 +742,27 @@ async def get_machinery_preview(
     }
 
 
+@router.get("/preview/forms-lab")
+async def get_forms_lab_batch1_preview(
+    request: Request,
+    look: Annotated[Optional[str], Query(description="Optional Batch 1 look_id filter.")] = None,
+    include_refusals: bool = True,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Admin-only preview of Forms Lab Batch 1 looks (#13551). Never exposed to public routes."""
+    from app.routes.admin_utils import _check_admin_auth
+    from app.utils.forms_lab_preview import BATCH1_LOOK_ORDER, build_forms_lab_batch1_preview
+
+    if not await _check_admin_auth(None, request, db):
+        raise HTTPException(status_code=403, detail="Admin authentication required")
+    if look is not None and look not in BATCH1_LOOK_ORDER:
+        raise HTTPException(status_code=400, detail=f"Unknown Batch 1 look: {look}")
+    return build_forms_lab_batch1_preview(
+        look_filter=look,
+        include_refusal_demos=include_refusals,
+    )
+
+
 @router.get("/{slug}")
 async def get_container(
     slug: str = Path(..., min_length=1, max_length=200),
