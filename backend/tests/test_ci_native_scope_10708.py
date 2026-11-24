@@ -91,7 +91,15 @@ class Scratch:
         _git(self.path, "commit", "-q", "-m", "x", "--allow-empty")
         return _git(self.path, "rev-parse", "HEAD")
 
-    def decide(self, event: str, base: str, head: str, tmp: Path) -> dict[str, str]:
+    def decide(
+        self,
+        event: str,
+        base: str,
+        head: str,
+        tmp: Path,
+        *,
+        ref: str | None = None,
+    ) -> dict[str, str]:
         script = _decide_script()
         for expr, value in {
             "github.event_name": event,
@@ -113,7 +121,8 @@ class Scratch:
             env={
                 "PATH": os.environ["PATH"],
                 "GITHUB_OUTPUT": str(output),
-                "GITHUB_REF": "refs/heads/master" if event == "push" else "refs/pull/1/merge",
+                "GITHUB_REF": ref
+                or ("refs/heads/master" if event == "push" else "refs/pull/1/merge"),
             },
         )
         return dict(
@@ -136,10 +145,27 @@ def test_a_pure_ios_pull_request_is_native_with_roster_and_text_readers(scratch,
     assert out["native_tests"].split() == ["tests/test_reads_swift.py", "tests/test_rostered.py"]
 
 
-def test_the_same_ios_change_on_a_push_is_always_full(scratch, tmp_path):
+def test_a_pure_ios_push_to_master_skips_server_shards_via_native_scope(scratch, tmp_path):
     base = scratch.commit({SWIFT: "a"})
     head = scratch.commit({SWIFT: "b"})
-    out = scratch.decide("push", base, head, tmp_path)
+    out = scratch.decide("push", base, head, tmp_path, ref="refs/heads/master")
+    assert out["scope"] == "native"
+    assert out["native_tests"].split() == ["tests/test_reads_swift.py", "tests/test_rostered.py"]
+
+
+def test_a_pure_ios_compose_push_remains_full(scratch, tmp_path):
+    base = scratch.commit({SWIFT: "a"})
+    head = scratch.commit({SWIFT: "b"})
+    out = scratch.decide(
+        "push", base, head, tmp_path, ref="refs/heads/integrator/compose-example"
+    )
+    assert out["scope"] == "full" and out["native_tests"] == ""
+
+
+def test_a_mixed_ios_push_to_master_remains_full(scratch, tmp_path):
+    base = scratch.commit({SWIFT: "a", "backend/app/main.py": "a"})
+    head = scratch.commit({SWIFT: "b", "backend/app/main.py": "b"})
+    out = scratch.decide("push", base, head, tmp_path, ref="refs/heads/master")
     assert out["scope"] == "full" and out["native_tests"] == ""
 
 

@@ -137,10 +137,10 @@ jobs:
           case "$SCOPE" in
             full|frontend) ;;
             native)
-              # #10708 (Alex 77: A). Push events are never native: master and
-              # compose runs feed the deploy path and always run everything.
-              if [ "${{ github.event_name }}" != "pull_request" ]; then
-                echo "native scope on a push — push runs are always full"; SCOPE=full
+              # #10708 (Alex 77: A) + Release runs: PRs and pure-ios/ master
+              # pushes use native backend readers; compose pushes stay full.
+              if [ "${{ github.event_name }}" != "pull_request" ] && { [ "${{ github.event_name }}" != "push" ] || [ "${GITHUB_REF:-}" != "refs/heads/master" ]; }; then
+                echo "native scope on non-master push — compose push runs are always full"; SCOPE=full
               else
                 # The roster ∪ every backend test that names a native path. A
                 # refusal or an empty set falls back to full, never a partial list.
@@ -5073,7 +5073,7 @@ jobs:
   # or turns a run red. Skipped when nothing is quarantined.
   flaky-canary:
     needs: change-scope
-    if: ${{ !cancelled() && needs.change-scope.result == 'success' && needs.change-scope.outputs.quarantine != '[]' && needs.change-scope.outputs.quarantine != '' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.live != 'true' }}
+    if: ${{ !cancelled() && needs.change-scope.result == 'success' && needs.change-scope.outputs.quarantine != '[]' && needs.change-scope.outputs.quarantine != '' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' }}
     continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 20

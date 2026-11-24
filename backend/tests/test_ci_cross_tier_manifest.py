@@ -563,12 +563,13 @@ class TestNativeInactivePreparation:
         assert "tests/test_ci_cross_tier_manifest.py" in _roster_paths()
         assert len(NATIVE_ACTIVATION_HOLDS) == 3
 
-    def test_workflow_accepts_native_only_for_a_pull_request_with_a_test_set(self):
-        # #10708: the executed contract is in test_ci_native_scope_10708.py; this
-        # pins the three fall-backs to full in the decide step's text.
+    def test_workflow_accepts_native_for_pr_and_master_with_a_test_set(self):
+        # #10708 + Release runs: the executed contract is in
+        # test_ci_native_scope_10708.py; this pins the fall-backs to full in the
+        # decide step's text.
         workflow = (REPO / ".github/workflows/ci.yml").read_text()
         assert "full|frontend) ;;" in workflow and "            native)\n" in workflow
-        assert "push runs are always full\"; SCOPE=full" in workflow
+        assert 'compose push runs are always full"; SCOPE=full' in workflow
         assert "native test set failed or empty — defaulting to full\"; SCOPE=full" in workflow
         assert "unparseable scope" in workflow and "SCOPE=full ;;" in workflow
 

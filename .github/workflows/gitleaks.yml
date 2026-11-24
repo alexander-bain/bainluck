@@ -16,10 +16,15 @@ name: gitleaks
 
 on:
   push:
+    branches: [master]
   pull_request:
   schedule:
     - cron: "0 8 * * 1"   # weekly full-history sweep, Monday 08:00 UTC
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('gitleaks-pr-{0}', github.event.pull_request.number) || format('gitleaks-{0}', github.ref) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
