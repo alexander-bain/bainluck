@@ -68,7 +68,13 @@ from app.utils.market_team_sport import (
     sport_key_llm_category as _sport_key_llm_category,
 )
 from app.utils.name_normalization import names_match as _names_match
-from app.utils.sport_keys import is_season_variant
+from app.utils.sport_keys import (
+    SPORT_HIERARCHY,
+    SPORT_PREFIX_TO_DISPLAY_FAMILY,
+    competition_gender,
+    is_season_variant,
+    sport_family_key,
+)
 from app.utils.statement_timeout import is_statement_timeout
 from app.utils.team_linking import given_name_before_city
 
@@ -83,17 +89,34 @@ router = APIRouter()
 
 # Maps brand/location names to their metro area aliases.
 # When a user types "Boston", we also search for "New England" and vice versa.
+_BAY_AREA = [
+    "golden state",
+    "san francisco",
+    "bay area",
+    "oakland",
+    "santa cruz",
+    "santa clara",
+    "san jose",
+]
+_LOS_ANGELES = ["los angeles", "la", "anaheim", "inglewood", "carson"]
+_ST_LOUIS = ["st louis", "st. louis", "saint louis"]
+_TWIN_CITIES = [
+    "minnesota", "minneapolis", "st. paul", "st paul", "saint paul", "twin cities"
+]
+_DC = ["dc", "d.c.", "washington", "washington dc", "washington, dc"]
 METRO_ALIASES: dict[str, list[str]] = {
-    "golden state": ["san francisco", "bay area", "oakland", "santa cruz"],
+    "golden state": _BAY_AREA,
     "new england": ["boston", "foxborough", "foxboro"],
     "brooklyn": ["new york", "nyc"],
-    "new york": ["brooklyn", "nyc"],
+    "new york": ["brooklyn", "nyc", "elmont", "long island", "uniondale"],
     "carolina": ["charlotte", "raleigh"],
     "tampa bay": ["tampa", "st. petersburg"],
     "tampa": ["tampa bay", "st. petersburg"],
-    "dc": ["washington", "d.c."],
-    "washington": ["dc", "d.c."],
-    "minnesota": ["minneapolis", "twin cities", "st. paul"],
+    "dc": _DC,
+    "d.c.": _DC,
+    "washington": _DC,
+    "minnesota": _TWIN_CITIES,
+    "twin cities": _TWIN_CITIES,
     "indiana": ["indianapolis"],
     "indianapolis": ["indiana"],
     "arizona": ["phoenix", "tempe", "glendale"],
@@ -106,11 +129,22 @@ METRO_ALIASES: dict[str, list[str]] = {
     "nashville": ["tennessee"],
     "miami": ["south florida", "fort lauderdale", "sunrise"],
     "dallas": ["arlington", "dfw"],
-    "san francisco": ["golden state", "bay area", "oakland", "santa cruz"],
-    "bay area": ["golden state", "san francisco", "oakland", "santa cruz"],
+    "san francisco": _BAY_AREA,
+    "sf": _BAY_AREA,
+    "bay area": _BAY_AREA,
     "boston": ["new england", "foxborough"],
-    "los angeles": ["la", "anaheim", "inglewood"],
-    "la": ["los angeles", "anaheim", "inglewood"],
+    "los angeles": _LOS_ANGELES,
+    "la": _LOS_ANGELES,
+    "kc": ["kansas city"],
+    "vegas": ["las vegas"],
+    "las vegas": ["vegas", "paradise"],
+    "st louis": _ST_LOUIS,
+    "st. louis": _ST_LOUIS,
+    "saint louis": _ST_LOUIS,
+    "jersey": ["new jersey"],
+    "nola": ["new orleans"],
+    "indy": ["indianapolis", "indiana"],
+    "okc": ["oklahoma city"],
     "chicago": ["chi"],
     "detroit": ["michigan"],
     "pittsburgh": ["pennsylvania"],
@@ -137,7 +171,7 @@ def _expand_location_query(query: str) -> list[str]:
         if q_lower in [a.lower() for a in aliases] and key not in terms:
             terms.append(key)
 
-    return list(set(terms))
+    return sorted(set(terms))
 
 
 # =============================================================================
@@ -727,6 +761,12 @@ _TEAM_SEARCH_TIER = {
     "soccer_italy_serie_a": 2,
 }
 _TEAM_SEARCH_SPORT_LABELS = {
+    **{
+        key: league["name"]
+        for sport in SPORT_HIERARCHY.values()
+        for league in sport["leagues"]
+        for key in league["sport_keys"]
+    },
     "basketball_nba": "NBA",
     "americanfootball_nfl": "NFL",
     "baseball_mlb": "MLB",
@@ -741,9 +781,29 @@ _TEAM_SEARCH_SPORT_LABELS = {
     "soccer_germany_bundesliga": "Bundesliga",
     "soccer_italy_serie_a": "Serie A",
     "soccer_france_ligue_one": "Ligue 1",
+    "soccer_uefa_champs_league": "UEFA Champions League",
+    "soccer_uefa_champs_league_women": "UEFA Women's Champions League",
     "icehockey_ncaa": "NCAA Hockey",
     "baseball_ncaa": "NCAA Baseball",
 }
+
+
+def _team_search_sport_display(sport_key: str, sport_name: str | None) -> str:
+    label = _TEAM_SEARCH_SPORT_LABELS.get(sport_key)
+    if label:
+        return label
+
+    # The stored label is the same league name used by the search pills.
+    label = (sport_name or "").strip()
+    if (
+        label
+        and "_" not in label
+        and label.casefold() != sport_key.replace("_", " ").casefold()
+    ):
+        return label
+    return SPORT_PREFIX_TO_DISPLAY_FAMILY.get(sport_family_key(sport_key) or "", "Sport")
+
+
 _TEAM_SEARCH_PRO_LEAGUES = frozenset(
     key for key in _TEAM_SEARCH_TIER if "_ncaa" not in key
 ) | {"soccer_france_ligue_one"}
@@ -774,7 +834,7 @@ def _onboarding_venue_pairs(pairs: set[tuple[int, int]]):
 def _onboarding_name_candidates(
     words: list[str],
     venue_aliases: VenueAliases,
-) -> Select[tuple[Team, str]]:
+) -> Select[tuple[Team, str, str]]:
     # Tokens contain only letters and digits. Anchor at the start of a word
     # so Real cannot match Montreal and Los cannot match Carlos.
     aliases_json = cast(Team.alternate_names, String)
@@ -856,9 +916,22 @@ def _onboarding_name_candidates(
         pro_club = and_(
             Sport.key.in_(_TEAM_SEARCH_PRO_LEAGUES), or_(full_word, relevance <= 1)
         )
-        order.insert(0, pro_club.desc().nulls_last())
+        # A top-league nickname prefix is more useful than a prefix in the
+        # first word of another club's name. Keep exact matches ahead of it.
+        location_length = func.length(Team.location)
+        after_location = and_(
+            func.substr(func.lower(Team.name), 1, location_length + 1)
+            == func.lower(Team.location) + " ",
+            func.substr(Team.name, location_length + 2).regexp_match(rf"(?i)^{words[0]}"),
+        )
+        last_word = Team.name.regexp_match(word_start + words[0] + r"[^\W_]*\s*$")
+        nickname_prefix = and_(tier == 1, or_(after_location, last_word))
+        order[:0] = [
+            pro_club.desc().nulls_last(),
+            case((relevance <= 1, 0), (nickname_prefix, 1), else_=2),
+        ]
     return (
-        select(Team, Sport.key)
+        select(Team, Sport.key, Sport.name)
         .options(_TEAM_SEARCH_COLUMNS)
         .join(possible_ids, possible_ids.c.id == Team.id)
         .join(Sport, Team.sport_id == Sport.id)
@@ -870,17 +943,17 @@ def _onboarding_name_candidates(
 
 async def _fold_onboarding_season_clubs(
     db: AsyncSession,
-    clubs: list[tuple[Team, str]],
-) -> list[tuple[Team, str]]:
+    clubs: list[tuple[Team, str, str]],
+) -> list[tuple[Team, str, str]]:
     parents = {
         key: key.removesuffix("_preseason").removesuffix("_summer_league")
-        for _, key in clubs
+        for _, key, _ in clubs
         if is_season_variant(key)
     }
     if not parents:
         return clubs
 
-    variants = [team for team, key in clubs if key in parents]
+    variants = [team for team, key, _ in clubs if key in parents]
     espn_ids = {team.espn_id for team in variants if team.espn_id}
     names = {team.name for team in variants}
     # Search the parent leagues in one read. Literal ILIKE can use the name
@@ -891,7 +964,7 @@ async def _fold_onboarding_season_clubs(
         name_matches.append(Team.name.ilike(escaped, escape="|"))
     parent_rows = (
         await db.execute(
-            select(Team, Sport.key)
+            select(Team, Sport.key, Sport.name)
             .options(_TEAM_SEARCH_COLUMNS)
             .join(Sport, Team.sport_id == Sport.id)
             .where(
@@ -903,51 +976,54 @@ async def _fold_onboarding_season_clubs(
     ).all()
 
     folded = []
-    for team, sport_key in clubs:
+    for team, sport_key, sport_name in clubs:
         if sport_key not in parents:
-            folded.append((team, sport_key))
+            folded.append((team, sport_key, sport_name))
             continue
         parent_key = parents[sport_key]
-        league_clubs = [parent for parent, key in parent_rows if key == parent_key]
+        league_clubs = [
+            (parent, name) for parent, key, name in parent_rows if key == parent_key
+        ]
         matching_ids = [
-            parent
-            for parent in league_clubs
+            (parent, name)
+            for parent, name in league_clubs
             if team.espn_id and parent.espn_id == team.espn_id
         ]
         matching_names = [
-            parent
-            for parent in league_clubs
+            (parent, name)
+            for parent, name in league_clubs
             if parent.name.casefold() == team.name.casefold()
             and not (parent.espn_id and team.espn_id and parent.espn_id != team.espn_id)
         ]
         # Equivalent ESPN rows still go through the membership winner below.
         if matching_ids:
-            folded.append((min(matching_ids, key=lambda club: club.id), parent_key))
+            parent, name = min(matching_ids, key=lambda match: match[0].id)
+            folded.append((parent, parent_key, name))
         elif (
             matching_names
-            and len({parent.espn_id for parent in matching_names if parent.espn_id})
+            and len({parent.espn_id for parent, _ in matching_names if parent.espn_id})
             <= 1
         ):
-            preferred = min(
-                matching_names, key=lambda club: (not club.espn_id, club.id)
+            parent, name = min(
+                matching_names, key=lambda match: (not match[0].espn_id, match[0].id)
             )
-            folded.append((preferred, parent_key))
+            folded.append((parent, parent_key, name))
         elif sport_key != "baseball_mlb_preseason":
-            folded.append((team, sport_key))
+            folded.append((team, sport_key, sport_name))
     return folded
 
 
 async def _verified_onboarding_clubs(
     db: AsyncSession,
-    rows: list[tuple[Team, str]],
-) -> list[tuple[Team, str]]:
+    rows: list[tuple[Team, str, str]],
+) -> list[tuple[Team, str, str]]:
     eligible = await onboarding_team_members(
-        [(team.sport_id, team.id) for team, _ in rows]
+        [(team.sport_id, team.id) for team, _, _ in rows]
     )
     if eligible is None:
         return rows
 
-    by_id = {team.id: team for team, _ in rows}
+    by_id = {team.id: team for team, _, _ in rows}
     other_ids = set(eligible.values()) - by_id.keys()
     if other_ids:
         # A verified ESPN alias can match when its canonical club did not.
@@ -961,7 +1037,7 @@ async def _verified_onboarding_clubs(
         by_id.update((team.id, team) for team in teams)
 
     verified = []
-    for matched, sport_key in rows:
+    for matched, sport_key, sport_name in rows:
         canonical_id = eligible.get((matched.sport_id, matched.id))
         if canonical_id is None:
             continue
@@ -971,7 +1047,7 @@ async def _verified_onboarding_clubs(
             and canonical.sport_id == matched.sport_id
             and canonical.espn_id == matched.espn_id
         ):
-            verified.append((canonical, sport_key))
+            verified.append((canonical, sport_key, sport_name))
     return verified
 
 
@@ -992,7 +1068,7 @@ async def search_teams(
     if not rows:
         return []
     folded = await _fold_onboarding_season_clubs(
-        db, [(team, key) for team, key in rows]
+        db, [(team, key, name) for team, key, name in rows]
     )
     clubs = await _verified_onboarding_clubs(db, folded) if folded else []
 
@@ -1001,7 +1077,7 @@ async def search_teams(
     groups: dict[int | tuple[str, str], TeamSearchResult] = {}
     seen_names_and_leagues: set[tuple[str, str]] = set()
     seen_espn_ids_and_leagues: set[tuple[str, str]] = set()
-    for team, sport_key in clubs:
+    for team, sport_key, sport_name in clubs:
         name_and_league = (team.name, sport_key)
         espn_id_and_league = (team.espn_id, sport_key) if team.espn_id else None
         if (
@@ -1015,11 +1091,10 @@ async def search_teams(
         key = team.id
         if team.espn_id and sport_key.startswith("soccer_"):
             key = (team.espn_id, " ".join(team.name.casefold().split()))
-        display = _TEAM_SEARCH_SPORT_LABELS.get(
-            sport_key, sport_key.split("_", 1)[-1].upper()
-        )
         variant = TeamSportVariant(
-            id=team.id, sport_key=sport_key, sport_display=display
+            id=team.id,
+            sport_key=sport_key,
+            sport_display=_team_search_sport_display(sport_key, sport_name),
         )
         if key in groups:
             groups[key].sports.append(variant)
@@ -1035,7 +1110,20 @@ async def search_teams(
             )
 
     results = list(groups.values())[:20]
+    mens_soccer_names = {
+        result.name.casefold()
+        for result in results
+        if (result.sport_key or "").startswith("soccer_")
+        and competition_gender(result.sport_key) == "men"
+    }
     for result in results:
+        # A single-competition result displays its team name in the installed app.
+        if (
+            result.name.casefold() in mens_soccer_names
+            and (result.sport_key or "").startswith("soccer_")
+            and competition_gender(result.sport_key) == "women"
+        ):
+            result.name += " (Women)"
         if len(result.sports) == 1:
             result.sports = []
     return results
@@ -1052,54 +1140,68 @@ async def teams_by_location(
 
     Example: q="Boston" returns Celtics, Red Sox, Bruins, Patriots (via "New England" alias).
     """
-    if len(q) < 2:
+    q_lower = q.strip().lower()
+    if len(q_lower) < 2:
         return []
 
-    # Expand query with metro aliases
-    terms = _expand_location_query(q)
-
-    # Build OR conditions for all expanded terms — search name, location,
-    # abbreviation, and alternate_names for maximum recall.
     from app.models.models import Sport
-    conditions = []
-    for term in terms:
-        pattern = f"%{term}%"
-        conditions.append(Team.location.ilike(pattern))
-        conditions.append(Team.name.ilike(pattern))
-        conditions.append(Team.abbreviation.ilike(pattern))
-        conditions.append(cast(Team.alternate_names, String).ilike(pattern))
 
-    # Relevance ordering: location match > name match > others
-    q_lower = q.lower().strip()
+    terms = _expand_location_query(q_lower)
+    location_matches = []
+    brand_matches = []
+    for term in terms:
+        if len(term.replace(".", "")) <= 3 and len(terms) > 1:
+            # Short aliases name a metro. A stored LA or D.C. label can match,
+            # while the same letters in Lagos or La Coruña prove no link.
+            location_matches.append(func.lower(Team.location) == term)
+            brand_matches.append(
+                Team.name.regexp_match(rf"^{re.escape(term.upper())}(?:$|\W)")
+            )
+            continue
+        if term == "washington" and q_lower in _DC:
+            # The state and its college teams share this generic label.
+            pro_league = ~Sport.key.contains("_ncaa", autoescape=True)
+            location_matches.append(and_(func.lower(Team.location) == term, pro_league))
+            brand_matches.append(
+                and_(Team.name.istartswith(term + " ", autoescape=True), pro_league)
+            )
+            continue
+        boundary = rf"(?i)^{re.escape(term)}(?:$|\W)"
+        location_matches.append(
+            Team.location.istartswith(term, autoescape=True)
+            if len(terms) == 1
+            else Team.location.regexp_match(boundary)
+        )
+        brand_matches.append(Team.name.regexp_match(boundary))
     relevance = case(
-        (Team.location.ilike(q_lower), 0),          # Exact location match
-        (Team.location.ilike(f"%{q_lower}%"), 1),    # Location contains
-        (Team.name.ilike(f"%{q_lower}%"), 2),        # Name contains
+        (func.lower(Team.location) == q_lower, 0),
+        (Team.location.istartswith(q_lower, autoescape=True), 1),
+        (Team.name.istartswith(q_lower + " ", autoescape=True), 2),
         else_=3,
     )
 
     result = await db.execute(
         select(Team, Sport.key.label("sport_key"))
         .join(Sport, Team.sport_id == Sport.id)
-        .where(or_(*conditions))
-        .order_by(relevance, Team.name)
+        .where(or_(*location_matches, *brand_matches), *club_filters())
+        .order_by(relevance, Team.name, Team.id)
         .limit(50)
     )
     rows = result.all()
+    members = await onboarding_team_members(
+        [(team.sport_id, team.id) for team, _ in rows]
+    )
 
-    # Deduplicate by team ID and fuzzy name match
-    # (catches "Stanford" vs "Stanford Cardinal" as separate Team records)
-    seen: set[int] = set()
-    seen_names: list[str] = []
+    # Clubs in different leagues can share a city and still be distinct.
+    seen: set[tuple[str, str]] = set()
     results: list[TeamSearchResult] = []
     for team, sport_key in rows:
-        if team.id in seen:
+        if members is not None and members.get((team.sport_id, team.id)) != team.id:
             continue
-        # Skip if a fuzzy-matching team name already in results
-        if any(_names_match(team.name, sn) for sn in seen_names):
+        key = (sport_key, " ".join(team.name.casefold().split()))
+        if key in seen:
             continue
-        seen.add(team.id)
-        seen_names.append(team.name)
+        seen.add(key)
         results.append(
             TeamSearchResult(
                 id=team.id,
