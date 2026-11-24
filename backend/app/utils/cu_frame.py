@@ -221,13 +221,18 @@ def value_appears_in_title(value: str, title: str) -> bool:
     """
     if not value or not title:
         return False
+    numeric = _NUMBER.fullmatch(value)
+    left = r"(?<![+\-−])(?<!\d,)" if numeric else ""
+    right = r"(?!,\d{3}(?:\D|$))" if numeric else ""
     pattern = re.compile(
-        r"(?<![0-9A-Za-z.])(?<!\d-)" + re.escape(value) + r"(?![0-9A-Za-z])(?!\.\d)",
+        r"(?<![0-9A-Za-z.])(?<!\d-)" + left + re.escape(value)
+        + r"(?![0-9A-Za-z])(?!\.\d)" + right,
         re.IGNORECASE,
     )
     if pattern.search(title):
         return True
-    return bool(pattern.search(title.replace(",", "")))
+    grouped_title = re.sub(r"(?<=\d),(?=\d{3}(?:\D|$))", "", title)
+    return grouped_title != title and bool(pattern.search(grouped_title))
 
 
 def unit_appears_in_title(unit: str, title: str) -> bool:

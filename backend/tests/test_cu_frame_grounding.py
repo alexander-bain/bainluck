@@ -38,6 +38,7 @@ from app.tasks.enrich_markets import (
     _resolve_entity_refs,
     enrich_cu_v2_profiles,
 )
+from app.services.entity_registry import resolve_aliases
 from app.utils.cu_frame import (
     DROP_ABSENT,
     DROP_NO_MEASURE,
@@ -123,6 +124,27 @@ class TestLiteralPresenceProperty:
         # Same digits, same order — 15000 against a title's "15,000".
         assert value_appears_in_title("15000", T_SINNER) is True
 
+    @pytest.mark.parametrize("title,value", [
+        ("Could attendance reach 15,000?", "15"),
+        ("Could attendance reach 15,000?", "000"),
+        ("Did the index move 1,2 or 3 points?", "12"),
+        ("Temperature below −2°C?", "2"),
+        ("Will attendance exceed +12,000?", "12000"),
+    ])
+    def test_sign_and_grouping_are_part_of_the_literal_value(self, title, value):
+        frame, drop = sanitize_cu_frame({"measure": "points", "value": value}, title=title)
+        assert frame is None
+        assert drop == DROP_VALUE_NOT_IN_TITLE
+
+    @pytest.mark.parametrize("title,value", [
+        ("Temperature below −2°C?", "−2"),
+        ("Will attendance exceed +12,000?", "+12000"),
+        ("Could attendance reach 15,000?", "15,000"),
+    ])
+    def test_an_exact_signed_or_grouped_value_remains_usable(self, title, value):
+        frame, drop = sanitize_cu_frame({"measure": "points", "value": value}, title=title)
+        assert drop is None
+        assert frame["value"] == value
     @pytest.mark.parametrize(
         "value,title,expected",
         [
@@ -472,9 +494,39 @@ class _FakeEntity:
     def __init__(self, id_, kind):
         self.id = id_
         self.kind = kind
+        self.confidence = 1.0
 
 
 class TestResolveEntityRefs:
+    async def test_ambiguous_alias_is_reported_without_a_confidence_tiebreak(self):
+        session = _FakeSession([[
+            ("giants", 0.9, _FakeEntity(28, "team")),
+            ("giants", 0.5, _FakeEntity(29, "team")),
+            ("boston celtics", 0.8, _FakeEntity(42, "team")),
+            ("boston celtics", 0.7, _FakeEntity(42, "team")),
+        ]])
+        ambiguous = set()
+        matches = await resolve_aliases(
+            session, ["Giants", "Boston Celtics", "Unknown Club"],
+            ambiguous_names=ambiguous,
+        )
+        assert ambiguous == {"Giants"}
+        assert {name: entity.id for name, entity in matches.items()} == {"Boston Celtics": 42}
+
+    async def test_ambiguous_alias_and_wrong_kind_cannot_fall_back_to_a_team(self, monkeypatch):
+        async def fake_resolve_aliases(session, names, *, ambiguous_names):
+            ambiguous_names.add("Giants")
+            return {"Jordan": _FakeEntity(70, "team")}
+
+        monkeypatch.setattr("app.services.entity_registry.resolve_aliases", fake_resolve_aliases)
+        session = _FakeSession()
+        hits = await _resolve_entity_refs(
+            session, ["Giants", "Jordan"],
+            mention_types={"Giants": "team", "Jordan": "person"},
+        )
+        assert not hits
+        assert session.executed == []
+
     async def test_registry_alias_hit(self, monkeypatch):
         async def fake_resolve_aliases(session, names, **kw):
             return {"Boston Celtics": _FakeEntity(42, "team")}
@@ -653,7 +705,7 @@ def _written_profile(write_session):
         if compiled is None:
             continue
         try:
-            metadata = compiled().params.get("market_metadata")
+            metadata = compiled().params.get("cu_profile_patch")
         except Exception:
             continue
         if isinstance(metadata, dict) and DISCOVER_LLM_METADATA_KEY in metadata:
