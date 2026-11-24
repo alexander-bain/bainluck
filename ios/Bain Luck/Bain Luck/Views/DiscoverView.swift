@@ -1154,6 +1154,32 @@ struct DiscoverView: View {
                                   groupItems: items,
                                   feedItems: vm.items
                               ),
+                              case .kit(let kitSpec) = KitCardStandInSwitch366B.resolveDiscoverStandIn(
+                                  contract: roundupBundle.roundupContract
+                              ),
+                              let kitView = KitCardView366B(
+                                  spec: kitSpec,
+                                  onRoute: { kitRoute in
+                                      if let primary = items.first {
+                                          recordInteraction(for: primary, action: .detailOpen, source: "card")
+                                      }
+                                      if let dest = KitCardStandInSwitch366B.resolveRoute(
+                                          kitRoute,
+                                          fallbackCollectionRef: roundupBundle.roundupCollectionRef ?? collectionRef,
+                                          fallbackTitle: roundupBundle.title
+                                      ) {
+                                          navigationPath.append(dest)
+                                      }
+                                  }
+                              ) {
+                        kitView
+                    } else if kind == "roundup",
+                              let roundupBundle = Self.resolveRoundupBundle(
+                                  title: title,
+                                  collectionRef: collectionRef,
+                                  groupItems: items,
+                                  feedItems: vm.items
+                              ),
                               let machineryCard = roundupBundle.roundupContract?.machineryCard {
                         MachineryDiscoverEntryCardView(
                             card: machineryCard,
