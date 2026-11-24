@@ -1,0 +1,343 @@
+name: Master release priority
+
+# Automates the one-off runner yield allowed under 379: A, for master pushes
+# that require a server release. Awaiting its own ruling and one supervised
+# trial under a full queue (does not assert standing approval). Runs one yield
+# pass when pushed; the NOW push hold remains the rule while a release runs so
+# later stages are not re-crowded by new pushes.
+on:
+  push:
+    branches: [master]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [master]
+
+permissions:
+  actions: write
+  contents: read
+  pull-requests: read
+
+jobs:
+  yield-pr-runs:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: master-priority-yield
+      cancel-in-progress: false
+    steps:
+      - name: Checkout candidate commit for release-required check
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+
+      - name: Check whether master push requires a server release
+        id: release_check
+        env:
+          PUSH_BEFORE: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          BASE="$(bash .github/scripts/ci-deploy-base.sh "$PUSH_BEFORE" "$HEAD_SHA")"
+          REQUIRED="$(bash .github/scripts/heroku-release-required.sh "$BASE" "$HEAD_SHA")"
+          echo "required=$REQUIRED" >> "$GITHUB_OUTPUT"
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
+          echo "Server release required: $REQUIRED (base=$BASE head=$HEAD_SHA)"
+          if [ "$REQUIRED" != "true" ]; then
+            echo "No server release required; skipping PR yield."
+          fi
+
+      - name: Measure queue wait and yield competing PR workflow runs
+        if: steps.release_check.outputs.required == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          MASTER_SHA: ${{ github.sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          python3 - <<'PY'
+          from datetime import datetime, timezone
+          import json, os, subprocess, sys
+
+          repo = os.environ["REPO"]
+          master_sha = os.environ["MASTER_SHA"]
+          run_id = os.environ["RUN_ID"]
+
+          def gh_api(endpoint: str, *, method: str = "GET", allow_409: bool = False):
+              proc = subprocess.run(
+                  ["gh", "api", "-X", method, endpoint],
+                  capture_output=True,
+                  text=True,
+              )
+              if proc.returncode != 0:
+                  if allow_409 and "409" in (proc.stderr or ""):
+                      return {"_conflict": proc.stderr.strip()}
+                  raise RuntimeError(
+                      f"gh api -X {method} {endpoint} failed (rc={proc.returncode}): "
+                      f"{proc.stderr.strip() or proc.stdout.strip()}"
+                  )
+              return json.loads(proc.stdout) if proc.stdout.strip() else {}
+
+          def gh_paginate_key(base_endpoint: str, key: str) -> list[dict]:
+              items = []
+              page = 1
+              sep = "&" if "?" in base_endpoint else "?"
+              while True:
+                  data = gh_api(f"{base_endpoint}{sep}per_page=100&page={page}")
+                  batch = data.get(key) or []
+                  items.extend(batch)
+                  if len(batch) < 100:
+                      break
+                  page += 1
+              return items
+
+          this_run = gh_api(f"repos/{repo}/actions/runs/{run_id}")
+          created_raw = this_run.get("created_at")
+          if created_raw:
+              created_at = datetime.fromisoformat(str(created_raw).replace("Z", "+00:00"))
+              wait_s = (datetime.now(timezone.utc) - created_at).total_seconds()
+              print(f"yield-pr-runs runner queue wait: {wait_s:.1f}s (run {run_id})")
+
+          paused = []
+          seen_runs = set()
+          for wf in ("ci.yml", "codeql.yml", "watch-mvp.yml"):
+              for st in ("queued", "in_progress"):
+                  runs = gh_paginate_key(
+                      f"repos/{repo}/actions/workflows/{wf}/runs?event=pull_request&status={st}",
+                      "workflow_runs",
+                  )
+                  for r in runs:
+                      rid = r.get("id")
+                      if not rid or rid in seen_runs:
+                          continue
+                      seen_runs.add(rid)
+                      prs = r.get("pull_requests") or []
+                      pr_num = prs[0].get("number") if prs else None
+                      head_sha = r.get("head_sha")
+                      if not pr_num or not head_sha:
+                          continue
+                      jobs = gh_paginate_key(
+                          f"repos/{repo}/actions/runs/{rid}/jobs",
+                          "jobs",
+                      )
+                      if any(
+                          j.get("conclusion")
+                          in ("failure", "timed_out", "startup_failure", "action_required")
+                          for j in jobs
+                      ):
+                          print(f"Skipping {wf} run {rid} (PR #{pr_num}): already has failed job")
+                          continue
+                      had_completed = any(
+                          j.get("status") == "completed" and j.get("conclusion") == "success"
+                          for j in jobs
+                      )
+                      res = gh_api(
+                          f"repos/{repo}/actions/runs/{rid}/cancel",
+                          method="POST",
+                          allow_409=True,
+                      )
+                      if isinstance(res, dict) and "_conflict" in res:
+                          print(f"Race on {wf} run {rid} (PR #{pr_num}): {res['_conflict']}")
+                          continue
+                      paused.append(
+                          {
+                              "run_id": rid,
+                              "workflow_file": wf,
+                              "pr_number": pr_num,
+                              "head_sha": head_sha,
+                              "prev_status": st,
+                              "had_completed_jobs": had_completed,
+                          }
+                      )
+                      print(f"Yielded {wf} run {rid} (PR #{pr_num}, {head_sha[:8]}, was {st})")
+
+          with open("/tmp/paused-pr-runs.json", "w", encoding="utf-8") as fh:
+              json.dump({"master_sha": master_sha, "runs": paused}, fh, indent=2)
+          print(f"Yield summary: paused={len(paused)} runs for master {master_sha[:8]}")
+          PY
+
+      - name: Save yielded PR run list
+        if: steps.release_check.outputs.required == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: master-paused-pr-runs-${{ github.run_id }}
+          path: /tmp/paused-pr-runs.json
+          retention-days: 1
+
+  resume-pr-runs:
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    concurrency:
+      group: master-priority-resume
+      cancel-in-progress: false
+    steps:
+      - name: Resume yielded PR runs once no master push CI run is active
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'PY'
+          from datetime import datetime, timedelta, timezone
+          import io, json, os, subprocess, sys, zipfile
+
+          repo = os.environ["REPO"]
+
+          def gh_api(endpoint: str, *, method: str = "GET", binary: bool = False):
+              proc = subprocess.run(
+                  ["gh", "api", "-X", method, endpoint],
+                  capture_output=True,
+              )
+              if proc.returncode != 0:
+                  err = proc.stderr.decode("utf-8", "replace").strip()
+                  raise RuntimeError(f"gh api -X {method} {endpoint} failed (rc={proc.returncode}): {err}")
+              if binary:
+                  return proc.stdout
+              text = proc.stdout.decode("utf-8", "replace")
+              return json.loads(text) if text.strip() else {}
+
+          def gh_paginate_key(base_endpoint: str, key: str) -> list[dict]:
+              items = []
+              page = 1
+              sep = "&" if "?" in base_endpoint else "?"
+              while True:
+                  data = gh_api(f"{base_endpoint}{sep}per_page=100&page={page}")
+                  batch = data.get(key) or []
+                  items.extend(batch)
+                  if len(batch) < 100:
+                      break
+                  page += 1
+              return items
+
+          active_master = []
+          for st in ("queued", "in_progress", "waiting", "pending", "requested"):
+              active_master.extend(
+                  gh_paginate_key(
+                      f"repos/{repo}/actions/workflows/ci.yml/runs?branch=master&event=push&status={st}",
+                      "workflow_runs",
+                  )
+              )
+          if active_master:
+              print(f"Master CI still active ({[r['id'] for r in active_master]}); deferring PR resume.")
+              raise SystemExit(0)
+
+          cutoff = datetime.now(timezone.utc) - timedelta(hours=3)
+          artifacts = []
+          page = 1
+          while True:
+              data = gh_api(f"repos/{repo}/actions/artifacts?per_page=100&page={page}")
+              batch = data.get("artifacts") or []
+              if not batch:
+                  break
+              page_has_recent = False
+              for art in batch:
+                  created_raw = art.get("created_at")
+                  if not created_raw:
+                      continue
+                  created = datetime.fromisoformat(str(created_raw).replace("Z", "+00:00"))
+                  if created >= cutoff:
+                      page_has_recent = True
+                      artifacts.append(art)
+              if not page_has_recent or len(batch) < 100:
+                  break
+              page += 1
+
+          candidates = {}
+          for art in artifacts:
+              if art.get("expired"):
+                  continue
+              name = str(art.get("name") or "")
+              if not name.startswith("master-paused-pr-runs-"):
+                  continue
+              blob = gh_api(f"repos/{repo}/actions/artifacts/{art['id']}/zip", binary=True)
+              with zipfile.ZipFile(io.BytesIO(blob)) as zf:
+                  for member in zf.namelist():
+                      if member.endswith(".json"):
+                          payload = json.loads(zf.read(member).decode("utf-8"))
+                          rows = payload.get("runs") if isinstance(payload, dict) else payload
+                          for row in rows or ():
+                              rid = row.get("run_id")
+                              if rid and rid not in candidates:
+                                  candidates[rid] = row
+
+          counts = {
+              "paused": len(candidates),
+              "resumed": 0,
+              "skipped_closed": 0,
+              "skipped_new_sha": 0,
+              "skipped_not_cancelled": 0,
+              "skipped_already_covered": 0,
+              "skipped_invalid": 0,
+              "failed_to_resume": 0,
+          }
+
+          pr_cache = {}
+          for run_id, row in candidates.items():
+              pr_number = row.get("pr_number")
+              head_sha = row.get("head_sha")
+              wf = row.get("workflow_file")
+              if not (pr_number and head_sha and wf):
+                  counts["skipped_invalid"] += 1
+                  continue
+              if pr_number not in pr_cache:
+                  pr_cache[pr_number] = gh_api(f"repos/{repo}/pulls/{pr_number}")
+              pr = pr_cache[pr_number]
+              if pr.get("state") != "open":
+                  counts["skipped_closed"] += 1
+                  continue
+              if (pr.get("head") or {}).get("sha") != head_sha:
+                  counts["skipped_new_sha"] += 1
+                  continue
+              run = gh_api(f"repos/{repo}/actions/runs/{run_id}")
+              if run.get("status") != "completed" or run.get("conclusion") != "cancelled":
+                  counts["skipped_not_cancelled"] += 1
+                  continue
+
+              siblings = gh_paginate_key(
+                  f"repos/{repo}/actions/workflows/{wf}/runs?head_sha={head_sha}&event=pull_request",
+                  "workflow_runs",
+              )
+              already_covered = any(
+                  s.get("status") in ("queued", "in_progress", "waiting", "pending", "requested")
+                  or (s.get("status") == "completed" and s.get("conclusion") != "cancelled")
+                  for s in siblings
+              )
+              if already_covered:
+                  counts["skipped_already_covered"] += 1
+                  continue
+
+              endpoint = (
+                  f"repos/{repo}/actions/runs/{run_id}/rerun-failed-jobs"
+                  if row.get("had_completed_jobs")
+                  else f"repos/{repo}/actions/runs/{run_id}/rerun"
+              )
+              proc = subprocess.run(
+                  ["gh", "api", "-X", "POST", endpoint],
+                  capture_output=True,
+                  text=True,
+              )
+              if proc.returncode != 0 and row.get("had_completed_jobs"):
+                  proc = subprocess.run(
+                      ["gh", "api", "-X", "POST", f"repos/{repo}/actions/runs/{run_id}/rerun"],
+                      capture_output=True,
+                      text=True,
+                  )
+              if proc.returncode == 0:
+                  counts["resumed"] += 1
+                  print(f"Resumed {wf} run {run_id} for PR #{pr_number} ({head_sha[:8]})")
+              else:
+                  counts["failed_to_resume"] += 1
+                  print(
+                      f"ERROR: Could not resume {wf} run {run_id} (PR #{pr_number}): {proc.stderr.strip()}",
+                      file=sys.stderr,
+                  )
+
+          print("Resume summary:", json.dumps(counts))
+          if counts["failed_to_resume"] > 0:
+              raise SystemExit(1)
+          PY
