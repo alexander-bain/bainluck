@@ -16,6 +16,7 @@ struct MyStuffLandingView295A: View {
     let onOpenDiscover: () -> Void
     let onManagePins: () -> Void
     let onRefresh: () async -> Void
+    var onRetryTeamFutures: (() async -> Void)? = nil
 
     @Environment(\.followManager295A) private var followManager
     @EnvironmentObject private var pinManager: PinManager
@@ -29,7 +30,8 @@ struct MyStuffLandingView295A: View {
             path: $path,
             onOpenDiscover: onOpenDiscover,
             onManagePins: onManagePins,
-            onRefresh: onRefresh
+            onRefresh: onRefresh,
+            onRetryTeamFutures: onRetryTeamFutures
         )
     }
 }
@@ -42,6 +44,7 @@ private struct MyStuffLandingBody295A: View {
     let onOpenDiscover: () -> Void
     let onManagePins: () -> Void
     let onRefresh: () async -> Void
+    let onRetryTeamFutures: (() async -> Void)?
 
     @Environment(\.colorScheme) private var colorScheme
 
@@ -101,7 +104,7 @@ private struct MyStuffLandingBody295A: View {
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(colorScheme == .dark ? DS.emerald : DS.greenReadable)
                                 .padding(.horizontal, 12)
-                                .frame(minHeight: 36)
+                                .frame(minHeight: 44)
                                 .background(
                                     Capsule()
                                         .fill((colorScheme == .dark ? DS.emerald : DS.greenReadable).opacity(0.12))
@@ -118,6 +121,56 @@ private struct MyStuffLandingBody295A: View {
                             .stroke(cardBorder, lineWidth: 1)
                     )
                     .accessibilityIdentifier("myStuff295A.loadErrorBanner")
+                }
+
+                if !landingVM.loadFailed && landingVM.teamFuturesFailed && !landingVM.loading {
+                    HStack(alignment: .center, spacing: 12) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.orange)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Couldn't load your teams' futures")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.primary)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text("Your followed teams are still saved — this read didn't finish.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 8)
+                        Button {
+                            Task { await (onRetryTeamFutures ?? onRefresh)() }
+                        } label: {
+                            Group {
+                                if landingVM.teamFuturesRetrying {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                } else {
+                                    Text("Try again")
+                                        .font(.subheadline.weight(.semibold))
+                                }
+                            }
+                            .foregroundStyle(colorScheme == .dark ? DS.emerald : DS.greenReadable)
+                            .padding(.horizontal, 12)
+                            .frame(minHeight: 44)
+                            .background(
+                                Capsule()
+                                    .fill((colorScheme == .dark ? DS.emerald : DS.greenReadable).opacity(0.12))
+                            )
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(landingVM.teamFuturesRetrying)
+                        .accessibilityIdentifier("myStuff295A.retryTeamFutures")
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 12)
+                    .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(cardSurface))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                            .stroke(cardBorder, lineWidth: 1)
+                    )
+                    .accessibilityIdentifier("myStuff295A.teamFuturesErrorBanner")
                 }
 
                 // 1. Live now
@@ -270,7 +323,8 @@ private struct MyStuffLandingBody295A: View {
                                         url: subject.logoUrl,
                                         teamName: subject.name,
                                         color: Color(hex: MyStuffTeamTextColour.logoTintHex(subject.primaryColor)),
-                                        size: 18
+                                        size: 18,
+                                        sportKey: subject.sportKey
                                     )
                                 } else {
                                     Image(systemName: subject.kind == .league ? "trophy.fill" : "square.stack.3d.up.fill")

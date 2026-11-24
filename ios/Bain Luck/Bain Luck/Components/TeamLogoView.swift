@@ -110,27 +110,48 @@ struct TeamLogoView: View {
         teamAvatarURL(servedURL: url, teamName: teamName, sportKey: sportKey)
     }
 
+    private var displayedImage: PlatformImage? {
+        if let image { return image }
+        if let primary = resolvedURL.flatMap(URL.init(string:)),
+           let cached = ImageCache.shared.cachedImage(for: primary) {
+            return cached
+        }
+        if url != nil,
+           let espn = espnTeamLogoURL(for: teamName),
+           let espnURL = URL(string: espn),
+           let cachedFallback = ImageCache.shared.cachedImage(for: espnURL) {
+            return cachedFallback
+        }
+        return nil
+    }
+
     var body: some View {
+        let activeImage = displayedImage
+        let activeDarkBacking: Bool = {
+            if image != nil { return needsDarkBacking }
+            guard colorScheme == .dark, !isPhotograph, let activeImage else { return false }
+            return Self.needsDarkSurfaceBacking(activeImage)
+        }()
         Group {
-            if let image {
+            if let activeImage {
                 if isPhotograph {
-                    Image(platformImage: image)
+                    Image(platformImage: activeImage)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
                         .frame(width: size, height: size)
                         .clipShape(RoundedRectangle(cornerRadius: size * 0.22, style: .continuous))
-                } else if colorScheme == .dark && needsDarkBacking {
+                } else if colorScheme == .dark && activeDarkBacking {
                     ZStack {
                         Circle()
                             .fill(Color.white.opacity(0.92))
-                        Image(platformImage: image)
+                        Image(platformImage: activeImage)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
                             .padding(size * 0.12)
                     }
                     .frame(width: size, height: size)
                 } else {
-                    Image(platformImage: image)
+                    Image(platformImage: activeImage)
                         .resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(width: size, height: size)
