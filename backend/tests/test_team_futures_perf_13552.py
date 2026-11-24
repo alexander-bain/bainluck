@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -93,12 +95,20 @@ def _result(rows, scalar=None):
     return res
 
 
+class QueryCanceledError(Exception):
+    """Stand-in for asyncpg.QueryCanceledError recognized by is_statement_timeout."""
+
+
 class _FakeSavepoint:
+    def __init__(self, pg_state: dict):
+        self._pg_state = pg_state
+        self._prev_aborted = pg_state["aborted"]
+
     async def commit(self):
         return None
 
     async def rollback(self):
-        return None
+        self._pg_state["aborted"] = self._prev_aborted
 
 
 def _build_pg_session(
@@ -109,12 +119,15 @@ def _build_pg_session(
     award_rows: list[tuple] | None = None,
     fleet_stamp: datetime | None = None,
     bind: SimpleNamespace | None = None,
+    initial_timeout: str = "30s",
+    fail_q1_timeout: bool = False,
 ) -> tuple[AsyncSession, list[str], list[list[int]]]:
-    """Create a real AsyncSession bound to PG dialect (no live DB socket needed)."""
+    """Create a real AsyncSession bound to PG dialect (emulates tx/savepoints/timeouts)."""
     now = fleet_stamp or _ts_now()
     markets_by_id = {m.id: m for m in markets}
     executed_sql: list[str] = []
     screen_wave_calls: list[list[int]] = []
+    pg_state = {"timeout": initial_timeout, "aborted": False}
 
     db = AsyncSession()
     fake_bind = bind or SimpleNamespace(dialect=postgresql.dialect())
@@ -123,9 +136,11 @@ def _build_pg_session(
         return fake_bind
 
     async def _begin_nested():
-        return _FakeSavepoint()
+        return _FakeSavepoint(pg_state)
 
-    async def _execute(stmt, *_a, **_k):
+    async def _execute(stmt, params=None, *_a, **_k):
+        if pg_state["aborted"]:
+            raise RuntimeError("InFailedSQLTransactionError: current transaction is aborted")
         if hasattr(stmt, "compile"):
             sql = str(
                 stmt.compile(
@@ -137,8 +152,17 @@ def _build_pg_session(
             sql = str(stmt)
         executed_sql.append(sql)
 
+        if "SHOW statement_timeout" in sql:
+            return _result([], scalar=pg_state["timeout"])
         if "SET LOCAL statement_timeout" in sql:
+            pg_state["timeout"] = sql.split("=", 1)[1].strip().strip("'")
             return _result([])
+        if "set_config('statement_timeout'" in sql:
+            val = params["val"] if isinstance(params, dict) and "val" in params else initial_timeout
+            pg_state["timeout"] = str(val)
+            return _result([], scalar=pg_state["timeout"])
+        if sql.strip() == "SELECT 1":
+            return _result([(1,)], scalar=1)
         if "max(futures_outcomes.last_updated)" in sql:
             return _result([], scalar=now)
         if "FROM teams JOIN sports" in sql:
@@ -148,6 +172,9 @@ def _build_pg_session(
         if "count(*)" in sql.lower() and "GROUP BY" in sql:
             return _result([(m.id, len(m.outcomes), sum(o.current_probability or 0 for o in m.outcomes)) for m in markets])
         if "futures_outcomes.team_id IN" in sql:
+            if fail_q1_timeout:
+                pg_state["aborted"] = True
+                raise QueryCanceledError("canceling statement due to statement timeout")
             return _result(fk_rows)
         if "futures_outcomes.name ILIKE" in sql or "open_futures_outcomes" in sql:
             return _result([])
@@ -214,6 +241,7 @@ def _build_pg_session(
     db.get_bind = _get_bind  # type: ignore[method-assign]
     db.begin_nested = _begin_nested  # type: ignore[method-assign]
     db.execute = _execute  # type: ignore[method-assign]
+    db._pg_state = pg_state  # type: ignore[attr-defined]
     return db, executed_sql, screen_wave_calls
 
 
@@ -428,7 +456,7 @@ async def test_route_cache_keyed_by_limit_and_coalesces_concurrent_requests():
     fake_user = SimpleNamespace(id=4242)
     query_calls = 0
 
-    async def _fake_query(team_ids, db, *, limit: int = 20):
+    async def _fake_query(team_ids, db, *, limit: int = 20, timings: dict | None = None):
         nonlocal query_calls
         query_calls += 1
         await asyncio.sleep(0.02)
@@ -461,3 +489,165 @@ async def test_route_cache_keyed_by_limit_and_coalesces_concurrent_requests():
         s_50 = await user_route.get_shared_team_futures(team_ids="1,2", limit=50, db=fake_db)
         assert query_calls == 2
         assert len(s_50["items"]) == 50
+
+
+async def test_wave_timeout_keeps_screened_omits_unscreened_logs_and_skips_cache(caplog):
+    """When wave 2 times out, wave 1 screened markets stay, wave 2+ unscreened are omitted, timeout+count are logged, and routes never cache incomplete answers."""
+    now = _ts_now()
+    user_route._team_futures_cache.clear()
+    user_route._shared_team_futures_cache.clear()
+    team = SimpleNamespace(
+        id=1,
+        name="Boston Celtics",
+        sport_id=1,
+        espn_id="2",
+        logo_url_small=None,
+        logo_url=None,
+        primary_color=None,
+        alternate_names=None,
+        roster_players=None,
+    )
+    markets = [
+        _market(
+            8000 + i,
+            f"Celtics Market {i}",
+            [
+                _outcome(9000 + i, 8000 + i, "Boston Celtics", round(0.9 - i * 0.01, 4), stamp=now, team_id=1),
+                _outcome(9500 + i, 8000 + i, "Other Club", round(0.1 + i * 0.01, 4), stamp=now, team_id=None, rank=2),
+            ],
+            updated_at=now,
+            source="kalshi",
+        )
+        for i in range(40)
+    ]
+    fk_rows = [(m.outcomes[0], m, "basketball_nba") for m in markets]
+
+    orig_wave_size = user_route._SCREEN_WAVE_SIZE
+    call_num = 0
+
+    async def _timeout_on_wave2(_db, screen_markets):
+        nonlocal call_num
+        call_num += 1
+        if call_num == 2:
+            raise QueryCanceledError("canceling statement due to statement timeout")
+        return {m.id: set() for m in screen_markets}
+
+    db_t, _, _ = _build_pg_session(teams=[team], fk_rows=fk_rows, markets=markets, fleet_stamp=now)
+    timings: dict = {}
+    caplog.set_level(logging.WARNING)
+    try:
+        user_route._SCREEN_WAVE_SIZE = 15
+        with patch("app.routes.futures.withheld_price_outcome_ids_for_markets", _timeout_on_wave2):
+            res = await user_route._query_team_futures([1], db_t, limit=40, timings=timings)
+    finally:
+        user_route._SCREEN_WAVE_SIZE = orig_wave_size
+
+    # Wave 1 screened top 15 markets; wave 2 timed out -> 15 kept, 25 omitted.
+    assert [it["market_id"] for it in res["items"]] == [8000 + i for i in range(15)]
+    assert timings["screen_incomplete"] is True
+    assert timings["screen_unscreened"] == 25
+    assert timings["screen_waves"] == 2
+    assert any("timed out" in rec.message and "25 unscreened" in rec.message for rec in caplog.records)
+
+    # Route endpoints never cache an answer whose screen failed/timed out.
+    class _FavAndPgDB:
+        async def execute(self, stmt, *a, **k):
+            sql = str(stmt)
+            if "user_favorites" in sql:
+                return _result([(1,)])
+            return await db_t.execute(stmt, *a, **k)
+
+        async def begin_nested(self):
+            return await db_t.begin_nested()
+
+        def get_bind(self):
+            return db_t.get_bind()
+
+    fake_user = SimpleNamespace(id=7771)
+    fav_db = _FavAndPgDB()
+    exec_count = 0
+
+    # Directly verify via route-level spy returning screen_incomplete=True
+    async def _incomplete_query(team_ids, db, *, limit=20, timings=None):
+        nonlocal exec_count
+        exec_count += 1
+        if timings is not None:
+            timings["screen_incomplete"] = True
+        return {"items": [{"market_id": 8000, "probability": 0.9}], "teams": [], "team_ids": [1], "total_count": 1}
+
+    with patch.object(user_route, "_query_team_futures", _incomplete_query):
+        await user_route.get_team_futures(limit=20, user=fake_user, db=fav_db)
+        await user_route.get_team_futures(limit=20, user=fake_user, db=fav_db)
+        assert exec_count == 2
+        await user_route.get_shared_team_futures(team_ids="1", limit=20, db=fav_db)
+        await user_route.get_shared_team_futures(team_ids="1", limit=20, db=fav_db)
+        assert exec_count == 4
+
+
+async def test_caller_transaction_isolated_on_normal_return_and_query_timeout():
+    """Caller's statement_timeout and transaction health survive BOTH normal return and Query 1 timeout."""
+    from sqlalchemy import text as sa_text
+
+    now = _ts_now()
+    user_route._award_outcomes_cache.clear()
+    team = SimpleNamespace(
+        id=1,
+        name="Boston Celtics",
+        sport_id=1,
+        espn_id="2",
+        logo_url_small=None,
+        logo_url=None,
+        primary_color=None,
+        alternate_names=None,
+        roster_players=None,
+    )
+    o = _outcome(101, 1001, "Boston Celtics", 0.28, stamp=now, team_id=1)
+    m = _market(1001, "NBA Championship Winner", [o], updated_at=now)
+
+    # (a) Normal return restores caller's previous statement_timeout and allows subsequent SQL
+    db_ok, _, _ = _build_pg_session(
+        teams=[team], fk_rows=[(o, m, "basketball_nba")], markets=[m], initial_timeout="30s"
+    )
+    res = await user_route._query_team_futures([1], db_ok, limit=20)
+    assert len(res["items"]) == 1
+    assert db_ok._pg_state["timeout"] == "30s"
+    assert db_ok._pg_state["aborted"] is False
+    assert (await db_ok.execute(sa_text("SELECT 1"))).scalar_one_or_none() == 1
+
+    # (b) Query 1 timeout rolls back outer savepoint, restores timeout, and leaves caller tx usable
+    db_to, _, _ = _build_pg_session(
+        teams=[team], fk_rows=[], markets=[m], initial_timeout="30s", fail_q1_timeout=True
+    )
+    with pytest.raises(QueryCanceledError):
+        await user_route._query_team_futures([1], db_to, limit=20)
+    assert db_to._pg_state["aborted"] is False
+    assert db_to._pg_state["timeout"] == "30s"
+    assert (await db_to.execute(sa_text("SELECT 1"))).scalar_one_or_none() == 1
+
+
+async def test_award_cache_limits_total_route_cache_age_to_120s():
+    """Route cache expires from the Award cache's own fetch time so award age never reaches 180s."""
+    user_route._team_futures_cache.clear()
+    user_route._award_outcomes_cache.clear()
+    fake_user = SimpleNamespace(id=5151)
+
+    class _FavDB:
+        async def execute(self, *_a, **_k):
+            return _result([(1,)])
+
+    fake_db = _FavDB()
+    award_fetched_at = time.time() - 55.0
+
+    async def _query_with_aged_award(team_ids, db, *, limit=20, timings=None):
+        if timings is not None:
+            timings["_award_cached_at"] = award_fetched_at
+        return {"items": [{"market_id": 1, "probability": 0.4}], "teams": [], "team_ids": [1], "total_count": 1}
+
+    with patch.object(user_route, "_query_team_futures", _query_with_aged_award):
+        await user_route.get_team_futures(limit=20, user=fake_user, db=fake_db)
+
+    scope = user_route._cache_scope_key(fake_db)
+    stored_ts, _ = user_route._team_futures_cache[(scope, fake_user.id, 20)]
+    assert stored_ts <= award_fetched_at + 1e-6
+    # 70s later (125s since award snapshot was fetched, only 70s since route cached): expired!
+    assert user_route._cache_get(user_route._team_futures_cache, (scope, fake_user.id, 20), award_fetched_at + 125.0) is None

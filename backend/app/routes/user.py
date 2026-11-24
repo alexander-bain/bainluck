@@ -8,6 +8,7 @@ import asyncio
 import logging
 import re
 import time
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any, Optional
@@ -68,6 +69,7 @@ from app.utils.market_team_sport import (
 )
 from app.utils.name_normalization import names_match as _names_match
 from app.utils.sport_keys import is_season_variant
+from app.utils.statement_timeout import is_statement_timeout
 from app.utils.team_linking import given_name_before_city
 
 logger = logging.getLogger(__name__)
@@ -1851,6 +1853,51 @@ async def _set_local_timeout_pg(db: AsyncSession, timeout_ms: int) -> None:
         await db.execute(text(f"SET LOCAL statement_timeout = '{int(timeout_ms)}'"))
 
 
+async def _get_local_timeout_pg(db: AsyncSession) -> str | None:
+    """Read current PostgreSQL session statement_timeout, or None for non-PG."""
+    if not _is_postgresql_session(db):
+        return None
+    val = (await db.execute(text("SHOW statement_timeout"))).scalar_one_or_none()
+    return None if val is None else str(val)
+
+
+async def _restore_local_timeout_pg(db: AsyncSession, prev_timeout: str | None) -> None:
+    """Restore caller transaction's statement_timeout before returning."""
+    if not _is_postgresql_session(db) or prev_timeout is None:
+        return
+    await db.execute(
+        text("SELECT set_config('statement_timeout', :val, true)"),
+        {"val": str(prev_timeout)},
+    )
+
+
+@asynccontextmanager
+async def _pg_capped_tx(db: AsyncSession, is_pg: bool, timeout_ms: int):
+    """Run PG capped queries inside an outer SAVEPOINT and restore caller timeout on exit."""
+    if not is_pg:
+        yield
+        return
+    prev_timeout = await _get_local_timeout_pg(db)
+    savepoint = await db.begin_nested()
+    try:
+        await _set_local_timeout_pg(db, timeout_ms)
+        yield
+    except BaseException:
+        try:
+            await savepoint.rollback()
+        except Exception:
+            logger.warning("team futures: outer savepoint rollback failed", exc_info=True)
+        raise
+    else:
+        await savepoint.commit()
+    finally:
+        if prev_timeout is not None:
+            try:
+                await _restore_local_timeout_pg(db, prev_timeout)
+            except Exception:
+                logger.warning("team futures: restore statement_timeout failed", exc_info=True)
+
+
 def _snapshot_award_rows(raw_rows: list) -> list[tuple]:
     """Detach cached Query-2 award rows into plain attribute holders (no session pin)."""
     snaps: list[tuple] = []
@@ -1966,787 +2013,809 @@ async def _query_team_futures(
         return {"items": [], "teams": [], "total_count": 0}
 
     is_pg = _is_postgresql_session(db)
-    await _set_local_timeout_pg(db, _TEAM_FUTURES_PG_QUERY_TIMEOUT_MS)
+    async with _pg_capped_tx(db, is_pg, _TEAM_FUTURES_PG_QUERY_TIMEOUT_MS):
 
-    # Load Team records with their sport for sport-scoped matching (BR53).
-    team_stmt = (
-        select(Team, Sport.key.label("sport_key"))
-        .join(Sport, Team.sport_id == Sport.id)
-        .where(Team.id.in_(team_ids))
-    )
-    if isinstance(db, AsyncSession):
-        team_stmt = team_stmt.options(
-            load_only(
-                Team.id,
-                Team.sport_id,
-                Team.name,
-                Team.espn_id,
-                Team.logo_url_small,
-                Team.logo_url,
-                Team.primary_color,
-                Team.alternate_names,
-                Team.roster_players,
-            )
-        )
-    result = await db.execute(team_stmt)
-    teams: dict[int, Team] = {}
-    # team_id → sport category (e.g., "hockey", "baseball")
-    team_sport_categories: dict[int, str] = {}
-    # team_id → sport key, for the side test (#9593)
-    team_sport_keys: dict[int, str] = {}
-    for t, sport_key in result.all():
-        teams[t.id] = t
-        team_sport_keys[t.id] = sport_key
-        cat = _sport_key_llm_category(sport_key)
-        if cat:
-            team_sport_categories[t.id] = cat
-
-    if not teams:
-        return {"items": [], "teams": [], "total_count": 0}
-
-    # ── Identity-collapse duplicate Team rows before matching ──
-    # Bare-location dupes ("Boston" dup of "Boston Bruins"; "New England" dup of
-    # "New England Revolution") share the SAME (sport_id, espn_id) as the canonical
-    # row but carry a bare name and ZERO team_identity_mapping rows. A null-espn
-    # dupe ("Boston Celtics" espn_id=NULL vs "Boston Celtics" espn_id=2) shares the
-    # canonical's name+sport. Without collapse a followed team surfaces twice
-    # (two matched_team + two teams_list entries) and its ILIKE patterns double up.
-    # Collapse is STRICTLY within sport_id — never merge a same-name different-sport
-    # team (NFL "New England Patriots" must not fold into MLS "New England Revolution").
-    # id_to_canonical maps EVERY loaded team id (dup + canonical) → the canonical id
-    # so the team_id FK match, matched_team, and teams_list all dedup.
-    id_to_canonical: dict[int, int] = {tid: tid for tid in teams}
-    loaded_teams: dict[int, Team] = dict(teams)
-    if len(teams) > 1:
-        # One query for identity-mapping row counts across all loaded team ids.
-        tim_counts: dict[int, int] = {}
-        tim_result = await db.execute(
-            select(TeamIdentityMapping.team_id, func.count().label("n"))
-            .where(TeamIdentityMapping.team_id.in_(list(teams.keys())))
-            .group_by(TeamIdentityMapping.team_id)
-        )
-        for _tid, _n in tim_result.all():
-            tim_counts[_tid] = _n
-
-        def _norm_team_name(nm: str | None) -> str:
-            return re.sub(r"\s+", " ", (nm or "").strip().lower())
-
-        # Union-find over loaded teams (within sport only). Two teams merge when
-        # they share a non-null espn_id OR a normalized name (same sport).
-        parent: dict[int, int] = {tid: tid for tid in teams}
-
-        def _find(x: int) -> int:
-            while parent[x] != x:
-                parent[x] = parent[parent[x]]
-                x = parent[x]
-            return x
-
-        def _union(a: int, b: int) -> None:
-            ra, rb = _find(a), _find(b)
-            if ra != rb:
-                parent[ra] = rb
-
-        team_list = list(teams.values())
-        for i in range(len(team_list)):
-            for j in range(i + 1, len(team_list)):
-                a, b = team_list[i], team_list[j]
-                if a.sport_id != b.sport_id:
-                    continue  # NEVER merge across sports
-                same_espn = bool(a.espn_id) and bool(b.espn_id) and str(a.espn_id) == str(b.espn_id)
-                a_norm = _norm_team_name(a.name)
-                same_name = bool(a_norm) and a_norm == _norm_team_name(b.name)
-                if same_espn or same_name:
-                    _union(a.id, b.id)
-
-        # Pick the canonical row per cluster: most identity-mapping rows, tiebreak
-        # longest name (the bare-location dup has the shorter name).
-        clusters: dict[int, list[Team]] = {}
-        for t in team_list:
-            clusters.setdefault(_find(t.id), []).append(t)
-
-        collapsed_teams: dict[int, Team] = {}
-        id_to_canonical = {}
-        for members in clusters.values():
-            canonical = max(
-                members,
-                key=lambda m: (tim_counts.get(m.id, 0), len(m.name or "")),
-            )
-            collapsed_teams[canonical.id] = canonical
-            for m in members:
-                id_to_canonical[m.id] = canonical.id
-
-        teams = collapsed_teams
-        # Remap sport categories onto the canonical ids.
-        remapped_cats: dict[int, str] = {}
-        for _tid, _cat in team_sport_categories.items():
-            remapped_cats[id_to_canonical.get(_tid, _tid)] = _cat
-        team_sport_categories = remapped_cats
-        # The collapse never crosses sport_id, so a cluster shares one key.
-        team_sport_keys = {
-            id_to_canonical.get(_tid, _tid): _key
-            for _tid, _key in team_sport_keys.items()
-        }
-
-    # Build ILIKE patterns from FULL team names only — no alternate_names,
-    # no short suffixes.  This prevents "Bears" (from "Brown Bears") from
-    # matching "Chicago Bears" or "Eagles" matching "Philadelphia Eagles".
-    #
-    # #9219 — EVERY MEMBER'S SPELLING, NOT ONLY THE CANONICAL'S. The patterns
-    # used to be built after the collapse, from the one row that won it. The
-    # Canadiens are 568 "Montreal Canadiens" and 3706 "Montréal Canadiens", tied
-    # on mappings and name length, so whichever won, the other spelling was
-    # never searched: the page served 3 of the club's markets while the
-    # division, playoff-round and title legs, all named "Montreal Canadiens",
-    # sat unread. A dupe row's full name is the same club's full name, so it
-    # is searched too and a hit resolves to the canonical.
-    team_patterns: list[str] = []
-    seen_lower: set[str] = set()
-    member_names: dict[int, list[str]] = {}
-    # Build roster player name → team ID map (for Python-side matching)
-    player_to_team_id: dict[str, int] = {}
-
-    for member_id, member in loaded_teams.items():
-        canonical_id = id_to_canonical.get(member_id, member_id)
-        if canonical_id not in teams or not member.name:
-            continue
-        names = member_names.setdefault(canonical_id, [])
-        if member.name not in names:
-            names.append(member.name)
-        escaped = _escape_like(member.name.strip())
-        if escaped.lower() not in seen_lower:
-            seen_lower.add(escaped.lower())
-            team_patterns.append(escaped)
-
-    for t in teams.values():
-        # Collect roster player names for Python-side matching (not SQL ILIKE)
-        roster = t.roster_players
-        if roster and isinstance(roster, list):
-            for item in roster:
-                if isinstance(item, dict):
-                    player_name = item.get("name")
-                elif isinstance(item, str):
-                    player_name = item
-                else:
-                    continue
-                if isinstance(player_name, str) and len(player_name) >= 4:
-                    player_to_team_id[player_name.lower()] = t.id
-
-    roster_regex: re.Pattern[str] | None = None
-    if player_to_team_id:
-        # Longest-first single C-engine alternation skips linear ~800-key scans per outcome.
-        roster_keys_desc = sorted(player_to_team_id, key=len, reverse=True)
-        roster_regex = re.compile("|".join(re.escape(k) for k in roster_keys_desc))
-
-    # NOTE (#1197 r259 team-route latency): the per-market outcome count + field
-    # probability sum ("#3 of 30" context; #237 Item 3 coherence signal) used to be
-    # an outcome_count_sq subquery — a GROUP BY over the ENTIRE 1.2M-row
-    # futures_outcomes table with NO filter — pre-joined into query1/query2. That
-    # unfiltered full-table aggregate was the ~6s team-page futures section (and a
-    # drag on the feed). It is now a post-hoc lookup SCOPED to only the result
-    # markets (a few hundred), computed after query1/query2 below.
-
-    # Common market-level filters
-    market_base_filters = [
-        FuturesMarket.status == "open",
-        FuturesMarket.event_id.is_(None),
-        # Filter game-level markets by name pattern (some have event_id=None)
-        ~FuturesMarket.name.ilike("% vs %"),
-        ~FuturesMarket.name.ilike("% vs. %"),
-    ]
-
-    # ── Query 1: Team matching (team_id FK + team-name ILIKE) ──
-    # #1197 (r259): split OR into separate indexed branches.
-    # #13552: on PostgreSQL, keep ILIKE ANY (ARRAY[...]) (single GIN scan instead of
-    # N-way BitmapOr) and route through #4437 `open_futures_outcomes` (~262k open rows
-    # instead of 8.8M closed+open rows) when its maintainer state is current.
-    _order_by = (
-        FuturesOutcome.current_probability.desc().nulls_last(),
-        func.abs(FuturesOutcome.probability_change_24h).desc().nulls_last(),
-        FuturesOutcome.id.asc(),
-    )
-
-    _outcome_load_opts = load_only(
-        FuturesOutcome.id,
-        FuturesOutcome.market_id,
-        FuturesOutcome.external_id,
-        FuturesOutcome.name,
-        FuturesOutcome.team_id,
-        FuturesOutcome.current_probability,
-        FuturesOutcome.probability_change_24h,
-        FuturesOutcome.current_yes_bid,
-        FuturesOutcome.current_yes_ask,
-        FuturesOutcome.rank,
-        FuturesOutcome.is_winner,
-        FuturesOutcome.resolution_source,
-        FuturesOutcome.last_updated,
-        FuturesOutcome.volume_24h,
-        FuturesOutcome.volume_24h_at,
-    )
-    _market_load_opts = load_only(
-        FuturesMarket.id,
-        FuturesMarket.source,
-        FuturesMarket.external_id,
-        FuturesMarket.sport_id,
-        FuturesMarket.event_id,
-        FuturesMarket.name,
-        FuturesMarket.llm_sport_category,
-        FuturesMarket.market_tier,
-        FuturesMarket.market_type,
-        FuturesMarket.status,
-        FuturesMarket.resolution_date,
-        FuturesMarket.canonical_market_key,
-        FuturesMarket.market_metadata,
-        FuturesMarket.updated_at,
-    )
-
-    def _q1(cond):
-        stmt = (
-            select(FuturesOutcome, FuturesMarket, Sport.key.label("market_sport_key"))
-            .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
-            .outerjoin(Sport, FuturesMarket.sport_id == Sport.id)
-            .where(and_(*market_base_filters, cond))
-            .order_by(*_order_by)
-            .limit(limit * 5)
+        # Load Team records with their sport for sport-scoped matching (BR53).
+        team_stmt = (
+            select(Team, Sport.key.label("sport_key"))
+            .join(Sport, Team.sport_id == Sport.id)
+            .where(Team.id.in_(team_ids))
         )
         if isinstance(db, AsyncSession):
-            stmt = stmt.options(_outcome_load_opts, _market_load_opts)
-        return stmt
-
-    _tq = time.perf_counter()
-    rows1 = list((await db.execute(_q1(FuturesOutcome.team_id.in_(team_ids)))).all())
-    if team_patterns:
-        if is_pg:
-            from app.utils.open_futures_outcomes import outcome_ids_named
-
-            pats = [f"%{p}%" for p in team_patterns]
-            pg_name_cond = FuturesOutcome.name.ilike(any_(literal(pats, ARRAY(Text))))
-            open_candidates = outcome_ids_named(pg_name_cond)
-            name_cond = (
-                pg_name_cond
-                if open_candidates is None
-                else FuturesOutcome.id == any_(func.array(open_candidates.scalar_subquery()))
+            team_stmt = team_stmt.options(
+                load_only(
+                    Team.id,
+                    Team.sport_id,
+                    Team.name,
+                    Team.espn_id,
+                    Team.logo_url_small,
+                    Team.logo_url,
+                    Team.primary_color,
+                    Team.alternate_names,
+                    Team.roster_players,
+                )
             )
-        else:
-            name_cond = or_(*[FuturesOutcome.name.ilike(f"%{p}%") for p in team_patterns])
-        name_rows = (await db.execute(_q1(name_cond))).all()
-        _seen_oids = {o.id for o, _m, _sk in rows1}
-        rows1.extend(r for r in name_rows if r[0].id not in _seen_oids)
-    if timings is not None:
-        timings["q1"] = round((time.perf_counter() - _tq) * 1000)
+        team_result = await db.execute(team_stmt)
+        teams: dict[int, Team] = {}
+        # team_id → sport category (e.g., "hockey", "baseball")
+        team_sport_categories: dict[int, str] = {}
+        # team_id → sport key, for the side test (#9593)
+        team_sport_keys: dict[int, str] = {}
+        for t, sport_key in team_result.all():
+            teams[t.id] = t
+            team_sport_keys[t.id] = sport_key
+            cat = _sport_key_llm_category(sport_key)
+            if cat:
+                team_sport_categories[t.id] = cat
 
-    # ── Query 2: Award markets — fetch all outcomes, match players in Python ──
-    # Only runs if we have roster players to match against.
-    # Zero team/user inputs: cache on real PG sessions for 60s with singleflight.
-    rows2: list = []
-    if player_to_team_id:
-        _tq = time.perf_counter()
-        if is_pg:
-            _eng_key = _cache_scope_key(db)
-            _now_mono = time.monotonic()
-            cached_award = _award_outcomes_cache.get(_eng_key)
-            if cached_award is not None and (_now_mono - cached_award[0]) < _AWARD_OUTCOMES_TTL:
-                rows2 = cached_award[1]
-            else:
-                async with _get_inflight_lock("award_q2", (_eng_key,)):
-                    _now_mono = time.monotonic()
-                    cached_award = _award_outcomes_cache.get(_eng_key)
-                    if cached_award is not None and (_now_mono - cached_award[0]) < _AWARD_OUTCOMES_TTL:
-                        rows2 = cached_award[1]
+        if not teams:
+            return {"items": [], "teams": [], "total_count": 0}
+
+        # ── Identity-collapse duplicate Team rows before matching ──
+        # Bare-location dupes ("Boston" dup of "Boston Bruins"; "New England" dup of
+        # "New England Revolution") share the SAME (sport_id, espn_id) as the canonical
+        # row but carry a bare name and ZERO team_identity_mapping rows. A null-espn
+        # dupe ("Boston Celtics" espn_id=NULL vs "Boston Celtics" espn_id=2) shares the
+        # canonical's name+sport. Without collapse a followed team surfaces twice
+        # (two matched_team + two teams_list entries) and its ILIKE patterns double up.
+        # Collapse is STRICTLY within sport_id — never merge a same-name different-sport
+        # team (NFL "New England Patriots" must not fold into MLS "New England Revolution").
+        # id_to_canonical maps EVERY loaded team id (dup + canonical) → the canonical id
+        # so the team_id FK match, matched_team, and teams_list all dedup.
+        id_to_canonical: dict[int, int] = {tid: tid for tid in teams}
+        loaded_teams: dict[int, Team] = dict(teams)
+        if len(teams) > 1:
+            # One query for identity-mapping row counts across all loaded team ids.
+            tim_counts: dict[int, int] = {}
+            tim_result = await db.execute(
+                select(TeamIdentityMapping.team_id, func.count().label("n"))
+                .where(TeamIdentityMapping.team_id.in_(list(teams.keys())))
+                .group_by(TeamIdentityMapping.team_id)
+            )
+            for _tid, _n in tim_result.all():
+                tim_counts[_tid] = _n
+
+            def _norm_team_name(nm: str | None) -> str:
+                return re.sub(r"\s+", " ", (nm or "").strip().lower())
+
+            # Union-find over loaded teams (within sport only). Two teams merge when
+            # they share a non-null espn_id OR a normalized name (same sport).
+            parent: dict[int, int] = {tid: tid for tid in teams}
+
+            def _find(x: int) -> int:
+                while parent[x] != x:
+                    parent[x] = parent[parent[x]]
+                    x = parent[x]
+                return x
+
+            def _union(a: int, b: int) -> None:
+                ra, rb = _find(a), _find(b)
+                if ra != rb:
+                    parent[ra] = rb
+
+            team_list = list(teams.values())
+            for i in range(len(team_list)):
+                for j in range(i + 1, len(team_list)):
+                    a, b = team_list[i], team_list[j]
+                    if a.sport_id != b.sport_id:
+                        continue  # NEVER merge across sports
+                    same_espn = bool(a.espn_id) and bool(b.espn_id) and str(a.espn_id) == str(b.espn_id)
+                    a_norm = _norm_team_name(a.name)
+                    same_name = bool(a_norm) and a_norm == _norm_team_name(b.name)
+                    if same_espn or same_name:
+                        _union(a.id, b.id)
+
+            # Pick the canonical row per cluster: most identity-mapping rows, tiebreak
+            # longest name (the bare-location dup has the shorter name).
+            clusters: dict[int, list[Team]] = {}
+            for t in team_list:
+                clusters.setdefault(_find(t.id), []).append(t)
+
+            collapsed_teams: dict[int, Team] = {}
+            id_to_canonical = {}
+            for members in clusters.values():
+                canonical = max(
+                    members,
+                    key=lambda m: (tim_counts.get(m.id, 0), len(m.name or "")),
+                )
+                collapsed_teams[canonical.id] = canonical
+                for m in members:
+                    id_to_canonical[m.id] = canonical.id
+
+            teams = collapsed_teams
+            # Remap sport categories onto the canonical ids.
+            remapped_cats: dict[int, str] = {}
+            for _tid, _cat in team_sport_categories.items():
+                remapped_cats[id_to_canonical.get(_tid, _tid)] = _cat
+            team_sport_categories = remapped_cats
+            # The collapse never crosses sport_id, so a cluster shares one key.
+            team_sport_keys = {
+                id_to_canonical.get(_tid, _tid): _key
+                for _tid, _key in team_sport_keys.items()
+            }
+
+        # Build ILIKE patterns from FULL team names only — no alternate_names,
+        # no short suffixes.  This prevents "Bears" (from "Brown Bears") from
+        # matching "Chicago Bears" or "Eagles" matching "Philadelphia Eagles".
+        #
+        # #9219 — EVERY MEMBER'S SPELLING, NOT ONLY THE CANONICAL'S. The patterns
+        # used to be built after the collapse, from the one row that won it. The
+        # Canadiens are 568 "Montreal Canadiens" and 3706 "Montréal Canadiens", tied
+        # on mappings and name length, so whichever won, the other spelling was
+        # never searched: the page served 3 of the club's markets while the
+        # division, playoff-round and title legs, all named "Montreal Canadiens",
+        # sat unread. A dupe row's full name is the same club's full name, so it
+        # is searched too and a hit resolves to the canonical.
+        team_patterns: list[str] = []
+        seen_lower: set[str] = set()
+        member_names: dict[int, list[str]] = {}
+        # Build roster player name → team ID map (for Python-side matching)
+        player_to_team_id: dict[str, int] = {}
+
+        for member_id, member in loaded_teams.items():
+            canonical_id = id_to_canonical.get(member_id, member_id)
+            if canonical_id not in teams or not member.name:
+                continue
+            names = member_names.setdefault(canonical_id, [])
+            if member.name not in names:
+                names.append(member.name)
+            escaped = _escape_like(member.name.strip())
+            if escaped.lower() not in seen_lower:
+                seen_lower.add(escaped.lower())
+                team_patterns.append(escaped)
+
+        for t in teams.values():
+            # Collect roster player names for Python-side matching (not SQL ILIKE)
+            roster = t.roster_players
+            if roster and isinstance(roster, list):
+                for item in roster:
+                    if isinstance(item, dict):
+                        player_name = item.get("name")
+                    elif isinstance(item, str):
+                        player_name = item
                     else:
-                        award_pats = [f"%{kw}%" for kw in _AWARD_KEYWORDS]
-                        award_cond = FuturesMarket.name.ilike(any_(literal(award_pats, ARRAY(Text))))
-                        query2 = (
-                            select(FuturesOutcome, FuturesMarket, Sport.key.label("market_sport_key"))
-                            .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
-                            .outerjoin(Sport, FuturesMarket.sport_id == Sport.id)
-                            .where(and_(*market_base_filters, award_cond))
-                            .order_by(FuturesOutcome.current_probability.desc().nulls_last(), FuturesOutcome.id.asc())
-                            .limit(500)
-                            .options(_outcome_load_opts, _market_load_opts)
-                        )
-                        raw_award = (await db.execute(query2)).all()
-                        rows2 = _snapshot_award_rows(raw_award)
-                        if len(_award_outcomes_cache) >= _AWARD_OUTCOMES_CACHE_MAX:
-                            oldest_ak = min(_award_outcomes_cache, key=lambda k: _award_outcomes_cache[k][0])
-                            del _award_outcomes_cache[oldest_ak]
-                        _award_outcomes_cache[_eng_key] = (time.monotonic(), rows2)
-        else:
-            award_keywords = [
-                "MVP", "Player of the Year", "Rookie of the Year",
-                "Defensive Player", "Coach of the Year", "Cy Young",
-                "Heisman", "Most Improved", "Sixth Man", "Clutch",
-                "Finals MVP", "All-Star",
-            ]
-            award_filters = [FuturesMarket.name.ilike(f"%{kw}%") for kw in award_keywords]
-            query2 = (
+                        continue
+                    if isinstance(player_name, str) and len(player_name) >= 4:
+                        player_to_team_id[player_name.lower()] = t.id
+
+        roster_regex: re.Pattern[str] | None = None
+        if player_to_team_id:
+            # Longest-first single C-engine alternation skips linear ~800-key scans per outcome.
+            roster_keys_desc = sorted(player_to_team_id, key=len, reverse=True)
+            roster_regex = re.compile("|".join(re.escape(k) for k in roster_keys_desc))
+
+        # NOTE (#1197 r259 team-route latency): the per-market outcome count + field
+        # probability sum ("#3 of 30" context; #237 Item 3 coherence signal) used to be
+        # an outcome_count_sq subquery — a GROUP BY over the ENTIRE 1.2M-row
+        # futures_outcomes table with NO filter — pre-joined into query1/query2. That
+        # unfiltered full-table aggregate was the ~6s team-page futures section (and a
+        # drag on the feed). It is now a post-hoc lookup SCOPED to only the result
+        # markets (a few hundred), computed after query1/query2 below.
+
+        # Common market-level filters
+        market_base_filters = [
+            FuturesMarket.status == "open",
+            FuturesMarket.event_id.is_(None),
+            # Filter game-level markets by name pattern (some have event_id=None)
+            ~FuturesMarket.name.ilike("% vs %"),
+            ~FuturesMarket.name.ilike("% vs. %"),
+        ]
+
+        # ── Query 1: Team matching (team_id FK + team-name ILIKE) ──
+        # #1197 (r259): split OR into separate indexed branches.
+        # #13552: on PostgreSQL, keep ILIKE ANY (ARRAY[...]) (single GIN scan instead of
+        # N-way BitmapOr) and route through #4437 `open_futures_outcomes` (~262k open rows
+        # instead of 8.8M closed+open rows) when its maintainer state is current.
+        _order_by = (
+            FuturesOutcome.current_probability.desc().nulls_last(),
+            func.abs(FuturesOutcome.probability_change_24h).desc().nulls_last(),
+            FuturesOutcome.id.asc(),
+        )
+
+        _outcome_load_opts = load_only(
+            FuturesOutcome.id,
+            FuturesOutcome.market_id,
+            FuturesOutcome.external_id,
+            FuturesOutcome.name,
+            FuturesOutcome.team_id,
+            FuturesOutcome.current_probability,
+            FuturesOutcome.probability_change_24h,
+            FuturesOutcome.current_yes_bid,
+            FuturesOutcome.current_yes_ask,
+            FuturesOutcome.rank,
+            FuturesOutcome.is_winner,
+            FuturesOutcome.resolution_source,
+            FuturesOutcome.last_updated,
+            FuturesOutcome.volume_24h,
+            FuturesOutcome.volume_24h_at,
+        )
+        _market_load_opts = load_only(
+            FuturesMarket.id,
+            FuturesMarket.source,
+            FuturesMarket.external_id,
+            FuturesMarket.sport_id,
+            FuturesMarket.event_id,
+            FuturesMarket.name,
+            FuturesMarket.llm_sport_category,
+            FuturesMarket.market_tier,
+            FuturesMarket.market_type,
+            FuturesMarket.status,
+            FuturesMarket.resolution_date,
+            FuturesMarket.canonical_market_key,
+            FuturesMarket.market_metadata,
+            FuturesMarket.updated_at,
+        )
+
+        def _q1(cond):
+            stmt = (
                 select(FuturesOutcome, FuturesMarket, Sport.key.label("market_sport_key"))
                 .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
                 .outerjoin(Sport, FuturesMarket.sport_id == Sport.id)
-                .where(and_(*market_base_filters, or_(*award_filters)))
-                .order_by(FuturesOutcome.current_probability.desc().nulls_last())
-                .limit(500)  # Award markets are few — fetch all outcomes
+                .where(and_(*market_base_filters, cond))
+                .order_by(*_order_by)
+                .limit(limit * 5)
             )
             if isinstance(db, AsyncSession):
-                query2 = query2.options(_outcome_load_opts, _market_load_opts)
-            result2 = await db.execute(query2)
-            rows2 = result2.all()
+                stmt = stmt.options(_outcome_load_opts, _market_load_opts)
+            return stmt
+
+        _tq = time.perf_counter()
+        rows1 = list((await db.execute(_q1(FuturesOutcome.team_id.in_(team_ids)))).all())
+        if team_patterns:
+            if is_pg:
+                from app.utils.open_futures_outcomes import outcome_ids_named
+
+                pats = [f"%{p}%" for p in team_patterns]
+                pg_name_cond = FuturesOutcome.name.ilike(any_(literal(pats, ARRAY(Text))))
+                open_candidates = outcome_ids_named(pg_name_cond)
+                name_cond = (
+                    pg_name_cond
+                    if open_candidates is None
+                    else FuturesOutcome.id == any_(func.array(open_candidates.scalar_subquery()))
+                )
+            else:
+                name_cond = or_(*[FuturesOutcome.name.ilike(f"%{p}%") for p in team_patterns])
+            name_rows = (await db.execute(_q1(name_cond))).all()
+            _seen_oids = {o.id for o, _m, _sk in rows1}
+            rows1.extend(r for r in name_rows if r[0].id not in _seen_oids)
         if timings is not None:
-            timings["q2"] = round((time.perf_counter() - _tq) * 1000)
+            timings["q1"] = round((time.perf_counter() - _tq) * 1000)
 
-    # For each outcome, figure out which followed team matched ONCE (#13552).
-    # Uses strict suffix-word matching + O(1)/regex roster player matching.
-    # BR53: name/player matches require the market's sport category to match
-    # the team's sport category to prevent cross-sport false positives
-    # (e.g., "Aliya Boston" WNBA player under Boston Bruins branding,
-    # or "Believers: Boston Red Sox" Sports Emmy matching baseball teams).
-    def _find_matched_team(
-        outcome: FuturesOutcome,
-        market: FuturesMarket,
-        market_sport_key: str | None = None,
-    ) -> dict | None:
-        # Derive market sport category for cross-sport filtering (BR53).
-        market_sport_cat: str | None = market.llm_sport_category
-        if not market_sport_cat and market_sport_key:
-            market_sport_cat = _sport_key_llm_category(market_sport_key)
-        outcome_name = outcome.name or ""
-        market_name = (market.name or "").casefold()
-
-        def _coach_surname_matches_city(team: Team) -> bool:
-            # A stored Blues link can put Canadiens coach Martin St. Louis
-            # on the Blues rail. A full roster match can still bind.
-            if "coach of the year" not in market_name and "jack adams award" not in market_name:
-                return False
-            if player_to_team_id.get(outcome_name.lower()) == team.id:
-                return False
-            aliases = getattr(team, "alternate_names", None)
-            return isinstance(aliases, list) and any(
-                given_name_before_city(outcome_name, alias, team.name, ignore_city_periods=True)
-                for alias in aliases if isinstance(alias, str)
-            )
-
-        # #2593 / #9593 / #9761: verify sport, gender side, and league on every branch.
-        def _crosses_side(team_id: int) -> bool:
-            return _link_crosses_gender(
-                market.name,
-                team_sport_keys.get(team_id),
-                market_sport_key,
-                getattr(market, "source", None),
-                getattr(market, "external_id", None),
-            ) or _link_crosses_league(
-                getattr(market, "source", None),
-                getattr(market, "external_id", None),
-                team_sport_keys.get(team_id),
-                _market_event_slug(getattr(market, "market_metadata", None)),
-            )
-
-        canonical_id = id_to_canonical.get(outcome.team_id) if outcome.team_id else None
-        if canonical_id and (
-            _link_crosses_sport(market_sport_cat, team_sport_categories.get(canonical_id))
-            or _crosses_side(canonical_id)
-        ):
-            canonical_id = None
-        if canonical_id and canonical_id in teams:
-            t = teams[canonical_id]
-            if not _coach_surname_matches_city(t):
-                return {
-                    "id": t.id,
-                    "name": t.name,
-                    "logo_small": t.logo_url_small or t.logo_url,
-                    "primary_color": t.primary_color,
-                }
-        # Name matching — use strict suffix-word logic to prevent
-        # "Bears" (from "Brown Bears") matching "Chicago Bears".
-        for t in teams.values():
-            if any(
-                _strict_team_name_matches(nm, outcome_name)
-                for nm in member_names.get(t.id, [t.name or ""])
-            ):
-                # BR53: verify sport compatibility for name matches
-                if market_sport_cat:
-                    team_cat = team_sport_categories.get(t.id)
-                    if team_cat and team_cat != market_sport_cat:
-                        continue  # sport mismatch — try next team
-                if _crosses_side(t.id) or _coach_surname_matches_city(t):
-                    continue
-                return {
-                    "id": t.id,
-                    "name": t.name,
-                    "logo_small": t.logo_url_small or t.logo_url,
-                    "primary_color": t.primary_color,
-                }
-        # Roster player matching — O(1) exact check first, single compiled regex for substrings.
+        # ── Query 2: Award markets — fetch all outcomes, match players in Python ──
+        # Only runs if we have roster players to match against.
+        # Zero team/user inputs: cache on real PG sessions for 60s with singleflight.
+        rows2: list = []
+        _award_wall_ts: float | None = None
         if player_to_team_id:
-            outcome_lower = outcome_name.lower()
-            exact_tid = player_to_team_id.get(outcome_lower)
-            if exact_tid is not None:
-                t = teams.get(exact_tid)
-                if t:
-                    ok = True
+            _tq = time.perf_counter()
+            if is_pg:
+                _eng_key = _cache_scope_key(db)
+                _now_mono = time.monotonic()
+                cached_award = _award_outcomes_cache.get(_eng_key)
+                if cached_award is not None and (_now_mono - cached_award[0]) < _AWARD_OUTCOMES_TTL:
+                    _award_wall_ts, rows2 = cached_award[1], cached_award[2]
+                else:
+                    async with _get_inflight_lock("award_q2", (_eng_key,)):
+                        _now_mono = time.monotonic()
+                        cached_award = _award_outcomes_cache.get(_eng_key)
+                        if cached_award is not None and (_now_mono - cached_award[0]) < _AWARD_OUTCOMES_TTL:
+                            _award_wall_ts, rows2 = cached_award[1], cached_award[2]
+                        else:
+                            award_pats = [f"%{kw}%" for kw in _AWARD_KEYWORDS]
+                            award_cond = FuturesMarket.name.ilike(any_(literal(award_pats, ARRAY(Text))))
+                            query2 = (
+                                select(FuturesOutcome, FuturesMarket, Sport.key.label("market_sport_key"))
+                                .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+                                .outerjoin(Sport, FuturesMarket.sport_id == Sport.id)
+                                .where(and_(*market_base_filters, award_cond))
+                                .order_by(FuturesOutcome.current_probability.desc().nulls_last(), FuturesOutcome.id.asc())
+                                .limit(500)
+                                .options(_outcome_load_opts, _market_load_opts)
+                            )
+                            raw_award = (await db.execute(query2)).all()
+                            rows2 = _snapshot_award_rows(raw_award)
+                            _award_wall_ts = time.time()
+                            if len(_award_outcomes_cache) >= _AWARD_OUTCOMES_CACHE_MAX:
+                                oldest_ak = min(_award_outcomes_cache, key=lambda k: _award_outcomes_cache[k][0])
+                                del _award_outcomes_cache[oldest_ak]
+                            _award_outcomes_cache[_eng_key] = (time.monotonic(), _award_wall_ts, rows2)
+            else:
+                award_keywords = [
+                    "MVP", "Player of the Year", "Rookie of the Year",
+                    "Defensive Player", "Coach of the Year", "Cy Young",
+                    "Heisman", "Most Improved", "Sixth Man", "Clutch",
+                    "Finals MVP", "All-Star",
+                ]
+                award_filters = [FuturesMarket.name.ilike(f"%{kw}%") for kw in award_keywords]
+                query2 = (
+                    select(FuturesOutcome, FuturesMarket, Sport.key.label("market_sport_key"))
+                    .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+                    .outerjoin(Sport, FuturesMarket.sport_id == Sport.id)
+                    .where(and_(*market_base_filters, or_(*award_filters)))
+                    .order_by(FuturesOutcome.current_probability.desc().nulls_last())
+                    .limit(500)  # Award markets are few — fetch all outcomes
+                )
+                if isinstance(db, AsyncSession):
+                    query2 = query2.options(_outcome_load_opts, _market_load_opts)
+                result2 = await db.execute(query2)
+                rows2 = result2.all()
+            if timings is not None:
+                timings["q2"] = round((time.perf_counter() - _tq) * 1000)
+
+        # For each outcome, figure out which followed team matched ONCE (#13552).
+        # Uses strict suffix-word matching + O(1)/regex roster player matching.
+        # BR53: name/player matches require the market's sport category to match
+        # the team's sport category to prevent cross-sport false positives
+        # (e.g., "Aliya Boston" WNBA player under Boston Bruins branding,
+        # or "Believers: Boston Red Sox" Sports Emmy matching baseball teams).
+        def _find_matched_team(
+            outcome: FuturesOutcome,
+            market: FuturesMarket,
+            market_sport_key: str | None = None,
+        ) -> dict | None:
+            # Derive market sport category for cross-sport filtering (BR53).
+            market_sport_cat: str | None = market.llm_sport_category
+            if not market_sport_cat and market_sport_key:
+                market_sport_cat = _sport_key_llm_category(market_sport_key)
+            outcome_name = outcome.name or ""
+            market_name = (market.name or "").casefold()
+
+            def _coach_surname_matches_city(team: Team) -> bool:
+                # A stored Blues link can put Canadiens coach Martin St. Louis
+                # on the Blues rail. A full roster match can still bind.
+                if "coach of the year" not in market_name and "jack adams award" not in market_name:
+                    return False
+                if player_to_team_id.get(outcome_name.lower()) == team.id:
+                    return False
+                aliases = getattr(team, "alternate_names", None)
+                return isinstance(aliases, list) and any(
+                    given_name_before_city(outcome_name, alias, team.name, ignore_city_periods=True)
+                    for alias in aliases if isinstance(alias, str)
+                )
+
+            # #2593 / #9593 / #9761: verify sport, gender side, and league on every branch.
+            def _crosses_side(team_id: int) -> bool:
+                return _link_crosses_gender(
+                    market.name,
+                    team_sport_keys.get(team_id),
+                    market_sport_key,
+                    getattr(market, "source", None),
+                    getattr(market, "external_id", None),
+                ) or _link_crosses_league(
+                    getattr(market, "source", None),
+                    getattr(market, "external_id", None),
+                    team_sport_keys.get(team_id),
+                    _market_event_slug(getattr(market, "market_metadata", None)),
+                )
+
+            canonical_id = id_to_canonical.get(outcome.team_id) if outcome.team_id else None
+            if canonical_id and (
+                _link_crosses_sport(market_sport_cat, team_sport_categories.get(canonical_id))
+                or _crosses_side(canonical_id)
+            ):
+                canonical_id = None
+            if canonical_id and canonical_id in teams:
+                t = teams[canonical_id]
+                if not _coach_surname_matches_city(t):
+                    return {
+                        "id": t.id,
+                        "name": t.name,
+                        "logo_small": t.logo_url_small or t.logo_url,
+                        "primary_color": t.primary_color,
+                    }
+            # Name matching — use strict suffix-word logic to prevent
+            # "Bears" (from "Brown Bears") matching "Chicago Bears".
+            for t in teams.values():
+                if any(
+                    _strict_team_name_matches(nm, outcome_name)
+                    for nm in member_names.get(t.id, [t.name or ""])
+                ):
+                    # BR53: verify sport compatibility for name matches
                     if market_sport_cat:
                         team_cat = team_sport_categories.get(t.id)
                         if team_cat and team_cat != market_sport_cat:
+                            continue  # sport mismatch — try next team
+                    if _crosses_side(t.id) or _coach_surname_matches_city(t):
+                        continue
+                    return {
+                        "id": t.id,
+                        "name": t.name,
+                        "logo_small": t.logo_url_small or t.logo_url,
+                        "primary_color": t.primary_color,
+                    }
+            # Roster player matching — O(1) exact check first, single compiled regex for substrings.
+            if player_to_team_id:
+                outcome_lower = outcome_name.lower()
+                exact_tid = player_to_team_id.get(outcome_lower)
+                if exact_tid is not None:
+                    t = teams.get(exact_tid)
+                    if t:
+                        ok = True
+                        if market_sport_cat:
+                            team_cat = team_sport_categories.get(t.id)
+                            if team_cat and team_cat != market_sport_cat:
+                                ok = False
+                        if ok and _crosses_side(t.id):
                             ok = False
-                    if ok and _crosses_side(t.id):
-                        ok = False
-                    if ok:
-                        return {
-                            "id": t.id,
-                            "name": t.name,
-                            "logo_small": t.logo_url_small or t.logo_url,
-                            "primary_color": t.primary_color,
-                        }
-            if roster_regex is not None and roster_regex.search(outcome_lower):
-                for player_lower, tid in player_to_team_id.items():
-                    if player_lower in outcome_lower:
-                        t = teams.get(tid)
-                        if t:
-                            if market_sport_cat:
-                                team_cat = team_sport_categories.get(t.id)
-                                if team_cat and team_cat != market_sport_cat:
-                                    continue  # sport mismatch — try next player
-                            if _crosses_side(t.id):
-                                continue  # the other side's market (#9593)
+                        if ok:
                             return {
                                 "id": t.id,
                                 "name": t.name,
                                 "logo_small": t.logo_url_small or t.logo_url,
                                 "primary_color": t.primary_color,
                             }
-        return None
+                if roster_regex is not None and roster_regex.search(outcome_lower):
+                    for player_lower, tid in player_to_team_id.items():
+                        if player_lower in outcome_lower:
+                            t = teams.get(tid)
+                            if t:
+                                if market_sport_cat:
+                                    team_cat = team_sport_categories.get(t.id)
+                                    if team_cat and team_cat != market_sport_cat:
+                                        continue  # sport mismatch — try next player
+                                if _crosses_side(t.id):
+                                    continue  # the other side's market (#9593)
+                                return {
+                                    "id": t.id,
+                                    "name": t.name,
+                                    "logo_small": t.logo_url_small or t.logo_url,
+                                    "primary_color": t.primary_color,
+                                }
+            return None
 
-    candidate_rows = list(rows1) + list(rows2)
-    matched_rows: list[tuple[Any, Any, str | None, dict]] = []
-    matched_oids_by_market: dict[int, set[int]] = {}
-    for _o, _m, _sk in candidate_rows:
-        _matched = _find_matched_team(_o, _m, market_sport_key=_sk)
-        if not _matched:
-            continue
-        matched_rows.append((_o, _m, _sk, _matched))
-        matched_oids_by_market.setdefault(_m.id, set()).add(_o.id)
-
-    # #1197 / #13552: scoped per-market stats ONLY for markets that matched a team.
-    _mkt_ids = sorted(matched_oids_by_market)
-    _market_stats: dict[int, tuple[int, float | None]] = {}
-    _tq = time.perf_counter()
-    if _mkt_ids:
-        for _mid, _tot, _fsum in (await db.execute(
-            select(
-                FuturesOutcome.market_id,
-                func.count().label("outcome_total"),
-                func.sum(FuturesOutcome.current_probability).label("field_prob_sum"),
-            )
-            .where(FuturesOutcome.market_id.in_(_mkt_ids))
-            .group_by(FuturesOutcome.market_id)
-        )).all():
-            _market_stats[_mid] = (_tot, _fsum)
-    if timings is not None:
-        timings["stats"] = round((time.perf_counter() - _tq) * 1000)
-        timings["rows1"] = len(rows1)
-        timings["rows2"] = len(rows2)
-
-    # Pre-build per-row candidate item stubs (reused across early-stop checks + final build).
-    candidate_items: list[tuple[int, int, dict]] = []
-    team_has_coherent_candidate: dict[int, set[int]] = {}
-    for idx, (_o, _m, _sk, _matched) in enumerate(matched_rows):
-        _otot, _fsum = _market_stats.get(_m.id, (None, None))
-        _stub = _build_team_futures_result_item(
-            _o,
-            _m,
-            _matched,
-            outcome_total=_otot,
-            field_prob_sum=_fsum,
-        )
-        candidate_items.append((_o.id, _m.id, _stub))
-        if not _stub["_illiquid_binary"]:
-            team_has_coherent_candidate.setdefault(_matched["id"], set()).add(_m.id)
-
-    def _pick_next_wave_ids(
-        screened_mids: set[int],
-        focus_tids: set[int] | None,
-    ) -> list[int]:
-        """Prioritize coherent-first candidates round-robin per team for the next wave."""
-        per_team_coh: dict[int, list[int]] = {}
-        per_team_ill: dict[int, list[int]] = {}
-        seen_per_team_mid: dict[int, set[int]] = {}
-        for _oid, _mid, _stub in candidate_items:
-            if _mid in screened_mids:
+        candidate_rows = list(rows1) + list(rows2)
+        matched_rows: list[tuple[Any, Any, str | None, dict]] = []
+        matched_oids_by_market: dict[int, set[int]] = {}
+        for _o, _m, _sk in candidate_rows:
+            _matched = _find_matched_team(_o, _m, market_sport_key=_sk)
+            if not _matched:
                 continue
-            tid = _stub["matched_team"]["id"]
-            if focus_tids is not None and tid not in focus_tids:
-                continue
-            seen_m = seen_per_team_mid.setdefault(tid, set())
-            if _mid in seen_m:
-                continue
-            seen_m.add(_mid)
-            if not _stub["_illiquid_binary"]:
-                per_team_coh.setdefault(tid, []).append(_mid)
-            else:
-                per_team_ill.setdefault(tid, []).append(_mid)
+            matched_rows.append((_o, _m, _sk, _matched))
+            matched_oids_by_market.setdefault(_m.id, set()).add(_o.id)
 
-        wave: list[int] = []
-        wave_set: set[int] = set()
-        tids_order = sorted(
-            set(per_team_coh) | set(per_team_ill),
-            key=lambda tid: (per_team_coh.get(tid) or per_team_ill.get(tid) or [0])[0],
-        )
-        # Re-sort teams by highest unscreened candidate probability desc for fair round-robin order.
-        top_prob_by_tid: dict[int, float] = {}
-        for _oid, _mid, _stub in candidate_items:
-            if _mid in screened_mids:
-                continue
-            tid = _stub["matched_team"]["id"]
-            if focus_tids is not None and tid not in focus_tids:
-                continue
-            p = _stub.get("probability") or 0.0
-            if not _stub["_illiquid_binary"]:
-                p += 10.0  # coherent first in screening order
-            if tid not in top_prob_by_tid or p > top_prob_by_tid[tid]:
-                top_prob_by_tid[tid] = p
-        tids_order = sorted(top_prob_by_tid, key=lambda tid: top_prob_by_tid[tid], reverse=True)
-
-        # Interleave coherent buckets first, then illiquid buckets.
-        for buckets in (per_team_coh, per_team_ill):
-            depth = 0
-            while len(wave) < _SCREEN_WAVE_SIZE:
-                progressed = False
-                for tid in tids_order:
-                    b = buckets.get(tid)
-                    if b and depth < len(b):
-                        mid = b[depth]
-                        progressed = True
-                        if mid not in wave_set:
-                            wave.append(mid)
-                            wave_set.add(mid)
-                            if len(wave) >= _SCREEN_WAVE_SIZE:
-                                break
-                if not progressed:
-                    break
-                depth += 1
-        return sorted(wave)
-
-    def _prefix_cutoff_state(
-        screened_mids: set[int],
-        withheld_map: dict[int, set[int]],
-    ) -> tuple[bool, set[int]]:
-        """Sound certificate proving whether remaining unscreened markets cannot enter items[:limit]."""
-        all_tids = list(
-            dict.fromkeys(_stub["matched_team"]["id"] for _oid, _mid, _stub in candidate_items)
-        )
-        if not all_tids:
-            return True, set()
-
-        mid_has_any_coherent: dict[int, bool] = {}
-        for _oid, _mid, _stub in candidate_items:
-            if not _stub["_illiquid_binary"]:
-                mid_has_any_coherent[_mid] = True
-            else:
-                mid_has_any_coherent.setdefault(_mid, False)
-
-        sim_seen_mids: set[int] = set()
-        screened_all_items: dict[int, list[tuple[int, dict]]] = {}
-        for idx, (oid, mid, _stub) in enumerate(candidate_items):
-            if mid not in screened_mids:
-                continue
-            if mid in sim_seen_mids:
-                continue
-            if oid in withheld_map.get(mid, ()):
-                continue
-            sim_seen_mids.add(mid)
-            tid = _stub["matched_team"]["id"]
-            screened_all_items.setdefault(tid, []).append((idx, _stub))
-
-        coherent_survives_by_tid: dict[int, bool] = {
-            tid: any(not it["_illiquid_binary"] for _i, it in screened_all_items.get(tid, ()))
-            for tid in all_tids
-        }
-        first_unscreened_idx: dict[int, int] = {tid: len(candidate_items) for tid in all_tids}
-        unscreened_coh_exists: dict[int, bool] = {tid: False for tid in all_tids}
-        for idx, (_oid, _mid, _stub) in enumerate(candidate_items):
-            tid = _stub["matched_team"]["id"]
-            if _mid not in screened_mids:
-                if not _stub["_illiquid_binary"]:
-                    unscreened_coh_exists[tid] = True
-                # If this team already has a surviving coherent item AND this market has
-                # NO coherent candidates for ANY team, it can never keep/claim a slot.
-                if coherent_survives_by_tid[tid] and not mid_has_any_coherent.get(_mid, False):
-                    continue
-                if idx < first_unscreened_idx[tid]:
-                    first_unscreened_idx[tid] = idx
-
-        locked_prefix: dict[int, list[dict]] = {}
-        needs_more_tids: set[int] = set()
-        for tid in all_tids:
-            all_t_rows = screened_all_items.get(tid, [])
-            has_unscreened = first_unscreened_idx[tid] < len(candidate_items)
-            coherent_survives = coherent_survives_by_tid[tid]
-            if not coherent_survives and unscreened_coh_exists[tid]:
-                locked_prefix[tid] = []
-                needs_more_tids.add(tid)
-                continue
-
-            prefix = [
-                it for idx, it in all_t_rows if idx < first_unscreened_idx[tid]
-            ]
-            if coherent_survives:
-                prefix = [it for it in prefix if not it["_illiquid_binary"]]
-            seen_series: set[str] = set()
-            deduped: list[dict] = []
-            for it in prefix:
-                ser = it.get("_many_winner_series")
-                if ser:
-                    if ser in seen_series:
-                        continue
-                    seen_series.add(ser)
-                deduped.append(it)
-            locked_prefix[tid] = deduped
-            if has_unscreened and not deduped:
-                needs_more_tids.add(tid)
-
-        if needs_more_tids:
-            return False, needs_more_tids
-
-        unscreened_tids = [
-            tid for tid in all_tids if first_unscreened_idx[tid] < len(candidate_items)
-        ]
-        if not unscreened_tids:
-            return True, set()
-
-        d_safe = min(len(locked_prefix[tid]) for tid in unscreened_tids)
-        non_empty_tids = [tid for tid in all_tids if locked_prefix[tid]]
-        if not non_empty_tids:
-            return False, set(unscreened_tids)
-
-        ordered_tids = sorted(
-            non_empty_tids,
-            key=lambda tid: (locked_prefix[tid][0].get("probability") or 0),
-            reverse=True,
-        )
-        rr_count = 0
-        for depth in range(d_safe):
-            for tid in ordered_tids:
-                if depth < len(locked_prefix[tid]):
-                    rr_count += 1
-                    if rr_count >= limit:
-                        return True, set()
-
-        # Need more items from teams with unscreened markets that ran shallowest first.
-        focus = {tid for tid in unscreened_tids if len(locked_prefix[tid]) <= d_safe}
-        return False, (focus or set(unscreened_tids))
-
-    # #8503 / #11534 / #13552: screen in bounded waves inside SAVEPOINT; run hoisted
-    # staleness BEFORE snapshot trade reads so stopped/dead boards skip 51 GB trade lookups.
-    withheld_by_market: dict[int, set[int]] = {}
-    _screen_ids = _mkt_ids
-    _screened_mids: set[int] = set()
-    _total_screened = 0
-    _screen_early_stopped = False
-    if _screen_ids:
-        from app.routes import prop_families as prop_families_route
-        from app.routes.futures import withheld_price_outcome_ids_for_markets
-        from app.utils.futures_price_screen import (
-            _fleet_newest_observation as _shared_fleet_newest,
-        )
-
-        # Capture the original function so monkeypatches in tests are still honored.
-        _orig_staleness_fn = getattr(prop_families_route, "_orig_board_staleness_withheld", None)
-        if _orig_staleness_fn is None:
-            prop_families_route._orig_board_staleness_withheld = prop_families_route._board_staleness_withheld
-            _orig_staleness_fn = prop_families_route._orig_board_staleness_withheld
-
+        # #1197 / #13552: scoped per-market stats ONLY for markets that matched a team.
+        _mkt_ids = sorted(matched_oids_by_market)
+        _market_stats: dict[int, tuple[int, float | None]] = {}
         _tq = time.perf_counter()
-        _focus_tids: set[int] | None = None
-        _fleet_newest_val: Any = None
-        while len(_screened_mids) < len(_screen_ids):
-            if len(_screen_ids) <= _SCREEN_WAVE_SIZE and not _screened_mids:
-                wave_ids = list(_screen_ids)
-            else:
-                wave_ids = _pick_next_wave_ids(_screened_mids, _focus_tids)
-                if not wave_ids and _focus_tids is not None:
-                    wave_ids = _pick_next_wave_ids(_screened_mids, None)
-                if not wave_ids:
+        if _mkt_ids:
+            for _mid, _tot, _fsum in (await db.execute(
+                select(
+                    FuturesOutcome.market_id,
+                    func.count().label("outcome_total"),
+                    func.sum(FuturesOutcome.current_probability).label("field_prob_sum"),
+                )
+                .where(FuturesOutcome.market_id.in_(_mkt_ids))
+                .group_by(FuturesOutcome.market_id)
+            )).all():
+                _market_stats[_mid] = (_tot, _fsum)
+        if timings is not None:
+            timings["stats"] = round((time.perf_counter() - _tq) * 1000)
+            timings["rows1"] = len(rows1)
+            timings["rows2"] = len(rows2)
+
+        # Pre-build per-row candidate item stubs (reused across early-stop checks + final build).
+        candidate_items: list[tuple[int, int, dict]] = []
+        team_has_coherent_candidate: dict[int, set[int]] = {}
+        for idx, (_o, _m, _sk, _matched) in enumerate(matched_rows):
+            _otot, _fsum = _market_stats.get(_m.id, (None, None))
+            _stub = _build_team_futures_result_item(
+                _o,
+                _m,
+                _matched,
+                outcome_total=_otot,
+                field_prob_sum=_fsum,
+            )
+            candidate_items.append((_o.id, _m.id, _stub))
+            if not _stub["_illiquid_binary"]:
+                team_has_coherent_candidate.setdefault(_matched["id"], set()).add(_m.id)
+
+        def _pick_next_wave_ids(
+            screened_mids: set[int],
+            focus_tids: set[int] | None,
+        ) -> list[int]:
+            """Prioritize coherent-first candidates round-robin per team for the next wave."""
+            per_team_coh: dict[int, list[int]] = {}
+            per_team_ill: dict[int, list[int]] = {}
+            seen_per_team_mid: dict[int, set[int]] = {}
+            for _oid, _mid, _stub in candidate_items:
+                if _mid in screened_mids:
+                    continue
+                tid = _stub["matched_team"]["id"]
+                if focus_tids is not None and tid not in focus_tids:
+                    continue
+                seen_m = seen_per_team_mid.setdefault(tid, set())
+                if _mid in seen_m:
+                    continue
+                seen_m.add(_mid)
+                if not _stub["_illiquid_binary"]:
+                    per_team_coh.setdefault(tid, []).append(_mid)
+                else:
+                    per_team_ill.setdefault(tid, []).append(_mid)
+
+            wave: list[int] = []
+            wave_set: set[int] = set()
+            # Sort teams by highest unscreened candidate probability desc for fair round-robin order.
+            top_prob_by_tid: dict[int, float] = {}
+            for _oid, _mid, _stub in candidate_items:
+                if _mid in screened_mids:
+                    continue
+                tid = _stub["matched_team"]["id"]
+                if focus_tids is not None and tid not in focus_tids:
+                    continue
+                p = _stub.get("probability") or 0.0
+                if not _stub["_illiquid_binary"]:
+                    p += 10.0  # coherent first in screening order
+                if tid not in top_prob_by_tid or p > top_prob_by_tid[tid]:
+                    top_prob_by_tid[tid] = p
+            tids_order = sorted(top_prob_by_tid, key=lambda tid: top_prob_by_tid[tid], reverse=True)
+
+            # Interleave coherent buckets first, then illiquid buckets.
+            for buckets in (per_team_coh, per_team_ill):
+                depth = 0
+                while len(wave) < _SCREEN_WAVE_SIZE:
+                    progressed = False
+                    for tid in tids_order:
+                        b = buckets.get(tid)
+                        if b and depth < len(b):
+                            mid = b[depth]
+                            progressed = True
+                            if mid not in wave_set:
+                                wave.append(mid)
+                                wave_set.add(mid)
+                                if len(wave) >= _SCREEN_WAVE_SIZE:
+                                    break
+                    if not progressed:
+                        break
+                    depth += 1
+            return sorted(wave)
+
+        def _prefix_cutoff_state(
+            screened_mids: set[int],
+            withheld_map: dict[int, set[int]],
+        ) -> tuple[bool, set[int]]:
+            """Sound certificate proving whether remaining unscreened markets cannot enter items[:limit]."""
+            all_tids = list(
+                dict.fromkeys(_stub["matched_team"]["id"] for _oid, _mid, _stub in candidate_items)
+            )
+            if not all_tids:
+                return True, set()
+
+            mid_has_any_coherent: dict[int, bool] = {}
+            for _oid, _mid, _stub in candidate_items:
+                if not _stub["_illiquid_binary"]:
+                    mid_has_any_coherent[_mid] = True
+                else:
+                    mid_has_any_coherent.setdefault(_mid, False)
+
+            sim_seen_mids: set[int] = set()
+            screened_all_items: dict[int, list[tuple[int, dict]]] = {}
+            for idx, (oid, mid, _stub) in enumerate(candidate_items):
+                if mid not in screened_mids:
+                    continue
+                if mid in sim_seen_mids:
+                    continue
+                if oid in withheld_map.get(mid, ()):
+                    continue
+                sim_seen_mids.add(mid)
+                tid = _stub["matched_team"]["id"]
+                screened_all_items.setdefault(tid, []).append((idx, _stub))
+
+            coherent_survives_by_tid: dict[int, bool] = {
+                tid: any(not it["_illiquid_binary"] for _i, it in screened_all_items.get(tid, ()))
+                for tid in all_tids
+            }
+            first_unscreened_idx: dict[int, int] = {tid: len(candidate_items) for tid in all_tids}
+            unscreened_coh_exists: dict[int, bool] = {tid: False for tid in all_tids}
+            for idx, (_oid, _mid, _stub) in enumerate(candidate_items):
+                tid = _stub["matched_team"]["id"]
+                if _mid not in screened_mids:
+                    if not _stub["_illiquid_binary"]:
+                        unscreened_coh_exists[tid] = True
+                    # If this team already has a surviving coherent item AND this market has
+                    # NO coherent candidates for ANY team, it can never keep/claim a slot.
+                    if coherent_survives_by_tid[tid] and not mid_has_any_coherent.get(_mid, False):
+                        continue
+                    if idx < first_unscreened_idx[tid]:
+                        first_unscreened_idx[tid] = idx
+
+            locked_prefix: dict[int, list[dict]] = {}
+            needs_more_tids: set[int] = set()
+            for tid in all_tids:
+                all_t_rows = screened_all_items.get(tid, [])
+                has_unscreened = first_unscreened_idx[tid] < len(candidate_items)
+                coherent_survives = coherent_survives_by_tid[tid]
+                if not coherent_survives and unscreened_coh_exists[tid]:
+                    locked_prefix[tid] = []
+                    needs_more_tids.add(tid)
+                    continue
+
+                prefix = [
+                    it for idx, it in all_t_rows if idx < first_unscreened_idx[tid]
+                ]
+                if coherent_survives:
+                    prefix = [it for it in prefix if not it["_illiquid_binary"]]
+                seen_series: set[str] = set()
+                deduped: list[dict] = []
+                for it in prefix:
+                    ser = it.get("_many_winner_series")
+                    if ser:
+                        if ser in seen_series:
+                            continue
+                        seen_series.add(ser)
+                    deduped.append(it)
+                locked_prefix[tid] = deduped
+                if has_unscreened and not deduped:
+                    needs_more_tids.add(tid)
+
+            if needs_more_tids:
+                return False, needs_more_tids
+
+            unscreened_tids = [
+                tid for tid in all_tids if first_unscreened_idx[tid] < len(candidate_items)
+            ]
+            if not unscreened_tids:
+                return True, set()
+
+            d_safe = min(len(locked_prefix[tid]) for tid in unscreened_tids)
+            non_empty_tids = [tid for tid in all_tids if locked_prefix[tid]]
+            if not non_empty_tids:
+                return False, set(unscreened_tids)
+
+            ordered_tids = sorted(
+                non_empty_tids,
+                key=lambda tid: (locked_prefix[tid][0].get("probability") or 0),
+                reverse=True,
+            )
+            rr_count = 0
+            for depth in range(d_safe):
+                for tid in ordered_tids:
+                    if depth < len(locked_prefix[tid]):
+                        rr_count += 1
+                        if rr_count >= limit:
+                            return True, set()
+
+            # Need more items from teams with unscreened markets that ran shallowest first.
+            focus = {tid for tid in unscreened_tids if len(locked_prefix[tid]) <= d_safe}
+            return False, (focus or set(unscreened_tids))
+
+        # #8503 / #11534 / #13552: screen in bounded waves inside SAVEPOINT; run hoisted
+        # staleness BEFORE snapshot trade reads so stopped/dead boards skip 51 GB trade lookups.
+        withheld_by_market: dict[int, set[int]] = {}
+        _screen_ids = _mkt_ids
+        _screened_mids: set[int] = set()
+        _total_screened = 0
+        _screen_waves = 0
+        _screen_early_stopped = False
+        _screen_incomplete = False
+        _screen_unscreened_count = 0
+        if _screen_ids:
+            from app.routes import prop_families as prop_families_route
+            from app.routes.futures import withheld_price_outcome_ids_for_markets
+            from app.utils.futures_price_screen import (
+                _fleet_newest_observation as _shared_fleet_newest,
+            )
+
+            # Capture the original function so monkeypatches in tests are still honored.
+            _orig_staleness_fn = getattr(prop_families_route, "_orig_board_staleness_withheld", None)
+            if _orig_staleness_fn is None:
+                prop_families_route._orig_board_staleness_withheld = prop_families_route._board_staleness_withheld
+                _orig_staleness_fn = prop_families_route._orig_board_staleness_withheld
+
+            _tq = time.perf_counter()
+            _focus_tids: set[int] | None = None
+            _fleet_newest_val: Any = None
+            while len(_screened_mids) < len(_screen_ids):
+                if len(_screen_ids) <= _SCREEN_WAVE_SIZE and not _screened_mids:
+                    wave_ids = list(_screen_ids)
+                else:
+                    wave_ids = _pick_next_wave_ids(_screened_mids, _focus_tids)
+                    if not wave_ids and _focus_tids is not None:
+                        wave_ids = _pick_next_wave_ids(_screened_mids, None)
+                    if not wave_ids:
+                        break
+
+                _screen_waves += 1
+                _screen_savepoint = await db.begin_nested()
+                _wave_markets: list = []
+                try:
+                    await _set_local_timeout_pg(db, _TEAM_FUTURES_PG_SCREEN_TIMEOUT_MS)
+                    if is_pg:
+                        _wave_markets = await _load_pg_screen_wave(db, wave_ids)
+                    else:
+                        screen_stmt = (
+                            select(FuturesMarket)
+                            .where(FuturesMarket.id.in_(wave_ids))
+                            .options(selectinload(FuturesMarket.outcomes))
+                        )
+                        _wave_markets = (await db.execute(screen_stmt)).scalars().all()
+                    _total_screened += len(_wave_markets)
+
+                    # Run board staleness FIRST with ONE hoisted fleet observation across waves (#13552).
+                    _fn = prop_families_route._board_staleness_withheld
+                    if _fn is _orig_staleness_fn:
+                        if _fleet_newest_val is None and _wave_markets:
+                            _fleet_newest_val = await _shared_fleet_newest(db, *_wave_markets)
+                        for _m in _wave_markets:
+                            _stopped = await _fn(db, _m, fleet_newest=_fleet_newest_val)
+                            if _stopped:
+                                withheld_by_market[_m.id] = (
+                                    withheld_by_market.get(_m.id, set()) | _stopped
+                                )
+                    else:
+                        for _m in _wave_markets:
+                            _stopped = await _fn(db, _m)
+                            if _stopped:
+                                withheld_by_market[_m.id] = (
+                                    withheld_by_market.get(_m.id, set()) | _stopped
+                                )
+
+                    # Skip trade snapshot lookups for boards whose matched outcomes are already all stopped.
+                    _surviving_markets = [
+                        _m
+                        for _m in _wave_markets
+                        if not (
+                            matched_oids_by_market.get(_m.id, set())
+                            <= withheld_by_market.get(_m.id, set())
+                        )
+                    ]
+                    if _surviving_markets:
+                        _price_withheld = await withheld_price_outcome_ids_for_markets(
+                            db, _surviving_markets
+                        )
+                        for _pmid, _poids in _price_withheld.items():
+                            if _poids:
+                                withheld_by_market[_pmid] = (
+                                    withheld_by_market.get(_pmid, set()) | _poids
+                                )
+                            else:
+                                withheld_by_market.setdefault(_pmid, set())
+                    await _screen_savepoint.commit()
+                except Exception as _screen_exc:  # noqa: BLE001 — omit unscreened markets cleanly
+                    await _screen_savepoint.rollback()
+                    _screen_incomplete = True
+                    _screen_unscreened_count = len(_screen_ids) - len(_screened_mids)
+                    if is_statement_timeout(_screen_exc):
+                        logger.warning(
+                            "team futures: price screen timed out for teams %s after %d ms — omitting %d unscreened markets (keeping %d screened)",
+                            sorted(teams),
+                            _TEAM_FUTURES_PG_SCREEN_TIMEOUT_MS,
+                            _screen_unscreened_count,
+                            len(_screened_mids),
+                        )
+                    else:
+                        logger.exception(
+                            "team futures: price screen failed for teams %s — omitting %d unscreened markets (keeping %d screened)",
+                            sorted(teams),
+                            _screen_unscreened_count,
+                            len(_screened_mids),
+                        )
                     break
 
-            _screen_savepoint = await db.begin_nested()
-            _wave_markets: list = []
-            try:
-                await _set_local_timeout_pg(db, _TEAM_FUTURES_PG_SCREEN_TIMEOUT_MS)
-                if is_pg:
-                    _wave_markets = await _load_pg_screen_wave(db, wave_ids)
-                else:
-                    screen_stmt = (
-                        select(FuturesMarket)
-                        .where(FuturesMarket.id.in_(wave_ids))
-                        .options(selectinload(FuturesMarket.outcomes))
-                    )
-                    _wave_markets = (await db.execute(screen_stmt)).scalars().all()
-                _total_screened += len(_wave_markets)
+                _screened_mids.update(wave_ids)
+                if len(_screened_mids) >= len(_screen_ids):
+                    break
+                _done, _focus_tids = _prefix_cutoff_state(_screened_mids, withheld_by_market)
+                if _done:
+                    _screen_early_stopped = True
+                    break
+                await asyncio.sleep(0)
 
-                # Run board staleness FIRST with ONE hoisted fleet observation across waves (#13552).
-                _fn = prop_families_route._board_staleness_withheld
-                if _fn is _orig_staleness_fn:
-                    if _fleet_newest_val is None and _wave_markets:
-                        _fleet_newest_val = await _shared_fleet_newest(db, *_wave_markets)
-                    for _m in _wave_markets:
-                        _stopped = await _fn(db, _m, fleet_newest=_fleet_newest_val)
-                        if _stopped:
-                            withheld_by_market[_m.id] = (
-                                withheld_by_market.get(_m.id, set()) | _stopped
-                            )
-                else:
-                    for _m in _wave_markets:
-                        _stopped = await _fn(db, _m)
-                        if _stopped:
-                            withheld_by_market[_m.id] = (
-                                withheld_by_market.get(_m.id, set()) | _stopped
-                            )
-
-                # Skip trade snapshot lookups for boards whose matched outcomes are already all stopped.
-                _surviving_markets = [
-                    _m
-                    for _m in _wave_markets
-                    if not (
-                        matched_oids_by_market.get(_m.id, set())
-                        <= withheld_by_market.get(_m.id, set())
-                    )
-                ]
-                if _surviving_markets:
-                    _price_withheld = await withheld_price_outcome_ids_for_markets(
-                        db, _surviving_markets
-                    )
-                    for _pmid, _poids in _price_withheld.items():
-                        if _poids:
-                            withheld_by_market[_pmid] = (
-                                withheld_by_market.get(_pmid, set()) | _poids
-                            )
-                        else:
-                            withheld_by_market.setdefault(_pmid, set())
-                await _screen_savepoint.commit()
-            except Exception:  # noqa: BLE001 — a price screen never costs the page
-                await _screen_savepoint.rollback()
-                logger.exception(
-                    "team futures: price screen failed for teams %s — serving unscreened",
-                    sorted(teams),
-                )
-                break
-
-            _screened_mids.update(wave_ids)
-            if len(_screened_mids) >= len(_screen_ids):
-                break
-            _done, _focus_tids = _prefix_cutoff_state(_screened_mids, withheld_by_market)
-            if _done:
-                _screen_early_stopped = True
-                break
-            await asyncio.sleep(0)
+            if timings is not None:
+                timings["screen"] = round((time.perf_counter() - _tq) * 1000)
+                timings["screened"] = _total_screened
 
         if timings is not None:
-            timings["screen"] = round((time.perf_counter() - _tq) * 1000)
-            timings["screened"] = _total_screened
+            timings["screen_waves"] = _screen_waves
+            timings["screen_incomplete"] = _screen_incomplete
+            timings["screen_unscreened"] = _screen_unscreened_count
+            if _award_wall_ts is not None:
+                timings["_award_cached_at"] = _award_wall_ts
 
     # Process matched result rows in original candidate order using single-pass matched_rows.
     per_team_items: dict[int, list[dict]] = {}
     seen_market_ids: set[int] = set()  # Deduplicate: one outcome per market
     for oid, mid, item in candidate_items:
-        if _screen_early_stopped and mid not in _screened_mids:
+        if (_screen_early_stopped or _screen_incomplete) and mid not in _screened_mids:
             continue
         if mid in seen_market_ids:
             continue
@@ -2855,8 +2924,13 @@ async def get_team_futures(
         if not team_ids:
             return {"items": [], "team_ids": [], "total_count": 0}
 
-        data = await _query_team_futures(team_ids, db, limit=eff_limit)
-        _cache_set(_team_futures_cache, cache_key, time.time(), data)
+        route_meta: dict[str, Any] = {}
+        data = await _query_team_futures(team_ids, db, limit=eff_limit, timings=route_meta)
+        if not route_meta.get("screen_incomplete"):
+            _now = time.time()
+            award_ts = route_meta.get("_award_cached_at")
+            cache_ts = min(_now, float(award_ts)) if award_ts is not None else _now
+            _cache_set(_team_futures_cache, cache_key, cache_ts, data)
         return data
 
 
@@ -2900,6 +2974,11 @@ async def get_shared_team_futures(
         if cached is not None:
             return cached
 
-        data = await _query_team_futures(parsed_ids, db, limit=eff_limit)
-        _cache_set(_shared_team_futures_cache, cache_key, time.time(), data)
+        route_meta: dict[str, Any] = {}
+        data = await _query_team_futures(parsed_ids, db, limit=eff_limit, timings=route_meta)
+        if not route_meta.get("screen_incomplete"):
+            _now = time.time()
+            award_ts = route_meta.get("_award_cached_at")
+            cache_ts = min(_now, float(award_ts)) if award_ts is not None else _now
+            _cache_set(_shared_team_futures_cache, cache_key, cache_ts, data)
         return data
