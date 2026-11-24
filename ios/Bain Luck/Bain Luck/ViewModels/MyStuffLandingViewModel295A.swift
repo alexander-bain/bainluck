@@ -81,14 +81,16 @@ enum MyStuffVisitLedger295A {
 
     enum Timeframe: Sendable, Equatable {
         case sinceLastVisit
-        case today
-        case sinceOpening
+        case sincePregame
+        case sinceLastUpdate
+        case last24Hours
 
         var suffix: String {
             switch self {
             case .sinceLastVisit: return "since your last visit"
-            case .today: return "today"
-            case .sinceOpening: return "since opening"
+            case .sincePregame: return "since pregame"
+            case .sinceLastUpdate: return "since last update"
+            case .last24Hours: return "in the last 24 hours"
             }
         }
     }
@@ -106,7 +108,7 @@ enum MyStuffVisitLedger295A {
     }
 
     static func formatPointMove(deltaProbability: Double, sinceLastVisit: Bool) -> (points: Int, text: String)? {
-        formatPointMove(deltaProbability: deltaProbability, timeframe: sinceLastVisit ? .sinceLastVisit : .today)
+        formatPointMove(deltaProbability: deltaProbability, timeframe: sinceLastVisit ? .sinceLastVisit : .sinceLastUpdate)
     }
 }
 
@@ -129,12 +131,18 @@ private let myStuffLeagueSlugToSportKey295A: [String: String] = [
 
 @MainActor
 final class MyStuffLandingViewModel295A: ObservableObject {
+    /// Max concurrent team/league/set page requests per refresh so opening My Stuff
+    /// never fires eight heavy `/api/teams/{slug}` reads onto the server at once (#13573).
+    nonisolated static let maxConcurrentSubjectHydrations = 2
+
     struct PreloadedSnapshot: Sendable {
         var liveEvents: [(event: FeedEventData, awayVerified: Bool)] = []
         var nextEvents: [(event: FeedEventData, awayVerified: Bool)] = []
         var nextMarkets: [MyStuffMarketItem295A] = []
         var movedEntries: [MyStuffMovedEntry295A] = []
         var discoverItems: [FeedItem] = []
+        var loadFailed: Bool = false
+        var hydratingRemainingCount: Int = 0
     }
 
     struct HydratedSubjectPack: Sendable {
@@ -144,6 +152,7 @@ final class MyStuffLandingViewModel295A: ObservableObject {
     }
 
     typealias SubjectHydrator = @Sendable ([FollowedSubject295A]) async -> [HydratedSubjectPack]
+    typealias SingleSubjectHydrator = @Sendable (FollowedSubject295A) async -> HydratedSubjectPack
     typealias DiscoverFetcher = @Sendable () async throws -> FeedResponse
 
     @Published private(set) var liveEvents: [(event: FeedEventData, awayVerified: Bool)] = []
@@ -153,10 +162,12 @@ final class MyStuffLandingViewModel295A: ObservableObject {
     @Published private(set) var discoverItems: [FeedItem] = []
     @Published private(set) var loading: Bool = false
     @Published private(set) var loadFailed: Bool = false
+    @Published private(set) var hydratingRemainingCount: Int = 0
 
     private let defaults: UserDefaults
     private let isPreloaded: Bool
-    private let subjectHydrator: SubjectHydrator
+    private let customBatchHydrator: SubjectHydrator?
+    private let singleSubjectHydrator: SingleSubjectHydrator
     private let discoverFetcher: DiscoverFetcher
     private var hasRotatedSession = false
 
@@ -164,11 +175,13 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         defaults: UserDefaults = .standard,
         preloaded: PreloadedSnapshot? = nil,
         subjectHydrator: SubjectHydrator? = nil,
+        singleSubjectHydrator: SingleSubjectHydrator? = nil,
         discoverFetcher: DiscoverFetcher? = nil
     ) {
         self.defaults = defaults
-        self.subjectHydrator = subjectHydrator ?? { subjects in
-            await Self.fetchFollowedSubjects(subjects)
+        self.customBatchHydrator = subjectHydrator
+        self.singleSubjectHydrator = singleSubjectHydrator ?? { subject in
+            await Self.fetchOneSubject(subject)
         }
         self.discoverFetcher = discoverFetcher ?? {
             try await APIClient.shared.fetchFeed(limit: 12, mode: "discover")
@@ -181,7 +194,8 @@ final class MyStuffLandingViewModel295A: ObservableObject {
             self.movedEntries = preloaded.movedEntries
             self.discoverItems = Self.stripModelWrittenText(preloaded.discoverItems, limit: 3)
             self.loading = false
-            self.loadFailed = false
+            self.loadFailed = preloaded.loadFailed
+            self.hydratingRemainingCount = preloaded.hydratingRemainingCount
         } else {
             self.isPreloaded = false
         }
@@ -194,14 +208,18 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         self.nextMarkets = snapshot.nextMarkets
         self.movedEntries = snapshot.movedEntries
         self.discoverItems = Self.stripModelWrittenText(snapshot.discoverItems, limit: 3)
-        self.loadFailed = false
+        self.loadFailed = snapshot.loadFailed
+        self.hydratingRemainingCount = snapshot.hydratingRemainingCount
     }
 
     /// Computes the moved-game banner line from the exact `CompactGameCard12616.currentOddsForCard`
     /// reading shown on `EventCardView`:
     /// - Skips draw-capable sports (a negative home delta does not imply the away side rose).
     /// - Uses `.sinceLastVisit` when `priorHomeProbability` is recorded in the visit ledger,
-    ///   and `.sinceOpening` (never `"today"`) when comparing against `prematchOdds` / `openingOdds`.
+    ///   and `.sincePregame` ONLY when `event.prematchOdds` carries a reading pinned at the
+    ///   start of the game (`PREMATCH_PRIOR_SQL` along Kalshi → Polymarket → sportsbooks).
+    /// - Never falls back to `event.openingOdds` (the first/running stored sportsbook column
+    ///   before any pregame pin) — with neither a last-visit reading nor `prematchOdds`, returns nil.
     /// - Attributes a negative home delta to the away team ONLY when the away reading is
     ///   present on `currentOddsForCard` and verified (`!currentAwayIsWithheld`).
     nonisolated static func movedEventSummary(
@@ -220,9 +238,9 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         if let prior = priorHomeProbability {
             baseHome = prior
             timeframe = .sinceLastVisit
-        } else if let openingHome = event.prematchOdds?.homeProbability ?? event.openingOdds?.homeProbability {
-            baseHome = openingHome
-            timeframe = .sinceOpening
+        } else if let prematchHome = event.prematchOdds?.homeProbability {
+            baseHome = prematchHome
+            timeframe = .sincePregame
         } else {
             return nil
         }
@@ -328,54 +346,17 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         return cleaned
     }
 
-    func refresh(
-        followedSubjects: [FollowedSubject295A],
-        savedPins: [SavedPin],
-        pinContent: [SavedPin: SavedPinContent],
-        signedInItems: [FeedItem],
-        signedInTeamFutures: TeamFuturesResponse?
-    ) async {
-        guard !isPreloaded else { return }
-
-        if !hasRotatedSession {
-            MyStuffVisitLedger295A.rotateSessionIfNeeded(defaults: defaults)
-            hasRotatedSession = true
-        }
-
-        if liveEvents.isEmpty && nextEvents.isEmpty && nextMarkets.isEmpty && movedEntries.isEmpty {
-            loading = true
-        }
-
-        let priorSnapshot = MyStuffVisitLedger295A.loadPreviousSnapshot(defaults: defaults)
-
-        // Hydrate followed subjects in parallel (bounded to first 8 subjects for snappy launch).
-        let subjectsToHydrate = Array(followedSubjects.prefix(8))
-        let hydrator = self.subjectHydrator
-        let feedFetcher = self.discoverFetcher
-
-        async let hydratedSubjectsTask = hydrator(subjectsToHydrate)
-        async let discoverFeedResultTask: (FeedResponse?, Bool) = {
-            do {
-                let res = try await feedFetcher()
-                return (res, false)
-            } catch {
-                return (nil, true)
-            }
-        }()
-
-        let hydrated = await hydratedSubjectsTask
-        let (discoverFeed, discoverFailed) = await discoverFeedResultTask
-        let anyHydrationFailed = hydrated.contains(where: \.didFail)
-
+    private struct RefreshAccumulator295A {
+        let priorSnapshot: [String: Double]
         var seenEventIds: Set<Int> = []
         var collectedEvents: [(event: FeedEventData, awayVerified: Bool)] = []
         var seenMarketKeys: Set<String> = []
         var collectedMarkets: [MyStuffMarketItem295A] = []
         var newReadings: [String: Double] = [:]
 
-        func appendEvent(_ ev: FeedEventData, awayVerified: Bool = false) {
+        mutating func appendEvent(_ ev: FeedEventData, awayVerified: Bool = false) {
             guard seenEventIds.insert(ev.id).inserted else { return }
-            let sanitized = Self.stripEventNarrative(ev)
+            let sanitized = MyStuffLandingViewModel295A.stripEventNarrative(ev)
             collectedEvents.append((sanitized, awayVerified))
             if EventState.canStillBeGraded(sanitized.status, commenceTime: sanitized.commenceTime?.asDate),
                let hp = CompactGameCard12616.currentOddsForCard(sanitized)?.homeProbability {
@@ -383,54 +364,13 @@ final class MyStuffLandingViewModel295A: ObservableObject {
             }
         }
 
-        func appendMarket(_ m: MyStuffMarketItem295A) {
+        mutating func appendMarket(_ m: MyStuffMarketItem295A) {
             guard seenMarketKeys.insert(m.id).inserted else { return }
             collectedMarkets.append(m)
             newReadings["market:\(m.id)"] = m.probability
         }
 
-        // 1. Pinned items
-        for pin in savedPins {
-            switch pinContent[pin] {
-            case .event(let e) where pin.type == "event":
-                appendEvent(e)
-            case .market(let f) where pin.type == "future":
-                if let top = f.topOutcomes?.first, let prob = top.probability {
-                    let key = "\(f.id):\(top.name.lowercased())"
-                    let delta24 = top.movement
-                    let prior = priorSnapshot["market:\(key)"]
-                    let moveInfo: (points: Int, text: String)? = {
-                        if let prior {
-                            return MyStuffVisitLedger295A.formatPointMove(deltaProbability: prob - prior, sinceLastVisit: true)
-                        }
-                        if let delta24 {
-                            return MyStuffVisitLedger295A.formatPointMove(deltaProbability: delta24, sinceLastVisit: false)
-                        }
-                        return nil
-                    }()
-                    appendMarket(
-                        MyStuffMarketItem295A(
-                            id: key,
-                            marketId: f.id,
-                            marketTitle: f.name,
-                            outcomeLabel: top.name,
-                            subjectName: nil,
-                            logoUrl: nil,
-                            primaryColor: nil,
-                            probability: prob,
-                            changePoints: moveInfo?.points,
-                            movementNote: moveInfo?.text,
-                            sourceMark: top.sourceMark ?? f.sourceMark
-                        )
-                    )
-                }
-            default:
-                break
-            }
-        }
-
-        // 2. Hydrated followed subjects (teams, leagues, sets)
-        for pack in hydrated {
+        mutating func mergePack(_ pack: HydratedSubjectPack) {
             for (ev, verified) in pack.events {
                 appendEvent(ev, awayVerified: verified)
             }
@@ -460,73 +400,136 @@ final class MyStuffLandingViewModel295A: ObservableObject {
             }
         }
 
-        // 3. Signed-in team feed & futures fallback/merge
-        for item in signedInItems {
-            if item.type == "event", let ev = item.event {
-                appendEvent(ev)
-            } else if item.type == "futures", let f = item.futures,
-                      let top = (f.matchedOutcomes?.first.map { ($0.name, $0.probability, $0.movement) })
-                        ?? (f.topOutcomes?.first.map { ($0.name, $0.probability, $0.movement) }),
-                      let prob = top.1 {
-                let key = "\(f.id):\(top.0.lowercased())"
-                let prior = priorSnapshot["market:\(key)"]
-                let move = prior != nil
-                    ? MyStuffVisitLedger295A.formatPointMove(deltaProbability: prob - prior!, sinceLastVisit: true)
-                    : top.2.flatMap { MyStuffVisitLedger295A.formatPointMove(deltaProbability: $0, sinceLastVisit: false) }
-                appendMarket(
-                    MyStuffMarketItem295A(
-                        id: key,
-                        marketId: f.id,
-                        marketTitle: f.name,
-                        outcomeLabel: top.0,
-                        subjectName: nil,
-                        logoUrl: nil,
-                        primaryColor: nil,
-                        probability: prob,
-                        changePoints: move?.points,
-                        movementNote: move?.text,
-                        sourceMark: f.sourceMark
-                    )
-                )
-            }
-        }
-
-        if let tf = signedInTeamFutures {
-            for item in tf.items.prefix(12) {
-                guard let prob = item.probability, prob > 0 else { continue }
-                let key = "\(item.marketId):\(item.outcomeName.lowercased())"
-                let prior = priorSnapshot["market:\(key)"]
-                let move = prior != nil
-                    ? MyStuffVisitLedger295A.formatPointMove(deltaProbability: prob - prior!, sinceLastVisit: true)
-                    : item.probabilityChange24h.flatMap {
-                        MyStuffVisitLedger295A.formatPointMove(deltaProbability: $0, sinceLastVisit: false)
+        mutating func mergeBaseline(
+            savedPins: [SavedPin],
+            pinContent: [SavedPin: SavedPinContent],
+            signedInItems: [FeedItem],
+            signedInTeamFutures: TeamFuturesResponse?
+        ) {
+            for pin in savedPins {
+                switch pinContent[pin] {
+                case .event(let e) where pin.type == "event":
+                    appendEvent(e)
+                case .market(let f) where pin.type == "future":
+                    if let top = f.topOutcomes?.first, let prob = top.probability {
+                        let key = "\(f.id):\(top.name.lowercased())"
+                        let delta24 = top.movement
+                        let prior = priorSnapshot["market:\(key)"]
+                        let moveInfo: (points: Int, text: String)? = {
+                            if let prior {
+                                return MyStuffVisitLedger295A.formatPointMove(deltaProbability: prob - prior, sinceLastVisit: true)
+                            }
+                            if let delta24 {
+                                return MyStuffVisitLedger295A.formatPointMove(deltaProbability: delta24, sinceLastVisit: false)
+                            }
+                            return nil
+                        }()
+                        appendMarket(
+                            MyStuffMarketItem295A(
+                                id: key,
+                                marketId: f.id,
+                                marketTitle: f.name,
+                                outcomeLabel: top.name,
+                                subjectName: nil,
+                                logoUrl: nil,
+                                primaryColor: nil,
+                                probability: prob,
+                                changePoints: moveInfo?.points,
+                                movementNote: moveInfo?.text,
+                                sourceMark: top.sourceMark ?? f.sourceMark
+                            )
+                        )
                     }
-                appendMarket(
-                    MyStuffMarketItem295A(
-                        id: key,
-                        marketId: item.marketId,
-                        marketTitle: Self.cleanMarketTitle(item.marketName),
-                        outcomeLabel: item.outcomeName,
-                        subjectName: item.matchedTeam?.name,
-                        logoUrl: item.matchedTeam?.logoSmall,
-                        primaryColor: item.matchedTeam?.primaryColor,
-                        probability: prob,
-                        changePoints: move?.points,
-                        movementNote: move?.text,
-                        sourceMark: item.sourceMark
+                default:
+                    break
+                }
+            }
+
+            for item in signedInItems {
+                if item.type == "event", let ev = item.event {
+                    appendEvent(ev)
+                } else if item.type == "futures", let f = item.futures,
+                          let top = (f.matchedOutcomes?.first.map { ($0.name, $0.probability, $0.movement) })
+                            ?? (f.topOutcomes?.first.map { ($0.name, $0.probability, $0.movement) }),
+                          let prob = top.1 {
+                    let key = "\(f.id):\(top.0.lowercased())"
+                    let prior = priorSnapshot["market:\(key)"]
+                    let move = prior != nil
+                        ? MyStuffVisitLedger295A.formatPointMove(deltaProbability: prob - prior!, sinceLastVisit: true)
+                        : top.2.flatMap { MyStuffVisitLedger295A.formatPointMove(deltaProbability: $0, sinceLastVisit: false) }
+                    appendMarket(
+                        MyStuffMarketItem295A(
+                            id: key,
+                            marketId: f.id,
+                            marketTitle: f.name,
+                            outcomeLabel: top.0,
+                            subjectName: nil,
+                            logoUrl: nil,
+                            primaryColor: nil,
+                            probability: prob,
+                            changePoints: move?.points,
+                            movementNote: move?.text,
+                            sourceMark: f.sourceMark
+                        )
                     )
-                )
+                }
+            }
+
+            if let tf = signedInTeamFutures {
+                for item in tf.items.prefix(12) {
+                    guard let prob = item.probability, prob > 0 else { continue }
+                    let key = "\(item.marketId):\(item.outcomeName.lowercased())"
+                    let prior = priorSnapshot["market:\(key)"]
+                    let move = prior != nil
+                        ? MyStuffVisitLedger295A.formatPointMove(deltaProbability: prob - prior!, sinceLastVisit: true)
+                        : item.probabilityChange24h.flatMap {
+                            MyStuffVisitLedger295A.formatPointMove(deltaProbability: $0, sinceLastVisit: false)
+                        }
+                    appendMarket(
+                        MyStuffMarketItem295A(
+                            id: key,
+                            marketId: item.marketId,
+                            marketTitle: MyStuffLandingViewModel295A.cleanMarketTitle(item.marketName),
+                            outcomeLabel: item.outcomeName,
+                            subjectName: item.matchedTeam?.name,
+                            logoUrl: item.matchedTeam?.logoSmall,
+                            primaryColor: item.matchedTeam?.primaryColor,
+                            probability: prob,
+                            changePoints: move?.points,
+                            movementNote: move?.text,
+                            sourceMark: item.sourceMark
+                        )
+                    )
+                }
             }
         }
+    }
 
-        MyStuffVisitLedger295A.recordObservedReadings(newReadings, defaults: defaults)
+    private struct PartitionedSections295A {
+        let live: [(event: FeedEventData, awayVerified: Bool)]
+        let nextEvents: [(event: FeedEventData, awayVerified: Bool)]
+        let nextMarkets: [MyStuffMarketItem295A]
+        let moved: [MyStuffMovedEntry295A]
+        let discover: [FeedItem]
 
-        // Partition into the 295: A order:
+        var hasFollowedContent: Bool {
+            !live.isEmpty || !nextEvents.isEmpty || !nextMarkets.isEmpty || !moved.isEmpty
+        }
+
+        var hasAnyContent: Bool {
+            hasFollowedContent || !discover.isEmpty
+        }
+    }
+
+    private static func buildPartitionedSections(
+        from acc: RefreshAccumulator295A,
+        discoverFeed: FeedResponse?
+    ) -> PartitionedSections295A {
         // 1. Live now
-        let live = collectedEvents.filter { pair in EventState.section(of: pair.event) == .live }
+        let live = acc.collectedEvents.filter { pair in EventState.section(of: pair.event) == .live }
 
         // 2. Next for you (upcoming games chronologically ascending + top active followed markets)
-        let upcomingSorted = collectedEvents
+        let upcomingSorted = acc.collectedEvents
             .filter { pair in EventState.section(of: pair.event) == .upcoming }
             .sorted { lhs, rhs in
                 switch (lhs.event.commenceTime?.asDate, rhs.event.commenceTime?.asDate) {
@@ -542,7 +545,7 @@ final class MyStuffLandingViewModel295A: ObservableObject {
 
         for pair in upcomingSorted {
             let ev = pair.event
-            let prior = priorSnapshot["event:\(ev.id)"]
+            let prior = acc.priorSnapshot["event:\(ev.id)"]
             if let eventMove = Self.movedEventSummary(
                 for: ev,
                 awayVerified: pair.awayVerified,
@@ -559,7 +562,7 @@ final class MyStuffLandingViewModel295A: ObservableObject {
             }
         }
 
-        let recentFinals = collectedEvents
+        let recentFinals = acc.collectedEvents
             .filter { pair in EventState.section(of: pair.event) == .finished }
             .sorted { lhs, rhs in
                 (lhs.event.commenceTime?.asDate ?? .distantPast) > (rhs.event.commenceTime?.asDate ?? .distantPast)
@@ -579,7 +582,7 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         }
 
         var unmovedMarkets: [MyStuffMarketItem295A] = []
-        for market in collectedMarkets {
+        for market in acc.collectedMarkets {
             if let note = market.movementNote, let pts = market.changePoints, pts >= 2 {
                 moved.append(
                     MyStuffMovedEntry295A(
@@ -629,17 +632,185 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         }
 
         let cleanedDiscover = Self.stripModelWrittenText(rawDiscover, limit: 3)
-        let newFollowedSectionsEmpty = live.isEmpty
-            && boundedNextEvents.isEmpty
-            && boundedNextMarkets.isEmpty
-            && boundedMoved.isEmpty
+        return PartitionedSections295A(
+            live: live,
+            nextEvents: boundedNextEvents,
+            nextMarkets: boundedNextMarkets,
+            moved: boundedMoved,
+            discover: cleanedDiscover
+        )
+    }
+
+    private func applyStreamingPartition(
+        _ partition: PartitionedSections295A,
+        discoverFailed: Bool,
+        discoverSettled: Bool,
+        preserveExistingFollowedIfEmpty: Bool
+    ) {
+        if partition.hasFollowedContent || !partition.discover.isEmpty {
+            loadFailed = false
+            loading = false
+        }
+        if !preserveExistingFollowedIfEmpty || partition.hasFollowedContent {
+            liveEvents = partition.live
+            nextEvents = partition.nextEvents
+            nextMarkets = partition.nextMarkets
+            movedEntries = partition.moved
+        }
+        if discoverSettled && (!discoverFailed || discoverItems.isEmpty) {
+            discoverItems = partition.discover
+        }
+    }
+
+    func refresh(
+        followedSubjects: [FollowedSubject295A],
+        savedPins: [SavedPin],
+        pinContent: [SavedPin: SavedPinContent],
+        signedInItems: [FeedItem],
+        signedInTeamFutures: TeamFuturesResponse?
+    ) async {
+        guard !isPreloaded else { return }
+
+        if !hasRotatedSession {
+            MyStuffVisitLedger295A.rotateSessionIfNeeded(defaults: defaults)
+            hasRotatedSession = true
+        }
+
+        if liveEvents.isEmpty && nextEvents.isEmpty && nextMarkets.isEmpty && movedEntries.isEmpty {
+            loading = true
+        }
+
         let hadExistingSections = !liveEvents.isEmpty
             || !nextEvents.isEmpty
             || !nextMarkets.isEmpty
             || !movedEntries.isEmpty
             || !discoverItems.isEmpty
 
-        if (anyHydrationFailed || discoverFailed) && newFollowedSectionsEmpty && cleanedDiscover.isEmpty {
+        let priorSnapshot = MyStuffVisitLedger295A.loadPreviousSnapshot(defaults: defaults)
+        let subjectsToHydrate = Array(followedSubjects.prefix(8))
+        hydratingRemainingCount = subjectsToHydrate.count
+
+        // Publish locally available pins and already-loaded signed-in items immediately
+        // so slow `/api/teams/{slug}` responses never hold up what is already on hand.
+        var baselineAcc = RefreshAccumulator295A(priorSnapshot: priorSnapshot)
+        baselineAcc.mergeBaseline(
+            savedPins: savedPins,
+            pinContent: pinContent,
+            signedInItems: signedInItems,
+            signedInTeamFutures: signedInTeamFutures
+        )
+        let baselinePartition = Self.buildPartitionedSections(from: baselineAcc, discoverFeed: nil)
+        if baselinePartition.hasFollowedContent {
+            applyStreamingPartition(
+                baselinePartition,
+                discoverFailed: false,
+                discoverSettled: false,
+                preserveExistingFollowedIfEmpty: hadExistingSections
+            )
+        }
+
+        let feedFetcher = self.discoverFetcher
+        var discoverFeed: FeedResponse?
+        var discoverFailed = false
+        var completedPacks: [Int: HydratedSubjectPack] = [:]
+
+        if let customBatchHydrator {
+            async let hydratedSubjectsTask = customBatchHydrator(subjectsToHydrate)
+            async let discoverFeedResultTask: (FeedResponse?, Bool) = {
+                do {
+                    return (try await feedFetcher(), false)
+                } catch {
+                    return (nil, true)
+                }
+            }()
+            let hydrated = await hydratedSubjectsTask
+            for (idx, pack) in hydrated.enumerated() {
+                completedPacks[idx] = pack
+            }
+            (discoverFeed, discoverFailed) = await discoverFeedResultTask
+        } else {
+            enum StreamEvent: Sendable {
+                case subject(Int, HydratedSubjectPack)
+                case discover(FeedResponse?, Bool)
+            }
+            let singleHydrator = self.singleSubjectHydrator
+            var remainingSubjects = subjectsToHydrate.count
+            var nextSubjectIndex = 0
+            let maxInFlight = Self.maxConcurrentSubjectHydrations
+
+            await withTaskGroup(of: StreamEvent.self) { group in
+                group.addTask {
+                    do {
+                        return .discover(try await feedFetcher(), false)
+                    } catch {
+                        return .discover(nil, true)
+                    }
+                }
+
+                let initialBatch = min(maxInFlight, subjectsToHydrate.count)
+                while nextSubjectIndex < initialBatch {
+                    let idx = nextSubjectIndex
+                    let subject = subjectsToHydrate[idx]
+                    nextSubjectIndex += 1
+                    group.addTask {
+                        .subject(idx, await singleHydrator(subject))
+                    }
+                }
+
+                for await event in group {
+                    switch event {
+                    case .discover(let feed, let didFail):
+                        discoverFeed = feed
+                        discoverFailed = didFail
+                    case .subject(let idx, let pack):
+                        completedPacks[idx] = pack
+                        remainingSubjects = max(0, remainingSubjects - 1)
+                        hydratingRemainingCount = remainingSubjects
+                        if nextSubjectIndex < subjectsToHydrate.count {
+                            let nextIdx = nextSubjectIndex
+                            let nextSubject = subjectsToHydrate[nextIdx]
+                            nextSubjectIndex += 1
+                            group.addTask {
+                                .subject(nextIdx, await singleHydrator(nextSubject))
+                            }
+                        }
+                    }
+
+                    var stepAcc = baselineAcc
+                    for idx in completedPacks.keys.sorted() {
+                        if let pack = completedPacks[idx] {
+                            stepAcc.mergePack(pack)
+                        }
+                    }
+                    let stepPartition = Self.buildPartitionedSections(from: stepAcc, discoverFeed: discoverFeed)
+                    if stepPartition.hasAnyContent {
+                        applyStreamingPartition(
+                            stepPartition,
+                            discoverFailed: discoverFailed,
+                            discoverSettled: discoverFeed != nil || discoverFailed,
+                            preserveExistingFollowedIfEmpty: hadExistingSections
+                        )
+                    }
+                }
+            }
+        }
+
+        hydratingRemainingCount = 0
+
+        var finalAcc = baselineAcc
+        var anyHydrationFailed = false
+        for idx in 0..<subjectsToHydrate.count {
+            if let pack = completedPacks[idx] {
+                if pack.didFail { anyHydrationFailed = true }
+                finalAcc.mergePack(pack)
+            }
+        }
+
+        MyStuffVisitLedger295A.recordObservedReadings(finalAcc.newReadings, defaults: defaults)
+        let finalPartition = Self.buildPartitionedSections(from: finalAcc, discoverFeed: discoverFeed)
+        let newFollowedSectionsEmpty = !finalPartition.hasFollowedContent
+
+        if (anyHydrationFailed || discoverFailed) && newFollowedSectionsEmpty && finalPartition.discover.isEmpty {
             loadFailed = true
             loading = false
             return
@@ -648,19 +819,19 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         if anyHydrationFailed && newFollowedSectionsEmpty && !subjectsToHydrate.isEmpty {
             loadFailed = true
             if !hadExistingSections {
-                discoverItems = cleanedDiscover
+                discoverItems = finalPartition.discover
             }
             loading = false
             return
         }
 
         loadFailed = false
-        liveEvents = live
-        nextEvents = boundedNextEvents
-        nextMarkets = boundedNextMarkets
-        movedEntries = boundedMoved
+        liveEvents = finalPartition.live
+        nextEvents = finalPartition.nextEvents
+        nextMarkets = finalPartition.nextMarkets
+        movedEntries = finalPartition.moved
         if !discoverFailed || discoverItems.isEmpty {
-            discoverItems = cleanedDiscover
+            discoverItems = finalPartition.discover
         }
         loading = false
     }
@@ -715,7 +886,12 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         _ subjects: [FollowedSubject295A]
     ) async -> [HydratedSubjectPack] {
         await withTaskGroup(of: (Int, HydratedSubjectPack).self) { group in
-            for (idx, subject) in subjects.enumerated() {
+            var nextIdx = 0
+            let initial = min(maxConcurrentSubjectHydrations, subjects.count)
+            while nextIdx < initial {
+                let idx = nextIdx
+                let subject = subjects[idx]
+                nextIdx += 1
                 group.addTask {
                     (idx, await fetchOneSubject(subject))
                 }
@@ -723,6 +899,14 @@ final class MyStuffLandingViewModel295A: ObservableObject {
             var ordered: [(Int, HydratedSubjectPack)] = []
             for await pair in group {
                 ordered.append(pair)
+                if nextIdx < subjects.count {
+                    let idx = nextIdx
+                    let subject = subjects[idx]
+                    nextIdx += 1
+                    group.addTask {
+                        (idx, await fetchOneSubject(subject))
+                    }
+                }
             }
             return ordered.sorted { $0.0 < $1.0 }.map(\.1)
         }
@@ -899,8 +1083,9 @@ final class MyStuffLandingViewModel295A: ObservableObject {
                     return pack
                 }
                 let prob = leader.probability
+                let timeframe: MyStuffVisitLedger295A.Timeframe = (leader.movementIsDated == true) ? .last24Hours : .sinceLastUpdate
                 let move = leader.movement24h.flatMap {
-                    MyStuffVisitLedger295A.formatPointMove(deltaProbability: $0, sinceLastVisit: false)
+                    MyStuffVisitLedger295A.formatPointMove(deltaProbability: $0, timeframe: timeframe)
                 }
                 pack.markets.append(
                     MyStuffMarketItem295A(

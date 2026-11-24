@@ -262,11 +262,18 @@ final class FollowAndMyStuff295ATests: XCTestCase {
         XCTAssertEqual(upSinceVisit.text, "Up 6 points since your last visit")
         XCTAssertFalse(upSinceVisit.text.contains("%"))
 
-        let downToday = try XCTUnwrap(
+        let downSinceUpdate = try XCTUnwrap(
             MyStuffVisitLedger295A.formatPointMove(deltaProbability: -0.042, sinceLastVisit: false)
         )
-        XCTAssertEqual(downToday.points, 4)
-        XCTAssertEqual(downToday.text, "Down 4 points today")
+        XCTAssertEqual(downSinceUpdate.points, 4)
+        XCTAssertEqual(downSinceUpdate.text, "Down 4 points since last update")
+        XCTAssertFalse(downSinceUpdate.text.contains("today"))
+
+        let up24h = try XCTUnwrap(
+            MyStuffVisitLedger295A.formatPointMove(deltaProbability: 0.053, timeframe: .last24Hours)
+        )
+        XCTAssertEqual(up24h.points, 5)
+        XCTAssertEqual(up24h.text, "Up 5 points in the last 24 hours")
 
         let itemWithModelText = try decodeFeedItem("""
         {
@@ -295,9 +302,34 @@ final class FollowAndMyStuff295ATests: XCTestCase {
         XCTAssertNil(sanitized[0].futures?.hookDescription)
     }
 
-    func testMovedEventSummaryHonorsSinceOpeningWithheldAwayOpeningSourceAndDrawSports() throws {
-        // 1. First-time reader (no prior ledger reading): opening -> current move says "since opening", never "today"
-        let nbaOpeningMove = try decodeFeedItem("""
+    func testMovedEventSummaryUsesLastVisitOrPinnedPrematchAndDropsOpeningOddsFallback() throws {
+        // 1. Opening-only (`opening_odds` without ledger or pinned `prematch_odds`) NEVER prints a movement line.
+        let nbaOpeningOnly = try decodeFeedItem("""
+        {
+          "type": "event",
+          "score": 80.0,
+          "data": {
+            "id": 99100,
+            "sport": "basketball_nba",
+            "away_team": "Miami Heat",
+            "home_team": "Boston Celtics",
+            "status": "scheduled",
+            "current_odds": {"away_probability": 0.34, "home_probability": 0.66},
+            "opening_odds": {"away_probability": 0.41, "home_probability": 0.59}
+          }
+        }
+        """).event!
+        XCTAssertNil(
+            MyStuffLandingViewModel295A.movedEventSummary(
+                for: nbaOpeningOnly,
+                awayVerified: true,
+                priorHomeProbability: nil
+            ),
+            "First/running opening_odds must never be used as a movement baseline"
+        )
+
+        // 2. Pinned pregame reading (`prematch_odds`, no prior ledger): says "since pregame", never "since opening" or "today".
+        let nbaPrematchPinnedMove = try decodeFeedItem("""
         {
           "type": "event",
           "score": 80.0,
@@ -308,25 +340,27 @@ final class FollowAndMyStuff295ATests: XCTestCase {
             "home_team": "Boston Celtics",
             "status": "scheduled",
             "current_odds": {"away_probability": 0.34, "home_probability": 0.66},
-            "opening_odds": {"away_probability": 0.41, "home_probability": 0.59}
+            "opening_odds": {"away_probability": 0.50, "home_probability": 0.50},
+            "prematch_odds": {"away_probability": 0.41, "home_probability": 0.59, "source": "kalshi"}
           }
         }
         """).event!
-        let openingSummary = try XCTUnwrap(
+        let pregameSummary = try XCTUnwrap(
             MyStuffLandingViewModel295A.movedEventSummary(
-                for: nbaOpeningMove,
+                for: nbaPrematchPinnedMove,
                 awayVerified: true,
                 priorHomeProbability: nil
             )
         )
-        XCTAssertEqual(openingSummary.points, 7)
-        XCTAssertEqual(openingSummary.summary, "Celtics up 7 points since opening")
-        XCTAssertFalse(openingSummary.summary.contains("today"))
+        XCTAssertEqual(pregameSummary.points, 7)
+        XCTAssertEqual(pregameSummary.summary, "Celtics up 7 points since pregame")
+        XCTAssertFalse(pregameSummary.summary.contains("opening"))
+        XCTAssertFalse(pregameSummary.summary.contains("today"))
 
-        // 2. Prior visit ledger reading says "since your last visit" and attributes negative home delta to verified away side
+        // 3. Prior visit ledger reading takes precedence and says "since your last visit" with verified away attribution.
         let awayVisitMove = try XCTUnwrap(
             MyStuffLandingViewModel295A.movedEventSummary(
-                for: nbaOpeningMove,
+                for: nbaOpeningOnly,
                 awayVerified: true,
                 priorHomeProbability: 0.72
             )
@@ -334,7 +368,7 @@ final class FollowAndMyStuff295ATests: XCTestCase {
         XCTAssertEqual(awayVisitMove.points, 6)
         XCTAssertEqual(awayVisitMove.summary, "Heat up 6 points since your last visit")
 
-        // 3. Withheld away reading (`away_probability: null`) never attributes a move to the away team
+        // 4. Withheld away reading (`away_probability: null`) never attributes a move to the away team
         let withheldAway = try decodeFeedItem("""
         {
           "type": "event",
@@ -346,7 +380,7 @@ final class FollowAndMyStuff295ATests: XCTestCase {
             "home_team": "Boston Celtics",
             "status": "scheduled",
             "current_odds": {"home_probability": 0.52},
-            "opening_odds": {"away_probability": 0.40, "home_probability": 0.60}
+            "prematch_odds": {"away_probability": 0.40, "home_probability": 0.60, "source": "kalshi"}
           }
         }
         """).event!
@@ -358,7 +392,7 @@ final class FollowAndMyStuff295ATests: XCTestCase {
             )
         )
 
-        // 4. `hero_probability_source == "opening"` (withheld by `CompactGameCard12616.currentOddsForCard`) produces no move banner
+        // 5. `hero_probability_source == "opening"` (withheld by `CompactGameCard12616.currentOddsForCard`) produces no move banner
         let openingOnlyCard = try decodeFeedItem("""
         {
           "type": "event",
@@ -371,7 +405,7 @@ final class FollowAndMyStuff295ATests: XCTestCase {
             "status": "scheduled",
             "hero_probability_source": "opening",
             "current_odds": {"away_probability": 0.34, "home_probability": 0.66},
-            "opening_odds": {"away_probability": 0.41, "home_probability": 0.59}
+            "prematch_odds": {"away_probability": 0.41, "home_probability": 0.59, "source": "kalshi"}
           }
         }
         """).event!
@@ -383,7 +417,7 @@ final class FollowAndMyStuff295ATests: XCTestCase {
             )
         )
 
-        // 5. Three-way / draw-capable sport (`soccer_epl`) skips moved-game attribution
+        // 6. Three-way / draw-capable sport (`soccer_epl`) skips moved-game attribution
         let soccerGame = try decodeFeedItem("""
         {
           "type": "event",
@@ -395,7 +429,7 @@ final class FollowAndMyStuff295ATests: XCTestCase {
             "home_team": "Arsenal",
             "status": "scheduled",
             "current_odds": {"away_probability": 0.35, "home_probability": 0.40, "draw_probability": 0.25},
-            "opening_odds": {"away_probability": 0.28, "home_probability": 0.50}
+            "prematch_odds": {"away_probability": 0.28, "home_probability": 0.50, "source": "kalshi"}
           }
         }
         """).event!
@@ -406,6 +440,133 @@ final class FollowAndMyStuff295ATests: XCTestCase {
                 priorHomeProbability: 0.50
             )
         )
+    }
+
+    func testFollowedSubjectHydrationCapsConcurrencyAtTwoAndPublishesIncrementally() async throws {
+        let lock = NSLock()
+        var currentInFlight = 0
+        var peakInFlight = 0
+        var startedSlugs: [String] = []
+
+        final class GateBox: @unchecked Sendable {
+            private let lock = NSLock()
+            private var cont: CheckedContinuation<Void, Never>?
+            private var opened = false
+            func wait() async {
+                let alreadyOpen = lock.withLock { opened }
+                if alreadyOpen { return }
+                await withCheckedContinuation { c in
+                    let shouldResume = lock.withLock {
+                        if opened { return true }
+                        cont = c
+                        return false
+                    }
+                    if shouldResume { c.resume() }
+                }
+            }
+            func open() {
+                let pending = lock.withLock { () -> CheckedContinuation<Void, Never>? in
+                    opened = true
+                    let c = cont
+                    cont = nil
+                    return c
+                }
+                pending?.resume()
+            }
+        }
+
+        let slowTeamGate = GateBox()
+        let firstFastDone = GateBox()
+        let subjects = (0..<6).map { i in
+            FollowedSubject295A.team(slug: "team-\(i)", teamId: 500 + i, name: "Team \(i)", sportKey: "basketball_nba")
+        }
+
+        let sampleEvents = try (0..<6).map { i in
+            try decodeEvent("""
+            {
+              "id": \(880100 + i),
+              "sport": "basketball_nba",
+              "sport_name": "NBA",
+              "away_team": "Away \(i)",
+              "home_team": "Home \(i)",
+              "commence_time": "2026-11-2\(i % 5 + 3)T23:00:00Z",
+              "status": "scheduled",
+              "current_odds": {"away_probability": 0.45, "home_probability": 0.55}
+            }
+            """)
+        }
+
+        let emptyDiscoverDecoder = JSONDecoder()
+        emptyDiscoverDecoder.keyDecodingStrategy = .convertFromSnakeCase
+        let emptyDiscover = try emptyDiscoverDecoder.decode(
+            FeedResponse.self,
+            from: Data(#"{"items":[],"total":0,"limit":20,"offset":0,"has_more":false}"#.utf8)
+        )
+
+        let defaults = makeIsolatedDefaults()
+        let vm = MyStuffLandingViewModel295A(
+            defaults: defaults,
+            singleSubjectHydrator: { subject in
+                lock.withLock {
+                    currentInFlight += 1
+                    peakInFlight = max(peakInFlight, currentInFlight)
+                    startedSlugs.append(subject.slug)
+                }
+                defer {
+                    lock.withLock { currentInFlight -= 1 }
+                }
+
+                if subject.slug == "team-1" {
+                    await slowTeamGate.wait()
+                }
+                let idx = Int(subject.slug.replacingOccurrences(of: "team-", with: "")) ?? 0
+                var pack = MyStuffLandingViewModel295A.HydratedSubjectPack()
+                pack.events = [(sampleEvents[idx], false)]
+                if subject.slug == "team-0" {
+                    firstFastDone.open()
+                }
+                return pack
+            },
+            discoverFetcher: {
+                emptyDiscover
+            }
+        )
+
+        let refreshTask = Task {
+            await vm.refresh(
+                followedSubjects: subjects,
+                savedPins: [],
+                pinContent: [:],
+                signedInItems: [],
+                signedInTeamFutures: nil
+            )
+        }
+
+        await firstFastDone.wait()
+        for _ in 0..<20 {
+            if !vm.nextEvents.isEmpty { break }
+            await Task.yield()
+        }
+
+        XCTAssertTrue(
+            vm.nextEvents.contains { $0.event.id == 880100 },
+            "Fast team-0 section must publish incrementally while team-1 is still in flight"
+        )
+        XCTAssertFalse(vm.loading, "Loading spinner must clear once team-0 is on screen")
+        XCTAssertGreaterThan(vm.hydratingRemainingCount, 0)
+
+        slowTeamGate.open()
+        await refreshTask.value
+
+        XCTAssertLessThanOrEqual(
+            peakInFlight,
+            MyStuffLandingViewModel295A.maxConcurrentSubjectHydrations,
+            "At most 2 team pages may be in flight at once (observed peak: \(peakInFlight))"
+        )
+        XCTAssertEqual(startedSlugs.count, 6)
+        XCTAssertEqual(vm.hydratingRemainingCount, 0)
+        XCTAssertEqual(vm.nextEvents.count, 6)
+        XCTAssertFalse(vm.loadFailed)
     }
 
     func testFailedRefreshSetsLoadFailedPreservesExistingSectionsAndExplicitIdsWinInMatches() async throws {
@@ -459,7 +620,7 @@ final class FollowAndMyStuff295ATests: XCTestCase {
 
     // MARK: - 4. OCR + Zero-Truncation Verification (+ Optional 390 pt Render Export)
 
-    func testRenderedMyStuffLandingAndTeamFollowHaveZeroEllipsis390() throws {
+    func testRenderedMyStuffLandingAndTeamFollowHaveZeroEllipsis390() async throws {
         let sampleSnapshot = try makeSampleLandingSnapshot()
         let teamPage = try makeSampleTeamPage()
 
@@ -513,6 +674,35 @@ final class FollowAndMyStuff295ATests: XCTestCase {
             XCTAssertTrue(landingOCR.contains("From Discover"), "Missing From Discover in \(landingOCR)")
             XCTAssertTrue(landingOCR.contains("See all on Discover"), "Missing Discover link in \(landingOCR)")
 
+            let failedSnapshot = MyStuffLandingViewModel295A.PreloadedSnapshot(
+                discoverItems: sampleSnapshot.discoverItems,
+                loadFailed: true
+            )
+            let failedImg = renderInWindow(
+                width: 390,
+                height: 844,
+                scheme: scheme
+            ) {
+                NavigationStack {
+                    MyStuffLandingView295A(
+                        landingVM: MyStuffLandingViewModel295A(preloaded: failedSnapshot),
+                        path: .constant(NavigationPath()),
+                        onOpenDiscover: {},
+                        onManagePins: {},
+                        onRefresh: {}
+                    )
+                    .navigationTitle("My Stuff")
+                    .navigationBarTitleDisplayMode(.large)
+                }
+                .environment(\.followManager295A, followAfter)
+                .environment(\.gameAlertsPrompt295A, alertsAfter)
+                .environmentObject(pinManager)
+            }
+            let failedOCR = recognizeText(in: failedImg)
+            XCTAssertFalse(failedOCR.contains("…"), "Ellipsis found in failed My Stuff (\(scheme)): \(failedOCR)")
+            XCTAssertTrue(failedOCR.contains("Couldn't load your stuff"), "Missing failure message in \(failedOCR)")
+            XCTAssertTrue(failedOCR.contains("Try again"), "Missing Try again button in \(failedOCR)")
+
             let beforeImg = renderInWindow(width: 390, height: 780, scheme: scheme) {
                 NavigationStack {
                     TeamDetailView(slug: "boston-celtics", loadedPageForTest: teamPage)
@@ -542,6 +732,17 @@ final class FollowAndMyStuff295ATests: XCTestCase {
         }
 
         if let outDir = ProcessInfo.processInfo.environment["BC_RENDER_DIR_295A"], !outDir.isEmpty {
+            for urlString in [
+                "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/bos.png",
+                "https://a.espncdn.com/i/teamlogos/nba/500/scoreboard/cle.png",
+                "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/buf.png",
+                "https://a.espncdn.com/i/teamlogos/nfl/500/scoreboard/det.png",
+                "https://a.espncdn.com/i/teamlogos/nba/500/bos.png"
+            ] {
+                if let u = URL(string: urlString) {
+                    _ = await ImageCache.shared.image(for: u)
+                }
+            }
             try export390Renders(
                 to: URL(fileURLWithPath: outDir, isDirectory: true),
                 snapshot: sampleSnapshot,
@@ -615,6 +816,29 @@ final class FollowAndMyStuff295ATests: XCTestCase {
                 .environmentObject(pinManager)
             }
             try landingTabImg.pngData()?.write(to: dir.appendingPathComponent("295a-mystuff-landing-\(suffix)-390.png"))
+
+            // 1b. My Stuff failed state ("Couldn't load your stuff." + Try again)
+            let failedSnapshot = MyStuffLandingViewModel295A.PreloadedSnapshot(
+                discoverItems: snapshot.discoverItems,
+                loadFailed: true
+            )
+            let failedImg = renderInWindow(width: 390, height: 844, scheme: scheme) {
+                NavigationStack {
+                    MyStuffLandingView295A(
+                        landingVM: MyStuffLandingViewModel295A(preloaded: failedSnapshot),
+                        path: .constant(NavigationPath()),
+                        onOpenDiscover: {},
+                        onManagePins: {},
+                        onRefresh: {}
+                    )
+                    .navigationTitle("My Stuff")
+                    .navigationBarTitleDisplayMode(.large)
+                }
+                .environment(\.followManager295A, followAfter)
+                .environment(\.gameAlertsPrompt295A, alertsAfter)
+                .environmentObject(pinManager)
+            }
+            try failedImg.pngData()?.write(to: dir.appendingPathComponent("295a-mystuff-failed-\(suffix)-390.png"))
 
             // 2. Team page BEFORE the Follow tap
             let teamBeforeImg = renderInWindow(width: 390, height: 844, scheme: scheme) {

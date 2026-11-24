@@ -67,10 +67,21 @@ private struct MyStuffLandingBody295A: View {
                     && landingVM.liveEvents.isEmpty
                     && landingVM.nextEvents.isEmpty
                     && landingVM.nextMarkets.isEmpty
-                    && landingVM.movedEntries.isEmpty {
+                    && landingVM.movedEntries.isEmpty
+                    && landingVM.discoverItems.isEmpty {
                     ProgressView("Loading your stuff")
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 32)
+                } else if landingVM.hydratingRemainingCount > 0 {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Updating your stuff")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 0)
+                    }
+                    .accessibilityIdentifier("myStuff295A.hydratingInline")
                 }
 
                 if landingVM.loadFailed && !landingVM.loading {

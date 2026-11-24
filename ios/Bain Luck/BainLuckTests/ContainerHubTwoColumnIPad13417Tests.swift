@@ -262,6 +262,10 @@ final class ContainerHubTwoColumnIPad13417Tests: XCTestCase {
         let game0Token = firstTwoEvents[0].away.split(separator: " ").last.map(String.init) ?? firstTwoEvents[0].away
         let game1Token = firstTwoEvents[1].away.split(separator: " ").last.map(String.init) ?? firstTwoEvents[1].away
 
+        if let dir = ProcessInfo.processInfo.environment["BAINLUCK_13417_RENDER_DIR"], !dir.isEmpty {
+            await prewarmTeamCrests(for: nflResp)
+        }
+
         let nflService = MockContainerHubService13417(response: nflResp, pairedSets: [])
         let oscarsService = MockContainerHubService13417(response: oscarsResp, pairedSets: pairedSets)
 
@@ -422,6 +426,31 @@ final class ContainerHubTwoColumnIPad13417Tests: XCTestCase {
             .deletingLastPathComponent()
             .appendingPathComponent("ContainerHubFixtures/\(name).json")
         return try Data(contentsOf: url)
+    }
+
+    private func prewarmTeamCrests(for response: ContainerHubResponse) async {
+        var urls: [URL] = []
+        for section in response.sections {
+            for member in section.members {
+                if case .event(let event) = member.card {
+                    for candidate in [
+                        teamAvatarURL(servedURL: event.awayImageUrl ?? event.awayTeamData?.logoSmall, teamName: event.awayTeam, sportKey: event.sport),
+                        teamAvatarURL(servedURL: event.homeImageUrl ?? event.homeTeamData?.logoSmall, teamName: event.homeTeam, sportKey: event.sport),
+                    ] {
+                        if let candidate, let u = URL(string: candidate) {
+                            urls.append(u)
+                        }
+                    }
+                }
+            }
+        }
+        await withTaskGroup(of: Void.self) { group in
+            for url in urls {
+                group.addTask {
+                    _ = await ImageCache.shared.image(for: url)
+                }
+            }
+        }
     }
 
     private func captureHub<V: View>(
