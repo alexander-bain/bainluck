@@ -43,6 +43,7 @@ import pytest
 
 from app.routes.politics import (
     _build_presidential,
+    _clean_outcomes,
     _contest_key,
     _is_headline_market,
     _is_single_winner_field,
@@ -316,6 +317,52 @@ def test_13089_the_election_call_and_inauguration_keep_distinct_prices():
     seen, sources, boards = set(), {}, []
     assert _admit_search_future(election, seen, sources, boards)
     assert _admit_search_future(inauguration, seen, sources, boards)
+
+
+@pytest.mark.parametrize("wider_nomination", [False, True])
+def test_13089_the_election_pair_survives_a_full_side_list(wider_nomination):
+    election = _poly_general()
+    inauguration = _market(
+        "2028 U.S. Presidential Election winner?",
+        [_outcome(n, p, 500 + i) for i, (n, p) in enumerate(_GENERAL_LEGS)],
+        source="kalshi", market_id=108326, external_id="KXPRESPERSON-28",
+    )
+    inauguration.outcomes[0].current_probability = 0.4
+    nomination = _kalshi_dem()
+    if wider_nomination:
+        more_candidates = (
+            "Mark Kelly", "Andy Beshear", "Tim Walz", "Gretchen Whitmer",
+            "JB Pritzker", "Cory Booker", "Wes Moore", "Ro Khanna", "Chris Murphy",
+        )
+        nomination.outcomes += [
+            _outcome(name, 0.006, 600 + i) for i, name in enumerate(more_candidates)
+        ]
+        assert len(_clean_outcomes(nomination.outcomes)) > len(inauguration.outcomes)
+    assert _is_single_winner_field(nomination.outcomes)
+    other_sides = [
+        _market(
+            f"Will presidential candidate {i} declare this year?",
+            [_outcome("Yes", 0.5, 700 + i * 2), _outcome("No", 0.5, 701 + i * 2)],
+            source="kalshi", market_id=200000 + i,
+        )
+        for i in range(10)
+    ]
+    for market in other_sides:
+        market.volume = 5000
+
+    response, outcome_keys = _build_presidential(
+        [nomination, _poly_dem(), inauguration, election, *other_sides], now=_NOW
+    )
+    assert response["poly_market_id"] == election.id
+    assert response["kalshi_market_id"] is None
+    assert not response["has_dual_source"]
+    assert {o.id for o in inauguration.outcomes}.isdisjoint(outcome_keys)
+    assert len(response["side_markets"]) == 8
+    inauguration_row = next(
+        row for row in response["side_markets"] if row["market_id"] == inauguration.id
+    )
+    assert inauguration_row["prob"] == 40.0
+    assert inauguration_row["src"] == "kalshi"
 
 
 class TestBehaviourThatMustNotChange:

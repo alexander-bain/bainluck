@@ -28,6 +28,9 @@ enum MacSearchResultAction10878: Hashable {
         case .futuresDetail(let id):
             let link = futuresShareURL(id)
             return [.copyLink(link), .share(shareURL(link))]
+        case .containerHub(let slug, _):
+            let link = collectionShareURL(slug)
+            return [.copyLink(link), .share(shareURL(link))]
         default:
             return []
         }

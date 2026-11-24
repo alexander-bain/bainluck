@@ -45,6 +45,20 @@ struct BrowseCollectionsView: View {
                             .background(DS.cardBg, in: RoundedRectangle(cornerRadius: 12))
                         }
                         .buttonStyle(.plain)
+                        .contextMenu {
+                            CollectionContextMenuItems(
+                                slug: entry.collection.slug,
+                                onShare: {
+                                    ShareInstrumentation.recordShareOpened(
+                                        itemType: "collection",
+                                        itemId: entry.collection.slug,
+                                        itemName: entry.collection.name,
+                                        category: nil,
+                                        surface: .discoverCard
+                                    )
+                                }
+                            )
+                        }
                         .accessibilityIdentifier("browse-collection-\(entry.id)")
                     }
                 }

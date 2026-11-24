@@ -104,13 +104,13 @@ _SCOUT_NON_FUN_HARM_RE = re.compile(
 _SLUG_CLEAN_RE = re.compile(r"[^a-z0-9]+")
 _NORM_TITLE_RE = re.compile(r"[^a-z0-9]+")
 
-_TAG_BATCH_SIZE = 120
+_TAG_BATCH_SIZE = 45
 _DEFAULT_TOKENS_PER_TITLE = 22
 _DEFAULT_TAG_PROMPT_OVERHEAD_PER_BATCH = 900
-_DEFAULT_TAG_OUTPUT_TOKENS_PER_BATCH = 900
+_DEFAULT_TAG_OUTPUT_TOKENS_PER_BATCH = 350
 _TAG_MAX_OUTPUT_TOKENS_PER_BATCH = 4_000
 _DEFAULT_SET_INPUT_TOKENS = 25_000
-_DEFAULT_SET_OUTPUT_TOKENS = 10_000
+_DEFAULT_SET_OUTPUT_TOKENS = 16_000
 
 _SCOUT_BANNED_VOICE_RE = re.compile(r"\b(?:traders?|bets?|betting)\b", re.IGNORECASE)
 _SCOUT_MECHANICAL_FAMILY_RE = re.compile(
@@ -516,6 +516,8 @@ _BLURB_LEADING_STARTERS: frozenset[str] = frozenset(
     {
         "a",
         "across",
+        "add",
+        "adding",
         "after",
         "all",
         "alongside",
@@ -523,28 +525,76 @@ _BLURB_LEADING_STARTERS: frozenset[str] = frozenset(
         "before",
         "between",
         "both",
+        "combine",
+        "combining",
+        "compare",
+        "comparing",
+        "count",
+        "counting",
         "during",
         "each",
+        "even",
         "every",
+        "everyday",
+        "everything",
+        "fans",
+        "few",
+        "fill",
+        "five",
+        "follow",
+        "following",
         "for",
+        "four",
         "from",
         "grouped",
+        "grouping",
+        "guess",
+        "guessing",
+        "here",
+        "how",
         "in",
+        "many",
+        "most",
         "near",
         "next",
+        "no",
         "on",
+        "once",
+        "one",
         "over",
         "point",
+        "put",
+        "putting",
         "read",
+        "reading",
         "rumors",
         "seeing",
+        "several",
         "side",
+        "six",
+        "some",
         "the",
+        "there",
         "these",
         "this",
         "those",
+        "three",
         "together",
+        "track",
+        "tracking",
+        "two",
+        "watch",
+        "watching",
+        "what",
+        "when",
+        "where",
+        "whether",
+        "which",
+        "who",
+        "why",
+        "will",
         "with",
+        "your",
     }
 )
 _BLURB_GENERIC_PHRASES: frozenset[str] = frozenset(
@@ -559,14 +609,20 @@ _BLURB_GENERIC_PHRASES: frozenset[str] = frozenset(
         "golden globe",
         "golden globes",
         "hall of fame",
+        "hip hop",
         "hot 100",
         "millennium prize",
         "mother nature",
         "new year",
         "nobel prize",
         "opening weekend",
+        "pacific northwest",
         "point of sale",
+        "pop and r&b",
         "prime minister",
+        "r&b",
+        "rap and r&b",
+        "rock and roll",
         "rotten tomatoes",
         "super bowl",
         "united states",
@@ -758,8 +814,16 @@ def _fold_text(text: str) -> str:
     return "".join(ch for ch in decomposed if not unicodedata.combining(ch)).lower()
 
 
-def _blurb_tokens_present(phrase_tokens: Sequence[str], member_text_folded: str, member_words: set[str]) -> bool:
+def _blurb_tokens_present(
+    phrase_tokens: Sequence[str],
+    member_text_folded: str,
+    member_words: set[str],
+    member_initials: set[str] | frozenset[str] = frozenset(),
+    acronym_tokens: frozenset[str] = frozenset(),
+) -> bool:
     for tok in phrase_tokens:
+        if tok in acronym_tokens and tok in member_initials:
+            continue
         if len(tok) <= 2:
             if tok not in member_words:
                 return False
@@ -768,20 +832,47 @@ def _blurb_tokens_present(phrase_tokens: Sequence[str], member_text_folded: str,
     return True
 
 
+def _extract_sig_tokens_and_acronyms(
+    words: Sequence[str],
+) -> tuple[list[str], frozenset[str]]:
+    sig_tokens: list[str] = []
+    acronyms: set[str] = set()
+    for raw in words:
+        stripped = raw.strip(".,\"'()")
+        folded = _fold_text(stripped)
+        if not folded or folded in _BLURB_CONNECTORS or len(stripped) < 2:
+            continue
+        sig_tokens.append(folded)
+        if sum(1 for ch in stripped if ch.isupper()) >= 2:
+            acronyms.add(folded)
+    return sig_tokens, frozenset(acronyms)
+
+
 def _extract_member_initials(members: Sequence[ScoutMarketRow]) -> set[str]:
     initials: set[str] = set()
+
+    def _emit_run(run: list[str]) -> None:
+        n = len(run)
+        if 2 <= n <= 5:
+            initials.add("".join(run))
+        if n >= 3:
+            for start in range(n):
+                for end in range(start + 3, min(n, start + 5) + 1):
+                    initials.add("".join(run[start:end]))
+
     for row in members:
         words = re.findall(r"[A-Za-z][A-Za-z.]*", row.title or "")
         cap_runs: list[str] = []
         for w in words:
+            clean_w = w.replace(".", "")
+            if clean_w.isupper() and 2 <= len(clean_w) <= 5:
+                initials.add(clean_w.lower())
             if w[0].isupper():
                 cap_runs.append(w[0].lower())
             else:
-                if 2 <= len(cap_runs) <= 5:
-                    initials.add("".join(cap_runs))
+                _emit_run(cap_runs)
                 cap_runs = []
-        if 2 <= len(cap_runs) <= 5:
-            initials.add("".join(cap_runs))
+        _emit_run(cap_runs)
     return initials
 
 
@@ -856,15 +947,12 @@ def check_scout_blurb_matches_members(
             folded_phrase = _fold_text(cleaned)
             if folded_phrase in _BLURB_GENERIC_PHRASES:
                 continue
-            sig_tokens = [
-                _fold_text(w.strip(".,\"'()"))
-                for w in words
-                if _fold_text(w.strip(".,\"'()")) not in _BLURB_CONNECTORS
-                and len(w.strip(".,\"'()")) >= 2
-            ]
+            sig_tokens, acronym_tokens = _extract_sig_tokens_and_acronyms(words)
             if len(sig_tokens) < 2:
                 continue
-            if not _blurb_tokens_present(sig_tokens, member_text_folded, member_words):
+            if not _blurb_tokens_present(
+                sig_tokens, member_text_folded, member_words, member_initials, acronym_tokens
+            ):
                 return f"blurb_mentions_unlisted_member:{cleaned}"
 
     # Check single proper names inside 3+ proper-name comma lists (e.g. "Drake, Kendrick, Travis, Ye and Don Toliver")
@@ -897,13 +985,10 @@ def check_scout_blurb_matches_members(
                 ):
                     continue
                 return f"blurb_mentions_unlisted_member:{cleaned}"
-            sig_tokens = [
-                _fold_text(w.strip(".,\"'()"))
-                for w in words
-                if _fold_text(w.strip(".,\"'()")) not in _BLURB_CONNECTORS
-                and len(w.strip(".,\"'()")) >= 2
-            ]
-            if sig_tokens and not _blurb_tokens_present(sig_tokens, member_text_folded, member_words):
+            sig_tokens, acronym_tokens = _extract_sig_tokens_and_acronyms(words)
+            if sig_tokens and not _blurb_tokens_present(
+                sig_tokens, member_text_folded, member_words, member_initials, acronym_tokens
+            ):
                 return f"blurb_mentions_unlisted_member:{cleaned}"
 
     return None
@@ -1426,6 +1511,12 @@ def run_scout_tagging_pass(
         f"Approved themes and example titles (all must be represented): {examples_json}\n"
         f"Retired sets (do NOT pick sets matching these): {retired_json}\n"
         "High-recall rules:\n"
+        "- Inspect EVERY numbered market in this batch one by one and return EVERY match — "
+        "do NOT cap or cherry-pick only a few per batch (batches often contain 8–20 valid matches).\n"
+        "- Pay special attention to frequently missed approved themes: `elon-musk`, `space`, "
+        "`unsolved-problems`, `james-bond`, `long-awaited`, `year-end`, `who-shows-up`, "
+        "`pope-leo-xiv`, `engagements`, `everyday-prices`, `christmas`, `white-christmas`, "
+        "`tv-finales`, and `taylor-swift`.\n"
         "- If a market fits ANY approved theme — even a modest city weather question, movie RT score, "
         "TV winner, music album/song, Pope/Taylor Swift/Bond/Space market, or Costco/fast-food price — "
         "ALWAYS include it and set `fun_group` to that theme slug (e.g. `taylor-swift`, `white-christmas`, "
@@ -1474,20 +1565,29 @@ def run_scout_set_writing_pass(
 ) -> tuple[list[ScoutProposedSet], str, float]:
     """Run the Claude set-writing pass to propose novel Discover sets."""
     system_prompt = (
-        "You are Bain Luck's nightly Fun Scout. Your job is to invent 12 to 18 crisp, "
+        "You are Bain Luck's nightly Fun Scout. Your job is to invent 20 to 26 crisp, "
         "shareable sets of prediction markets that are genuinely better together "
         'than alone — the kind a person texts to a friend (e.g. "Will it ever '
         'come out?", "White Christmas", "How 2026 gets summed up").\n'
+        "Coverage rule: FIRST write one strong set for EVERY non-empty `group` listed in "
+        "`Tagged group counts` below that has >= 3 live candidates (explicitly covering present "
+        "approved themes like `taylor-swift`, `engagements`, `james-bond`, `pope-leo-xiv`, `space`, "
+        "`unsolved-problems`, `tv-finales`, `movies`, `long-awaited`, `long-shot`, `who-shows-up`, "
+        "`elon-musk`, `year-end`, `super-bowl-culture`, `everyday-prices`, `christmas`, "
+        "`white-christmas`), BEFORE spending extra slots on duplicate topics or bonus ideas.\n"
         "Rules (enforced automatically in code — any violation drops the set):\n"
-        "1. Every set needs at least 3 distinct live markets from the supplied list.\n"
+        "1. Every set needs at least 3 distinct live markets from `Live tagged fun candidates`; "
+        "prefer 4 to 6 `member_ids` whenever a theme has >= 4 candidates so every set has depth.\n"
         "2. Never put two venues' copies of the same market in one set.\n"
         "3. Voice ban: NEVER use the words `trader`, `traders`, `bet`, `bets`, or `betting` "
         "in the set name, kicker, why_better_together, or footer. Write for casual readers.\n"
-        "4. Blurb honesty: `why_better_together` may ONLY name people, titles, or topics that appear "
-        "in your `member_ids` — never mention a market you decided not to include.\n"
-        "5. Visual look: choose `map` ONLY when members are distinct specific geographic places "
-        "(cities, ski resorts, mountains, lakes, states); choose `faces` for specific people "
-        "(requires credited portraits); choose `bars` for everything else (including global storms/volcanoes).\n"
+        "4. Blurb honesty & brevity: keep `why_better_together` to ONE crisp sentence (<= 25 words) "
+        "and mention ONLY markets, people, couples, albums, books, movies, or facts whose exact "
+        "`market_id` is in `member_ids` — NEVER cite an `Approved examples` sample or outside title "
+        "unless its exact `market_id` is in `member_ids`.\n"
+        '5. Visual look: choose `"map"` ONLY when EVERY market title in `member_ids` explicitly names '
+        "a specific city, state, ski resort, mountain, or lake; choose `faces` for specific people "
+        "(requires credited portraits); otherwise choose `bars` (including global storms/volcanoes).\n"
         "6. No mechanical financial metrics (never group monthly sales growth, POS growth, or app downloads).\n"
         "7. No politics-only, cabinet/government-exit, or routine election sets.\n"
         "8. Taste guard: no named person's pregnancy, health, affairs, divorce, arrest, trial, or death "
@@ -1499,7 +1599,7 @@ def run_scout_set_writing_pass(
         '"template": str|null, "footer": str|null, "member_ids": [int, ...]}]}'
     )
 
-    live_candidates: list[tuple[ScoutTaggedMarket, ScoutMarketRow]] = []
+    live_rows_raw: list[tuple[ScoutTaggedMarket, ScoutMarketRow]] = []
     for t in tagged_markets:
         row = catalog_by_id.get(t.market_id)
         if row is None:
@@ -1507,7 +1607,11 @@ def run_scout_set_writing_pass(
         ok, _ = check_scout_member(row, min_volume=min_volume, now=now)
         if not ok:
             continue
-        live_candidates.append((t, row))
+        live_rows_raw.append((t, row))
+
+    deduped_rows, _ = dedupe_cross_venue_members([row for _t, row in live_rows_raw])
+    kept_ids = {row.market_id for row in deduped_rows}
+    live_candidates = [pair for pair in live_rows_raw if pair[1].market_id in kept_ids]
 
     live_candidates.sort(
         key=lambda pair: (
@@ -1516,6 +1620,9 @@ def run_scout_set_writing_pass(
             pair[1].market_id,
         )
     )
+    group_counts: dict[str, int] = {}
+    for t, _row in live_candidates:
+        group_counts[t.fun_group] = group_counts.get(t.fun_group, 0) + 1
     candidate_lines = [
         f"{row.market_id} | {row.source} | {row.category or ''} | "
         f"group={t.fun_group} | hint={t.set_hint or ''} | {row.title}"
@@ -1531,7 +1638,9 @@ def run_scout_set_writing_pass(
         f"Recent morning grades: {json.dumps(list(morning_grades)[:20])}\n"
         f"Uncovered sentinel families ({len(family_lines)}):\n"
         + "\n".join(family_lines)
-        + f"\n\nLive tagged fun candidates ({len(candidate_lines)}, grouped by theme):\n"
+        + f"\n\nTagged group counts ({len(group_counts)} themes): "
+        + json.dumps(dict(sorted(group_counts.items())))
+        + f"\nLive tagged fun candidates ({len(candidate_lines)}, grouped by theme):\n"
         + "\n".join(candidate_lines)
     )
 

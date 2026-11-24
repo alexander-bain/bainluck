@@ -25,6 +25,8 @@ ROW_ART_ENABLED_SLUGS = (
     "machinery-2026-summed-up",
     "machinery-cast-delayed-cancelled",
     "machinery-stage-and-cover",
+    "machinery-tv-and-gaming-2026",
+    "machinery-chess-milestones-and-curiosities",
 )
 
 ROW_ART_HIDDEN_SLUGS = (

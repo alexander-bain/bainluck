@@ -57,6 +57,7 @@ class DailyPictureTests(unittest.TestCase):
         self.assertEqual((record["floor"], record["shipped"]), (1, 1))
         self.assertEqual(payload["n"], 1)
         self.assertIn("no lettering", payload["prompt"])
+        self.assertIn("free of signs, labels, words, letters, numbers and rows of tiny marks.", payload["prompt"])
         self.assertNotIn("private title", payload["prompt"])
 
     def test_measurement_reserves_and_prices_one_image_for_the_receipt(self):
@@ -196,28 +197,74 @@ class DailyPictureTests(unittest.TestCase):
         self.assertEqual(receipt["status"], "over-picture-budget")
 
         meter = self.budget.state()
-        meter.update(calls=1, month_micros=MONTHLY_COST_MICROS - 1)
+        meter.update(calls=1, month_micros=MONTHLY_COST_MICROS - 1,
+                     picture_day=meter["day"], picture_draws=1, picture_retry=True)
         budget = ModelBudget(meter_body("", meter), self.save, now=self.now)
         _, receipt = metered_picture(self.snapshot, budget, "fake", request=self.request)
         self.assertEqual(receipt["status"], "no-reservation")
         self.request.assert_not_called()
         self.save.assert_not_called()
 
-    def test_enabled_path_rejects_lettering_then_keeps_yesterdays_date(self):
-        picture, receipt = metered_picture(
-            self.snapshot, self.budget, "fake", enabled=True, request=self.request,
-            prepare=lambda: True, check=lambda image: False,
-        )
-        self.assertIsNone(picture)
-        self.assertEqual(receipt["status"], "lettering-found")
+    def test_three_lettering_rejections_leave_the_previous_picture_and_prevent_a_fourth_draw(self):
         earlier = {"day": "2026-11-20", "as_of": "2026-11-21T03:00:00Z", "floor": 2, "shipped": 5}
         asset = {"name": asset_name(earlier), "label": asset_label(earlier), "state": "uploaded"}
+        budget = self.budget
+        for attempt in range(1, 4):
+            picture, receipt = metered_picture(
+                self.snapshot, budget, "fake", request=self.request,
+                prepare=lambda: True, check=lambda image: False,
+            )
+            self.assertIsNone(picture)
+            self.assertEqual(receipt["status"], "lettering-found")
+            self.assertEqual(receipt["attempt"], attempt)
+            self.assertEqual(receipt["day"], "2026-11-21")
+            self.assertEqual(receipt["used_micros"], 25_215)
+            self.assertEqual(receipt["month_cost_usd"], attempt * 25_215 / 1_000_000)
+            budget = ModelBudget(budget.body, self.save, now=self.now)
         self.assertEqual(gallery([asset], self.now), [earlier])
-        metered_picture(
-            self.snapshot, self.budget, "fake", enabled=True, request=self.request,
+        _, receipt = metered_picture(
+            self.snapshot, budget, "fake", request=self.request,
             prepare=lambda: True, check=lambda image: True,
         )
+        self.assertEqual(receipt["status"], "outside-daily-turn")
+        self.assertEqual(self.request.call_count, 3)
+
+    def test_november_23_legacy_rejection_counts_as_draw_one_and_successful_retry_closes_the_day(self):
+        now = datetime(2026, 11, 24, 3, tzinfo=timezone.utc)
+        meter = ModelBudget("", self.save, now=now).state()
+        meter.update(calls=159, micros=70_961, month_micros=271_141, picture_day="2026-11-23")
+        snapshot = {**self.snapshot, "generated_at": now.isoformat()}
+        budget = ModelBudget(meter_body("", meter), self.save, now=now)
+        options = {"request": self.request, "prepare": lambda: True, "check": lambda image: True}
+        picture, receipt = metered_picture(snapshot, budget, "fake", **options)
+        self.assertEqual(picture[1], self.image)
+        self.assertEqual((receipt["attempt"], receipt["status"]), (2, "drawn"))
+        self.assertEqual(receipt["month_before_micros"], 271_141)
+        self.assertEqual(receipt["month_cost_usd"], 0.296356)
+        again = ModelBudget(budget.body, self.save, now=now)
+        _, receipt = metered_picture(snapshot, again, "fake", **options)
+        self.assertEqual(receipt["status"], "outside-daily-turn")
         self.request.assert_called_once()
+
+    def test_other_legacy_draws_with_unknown_outcomes_do_not_unlock_retries(self):
+        meter = self.budget.state()
+        meter.update(calls=1, picture_day=meter["day"])
+        budget = ModelBudget(meter_body("", meter), self.save, now=self.now)
+        _, receipt = metered_picture(self.snapshot, budget, "fake", request=self.request)
+        self.assertEqual(receipt["status"], "outside-daily-turn")
+        self.request.assert_not_called()
+
+    def test_unknown_charge_consumes_retry_and_stops_more_draws(self):
+        options = {"request": self.request, "prepare": lambda: True, "check": lambda image: False}
+        _, first = metered_picture(self.snapshot, self.budget, "fake", **options)
+        self.assertEqual(first["status"], "lettering-found")
+        self.request.side_effect = TimeoutError()
+        _, second = metered_picture(self.snapshot, self.budget, "fake", **options)
+        self.assertEqual((second["attempt"], second["status"]), (2, "request-failed"))
+        self.assertEqual(self.budget.state()["month_micros"], 25_215 + second["reserve_micros"])
+        _, after = metered_picture(self.snapshot, self.budget, "fake", **options)
+        self.assertEqual(after["status"], "outside-daily-turn")
+        self.assertEqual(self.request.call_count, 2)
 
     def test_picture_validation_has_a_distinct_receipt_for_each_refusal(self):
         response, request_id = self.request.return_value
@@ -386,3 +433,30 @@ class DailyPictureTests(unittest.TestCase):
                 self.assertEqual(api.request.call_args.kwargs["method"], "POST")
                 api.request.assert_called_once()
                 draw.assert_called_once()
+
+    def test_collector_leaves_an_already_published_picture_in_place(self):
+        api = Mock()
+        api.pages.return_value = []
+        api.metrics.return_value = {}
+        record = {"day": "2026-11-21", "as_of": self.now.isoformat(), "floor": 0, "shipped": 0}
+        asset = {"name": asset_name(record), "label": asset_label(record), "state": "uploaded"}
+        run = {"captured_at": self.now.isoformat(), "pulls": [], "deployments": [],
+               "master": {"tests": "passing", "testflight": "success"}}
+        release = {"id": 1, "assets": [asset]}
+        with TemporaryDirectory() as directory, patch.dict("os.environ", {
+            "FACTORY_MEASURE_PICTURE": "false", "OPENAI_API_KEY": "",
+        }), patch(
+            "sys.argv", ["collect.py", "--publish", "--output", f"{directory}/factory.json"]
+        ), patch("collect.authorize_publication"), patch("collect.GitHub", return_value=api), patch(
+            "collect.read_published", return_value=(release, {}, {})
+        ), patch("collect.collect", return_value=run), patch(
+            "collect.machine_queue", return_value={}
+        ), patch("collect.ModelBudget", return_value=self.budget), patch(
+            "collect.metered_picture"
+        ) as draw, patch("collect.publish_asset"), redirect_stdout(io.StringIO()) as out:
+            main()
+            reading = json.loads((Path(directory) / "factory.json").read_text())
+        draw.assert_not_called()
+        api.request.assert_not_called()
+        self.assertEqual(reading["pictures"], [record])
+        self.assertIn('FACTORY_PICTURE {"status": "already-published"}', out.getvalue())
