@@ -1,0 +1,70 @@
+=== 1. EVENTS_SQL (completed pre-Nov-6 games, zero held-out events) ===
+SELECT e.id AS event_id,
+       e.commence_time AS start,
+       e.completed_at AS completed_at,
+       e.score_observed_at AS score_observed_at,
+       e.home_team_name AS home_team_name,
+       e.away_team_name AS away_team_name,
+       e.home_score AS home_score,
+       e.away_score AS away_score,
+       s.key AS league,
+       s."group" AS sport_group
+  FROM events e
+  JOIN sports s ON s.id = e.sport_id
+ WHERE e.status = 'completed'
+   AND e.home_score IS NOT NULL
+   AND e.away_score IS NOT NULL
+   AND e.commence_time < TIMESTAMPTZ '2026-11-06T00:00:00Z'
+   AND (e.completed_at IS NULL OR e.completed_at < TIMESTAMPTZ '2026-11-06T00:00:00Z')
+   AND (e.score_observed_at IS NULL OR e.score_observed_at < TIMESTAMPTZ '2026-11-06T00:00:00Z')
+ ORDER BY e.id
+
+=== 2. WIN_PROB_BATCH_SQL (200-event indexed LATERAL across all win_prob_snapshots sources) ===
+SELECT b.event_id AS event_id,
+       b.horizon AS horizon,
+       src.source AS source,
+       snap.id AS snap_id,
+       snap.captured_at AS captured_at,
+       snap.valid_until AS valid_until,
+       snap.home_win_probability AS home_win_probability
+  FROM unnest(
+      CAST(:event_ids AS bigint[]),
+      CAST(:cutoffs AS timestamptz[]),
+      CAST(:horizons AS text[])
+  ) AS b(event_id, cutoff, horizon)
+  CROSS JOIN (
+      VALUES ('espn'), ('kalshi'), ('polymarket'), ('stat_model'), ('mlb'), ('fangraphs')
+  ) AS src(source)
+  CROSS JOIN LATERAL (
+      SELECT w.id, w.captured_at, w.valid_until, w.home_win_probability
+        FROM win_prob_snapshots w
+       WHERE w.event_id = b.event_id
+         AND w.source = src.source
+         AND w.captured_at <= b.cutoff
+         AND w.captured_at < TIMESTAMPTZ '2026-11-06T00:00:00Z'
+         AND w.home_win_probability IS NOT NULL
+         AND w.home_win_probability >= 0
+         AND w.home_win_probability <= 1
+       ORDER BY w.captured_at DESC, w.id DESC
+       LIMIT 1
+  ) AS snap
+
+=== 3. ODDS_BATCH_SQL (200-event pre-cutoff bookmaker rows for producer median/floor replay) ===
+SELECT o.event_id AS event_id,
+       o.id AS snap_id,
+       o.bookmaker AS bookmaker,
+       o.captured_at AS captured_at,
+       o.valid_until AS valid_until,
+       o.home_win_probability AS home_win_probability
+  FROM odds_snapshots o
+  JOIN events e ON e.id = o.event_id
+ WHERE o.event_id = ANY(CAST(:event_ids AS bigint[]))
+   AND e.commence_time < TIMESTAMPTZ '2026-11-06T00:00:00Z'
+   AND (e.completed_at IS NULL OR e.completed_at < TIMESTAMPTZ '2026-11-06T00:00:00Z')
+   AND (e.score_observed_at IS NULL OR e.score_observed_at < TIMESTAMPTZ '2026-11-06T00:00:00Z')
+   AND o.captured_at <= e.commence_time
+   AND o.captured_at < TIMESTAMPTZ '2026-11-06T00:00:00Z'
+   AND o.home_win_probability IS NOT NULL
+   AND o.home_win_probability > 0
+   AND o.home_win_probability < 1
+ ORDER BY o.event_id, o.bookmaker, o.captured_at, o.id

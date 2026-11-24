@@ -1,0 +1,49 @@
+=== 1. MANIFEST SQL (Dec 4 held-out events) ===
+SELECT e.id AS event_id,
+       e.commence_time AS start,
+       e.home_team_name AS home_team_name,
+       e.away_team_name AS away_team_name,
+       s.key AS league
+  FROM events e
+  JOIN sports s ON s.id = e.sport_id
+ WHERE e.status = 'completed'
+   AND e.commence_time >= TIMESTAMPTZ '2026-11-06T05:52:44+00:00'
+   AND e.commence_time < TIMESTAMPTZ '2026-12-04T05:52:44+00:00'
+   AND e.home_score IS NOT NULL
+   AND e.away_score IS NOT NULL
+   AND EXISTS (
+       SELECT 1
+         FROM probability_publications pp
+        WHERE pp.event_id = e.id
+          AND pp.recorded_at >= TIMESTAMPTZ '2026-11-06T05:52:44+00:00'
+          AND pp.recorded_at <= e.commence_time
+   )
+ ORDER BY e.commence_time, e.id
+
+=== 2.EVENT PER-EVENT SQL (inside blend_replay_export.read_packets) ===
+SELECT e.id, e.commence_time AS start, e.status,
+       e.home_score, e.away_score, s.key AS league
+  FROM events e JOIN sports s ON s.id = e.sport_id
+ WHERE e.id = :event_id
+
+=== 2.ODDS_SNAPSHOTS PER-EVENT SQL (inside blend_replay_export.read_packets) ===
+SELECT id, bookmaker, captured_at, valid_until, home_win_probability
+  FROM odds_snapshots
+ WHERE event_id = :event_id AND captured_at <= :start
+ ORDER BY captured_at, id
+ LIMIT 20001
+
+=== 2.WIN_PROB_SNAPSHOTS PER-EVENT SQL (inside blend_replay_export.read_packets) ===
+SELECT id, source, captured_at, valid_until, home_win_probability
+  FROM win_prob_snapshots
+ WHERE event_id = :event_id AND captured_at <= :start
+ ORDER BY captured_at, id
+ LIMIT 20001
+
+=== 2.PROBABILITY_PUBLICATIONS PER-EVENT SQL (inside blend_replay_export.read_packets) ===
+SELECT rev, recorded_at, sources, event_status, blend_inputs, source_clocks,
+       blend_probability, blend_tier, blend_method, payload_sha256
+  FROM probability_publications
+ WHERE event_id = :event_id AND recorded_at <= :start
+ ORDER BY rev
+ LIMIT 20001

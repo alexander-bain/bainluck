@@ -1,0 +1,4996 @@
+{
+  "database": "disposable local postgres (0 production reads, 0 real games)",
+  "database_reads": {
+    "manifest_events": 4,
+    "manifest_sha256": "d5101a4cb0b2ae2be9907b8c06b7030f65e1a1bcc8764d7b43fc3aaa2c53bd2a",
+    "nightly_limit_seconds": 1800,
+    "read_only": true,
+    "statement_seconds_total": 0.04,
+    "statement_timeout_ms": 10000,
+    "statements": 43
+  },
+  "export_sha256": "c1ae4de18618979b0e5f63a0c06136f51eadd7792b2e07e4032061b8c48a1339",
+  "manifest_clusters": 3,
+  "manifest_events": 4,
+  "out_of_window_synthetic_events_excluded": 2,
+  "pre_dec4_clock_refusal_check": "REFUSED: held-out window (2026-11-06T05:52:44+00:00 to 2026-12-04T05:52:44+00:00) may not be scored before Fri Dec 4 00:00 PT (2026-12-04T08:00:00+00:00 / 2026-12-04T00:00:00-08:00). Current time: 2026-11-24T00:39:07.596762+00:00 (2026-11-23T16:39:07.596762-08:00).",
+  "protocol_sha256": "73b302ff91058e29fe13d6dc315462f7fcdc3b50903c9cdce45610931d83b746",
+  "receipt_sha256": "c9792d4c88ee86d164242b11ea76bf3afb096559b7e321cd9fda6ffe0f00a38b",
+  "rehearsal_status": "PASSED",
+  "score_receipt_summary": {
+    "activation": "NONE",
+    "blend_vs_sources": {
+      "common_source_sets": [
+        {
+          "blend": {
+            "brier": 0.14529999999999998,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.41,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.82,
+                "sum_sq_err": 0.33619999999999994,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.65,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.3,
+                "sum_sq_err": 0.24499999999999997,
+                "winners": 2
+              }
+            ],
+            "ece": 38.0,
+            "gap": 3.0,
+            "log_loss": 0.479207829087413,
+            "n": 4
+          },
+          "by_source": {
+            "betting": {
+              "brier": 0.12339999999999998,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.38,
+                  "bucket": "30-40%",
+                  "bucket_idx": 3,
+                  "n": 2,
+                  "sum_prob": 0.76,
+                  "sum_sq_err": 0.2888,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.68,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.36,
+                  "sum_sq_err": 0.20479999999999993,
+                  "winners": 2
+                }
+              ],
+              "ece": 35.0,
+              "gap": 3.0,
+              "log_loss": 0.4318491408774922,
+              "n": 4
+            },
+            "espn": {
+              "brier": 0.15664999999999998,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.42,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.84,
+                  "sum_sq_err": 0.35279999999999995,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.63,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.26,
+                  "sum_sq_err": 0.2738,
+                  "winners": 2
+                }
+              ],
+              "ece": 39.5,
+              "gap": 2.5,
+              "log_loss": 0.5033813175191153,
+              "n": 4
+            }
+          },
+          "distinct_events": 4,
+          "horizon": "start",
+          "kind": "served",
+          "n_games": 4,
+          "sources": [
+            "betting",
+            "espn"
+          ],
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.14529999999999998,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.41,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.82,
+                "sum_sq_err": 0.33619999999999994,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.65,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.3,
+                "sum_sq_err": 0.24499999999999997,
+                "winners": 2
+              }
+            ],
+            "ece": 38.0,
+            "gap": 3.0,
+            "log_loss": 0.479207829087413,
+            "n": 4
+          },
+          "by_source": {
+            "betting": {
+              "brier": 0.12339999999999998,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.38,
+                  "bucket": "30-40%",
+                  "bucket_idx": 3,
+                  "n": 2,
+                  "sum_prob": 0.76,
+                  "sum_sq_err": 0.2888,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.68,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.36,
+                  "sum_sq_err": 0.20479999999999993,
+                  "winners": 2
+                }
+              ],
+              "ece": 35.0,
+              "gap": 3.0,
+              "log_loss": 0.4318491408774922,
+              "n": 4
+            },
+            "espn": {
+              "brier": 0.15664999999999998,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.42,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.84,
+                  "sum_sq_err": 0.35279999999999995,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.63,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.26,
+                  "sum_sq_err": 0.2738,
+                  "winners": 2
+                }
+              ],
+              "ece": 39.5,
+              "gap": 2.5,
+              "log_loss": 0.5033813175191153,
+              "n": 4
+            },
+            "kalshi": {
+              "brier": 0.14529999999999998,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.41,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.82,
+                  "sum_sq_err": 0.33619999999999994,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.65,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.3,
+                  "sum_sq_err": 0.24499999999999997,
+                  "winners": 2
+                }
+              ],
+              "ece": 38.0,
+              "gap": 3.0,
+              "log_loss": 0.479207829087413,
+              "n": 4
+            }
+          },
+          "distinct_events": 4,
+          "horizon": "start",
+          "kind": "served",
+          "n_games": 4,
+          "sources": [
+            "betting",
+            "espn",
+            "kalshi"
+          ],
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.14529999999999998,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.41,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.82,
+                "sum_sq_err": 0.33619999999999994,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.65,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.3,
+                "sum_sq_err": 0.24499999999999997,
+                "winners": 2
+              }
+            ],
+            "ece": 38.0,
+            "gap": 3.0,
+            "log_loss": 0.479207829087413,
+            "n": 4
+          },
+          "by_source": {
+            "betting": {
+              "brier": 0.12339999999999998,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.38,
+                  "bucket": "30-40%",
+                  "bucket_idx": 3,
+                  "n": 2,
+                  "sum_prob": 0.76,
+                  "sum_sq_err": 0.2888,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.68,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.36,
+                  "sum_sq_err": 0.20479999999999993,
+                  "winners": 2
+                }
+              ],
+              "ece": 35.0,
+              "gap": 3.0,
+              "log_loss": 0.4318491408774922,
+              "n": 4
+            },
+            "kalshi": {
+              "brier": 0.14529999999999998,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.41,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.82,
+                  "sum_sq_err": 0.33619999999999994,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.65,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.3,
+                  "sum_sq_err": 0.24499999999999997,
+                  "winners": 2
+                }
+              ],
+              "ece": 38.0,
+              "gap": 3.0,
+              "log_loss": 0.479207829087413,
+              "n": 4
+            }
+          },
+          "distinct_events": 4,
+          "horizon": "start",
+          "kind": "served",
+          "n_games": 4,
+          "sources": [
+            "betting",
+            "kalshi"
+          ],
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.14529999999999998,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.41,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.82,
+                "sum_sq_err": 0.33619999999999994,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.65,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.3,
+                "sum_sq_err": 0.24499999999999997,
+                "winners": 2
+              }
+            ],
+            "ece": 38.0,
+            "gap": 3.0,
+            "log_loss": 0.479207829087413,
+            "n": 4
+          },
+          "by_source": {
+            "espn": {
+              "brier": 0.15664999999999998,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.42,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.84,
+                  "sum_sq_err": 0.35279999999999995,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.63,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.26,
+                  "sum_sq_err": 0.2738,
+                  "winners": 2
+                }
+              ],
+              "ece": 39.5,
+              "gap": 2.5,
+              "log_loss": 0.5033813175191153,
+              "n": 4
+            },
+            "kalshi": {
+              "brier": 0.14529999999999998,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.41,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.82,
+                  "sum_sq_err": 0.33619999999999994,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.65,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.3,
+                  "sum_sq_err": 0.24499999999999997,
+                  "winners": 2
+                }
+              ],
+              "ece": 38.0,
+              "gap": 3.0,
+              "log_loss": 0.479207829087413,
+              "n": 4
+            }
+          },
+          "distinct_events": 4,
+          "horizon": "start",
+          "kind": "served",
+          "n_games": 4,
+          "sources": [
+            "espn",
+            "kalshi"
+          ],
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.15299999999999997,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.42,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.84,
+                "sum_sq_err": 0.35279999999999995,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.64,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.28,
+                "sum_sq_err": 0.2592,
+                "winners": 2
+              }
+            ],
+            "ece": 39.0,
+            "gap": 3.0,
+            "log_loss": 0.49550713903504573,
+            "n": 4
+          },
+          "by_source": {
+            "betting": {
+              "brier": 0.1305,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.39,
+                  "bucket": "30-40%",
+                  "bucket_idx": 3,
+                  "n": 2,
+                  "sum_prob": 0.78,
+                  "sum_sq_err": 0.3042,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.67,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.34,
+                  "sum_sq_err": 0.21779999999999994,
+                  "winners": 2
+                }
+              ],
+              "ece": 36.0,
+              "gap": 3.0,
+              "log_loss": 0.4473869442059527,
+              "n": 4
+            },
+            "espn": {
+              "brier": 0.16465,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.43,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.86,
+                  "sum_sq_err": 0.36979999999999996,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.62,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.24,
+                  "sum_sq_err": 0.2888,
+                  "winners": 2
+                }
+              ],
+              "ece": 40.5,
+              "gap": 2.5,
+              "log_loss": 0.5200773595482705,
+              "n": 4
+            }
+          },
+          "distinct_events": 4,
+          "horizon": "t_minus_1h",
+          "kind": "served",
+          "n_games": 4,
+          "sources": [
+            "betting",
+            "espn"
+          ],
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.15299999999999997,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.42,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.84,
+                "sum_sq_err": 0.35279999999999995,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.64,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.28,
+                "sum_sq_err": 0.2592,
+                "winners": 2
+              }
+            ],
+            "ece": 39.0,
+            "gap": 3.0,
+            "log_loss": 0.49550713903504573,
+            "n": 4
+          },
+          "by_source": {
+            "betting": {
+              "brier": 0.1305,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.39,
+                  "bucket": "30-40%",
+                  "bucket_idx": 3,
+                  "n": 2,
+                  "sum_prob": 0.78,
+                  "sum_sq_err": 0.3042,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.67,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.34,
+                  "sum_sq_err": 0.21779999999999994,
+                  "winners": 2
+                }
+              ],
+              "ece": 36.0,
+              "gap": 3.0,
+              "log_loss": 0.4473869442059527,
+              "n": 4
+            },
+            "espn": {
+              "brier": 0.16465,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.43,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.86,
+                  "sum_sq_err": 0.36979999999999996,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.62,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.24,
+                  "sum_sq_err": 0.2888,
+                  "winners": 2
+                }
+              ],
+              "ece": 40.5,
+              "gap": 2.5,
+              "log_loss": 0.5200773595482705,
+              "n": 4
+            },
+            "kalshi": {
+              "brier": 0.15299999999999997,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.42,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.84,
+                  "sum_sq_err": 0.35279999999999995,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.64,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.28,
+                  "sum_sq_err": 0.2592,
+                  "winners": 2
+                }
+              ],
+              "ece": 39.0,
+              "gap": 3.0,
+              "log_loss": 0.49550713903504573,
+              "n": 4
+            }
+          },
+          "distinct_events": 4,
+          "horizon": "t_minus_1h",
+          "kind": "served",
+          "n_games": 4,
+          "sources": [
+            "betting",
+            "espn",
+            "kalshi"
+          ],
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.15299999999999997,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.42,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.84,
+                "sum_sq_err": 0.35279999999999995,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.64,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.28,
+                "sum_sq_err": 0.2592,
+                "winners": 2
+              }
+            ],
+            "ece": 39.0,
+            "gap": 3.0,
+            "log_loss": 0.49550713903504573,
+            "n": 4
+          },
+          "by_source": {
+            "betting": {
+              "brier": 0.1305,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.39,
+                  "bucket": "30-40%",
+                  "bucket_idx": 3,
+                  "n": 2,
+                  "sum_prob": 0.78,
+                  "sum_sq_err": 0.3042,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.67,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.34,
+                  "sum_sq_err": 0.21779999999999994,
+                  "winners": 2
+                }
+              ],
+              "ece": 36.0,
+              "gap": 3.0,
+              "log_loss": 0.4473869442059527,
+              "n": 4
+            },
+            "kalshi": {
+              "brier": 0.15299999999999997,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.42,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.84,
+                  "sum_sq_err": 0.35279999999999995,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.64,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.28,
+                  "sum_sq_err": 0.2592,
+                  "winners": 2
+                }
+              ],
+              "ece": 39.0,
+              "gap": 3.0,
+              "log_loss": 0.49550713903504573,
+              "n": 4
+            }
+          },
+          "distinct_events": 4,
+          "horizon": "t_minus_1h",
+          "kind": "served",
+          "n_games": 4,
+          "sources": [
+            "betting",
+            "kalshi"
+          ],
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.15299999999999997,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.42,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.84,
+                "sum_sq_err": 0.35279999999999995,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.64,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.28,
+                "sum_sq_err": 0.2592,
+                "winners": 2
+              }
+            ],
+            "ece": 39.0,
+            "gap": 3.0,
+            "log_loss": 0.49550713903504573,
+            "n": 4
+          },
+          "by_source": {
+            "espn": {
+              "brier": 0.16465,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.43,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.86,
+                  "sum_sq_err": 0.36979999999999996,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.62,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.24,
+                  "sum_sq_err": 0.2888,
+                  "winners": 2
+                }
+              ],
+              "ece": 40.5,
+              "gap": 2.5,
+              "log_loss": 0.5200773595482705,
+              "n": 4
+            },
+            "kalshi": {
+              "brier": 0.15299999999999997,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.42,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.84,
+                  "sum_sq_err": 0.35279999999999995,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.64,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.28,
+                  "sum_sq_err": 0.2592,
+                  "winners": 2
+                }
+              ],
+              "ece": 39.0,
+              "gap": 3.0,
+              "log_loss": 0.49550713903504573,
+              "n": 4
+            }
+          },
+          "distinct_events": 4,
+          "horizon": "t_minus_1h",
+          "kind": "served",
+          "n_games": 4,
+          "sources": [
+            "espn",
+            "kalshi"
+          ],
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.16899999999999998,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.44,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.88,
+                "sum_sq_err": 0.3872,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.62,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.24,
+                "sum_sq_err": 0.2888,
+                "winners": 2
+              }
+            ],
+            "ece": 41.0,
+            "gap": 3.0,
+            "log_loss": 0.5289271480979709,
+            "n": 4
+          },
+          "by_source": {
+            "betting": {
+              "brier": 0.14529999999999998,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.41,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.82,
+                  "sum_sq_err": 0.33619999999999994,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.65,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.3,
+                  "sum_sq_err": 0.24499999999999997,
+                  "winners": 2
+                }
+              ],
+              "ece": 38.0,
+              "gap": 3.0,
+              "log_loss": 0.479207829087413,
+              "n": 4
+            },
+            "espn": {
+              "brier": 0.18125000000000002,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.45,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.9,
+                  "sum_sq_err": 0.405,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.6,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.2,
+                  "sum_sq_err": 0.32000000000000006,
+                  "winners": 2
+                }
+              ],
+              "ece": 42.5,
+              "gap": 2.5,
+              "log_loss": 0.5543313122608056,
+              "n": 4
+            }
+          },
+          "distinct_events": 4,
+          "horizon": "t_minus_24h",
+          "kind": "served",
+          "n_games": 4,
+          "sources": [
+            "betting",
+            "espn"
+          ],
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.16899999999999998,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.44,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.88,
+                "sum_sq_err": 0.3872,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.62,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.24,
+                "sum_sq_err": 0.2888,
+                "winners": 2
+              }
+            ],
+            "ece": 41.0,
+            "gap": 3.0,
+            "log_loss": 0.5289271480979709,
+            "n": 4
+          },
+          "by_source": {
+            "betting": {
+              "brier": 0.14529999999999998,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.41,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.82,
+                  "sum_sq_err": 0.33619999999999994,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.65,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.3,
+                  "sum_sq_err": 0.24499999999999997,
+                  "winners": 2
+                }
+              ],
+              "ece": 38.0,
+              "gap": 3.0,
+              "log_loss": 0.479207829087413,
+              "n": 4
+            },
+            "espn": {
+              "brier": 0.18125000000000002,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.45,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.9,
+                  "sum_sq_err": 0.405,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.6,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.2,
+                  "sum_sq_err": 0.32000000000000006,
+                  "winners": 2
+                }
+              ],
+              "ece": 42.5,
+              "gap": 2.5,
+              "log_loss": 0.5543313122608056,
+              "n": 4
+            },
+            "kalshi": {
+              "brier": 0.16899999999999998,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.44,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.88,
+                  "sum_sq_err": 0.3872,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.62,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.24,
+                  "sum_sq_err": 0.2888,
+                  "winners": 2
+                }
+              ],
+              "ece": 41.0,
+              "gap": 3.0,
+              "log_loss": 0.5289271480979709,
+              "n": 4
+            }
+          },
+          "distinct_events": 4,
+          "horizon": "t_minus_24h",
+          "kind": "served",
+          "n_games": 4,
+          "sources": [
+            "betting",
+            "espn",
+            "kalshi"
+          ],
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.16899999999999998,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.44,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.88,
+                "sum_sq_err": 0.3872,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.62,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.24,
+                "sum_sq_err": 0.2888,
+                "winners": 2
+              }
+            ],
+            "ece": 41.0,
+            "gap": 3.0,
+            "log_loss": 0.5289271480979709,
+            "n": 4
+          },
+          "by_source": {
+            "betting": {
+              "brier": 0.14529999999999998,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.41,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.82,
+                  "sum_sq_err": 0.33619999999999994,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.65,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.3,
+                  "sum_sq_err": 0.24499999999999997,
+                  "winners": 2
+                }
+              ],
+              "ece": 38.0,
+              "gap": 3.0,
+              "log_loss": 0.479207829087413,
+              "n": 4
+            },
+            "kalshi": {
+              "brier": 0.16899999999999998,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.44,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.88,
+                  "sum_sq_err": 0.3872,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.62,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.24,
+                  "sum_sq_err": 0.2888,
+                  "winners": 2
+                }
+              ],
+              "ece": 41.0,
+              "gap": 3.0,
+              "log_loss": 0.5289271480979709,
+              "n": 4
+            }
+          },
+          "distinct_events": 4,
+          "horizon": "t_minus_24h",
+          "kind": "served",
+          "n_games": 4,
+          "sources": [
+            "betting",
+            "kalshi"
+          ],
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.16899999999999998,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.44,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.88,
+                "sum_sq_err": 0.3872,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.62,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.24,
+                "sum_sq_err": 0.2888,
+                "winners": 2
+              }
+            ],
+            "ece": 41.0,
+            "gap": 3.0,
+            "log_loss": 0.5289271480979709,
+            "n": 4
+          },
+          "by_source": {
+            "espn": {
+              "brier": 0.18125000000000002,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.45,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.9,
+                  "sum_sq_err": 0.405,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.6,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.2,
+                  "sum_sq_err": 0.32000000000000006,
+                  "winners": 2
+                }
+              ],
+              "ece": 42.5,
+              "gap": 2.5,
+              "log_loss": 0.5543313122608056,
+              "n": 4
+            },
+            "kalshi": {
+              "brier": 0.16899999999999998,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.44,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.88,
+                  "sum_sq_err": 0.3872,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.62,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.24,
+                  "sum_sq_err": 0.2888,
+                  "winners": 2
+                }
+              ],
+              "ece": 41.0,
+              "gap": 3.0,
+              "log_loss": 0.5289271480979709,
+              "n": 4
+            }
+          },
+          "distinct_events": 4,
+          "horizon": "t_minus_24h",
+          "kind": "served",
+          "n_games": 4,
+          "sources": [
+            "espn",
+            "kalshi"
+          ],
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.1609,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.43,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.86,
+                "sum_sq_err": 0.36979999999999996,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.63,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.26,
+                "sum_sq_err": 0.2738,
+                "winners": 2
+              }
+            ],
+            "ece": 40.0,
+            "gap": 3.0,
+            "log_loss": 0.5120771888750499,
+            "n": 4
+          },
+          "by_source": {
+            "betting": {
+              "brier": 0.1378,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.4,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.8,
+                  "sum_sq_err": 0.32000000000000006,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.66,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.32,
+                  "sum_sq_err": 0.23119999999999996,
+                  "winners": 2
+                }
+              ],
+              "ece": 37.0,
+              "gap": 3.0,
+              "log_loss": 0.4631705338638282,
+              "n": 4
+            },
+            "espn": {
+              "brier": 0.17285,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.44,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.88,
+                  "sum_sq_err": 0.3872,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.61,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.22,
+                  "sum_sq_err": 0.3042,
+                  "winners": 2
+                }
+              ],
+              "ece": 41.5,
+              "gap": 2.5,
+              "log_loss": 0.5370574085338611,
+              "n": 4
+            }
+          },
+          "distinct_events": 4,
+          "horizon": "t_minus_6h",
+          "kind": "served",
+          "n_games": 4,
+          "sources": [
+            "betting",
+            "espn"
+          ],
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.1609,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.43,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.86,
+                "sum_sq_err": 0.36979999999999996,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.63,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.26,
+                "sum_sq_err": 0.2738,
+                "winners": 2
+              }
+            ],
+            "ece": 40.0,
+            "gap": 3.0,
+            "log_loss": 0.5120771888750499,
+            "n": 4
+          },
+          "by_source": {
+            "betting": {
+              "brier": 0.1378,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.4,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.8,
+                  "sum_sq_err": 0.32000000000000006,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.66,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.32,
+                  "sum_sq_err": 0.23119999999999996,
+                  "winners": 2
+                }
+              ],
+              "ece": 37.0,
+              "gap": 3.0,
+              "log_loss": 0.4631705338638282,
+              "n": 4
+            },
+            "espn": {
+              "brier": 0.17285,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.44,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.88,
+                  "sum_sq_err": 0.3872,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.61,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.22,
+                  "sum_sq_err": 0.3042,
+                  "winners": 2
+                }
+              ],
+              "ece": 41.5,
+              "gap": 2.5,
+              "log_loss": 0.5370574085338611,
+              "n": 4
+            },
+            "kalshi": {
+              "brier": 0.1609,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.43,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.86,
+                  "sum_sq_err": 0.36979999999999996,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.63,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.26,
+                  "sum_sq_err": 0.2738,
+                  "winners": 2
+                }
+              ],
+              "ece": 40.0,
+              "gap": 3.0,
+              "log_loss": 0.5120771888750499,
+              "n": 4
+            }
+          },
+          "distinct_events": 4,
+          "horizon": "t_minus_6h",
+          "kind": "served",
+          "n_games": 4,
+          "sources": [
+            "betting",
+            "espn",
+            "kalshi"
+          ],
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.1609,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.43,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.86,
+                "sum_sq_err": 0.36979999999999996,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.63,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.26,
+                "sum_sq_err": 0.2738,
+                "winners": 2
+              }
+            ],
+            "ece": 40.0,
+            "gap": 3.0,
+            "log_loss": 0.5120771888750499,
+            "n": 4
+          },
+          "by_source": {
+            "betting": {
+              "brier": 0.1378,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.4,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.8,
+                  "sum_sq_err": 0.32000000000000006,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.66,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.32,
+                  "sum_sq_err": 0.23119999999999996,
+                  "winners": 2
+                }
+              ],
+              "ece": 37.0,
+              "gap": 3.0,
+              "log_loss": 0.4631705338638282,
+              "n": 4
+            },
+            "kalshi": {
+              "brier": 0.1609,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.43,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.86,
+                  "sum_sq_err": 0.36979999999999996,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.63,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.26,
+                  "sum_sq_err": 0.2738,
+                  "winners": 2
+                }
+              ],
+              "ece": 40.0,
+              "gap": 3.0,
+              "log_loss": 0.5120771888750499,
+              "n": 4
+            }
+          },
+          "distinct_events": 4,
+          "horizon": "t_minus_6h",
+          "kind": "served",
+          "n_games": 4,
+          "sources": [
+            "betting",
+            "kalshi"
+          ],
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.1609,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.43,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.86,
+                "sum_sq_err": 0.36979999999999996,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.63,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.26,
+                "sum_sq_err": 0.2738,
+                "winners": 2
+              }
+            ],
+            "ece": 40.0,
+            "gap": 3.0,
+            "log_loss": 0.5120771888750499,
+            "n": 4
+          },
+          "by_source": {
+            "espn": {
+              "brier": 0.17285,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.44,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.88,
+                  "sum_sq_err": 0.3872,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.61,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.22,
+                  "sum_sq_err": 0.3042,
+                  "winners": 2
+                }
+              ],
+              "ece": 41.5,
+              "gap": 2.5,
+              "log_loss": 0.5370574085338611,
+              "n": 4
+            },
+            "kalshi": {
+              "brier": 0.1609,
+              "buckets": [
+                {
+                  "actual": 0.0,
+                  "avg_prob": 0.43,
+                  "bucket": "40-50%",
+                  "bucket_idx": 4,
+                  "n": 2,
+                  "sum_prob": 0.86,
+                  "sum_sq_err": 0.36979999999999996,
+                  "winners": 0
+                },
+                {
+                  "actual": 1.0,
+                  "avg_prob": 0.63,
+                  "bucket": "60-70%",
+                  "bucket_idx": 6,
+                  "n": 2,
+                  "sum_prob": 1.26,
+                  "sum_sq_err": 0.2738,
+                  "winners": 2
+                }
+              ],
+              "ece": 40.0,
+              "gap": 3.0,
+              "log_loss": 0.5120771888750499,
+              "n": 4
+            }
+          },
+          "distinct_events": 4,
+          "horizon": "t_minus_6h",
+          "kind": "served",
+          "n_games": 4,
+          "sources": [
+            "espn",
+            "kalshi"
+          ],
+          "split": "held_out"
+        }
+      ],
+      "per_source_matched": [
+        {
+          "blend": {
+            "brier": 0.14529999999999998,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.41,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.82,
+                "sum_sq_err": 0.33619999999999994,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.65,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.3,
+                "sum_sq_err": 0.24499999999999997,
+                "winners": 2
+              }
+            ],
+            "ece": 38.0,
+            "gap": 3.0,
+            "log_loss": 0.479207829087413,
+            "n": 4
+          },
+          "delta_blend_minus_source": {
+            "brier": 0.021900000000000003,
+            "ece": 3.0,
+            "gap": 0.0,
+            "log_loss": 0.047358688209920785
+          },
+          "distinct_events": 4,
+          "horizon": "start",
+          "interval95": {
+            "bounds": {
+              "brier": [
+                0.020100000000000007,
+                0.0237
+              ],
+              "ece": [
+                3.0,
+                3.0
+              ],
+              "gap": [
+                -3.0,
+                3.0
+              ],
+              "log_loss": [
+                0.04512043528046966,
+                0.04959694113937202
+              ]
+            },
+            "clusters": 3,
+            "replicates": 1000
+          },
+          "kind": "served",
+          "league": "all",
+          "n_games": 4,
+          "source": "betting",
+          "source_metrics": {
+            "brier": 0.12339999999999998,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.38,
+                "bucket": "30-40%",
+                "bucket_idx": 3,
+                "n": 2,
+                "sum_prob": 0.76,
+                "sum_sq_err": 0.2888,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.68,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.36,
+                "sum_sq_err": 0.20479999999999993,
+                "winners": 2
+              }
+            ],
+            "ece": 35.0,
+            "gap": 3.0,
+            "log_loss": 0.4318491408774922,
+            "n": 4
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.14529999999999998,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.41,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.82,
+                "sum_sq_err": 0.33619999999999994,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.65,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.3,
+                "sum_sq_err": 0.24499999999999997,
+                "winners": 2
+              }
+            ],
+            "ece": 38.0,
+            "gap": 3.0,
+            "log_loss": 0.479207829087413,
+            "n": 4
+          },
+          "delta_blend_minus_source": {
+            "brier": -0.011349999999999999,
+            "ece": -1.5,
+            "gap": 0.5,
+            "log_loss": -0.024173488431702306
+          },
+          "distinct_events": 4,
+          "horizon": "start",
+          "interval95": {
+            "bounds": {
+              "brier": [
+                -0.01440000000000001,
+                -0.008299999999999974
+              ],
+              "ece": [
+                -2.0,
+                -1.0
+              ],
+              "gap": [
+                -1.0,
+                2.0
+              ],
+              "log_loss": [
+                -0.031252543504104335,
+                -0.017094433359300165
+              ]
+            },
+            "clusters": 3,
+            "replicates": 1000
+          },
+          "kind": "served",
+          "league": "all",
+          "n_games": 4,
+          "source": "espn",
+          "source_metrics": {
+            "brier": 0.15664999999999998,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.42,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.84,
+                "sum_sq_err": 0.35279999999999995,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.63,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.26,
+                "sum_sq_err": 0.2738,
+                "winners": 2
+              }
+            ],
+            "ece": 39.5,
+            "gap": 2.5,
+            "log_loss": 0.5033813175191153,
+            "n": 4
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.14529999999999998,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.41,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.82,
+                "sum_sq_err": 0.33619999999999994,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.65,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.3,
+                "sum_sq_err": 0.24499999999999997,
+                "winners": 2
+              }
+            ],
+            "ece": 38.0,
+            "gap": 3.0,
+            "log_loss": 0.479207829087413,
+            "n": 4
+          },
+          "delta_blend_minus_source": {
+            "brier": 0.0,
+            "ece": 0.0,
+            "gap": 0.0,
+            "log_loss": 0.0
+          },
+          "distinct_events": 4,
+          "horizon": "start",
+          "interval95": {
+            "bounds": {
+              "brier": [
+                0.0,
+                0.0
+              ],
+              "ece": [
+                0.0,
+                0.0
+              ],
+              "gap": [
+                0.0,
+                0.0
+              ],
+              "log_loss": [
+                0.0,
+                0.0
+              ]
+            },
+            "clusters": 3,
+            "replicates": 1000
+          },
+          "kind": "served",
+          "league": "all",
+          "n_games": 4,
+          "source": "kalshi",
+          "source_metrics": {
+            "brier": 0.14529999999999998,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.41,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.82,
+                "sum_sq_err": 0.33619999999999994,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.65,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.3,
+                "sum_sq_err": 0.24499999999999997,
+                "winners": 2
+              }
+            ],
+            "ece": 38.0,
+            "gap": 3.0,
+            "log_loss": 0.479207829087413,
+            "n": 4
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.15299999999999997,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.42,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.84,
+                "sum_sq_err": 0.35279999999999995,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.64,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.28,
+                "sum_sq_err": 0.2592,
+                "winners": 2
+              }
+            ],
+            "ece": 39.0,
+            "gap": 3.0,
+            "log_loss": 0.49550713903504573,
+            "n": 4
+          },
+          "delta_blend_minus_source": {
+            "brier": 0.022499999999999964,
+            "ece": 3.0,
+            "gap": 0.0,
+            "log_loss": 0.04812019482909302
+          },
+          "distinct_events": 4,
+          "horizon": "t_minus_1h",
+          "interval95": {
+            "bounds": {
+              "brier": [
+                0.020700000000000038,
+                0.02429999999999996
+              ],
+              "ece": [
+                3.0,
+                3.0
+              ],
+              "gap": [
+                -3.0,
+                3.0
+              ],
+              "log_loss": [
+                0.04580953603129423,
+                0.05043085362689187
+              ]
+            },
+            "clusters": 3,
+            "replicates": 1000
+          },
+          "kind": "served",
+          "league": "all",
+          "n_games": 4,
+          "source": "betting",
+          "source_metrics": {
+            "brier": 0.1305,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.39,
+                "bucket": "30-40%",
+                "bucket_idx": 3,
+                "n": 2,
+                "sum_prob": 0.78,
+                "sum_sq_err": 0.3042,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.67,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.34,
+                "sum_sq_err": 0.21779999999999994,
+                "winners": 2
+              }
+            ],
+            "ece": 36.0,
+            "gap": 3.0,
+            "log_loss": 0.4473869442059527,
+            "n": 4
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.15299999999999997,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.42,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.84,
+                "sum_sq_err": 0.35279999999999995,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.64,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.28,
+                "sum_sq_err": 0.2592,
+                "winners": 2
+              }
+            ],
+            "ece": 39.0,
+            "gap": 3.0,
+            "log_loss": 0.49550713903504573,
+            "n": 4
+          },
+          "delta_blend_minus_source": {
+            "brier": -0.011650000000000021,
+            "ece": -1.5,
+            "gap": 0.5,
+            "log_loss": -0.024570220513224772
+          },
+          "distinct_events": 4,
+          "horizon": "t_minus_1h",
+          "interval95": {
+            "bounds": {
+              "brier": [
+                -0.014800000000000008,
+                -0.008500000000000008
+              ],
+              "ece": [
+                -2.0,
+                -1.0
+              ],
+              "gap": [
+                -1.0,
+                2.0
+              ],
+              "log_loss": [
+                -0.03174869831458038,
+                -0.017391742711869163
+              ]
+            },
+            "clusters": 3,
+            "replicates": 1000
+          },
+          "kind": "served",
+          "league": "all",
+          "n_games": 4,
+          "source": "espn",
+          "source_metrics": {
+            "brier": 0.16465,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.43,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.86,
+                "sum_sq_err": 0.36979999999999996,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.62,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.24,
+                "sum_sq_err": 0.2888,
+                "winners": 2
+              }
+            ],
+            "ece": 40.5,
+            "gap": 2.5,
+            "log_loss": 0.5200773595482705,
+            "n": 4
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.15299999999999997,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.42,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.84,
+                "sum_sq_err": 0.35279999999999995,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.64,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.28,
+                "sum_sq_err": 0.2592,
+                "winners": 2
+              }
+            ],
+            "ece": 39.0,
+            "gap": 3.0,
+            "log_loss": 0.49550713903504573,
+            "n": 4
+          },
+          "delta_blend_minus_source": {
+            "brier": 0.0,
+            "ece": 0.0,
+            "gap": 0.0,
+            "log_loss": 0.0
+          },
+          "distinct_events": 4,
+          "horizon": "t_minus_1h",
+          "interval95": {
+            "bounds": {
+              "brier": [
+                0.0,
+                0.0
+              ],
+              "ece": [
+                0.0,
+                0.0
+              ],
+              "gap": [
+                0.0,
+                0.0
+              ],
+              "log_loss": [
+                0.0,
+                0.0
+              ]
+            },
+            "clusters": 3,
+            "replicates": 1000
+          },
+          "kind": "served",
+          "league": "all",
+          "n_games": 4,
+          "source": "kalshi",
+          "source_metrics": {
+            "brier": 0.15299999999999997,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.42,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.84,
+                "sum_sq_err": 0.35279999999999995,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.64,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.28,
+                "sum_sq_err": 0.2592,
+                "winners": 2
+              }
+            ],
+            "ece": 39.0,
+            "gap": 3.0,
+            "log_loss": 0.49550713903504573,
+            "n": 4
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.16899999999999998,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.44,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.88,
+                "sum_sq_err": 0.3872,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.62,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.24,
+                "sum_sq_err": 0.2888,
+                "winners": 2
+              }
+            ],
+            "ece": 41.0,
+            "gap": 3.0,
+            "log_loss": 0.5289271480979709,
+            "n": 4
+          },
+          "delta_blend_minus_source": {
+            "brier": 0.0237,
+            "ece": 3.0,
+            "gap": 0.0,
+            "log_loss": 0.04971931901055793
+          },
+          "distinct_events": 4,
+          "horizon": "t_minus_24h",
+          "interval95": {
+            "bounds": {
+              "brier": [
+                0.021900000000000017,
+                0.025499999999999995
+              ],
+              "ece": [
+                3.0,
+                3.0
+              ],
+              "gap": [
+                -3.0,
+                3.0
+              ],
+              "log_loss": [
+                0.04725288485054557,
+                0.05218575317057028
+              ]
+            },
+            "clusters": 3,
+            "replicates": 1000
+          },
+          "kind": "served",
+          "league": "all",
+          "n_games": 4,
+          "source": "betting",
+          "source_metrics": {
+            "brier": 0.14529999999999998,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.41,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.82,
+                "sum_sq_err": 0.33619999999999994,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.65,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.3,
+                "sum_sq_err": 0.24499999999999997,
+                "winners": 2
+              }
+            ],
+            "ece": 38.0,
+            "gap": 3.0,
+            "log_loss": 0.479207829087413,
+            "n": 4
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.16899999999999998,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.44,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.88,
+                "sum_sq_err": 0.3872,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.62,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.24,
+                "sum_sq_err": 0.2888,
+                "winners": 2
+              }
+            ],
+            "ece": 41.0,
+            "gap": 3.0,
+            "log_loss": 0.5289271480979709,
+            "n": 4
+          },
+          "delta_blend_minus_source": {
+            "brier": -0.012250000000000039,
+            "ece": -1.5,
+            "gap": 0.5,
+            "log_loss": -0.02540416416283464
+          },
+          "distinct_events": 4,
+          "horizon": "t_minus_24h",
+          "interval95": {
+            "bounds": {
+              "brier": [
+                -0.01560000000000003,
+                -0.008900000000000019
+              ],
+              "ece": [
+                -2.0,
+                -1.0
+              ],
+              "gap": [
+                -1.0,
+                2.0
+              ],
+              "log_loss": [
+                -0.032789822822990866,
+                -0.01801850550267836
+              ]
+            },
+            "clusters": 3,
+            "replicates": 1000
+          },
+          "kind": "served",
+          "league": "all",
+          "n_games": 4,
+          "source": "espn",
+          "source_metrics": {
+            "brier": 0.18125000000000002,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.45,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.9,
+                "sum_sq_err": 0.405,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.6,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.2,
+                "sum_sq_err": 0.32000000000000006,
+                "winners": 2
+              }
+            ],
+            "ece": 42.5,
+            "gap": 2.5,
+            "log_loss": 0.5543313122608056,
+            "n": 4
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.16899999999999998,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.44,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.88,
+                "sum_sq_err": 0.3872,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.62,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.24,
+                "sum_sq_err": 0.2888,
+                "winners": 2
+              }
+            ],
+            "ece": 41.0,
+            "gap": 3.0,
+            "log_loss": 0.5289271480979709,
+            "n": 4
+          },
+          "delta_blend_minus_source": {
+            "brier": 0.0,
+            "ece": 0.0,
+            "gap": 0.0,
+            "log_loss": 0.0
+          },
+          "distinct_events": 4,
+          "horizon": "t_minus_24h",
+          "interval95": {
+            "bounds": {
+              "brier": [
+                0.0,
+                0.0
+              ],
+              "ece": [
+                0.0,
+                0.0
+              ],
+              "gap": [
+                0.0,
+                0.0
+              ],
+              "log_loss": [
+                0.0,
+                0.0
+              ]
+            },
+            "clusters": 3,
+            "replicates": 1000
+          },
+          "kind": "served",
+          "league": "all",
+          "n_games": 4,
+          "source": "kalshi",
+          "source_metrics": {
+            "brier": 0.16899999999999998,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.44,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.88,
+                "sum_sq_err": 0.3872,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.62,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.24,
+                "sum_sq_err": 0.2888,
+                "winners": 2
+              }
+            ],
+            "ece": 41.0,
+            "gap": 3.0,
+            "log_loss": 0.5289271480979709,
+            "n": 4
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.1609,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.43,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.86,
+                "sum_sq_err": 0.36979999999999996,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.63,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.26,
+                "sum_sq_err": 0.2738,
+                "winners": 2
+              }
+            ],
+            "ece": 40.0,
+            "gap": 3.0,
+            "log_loss": 0.5120771888750499,
+            "n": 4
+          },
+          "delta_blend_minus_source": {
+            "brier": 0.02309999999999998,
+            "ece": 3.0,
+            "gap": 0.0,
+            "log_loss": 0.04890665501122171
+          },
+          "distinct_events": 4,
+          "horizon": "t_minus_6h",
+          "interval95": {
+            "bounds": {
+              "brier": [
+                0.021300000000000013,
+                0.02489999999999995
+              ],
+              "ece": [
+                3.0,
+                3.0
+              ],
+              "gap": [
+                -3.0,
+                3.0
+              ],
+              "log_loss": [
+                0.04652001563489283,
+                0.05129329438755048
+              ]
+            },
+            "clusters": 3,
+            "replicates": 1000
+          },
+          "kind": "served",
+          "league": "all",
+          "n_games": 4,
+          "source": "betting",
+          "source_metrics": {
+            "brier": 0.1378,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.4,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.8,
+                "sum_sq_err": 0.32000000000000006,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.66,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.32,
+                "sum_sq_err": 0.23119999999999996,
+                "winners": 2
+              }
+            ],
+            "ece": 37.0,
+            "gap": 3.0,
+            "log_loss": 0.4631705338638282,
+            "n": 4
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.1609,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.43,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.86,
+                "sum_sq_err": 0.36979999999999996,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.63,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.26,
+                "sum_sq_err": 0.2738,
+                "winners": 2
+              }
+            ],
+            "ece": 40.0,
+            "gap": 3.0,
+            "log_loss": 0.5120771888750499,
+            "n": 4
+          },
+          "delta_blend_minus_source": {
+            "brier": -0.011950000000000016,
+            "ece": -1.5,
+            "gap": 0.5,
+            "log_loss": -0.024980219658811142
+          },
+          "distinct_events": 4,
+          "horizon": "t_minus_6h",
+          "interval95": {
+            "bounds": {
+              "brier": [
+                -0.015200000000000019,
+                -0.008700000000000013
+              ],
+              "ece": [
+                -2.0,
+                -1.0
+              ],
+              "gap": [
+                -1.0,
+                2.0
+              ],
+              "log_loss": [
+                -0.03226086221822155,
+                -0.017699577099400954
+              ]
+            },
+            "clusters": 3,
+            "replicates": 1000
+          },
+          "kind": "served",
+          "league": "all",
+          "n_games": 4,
+          "source": "espn",
+          "source_metrics": {
+            "brier": 0.17285,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.44,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.88,
+                "sum_sq_err": 0.3872,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.61,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.22,
+                "sum_sq_err": 0.3042,
+                "winners": 2
+              }
+            ],
+            "ece": 41.5,
+            "gap": 2.5,
+            "log_loss": 0.5370574085338611,
+            "n": 4
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.1609,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.43,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.86,
+                "sum_sq_err": 0.36979999999999996,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.63,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.26,
+                "sum_sq_err": 0.2738,
+                "winners": 2
+              }
+            ],
+            "ece": 40.0,
+            "gap": 3.0,
+            "log_loss": 0.5120771888750499,
+            "n": 4
+          },
+          "delta_blend_minus_source": {
+            "brier": 0.0,
+            "ece": 0.0,
+            "gap": 0.0,
+            "log_loss": 0.0
+          },
+          "distinct_events": 4,
+          "horizon": "t_minus_6h",
+          "interval95": {
+            "bounds": {
+              "brier": [
+                0.0,
+                0.0
+              ],
+              "ece": [
+                0.0,
+                0.0
+              ],
+              "gap": [
+                0.0,
+                0.0
+              ],
+              "log_loss": [
+                0.0,
+                0.0
+              ]
+            },
+            "clusters": 3,
+            "replicates": 1000
+          },
+          "kind": "served",
+          "league": "all",
+          "n_games": 4,
+          "source": "kalshi",
+          "source_metrics": {
+            "brier": 0.1609,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.43,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.86,
+                "sum_sq_err": 0.36979999999999996,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.63,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 2,
+                "sum_prob": 1.26,
+                "sum_sq_err": 0.2738,
+                "winners": 2
+              }
+            ],
+            "ece": 40.0,
+            "gap": 3.0,
+            "log_loss": 0.5120771888750499,
+            "n": 4
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.15289999999999998,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.41,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.82,
+                "sum_sq_err": 0.33619999999999994,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.65,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.65,
+                "sum_sq_err": 0.12249999999999998,
+                "winners": 1
+              }
+            ],
+            "ece": 39.0,
+            "gap": 15.67,
+            "log_loss": 0.49534946675239927,
+            "n": 3
+          },
+          "delta_blend_minus_source": {
+            "brier": 0.022499999999999992,
+            "ece": 3.0,
+            "gap": 1.0,
+            "log_loss": 0.04810477251973788
+          },
+          "distinct_events": 3,
+          "horizon": "start",
+          "interval95": {
+            "bounds": {
+              "brier": [
+                0.021900000000000003,
+                0.02369999999999997
+              ],
+              "ece": [
+                3.0,
+                3.0
+              ],
+              "gap": [
+                0.0,
+                3.0
+              ],
+              "log_loss": [
+                0.047358688209920896,
+                0.049596941139372075
+              ]
+            },
+            "clusters": 2,
+            "replicates": 1000
+          },
+          "kind": "served",
+          "league": "basketball_nba",
+          "n_games": 3,
+          "source": "betting",
+          "source_metrics": {
+            "brier": 0.1304,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.38,
+                "bucket": "30-40%",
+                "bucket_idx": 3,
+                "n": 2,
+                "sum_prob": 0.76,
+                "sum_sq_err": 0.2888,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.68,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.68,
+                "sum_sq_err": 0.10239999999999996,
+                "winners": 1
+              }
+            ],
+            "ece": 36.0,
+            "gap": 14.67,
+            "log_loss": 0.4472446942326614,
+            "n": 3
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.15289999999999998,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.41,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.82,
+                "sum_sq_err": 0.33619999999999994,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.65,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.65,
+                "sum_sq_err": 0.12249999999999998,
+                "winners": 1
+              }
+            ],
+            "ece": 39.0,
+            "gap": 15.67,
+            "log_loss": 0.49534946675239927,
+            "n": 3
+          },
+          "delta_blend_minus_source": {
+            "brier": -0.010333333333333333,
+            "ece": -1.33,
+            "gap": 0.0,
+            "log_loss": -0.021813803407568277
+          },
+          "distinct_events": 3,
+          "horizon": "start",
+          "interval95": {
+            "bounds": {
+              "brier": [
+                -0.011349999999999999,
+                -0.008300000000000002
+              ],
+              "ece": [
+                -1.5,
+                -1.0
+              ],
+              "gap": [
+                -1.0,
+                0.5
+              ],
+              "log_loss": [
+                -0.02417348843170225,
+                -0.017094433359300165
+              ]
+            },
+            "clusters": 2,
+            "replicates": 1000
+          },
+          "kind": "served",
+          "league": "basketball_nba",
+          "n_games": 3,
+          "source": "espn",
+          "source_metrics": {
+            "brier": 0.1632333333333333,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.42,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.84,
+                "sum_sq_err": 0.35279999999999995,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.63,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.63,
+                "sum_sq_err": 0.1369,
+                "winners": 1
+              }
+            ],
+            "ece": 40.33,
+            "gap": 15.67,
+            "log_loss": 0.5171632701599675,
+            "n": 3
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.15289999999999998,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.41,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.82,
+                "sum_sq_err": 0.33619999999999994,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.65,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.65,
+                "sum_sq_err": 0.12249999999999998,
+                "winners": 1
+              }
+            ],
+            "ece": 39.0,
+            "gap": 15.67,
+            "log_loss": 0.49534946675239927,
+            "n": 3
+          },
+          "delta_blend_minus_source": {
+            "brier": 0.0,
+            "ece": 0.0,
+            "gap": 0.0,
+            "log_loss": 0.0
+          },
+          "distinct_events": 3,
+          "horizon": "start",
+          "interval95": {
+            "bounds": {
+              "brier": [
+                0.0,
+                0.0
+              ],
+              "ece": [
+                0.0,
+                0.0
+              ],
+              "gap": [
+                0.0,
+                0.0
+              ],
+              "log_loss": [
+                0.0,
+                0.0
+              ]
+            },
+            "clusters": 2,
+            "replicates": 1000
+          },
+          "kind": "served",
+          "league": "basketball_nba",
+          "n_games": 3,
+          "source": "kalshi",
+          "source_metrics": {
+            "brier": 0.15289999999999998,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.41,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.82,
+                "sum_sq_err": 0.33619999999999994,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.65,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.65,
+                "sum_sq_err": 0.12249999999999998,
+                "winners": 1
+              }
+            ],
+            "ece": 39.0,
+            "gap": 15.67,
+            "log_loss": 0.49534946675239927,
+            "n": 3
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.16079999999999997,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.42,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.84,
+                "sum_sq_err": 0.35279999999999995,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.64,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.64,
+                "sum_sq_err": 0.1296,
+                "winners": 1
+              }
+            ],
+            "ece": 40.0,
+            "gap": 16.0,
+            "log_loss": 0.5119138178372545,
+            "n": 3
+          },
+          "delta_blend_minus_source": {
+            "brier": 0.023099999999999954,
+            "ece": 3.0,
+            "gap": 1.0,
+            "log_loss": 0.04889041442835934
+          },
+          "distinct_events": 3,
+          "horizon": "t_minus_1h",
+          "interval95": {
+            "bounds": {
+              "brier": [
+                0.022499999999999964,
+                0.02429999999999996
+              ],
+              "ece": [
+                3.0,
+                3.0
+              ],
+              "gap": [
+                0.0,
+                3.0
+              ],
+              "log_loss": [
+                0.04812019482909302,
+                0.050430853626891925
+              ]
+            },
+            "clusters": 2,
+            "replicates": 1000
+          },
+          "kind": "served",
+          "league": "basketball_nba",
+          "n_games": 3,
+          "source": "betting",
+          "source_metrics": {
+            "brier": 0.13770000000000002,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.39,
+                "bucket": "30-40%",
+                "bucket_idx": 3,
+                "n": 2,
+                "sum_prob": 0.78,
+                "sum_sq_err": 0.3042,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.67,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.67,
+                "sum_sq_err": 0.10889999999999997,
+                "winners": 1
+              }
+            ],
+            "ece": 37.0,
+            "gap": 15.0,
+            "log_loss": 0.4630234034088952,
+            "n": 3
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.16079999999999997,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.42,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.84,
+                "sum_sq_err": 0.35279999999999995,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.64,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.64,
+                "sum_sq_err": 0.1296,
+                "winners": 1
+              }
+            ],
+            "ece": 40.0,
+            "gap": 16.0,
+            "log_loss": 0.5119138178372545,
+            "n": 3
+          },
+          "delta_blend_minus_source": {
+            "brier": -0.010600000000000026,
+            "ece": -1.33,
+            "gap": 0.0,
+            "log_loss": -0.02217739457943957
+          },
+          "distinct_events": 3,
+          "horizon": "t_minus_1h",
+          "interval95": {
+            "bounds": {
+              "brier": [
+                -0.011650000000000021,
+                -0.008500000000000008
+              ],
+              "ece": [
+                -1.5,
+                -1.0
+              ],
+              "gap": [
+                -1.0,
+                0.5
+              ],
+              "log_loss": [
+                -0.024570220513224772,
+                -0.017391742711869163
+              ]
+            },
+            "clusters": 2,
+            "replicates": 1000
+          },
+          "kind": "served",
+          "league": "basketball_nba",
+          "n_games": 3,
+          "source": "espn",
+          "source_metrics": {
+            "brier": 0.1714,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.43,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.86,
+                "sum_sq_err": 0.36979999999999996,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.62,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.62,
+                "sum_sq_err": 0.1444,
+                "winners": 1
+              }
+            ],
+            "ece": 41.33,
+            "gap": 16.0,
+            "log_loss": 0.5340912124166941,
+            "n": 3
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.16079999999999997,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.42,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.84,
+                "sum_sq_err": 0.35279999999999995,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.64,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.64,
+                "sum_sq_err": 0.1296,
+                "winners": 1
+              }
+            ],
+            "ece": 40.0,
+            "gap": 16.0,
+            "log_loss": 0.5119138178372545,
+            "n": 3
+          },
+          "delta_blend_minus_source": {
+            "brier": 0.0,
+            "ece": 0.0,
+            "gap": 0.0,
+            "log_loss": 0.0
+          },
+          "distinct_events": 3,
+          "horizon": "t_minus_1h",
+          "interval95": {
+            "bounds": {
+              "brier": [
+                0.0,
+                0.0
+              ],
+              "ece": [
+                0.0,
+                0.0
+              ],
+              "gap": [
+                0.0,
+                0.0
+              ],
+              "log_loss": [
+                0.0,
+                0.0
+              ]
+            },
+            "clusters": 2,
+            "replicates": 1000
+          },
+          "kind": "served",
+          "league": "basketball_nba",
+          "n_games": 3,
+          "source": "kalshi",
+          "source_metrics": {
+            "brier": 0.16079999999999997,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.42,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.84,
+                "sum_sq_err": 0.35279999999999995,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.64,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.64,
+                "sum_sq_err": 0.1296,
+                "winners": 1
+              }
+            ],
+            "ece": 40.0,
+            "gap": 16.0,
+            "log_loss": 0.5119138178372545,
+            "n": 3
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.1772,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.44,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.88,
+                "sum_sq_err": 0.3872,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.62,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.62,
+                "sum_sq_err": 0.1444,
+                "winners": 1
+              }
+            ],
+            "ece": 42.0,
+            "gap": 16.67,
+            "log_loss": 0.5458909304829613,
+            "n": 3
+          },
+          "delta_blend_minus_source": {
+            "brier": 0.024300000000000016,
+            "ece": 3.0,
+            "gap": 1.0,
+            "log_loss": 0.050541463730562064
+          },
+          "distinct_events": 3,
+          "horizon": "t_minus_24h",
+          "interval95": {
+            "bounds": {
+              "brier": [
+                0.0237,
+                0.025500000000000023
+              ],
+              "ece": [
+                3.0,
+                3.0
+              ],
+              "gap": [
+                0.0,
+                3.0
+              ],
+              "log_loss": [
+                0.04971931901055787,
+                0.05218575317057028
+              ]
+            },
+            "clusters": 2,
+            "replicates": 1000
+          },
+          "kind": "served",
+          "league": "basketball_nba",
+          "n_games": 3,
+          "source": "betting",
+          "source_metrics": {
+            "brier": 0.15289999999999998,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.41,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.82,
+                "sum_sq_err": 0.33619999999999994,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.65,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.65,
+                "sum_sq_err": 0.12249999999999998,
+                "winners": 1
+              }
+            ],
+            "ece": 39.0,
+            "gap": 15.67,
+            "log_loss": 0.49534946675239927,
+            "n": 3
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.1772,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.44,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.88,
+                "sum_sq_err": 0.3872,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.62,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.62,
+                "sum_sq_err": 0.1444,
+                "winners": 1
+              }
+            ],
+            "ece": 42.0,
+            "gap": 16.67,
+            "log_loss": 0.5458909304829613,
+            "n": 3
+          },
+          "delta_blend_minus_source": {
+            "brier": -0.011133333333333356,
+            "ece": -1.33,
+            "gap": 0.0,
+            "log_loss": -0.022942277942782585
+          },
+          "distinct_events": 3,
+          "horizon": "t_minus_24h",
+          "interval95": {
+            "bounds": {
+              "brier": [
+                -0.012250000000000039,
+                -0.008900000000000019
+              ],
+              "ece": [
+                -1.5,
+                -1.0
+              ],
+              "gap": [
+                -1.0,
+                0.5
+              ],
+              "log_loss": [
+                -0.02540416416283464,
+                -0.01801850550267836
+              ]
+            },
+            "clusters": 2,
+            "replicates": 1000
+          },
+          "kind": "served",
+          "league": "basketball_nba",
+          "n_games": 3,
+          "source": "espn",
+          "source_metrics": {
+            "brier": 0.18833333333333335,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.45,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.9,
+                "sum_sq_err": 0.405,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.6,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.6,
+                "sum_sq_err": 0.16000000000000003,
+                "winners": 1
+              }
+            ],
+            "ece": 43.33,
+            "gap": 16.67,
+            "log_loss": 0.5688332084257439,
+            "n": 3
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.1772,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.44,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.88,
+                "sum_sq_err": 0.3872,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.62,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.62,
+                "sum_sq_err": 0.1444,
+                "winners": 1
+              }
+            ],
+            "ece": 42.0,
+            "gap": 16.67,
+            "log_loss": 0.5458909304829613,
+            "n": 3
+          },
+          "delta_blend_minus_source": {
+            "brier": 0.0,
+            "ece": 0.0,
+            "gap": 0.0,
+            "log_loss": 0.0
+          },
+          "distinct_events": 3,
+          "horizon": "t_minus_24h",
+          "interval95": {
+            "bounds": {
+              "brier": [
+                0.0,
+                0.0
+              ],
+              "ece": [
+                0.0,
+                0.0
+              ],
+              "gap": [
+                0.0,
+                0.0
+              ],
+              "log_loss": [
+                0.0,
+                0.0
+              ]
+            },
+            "clusters": 2,
+            "replicates": 1000
+          },
+          "kind": "served",
+          "league": "basketball_nba",
+          "n_games": 3,
+          "source": "kalshi",
+          "source_metrics": {
+            "brier": 0.1772,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.44,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.88,
+                "sum_sq_err": 0.3872,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.62,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.62,
+                "sum_sq_err": 0.1444,
+                "winners": 1
+              }
+            ],
+            "ece": 42.0,
+            "gap": 16.67,
+            "log_loss": 0.5458909304829613,
+            "n": 3
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.16889999999999997,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.43,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.86,
+                "sum_sq_err": 0.36979999999999996,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.63,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.63,
+                "sum_sq_err": 0.1369,
+                "winners": 1
+              }
+            ],
+            "ece": 41.0,
+            "gap": 16.33,
+            "log_loss": 0.5287577653012137,
+            "n": 3
+          },
+          "delta_blend_minus_source": {
+            "brier": 0.023699999999999943,
+            "ece": 3.0,
+            "gap": 1.0,
+            "log_loss": 0.04970220146999793
+          },
+          "distinct_events": 3,
+          "horizon": "t_minus_6h",
+          "interval95": {
+            "bounds": {
+              "brier": [
+                0.02309999999999998,
+                0.02489999999999995
+              ],
+              "ece": [
+                3.0,
+                3.0
+              ],
+              "gap": [
+                0.0,
+                3.0
+              ],
+              "log_loss": [
+                0.04890665501122171,
+                0.05129329438755048
+              ]
+            },
+            "clusters": 2,
+            "replicates": 1000
+          },
+          "kind": "served",
+          "league": "basketball_nba",
+          "n_games": 3,
+          "source": "betting",
+          "source_metrics": {
+            "brier": 0.14520000000000002,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.4,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.8,
+                "sum_sq_err": 0.32000000000000006,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.66,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.66,
+                "sum_sq_err": 0.11559999999999998,
+                "winners": 1
+              }
+            ],
+            "ece": 38.0,
+            "gap": 15.33,
+            "log_loss": 0.4790555638312157,
+            "n": 3
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.16889999999999997,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.43,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.86,
+                "sum_sq_err": 0.36979999999999996,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.63,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.63,
+                "sum_sq_err": 0.1369,
+                "winners": 1
+              }
+            ],
+            "ece": 41.0,
+            "gap": 16.33,
+            "log_loss": 0.5287577653012137,
+            "n": 3
+          },
+          "delta_blend_minus_source": {
+            "brier": -0.010866666666666691,
+            "ece": -1.33,
+            "gap": 0.0,
+            "log_loss": -0.02255333880567445
+          },
+          "distinct_events": 3,
+          "horizon": "t_minus_6h",
+          "interval95": {
+            "bounds": {
+              "brier": [
+                -0.011950000000000016,
+                -0.008700000000000013
+              ],
+              "ece": [
+                -1.5,
+                -1.0
+              ],
+              "gap": [
+                -1.0,
+                0.5
+              ],
+              "log_loss": [
+                -0.024980219658811142,
+                -0.017699577099400954
+              ]
+            },
+            "clusters": 2,
+            "replicates": 1000
+          },
+          "kind": "served",
+          "league": "basketball_nba",
+          "n_games": 3,
+          "source": "espn",
+          "source_metrics": {
+            "brier": 0.17976666666666666,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.44,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.88,
+                "sum_sq_err": 0.3872,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.61,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.61,
+                "sum_sq_err": 0.1521,
+                "winners": 1
+              }
+            ],
+            "ece": 42.33,
+            "gap": 16.33,
+            "log_loss": 0.5513111041068881,
+            "n": 3
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.16889999999999997,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.43,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.86,
+                "sum_sq_err": 0.36979999999999996,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.63,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.63,
+                "sum_sq_err": 0.1369,
+                "winners": 1
+              }
+            ],
+            "ece": 41.0,
+            "gap": 16.33,
+            "log_loss": 0.5287577653012137,
+            "n": 3
+          },
+          "delta_blend_minus_source": {
+            "brier": 0.0,
+            "ece": 0.0,
+            "gap": 0.0,
+            "log_loss": 0.0
+          },
+          "distinct_events": 3,
+          "horizon": "t_minus_6h",
+          "interval95": {
+            "bounds": {
+              "brier": [
+                0.0,
+                0.0
+              ],
+              "ece": [
+                0.0,
+                0.0
+              ],
+              "gap": [
+                0.0,
+                0.0
+              ],
+              "log_loss": [
+                0.0,
+                0.0
+              ]
+            },
+            "clusters": 2,
+            "replicates": 1000
+          },
+          "kind": "served",
+          "league": "basketball_nba",
+          "n_games": 3,
+          "source": "kalshi",
+          "source_metrics": {
+            "brier": 0.16889999999999997,
+            "buckets": [
+              {
+                "actual": 0.0,
+                "avg_prob": 0.43,
+                "bucket": "40-50%",
+                "bucket_idx": 4,
+                "n": 2,
+                "sum_prob": 0.86,
+                "sum_sq_err": 0.36979999999999996,
+                "winners": 0
+              },
+              {
+                "actual": 1.0,
+                "avg_prob": 0.63,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.63,
+                "sum_sq_err": 0.1369,
+                "winners": 1
+              }
+            ],
+            "ece": 41.0,
+            "gap": 16.33,
+            "log_loss": 0.5287577653012137,
+            "n": 3
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.12249999999999998,
+            "buckets": [
+              {
+                "actual": 1.0,
+                "avg_prob": 0.65,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.65,
+                "sum_sq_err": 0.12249999999999998,
+                "winners": 1
+              }
+            ],
+            "ece": 35.0,
+            "gap": -35.0,
+            "log_loss": 0.4307829160924542,
+            "n": 1
+          },
+          "delta_blend_minus_source": {
+            "brier": 0.02010000000000002,
+            "ece": 3.0,
+            "gap": -3.0,
+            "log_loss": 0.045120435280469606
+          },
+          "distinct_events": 1,
+          "horizon": "start",
+          "interval95": {
+            "bounds": null,
+            "clusters": 1
+          },
+          "kind": "served",
+          "league": "soccer_epl",
+          "n_games": 1,
+          "source": "betting",
+          "source_metrics": {
+            "brier": 0.10239999999999996,
+            "buckets": [
+              {
+                "actual": 1.0,
+                "avg_prob": 0.68,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.68,
+                "sum_sq_err": 0.10239999999999996,
+                "winners": 1
+              }
+            ],
+            "ece": 32.0,
+            "gap": -32.0,
+            "log_loss": 0.3856624808119846,
+            "n": 1
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.12249999999999998,
+            "buckets": [
+              {
+                "actual": 1.0,
+                "avg_prob": 0.65,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.65,
+                "sum_sq_err": 0.12249999999999998,
+                "winners": 1
+              }
+            ],
+            "ece": 35.0,
+            "gap": -35.0,
+            "log_loss": 0.4307829160924542,
+            "n": 1
+          },
+          "delta_blend_minus_source": {
+            "brier": -0.01440000000000001,
+            "ece": -2.0,
+            "gap": 2.0,
+            "log_loss": -0.031252543504104446
+          },
+          "distinct_events": 1,
+          "horizon": "start",
+          "interval95": {
+            "bounds": null,
+            "clusters": 1
+          },
+          "kind": "served",
+          "league": "soccer_epl",
+          "n_games": 1,
+          "source": "espn",
+          "source_metrics": {
+            "brier": 0.1369,
+            "buckets": [
+              {
+                "actual": 1.0,
+                "avg_prob": 0.63,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.63,
+                "sum_sq_err": 0.1369,
+                "winners": 1
+              }
+            ],
+            "ece": 37.0,
+            "gap": -37.0,
+            "log_loss": 0.4620354595965587,
+            "n": 1
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.12249999999999998,
+            "buckets": [
+              {
+                "actual": 1.0,
+                "avg_prob": 0.65,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.65,
+                "sum_sq_err": 0.12249999999999998,
+                "winners": 1
+              }
+            ],
+            "ece": 35.0,
+            "gap": -35.0,
+            "log_loss": 0.4307829160924542,
+            "n": 1
+          },
+          "delta_blend_minus_source": {
+            "brier": 0.0,
+            "ece": 0.0,
+            "gap": 0.0,
+            "log_loss": 0.0
+          },
+          "distinct_events": 1,
+          "horizon": "start",
+          "interval95": {
+            "bounds": null,
+            "clusters": 1
+          },
+          "kind": "served",
+          "league": "soccer_epl",
+          "n_games": 1,
+          "source": "kalshi",
+          "source_metrics": {
+            "brier": 0.12249999999999998,
+            "buckets": [
+              {
+                "actual": 1.0,
+                "avg_prob": 0.65,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.65,
+                "sum_sq_err": 0.12249999999999998,
+                "winners": 1
+              }
+            ],
+            "ece": 35.0,
+            "gap": -35.0,
+            "log_loss": 0.4307829160924542,
+            "n": 1
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.1296,
+            "buckets": [
+              {
+                "actual": 1.0,
+                "avg_prob": 0.64,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.64,
+                "sum_sq_err": 0.1296,
+                "winners": 1
+              }
+            ],
+            "ece": 36.0,
+            "gap": -36.0,
+            "log_loss": 0.4462871026284195,
+            "n": 1
+          },
+          "delta_blend_minus_source": {
+            "brier": 0.020700000000000024,
+            "ece": 3.0,
+            "gap": -3.0,
+            "log_loss": 0.04580953603129423
+          },
+          "distinct_events": 1,
+          "horizon": "t_minus_1h",
+          "interval95": {
+            "bounds": null,
+            "clusters": 1
+          },
+          "kind": "served",
+          "league": "soccer_epl",
+          "n_games": 1,
+          "source": "betting",
+          "source_metrics": {
+            "brier": 0.10889999999999997,
+            "buckets": [
+              {
+                "actual": 1.0,
+                "avg_prob": 0.67,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.67,
+                "sum_sq_err": 0.10889999999999997,
+                "winners": 1
+              }
+            ],
+            "ece": 33.0,
+            "gap": -33.0,
+            "log_loss": 0.40047756659712525,
+            "n": 1
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.1296,
+            "buckets": [
+              {
+                "actual": 1.0,
+                "avg_prob": 0.64,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.64,
+                "sum_sq_err": 0.1296,
+                "winners": 1
+              }
+            ],
+            "ece": 36.0,
+            "gap": -36.0,
+            "log_loss": 0.4462871026284195,
+            "n": 1
+          },
+          "delta_blend_minus_source": {
+            "brier": -0.014800000000000008,
+            "ece": -2.0,
+            "gap": 2.0,
+            "log_loss": -0.031748698314580326
+          },
+          "distinct_events": 1,
+          "horizon": "t_minus_1h",
+          "interval95": {
+            "bounds": null,
+            "clusters": 1
+          },
+          "kind": "served",
+          "league": "soccer_epl",
+          "n_games": 1,
+          "source": "espn",
+          "source_metrics": {
+            "brier": 0.1444,
+            "buckets": [
+              {
+                "actual": 1.0,
+                "avg_prob": 0.62,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.62,
+                "sum_sq_err": 0.1444,
+                "winners": 1
+              }
+            ],
+            "ece": 38.0,
+            "gap": -38.0,
+            "log_loss": 0.4780358009429998,
+            "n": 1
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.1296,
+            "buckets": [
+              {
+                "actual": 1.0,
+                "avg_prob": 0.64,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.64,
+                "sum_sq_err": 0.1296,
+                "winners": 1
+              }
+            ],
+            "ece": 36.0,
+            "gap": -36.0,
+            "log_loss": 0.4462871026284195,
+            "n": 1
+          },
+          "delta_blend_minus_source": {
+            "brier": 0.0,
+            "ece": 0.0,
+            "gap": 0.0,
+            "log_loss": 0.0
+          },
+          "distinct_events": 1,
+          "horizon": "t_minus_1h",
+          "interval95": {
+            "bounds": null,
+            "clusters": 1
+          },
+          "kind": "served",
+          "league": "soccer_epl",
+          "n_games": 1,
+          "source": "kalshi",
+          "source_metrics": {
+            "brier": 0.1296,
+            "buckets": [
+              {
+                "actual": 1.0,
+                "avg_prob": 0.64,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.64,
+                "sum_sq_err": 0.1296,
+                "winners": 1
+              }
+            ],
+            "ece": 36.0,
+            "gap": -36.0,
+            "log_loss": 0.4462871026284195,
+            "n": 1
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.1444,
+            "buckets": [
+              {
+                "actual": 1.0,
+                "avg_prob": 0.62,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.62,
+                "sum_sq_err": 0.1444,
+                "winners": 1
+              }
+            ],
+            "ece": 38.0,
+            "gap": -38.0,
+            "log_loss": 0.4780358009429998,
+            "n": 1
+          },
+          "delta_blend_minus_source": {
+            "brier": 0.021900000000000017,
+            "ece": 3.0,
+            "gap": -3.0,
+            "log_loss": 0.04725288485054557
+          },
+          "distinct_events": 1,
+          "horizon": "t_minus_24h",
+          "interval95": {
+            "bounds": null,
+            "clusters": 1
+          },
+          "kind": "served",
+          "league": "soccer_epl",
+          "n_games": 1,
+          "source": "betting",
+          "source_metrics": {
+            "brier": 0.12249999999999998,
+            "buckets": [
+              {
+                "actual": 1.0,
+                "avg_prob": 0.65,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.65,
+                "sum_sq_err": 0.12249999999999998,
+                "winners": 1
+              }
+            ],
+            "ece": 35.0,
+            "gap": -35.0,
+            "log_loss": 0.4307829160924542,
+            "n": 1
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.1444,
+            "buckets": [
+              {
+                "actual": 1.0,
+                "avg_prob": 0.62,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.62,
+                "sum_sq_err": 0.1444,
+                "winners": 1
+              }
+            ],
+            "ece": 38.0,
+            "gap": -38.0,
+            "log_loss": 0.4780358009429998,
+            "n": 1
+          },
+          "delta_blend_minus_source": {
+            "brier": -0.01560000000000003,
+            "ece": -2.0,
+            "gap": 2.0,
+            "log_loss": -0.03278982282299092
+          },
+          "distinct_events": 1,
+          "horizon": "t_minus_24h",
+          "interval95": {
+            "bounds": null,
+            "clusters": 1
+          },
+          "kind": "served",
+          "league": "soccer_epl",
+          "n_games": 1,
+          "source": "espn",
+          "source_metrics": {
+            "brier": 0.16000000000000003,
+            "buckets": [
+              {
+                "actual": 1.0,
+                "avg_prob": 0.6,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.6,
+                "sum_sq_err": 0.16000000000000003,
+                "winners": 1
+              }
+            ],
+            "ece": 40.0,
+            "gap": -40.0,
+            "log_loss": 0.5108256237659907,
+            "n": 1
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.1444,
+            "buckets": [
+              {
+                "actual": 1.0,
+                "avg_prob": 0.62,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.62,
+                "sum_sq_err": 0.1444,
+                "winners": 1
+              }
+            ],
+            "ece": 38.0,
+            "gap": -38.0,
+            "log_loss": 0.4780358009429998,
+            "n": 1
+          },
+          "delta_blend_minus_source": {
+            "brier": 0.0,
+            "ece": 0.0,
+            "gap": 0.0,
+            "log_loss": 0.0
+          },
+          "distinct_events": 1,
+          "horizon": "t_minus_24h",
+          "interval95": {
+            "bounds": null,
+            "clusters": 1
+          },
+          "kind": "served",
+          "league": "soccer_epl",
+          "n_games": 1,
+          "source": "kalshi",
+          "source_metrics": {
+            "brier": 0.1444,
+            "buckets": [
+              {
+                "actual": 1.0,
+                "avg_prob": 0.62,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.62,
+                "sum_sq_err": 0.1444,
+                "winners": 1
+              }
+            ],
+            "ece": 38.0,
+            "gap": -38.0,
+            "log_loss": 0.4780358009429998,
+            "n": 1
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.1369,
+            "buckets": [
+              {
+                "actual": 1.0,
+                "avg_prob": 0.63,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.63,
+                "sum_sq_err": 0.1369,
+                "winners": 1
+              }
+            ],
+            "ece": 37.0,
+            "gap": -37.0,
+            "log_loss": 0.4620354595965587,
+            "n": 1
+          },
+          "delta_blend_minus_source": {
+            "brier": 0.021300000000000013,
+            "ece": 3.0,
+            "gap": -3.0,
+            "log_loss": 0.046520015634892886
+          },
+          "distinct_events": 1,
+          "horizon": "t_minus_6h",
+          "interval95": {
+            "bounds": null,
+            "clusters": 1
+          },
+          "kind": "served",
+          "league": "soccer_epl",
+          "n_games": 1,
+          "source": "betting",
+          "source_metrics": {
+            "brier": 0.11559999999999998,
+            "buckets": [
+              {
+                "actual": 1.0,
+                "avg_prob": 0.66,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.66,
+                "sum_sq_err": 0.11559999999999998,
+                "winners": 1
+              }
+            ],
+            "ece": 34.0,
+            "gap": -34.0,
+            "log_loss": 0.4155154439616658,
+            "n": 1
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.1369,
+            "buckets": [
+              {
+                "actual": 1.0,
+                "avg_prob": 0.63,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.63,
+                "sum_sq_err": 0.1369,
+                "winners": 1
+              }
+            ],
+            "ece": 37.0,
+            "gap": -37.0,
+            "log_loss": 0.4620354595965587,
+            "n": 1
+          },
+          "delta_blend_minus_source": {
+            "brier": -0.015200000000000019,
+            "ece": -2.0,
+            "gap": 2.0,
+            "log_loss": -0.03226086221822144
+          },
+          "distinct_events": 1,
+          "horizon": "t_minus_6h",
+          "interval95": {
+            "bounds": null,
+            "clusters": 1
+          },
+          "kind": "served",
+          "league": "soccer_epl",
+          "n_games": 1,
+          "source": "espn",
+          "source_metrics": {
+            "brier": 0.1521,
+            "buckets": [
+              {
+                "actual": 1.0,
+                "avg_prob": 0.61,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.61,
+                "sum_sq_err": 0.1521,
+                "winners": 1
+              }
+            ],
+            "ece": 39.0,
+            "gap": -39.0,
+            "log_loss": 0.4942963218147801,
+            "n": 1
+          },
+          "split": "held_out"
+        },
+        {
+          "blend": {
+            "brier": 0.1369,
+            "buckets": [
+              {
+                "actual": 1.0,
+                "avg_prob": 0.63,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.63,
+                "sum_sq_err": 0.1369,
+                "winners": 1
+              }
+            ],
+            "ece": 37.0,
+            "gap": -37.0,
+            "log_loss": 0.4620354595965587,
+            "n": 1
+          },
+          "delta_blend_minus_source": {
+            "brier": 0.0,
+            "ece": 0.0,
+            "gap": 0.0,
+            "log_loss": 0.0
+          },
+          "distinct_events": 1,
+          "horizon": "t_minus_6h",
+          "interval95": {
+            "bounds": null,
+            "clusters": 1
+          },
+          "kind": "served",
+          "league": "soccer_epl",
+          "n_games": 1,
+          "source": "kalshi",
+          "source_metrics": {
+            "brier": 0.1369,
+            "buckets": [
+              {
+                "actual": 1.0,
+                "avg_prob": 0.63,
+                "bucket": "60-70%",
+                "bucket_idx": 6,
+                "n": 1,
+                "sum_prob": 0.63,
+                "sum_sq_err": 0.1369,
+                "winners": 1
+              }
+            ],
+            "ece": 37.0,
+            "gap": -37.0,
+            "log_loss": 0.4620354595965587,
+            "n": 1
+          },
+          "split": "held_out"
+        }
+      ]
+    },
+    "cohorts": [
+      {
+        "brier": 0.15289999999999998,
+        "ece": 39.0,
+        "gap": 15.67,
+        "horizon": "start",
+        "interval95": {
+          "bounds": {
+            "brier": [
+              0.14529999999999998,
+              0.16809999999999997
+            ],
+            "ece": [
+              38.0,
+              41.0
+            ],
+            "gap": [
+              3.0,
+              41.0
+            ],
+            "log_loss": [
+              0.47920782908741305,
+              0.5276327420823719
+            ]
+          },
+          "clusters": 2,
+          "replicates": 1000
+        },
+        "kind": "served",
+        "league": "basketball_nba",
+        "log_loss": 0.49534946675239927,
+        "n": 3,
+        "split": "held_out"
+      },
+      {
+        "brier": 0.16079999999999997,
+        "ece": 40.0,
+        "gap": 16.0,
+        "horizon": "t_minus_1h",
+        "interval95": {
+          "bounds": {
+            "brier": [
+              0.15299999999999997,
+              0.17639999999999997
+            ],
+            "ece": [
+              39.0,
+              42.0
+            ],
+            "gap": [
+              3.0,
+              42.0
+            ],
+            "log_loss": [
+              0.49550713903504573,
+              0.544727175441672
+            ]
+          },
+          "clusters": 2,
+          "replicates": 1000
+        },
+        "kind": "served",
+        "league": "basketball_nba",
+        "log_loss": 0.5119138178372545,
+        "n": 3,
+        "split": "held_out"
+      },
+      {
+        "brier": 0.1772,
+        "ece": 42.0,
+        "gap": 16.67,
+        "horizon": "t_minus_24h",
+        "interval95": {
+          "bounds": {
+            "brier": [
+              0.16899999999999998,
+              0.1936
+            ],
+            "ece": [
+              41.0,
+              44.0
+            ],
+            "gap": [
+              3.0,
+              44.0
+            ],
+            "log_loss": [
+              0.5289271480979709,
+              0.5798184952529422
+            ]
+          },
+          "clusters": 2,
+          "replicates": 1000
+        },
+        "kind": "served",
+        "league": "basketball_nba",
+        "log_loss": 0.5458909304829613,
+        "n": 3,
+        "split": "held_out"
+      },
+      {
+        "brier": 0.16889999999999997,
+        "ece": 41.0,
+        "gap": 16.33,
+        "horizon": "t_minus_6h",
+        "interval95": {
+          "bounds": {
+            "brier": [
+              0.1609,
+              0.18489999999999998
+            ],
+            "ece": [
+              40.0,
+              43.0
+            ],
+            "gap": [
+              3.0,
+              43.0
+            ],
+            "log_loss": [
+              0.5120771888750499,
+              0.5621189181535412
+            ]
+          },
+          "clusters": 2,
+          "replicates": 1000
+        },
+        "kind": "served",
+        "league": "basketball_nba",
+        "log_loss": 0.5287577653012137,
+        "n": 3,
+        "split": "held_out"
+      },
+      {
+        "brier": 0.12249999999999998,
+        "ece": 35.0,
+        "gap": -35.0,
+        "horizon": "start",
+        "interval95": {
+          "bounds": null,
+          "clusters": 1,
+          "result": "UNKNOWN"
+        },
+        "kind": "served",
+        "league": "soccer_epl",
+        "log_loss": 0.4307829160924542,
+        "n": 1,
+        "split": "held_out"
+      },
+      {
+        "brier": 0.1296,
+        "ece": 36.0,
+        "gap": -36.0,
+        "horizon": "t_minus_1h",
+        "interval95": {
+          "bounds": null,
+          "clusters": 1,
+          "result": "UNKNOWN"
+        },
+        "kind": "served",
+        "league": "soccer_epl",
+        "log_loss": 0.4462871026284195,
+        "n": 1,
+        "split": "held_out"
+      },
+      {
+        "brier": 0.1444,
+        "ece": 38.0,
+        "gap": -38.0,
+        "horizon": "t_minus_24h",
+        "interval95": {
+          "bounds": null,
+          "clusters": 1,
+          "result": "UNKNOWN"
+        },
+        "kind": "served",
+        "league": "soccer_epl",
+        "log_loss": 0.4780358009429998,
+        "n": 1,
+        "split": "held_out"
+      },
+      {
+        "brier": 0.1369,
+        "ece": 37.0,
+        "gap": -37.0,
+        "horizon": "t_minus_6h",
+        "interval95": {
+          "bounds": null,
+          "clusters": 1,
+          "result": "UNKNOWN"
+        },
+        "kind": "served",
+        "league": "soccer_epl",
+        "log_loss": 0.4620354595965587,
+        "n": 1,
+        "split": "held_out"
+      }
+    ],
+    "coverage": [
+      {
+        "expected": 3,
+        "horizon": "start",
+        "league": "basketball_nba",
+        "recorded": 3,
+        "recorded_probability": 3,
+        "split": "held_out"
+      },
+      {
+        "expected": 3,
+        "horizon": "t_minus_1h",
+        "league": "basketball_nba",
+        "recorded": 3,
+        "recorded_probability": 3,
+        "split": "held_out"
+      },
+      {
+        "expected": 3,
+        "horizon": "t_minus_24h",
+        "league": "basketball_nba",
+        "recorded": 3,
+        "recorded_probability": 3,
+        "split": "held_out"
+      },
+      {
+        "expected": 3,
+        "horizon": "t_minus_6h",
+        "league": "basketball_nba",
+        "recorded": 3,
+        "recorded_probability": 3,
+        "split": "held_out"
+      },
+      {
+        "expected": 1,
+        "horizon": "start",
+        "league": "soccer_epl",
+        "recorded": 1,
+        "recorded_probability": 1,
+        "split": "held_out"
+      },
+      {
+        "expected": 1,
+        "horizon": "t_minus_1h",
+        "league": "soccer_epl",
+        "recorded": 1,
+        "recorded_probability": 1,
+        "split": "held_out"
+      },
+      {
+        "expected": 1,
+        "horizon": "t_minus_24h",
+        "league": "soccer_epl",
+        "recorded": 1,
+        "recorded_probability": 1,
+        "split": "held_out"
+      },
+      {
+        "expected": 1,
+        "horizon": "t_minus_6h",
+        "league": "soccer_epl",
+        "recorded": 1,
+        "recorded_probability": 1,
+        "split": "held_out"
+      }
+    ],
+    "failures": {
+      "export_packet": 0
+    },
+    "input_rows": 32,
+    "method": "aggregation.compute_aggregate_probability_tiered/v1",
+    "reconstruction_agreement": {
+      "k": 16,
+      "n": 16,
+      "nullable_pairs": 0,
+      "required_share": 0.95,
+      "result": "PASS",
+      "unpaired": 0
+    },
+    "recorded_reproduction": {
+      "mismatches": 0,
+      "n": 16
+    },
+    "result": "BASELINE_REPLAY_ONLY"
+  },
+  "simulated_rehearsal_clock_utc": "2026-12-04T09:00:00+00:00"
+}
