@@ -1,22 +1,57 @@
 /**
- * #13551 (Ruling 366: B & 367: A & Fable's 7 rules) — Cross-platform Kit v1 contract.
- * Matches `backend/app/utils/kit_v1_spec.py` identically.
+ * Issue 13551 (Ruling 366: B, 367: A, and Fable's 7 rules) — Cross-platform Kit v1 contract.
+ * Reconciled with Builder C (comment-7122832951); matches `backend/app/utils/kit_v1_spec.py`.
  */
 
-export type KitV1Look =
-  | "scoreboard_grid"
-  | "dated_tiles"
+export type KitV1Layout = "stack" | "grid" | "calendar" | "axis";
+
+export type KitV1Variant =
   | "countdown"
   | "road_ahead"
-  | "bubble_line"
   | "one_in_n"
   | "single_sport_slate"
-  | "calendar_strip";
+  | "casting_sheet"
+  | "the_cut"
+  | "scoreboard_grid"
+  | "places_grid"
+  | "dated_tiles"
+  | "photo_wall"
+  | "calendar_strip"
+  | "bubble_line"
+  | "shared_scale"
+  | "deadline_line";
+
+export const VARIANT_TO_LAYOUT: Record<KitV1Variant, KitV1Layout> = {
+  countdown: "stack",
+  road_ahead: "stack",
+  one_in_n: "stack",
+  single_sport_slate: "stack",
+  casting_sheet: "stack",
+  the_cut: "stack",
+  scoreboard_grid: "grid",
+  places_grid: "grid",
+  dated_tiles: "grid",
+  photo_wall: "grid",
+  calendar_strip: "calendar",
+  bubble_line: "axis",
+  shared_scale: "axis",
+  deadline_line: "axis",
+};
+
+export interface KitV1SourceMark {
+  label: string;
+  count: number;
+}
+
+export interface KitV1Route {
+  kind: "collection" | "event" | "market" | "team";
+  id: number | null;
+  slug: string | null;
+}
 
 export interface ScoreboardGridColumn {
   key: string;
   label: string;
-  refused_sum?: number | null;
 }
 
 export interface ScoreboardGridRow {
@@ -150,7 +185,6 @@ export interface CalendarStripData {
   month_span_label: string;
   show_percent: true;
   ladder_rule_note: string;
-  ladder_footer: string;
   days: CalendarStripDay[];
 }
 
@@ -166,12 +200,16 @@ export type KitV1Data =
 
 export interface KitV1CardSpec {
   kit_version: 1;
-  look: KitV1Look | null;
+  id: string;
+  layout: KitV1Layout | null;
+  variant: KitV1Variant | null;
   kicker?: string;
   common_headline?: string;
   stat_caption?: string;
+  source_mark?: KitV1SourceMark;
+  route?: KitV1Route;
+  footnote?: string | null;
   disclosure?: string | null;
-  notes?: string[];
   refusal_reason: string | null;
   fallback_today?: boolean;
   data?: KitV1Data;

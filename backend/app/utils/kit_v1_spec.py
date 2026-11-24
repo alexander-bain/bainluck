@@ -1,10 +1,11 @@
 """Kit v1 (Ruling 366: B, 367: A, and Fable's 7 rules on #13551).
 
-Cross-platform structured card specification (`kit_version: 1`) so the web
-renderer proves each look and iOS/Android match it from the same server JSON.
-Every worked example uses real numbers from the Nov 23 batch2 redraw snapshot
-(`batch2/redraw.json` + Spotify Wrapped 367: A) and verified repo artwork
-(`_lookup_team_or_nation_logo` + `verified_discover_art.json`).
+Cross-platform structured card specification (`kit_version: 1`) reconciled with
+Builder C (`comment-7122832951`): top-level `layout` + `variant` envelope with
+typed per-variant `data`, standard `source_mark`, tap `route`, `footnote`,
+and fail-closed validation. Every worked example uses real numbers from the
+batch2 redraw snapshot (`batch2/redraw.json` + Spotify Wrapped 367: A) and verified
+repo artwork (`_lookup_team_or_nation_logo` + `verified_discover_art.json`).
 """
 
 from __future__ import annotations
@@ -19,26 +20,31 @@ from app.utils.discover_image_policy import _lookup_team_or_nation_logo
 
 KIT_VERSION = 1
 
-_VERIFIED_ART_PATH = (
-    Path(__file__).resolve().parents[2] / "data" / "discover" / "verified_discover_art.json"
-)
+_DATA_DISCOVER_DIR = Path(__file__).resolve().parents[2] / "data" / "discover"
+_VERIFIED_ART_PATH = _DATA_DISCOVER_DIR / "verified_discover_art.json"
+GOLDEN_EXAMPLES_PATH = _DATA_DISCOVER_DIR / "kit_v1_golden_examples.json"
 
-ALLOWED_VISUAL_LOOKS: frozenset[str] = frozenset(
-    {
-        "scoreboard_grid",
-        "dated_tiles",
-        "countdown",
-        "road_ahead",
-        "bubble_line",
-        "one_in_n",
-        "single_sport_slate",
-        "calendar_strip",
-        "casting_sheet",
-        "photo_wall",
-    }
-)
+VARIANT_TO_LAYOUT: dict[str, str] = {
+    "countdown": "stack",
+    "road_ahead": "stack",
+    "one_in_n": "stack",
+    "single_sport_slate": "stack",
+    "casting_sheet": "stack",
+    "the_cut": "stack",
+    "scoreboard_grid": "grid",
+    "places_grid": "grid",
+    "dated_tiles": "grid",
+    "photo_wall": "grid",
+    "calendar_strip": "calendar",
+    "bubble_line": "axis",
+    "shared_scale": "axis",
+    "deadline_line": "axis",
+}
 
-TEXT_ONLY_FORBIDDEN_LOOKS: frozenset[str] = frozenset(
+ALLOWED_LAYOUTS: frozenset[str] = frozenset(VARIANT_TO_LAYOUT.values())
+ALLOWED_VISUAL_VARIANTS: frozenset[str] = frozenset(VARIANT_TO_LAYOUT.keys())
+
+TEXT_ONLY_FORBIDDEN_VARIANTS: frozenset[str] = frozenset(
     {
         "word_list",
         "sorted_words",
@@ -114,11 +120,49 @@ def compute_one_in_n(pct: int) -> int:
     return max(1, round(100 / max(1, int(pct))))
 
 
+def _make_kit_card(
+    *,
+    card_id: str,
+    variant: str,
+    kicker: str,
+    common_headline: str,
+    stat_caption: str,
+    source_count: int = 2,
+    route_kind: str = "collection",
+    route_id: int | None = None,
+    route_slug: str | None = None,
+    footnote: str | None = None,
+    disclosure: str | None = None,
+    data: dict[str, Any],
+) -> dict[str, Any]:
+    layout = VARIANT_TO_LAYOUT.get(variant)
+    if layout is None:
+        raise ValueError(f"Unknown Kit v1 variant={variant!r}")
+    source_label = "1 source" if source_count == 1 else f"{source_count} sources"
+    return {
+        "kit_version": KIT_VERSION,
+        "id": card_id,
+        "layout": layout,
+        "variant": variant,
+        "kicker": kicker,
+        "common_headline": common_headline,
+        "stat_caption": stat_caption,
+        "source_mark": {"label": source_label, "count": source_count},
+        "route": {"kind": route_kind, "id": route_id, "slug": route_slug},
+        "footnote": footnote,
+        "disclosure": disclosure,
+        "refusal_reason": None,
+        "data": data,
+    }
+
+
 def build_fallback_today(reason: str) -> dict[str, Any]:
     """Return explicit refusal envelope keeping today's standard card (Rule 1)."""
     return {
         "kit_version": KIT_VERSION,
-        "look": None,
+        "id": "fallback-today",
+        "layout": None,
+        "variant": None,
         "fallback_today": True,
         "refusal_reason": reason.strip() or "No visual shape fits safely",
     }
@@ -126,20 +170,15 @@ def build_fallback_today(reason: str) -> dict[str, Any]:
 
 def build_calendar_strip_367a(
     *,
+    card_id: str = "kit-spotify-wrapped-2026",
     kicker: str,
     common_headline: str,
     stat_caption: str,
     rungs: list[dict[str, Any]],
     ladder_footer: str,
+    route_slug: str | None = "how-2026-gets-summed-up",
 ) -> dict[str, Any]:
-    """Build Ruling 367: A calendar strip from one non-dipping cumulative ladder.
-
-    Each input rung is `{"dow": "Fri", "day_num": "27", "month_abbr": "Nov",
-    "cum_pct": 3}` plus one final upper rung marking the end of the strip window,
-    OR pre-differenced intervals when exactly one cumulative ladder is provided.
-    Refuses any ladder where a later cumulative probability dips below an earlier
-    one by more than 1 percentage point.
-    """
+    """Build Ruling 367: A calendar strip from one non-dipping cumulative ladder."""
     if len(rungs) < 2:
         raise ValueError("Calendar strip requires at least two cumulative rungs")
 
@@ -178,23 +217,23 @@ def build_calendar_strip_367a(
     span = (
         f"{first['month_abbr']} {first['day_num']} – {last['month_abbr']} {last['day_num']}"
     )
-    return {
-        "kit_version": KIT_VERSION,
-        "look": "calendar_strip",
-        "kicker": kicker,
-        "common_headline": common_headline,
-        "stat_caption": stat_caption,
-        "disclosure": None,
-        "notes": [],
-        "refusal_reason": None,
-        "data": {
+    return _make_kit_card(
+        card_id=card_id,
+        variant="calendar_strip",
+        kicker=kicker,
+        common_headline=common_headline,
+        stat_caption=stat_caption,
+        source_count=2,
+        route_kind="collection",
+        route_slug=route_slug,
+        footnote=ladder_footer,
+        data={
             "month_span_label": span,
             "show_percent": True,
             "ladder_rule_note": CALENDAR_STRIP_RULE_NOTE,
-            "ladder_footer": ladder_footer,
             "days": days,
         },
-    }
+    )
 
 
 def _check_pct(val: Any, label: str, errors: list[str]) -> None:
@@ -211,31 +250,48 @@ def validate_kit_v1_card(spec: dict[str, Any]) -> tuple[bool, list[str]]:
     if spec.get("kit_version") != KIT_VERSION:
         errors.append("kit_version must equal 1")
 
-    look = spec.get("look")
-    if look in TEXT_ONLY_FORBIDDEN_LOOKS:
-        errors.append("Rule 1: text-only fallback looks are forbidden in Kit v1")
+    if not str(spec.get("id") or "").strip():
+        errors.append("id must be non-empty")
+
+    variant = spec.get("variant")
+    if variant in TEXT_ONLY_FORBIDDEN_VARIANTS:
+        errors.append("Rule 1: text-only fallback variants are forbidden in Kit v1")
         return False, errors
 
     if spec.get("refusal_reason"):
-        # Refused cards explicitly fall back to today's card; no custom draw allowed.
         return False, [str(spec["refusal_reason"])]
 
-    if look not in ALLOWED_VISUAL_LOOKS:
-        errors.append(f"Rule 1: unsupported visual look {look!r}")
+    layout = spec.get("layout")
+    if variant not in ALLOWED_VISUAL_VARIANTS:
+        errors.append(f"Rule 1: unsupported visual variant {variant!r}")
         return False, errors
 
-    # Rule 2: headline (what the set shares) + stat caption (today's stat sentence)
+    expected_layout = VARIANT_TO_LAYOUT[variant]
+    if layout != expected_layout:
+        errors.append(
+            f"layout/variant mismatch: variant {variant!r} requires layout={expected_layout!r}, got {layout!r}"
+        )
+        return False, errors
+
     if not str(spec.get("common_headline") or "").strip():
         errors.append("Rule 2: common_headline must be non-empty")
     if not str(spec.get("stat_caption") or "").strip():
         errors.append("Rule 2: stat_caption must be non-empty")
+
+    source_mark = spec.get("source_mark")
+    if not isinstance(source_mark, dict) or not str(source_mark.get("label") or "").strip():
+        errors.append("source_mark with non-empty label is required")
+
+    route = spec.get("route")
+    if not isinstance(route, dict) or route.get("kind") not in {"collection", "event", "market", "team"}:
+        errors.append("route with valid kind (collection|event|market|team) is required")
 
     data = spec.get("data")
     if not isinstance(data, dict):
         errors.append("data object is required")
         return False, errors
 
-    # Rule 3: any shared scale must state unit, step, ticks, and caption, no mixed units
+    # Rule 3: shared scale requires unit, step, ticks, and caption, no mixed units
     if data.get("shared_scale") or "scale_units" in data:
         units = data.get("scale_units")
         if isinstance(units, list) and len({str(u) for u in units}) > 1:
@@ -244,24 +300,24 @@ def validate_kit_v1_card(spec: dict[str, Any]) -> tuple[bool, list[str]]:
             if not data.get(req_key):
                 errors.append(f"Rule 3: shared scale requires {req_key}")
 
-    if look == "scoreboard_grid":
+    if variant in {"scoreboard_grid", "places_grid"}:
         _validate_scoreboard_grid(data, errors)
-    elif look == "dated_tiles":
+    elif variant == "dated_tiles":
         _validate_dated_tiles(data, errors)
-    elif look == "countdown":
+    elif variant == "countdown":
         _validate_countdown(data, errors)
-    elif look == "road_ahead":
+    elif variant == "road_ahead":
         _validate_road_ahead(data, errors)
-    elif look == "bubble_line":
+    elif variant == "bubble_line":
         _validate_bubble_line(data, errors)
-    elif look == "one_in_n":
+    elif variant == "one_in_n":
         _validate_one_in_n(data, errors)
-    elif look == "single_sport_slate":
+    elif variant == "single_sport_slate":
         _validate_single_sport_slate(data, errors)
-    elif look == "calendar_strip":
+    elif variant == "calendar_strip":
         _validate_calendar_strip(data, errors)
-    elif look in {"casting_sheet", "photo_wall"}:
-        _validate_pictured_people_look(look, data, errors)
+    elif variant in {"casting_sheet", "photo_wall"}:
+        _validate_pictured_people_look(variant, data, errors)
 
     return len(errors) == 0, errors
 
@@ -272,9 +328,11 @@ def _validate_scoreboard_grid(data: dict[str, Any], errors: list[str]) -> None:
     if not cols or not rows:
         errors.append("scoreboard_grid requires columns and rows")
         return
-    unrefused_keys = {c["key"] for c in cols if not c.get("refused_sum")}
-    if not unrefused_keys:
-        errors.append("scoreboard_grid refused: all columns failed one-winner sum check")
+    if any(c.get("refused_sum") is not None for c in cols):
+        errors.append("scoreboard_grid must strip refused columns server-side before serving")
+    if len(cols) < 2:
+        errors.append("scoreboard_grid requires at least 2 valid columns (fallback if < 2)")
+    valid_keys = {c["key"] for c in cols}
     for idx, row in enumerate(rows, 1):
         if row.get("rank") != idx:
             errors.append(f"Rule 4: scoreboard_grid row {idx} must carry sequential rank={idx}")
@@ -283,7 +341,7 @@ def _validate_scoreboard_grid(data: dict[str, Any], errors: list[str]) -> None:
         if row.get("image_kind") == "person" and not _has_first_and_last_name(row.get("name", "")):
             errors.append(f"Rule 4: person row {row.get('name')!r} must have first and last name")
         cells = row.get("cells") or {}
-        for k in unrefused_keys:
+        for k in valid_keys:
             if cells.get(k) is not None:
                 _check_pct(cells[k], f"row {idx} cell {k}", errors)
 
@@ -409,19 +467,19 @@ def _validate_calendar_strip(data: dict[str, Any], errors: list[str]) -> None:
         _check_pct(day.get("daily_pct"), f"calendar_strip day {idx}", errors)
 
 
-def _validate_pictured_people_look(look: str, data: dict[str, Any], errors: list[str]) -> None:
+def _validate_pictured_people_look(variant: str, data: dict[str, Any], errors: list[str]) -> None:
     rows = data.get("rows") or []
     if not rows:
-        errors.append(f"{look} requires rows")
+        errors.append(f"{variant} requires rows")
         return
     prev_p: int | None = None
     for idx, row in enumerate(rows, 1):
         if not _is_valid_image_url(row.get("image_url")):
-            errors.append(f"Rule 1/4: {look} row {idx} refused without verified image_url")
+            errors.append(f"Rule 1/4: {variant} row {idx} refused without verified image_url")
         if row.get("image_kind") == "person" and not _has_first_and_last_name(row.get("name", "")):
-            errors.append(f"Rule 4: {look} person row {row.get('name')!r} needs first & last name")
-        _check_pct(row.get("p"), f"{look} row {idx}", errors)
-        if look == "photo_wall":
+            errors.append(f"Rule 4: {variant} person row {row.get('name')!r} needs first & last name")
+        _check_pct(row.get("p"), f"{variant} row {idx}", errors)
+        if variant == "photo_wall":
             if row.get("rank") != idx:
                 errors.append(f"Rule 5: photo_wall row {idx} must carry rank={idx}")
             p_val = row.get("p")
@@ -435,7 +493,7 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
     """Return the 8 worked Kit v1 examples + Rule/367-A refusal examples."""
     cards: list[dict[str, Any]] = []
 
-    # 1. scoreboard_grid — College Football National Championship (rd-57)
+    # 1. grid / scoreboard_grid — College Football National Championship (rd-57)
     cfb_rows = []
     for idx, (team, nat_p, sec_p) in enumerate(
         [
@@ -457,39 +515,40 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
             }
         )
     cards.append(
-        {
-            "kit_version": KIT_VERSION,
-            "look": "scoreboard_grid",
-            "kicker": "SPORTS · COLLEGE FOOTBALL",
-            "common_headline": "College Football Playoff and SEC Championship leaders",
-            "stat_caption": "Georgia leads the college football national championship at 34%, with SEC contenders across the same board",
-            "disclosure": "2 other markets in this set are not drawn here.",
-            "notes": [],
-            "refusal_reason": None,
-            "data": {
+        _make_kit_card(
+            card_id="kit-cfb-national-title",
+            variant="scoreboard_grid",
+            kicker="SPORTS · COLLEGE FOOTBALL",
+            common_headline="College Football Playoff and SEC Championship leaders",
+            stat_caption="Georgia leads the college football national championship at 34%, with SEC contenders across the same board",
+            source_count=2,
+            route_slug="college-football-national-championship",
+            footnote="Shaded cells show served chances across both title races.",
+            disclosure="2 other markets in this set are not drawn here.",
+            data={
                 "columns": [
-                    {"key": "181", "label": "National Title", "refused_sum": None},
-                    {"key": "233", "label": "SEC Title", "refused_sum": None},
+                    {"key": "181", "label": "National Title"},
+                    {"key": "233", "label": "SEC Title"},
                 ],
                 "rows": cfb_rows,
             },
-        }
+        )
     )
 
-    # 2. dated_tiles — Middle East deadlines (rd-13)
+    # 2. grid / dated_tiles — Middle East deadlines (rd-13)
     us_url, us_kind = _team_logo("United States", kind="flag")
     ir_url, ir_kind = _team_logo("Iran", kind="flag")
     cards.append(
-        {
-            "kit_version": KIT_VERSION,
-            "look": "dated_tiles",
-            "kicker": "GEOPOLITICS · MIDDLE EAST",
-            "common_headline": "Middle East ceasefire and leadership timelines",
-            "stat_caption": "US x Iran effective ceasefire reaches 81% by December 31, while Iran leadership change climbs to 24% by June 30",
-            "disclosure": "4 other markets in this set are not drawn here.",
-            "notes": [],
-            "refusal_reason": None,
-            "data": {
+        _make_kit_card(
+            card_id="kit-middle-east-deadlines",
+            variant="dated_tiles",
+            kicker="GEOPOLITICS · MIDDLE EAST",
+            common_headline="Middle East ceasefire and leadership timelines",
+            stat_caption="US x Iran effective ceasefire reaches 81% by December 31, while Iran leadership change climbs to 24% by June 30",
+            source_count=2,
+            route_slug="middle-east-deadlines",
+            disclosure="4 other markets in this set are not drawn here.",
+            data={
                 "aligned": True,
                 "columns": [
                     {"key": "2026-11-30", "label": "Nov 30 '26"},
@@ -511,10 +570,10 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
                     },
                 ],
             },
-        }
+        )
     )
 
-    # 3. countdown — By December 31 (rd-22)
+    # 3. stack / countdown — By December 31 (rd-22)
     ai_url, ai_kind = _art_entry("batch5-ai-model-leaderboard-2026")
     dc_url, dc_kind = _art_entry("nersc-data-center")
     fr_url, fr_kind = _team_logo("France", kind="flag")
@@ -522,16 +581,15 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
     ph_url, ph_kind = _art_entry("pete-hegseth")
     em_url, em_kind = _art_entry("elon-musk")
     cards.append(
-        {
-            "kit_version": KIT_VERSION,
-            "look": "countdown",
-            "kicker": "SAME DEADLINE",
-            "common_headline": "By December 31",
-            "stat_caption": "Next Claude Opus (5.6+) release leads December 31 deadlines at 85%",
-            "disclosure": None,
-            "notes": [],
-            "refusal_reason": None,
-            "data": {
+        _make_kit_card(
+            card_id="kit-by-december-31",
+            variant="countdown",
+            kicker="SAME DEADLINE",
+            common_headline="By December 31",
+            stat_caption="Next Claude Opus (5.6+) release leads December 31 deadlines at 85%",
+            source_count=2,
+            route_slug="by-december-31",
+            data={
                 "days_left": 38,
                 "deadline_label": "all of these end on Dec 31",
                 "rows": [
@@ -573,25 +631,25 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
                     },
                 ],
             },
-        }
+        )
     )
 
-    # 4. road_ahead — Boston Celtics: next 3 games (rd-37)
+    # 4. stack / road_ahead — Boston Celtics: next 3 games (rd-37)
     bos_url, _ = _team_logo("Boston Celtics")
     wsh_url, _ = _team_logo("Washington Wizards")
     atl_url, _ = _team_logo("Atlanta Hawks")
     sa_url, _ = _team_logo("San Antonio Spurs")
     cards.append(
-        {
-            "kit_version": KIT_VERSION,
-            "look": "road_ahead",
-            "kicker": "NBA · NEXT 3 GAMES",
-            "common_headline": "Boston Celtics: next 3 games",
-            "stat_caption": "Boston opens at 79% in Washington before hosting Atlanta at 62% and visiting San Antonio at 40%",
-            "disclosure": None,
-            "notes": [],
-            "refusal_reason": None,
-            "data": {
+        _make_kit_card(
+            card_id="kit-boston-celtics-road",
+            variant="road_ahead",
+            kicker="NBA · NEXT 3 GAMES",
+            common_headline="Boston Celtics: next 3 games",
+            stat_caption="Boston opens at 79% in Washington before hosting Atlanta at 62% and visiting San Antonio at 40%",
+            source_count=4,
+            route_kind="team",
+            route_slug="boston-celtics",
+            data={
                 "team_name": "Boston Celtics",
                 "team_abbr": "BOS",
                 "team_color": "#008348",
@@ -629,10 +687,10 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
                     },
                 ],
             },
-        }
+        )
     )
 
-    # 5. bubble_line — 2026-27 NHL Playoffs (rd-25)
+    # 5. axis / bubble_line — 2026-27 NHL Playoffs (rd-25)
     nhl_raw = [
         ("Edmonton Oilers", "EDM", 98, "#041e42"),
         ("Minnesota Wild", "MIN", 98, "#154734"),
@@ -668,7 +726,6 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
         ("Vancouver Canucks", "VAN", 6, "#00205b"),
     ]
     nhl_points = []
-    # Assign non-overlapping vertical lanes for in-doubt teams (25 < p < 75)
     lanes_x: list[float] = []
     for team_name, abbr, p_val, color in sorted(nhl_raw, key=lambda x: (x[2], x[1])):
         in_doubt = 25 < p_val < 75
@@ -699,16 +756,15 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
         for pt in sorted((p for p in nhl_points if p["in_doubt"]), key=lambda x: -x["p"])
     ]
     cards.append(
-        {
-            "kit_version": KIT_VERSION,
-            "look": "bubble_line",
-            "kicker": "HOCKEY · NHL PLAYOFFS",
-            "common_headline": "2026–27 NHL Playoffs picture",
-            "stat_caption": "Edmonton leads at 98%, while Washington (54%) and the Rangers (47%) sit inside the playoff bubble",
-            "disclosure": None,
-            "notes": [],
-            "refusal_reason": None,
-            "data": {
+        _make_kit_card(
+            card_id="kit-nhl-playoffs-bubble",
+            variant="bubble_line",
+            kicker="HOCKEY · NHL PLAYOFFS",
+            common_headline="2026–27 NHL Playoffs picture",
+            stat_caption="Edmonton leads at 98%, while Washington (54%) and the Rangers (47%) sit inside the playoff bubble",
+            source_count=2,
+            route_slug="nhl-playoffs-2027",
+            data={
                 "band_low": 25,
                 "band_high": 75,
                 "band_label": "in doubt",
@@ -717,23 +773,22 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
                 "points": nhl_points,
                 "doubt_summary": " · ".join(doubt_labels),
             },
-        }
+        )
     )
 
-    # 6. one_in_n — Elon Musk's wildest side quests (rd-01)
+    # 6. stack / one_in_n — Elon Musk's wildest side quests (rd-01)
     space_url, space_kind = _art_entry("batch3-elon-musk-side-quests")
     sofi_url, sofi_kind = _art_entry("sofi-stadium-super-bowl")
     cards.append(
-        {
-            "kit_version": KIT_VERSION,
-            "look": "one_in_n",
-            "kicker": "ODD · SIDE QUESTS",
-            "common_headline": "Elon Musk's wildest side quests",
-            "stat_caption": "Visiting Mars in his lifetime is the likeliest long shot at 12% (1 in 8), with buying Ryanair at 5% (1 in 20)",
-            "disclosure": None,
-            "notes": [],
-            "refusal_reason": None,
-            "data": {
+        _make_kit_card(
+            card_id="kit-elon-side-quests",
+            variant="one_in_n",
+            kicker="ODD · SIDE QUESTS",
+            common_headline="Elon Musk's wildest side quests",
+            stat_caption="Visiting Mars in his lifetime is the likeliest long shot at 12% (1 in 8), with buying Ryanair at 5% (1 in 20)",
+            source_count=2,
+            route_slug="elon-musk-wildest-side-quests",
+            data={
                 "rows": [
                     {
                         "name": "Will Elon Musk visit Mars in his lifetime?",
@@ -779,10 +834,10 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
                     },
                 ],
             },
-        }
+        )
     )
 
-    # 7. single_sport_slate — NBA Slate (rd-02, Rule 6 strictly NBA)
+    # 7. stack / single_sport_slate — NBA Slate (rd-02, Rule 6 strictly NBA)
     nba_games = []
     for away_name, away_abbr, away_c, away_p, home_name, home_abbr, home_c, home_p, day, clock, status, score in [
         ("Memphis Grizzlies", "MEM", "#5d76a9", 49, "Charlotte Hornets", "CHA", "#008ca8", 51, "Mon Nov 23", "4:00 PM PT", "live", [28, 32]),
@@ -807,24 +862,24 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
             }
         )
     cards.append(
-        {
-            "kit_version": KIT_VERSION,
-            "look": "single_sport_slate",
-            "kicker": "NBA · THIS SLATE",
-            "common_headline": "Tonight's NBA Slate",
-            "stat_caption": "Pistons at Magic (54%–46%) headlines seven NBA matchups",
-            "disclosure": "6 other markets in this set are not drawn here.",
-            "notes": [],
-            "refusal_reason": None,
-            "data": {
+        _make_kit_card(
+            card_id="kit-nba-slate",
+            variant="single_sport_slate",
+            kicker="NBA · THIS SLATE",
+            common_headline="Tonight's NBA Slate",
+            stat_caption="Pistons at Magic (54%–46%) headlines seven NBA matchups",
+            source_count=4,
+            route_slug="nba-slate",
+            disclosure="6 other markets in this set are not drawn here.",
+            data={
                 "sport_key": "basketball_nba",
                 "league_label": "NBA",
                 "rows": nba_games,
             },
-        }
+        )
     )
 
-    # 8. calendar_strip (Ruling 367: A) — Spotify Wrapped 2026
+    # 8. calendar / calendar_strip (Ruling 367: A) — Spotify Wrapped 2026
     wrapped_rungs = [
         {"dow": "Fri", "day_num": "27", "month_abbr": "Nov", "cum_pct": 3},
         {"dow": "Sat", "day_num": "28", "month_abbr": "Nov", "cum_pct": 5},
@@ -838,6 +893,7 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
     ]
     cards.append(
         build_calendar_strip_367a(
+            card_id="kit-spotify-wrapped-2026",
             kicker="CULTURE · 2026",
             common_headline="When will Spotify release 2026 Wrapped?",
             stat_caption="Spotify Wrapped is most likely to arrive on Wednesday, December 2 (67%)",
@@ -846,25 +902,29 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
         )
     )
 
-    # Validation check across all worked examples
     for card in cards:
         ok, errs = validate_kit_v1_card(card)
         if not ok:
-            raise AssertionError(f"Worked example {card.get('look')} failed validation: {errs}")
+            raise AssertionError(f"Worked example {card.get('variant')} failed validation: {errs}")
 
-    # Refusal demonstrations (Rule 1, Rule 4/sum>115, Rule 6 mixed-sport slate, 367:A dip)
     refusals = [
         {
-            "title": "Rule 1 — No text-only fallback (`Casting sheet` / `Word list` refused without pictures)",
-            "spec": build_fallback_today("Members carry no verified artwork; keep today's standard card instead of text-only fallback."),
+            "title": "Rule 1 — No text-only fallback (casting_sheet / word_list refused without pictures)",
+            "spec": build_fallback_today(
+                "Members carry no verified artwork; keep today's standard card instead of text-only fallback."
+            ),
         },
         {
-            "title": "Rule 6 — Mixed-sport slate refused (`The closest games tonight`)",
-            "spec": build_fallback_today("Slate mixes soccer, basketball, hockey, and cricket (`>1` sport_key); keep today's card."),
+            "title": "Rule 6 — Mixed-sport slate refused (The closest games tonight)",
+            "spec": build_fallback_today(
+                "Slate mixes soccer, basketball, hockey, and cricket (>1 sport_key); keep today's card."
+            ),
         },
         {
-            "title": "One-winner columns > 115 refused (`2028 Presidential Race`: 123% & 127%)",
-            "spec": build_fallback_today("Every mutually exclusive column sums above 115 as served (123%, 127%); scoreboard grid refuses to draw."),
+            "title": "One-winner columns > 115 refused (2028 Presidential Race: 123% & 127%)",
+            "spec": build_fallback_today(
+                "Mutually exclusive columns sum above 115 as served (123%, 127%) and <2 valid columns remain; keep today's card."
+            ),
         },
     ]
 
@@ -874,3 +934,13 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
         "items": cards,
         "refusals": refusals,
     }
+
+
+def write_golden_examples_json(dest: Path = GOLDEN_EXAMPLES_PATH) -> Path:
+    payload = build_kit_v1_worked_examples()
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(
+        json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    return dest

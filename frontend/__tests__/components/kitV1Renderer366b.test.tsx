@@ -1,184 +1,41 @@
 /**
- * #13551 (Rulings 366: B, 367: A, and Fable's 7 rules) — Kit v1 renderer tests.
+ * Issue 13551 (Rulings 366: B, 367: A, and Fable's 7 rules) — Kit v1 renderer tests.
  */
 import fs from "node:fs";
 import path from "node:path";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { KitCardRenderer } from "@/components/discover/kit/KitCardRenderer";
+import { KitCardRenderer, parseKitCardV1 } from "@/components/discover/kit/KitCardRenderer";
 import type { KitV1CardSpec } from "@/components/discover/kit/types";
 
-const IMG = "https://a.espncdn.com/i/teamlogos/ncaa/500/61.png";
+describe("Kit v1 web renderer & fail-closed envelope (366: B, 367: A, 7 rules)", () => {
+  const goldenPath = path.resolve(
+    process.cwd(),
+    "..",
+    "backend",
+    "data",
+    "discover",
+    "kit_v1_golden_examples.json",
+  );
+  const golden = JSON.parse(fs.readFileSync(goldenPath, "utf-8")) as {
+    kit_version: number;
+    count: number;
+    items: KitV1CardSpec[];
+    refusals: Array<{ title: string; spec: KitV1CardSpec }>;
+  };
 
-const SAMPLE_CARDS: KitV1CardSpec[] = [
-  {
-    kit_version: 1,
-    look: "scoreboard_grid",
-    kicker: "SPORTS · COLLEGE FOOTBALL",
-    common_headline: "College Football Playoff and SEC Championship leaders",
-    stat_caption: "Georgia leads the college football national championship at 34%",
-    refusal_reason: null,
-    data: {
-      columns: [
-        { key: "181", label: "National Championship" },
-        { key: "233", label: "SEC Championship" },
-      ],
-      rows: [
-        { rank: 1, name: "Georgia", image_url: IMG, image_kind: "team", cells: { "181": 34, "233": 68 } },
-        { rank: 2, name: "Texas", image_url: IMG, image_kind: "team", cells: { "181": 11, "233": 26 } },
-        { rank: 3, name: "Alabama", image_url: IMG, image_kind: "team", cells: { "181": 10, "233": 3 } },
-        { rank: 4, name: "Tennessee", image_url: IMG, image_kind: "team", cells: { "181": 4, "233": 3 } },
-      ],
-    },
-  },
-  {
-    kit_version: 1,
-    look: "dated_tiles",
-    kicker: "GEOPOLITICS",
-    common_headline: "Middle East ceasefire and leadership timelines",
-    stat_caption: "US x Iran ceasefire climbs to 81% by Dec 31",
-    refusal_reason: null,
-    data: {
-      aligned: true,
-      columns: [
-        { key: "2026-11-30", label: "Nov 30 '26" },
-        { key: "2026-12-31", label: "Dec 31 '26" },
-      ],
-      rows: [
-        {
-          name: "US x Iran Ceasefire",
-          image_url: "https://flagcdn.com/w320/us.png",
-          image_kind: "flag",
-          cells: { "2026-11-30": 66, "2026-12-31": 81 },
-        },
-      ],
-    },
-  },
-  {
-    kit_version: 1,
-    look: "countdown",
-    kicker: "SAME DEADLINE",
-    common_headline: "By December 31",
-    stat_caption: "Next Claude Opus leads at 85%",
-    refusal_reason: null,
-    data: {
-      days_left: 38,
-      deadline_label: "all of these end on Dec 31",
-      rows: [{ name: "Next Claude Opus", p: 85, image_url: IMG, image_kind: "topic" }],
-    },
-  },
-  {
-    kit_version: 1,
-    look: "road_ahead",
-    kicker: "NBA · NEXT 3 GAMES",
-    common_headline: "Boston Celtics: next 3 games",
-    stat_caption: "Boston opens at 79% in Washington",
-    refusal_reason: null,
-    data: {
-      team_name: "Boston Celtics",
-      team_abbr: "BOS",
-      team_color: null,
-      team_image_url: "https://a.espncdn.com/i/teamlogos/nba/500/bos.png",
-      rows: [
-        {
-          opponent_name: "Washington Wizards",
-          opponent_abbr: "WSH",
-          opponent_color: null,
-          opponent_image_url: "https://a.espncdn.com/i/teamlogos/nba/500/wsh.png",
-          home_or_away: "at",
-          day: "Tue Nov 24",
-          clock: "5:00 PM PT",
-          team_p: 79,
-        },
-      ],
-    },
-  },
-  {
-    kit_version: 1,
-    look: "bubble_line",
-    kicker: "HOCKEY · NHL PLAYOFFS",
-    common_headline: "2026–27 NHL Playoffs picture",
-    stat_caption: "Washington sits at 54% inside the bubble",
-    refusal_reason: null,
-    data: {
-      band_low: 25,
-      band_high: 75,
-      band_label: "in doubt",
-      low_count: 10,
-      high_count: 13,
-      doubt_summary: "WSH 54% · NYR 47%",
-      points: [
-        { name: "Washington Capitals", abbr: "WSH", p: 54, lane: 0, in_doubt: true, color: null, image_url: IMG },
-        { name: "Edmonton Oilers", abbr: "EDM", p: 98, lane: null, in_doubt: false, color: null, image_url: IMG },
-      ],
-    },
-  },
-  {
-    kit_version: 1,
-    look: "one_in_n",
-    kicker: "ODD · SIDE QUESTS",
-    common_headline: "Elon Musk's wildest side quests",
-    stat_caption: "Visiting Mars leads at 12% (1 in 8)",
-    refusal_reason: null,
-    data: {
-      rows: [
-        {
-          name: "Will Elon Musk visit Mars in his lifetime?",
-          p: 12,
-          one_in_n: 8,
-          image_url: "https://image.tmdb.org/t/p/w185/i5a0XRXLfu0meGB3g5Sy4qP8pY.jpg",
-          image_kind: "person",
-        },
-      ],
-    },
-  },
-  {
-    kit_version: 1,
-    look: "single_sport_slate",
-    kicker: "NBA · THIS SLATE",
-    common_headline: "Tonight's NBA Slate",
-    stat_caption: "Pistons at Magic headlines",
-    refusal_reason: null,
-    data: {
-      sport_key: "basketball_nba",
-      league_label: "NBA",
-      rows: [
-        {
-          away: { name: "Memphis Grizzlies", abbr: "MEM", color: null, image_url: IMG, p: 49 },
-          home: { name: "Charlotte Hornets", abbr: "CHA", color: null, image_url: IMG, p: 51 },
-          day: "Mon Nov 23",
-          clock: "4:00 PM PT",
-          status: "live",
-          score: [28, 32],
-        },
-      ],
-    },
-  },
-  {
-    kit_version: 1,
-    look: "calendar_strip",
-    kicker: "CULTURE · 2026",
-    common_headline: "When will Spotify release 2026 Wrapped?",
-    stat_caption: "Spotify Wrapped is most likely to arrive on Wednesday, December 2 (67%)",
-    refusal_reason: null,
-    data: {
-      month_span_label: "Nov 27 – Dec 4",
-      show_percent: true,
-      ladder_rule_note: "The percent in a day is the chance it arrives that day: one rung of the ladder minus the rung before it.",
-      ladder_footer: "Served ladder: 18% before Dec 2 · 85% before Dec 3",
-      days: [
-        { dow: "Tue", day_num: "1", month_abbr: "Dec", daily_pct: 6, is_peak: false },
-        { dow: "Wed", day_num: "2", month_abbr: "Dec", daily_pct: 67, is_peak: true },
-      ],
-    },
-  },
-];
+  test("parseKitCardV1 decodes and renders all 8 golden examples with expected labels and percents", () => {
+    expect(golden.kit_version).toBe(1);
+    expect(golden.items).toHaveLength(8);
+    const rendered = golden.items.map((item) => {
+      const parsed = parseKitCardV1(item);
+      expect(parsed).not.toBeNull();
+      return renderToStaticMarkup(<KitCardRenderer spec={item} />);
+    });
 
-describe("Kit v1 web renderer (366: B, 367: A, 7 rules)", () => {
-  test("renders all 8 worked examples with expected labels and percents", () => {
-    const rendered = SAMPLE_CARDS.map((c) => renderToStaticMarkup(<KitCardRenderer spec={c} />));
     expect(rendered[0]).toContain("Georgia");
     expect(rendered[0]).toContain(">4<");
+    expect(rendered[0]).toContain("Shaded cells show served chances");
     expect(rendered[1]).toContain("by Dec 31");
     expect(rendered[1]).toContain("81%");
     expect(rendered[2]).toContain("38");
@@ -193,21 +50,36 @@ describe("Kit v1 web renderer (366: B, 367: A, 7 rules)", () => {
     expect(rendered[7]).toContain("67%");
     expect(rendered[7]).toContain("Daily chance");
     expect(rendered[7]).not.toContain("367: A");
+    expect(rendered[7]).toContain("Served ladder:");
     expect(rendered[7]).toContain("one rung of the ladder minus the rung before it");
   });
 
-  test("renders explicit Rule 1 fallback card when refusal_reason is present", () => {
+  test("parseKitCardV1 fails closed on unknown versions, unknown variants, mismatches, and refusals", () => {
+    const sample = golden.items[2];
+    expect(parseKitCardV1({ ...sample, kit_version: 2 })).toBeNull();
+    expect(parseKitCardV1({ ...sample, layout: "unknown" })).toBeNull();
+    expect(parseKitCardV1({ ...sample, variant: "future_look" })).toBeNull();
+    expect(parseKitCardV1({ ...sample, layout: "grid" })).toBeNull(); // countdown belongs to stack
+    expect(
+      parseKitCardV1({
+        ...sample,
+        refusal_reason: "Refused",
+      }),
+    ).toBeNull();
+
     const html = renderToStaticMarkup(
       <KitCardRenderer
         spec={{
           kit_version: 1,
-          look: null,
+          id: "refusal-1",
+          layout: null,
+          variant: null,
           fallback_today: true,
           refusal_reason: "Slate mixes >1 sport_key; keep today's card.",
         }}
       />,
     );
-    expect(html).toContain("Rule 1 fallback");
+    expect(html).toContain("Standard card fallback");
     expect(html).toContain("Slate mixes &gt;1 sport_key");
   });
 

@@ -8,17 +8,36 @@
  */
 
 import React from "react";
-import type {
-  BubbleLineData,
-  CalendarStripData,
-  CountdownData,
-  DatedTilesData,
-  KitV1CardSpec,
-  OneInNData,
-  RoadAheadData,
-  ScoreboardGridData,
-  SingleSportSlateData,
+import {
+  VARIANT_TO_LAYOUT,
+  type BubbleLineData,
+  type CalendarStripData,
+  type CountdownData,
+  type DatedTilesData,
+  type KitV1CardSpec,
+  type KitV1Variant,
+  type OneInNData,
+  type RoadAheadData,
+  type ScoreboardGridData,
+  type SingleSportSlateData,
 } from "./types";
+
+export function parseKitCardV1(raw: unknown): KitV1CardSpec | null {
+  if (!raw || typeof raw !== "object") return null;
+  const candidate = raw as Record<string, unknown>;
+  if (candidate.kit_version !== 1) return null;
+  if (typeof candidate.id !== "string" || !candidate.id.trim()) return null;
+  if (candidate.refusal_reason) return null;
+
+  const layout = candidate.layout;
+  const variant = candidate.variant;
+  if (typeof layout !== "string" || typeof variant !== "string") return null;
+  if (!(variant in VARIANT_TO_LAYOUT)) return null;
+  if (VARIANT_TO_LAYOUT[variant as KitV1Variant] !== layout) return null;
+  if (!candidate.data || typeof candidate.data !== "object") return null;
+
+  return raw as KitV1CardSpec;
+}
 
 function MemberAvatar({
   src,
@@ -475,17 +494,17 @@ function CalendarStripBody({ data }: { data: CalendarStripData }) {
         })}
       </div>
       <p className="text-[11px] leading-snug text-text-secondary">{data.ladder_rule_note}</p>
-      <p className="text-[10px] text-text-muted">{data.ladder_footer}</p>
     </div>
   );
 }
 
 export function KitCardRenderer({ spec }: { spec: KitV1CardSpec }) {
-  if (spec.refusal_reason || !spec.look || !spec.data) {
+  const parsed = parseKitCardV1(spec);
+  if (!parsed || !parsed.variant || !parsed.data) {
     return (
       <article className="w-full rounded-2xl border border-accent-danger/40 bg-surface-card p-3.5 shadow-sm">
         <div className="text-[10px] font-bold uppercase tracking-wide text-accent-danger">
-          Rule 1 fallback · Keep today&apos;s card
+          Standard card fallback
         </div>
         <p className="mt-1 text-xs leading-relaxed text-text-secondary">
           {spec.refusal_reason || "No Kit v1 shape fits safely; render standard card instead."}
@@ -496,52 +515,66 @@ export function KitCardRenderer({ spec }: { spec: KitV1CardSpec }) {
 
   return (
     <article className="w-full rounded-2xl border border-surface-border bg-surface-card p-3.5 shadow-sm">
-      {spec.kicker && (
-        <div className="text-[10px] font-bold uppercase tracking-wider text-accent-brand">
-          {spec.kicker}
-        </div>
-      )}
-      {spec.common_headline && (
+      <div className="flex items-center justify-between gap-2">
+        {parsed.kicker ? (
+          <div className="text-[10px] font-bold uppercase tracking-wider text-accent-brand">
+            {parsed.kicker}
+          </div>
+        ) : (
+          <span />
+        )}
+        {parsed.source_mark?.label && (
+          <span className="text-[10px] font-medium text-text-muted">
+            {parsed.source_mark.label}
+          </span>
+        )}
+      </div>
+      {parsed.common_headline && (
         <h3 className="mt-1 text-base font-bold leading-snug text-text-primary">
-          {spec.common_headline}
+          {parsed.common_headline}
         </h3>
       )}
-      {spec.stat_caption && (
+      {parsed.stat_caption && (
         <p className="mt-0.5 text-xs leading-snug text-text-secondary">
-          {spec.stat_caption}
+          {parsed.stat_caption}
         </p>
       )}
 
       <div className="mt-3">
-        {spec.look === "scoreboard_grid" && (
-          <ScoreboardGridBody data={spec.data as ScoreboardGridData} />
+        {parsed.variant === "scoreboard_grid" && (
+          <ScoreboardGridBody data={parsed.data as ScoreboardGridData} />
         )}
-        {spec.look === "dated_tiles" && (
-          <DatedTilesBody data={spec.data as DatedTilesData} />
+        {parsed.variant === "dated_tiles" && (
+          <DatedTilesBody data={parsed.data as DatedTilesData} />
         )}
-        {spec.look === "countdown" && (
-          <CountdownBody data={spec.data as CountdownData} />
+        {parsed.variant === "countdown" && (
+          <CountdownBody data={parsed.data as CountdownData} />
         )}
-        {spec.look === "road_ahead" && (
-          <RoadAheadBody data={spec.data as RoadAheadData} />
+        {parsed.variant === "road_ahead" && (
+          <RoadAheadBody data={parsed.data as RoadAheadData} />
         )}
-        {spec.look === "bubble_line" && (
-          <BubbleLineBody data={spec.data as BubbleLineData} />
+        {parsed.variant === "bubble_line" && (
+          <BubbleLineBody data={parsed.data as BubbleLineData} />
         )}
-        {spec.look === "one_in_n" && (
-          <OneInNBody data={spec.data as OneInNData} />
+        {parsed.variant === "one_in_n" && (
+          <OneInNBody data={parsed.data as OneInNData} />
         )}
-        {spec.look === "single_sport_slate" && (
-          <SingleSportSlateBody data={spec.data as SingleSportSlateData} />
+        {parsed.variant === "single_sport_slate" && (
+          <SingleSportSlateBody data={parsed.data as SingleSportSlateData} />
         )}
-        {spec.look === "calendar_strip" && (
-          <CalendarStripBody data={spec.data as CalendarStripData} />
+        {parsed.variant === "calendar_strip" && (
+          <CalendarStripBody data={parsed.data as CalendarStripData} />
         )}
       </div>
 
-      {spec.disclosure && (
-        <p className="mt-2.5 border-t border-surface-border/60 pt-2 text-[11px] text-text-muted">
-          {spec.disclosure}
+      {parsed.footnote && (
+        <p className="mt-2.5 border-t border-surface-border/60 pt-2 text-[10px] leading-snug text-text-muted">
+          {parsed.footnote}
+        </p>
+      )}
+      {parsed.disclosure && (
+        <p className="mt-1.5 text-[11px] text-text-muted">
+          {parsed.disclosure}
         </p>
       )}
     </article>

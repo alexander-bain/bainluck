@@ -1,0 +1,963 @@
+{
+  "kit_version": 1,
+  "count": 8,
+  "items": [
+    {
+      "kit_version": 1,
+      "id": "kit-cfb-national-title",
+      "layout": "grid",
+      "variant": "scoreboard_grid",
+      "kicker": "SPORTS · COLLEGE FOOTBALL",
+      "common_headline": "College Football Playoff and SEC Championship leaders",
+      "stat_caption": "Georgia leads the college football national championship at 34%, with SEC contenders across the same board",
+      "source_mark": {
+        "label": "2 sources",
+        "count": 2
+      },
+      "route": {
+        "kind": "collection",
+        "id": null,
+        "slug": "college-football-national-championship"
+      },
+      "footnote": "Shaded cells show served chances across both title races.",
+      "disclosure": "2 other markets in this set are not drawn here.",
+      "refusal_reason": null,
+      "data": {
+        "columns": [
+          {
+            "key": "181",
+            "label": "National Title"
+          },
+          {
+            "key": "233",
+            "label": "SEC Title"
+          }
+        ],
+        "rows": [
+          {
+            "rank": 1,
+            "name": "Georgia",
+            "image_url": "https://a.espncdn.com/i/teamlogos/ncaa/500/61.png",
+            "image_kind": "team",
+            "cells": {
+              "181": 34,
+              "233": 68
+            }
+          },
+          {
+            "rank": 2,
+            "name": "Texas",
+            "image_url": "https://a.espncdn.com/i/teamlogos/ncaa/500/251.png",
+            "image_kind": "team",
+            "cells": {
+              "181": 11,
+              "233": 26
+            }
+          },
+          {
+            "rank": 3,
+            "name": "Alabama",
+            "image_url": "https://a.espncdn.com/i/teamlogos/ncaa/500/333.png",
+            "image_kind": "team",
+            "cells": {
+              "181": 10,
+              "233": 3
+            }
+          },
+          {
+            "rank": 4,
+            "name": "Tennessee",
+            "image_url": "https://a.espncdn.com/i/teamlogos/ncaa/500/2633.png",
+            "image_kind": "team",
+            "cells": {
+              "181": 4,
+              "233": 3
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kit_version": 1,
+      "id": "kit-middle-east-deadlines",
+      "layout": "grid",
+      "variant": "dated_tiles",
+      "kicker": "GEOPOLITICS · MIDDLE EAST",
+      "common_headline": "Middle East ceasefire and leadership timelines",
+      "stat_caption": "US x Iran effective ceasefire reaches 81% by December 31, while Iran leadership change climbs to 24% by June 30",
+      "source_mark": {
+        "label": "2 sources",
+        "count": 2
+      },
+      "route": {
+        "kind": "collection",
+        "id": null,
+        "slug": "middle-east-deadlines"
+      },
+      "footnote": null,
+      "disclosure": "4 other markets in this set are not drawn here.",
+      "refusal_reason": null,
+      "data": {
+        "aligned": true,
+        "columns": [
+          {
+            "key": "2026-11-30",
+            "label": "Nov 30 '26"
+          },
+          {
+            "key": "2026-12-31",
+            "label": "Dec 31 '26"
+          },
+          {
+            "key": "2027-06-30",
+            "label": "Jun 30 '27"
+          }
+        ],
+        "rows": [
+          {
+            "name": "US x Iran Effective Ceasefire begins",
+            "image_url": "https://flagcdn.com/w320/us.png",
+            "image_kind": "flag",
+            "cells": {
+              "2026-11-30": 66,
+              "2026-12-31": 81,
+              "2027-06-30": null
+            }
+          },
+          {
+            "name": "Iran leadership change",
+            "image_url": "https://flagcdn.com/w320/ir.png",
+            "image_kind": "flag",
+            "cells": {
+              "2026-11-30": 1,
+              "2026-12-31": 7,
+              "2027-06-30": 24
+            }
+          }
+        ]
+      }
+    },
+    {
+      "kit_version": 1,
+      "id": "kit-by-december-31",
+      "layout": "stack",
+      "variant": "countdown",
+      "kicker": "SAME DEADLINE",
+      "common_headline": "By December 31",
+      "stat_caption": "Next Claude Opus (5.6+) release leads December 31 deadlines at 85%",
+      "source_mark": {
+        "label": "2 sources",
+        "count": 2
+      },
+      "route": {
+        "kind": "collection",
+        "id": null,
+        "slug": "by-december-31"
+      },
+      "footnote": null,
+      "disclosure": null,
+      "refusal_reason": null,
+      "data": {
+        "days_left": 38,
+        "deadline_label": "all of these end on Dec 31",
+        "rows": [
+          {
+            "name": "Next Claude Opus (5.6+) released?",
+            "p": 85,
+            "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f7/Beautiful_technology_%28Unsplash%29.jpg/960px-Beautiful_technology_%28Unsplash%29.jpg",
+            "image_kind": "topic"
+          },
+          {
+            "name": "Will any AI model reach a Chatbot Arena score of at least 1550?",
+            "p": 42,
+            "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/ff/Rear_of_rack_at_NERSC_data_center_-_closeup.jpg/500px-Rear_of_rack_at_NERSC_data_center_-_closeup.jpg",
+            "image_kind": "topic"
+          },
+          {
+            "name": "Will France pass a national budget?",
+            "p": 42,
+            "image_url": "https://flagcdn.com/w320/fr.png",
+            "image_kind": "flag"
+          },
+          {
+            "name": "Will Banksy create a new mural or street artwork?",
+            "p": 31,
+            "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5f/Confused_Neon_%28Unsplash%29.jpg/960px-Confused_Neon_%28Unsplash%29.jpg",
+            "image_kind": "topic"
+          },
+          {
+            "name": "Pete Hegseth out as Secretary of Defense?",
+            "p": 11,
+            "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2f/Pete_Hegseth_Official_Portrait.jpg/500px-Pete_Hegseth_Official_Portrait.jpg",
+            "image_kind": "person"
+          },
+          {
+            "name": "X banned in any European country?",
+            "p": 8,
+            "image_url": "https://image.tmdb.org/t/p/w185/i5a0XRXLfu0meGB3g5Sy4qP8pY.jpg",
+            "image_kind": "person"
+          }
+        ]
+      }
+    },
+    {
+      "kit_version": 1,
+      "id": "kit-boston-celtics-road",
+      "layout": "stack",
+      "variant": "road_ahead",
+      "kicker": "NBA · NEXT 3 GAMES",
+      "common_headline": "Boston Celtics: next 3 games",
+      "stat_caption": "Boston opens at 79% in Washington before hosting Atlanta at 62% and visiting San Antonio at 40%",
+      "source_mark": {
+        "label": "4 sources",
+        "count": 4
+      },
+      "route": {
+        "kind": "team",
+        "id": null,
+        "slug": "boston-celtics"
+      },
+      "footnote": null,
+      "disclosure": null,
+      "refusal_reason": null,
+      "data": {
+        "team_name": "Boston Celtics",
+        "team_abbr": "BOS",
+        "team_color": "#008348",
+        "team_image_url": "https://a.espncdn.com/i/teamlogos/nba/500/bos.png",
+        "rows": [
+          {
+            "opponent_name": "Washington Wizards",
+            "opponent_abbr": "WSH",
+            "opponent_color": "#e31837",
+            "opponent_image_url": "https://a.espncdn.com/i/teamlogos/nba/500/wsh.png",
+            "home_or_away": "at",
+            "day": "Tue Nov 24",
+            "clock": "5:00 PM PT",
+            "team_p": 79
+          },
+          {
+            "opponent_name": "Atlanta Hawks",
+            "opponent_abbr": "ATL",
+            "opponent_color": "#c8102e",
+            "opponent_image_url": "https://a.espncdn.com/i/teamlogos/nba/500/atl.png",
+            "home_or_away": "vs",
+            "day": "Fri Nov 27",
+            "clock": "5:00 PM PT",
+            "team_p": 62
+          },
+          {
+            "opponent_name": "San Antonio Spurs",
+            "opponent_abbr": "SA",
+            "opponent_color": "#000000",
+            "opponent_image_url": "https://a.espncdn.com/i/teamlogos/nba/500/sa.png",
+            "home_or_away": "at",
+            "day": "Sun Nov 29",
+            "clock": "1:00 PM PT",
+            "team_p": 40
+          }
+        ]
+      }
+    },
+    {
+      "kit_version": 1,
+      "id": "kit-nhl-playoffs-bubble",
+      "layout": "axis",
+      "variant": "bubble_line",
+      "kicker": "HOCKEY · NHL PLAYOFFS",
+      "common_headline": "2026–27 NHL Playoffs picture",
+      "stat_caption": "Edmonton leads at 98%, while Washington (54%) and the Rangers (47%) sit inside the playoff bubble",
+      "source_mark": {
+        "label": "2 sources",
+        "count": 2
+      },
+      "route": {
+        "kind": "collection",
+        "id": null,
+        "slug": "nhl-playoffs-2027"
+      },
+      "footnote": null,
+      "disclosure": null,
+      "refusal_reason": null,
+      "data": {
+        "band_low": 25,
+        "band_high": 75,
+        "band_label": "in doubt",
+        "low_count": 9,
+        "high_count": 10,
+        "points": [
+          {
+            "name": "Vancouver Canucks",
+            "abbr": "VAN",
+            "p": 6,
+            "lane": null,
+            "in_doubt": false,
+            "color": "#00205b",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/van.png"
+          },
+          {
+            "name": "Chicago Blackhawks",
+            "abbr": "CHI",
+            "p": 8,
+            "lane": null,
+            "in_doubt": false,
+            "color": "#cf0a2c",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/chi.png"
+          },
+          {
+            "name": "Detroit Red Wings",
+            "abbr": "DET",
+            "p": 8,
+            "lane": null,
+            "in_doubt": false,
+            "color": "#ce1126",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/det.png"
+          },
+          {
+            "name": "Toronto Maple Leafs",
+            "abbr": "TOR",
+            "p": 8,
+            "lane": null,
+            "in_doubt": false,
+            "color": "#00205b",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/tor.png"
+          },
+          {
+            "name": "Calgary Flames",
+            "abbr": "CGY",
+            "p": 11,
+            "lane": null,
+            "in_doubt": false,
+            "color": "#c8102e",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/cgy.png"
+          },
+          {
+            "name": "Pittsburgh Penguins",
+            "abbr": "PIT",
+            "p": 11,
+            "lane": null,
+            "in_doubt": false,
+            "color": "#000000",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/pit.png"
+          },
+          {
+            "name": "Columbus Blue Jackets",
+            "abbr": "CBJ",
+            "p": 14,
+            "lane": null,
+            "in_doubt": false,
+            "color": "#002654",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/cbj.png"
+          },
+          {
+            "name": "Philadelphia Flyers",
+            "abbr": "PHI",
+            "p": 18,
+            "lane": null,
+            "in_doubt": false,
+            "color": "#f74902",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/phi.png"
+          },
+          {
+            "name": "San Jose Sharks",
+            "abbr": "SJ",
+            "p": 24,
+            "lane": null,
+            "in_doubt": false,
+            "color": "#006d75",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/sj.png"
+          },
+          {
+            "name": "Buffalo Sabres",
+            "abbr": "BUF",
+            "p": 32,
+            "lane": 0,
+            "in_doubt": true,
+            "color": "#002654",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/buf.png"
+          },
+          {
+            "name": "Seattle Kraken",
+            "abbr": "SEA",
+            "p": 33,
+            "lane": 1,
+            "in_doubt": true,
+            "color": "#001628",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/sea.png"
+          },
+          {
+            "name": "Los Angeles Kings",
+            "abbr": "LA",
+            "p": 34,
+            "lane": 2,
+            "in_doubt": true,
+            "color": "#111111",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/la.png"
+          },
+          {
+            "name": "Winnipeg Jets",
+            "abbr": "WPG",
+            "p": 34,
+            "lane": 3,
+            "in_doubt": true,
+            "color": "#041e42",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/wpg.png"
+          },
+          {
+            "name": "Anaheim Ducks",
+            "abbr": "ANA",
+            "p": 38,
+            "lane": 0,
+            "in_doubt": true,
+            "color": "#fc4c02",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/ana.png"
+          },
+          {
+            "name": "St. Louis Blues",
+            "abbr": "STL",
+            "p": 38,
+            "lane": 4,
+            "in_doubt": true,
+            "color": "#002f87",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/stl.png"
+          },
+          {
+            "name": "New York Islanders",
+            "abbr": "NYI",
+            "p": 43,
+            "lane": 1,
+            "in_doubt": true,
+            "color": "#00539b",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/nyi.png"
+          },
+          {
+            "name": "Nashville Predators",
+            "abbr": "NSH",
+            "p": 46,
+            "lane": 0,
+            "in_doubt": true,
+            "color": "#ffb81c",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/nsh.png"
+          },
+          {
+            "name": "New York Rangers",
+            "abbr": "NYR",
+            "p": 47,
+            "lane": 2,
+            "in_doubt": true,
+            "color": "#0038a8",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/nyr.png"
+          },
+          {
+            "name": "Washington Capitals",
+            "abbr": "WSH",
+            "p": 54,
+            "lane": 0,
+            "in_doubt": true,
+            "color": "#c8102e",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/wsh.png"
+          },
+          {
+            "name": "Boston Bruins",
+            "abbr": "BOS",
+            "p": 69,
+            "lane": 0,
+            "in_doubt": true,
+            "color": "#ffb81c",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/bos.png"
+          },
+          {
+            "name": "Ottawa Senators",
+            "abbr": "OTT",
+            "p": 73,
+            "lane": 1,
+            "in_doubt": true,
+            "color": "#c52032",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/ott.png"
+          },
+          {
+            "name": "Utah Mammoth",
+            "abbr": "UTAH",
+            "p": 73,
+            "lane": 2,
+            "in_doubt": true,
+            "color": "#69b3e7",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/utah.png"
+          },
+          {
+            "name": "Florida Panthers",
+            "abbr": "FLA",
+            "p": 76,
+            "lane": null,
+            "in_doubt": false,
+            "color": "#c8102e",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/fla.png"
+          },
+          {
+            "name": "Montreal Canadiens",
+            "abbr": "MTL",
+            "p": 81,
+            "lane": null,
+            "in_doubt": false,
+            "color": "#af1e2d",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/mtl.png"
+          },
+          {
+            "name": "New Jersey Devils",
+            "abbr": "NJ",
+            "p": 83,
+            "lane": null,
+            "in_doubt": false,
+            "color": "#ce1126",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/nj.png"
+          },
+          {
+            "name": "Dallas Stars",
+            "abbr": "DAL",
+            "p": 85,
+            "lane": null,
+            "in_doubt": false,
+            "color": "#006847",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/dal.png"
+          },
+          {
+            "name": "Colorado Avalanche",
+            "abbr": "COL",
+            "p": 88,
+            "lane": null,
+            "in_doubt": false,
+            "color": "#6f263d",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/col.png"
+          },
+          {
+            "name": "Tampa Bay Lightning",
+            "abbr": "TB",
+            "p": 90,
+            "lane": null,
+            "in_doubt": false,
+            "color": "#002868",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/tb.png"
+          },
+          {
+            "name": "Vegas Golden Knights",
+            "abbr": "VGK",
+            "p": 94,
+            "lane": null,
+            "in_doubt": false,
+            "color": "#b4975a",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/vgk.png"
+          },
+          {
+            "name": "Carolina Hurricanes",
+            "abbr": "CAR",
+            "p": 97,
+            "lane": null,
+            "in_doubt": false,
+            "color": "#cc0000",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/car.png"
+          },
+          {
+            "name": "Edmonton Oilers",
+            "abbr": "EDM",
+            "p": 98,
+            "lane": null,
+            "in_doubt": false,
+            "color": "#041e42",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/edm.png"
+          },
+          {
+            "name": "Minnesota Wild",
+            "abbr": "MIN",
+            "p": 98,
+            "lane": null,
+            "in_doubt": false,
+            "color": "#154734",
+            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/min.png"
+          }
+        ],
+        "doubt_summary": "OTT 73% · UTAH 73% · BOS 69% · WSH 54% · NYR 47% · NSH 46% · NYI 43% · ANA 38% · STL 38% · LA 34% · WPG 34% · SEA 33% · BUF 32%"
+      }
+    },
+    {
+      "kit_version": 1,
+      "id": "kit-elon-side-quests",
+      "layout": "stack",
+      "variant": "one_in_n",
+      "kicker": "ODD · SIDE QUESTS",
+      "common_headline": "Elon Musk's wildest side quests",
+      "stat_caption": "Visiting Mars in his lifetime is the likeliest long shot at 12% (1 in 8), with buying Ryanair at 5% (1 in 20)",
+      "source_mark": {
+        "label": "2 sources",
+        "count": 2
+      },
+      "route": {
+        "kind": "collection",
+        "id": null,
+        "slug": "elon-musk-wildest-side-quests"
+      },
+      "footnote": null,
+      "disclosure": null,
+      "refusal_reason": null,
+      "data": {
+        "rows": [
+          {
+            "name": "Will Elon Musk visit Mars in his lifetime?",
+            "p": 12,
+            "one_in_n": 8,
+            "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/69/NASA%27s_SpaceX_Europa_Clipper_Launch_%28KSC-20241014-PH-FMX01_0001%29.jpg/1280px-NASA%27s_SpaceX_Europa_Clipper_Launch_%28KSC-20241014-PH-FMX01_0001%29.jpg",
+            "image_kind": "topic"
+          },
+          {
+            "name": "Will Elon purchase Ryanair?",
+            "p": 5,
+            "one_in_n": 20,
+            "image_url": "https://image.tmdb.org/t/p/w185/i5a0XRXLfu0meGB3g5Sy4qP8pY.jpg",
+            "image_kind": "person"
+          },
+          {
+            "name": "Next Superman film: Will Elon Musk be cast?",
+            "p": 5,
+            "one_in_n": 20,
+            "image_url": "https://image.tmdb.org/t/p/w185/i5a0XRXLfu0meGB3g5Sy4qP8pY.jpg",
+            "image_kind": "person"
+          },
+          {
+            "name": "Elon Musk out as Tesla CEO before 2027?",
+            "p": 3,
+            "one_in_n": 33,
+            "image_url": "https://image.tmdb.org/t/p/w185/i5a0XRXLfu0meGB3g5Sy4qP8pY.jpg",
+            "image_kind": "person"
+          },
+          {
+            "name": "Tesla Optimus released this year?",
+            "p": 2,
+            "one_in_n": 50,
+            "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/ff/Rear_of_rack_at_NERSC_data_center_-_closeup.jpg/500px-Rear_of_rack_at_NERSC_data_center_-_closeup.jpg",
+            "image_kind": "topic"
+          },
+          {
+            "name": "Will Elon Musk buy a major sports team before 2027?",
+            "p": 1,
+            "one_in_n": 100,
+            "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bd/SoFi_Stadium_%2851126606022%29.jpg/500px-SoFi_Stadium_%2851126606022%29.jpg",
+            "image_kind": "topic"
+          }
+        ]
+      }
+    },
+    {
+      "kit_version": 1,
+      "id": "kit-nba-slate",
+      "layout": "stack",
+      "variant": "single_sport_slate",
+      "kicker": "NBA · THIS SLATE",
+      "common_headline": "Tonight's NBA Slate",
+      "stat_caption": "Pistons at Magic (54%–46%) headlines seven NBA matchups",
+      "source_mark": {
+        "label": "4 sources",
+        "count": 4
+      },
+      "route": {
+        "kind": "collection",
+        "id": null,
+        "slug": "nba-slate"
+      },
+      "footnote": null,
+      "disclosure": "6 other markets in this set are not drawn here.",
+      "refusal_reason": null,
+      "data": {
+        "sport_key": "basketball_nba",
+        "league_label": "NBA",
+        "rows": [
+          {
+            "sport_key": "basketball_nba",
+            "away": {
+              "name": "Memphis Grizzlies",
+              "abbr": "MEM",
+              "color": "#5d76a9",
+              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/mem.png",
+              "p": 49
+            },
+            "home": {
+              "name": "Charlotte Hornets",
+              "abbr": "CHA",
+              "color": "#008ca8",
+              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/cha.png",
+              "p": 51
+            },
+            "day": "Mon Nov 23",
+            "clock": "4:00 PM PT",
+            "status": "live",
+            "score": [
+              28,
+              32
+            ]
+          },
+          {
+            "sport_key": "basketball_nba",
+            "away": {
+              "name": "Portland Trail Blazers",
+              "abbr": "PTB",
+              "color": "#e03a3e",
+              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/por.png",
+              "p": 47
+            },
+            "home": {
+              "name": "Philadelphia 76ers",
+              "abbr": "PHI",
+              "color": "#1d428a",
+              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/phi.png",
+              "p": 53
+            },
+            "day": "Mon Nov 23",
+            "clock": "4:00 PM PT",
+            "status": "live",
+            "score": [
+              27,
+              28
+            ]
+          },
+          {
+            "sport_key": "basketball_nba",
+            "away": {
+              "name": "Oklahoma City Thunder",
+              "abbr": "OKC",
+              "color": "#007ac1",
+              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/okc.png",
+              "p": 63
+            },
+            "home": {
+              "name": "Indiana Pacers",
+              "abbr": "IND",
+              "color": "#0c2340",
+              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/ind.png",
+              "p": 37
+            },
+            "day": "Mon Nov 23",
+            "clock": "4:30 PM PT",
+            "status": "scheduled",
+            "score": [
+              null,
+              null
+            ]
+          },
+          {
+            "sport_key": "basketball_nba",
+            "away": {
+              "name": "Milwaukee Bucks",
+              "abbr": "MIL",
+              "color": "#00471b",
+              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/mil.png",
+              "p": 21
+            },
+            "home": {
+              "name": "Toronto Raptors",
+              "abbr": "TOR",
+              "color": "#d91244",
+              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/tor.png",
+              "p": 79
+            },
+            "day": "Mon Nov 23",
+            "clock": "4:30 PM PT",
+            "status": "scheduled",
+            "score": [
+              null,
+              null
+            ]
+          },
+          {
+            "sport_key": "basketball_nba",
+            "away": {
+              "name": "Brooklyn Nets",
+              "abbr": "BKN",
+              "color": "#000000",
+              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/bkn.png",
+              "p": 19
+            },
+            "home": {
+              "name": "Minnesota Timberwolves",
+              "abbr": "MIN",
+              "color": "#266092",
+              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/min.png",
+              "p": 81
+            },
+            "day": "Mon Nov 23",
+            "clock": "4:30 PM PT",
+            "status": "scheduled",
+            "score": [
+              null,
+              null
+            ]
+          },
+          {
+            "sport_key": "basketball_nba",
+            "away": {
+              "name": "Phoenix Suns",
+              "abbr": "PHX",
+              "color": "#29127a",
+              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/phx.png",
+              "p": 58
+            },
+            "home": {
+              "name": "New Orleans Pelicans",
+              "abbr": "NOP",
+              "color": "#0a2240",
+              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/no.png",
+              "p": 42
+            },
+            "day": "Mon Nov 23",
+            "clock": "5:00 PM PT",
+            "status": "scheduled",
+            "score": [
+              null,
+              null
+            ]
+          },
+          {
+            "sport_key": "basketball_nba",
+            "away": {
+              "name": "Detroit Pistons",
+              "abbr": "DET",
+              "color": "#1d428a",
+              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/det.png",
+              "p": 54
+            },
+            "home": {
+              "name": "Orlando Magic",
+              "abbr": "ORL",
+              "color": "#0150b5",
+              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/orl.png",
+              "p": 46
+            },
+            "day": "Tue Nov 24",
+            "clock": "4:00 PM PT",
+            "status": "scheduled",
+            "score": [
+              null,
+              null
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "kit_version": 1,
+      "id": "kit-spotify-wrapped-2026",
+      "layout": "calendar",
+      "variant": "calendar_strip",
+      "kicker": "CULTURE · 2026",
+      "common_headline": "When will Spotify release 2026 Wrapped?",
+      "stat_caption": "Spotify Wrapped is most likely to arrive on Wednesday, December 2 (67%)",
+      "source_mark": {
+        "label": "2 sources",
+        "count": 2
+      },
+      "route": {
+        "kind": "collection",
+        "id": null,
+        "slug": "how-2026-gets-summed-up"
+      },
+      "footnote": "Served ladder: 12% before Dec 1 · 18% before Dec 2 · 85% before Dec 3 · 90% before Dec 4",
+      "disclosure": null,
+      "refusal_reason": null,
+      "data": {
+        "month_span_label": "Nov 27 – Dec 4",
+        "show_percent": true,
+        "ladder_rule_note": "The percent in a day is the chance it arrives that day: one rung of the ladder minus the rung before it.",
+        "days": [
+          {
+            "dow": "Fri",
+            "day_num": "27",
+            "month_abbr": "Nov",
+            "daily_pct": 2,
+            "is_peak": false
+          },
+          {
+            "dow": "Sat",
+            "day_num": "28",
+            "month_abbr": "Nov",
+            "daily_pct": 1,
+            "is_peak": false
+          },
+          {
+            "dow": "Sun",
+            "day_num": "29",
+            "month_abbr": "Nov",
+            "daily_pct": 6,
+            "is_peak": false
+          },
+          {
+            "dow": "Mon",
+            "day_num": "30",
+            "month_abbr": "Nov",
+            "daily_pct": 0,
+            "is_peak": false
+          },
+          {
+            "dow": "Tue",
+            "day_num": "1",
+            "month_abbr": "Dec",
+            "daily_pct": 6,
+            "is_peak": false
+          },
+          {
+            "dow": "Wed",
+            "day_num": "2",
+            "month_abbr": "Dec",
+            "daily_pct": 67,
+            "is_peak": true
+          },
+          {
+            "dow": "Thu",
+            "day_num": "3",
+            "month_abbr": "Dec",
+            "daily_pct": 5,
+            "is_peak": false
+          },
+          {
+            "dow": "Fri",
+            "day_num": "4",
+            "month_abbr": "Dec",
+            "daily_pct": 0,
+            "is_peak": false
+          }
+        ]
+      }
+    }
+  ],
+  "refusals": [
+    {
+      "title": "Rule 1 — No text-only fallback (casting_sheet / word_list refused without pictures)",
+      "spec": {
+        "kit_version": 1,
+        "id": "fallback-today",
+        "layout": null,
+        "variant": null,
+        "fallback_today": true,
+        "refusal_reason": "Members carry no verified artwork; keep today's standard card instead of text-only fallback."
+      }
+    },
+    {
+      "title": "Rule 6 — Mixed-sport slate refused (The closest games tonight)",
+      "spec": {
+        "kit_version": 1,
+        "id": "fallback-today",
+        "layout": null,
+        "variant": null,
+        "fallback_today": true,
+        "refusal_reason": "Slate mixes soccer, basketball, hockey, and cricket (>1 sport_key); keep today's card."
+      }
+    },
+    {
+      "title": "One-winner columns > 115 refused (2028 Presidential Race: 123% & 127%)",
+      "spec": {
+        "kit_version": 1,
+        "id": "fallback-today",
+        "layout": null,
+        "variant": null,
+        "fallback_today": true,
+        "refusal_reason": "Mutually exclusive columns sum above 115 as served (123%, 127%) and <2 valid columns remain; keep today's card."
+      }
+    }
+  ]
+}

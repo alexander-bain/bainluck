@@ -94,10 +94,10 @@ function KitV1PreviewBody() {
           <>
             <section className="space-y-4">
               {payload.items.map((spec, idx) => (
-                <div key={`${spec.look}-${idx}`} className="space-y-1.5">
+                <div key={`${spec.id || spec.variant}-${idx}`} className="space-y-1.5">
                   <div className="flex items-center justify-between px-1 text-[11px] font-semibold text-text-muted">
                     <span>
-                      {idx + 1}. {spec.look}
+                      {idx + 1}. {spec.layout} / {spec.variant}
                     </span>
                     <button
                       type="button"
