@@ -25,7 +25,6 @@ from typing import Any
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
-from app.utils.container_machinery import _default_art_resolver
 from app.utils.discover_image_policy import _lookup_team_or_nation_logo
 from app.utils.kit_v1_spec import (
     _adaptive_team_color,
@@ -248,7 +247,7 @@ def _subject_kind_from_art(art: dict[str, Any] | None, row_label: str = "") -> s
         return "team"
     if "/headshots/" in url:
         return "person"
-    if "flagcdn.com" in url:
+    if (urlparse(url).hostname or "").lower() == "flagcdn.com":
         return "flag"
     return "topic"
 
@@ -1217,10 +1216,10 @@ def _explain_non_fit(bundle: dict[str, Any] | None, container: dict[str, Any] | 
         if len(items) < 3:
             return f"Theme bundle has only {len(items)} markets (need >= 3 for a multi-row Kit shape)"
         hosts = {
-            urlparse(str((it.get("data") or {}).get("image_url") or "")).netloc
+            (urlparse(str((it.get("data") or {}).get("image_url") or "")).hostname or "").lower()
             for it in items
         }
-        if "images.pexels.com" in hosts:
+        if any(host == "images.pexels.com" for host in hosts):
             return "Theme uses generic stock photos (images.pexels.com) and mixed non-comparable questions"
         return "Theme combines distinct question shapes without shared verified entity art"
     if mc:
@@ -1240,6 +1239,8 @@ def build_kit_card_for_real_set(
     now: datetime | None = None,
 ) -> dict[str, Any]:
     """Deterministically convert one public bundle/container into Kit v1 or honest refusal."""
+    from app.utils.container_machinery import _default_art_resolver
+
     resolved_now = now or datetime.now(timezone.utc)
     resolver = _default_art_resolver()
     slug, kicker, common, stat, route = _derive_slug_and_copy(bundle, container)
