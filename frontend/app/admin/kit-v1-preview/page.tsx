@@ -3,7 +3,7 @@
 /**
  * #13551 (Rulings 366: B & 367: A) — /admin/kit-v1-preview:
  * Renders all 8 Kit v1 worked examples at 390px directly from GET /api/containers/preview/kit-v1
- * so web proves every shape before iPhone matches from the same JSON.
+ * using only the 4 generic layouts + 8 marks (variant is an optional hint only).
  */
 
 import { useEffect, useState } from "react";
@@ -74,7 +74,7 @@ function KitV1PreviewBody() {
             Kit v1 Preview (366: B &amp; 367: A)
           </h1>
           <p className="mt-1 text-xs leading-relaxed text-text-secondary">
-            Web renderer first across all 7 better-than-today looks plus Ruling 367: A calendar strip, driven directly by shared server JSON.
+            Layout-generic renderer (4 layouts, 8 marks) driven directly by shared server JSON; variant is an optional hint only.
           </p>
         </header>
 
@@ -94,10 +94,10 @@ function KitV1PreviewBody() {
           <>
             <section className="space-y-4">
               {payload.items.map((spec, idx) => (
-                <div key={`${spec.id || spec.variant}-${idx}`} className="space-y-1.5">
+                <div key={`${spec.id || spec.layout}-${idx}`} className="space-y-1.5">
                   <div className="flex items-center justify-between px-1 text-[11px] font-semibold text-text-muted">
                     <span>
-                      {idx + 1}. {spec.layout} / {spec.variant}
+                      {idx + 1}. layout={spec.layout} (variant hint: {spec.variant ?? "none"})
                     </span>
                     <button
                       type="button"

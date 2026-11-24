@@ -22,7 +22,10 @@
       "footnote": "Shaded cells show served chances across both title races.",
       "disclosure": "2 other markets in this set are not drawn here.",
       "refusal_reason": null,
-      "data": {
+      "body": {
+        "leading_label": "Contender",
+        "show_column_headers": true,
+        "row_layout": "matrix",
         "columns": [
           {
             "key": "181",
@@ -35,44 +38,248 @@
         ],
         "rows": [
           {
-            "rank": 1,
-            "name": "Georgia",
-            "image_url": "https://a.espncdn.com/i/teamlogos/ncaa/500/61.png",
-            "image_kind": "team",
-            "cells": {
-              "181": 34,
-              "233": 68
-            }
+            "id": "cfb-1-georgia",
+            "leading": [
+              {
+                "mark": "word",
+                "text": "1",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/ncaa/500/61.png",
+                "alt": "Georgia",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Georgia",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "cells": [
+              {
+                "column_key": "181",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.34,
+                    "top_label": null,
+                    "center_label": "34%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "233",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.68,
+                    "top_label": null,
+                    "center_label": "68%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              }
+            ]
           },
           {
-            "rank": 2,
-            "name": "Texas",
-            "image_url": "https://a.espncdn.com/i/teamlogos/ncaa/500/251.png",
-            "image_kind": "team",
-            "cells": {
-              "181": 11,
-              "233": 26
-            }
+            "id": "cfb-2-texas",
+            "leading": [
+              {
+                "mark": "word",
+                "text": "2",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/ncaa/500/251.png",
+                "alt": "Texas",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Texas",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "cells": [
+              {
+                "column_key": "181",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.11,
+                    "top_label": null,
+                    "center_label": "11%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "233",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.26,
+                    "top_label": null,
+                    "center_label": "26%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              }
+            ]
           },
           {
-            "rank": 3,
-            "name": "Alabama",
-            "image_url": "https://a.espncdn.com/i/teamlogos/ncaa/500/333.png",
-            "image_kind": "team",
-            "cells": {
-              "181": 10,
-              "233": 3
-            }
+            "id": "cfb-3-alabama",
+            "leading": [
+              {
+                "mark": "word",
+                "text": "3",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/ncaa/500/333.png",
+                "alt": "Alabama",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Alabama",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "cells": [
+              {
+                "column_key": "181",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.1,
+                    "top_label": null,
+                    "center_label": "10%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "233",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.03,
+                    "top_label": null,
+                    "center_label": "3%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              }
+            ]
           },
           {
-            "rank": 4,
-            "name": "Tennessee",
-            "image_url": "https://a.espncdn.com/i/teamlogos/ncaa/500/2633.png",
-            "image_kind": "team",
-            "cells": {
-              "181": 4,
-              "233": 3
-            }
+            "id": "cfb-4-tennessee",
+            "leading": [
+              {
+                "mark": "word",
+                "text": "4",
+                "style": "rank",
+                "tone": "muted",
+                "align": "left",
+                "width": "xs",
+                "bold": false
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/ncaa/500/2633.png",
+                "alt": "Tennessee",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Tennessee",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "cells": [
+              {
+                "column_key": "181",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.04,
+                    "top_label": null,
+                    "center_label": "4%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "233",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.03,
+                    "top_label": null,
+                    "center_label": "3%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              }
+            ]
           }
         ]
       }
@@ -97,8 +304,9 @@
       "footnote": null,
       "disclosure": "4 other markets in this set are not drawn here.",
       "refusal_reason": null,
-      "data": {
-        "aligned": true,
+      "body": {
+        "show_column_headers": false,
+        "row_layout": "stacked_cells",
         "columns": [
           {
             "key": "2026-11-30",
@@ -115,24 +323,136 @@
         ],
         "rows": [
           {
-            "name": "US x Iran Effective Ceasefire begins",
-            "image_url": "https://flagcdn.com/w320/us.png",
-            "image_kind": "flag",
-            "cells": {
-              "2026-11-30": 66,
-              "2026-12-31": 81,
-              "2027-06-30": null
-            }
+            "id": "ceasefire",
+            "leading": [
+              {
+                "mark": "picture",
+                "url": "https://flagcdn.com/w320/us.png",
+                "alt": "US x Iran Effective Ceasefire begins",
+                "subject_kind": "flag",
+                "size": "xs",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "US x Iran Effective Ceasefire begins",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "cells": [
+              {
+                "column_key": "2026-11-30",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.66,
+                    "top_label": "by Nov 30 '26",
+                    "center_label": "66%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "2026-12-31",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.81,
+                    "top_label": "by Dec 31 '26",
+                    "center_label": "81%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "2027-06-30",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.0,
+                    "top_label": "by Jun 30 '27",
+                    "center_label": "—",
+                    "bottom_label": null,
+                    "muted": true,
+                    "highlight_role": null
+                  }
+                ]
+              }
+            ]
           },
           {
-            "name": "Iran leadership change",
-            "image_url": "https://flagcdn.com/w320/ir.png",
-            "image_kind": "flag",
-            "cells": {
-              "2026-11-30": 1,
-              "2026-12-31": 7,
-              "2027-06-30": 24
-            }
+            "id": "iran-leadership",
+            "leading": [
+              {
+                "mark": "picture",
+                "url": "https://flagcdn.com/w320/ir.png",
+                "alt": "Iran leadership change",
+                "subject_kind": "flag",
+                "size": "xs",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Iran leadership change",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              }
+            ],
+            "cells": [
+              {
+                "column_key": "2026-11-30",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.01,
+                    "top_label": "by Nov 30 '26",
+                    "center_label": "1%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "2026-12-31",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.07,
+                    "top_label": "by Dec 31 '26",
+                    "center_label": "7%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              },
+              {
+                "column_key": "2027-06-30",
+                "marks": [
+                  {
+                    "mark": "tile",
+                    "shade": 0.24,
+                    "top_label": "by Jun 30 '27",
+                    "center_label": "24%",
+                    "bottom_label": null,
+                    "muted": false,
+                    "highlight_role": null
+                  }
+                ]
+              }
+            ]
           }
         ]
       }
@@ -157,45 +477,258 @@
       "footnote": null,
       "disclosure": null,
       "refusal_reason": null,
-      "data": {
-        "days_left": 38,
-        "deadline_label": "all of these end on Dec 31",
-        "rows": [
+      "body": {
+        "header_layout": "banner",
+        "header_marks": [
           {
-            "name": "Next Claude Opus (5.6+) released?",
-            "p": 85,
-            "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f7/Beautiful_technology_%28Unsplash%29.jpg/960px-Beautiful_technology_%28Unsplash%29.jpg",
-            "image_kind": "topic"
+            "mark": "number",
+            "value": 38,
+            "display": "38",
+            "unit": "days",
+            "tone": "accent",
+            "prominence": "hero",
+            "align": "left",
+            "width": "auto"
           },
           {
-            "name": "Will any AI model reach a Chatbot Arena score of at least 1550?",
-            "p": 42,
-            "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/ff/Rear_of_rack_at_NERSC_data_center_-_closeup.jpg/500px-Rear_of_rack_at_NERSC_data_center_-_closeup.jpg",
-            "image_kind": "topic"
+            "mark": "word",
+            "text": "days left",
+            "style": "hero_label",
+            "tone": "primary",
+            "align": "left",
+            "width": "flex",
+            "bold": true,
+            "secondary_text": "all of these end on Dec 31"
+          }
+        ],
+        "items": [
+          {
+            "id": "opus",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f7/Beautiful_technology_%28Unsplash%29.jpg/960px-Beautiful_technology_%28Unsplash%29.jpg",
+                "alt": "Next Claude Opus (5.6+) released?",
+                "subject_kind": "topic",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Next Claude Opus (5.6+) released?",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.85,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 85,
+                "display": "85%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
           },
           {
-            "name": "Will France pass a national budget?",
-            "p": 42,
-            "image_url": "https://flagcdn.com/w320/fr.png",
-            "image_kind": "flag"
+            "id": "arena",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/ff/Rear_of_rack_at_NERSC_data_center_-_closeup.jpg/500px-Rear_of_rack_at_NERSC_data_center_-_closeup.jpg",
+                "alt": "Will any AI model reach a Chatbot Arena score of at least 1550?",
+                "subject_kind": "topic",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Will any AI model reach a Chatbot Arena score of at least 1550?",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.42,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 42,
+                "display": "42%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
           },
           {
-            "name": "Will Banksy create a new mural or street artwork?",
-            "p": 31,
-            "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5f/Confused_Neon_%28Unsplash%29.jpg/960px-Confused_Neon_%28Unsplash%29.jpg",
-            "image_kind": "topic"
+            "id": "france",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://flagcdn.com/w320/fr.png",
+                "alt": "Will France pass a national budget?",
+                "subject_kind": "flag",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Will France pass a national budget?",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.42,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 42,
+                "display": "42%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
           },
           {
-            "name": "Pete Hegseth out as Secretary of Defense?",
-            "p": 11,
-            "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2f/Pete_Hegseth_Official_Portrait.jpg/500px-Pete_Hegseth_Official_Portrait.jpg",
-            "image_kind": "person"
+            "id": "banksy",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/5f/Confused_Neon_%28Unsplash%29.jpg/960px-Confused_Neon_%28Unsplash%29.jpg",
+                "alt": "Will Banksy create a new mural or street artwork?",
+                "subject_kind": "topic",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Will Banksy create a new mural or street artwork?",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.31,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 31,
+                "display": "31%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
           },
           {
-            "name": "X banned in any European country?",
-            "p": 8,
-            "image_url": "https://image.tmdb.org/t/p/w185/i5a0XRXLfu0meGB3g5Sy4qP8pY.jpg",
-            "image_kind": "person"
+            "id": "hegseth",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/2f/Pete_Hegseth_Official_Portrait.jpg/500px-Pete_Hegseth_Official_Portrait.jpg",
+                "alt": "Pete Hegseth out as Secretary of Defense?",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Pete Hegseth out as Secretary of Defense?",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.11,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 11,
+                "display": "11%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
+          },
+          {
+            "id": "x-ban",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://image.tmdb.org/t/p/w185/i5a0XRXLfu0meGB3g5Sy4qP8pY.jpg",
+                "alt": "X banned in any European country?",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "X banned in any European country?",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.08,
+                "width": "sm"
+              },
+              {
+                "mark": "number",
+                "value": 8,
+                "display": "8%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
           }
         ]
       }
@@ -220,41 +753,174 @@
       "footnote": null,
       "disclosure": null,
       "refusal_reason": null,
-      "data": {
-        "team_name": "Boston Celtics",
-        "team_abbr": "BOS",
-        "team_color": "#008348",
-        "team_image_url": "https://a.espncdn.com/i/teamlogos/nba/500/bos.png",
-        "rows": [
+      "body": {
+        "header_layout": "banner",
+        "header_marks": [
           {
-            "opponent_name": "Washington Wizards",
-            "opponent_abbr": "WSH",
-            "opponent_color": "#e31837",
-            "opponent_image_url": "https://a.espncdn.com/i/teamlogos/nba/500/wsh.png",
-            "home_or_away": "at",
-            "day": "Tue Nov 24",
-            "clock": "5:00 PM PT",
-            "team_p": 79
+            "mark": "picture",
+            "url": "https://a.espncdn.com/i/teamlogos/nba/500/bos.png",
+            "alt": "Boston Celtics",
+            "subject_kind": "team",
+            "size": "sm",
+            "contain": true
           },
           {
-            "opponent_name": "Atlanta Hawks",
-            "opponent_abbr": "ATL",
-            "opponent_color": "#c8102e",
-            "opponent_image_url": "https://a.espncdn.com/i/teamlogos/nba/500/atl.png",
-            "home_or_away": "vs",
-            "day": "Fri Nov 27",
-            "clock": "5:00 PM PT",
-            "team_p": 62
+            "mark": "word",
+            "text": "Boston Celtics",
+            "style": "row",
+            "tone": "primary",
+            "align": "left",
+            "width": "flex",
+            "bold": true
+          }
+        ],
+        "items": [
+          {
+            "id": "g1-wsh",
+            "marks": [
+              {
+                "mark": "word",
+                "text": "Tue Nov 24",
+                "style": "meta",
+                "tone": "secondary",
+                "align": "left",
+                "width": "sm",
+                "bold": false,
+                "secondary_text": "5:00 PM PT"
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/wsh.png",
+                "alt": "Washington Wizards",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "at WSH",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.79,
+                "width": "md",
+                "fill_color": "#008348"
+              },
+              {
+                "mark": "number",
+                "value": 79,
+                "display": "79%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
           },
           {
-            "opponent_name": "San Antonio Spurs",
-            "opponent_abbr": "SA",
-            "opponent_color": "#000000",
-            "opponent_image_url": "https://a.espncdn.com/i/teamlogos/nba/500/sa.png",
-            "home_or_away": "at",
-            "day": "Sun Nov 29",
-            "clock": "1:00 PM PT",
-            "team_p": 40
+            "id": "g2-atl",
+            "marks": [
+              {
+                "mark": "word",
+                "text": "Fri Nov 27",
+                "style": "meta",
+                "tone": "secondary",
+                "align": "left",
+                "width": "sm",
+                "bold": false,
+                "secondary_text": "5:00 PM PT"
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/atl.png",
+                "alt": "Atlanta Hawks",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "vs ATL",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.62,
+                "width": "md",
+                "fill_color": "#008348"
+              },
+              {
+                "mark": "number",
+                "value": 62,
+                "display": "62%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
+          },
+          {
+            "id": "g3-sa",
+            "marks": [
+              {
+                "mark": "word",
+                "text": "Sun Nov 29",
+                "style": "meta",
+                "tone": "secondary",
+                "align": "left",
+                "width": "sm",
+                "bold": false,
+                "secondary_text": "1:00 PM PT"
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/sa.png",
+                "alt": "San Antonio Spurs",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "at SA",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": true
+              },
+              {
+                "mark": "bar",
+                "bar_style": "single",
+                "fill": 0.4,
+                "width": "md",
+                "fill_color": "#008348"
+              },
+              {
+                "mark": "number",
+                "value": 40,
+                "display": "40%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "sm"
+              }
+            ]
           }
         ]
       }
@@ -279,303 +945,452 @@
       "footnote": null,
       "disclosure": null,
       "refusal_reason": null,
-      "data": {
-        "band_low": 25,
-        "band_high": 75,
-        "band_label": "in doubt",
-        "low_count": 9,
-        "high_count": 10,
-        "points": [
+      "body": {
+        "scale": {
+          "scale_kind": "percent",
+          "unit": "%",
+          "min": 0,
+          "max": 100,
+          "ticks": [
+            {
+              "x": 0,
+              "label": "0%"
+            },
+            {
+              "x": 25,
+              "label": "25%"
+            },
+            {
+              "x": 50,
+              "label": "50%"
+            },
+            {
+              "x": 75,
+              "label": "75%"
+            },
+            {
+              "x": 100,
+              "label": "100%"
+            }
+          ]
+        },
+        "highlight_band": {
+          "lo": 25,
+          "hi": 75,
+          "label": "in doubt"
+        },
+        "marks": [
           {
-            "name": "Vancouver Canucks",
-            "abbr": "VAN",
-            "p": 6,
-            "lane": null,
-            "in_doubt": false,
+            "mark": "dot",
+            "x": 6.0,
+            "y_lane": null,
+            "label": "Vancouver Canucks: 6%",
             "color": "#00205b",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/van.png"
+            "in_band": false,
+            "picture": null
           },
           {
-            "name": "Chicago Blackhawks",
-            "abbr": "CHI",
-            "p": 8,
-            "lane": null,
-            "in_doubt": false,
+            "mark": "dot",
+            "x": 8.0,
+            "y_lane": null,
+            "label": "Chicago Blackhawks: 8%",
             "color": "#cf0a2c",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/chi.png"
+            "in_band": false,
+            "picture": null
           },
           {
-            "name": "Detroit Red Wings",
-            "abbr": "DET",
-            "p": 8,
-            "lane": null,
-            "in_doubt": false,
+            "mark": "dot",
+            "x": 8.0,
+            "y_lane": null,
+            "label": "Detroit Red Wings: 8%",
             "color": "#ce1126",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/det.png"
+            "in_band": false,
+            "picture": null
           },
           {
-            "name": "Toronto Maple Leafs",
-            "abbr": "TOR",
-            "p": 8,
-            "lane": null,
-            "in_doubt": false,
+            "mark": "dot",
+            "x": 8.0,
+            "y_lane": null,
+            "label": "Toronto Maple Leafs: 8%",
             "color": "#00205b",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/tor.png"
+            "in_band": false,
+            "picture": null
           },
           {
-            "name": "Calgary Flames",
-            "abbr": "CGY",
-            "p": 11,
-            "lane": null,
-            "in_doubt": false,
+            "mark": "dot",
+            "x": 11.0,
+            "y_lane": null,
+            "label": "Calgary Flames: 11%",
             "color": "#c8102e",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/cgy.png"
+            "in_band": false,
+            "picture": null
           },
           {
-            "name": "Pittsburgh Penguins",
-            "abbr": "PIT",
-            "p": 11,
-            "lane": null,
-            "in_doubt": false,
+            "mark": "dot",
+            "x": 11.0,
+            "y_lane": null,
+            "label": "Pittsburgh Penguins: 11%",
             "color": "#000000",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/pit.png"
+            "in_band": false,
+            "picture": null
           },
           {
-            "name": "Columbus Blue Jackets",
-            "abbr": "CBJ",
-            "p": 14,
-            "lane": null,
-            "in_doubt": false,
+            "mark": "dot",
+            "x": 14.0,
+            "y_lane": null,
+            "label": "Columbus Blue Jackets: 14%",
             "color": "#002654",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/cbj.png"
+            "in_band": false,
+            "picture": null
           },
           {
-            "name": "Philadelphia Flyers",
-            "abbr": "PHI",
-            "p": 18,
-            "lane": null,
-            "in_doubt": false,
+            "mark": "dot",
+            "x": 18.0,
+            "y_lane": null,
+            "label": "Philadelphia Flyers: 18%",
             "color": "#f74902",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/phi.png"
+            "in_band": false,
+            "picture": null
           },
           {
-            "name": "San Jose Sharks",
-            "abbr": "SJ",
-            "p": 24,
-            "lane": null,
-            "in_doubt": false,
+            "mark": "dot",
+            "x": 24.0,
+            "y_lane": null,
+            "label": "San Jose Sharks: 24%",
             "color": "#006d75",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/sj.png"
+            "in_band": false,
+            "picture": null
           },
           {
-            "name": "Buffalo Sabres",
-            "abbr": "BUF",
-            "p": 32,
-            "lane": 0,
-            "in_doubt": true,
+            "mark": "dot",
+            "x": 32.0,
+            "y_lane": 0,
+            "label": "Buffalo Sabres: 32%",
             "color": "#002654",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/buf.png"
+            "in_band": true,
+            "picture": {
+              "mark": "picture",
+              "url": "https://a.espncdn.com/i/teamlogos/nhl/500/buf.png",
+              "alt": "BUF",
+              "subject_kind": "team",
+              "size": "xs",
+              "contain": true
+            }
           },
           {
-            "name": "Seattle Kraken",
-            "abbr": "SEA",
-            "p": 33,
-            "lane": 1,
-            "in_doubt": true,
+            "mark": "dot",
+            "x": 33.0,
+            "y_lane": 1,
+            "label": "Seattle Kraken: 33%",
             "color": "#001628",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/sea.png"
+            "in_band": true,
+            "picture": {
+              "mark": "picture",
+              "url": "https://a.espncdn.com/i/teamlogos/nhl/500/sea.png",
+              "alt": "SEA",
+              "subject_kind": "team",
+              "size": "xs",
+              "contain": true
+            }
           },
           {
-            "name": "Los Angeles Kings",
-            "abbr": "LA",
-            "p": 34,
-            "lane": 2,
-            "in_doubt": true,
+            "mark": "dot",
+            "x": 34.0,
+            "y_lane": 2,
+            "label": "Los Angeles Kings: 34%",
             "color": "#111111",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/la.png"
+            "in_band": true,
+            "picture": {
+              "mark": "picture",
+              "url": "https://a.espncdn.com/i/teamlogos/nhl/500/la.png",
+              "alt": "LA",
+              "subject_kind": "team",
+              "size": "xs",
+              "contain": true
+            }
           },
           {
-            "name": "Winnipeg Jets",
-            "abbr": "WPG",
-            "p": 34,
-            "lane": 3,
-            "in_doubt": true,
+            "mark": "dot",
+            "x": 34.0,
+            "y_lane": 3,
+            "label": "Winnipeg Jets: 34%",
             "color": "#041e42",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/wpg.png"
+            "in_band": true,
+            "picture": {
+              "mark": "picture",
+              "url": "https://a.espncdn.com/i/teamlogos/nhl/500/wpg.png",
+              "alt": "WPG",
+              "subject_kind": "team",
+              "size": "xs",
+              "contain": true
+            }
           },
           {
-            "name": "Anaheim Ducks",
-            "abbr": "ANA",
-            "p": 38,
-            "lane": 0,
-            "in_doubt": true,
+            "mark": "dot",
+            "x": 38.0,
+            "y_lane": 0,
+            "label": "Anaheim Ducks: 38%",
             "color": "#fc4c02",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/ana.png"
+            "in_band": true,
+            "picture": {
+              "mark": "picture",
+              "url": "https://a.espncdn.com/i/teamlogos/nhl/500/ana.png",
+              "alt": "ANA",
+              "subject_kind": "team",
+              "size": "xs",
+              "contain": true
+            }
           },
           {
-            "name": "St. Louis Blues",
-            "abbr": "STL",
-            "p": 38,
-            "lane": 4,
-            "in_doubt": true,
+            "mark": "dot",
+            "x": 38.0,
+            "y_lane": 4,
+            "label": "St. Louis Blues: 38%",
             "color": "#002f87",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/stl.png"
+            "in_band": true,
+            "picture": {
+              "mark": "picture",
+              "url": "https://a.espncdn.com/i/teamlogos/nhl/500/stl.png",
+              "alt": "STL",
+              "subject_kind": "team",
+              "size": "xs",
+              "contain": true
+            }
           },
           {
-            "name": "New York Islanders",
-            "abbr": "NYI",
-            "p": 43,
-            "lane": 1,
-            "in_doubt": true,
+            "mark": "dot",
+            "x": 43.0,
+            "y_lane": 1,
+            "label": "New York Islanders: 43%",
             "color": "#00539b",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/nyi.png"
+            "in_band": true,
+            "picture": {
+              "mark": "picture",
+              "url": "https://a.espncdn.com/i/teamlogos/nhl/500/nyi.png",
+              "alt": "NYI",
+              "subject_kind": "team",
+              "size": "xs",
+              "contain": true
+            }
           },
           {
-            "name": "Nashville Predators",
-            "abbr": "NSH",
-            "p": 46,
-            "lane": 0,
-            "in_doubt": true,
+            "mark": "dot",
+            "x": 46.0,
+            "y_lane": 0,
+            "label": "Nashville Predators: 46%",
             "color": "#ffb81c",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/nsh.png"
+            "in_band": true,
+            "picture": {
+              "mark": "picture",
+              "url": "https://a.espncdn.com/i/teamlogos/nhl/500/nsh.png",
+              "alt": "NSH",
+              "subject_kind": "team",
+              "size": "xs",
+              "contain": true
+            }
           },
           {
-            "name": "New York Rangers",
-            "abbr": "NYR",
-            "p": 47,
-            "lane": 2,
-            "in_doubt": true,
+            "mark": "dot",
+            "x": 47.0,
+            "y_lane": 2,
+            "label": "New York Rangers: 47%",
             "color": "#0038a8",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/nyr.png"
+            "in_band": true,
+            "picture": {
+              "mark": "picture",
+              "url": "https://a.espncdn.com/i/teamlogos/nhl/500/nyr.png",
+              "alt": "NYR",
+              "subject_kind": "team",
+              "size": "xs",
+              "contain": true
+            }
           },
           {
-            "name": "Washington Capitals",
-            "abbr": "WSH",
-            "p": 54,
-            "lane": 0,
-            "in_doubt": true,
+            "mark": "dot",
+            "x": 54.0,
+            "y_lane": 0,
+            "label": "Washington Capitals: 54%",
             "color": "#c8102e",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/wsh.png"
+            "in_band": true,
+            "picture": {
+              "mark": "picture",
+              "url": "https://a.espncdn.com/i/teamlogos/nhl/500/wsh.png",
+              "alt": "WSH",
+              "subject_kind": "team",
+              "size": "xs",
+              "contain": true
+            }
           },
           {
-            "name": "Boston Bruins",
-            "abbr": "BOS",
-            "p": 69,
-            "lane": 0,
-            "in_doubt": true,
+            "mark": "dot",
+            "x": 69.0,
+            "y_lane": 0,
+            "label": "Boston Bruins: 69%",
             "color": "#ffb81c",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/bos.png"
+            "in_band": true,
+            "picture": {
+              "mark": "picture",
+              "url": "https://a.espncdn.com/i/teamlogos/nhl/500/bos.png",
+              "alt": "BOS",
+              "subject_kind": "team",
+              "size": "xs",
+              "contain": true
+            }
           },
           {
-            "name": "Ottawa Senators",
-            "abbr": "OTT",
-            "p": 73,
-            "lane": 1,
-            "in_doubt": true,
+            "mark": "dot",
+            "x": 73.0,
+            "y_lane": 1,
+            "label": "Ottawa Senators: 73%",
             "color": "#c52032",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/ott.png"
+            "in_band": true,
+            "picture": {
+              "mark": "picture",
+              "url": "https://a.espncdn.com/i/teamlogos/nhl/500/ott.png",
+              "alt": "OTT",
+              "subject_kind": "team",
+              "size": "xs",
+              "contain": true
+            }
           },
           {
-            "name": "Utah Mammoth",
-            "abbr": "UTAH",
-            "p": 73,
-            "lane": 2,
-            "in_doubt": true,
+            "mark": "dot",
+            "x": 73.0,
+            "y_lane": 2,
+            "label": "Utah Mammoth: 73%",
             "color": "#69b3e7",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/utah.png"
+            "in_band": true,
+            "picture": {
+              "mark": "picture",
+              "url": "https://a.espncdn.com/i/teamlogos/nhl/500/utah.png",
+              "alt": "UTAH",
+              "subject_kind": "team",
+              "size": "xs",
+              "contain": true
+            }
           },
           {
-            "name": "Florida Panthers",
-            "abbr": "FLA",
-            "p": 76,
-            "lane": null,
-            "in_doubt": false,
+            "mark": "dot",
+            "x": 76.0,
+            "y_lane": null,
+            "label": "Florida Panthers: 76%",
             "color": "#c8102e",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/fla.png"
+            "in_band": false,
+            "picture": null
           },
           {
-            "name": "Montreal Canadiens",
-            "abbr": "MTL",
-            "p": 81,
-            "lane": null,
-            "in_doubt": false,
+            "mark": "dot",
+            "x": 81.0,
+            "y_lane": null,
+            "label": "Montreal Canadiens: 81%",
             "color": "#af1e2d",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/mtl.png"
+            "in_band": false,
+            "picture": null
           },
           {
-            "name": "New Jersey Devils",
-            "abbr": "NJ",
-            "p": 83,
-            "lane": null,
-            "in_doubt": false,
+            "mark": "dot",
+            "x": 83.0,
+            "y_lane": null,
+            "label": "New Jersey Devils: 83%",
             "color": "#ce1126",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/nj.png"
+            "in_band": false,
+            "picture": null
           },
           {
-            "name": "Dallas Stars",
-            "abbr": "DAL",
-            "p": 85,
-            "lane": null,
-            "in_doubt": false,
+            "mark": "dot",
+            "x": 85.0,
+            "y_lane": null,
+            "label": "Dallas Stars: 85%",
             "color": "#006847",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/dal.png"
+            "in_band": false,
+            "picture": null
           },
           {
-            "name": "Colorado Avalanche",
-            "abbr": "COL",
-            "p": 88,
-            "lane": null,
-            "in_doubt": false,
+            "mark": "dot",
+            "x": 88.0,
+            "y_lane": null,
+            "label": "Colorado Avalanche: 88%",
             "color": "#6f263d",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/col.png"
+            "in_band": false,
+            "picture": null
           },
           {
-            "name": "Tampa Bay Lightning",
-            "abbr": "TB",
-            "p": 90,
-            "lane": null,
-            "in_doubt": false,
+            "mark": "dot",
+            "x": 90.0,
+            "y_lane": null,
+            "label": "Tampa Bay Lightning: 90%",
             "color": "#002868",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/tb.png"
+            "in_band": false,
+            "picture": null
           },
           {
-            "name": "Vegas Golden Knights",
-            "abbr": "VGK",
-            "p": 94,
-            "lane": null,
-            "in_doubt": false,
+            "mark": "dot",
+            "x": 94.0,
+            "y_lane": null,
+            "label": "Vegas Golden Knights: 94%",
             "color": "#b4975a",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/vgk.png"
+            "in_band": false,
+            "picture": null
           },
           {
-            "name": "Carolina Hurricanes",
-            "abbr": "CAR",
-            "p": 97,
-            "lane": null,
-            "in_doubt": false,
+            "mark": "dot",
+            "x": 97.0,
+            "y_lane": null,
+            "label": "Carolina Hurricanes: 97%",
             "color": "#cc0000",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/car.png"
+            "in_band": false,
+            "picture": null
           },
           {
-            "name": "Edmonton Oilers",
-            "abbr": "EDM",
-            "p": 98,
-            "lane": null,
-            "in_doubt": false,
+            "mark": "dot",
+            "x": 98.0,
+            "y_lane": null,
+            "label": "Edmonton Oilers: 98%",
             "color": "#041e42",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/edm.png"
+            "in_band": false,
+            "picture": null
           },
           {
-            "name": "Minnesota Wild",
-            "abbr": "MIN",
-            "p": 98,
-            "lane": null,
-            "in_doubt": false,
+            "mark": "dot",
+            "x": 98.0,
+            "y_lane": null,
+            "label": "Minnesota Wild: 98%",
             "color": "#154734",
-            "image_url": "https://a.espncdn.com/i/teamlogos/nhl/500/min.png"
+            "in_band": false,
+            "picture": null
           }
         ],
-        "doubt_summary": "OTT 73% · UTAH 73% · BOS 69% · WSH 54% · NYR 47% · NSH 46% · NYI 43% · ANA 38% · STL 38% · LA 34% · WPG 34% · SEA 33% · BUF 32%"
+        "summary_marks": [
+          {
+            "mark": "word",
+            "text": "9 at 25% or less",
+            "style": "sub",
+            "tone": "secondary",
+            "align": "left",
+            "width": "auto",
+            "bold": false
+          },
+          {
+            "mark": "word",
+            "text": "10 at 75% or more",
+            "style": "sub",
+            "tone": "secondary",
+            "align": "right",
+            "width": "auto",
+            "bold": false
+          }
+        ],
+        "footer_marks": [
+          {
+            "mark": "word",
+            "text": "OTT 73% · UTAH 73% · BOS 69% · WSH 54% · NYR 47% · NSH 46% · NYI 43% · ANA 38% · STL 38% · LA 34% · WPG 34% · SEA 33% · BUF 32%",
+            "style": "pill",
+            "tone": "secondary",
+            "align": "left",
+            "width": "auto",
+            "bold": false
+          }
+        ]
       }
     },
     {
@@ -598,49 +1413,261 @@
       "footnote": null,
       "disclosure": null,
       "refusal_reason": null,
-      "data": {
-        "rows": [
+      "body": {
+        "header_layout": "none",
+        "header_marks": [],
+        "items": [
           {
-            "name": "Will Elon Musk visit Mars in his lifetime?",
-            "p": 12,
-            "one_in_n": 8,
-            "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/69/NASA%27s_SpaceX_Europa_Clipper_Launch_%28KSC-20241014-PH-FMX01_0001%29.jpg/1280px-NASA%27s_SpaceX_Europa_Clipper_Launch_%28KSC-20241014-PH-FMX01_0001%29.jpg",
-            "image_kind": "topic"
+            "id": "mars",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/69/NASA%27s_SpaceX_Europa_Clipper_Launch_%28KSC-20241014-PH-FMX01_0001%29.jpg/1280px-NASA%27s_SpaceX_Europa_Clipper_Launch_%28KSC-20241014-PH-FMX01_0001%29.jpg",
+                "alt": "Will Elon Musk visit Mars in his lifetime?",
+                "subject_kind": "topic",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Will Elon Musk visit Mars in his lifetime?",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "number",
+                "value": 8,
+                "display": "1 in 8",
+                "unit": "one_in_n",
+                "tone": "accent",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              },
+              {
+                "mark": "number",
+                "value": 12,
+                "display": "12%",
+                "unit": "%",
+                "tone": "muted",
+                "prominence": "secondary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
           },
           {
-            "name": "Will Elon purchase Ryanair?",
-            "p": 5,
-            "one_in_n": 20,
-            "image_url": "https://image.tmdb.org/t/p/w185/i5a0XRXLfu0meGB3g5Sy4qP8pY.jpg",
-            "image_kind": "person"
+            "id": "ryanair",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://image.tmdb.org/t/p/w185/i5a0XRXLfu0meGB3g5Sy4qP8pY.jpg",
+                "alt": "Will Elon purchase Ryanair?",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Will Elon purchase Ryanair?",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "number",
+                "value": 20,
+                "display": "1 in 20",
+                "unit": "one_in_n",
+                "tone": "accent",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              },
+              {
+                "mark": "number",
+                "value": 5,
+                "display": "5%",
+                "unit": "%",
+                "tone": "muted",
+                "prominence": "secondary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
           },
           {
-            "name": "Next Superman film: Will Elon Musk be cast?",
-            "p": 5,
-            "one_in_n": 20,
-            "image_url": "https://image.tmdb.org/t/p/w185/i5a0XRXLfu0meGB3g5Sy4qP8pY.jpg",
-            "image_kind": "person"
+            "id": "superman",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://image.tmdb.org/t/p/w185/i5a0XRXLfu0meGB3g5Sy4qP8pY.jpg",
+                "alt": "Next Superman film: Will Elon Musk be cast?",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Next Superman film: Will Elon Musk be cast?",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "number",
+                "value": 20,
+                "display": "1 in 20",
+                "unit": "one_in_n",
+                "tone": "accent",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              },
+              {
+                "mark": "number",
+                "value": 5,
+                "display": "5%",
+                "unit": "%",
+                "tone": "muted",
+                "prominence": "secondary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
           },
           {
-            "name": "Elon Musk out as Tesla CEO before 2027?",
-            "p": 3,
-            "one_in_n": 33,
-            "image_url": "https://image.tmdb.org/t/p/w185/i5a0XRXLfu0meGB3g5Sy4qP8pY.jpg",
-            "image_kind": "person"
+            "id": "tesla-ceo",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://image.tmdb.org/t/p/w185/i5a0XRXLfu0meGB3g5Sy4qP8pY.jpg",
+                "alt": "Elon Musk out as Tesla CEO before 2027?",
+                "subject_kind": "person",
+                "size": "sm",
+                "contain": false
+              },
+              {
+                "mark": "word",
+                "text": "Elon Musk out as Tesla CEO before 2027?",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "number",
+                "value": 33,
+                "display": "1 in 33",
+                "unit": "one_in_n",
+                "tone": "accent",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              },
+              {
+                "mark": "number",
+                "value": 3,
+                "display": "3%",
+                "unit": "%",
+                "tone": "muted",
+                "prominence": "secondary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
           },
           {
-            "name": "Tesla Optimus released this year?",
-            "p": 2,
-            "one_in_n": 50,
-            "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/ff/Rear_of_rack_at_NERSC_data_center_-_closeup.jpg/500px-Rear_of_rack_at_NERSC_data_center_-_closeup.jpg",
-            "image_kind": "topic"
+            "id": "optimus",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/ff/Rear_of_rack_at_NERSC_data_center_-_closeup.jpg/500px-Rear_of_rack_at_NERSC_data_center_-_closeup.jpg",
+                "alt": "Tesla Optimus released this year?",
+                "subject_kind": "topic",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Tesla Optimus released this year?",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "number",
+                "value": 50,
+                "display": "1 in 50",
+                "unit": "one_in_n",
+                "tone": "accent",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              },
+              {
+                "mark": "number",
+                "value": 2,
+                "display": "2%",
+                "unit": "%",
+                "tone": "muted",
+                "prominence": "secondary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
           },
           {
-            "name": "Will Elon Musk buy a major sports team before 2027?",
-            "p": 1,
-            "one_in_n": 100,
-            "image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bd/SoFi_Stadium_%2851126606022%29.jpg/500px-SoFi_Stadium_%2851126606022%29.jpg",
-            "image_kind": "topic"
+            "id": "sports-team",
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/bd/SoFi_Stadium_%2851126606022%29.jpg/500px-SoFi_Stadium_%2851126606022%29.jpg",
+                "alt": "Will Elon Musk buy a major sports team before 2027?",
+                "subject_kind": "topic",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "Will Elon Musk buy a major sports team before 2027?",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "flex",
+                "bold": false
+              },
+              {
+                "mark": "number",
+                "value": 100,
+                "display": "1 in 100",
+                "unit": "one_in_n",
+                "tone": "accent",
+                "prominence": "primary",
+                "align": "right",
+                "width": "auto"
+              },
+              {
+                "mark": "number",
+                "value": 1,
+                "display": "1%",
+                "unit": "%",
+                "tone": "muted",
+                "prominence": "secondary",
+                "align": "right",
+                "width": "auto"
+              }
+            ]
           }
         ]
       }
@@ -665,176 +1692,644 @@
       "footnote": null,
       "disclosure": "6 other markets in this set are not drawn here.",
       "refusal_reason": null,
-      "data": {
-        "sport_key": "basketball_nba",
-        "league_label": "NBA",
-        "rows": [
+      "body": {
+        "single_sport_key": "basketball_nba",
+        "header_layout": "split",
+        "header_marks": [
           {
+            "mark": "word",
+            "text": "NBA",
+            "style": "kicker",
+            "tone": "muted",
+            "align": "left",
+            "width": "auto",
+            "bold": true
+          },
+          {
+            "mark": "word",
+            "text": "7 GAMES",
+            "style": "kicker",
+            "tone": "muted",
+            "align": "right",
+            "width": "auto",
+            "bold": true
+          }
+        ],
+        "items": [
+          {
+            "id": "nba-mem-cha",
             "sport_key": "basketball_nba",
-            "away": {
-              "name": "Memphis Grizzlies",
-              "abbr": "MEM",
-              "color": "#5d76a9",
-              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/mem.png",
-              "p": 49
-            },
-            "home": {
-              "name": "Charlotte Hornets",
-              "abbr": "CHA",
-              "color": "#008ca8",
-              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/cha.png",
-              "p": 51
-            },
-            "day": "Mon Nov 23",
-            "clock": "4:00 PM PT",
-            "status": "live",
-            "score": [
-              28,
-              32
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/mem.png",
+                "alt": "MEM",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "MEM",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "number",
+                "value": 49,
+                "display": "49%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "left",
+                "width": "xs"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "split",
+                "segments": [
+                  {
+                    "fill": 0.49,
+                    "color": "#5d76a9",
+                    "label": "MEM"
+                  },
+                  {
+                    "fill": 0.51,
+                    "color": "#008ca8",
+                    "label": "CHA"
+                  }
+                ],
+                "width": "flex"
+              },
+              {
+                "mark": "number",
+                "value": 51,
+                "display": "51%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "xs"
+              },
+              {
+                "mark": "word",
+                "text": "CHA",
+                "style": "row",
+                "tone": "primary",
+                "align": "right",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/cha.png",
+                "alt": "CHA",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              }
+            ],
+            "sub_marks": [
+              {
+                "mark": "word",
+                "text": "Live · 28–32",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
             ]
           },
           {
+            "id": "nba-ptb-phi",
             "sport_key": "basketball_nba",
-            "away": {
-              "name": "Portland Trail Blazers",
-              "abbr": "PTB",
-              "color": "#e03a3e",
-              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/por.png",
-              "p": 47
-            },
-            "home": {
-              "name": "Philadelphia 76ers",
-              "abbr": "PHI",
-              "color": "#1d428a",
-              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/phi.png",
-              "p": 53
-            },
-            "day": "Mon Nov 23",
-            "clock": "4:00 PM PT",
-            "status": "live",
-            "score": [
-              27,
-              28
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/por.png",
+                "alt": "PTB",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "PTB",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "number",
+                "value": 47,
+                "display": "47%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "left",
+                "width": "xs"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "split",
+                "segments": [
+                  {
+                    "fill": 0.47,
+                    "color": "#e03a3e",
+                    "label": "PTB"
+                  },
+                  {
+                    "fill": 0.53,
+                    "color": "#1d428a",
+                    "label": "PHI"
+                  }
+                ],
+                "width": "flex"
+              },
+              {
+                "mark": "number",
+                "value": 53,
+                "display": "53%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "xs"
+              },
+              {
+                "mark": "word",
+                "text": "PHI",
+                "style": "row",
+                "tone": "primary",
+                "align": "right",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/phi.png",
+                "alt": "PHI",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              }
+            ],
+            "sub_marks": [
+              {
+                "mark": "word",
+                "text": "Live · 27–28",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
             ]
           },
           {
+            "id": "nba-okc-ind",
             "sport_key": "basketball_nba",
-            "away": {
-              "name": "Oklahoma City Thunder",
-              "abbr": "OKC",
-              "color": "#007ac1",
-              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/okc.png",
-              "p": 63
-            },
-            "home": {
-              "name": "Indiana Pacers",
-              "abbr": "IND",
-              "color": "#0c2340",
-              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/ind.png",
-              "p": 37
-            },
-            "day": "Mon Nov 23",
-            "clock": "4:30 PM PT",
-            "status": "scheduled",
-            "score": [
-              null,
-              null
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/okc.png",
+                "alt": "OKC",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "OKC",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "number",
+                "value": 63,
+                "display": "63%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "left",
+                "width": "xs"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "split",
+                "segments": [
+                  {
+                    "fill": 0.63,
+                    "color": "#007ac1",
+                    "label": "OKC"
+                  },
+                  {
+                    "fill": 0.37,
+                    "color": "#0c2340",
+                    "label": "IND"
+                  }
+                ],
+                "width": "flex"
+              },
+              {
+                "mark": "number",
+                "value": 37,
+                "display": "37%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "xs"
+              },
+              {
+                "mark": "word",
+                "text": "IND",
+                "style": "row",
+                "tone": "primary",
+                "align": "right",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/ind.png",
+                "alt": "IND",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              }
+            ],
+            "sub_marks": [
+              {
+                "mark": "word",
+                "text": "Mon Nov 23 · 4:30 PM PT",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
             ]
           },
           {
+            "id": "nba-mil-tor",
             "sport_key": "basketball_nba",
-            "away": {
-              "name": "Milwaukee Bucks",
-              "abbr": "MIL",
-              "color": "#00471b",
-              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/mil.png",
-              "p": 21
-            },
-            "home": {
-              "name": "Toronto Raptors",
-              "abbr": "TOR",
-              "color": "#d91244",
-              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/tor.png",
-              "p": 79
-            },
-            "day": "Mon Nov 23",
-            "clock": "4:30 PM PT",
-            "status": "scheduled",
-            "score": [
-              null,
-              null
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/mil.png",
+                "alt": "MIL",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "MIL",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "number",
+                "value": 21,
+                "display": "21%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "left",
+                "width": "xs"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "split",
+                "segments": [
+                  {
+                    "fill": 0.21,
+                    "color": "#00471b",
+                    "label": "MIL"
+                  },
+                  {
+                    "fill": 0.79,
+                    "color": "#d91244",
+                    "label": "TOR"
+                  }
+                ],
+                "width": "flex"
+              },
+              {
+                "mark": "number",
+                "value": 79,
+                "display": "79%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "xs"
+              },
+              {
+                "mark": "word",
+                "text": "TOR",
+                "style": "row",
+                "tone": "primary",
+                "align": "right",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/tor.png",
+                "alt": "TOR",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              }
+            ],
+            "sub_marks": [
+              {
+                "mark": "word",
+                "text": "Mon Nov 23 · 4:30 PM PT",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
             ]
           },
           {
+            "id": "nba-bkn-min",
             "sport_key": "basketball_nba",
-            "away": {
-              "name": "Brooklyn Nets",
-              "abbr": "BKN",
-              "color": "#000000",
-              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/bkn.png",
-              "p": 19
-            },
-            "home": {
-              "name": "Minnesota Timberwolves",
-              "abbr": "MIN",
-              "color": "#266092",
-              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/min.png",
-              "p": 81
-            },
-            "day": "Mon Nov 23",
-            "clock": "4:30 PM PT",
-            "status": "scheduled",
-            "score": [
-              null,
-              null
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/bkn.png",
+                "alt": "BKN",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "BKN",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "number",
+                "value": 19,
+                "display": "19%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "left",
+                "width": "xs"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "split",
+                "segments": [
+                  {
+                    "fill": 0.19,
+                    "color": "#000000",
+                    "label": "BKN"
+                  },
+                  {
+                    "fill": 0.81,
+                    "color": "#266092",
+                    "label": "MIN"
+                  }
+                ],
+                "width": "flex"
+              },
+              {
+                "mark": "number",
+                "value": 81,
+                "display": "81%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "xs"
+              },
+              {
+                "mark": "word",
+                "text": "MIN",
+                "style": "row",
+                "tone": "primary",
+                "align": "right",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/min.png",
+                "alt": "MIN",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              }
+            ],
+            "sub_marks": [
+              {
+                "mark": "word",
+                "text": "Mon Nov 23 · 4:30 PM PT",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
             ]
           },
           {
+            "id": "nba-phx-nop",
             "sport_key": "basketball_nba",
-            "away": {
-              "name": "Phoenix Suns",
-              "abbr": "PHX",
-              "color": "#29127a",
-              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/phx.png",
-              "p": 58
-            },
-            "home": {
-              "name": "New Orleans Pelicans",
-              "abbr": "NOP",
-              "color": "#0a2240",
-              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/no.png",
-              "p": 42
-            },
-            "day": "Mon Nov 23",
-            "clock": "5:00 PM PT",
-            "status": "scheduled",
-            "score": [
-              null,
-              null
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/phx.png",
+                "alt": "PHX",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "PHX",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "number",
+                "value": 58,
+                "display": "58%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "left",
+                "width": "xs"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "split",
+                "segments": [
+                  {
+                    "fill": 0.58,
+                    "color": "#29127a",
+                    "label": "PHX"
+                  },
+                  {
+                    "fill": 0.42,
+                    "color": "#0a2240",
+                    "label": "NOP"
+                  }
+                ],
+                "width": "flex"
+              },
+              {
+                "mark": "number",
+                "value": 42,
+                "display": "42%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "xs"
+              },
+              {
+                "mark": "word",
+                "text": "NOP",
+                "style": "row",
+                "tone": "primary",
+                "align": "right",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/no.png",
+                "alt": "NOP",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              }
+            ],
+            "sub_marks": [
+              {
+                "mark": "word",
+                "text": "Mon Nov 23 · 5:00 PM PT",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
             ]
           },
           {
+            "id": "nba-det-orl",
             "sport_key": "basketball_nba",
-            "away": {
-              "name": "Detroit Pistons",
-              "abbr": "DET",
-              "color": "#1d428a",
-              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/det.png",
-              "p": 54
-            },
-            "home": {
-              "name": "Orlando Magic",
-              "abbr": "ORL",
-              "color": "#0150b5",
-              "image_url": "https://a.espncdn.com/i/teamlogos/nba/500/orl.png",
-              "p": 46
-            },
-            "day": "Tue Nov 24",
-            "clock": "4:00 PM PT",
-            "status": "scheduled",
-            "score": [
-              null,
-              null
+            "marks": [
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/det.png",
+                "alt": "DET",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              },
+              {
+                "mark": "word",
+                "text": "DET",
+                "style": "row",
+                "tone": "primary",
+                "align": "left",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "number",
+                "value": 54,
+                "display": "54%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "left",
+                "width": "xs"
+              },
+              {
+                "mark": "bar",
+                "bar_style": "split",
+                "segments": [
+                  {
+                    "fill": 0.54,
+                    "color": "#1d428a",
+                    "label": "DET"
+                  },
+                  {
+                    "fill": 0.46,
+                    "color": "#0150b5",
+                    "label": "ORL"
+                  }
+                ],
+                "width": "flex"
+              },
+              {
+                "mark": "number",
+                "value": 46,
+                "display": "46%",
+                "unit": "%",
+                "tone": "primary",
+                "prominence": "primary",
+                "align": "right",
+                "width": "xs"
+              },
+              {
+                "mark": "word",
+                "text": "ORL",
+                "style": "row",
+                "tone": "primary",
+                "align": "right",
+                "width": "xs",
+                "bold": true
+              },
+              {
+                "mark": "picture",
+                "url": "https://a.espncdn.com/i/teamlogos/nba/500/orl.png",
+                "alt": "ORL",
+                "subject_kind": "team",
+                "size": "sm",
+                "contain": true
+              }
+            ],
+            "sub_marks": [
+              {
+                "mark": "word",
+                "text": "Tue Nov 24 · 4:00 PM PT",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
             ]
           }
         ]
@@ -860,66 +2355,302 @@
       "footnote": "Served ladder: 12% before Dec 1 · 18% before Dec 2 · 85% before Dec 3 · 90% before Dec 4",
       "disclosure": null,
       "refusal_reason": null,
-      "data": {
-        "month_span_label": "Nov 27 – Dec 4",
-        "show_percent": true,
-        "ladder_rule_note": "The percent in a day is the chance it arrives that day: one rung of the ladder minus the rung before it.",
+      "body": {
+        "header_marks": [
+          {
+            "mark": "word",
+            "text": "Nov 27 – Dec 4",
+            "style": "meta",
+            "tone": "muted",
+            "align": "left",
+            "width": "auto",
+            "bold": false
+          },
+          {
+            "mark": "word",
+            "text": "Daily chance",
+            "style": "kicker",
+            "tone": "accent",
+            "align": "right",
+            "width": "auto",
+            "bold": true
+          }
+        ],
         "days": [
           {
-            "dow": "Fri",
-            "day_num": "27",
-            "month_abbr": "Nov",
+            "date_key": "Nov-27",
             "daily_pct": 2,
-            "is_peak": false
+            "marks": [
+              {
+                "mark": "word",
+                "text": "Fri",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              },
+              {
+                "mark": "tile",
+                "shade": 0.0299,
+                "top_label": null,
+                "center_label": "27",
+                "bottom_label": "2%",
+                "muted": false,
+                "highlight_role": null
+              },
+              {
+                "mark": "word",
+                "text": "Nov",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
+            ]
           },
           {
-            "dow": "Sat",
-            "day_num": "28",
-            "month_abbr": "Nov",
+            "date_key": "Nov-28",
             "daily_pct": 1,
-            "is_peak": false
+            "marks": [
+              {
+                "mark": "word",
+                "text": "Sat",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              },
+              {
+                "mark": "tile",
+                "shade": 0.0149,
+                "top_label": null,
+                "center_label": "28",
+                "bottom_label": "1%",
+                "muted": false,
+                "highlight_role": null
+              },
+              {
+                "mark": "word",
+                "text": "Nov",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
+            ]
           },
           {
-            "dow": "Sun",
-            "day_num": "29",
-            "month_abbr": "Nov",
+            "date_key": "Nov-29",
             "daily_pct": 6,
-            "is_peak": false
+            "marks": [
+              {
+                "mark": "word",
+                "text": "Sun",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              },
+              {
+                "mark": "tile",
+                "shade": 0.0896,
+                "top_label": null,
+                "center_label": "29",
+                "bottom_label": "6%",
+                "muted": false,
+                "highlight_role": null
+              },
+              {
+                "mark": "word",
+                "text": "Nov",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
+            ]
           },
           {
-            "dow": "Mon",
-            "day_num": "30",
-            "month_abbr": "Nov",
+            "date_key": "Nov-30",
             "daily_pct": 0,
-            "is_peak": false
+            "marks": [
+              {
+                "mark": "word",
+                "text": "Mon",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              },
+              {
+                "mark": "tile",
+                "shade": 0.0,
+                "top_label": null,
+                "center_label": "30",
+                "bottom_label": "·",
+                "muted": true,
+                "highlight_role": null
+              },
+              {
+                "mark": "word",
+                "text": "Nov",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
+            ]
           },
           {
-            "dow": "Tue",
-            "day_num": "1",
-            "month_abbr": "Dec",
+            "date_key": "Dec-1",
             "daily_pct": 6,
-            "is_peak": false
+            "marks": [
+              {
+                "mark": "word",
+                "text": "Tue",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              },
+              {
+                "mark": "tile",
+                "shade": 0.0896,
+                "top_label": null,
+                "center_label": "1",
+                "bottom_label": "6%",
+                "muted": false,
+                "highlight_role": null
+              },
+              {
+                "mark": "word",
+                "text": "Dec",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
+            ]
           },
           {
-            "dow": "Wed",
-            "day_num": "2",
-            "month_abbr": "Dec",
+            "date_key": "Dec-2",
             "daily_pct": 67,
-            "is_peak": true
+            "marks": [
+              {
+                "mark": "word",
+                "text": "Wed",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              },
+              {
+                "mark": "tile",
+                "shade": 1.0,
+                "top_label": null,
+                "center_label": "2",
+                "bottom_label": "67%",
+                "muted": false,
+                "highlight_role": "day_peak"
+              },
+              {
+                "mark": "word",
+                "text": "Dec",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
+            ]
           },
           {
-            "dow": "Thu",
-            "day_num": "3",
-            "month_abbr": "Dec",
+            "date_key": "Dec-3",
             "daily_pct": 5,
-            "is_peak": false
+            "marks": [
+              {
+                "mark": "word",
+                "text": "Thu",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              },
+              {
+                "mark": "tile",
+                "shade": 0.0746,
+                "top_label": null,
+                "center_label": "3",
+                "bottom_label": "5%",
+                "muted": false,
+                "highlight_role": null
+              },
+              {
+                "mark": "word",
+                "text": "Dec",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
+            ]
           },
           {
-            "dow": "Fri",
-            "day_num": "4",
-            "month_abbr": "Dec",
+            "date_key": "Dec-4",
             "daily_pct": 0,
-            "is_peak": false
+            "marks": [
+              {
+                "mark": "word",
+                "text": "Fri",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              },
+              {
+                "mark": "tile",
+                "shade": 0.0,
+                "top_label": null,
+                "center_label": "4",
+                "bottom_label": "·",
+                "muted": true,
+                "highlight_role": null
+              },
+              {
+                "mark": "word",
+                "text": "Dec",
+                "style": "meta",
+                "tone": "muted",
+                "align": "center",
+                "width": "auto",
+                "bold": false
+              }
+            ]
+          }
+        ],
+        "footer_marks": [
+          {
+            "mark": "word",
+            "text": "The percent in a day is the chance it arrives that day: one rung of the ladder minus the rung before it.",
+            "style": "sub",
+            "tone": "secondary",
+            "align": "left",
+            "width": "auto",
+            "bold": false
           }
         ]
       }

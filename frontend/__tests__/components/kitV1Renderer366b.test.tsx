@@ -1,14 +1,14 @@
 /**
- * Issue 13551 (Rulings 366: B, 367: A, and Fable's 7 rules) — Kit v1 renderer tests.
+ * Issue 13551 (Rulings 366: B, 367: A, and Fable's 7 rules) — Layout-generic Kit v1 renderer tests.
  */
 import fs from "node:fs";
 import path from "node:path";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { KitCardRenderer, parseKitCardV1 } from "@/components/discover/kit/KitCardRenderer";
-import type { KitV1CardSpec } from "@/components/discover/kit/types";
+import type { KitV1CardSpec, KitV1StackBody } from "@/components/discover/kit/types";
 
-describe("Kit v1 web renderer & fail-closed envelope (366: B, 367: A, 7 rules)", () => {
+describe("Kit v1 layout-generic web renderer & fail-closed envelope (366: B, 367: A, 7 rules)", () => {
   const goldenPath = path.resolve(
     process.cwd(),
     "..",
@@ -30,7 +30,7 @@ describe("Kit v1 web renderer & fail-closed envelope (366: B, 367: A, 7 rules)",
     const rendered = golden.items.map((item) => {
       const parsed = parseKitCardV1(item);
       expect(parsed).not.toBeNull();
-      return renderToStaticMarkup(<KitCardRenderer spec={item} />);
+      return renderToStaticMarkup(<KitCardRenderer spec={parsed!} />);
     });
 
     expect(rendered[0]).toContain("Georgia");
@@ -54,18 +54,61 @@ describe("Kit v1 web renderer & fail-closed envelope (366: B, 367: A, 7 rules)",
     expect(rendered[7]).toContain("one rung of the ladder minus the rung before it");
   });
 
-  test("parseKitCardV1 fails closed on unknown versions, unknown variants, mismatches, and refusals", () => {
+  test("defining kit test: renaming variant to an unknown string or null renders byte-for-byte identical output for all 8 examples", () => {
+    for (const item of golden.items) {
+      const baseParsed = parseKitCardV1(item);
+      const unknownParsed = parseKitCardV1({
+        ...item,
+        variant: "unheard_of_future_bracket_2027",
+      });
+      const nullParsed = parseKitCardV1({
+        ...item,
+        variant: null,
+      });
+
+      expect(baseParsed).not.toBeNull();
+      expect(unknownParsed).not.toBeNull();
+      expect(nullParsed).not.toBeNull();
+
+      const baseHtml = renderToStaticMarkup(<KitCardRenderer spec={baseParsed!} />);
+      const unknownHtml = renderToStaticMarkup(<KitCardRenderer spec={unknownParsed!} />);
+      const nullHtml = renderToStaticMarkup(<KitCardRenderer spec={nullParsed!} />);
+
+      expect(unknownHtml).toBe(baseHtml);
+      expect(nullHtml).toBe(baseHtml);
+    }
+  });
+
+  test("parseKitCardV1 fails closed on unknown kit_version, unknown layout, unknown mark, empty body, and refusals", () => {
     const sample = golden.items[2];
     expect(parseKitCardV1({ ...sample, kit_version: 2 })).toBeNull();
     expect(parseKitCardV1({ ...sample, layout: "unknown" })).toBeNull();
-    expect(parseKitCardV1({ ...sample, variant: "future_look" })).toBeNull();
-    expect(parseKitCardV1({ ...sample, layout: "grid" })).toBeNull(); // countdown belongs to stack
+    expect(parseKitCardV1({ ...sample, body: {} })).toBeNull();
+    expect(parseKitCardV1({ ...sample, fallback_today: true })).toBeNull();
     expect(
       parseKitCardV1({
         ...sample,
         refusal_reason: "Refused",
       }),
     ).toBeNull();
+
+    const stackBody = sample.body as KitV1StackBody;
+    const withUnknownMark = {
+      ...sample,
+      body: {
+        ...stackBody,
+        items: [
+          {
+            ...stackBody.items[0],
+            marks: [
+              ...stackBody.items[0].marks,
+              { mark: "sparkle", text: "unsupported" },
+            ],
+          },
+        ],
+      },
+    };
+    expect(parseKitCardV1(withUnknownMark)).toBeNull();
 
     const html = renderToStaticMarkup(
       <KitCardRenderer
@@ -83,12 +126,13 @@ describe("Kit v1 web renderer & fail-closed envelope (366: B, 367: A, 7 rules)",
     expect(html).toContain("Slate mixes &gt;1 sport_key");
   });
 
-  test("uses light-mode semantic tokens only with zero dark classes or raw hexes", () => {
+  test("uses light-mode semantic tokens only with zero dark classes, zero raw hexes, and zero variant branches", () => {
     const src = fs.readFileSync(
       path.join(process.cwd(), "components", "discover", "kit", "KitCardRenderer.tsx"),
       "utf-8",
     );
     expect(src).not.toMatch(/\bdark:/);
     expect(src).not.toMatch(/#[0-9a-fA-F]{3,6}/);
+    expect(src).not.toMatch(/\.variant\b/);
   });
 });

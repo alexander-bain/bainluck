@@ -1,10 +1,11 @@
-"""Contract, 7-rules, and Ruling 367: A tests for Kit v1 (`kit_version: 1`, #13551)."""
+"""Contract, layout-generic kit, 7-rules, and Ruling 367: A tests for Kit v1 (#13551)."""
 
 from __future__ import annotations
 
 import copy
 import json
 from types import SimpleNamespace
+from typing import Any
 
 import pytest
 from fastapi import FastAPI
@@ -12,6 +13,7 @@ from fastapi.testclient import TestClient
 
 from app.routes import admin_utils, containers
 from app.utils.kit_v1_spec import (
+    ALLOWED_LAYOUTS,
     GOLDEN_EXAMPLES_PATH,
     build_calendar_strip_367a,
     build_fallback_today,
@@ -19,6 +21,24 @@ from app.utils.kit_v1_spec import (
     compute_one_in_n,
     validate_kit_v1_card,
 )
+
+
+def _walk_marks_dicts(node: Any, *, inside_marks: bool = False):
+    if isinstance(node, list):
+        for el in node:
+            yield from _walk_marks_dicts(el, inside_marks=inside_marks)
+    elif isinstance(node, dict):
+        if inside_marks:
+            yield node
+        for k, child in node.items():
+            if k == "route":
+                continue
+            yield from _walk_marks_dicts(
+                child,
+                inside_marks=(
+                    k in {"marks", "header_marks", "footer_marks", "leading", "summary_marks", "sub_marks"}
+                ),
+            )
 
 
 def test_all_eight_worked_examples_validate_and_match_golden_json() -> None:
@@ -37,8 +57,11 @@ def test_all_eight_worked_examples_validate_and_match_golden_json() -> None:
         ("calendar", "calendar_strip"),
     ]
     for card in payload["items"]:
+        assert "data" not in card
+        assert isinstance(card["body"], dict) and card["body"]
+        assert card["layout"] in ALLOWED_LAYOUTS
         ok, errs = validate_kit_v1_card(card)
-        assert ok, f"{card['variant']} validation failed: {errs}"
+        assert ok, f"{card['id']} validation failed: {errs}"
         assert card["source_mark"]["label"]
         assert card["route"]["kind"] in {"collection", "event", "market", "team"}
 
@@ -47,24 +70,63 @@ def test_all_eight_worked_examples_validate_and_match_golden_json() -> None:
     assert golden == payload
 
 
-def test_mismatched_layout_and_variant_and_fallback_envelope_fail_closed() -> None:
+def test_defining_kit_rule_unknown_variant_or_none_still_validates() -> None:
+    """Ruling 366: B — renaming `variant` to an unknown string (or None) MUST still draw/validate."""
     payload = build_kit_v1_worked_examples()
-    bad = copy.deepcopy(payload["items"][2])  # stack / countdown
-    bad["layout"] = "grid"
-    ok, errs = validate_kit_v1_card(bad)
-    assert not ok
-    assert any("mismatch" in e for e in errs)
+    for card in payload["items"]:
+        mutated_unknown = copy.deepcopy(card)
+        mutated_unknown["variant"] = "unheard_of_future_bracket_2027"
+        ok, errs = validate_kit_v1_card(mutated_unknown)
+        assert ok, f"Unknown variant must not fail closed for {card['id']}: {errs}"
+
+        mutated_none = copy.deepcopy(card)
+        mutated_none["variant"] = None
+        ok_none, errs_none = validate_kit_v1_card(mutated_none)
+        assert ok_none, f"None variant must not fail closed for {card['id']}: {errs_none}"
+
+
+def test_builder_c_swift_compatibility_no_kind_or_type_inside_marks() -> None:
+    """KitCardEnvelope366B treats 'kind'/'type' inside marks arrays as a mark discriminator."""
+    payload = build_kit_v1_worked_examples()
+    for card in payload["items"]:
+        for mark_dict in _walk_marks_dicts(card["body"]):
+            assert "kind" not in mark_dict, f"Unexpected 'kind' key in {card['id']}: {mark_dict}"
+            assert "type" not in mark_dict, f"Unexpected 'type' key in {card['id']}: {mark_dict}"
+
+
+def test_unknown_version_layout_mark_and_empty_body_fail_closed() -> None:
+    payload = build_kit_v1_worked_examples()
+    sample = payload["items"][2]  # stack
+
+    bad_ver = copy.deepcopy(sample)
+    bad_ver["kit_version"] = 2
+    assert not validate_kit_v1_card(bad_ver)[0]
+
+    bad_layout = copy.deepcopy(sample)
+    bad_layout["layout"] = "carousel"
+    assert not validate_kit_v1_card(bad_layout)[0]
+
+    bad_mark = copy.deepcopy(sample)
+    bad_mark["body"]["items"][0]["marks"].append({"mark": "sparkle", "text": "x"})
+    ok_mark, errs_mark = validate_kit_v1_card(bad_mark)
+    assert not ok_mark
+    assert any("Unsupported mark" in e for e in errs_mark)
+
+    empty_body = copy.deepcopy(sample)
+    empty_body["body"] = {}
+    assert not validate_kit_v1_card(empty_body)[0]
 
     fb = build_fallback_today("No fit")
     assert fb["layout"] is None
     assert fb["variant"] is None
     assert fb["fallback_today"] is True
+    assert not validate_kit_v1_card(fb)[0]
 
 
 def test_scoreboard_grid_strips_refused_and_requires_two_columns() -> None:
     payload = build_kit_v1_worked_examples()
     grid_with_refused = copy.deepcopy(payload["items"][0])
-    grid_with_refused["data"]["columns"].append(
+    grid_with_refused["body"]["columns"].append(
         {"key": "bad", "label": "Broken", "refused_sum": 183}
     )
     ok_ref, errs_ref = validate_kit_v1_card(grid_with_refused)
@@ -72,7 +134,7 @@ def test_scoreboard_grid_strips_refused_and_requires_two_columns() -> None:
     assert any("strip refused" in e for e in errs_ref)
 
     grid_one_col = copy.deepcopy(payload["items"][0])
-    grid_one_col["data"]["columns"] = grid_one_col["data"]["columns"][:1]
+    grid_one_col["body"]["columns"] = grid_one_col["body"]["columns"][:1]
     ok_one, errs_one = validate_kit_v1_card(grid_one_col)
     assert not ok_one
     assert any("at least 2 valid columns" in e for e in errs_one)
@@ -88,7 +150,7 @@ def test_rule1_no_text_only_or_unpictured_casting_fallback() -> None:
         "stat_caption": "Gemini leads at 81%",
         "source_mark": {"label": "1 source", "count": 1},
         "route": {"kind": "collection", "id": None, "slug": "ai"},
-        "data": {"rows": []},
+        "body": {"items": [{"id": "r1", "marks": [{"mark": "word", "text": "Gemini"}]}]},
     }
     ok, errs = validate_kit_v1_card(bad_text_only)
     assert not ok
@@ -103,7 +165,18 @@ def test_rule1_no_text_only_or_unpictured_casting_fallback() -> None:
         "stat_caption": "Bad Bunny leads at 97%",
         "source_mark": {"label": "2 sources", "count": 2},
         "route": {"kind": "collection", "id": None, "slug": "2026"},
-        "data": {"rows": [{"name": "Bad Bunny", "p": 97, "image_url": "", "image_kind": "person"}]},
+        "body": {
+            "items": [
+                {
+                    "id": "r1",
+                    "marks": [
+                        {"mark": "picture", "url": "", "alt": "Bad Bunny", "subject_kind": "person"},
+                        {"mark": "word", "text": "Bad Bunny", "style": "row"},
+                        {"mark": "number", "value": 97, "display": "97%", "unit": "%"},
+                    ],
+                }
+            ]
+        },
     }
     ok_cast, errs_cast = validate_kit_v1_card(bad_casting)
     assert not ok_cast
@@ -112,18 +185,23 @@ def test_rule1_no_text_only_or_unpictured_casting_fallback() -> None:
 
 def test_rule3_shared_scale_rejects_mixed_units_or_missing_scale() -> None:
     payload = build_kit_v1_worked_examples()
-    card = copy.deepcopy(payload["items"][1])
-    card["data"]["shared_scale"] = True
-    card["data"]["scale_units"] = ["$M", "%"]
+    card = copy.deepcopy(payload["items"][4])  # axis / bubble_line
+    card["body"]["scale_units"] = ["$M", "%"]
     ok, errs = validate_kit_v1_card(card)
     assert not ok
     assert any("Rule 3" in e for e in errs)
+
+    no_scale = copy.deepcopy(payload["items"][4])
+    del no_scale["body"]["scale"]
+    ok_ns, errs_ns = validate_kit_v1_card(no_scale)
+    assert not ok_ns
+    assert any("Rule 3" in e for e in errs_ns)
 
 
 def test_rule4_and_rule5_enforce_ranks_images_and_full_names() -> None:
     payload = build_kit_v1_worked_examples()
     grid = copy.deepcopy(payload["items"][0])
-    grid["data"]["rows"][0]["rank"] = 9
+    grid["body"]["rows"][0]["leading"][0]["text"] = "9"
     ok, errs = validate_kit_v1_card(grid)
     assert not ok
     assert any("rank=1" in e for e in errs)
@@ -137,28 +215,39 @@ def test_rule4_and_rule5_enforce_ranks_images_and_full_names() -> None:
         "stat_caption": "Top leaders",
         "source_mark": {"label": "1 source", "count": 1},
         "route": {"kind": "collection", "id": None, "slug": "engaged"},
-        "data": {
+        "body": {
+            "row_layout": "stacked_cells",
+            "columns": [{"key": "a", "label": "A"}, {"key": "b", "label": "B"}],
             "rows": [
                 {
-                    "rank": 1,
-                    "name": "Cher",
-                    "p": 30,
-                    "image_url": "https://thumb.wikimedia.org/wikipedia/commons/a.jpg",
-                    "image_kind": "person",
+                    "id": "cher",
+                    "leading": [
+                        {
+                            "mark": "picture",
+                            "url": "https://thumb.wikimedia.org/wikipedia/commons/a.jpg",
+                            "alt": "Cher",
+                            "subject_kind": "person",
+                        },
+                        {"mark": "word", "text": "Cher", "style": "row"},
+                    ],
+                    "cells": [
+                        {"column_key": "a", "marks": [{"mark": "tile", "shade": 0.3, "center_label": "30%"}]},
+                        {"column_key": "b", "marks": [{"mark": "tile", "shade": 0.1, "center_label": "10%"}]},
+                    ],
                 }
-            ]
+            ],
         },
     }
     ok_wall, errs_wall = validate_kit_v1_card(first_name_only_wall)
     assert not ok_wall
-    assert any("first & last name" in e or "first and last" in e for e in errs_wall)
+    assert any("first & last name" in e for e in errs_wall)
 
 
 def test_rule6_single_sport_slate_rejects_mixed_sports() -> None:
     payload = build_kit_v1_worked_examples()
     slate = copy.deepcopy(payload["items"][6])
     assert slate["variant"] == "single_sport_slate"
-    slate["data"]["rows"][1]["sport_key"] = "icehockey_nhl"
+    slate["body"]["items"][1]["sport_key"] = "icehockey_nhl"
     ok, errs = validate_kit_v1_card(slate)
     assert not ok
     assert any("Rule 6" in e for e in errs)
@@ -169,7 +258,9 @@ def test_rule7_one_in_n_matches_percent() -> None:
     assert compute_one_in_n(5) == 20
     payload = build_kit_v1_worked_examples()
     one_in_n_card = copy.deepcopy(payload["items"][5])
-    one_in_n_card["data"]["rows"][0]["one_in_n"] = 99
+    # Mutate the one_in_n number mark to mismatch 12%
+    one_in_n_card["body"]["items"][0]["marks"][2]["value"] = 99
+    one_in_n_card["body"]["items"][0]["marks"][2]["display"] = "1 in 99"
     ok, errs = validate_kit_v1_card(one_in_n_card)
     assert not ok
     assert any("Rule 7" in e for e in errs)
@@ -180,11 +271,12 @@ def test_ruling_367a_calendar_strip_math_and_dip_refusal() -> None:
     cal = payload["items"][7]
     assert cal["layout"] == "calendar"
     assert cal["variant"] == "calendar_strip"
-    assert cal["data"]["show_percent"] is True
     assert "Served ladder:" in cal["footnote"]
-    wed = next(d for d in cal["data"]["days"] if d["dow"] == "Wed")
+    wed = next(d for d in cal["body"]["days"] if d["date_key"] == "Dec-2")
     assert wed["daily_pct"] == 67
-    assert wed["is_peak"] is True
+    tile = next(m for m in wed["marks"] if m["mark"] == "tile")
+    assert tile["bottom_label"] == "67%"
+    assert tile["highlight_role"] == "day_peak"
 
     with pytest.raises(ValueError, match="dipped"):
         build_calendar_strip_367a(
@@ -220,6 +312,9 @@ def test_kit_v1_preview_endpoint_requires_admin_auth(monkeypatch) -> None:
     assert body["kit_version"] == 1
     assert body["count"] == 8
     assert len(body["refusals"]) == 3
+    for item in body["items"]:
+        assert "data" not in item
+        assert isinstance(item["body"], dict)
 
 
 def _async_return(value: bool):
