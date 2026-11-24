@@ -92,22 +92,18 @@ nonisolated enum FirstRunSentenceSampleProvider359A {
 
         if lower.contains("oscar") {
             let oscars = FirstRunSuggestion212A(
-                id: "set:roundup-oscars-best-picture",
-                name: "Oscars \u{00B7} Best Picture",
-                sportOrCategoryLabel: "Entertainment \u{00B7} Set",
-                contextLine: "Academy Awards",
+                id: "subject:oscars",
+                name: "Oscars",
+                sportOrCategoryLabel: "Awards",
+                contextLine: nil,
                 logoUrl: nil,
                 primaryColorHex: "#B45309",
                 teamId: nil,
                 sportKey: "entertainment",
-                followedSubject: FollowedSubject295A.set(
-                    slug: "roundup-oscars-best-picture",
-                    setKind: .container,
-                    name: "Oscars · Best Picture"
-                ),
+                followedSubject: nil,
                 affinityCategory: "entertainment",
                 marketId: nil,
-                matchKeywords: ["Oscars", "Best Picture"]
+                matchKeywords: ["Oscars", "Awards"]
             )
             chips.append(FirstRunSentenceChip359A(
                 id: oscars.id,
@@ -119,18 +115,18 @@ nonisolated enum FirstRunSentenceSampleProvider359A {
 
         if lower.contains("inflation") {
             let inflation = FirstRunSuggestion212A(
-                id: "fut:52756026",
-                name: "Inflation in November 2026 (CPI YoY)",
-                sportOrCategoryLabel: "Economics",
-                contextLine: "Macro & Fed rates",
+                id: "subject:inflation",
+                name: "Inflation",
+                sportOrCategoryLabel: "Economy",
+                contextLine: nil,
                 logoUrl: nil,
                 primaryColorHex: "#005CC2",
                 teamId: nil,
                 sportKey: "economics",
                 followedSubject: nil,
                 affinityCategory: "economics",
-                marketId: 52756026,
-                matchKeywords: ["Inflation", "CPI", "Fed"]
+                marketId: nil,
+                matchKeywords: ["Inflation", "Economy", "CPI", "Fed"]
             )
             chips.append(FirstRunSentenceChip359A(
                 id: inflation.id,

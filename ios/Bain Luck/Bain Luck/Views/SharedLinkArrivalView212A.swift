@@ -10,7 +10,7 @@ import SwiftUI
 /// 4. Wording strictly in `"points"` (never `"pts"`).
 ///
 /// Underneath, `"More of what the world thinks now"` peeks live non-sports & sports cards while
-/// the fixed bottom `"Want kickoff & swing updates?"` bookmark bar lets the reader pin without
+/// the fixed bottom `"Want start & swing updates?"` bookmark bar lets the reader pin without
 /// an account (`Step 3`) and triggers `#13084`'s contextual alert prompt (`Step 4A`).
 struct SharedLinkArrivalView212A: View {
     let event: EventDetail
@@ -198,9 +198,11 @@ struct SharedLinkArrivalView212A: View {
         return HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
                 HStack(spacing: 6) {
-                    Text(card.kicker)
-                        .font(.caption2.weight(.bold))
-                        .foregroundStyle(tint)
+                    if let kicker = card.kicker, !kicker.isEmpty {
+                        Text(kicker)
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(tint)
+                    }
                     if let shift = FirstRunCard212A.shiftText(points: card.deltaPoints) {
                         Text(shift)
                             .font(.caption2.weight(.semibold))
@@ -241,7 +243,7 @@ struct SharedLinkArrivalView212A: View {
     private var fixedPinBar: some View {
         HStack(spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Want kickoff & swing updates?")
+                Text("Want start & swing updates?")
                     .font(.subheadline.weight(.bold))
                     .foregroundStyle(.white)
                     .fixedSize(horizontal: false, vertical: true)

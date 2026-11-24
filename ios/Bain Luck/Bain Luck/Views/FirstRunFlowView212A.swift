@@ -17,40 +17,26 @@ struct FirstRunFlowView212A: View {
     @Environment(\.followManager295A) private var followManager
     @Environment(\.dismiss) private var dismiss
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.colorScheme) private var colorScheme
 
     @StateObject private var vm: FirstRunViewModel212A
     @State private var showAboutWorkedExample = false
-    @State private var exampleIndex: Int = 0
-    private let pinnedExampleIndexForTest: Int?
-    private let reduceMotionOverrideForTest: Bool?
     var onFinished: (() -> Void)? = nil
-
-    private var effectiveReduceMotion: Bool {
-        reduceMotionOverrideForTest ?? reduceMotion
-    }
 
     init(
         arrivedHeadline: String? = nil,
         onFinished: (() -> Void)? = nil
     ) {
         _vm = StateObject(wrappedValue: FirstRunViewModel212A(arrivedHeadline: arrivedHeadline))
-        self.pinnedExampleIndexForTest = nil
-        self.reduceMotionOverrideForTest = nil
         self.onFinished = onFinished
     }
 
     #if DEBUG
     init(
         viewModelForTest: FirstRunViewModel212A,
-        pinnedExampleIndex: Int? = nil,
-        reduceMotionOverride: Bool? = nil,
         onFinished: (() -> Void)? = nil
     ) {
         _vm = StateObject(wrappedValue: viewModelForTest)
-        self.pinnedExampleIndexForTest = pinnedExampleIndex
-        self.reduceMotionOverrideForTest = reduceMotionOverride
         self.onFinished = onFinished
     }
     #endif
@@ -62,12 +48,6 @@ struct FirstRunFlowView212A: View {
             counts[item.name, default: 0] += 1
         }
         return Set(counts.filter { $0.value > 1 }.keys)
-    }
-
-    private var activeExampleIndex: Int {
-        guard !vm.servedExamples.isEmpty else { return 0 }
-        let idx = pinnedExampleIndexForTest ?? exampleIndex
-        return ((idx % vm.servedExamples.count) + vm.servedExamples.count) % vm.servedExamples.count
     }
 
     var body: some View {
@@ -115,22 +95,6 @@ struct FirstRunFlowView212A: View {
             .task {
                 await vm.loadLivePairsIfNeeded()
             }
-            .task(id: "\(vm.isOnTypeaheadStep)|\(vm.searchQuery.isEmpty)|\(vm.servedExamples.count)|\(effectiveReduceMotion)|\(pinnedExampleIndexForTest ?? -1)") {
-                guard vm.isOnTypeaheadStep,
-                      vm.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                      vm.servedExamples.count > 1,
-                      !effectiveReduceMotion,
-                      pinnedExampleIndexForTest == nil else {
-                    return
-                }
-                while !Task.isCancelled {
-                    try? await Task.sleep(nanoseconds: 2_500_000_000)
-                    guard !Task.isCancelled else { break }
-                    withAnimation(.easeInOut(duration: 0.25)) {
-                        exampleIndex = (exampleIndex + 1) % vm.servedExamples.count
-                    }
-                }
-            }
         }
     }
 
@@ -160,24 +124,26 @@ struct FirstRunFlowView212A: View {
 
             Spacer(minLength: 8)
 
-            Button {
-                vm.skipCurrentStep(
-                    followManager: followManager,
-                    pinManager: pinManager,
-                    authManager: authManager,
-                    onDismiss: finishAndDismiss
-                )
-            } label: {
-                Text("Skip")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(DS.textSecondaryReadable)
-                    .padding(.horizontal, 14)
-                    .frame(minHeight: 36)
-                    .background(DS.cardBg, in: Capsule())
-                    .overlay(Capsule().stroke(DS.border, lineWidth: 1))
+            if vm.isOnPairStep && (vm.currentPair != nil || vm.isLoadingPairs) {
+                Button {
+                    vm.skipCurrentStep(
+                        followManager: followManager,
+                        pinManager: pinManager,
+                        authManager: authManager,
+                        onDismiss: finishAndDismiss
+                    )
+                } label: {
+                    Text("Skip")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .padding(.horizontal, 14)
+                        .frame(minHeight: 36)
+                        .background(DS.cardBg, in: Capsule())
+                        .overlay(Capsule().stroke(DS.border, lineWidth: 1))
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("firstRunSkipButton")
             }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("firstRunSkipButton")
         }
     }
 
@@ -249,7 +215,7 @@ struct FirstRunFlowView212A: View {
                             onDismiss: finishAndDismiss
                         )
                     } label: {
-                        Text("Skip to topics")
+                        Text("Skip")
                             .font(.subheadline.weight(.semibold))
                             .foregroundStyle(DS.textPrimary)
                             .padding(.horizontal, 14)
@@ -257,6 +223,7 @@ struct FirstRunFlowView212A: View {
                             .background(DS.trackBg, in: Capsule())
                     }
                     .buttonStyle(.plain)
+                    .accessibilityIdentifier("firstRunSkipButton")
                 }
                 .padding(.top, 4)
             }
@@ -338,14 +305,16 @@ struct FirstRunFlowView212A: View {
             Button(action: onTapCard) {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack(alignment: .center, spacing: 8) {
-                        Text(card.kicker)
-                            .font(.caption2.weight(.bold))
-                            .tracking(0.5)
-                            .foregroundStyle(accent)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(accent.opacity(colorScheme == .dark ? 0.18 : 0.10), in: Capsule())
-                            .fixedSize(horizontal: false, vertical: true)
+                        if let kicker = card.kicker, !kicker.isEmpty {
+                            Text(kicker)
+                                .font(.caption2.weight(.bold))
+                                .tracking(0.5)
+                                .foregroundStyle(accent)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 4)
+                                .background(accent.opacity(colorScheme == .dark ? 0.18 : 0.10), in: Capsule())
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
 
                         Spacer(minLength: 4)
 
@@ -627,47 +596,31 @@ struct FirstRunFlowView212A: View {
         )
     }
 
-    @ViewBuilder
     private var servedExamplesStrip: some View {
-        if effectiveReduceMotion {
-            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                Text("Examples:")
-                    .font(.caption)
-                    .foregroundStyle(DS.textSecondaryReadable)
-                FirstRunPickedChipFlow212A(spacing: 6) {
-                    ForEach(vm.servedExamples) { ex in
-                        Button {
-                            vm.applyExampleQuery(ex.query)
-                        } label: {
-                            Text(ex.displayText)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(DS.blueReadable)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("firstRunExampleStatic.\(ex.id)")
+        VStack(alignment: .leading, spacing: 6) {
+            Text("Try:")
+                .font(.caption)
+                .foregroundStyle(DS.textSecondaryReadable)
+            FirstRunPickedChipFlow212A(spacing: 8) {
+                ForEach(Array(vm.servedExamples.prefix(5))) { ex in
+                    Button {
+                        vm.applyExampleQuery(ex.query)
+                    } label: {
+                        Text(ex.displayText)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(DS.blueReadable)
+                            .padding(.horizontal, 10)
+                            .padding(.vertical, 6)
+                            .background(DS.cardBg, in: Capsule())
+                            .overlay(Capsule().stroke(DS.border, lineWidth: 1))
+                            .fixedSize(horizontal: false, vertical: true)
                     }
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("firstRunExampleStatic.\(ex.id)")
                 }
             }
-            .accessibilityIdentifier("firstRunExamplesStatic")
-        } else {
-            let ex = vm.servedExamples[activeExampleIndex]
-            Button {
-                vm.applyExampleQuery(ex.query)
-            } label: {
-                HStack(spacing: 5) {
-                    Text("Example:")
-                        .font(.caption)
-                        .foregroundStyle(DS.textSecondaryReadable)
-                    Text("\u{201C}\(ex.displayText)\u{201D}")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(DS.blueReadable)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier("firstRunExampleRotating")
         }
+        .accessibilityIdentifier("firstRunExamplesStatic")
     }
 
     // MARK: - 359: A Sentence Confirmation / Waiting / Could-Not-Read States
@@ -930,20 +883,30 @@ struct FirstRunFlowView212A: View {
     }
 
     private var typeaheadFooter: some View {
-        VStack(spacing: 6) {
+        let hasPicks = !vm.pickedItems.isEmpty
+        return VStack(spacing: 0) {
             Divider()
             Button {
-                vm.finish(
-                    followManager: followManager,
-                    pinManager: pinManager,
-                    authManager: authManager
-                ) {
-                    navCoordinator.selectedTab = .discover
-                    dismiss()
-                    onFinished?()
+                if hasPicks {
+                    vm.finish(
+                        followManager: followManager,
+                        pinManager: pinManager,
+                        authManager: authManager
+                    ) {
+                        navCoordinator.selectedTab = .discover
+                        dismiss()
+                        onFinished?()
+                    }
+                } else {
+                    vm.skipCurrentStep(
+                        followManager: followManager,
+                        pinManager: pinManager,
+                        authManager: authManager,
+                        onDismiss: finishAndDismiss
+                    )
                 }
             } label: {
-                Text("Go to Discover \u{2192}")
+                Text(hasPicks ? "Go to Discover \u{2192}" : "Skip to Discover")
                     .font(.headline)
                     .lineLimit(1)
                     .minimumScaleFactor(0.8)
@@ -957,24 +920,8 @@ struct FirstRunFlowView212A: View {
             }
             .buttonStyle(.plain)
             .padding(.horizontal, 16)
-            .padding(.top, 10)
-            .accessibilityIdentifier("firstRunGoToDiscoverButton")
-
-            Button {
-                vm.skipCurrentStep(
-                    followManager: followManager,
-                    pinManager: pinManager,
-                    authManager: authManager,
-                    onDismiss: finishAndDismiss
-                )
-            } label: {
-                Text("Skip for now")
-                    .font(.footnote.weight(.medium))
-                    .foregroundStyle(DS.textSecondaryReadable)
-                    .frame(minHeight: 34)
-            }
-            .buttonStyle(.plain)
-            .padding(.bottom, 8)
+            .padding(.vertical, 12)
+            .accessibilityIdentifier(hasPicks ? "firstRunGoToDiscoverButton" : "firstRunSkipButton")
         }
         .background(DS.surface)
     }

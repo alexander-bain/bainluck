@@ -96,7 +96,7 @@ nonisolated enum FirstRunLinkHandoffBridge212A {
 /// - projections are whole numbers only.
 nonisolated struct FirstRunCard212A: Identifiable, Equatable, Sendable {
     let id: String
-    let kicker: String
+    let kicker: String?
     let subtitleRight: String?
     let title: String
     let detailLine: String?
@@ -203,17 +203,202 @@ nonisolated struct FirstRunPair212A: Identifiable, Equatable, Sendable {
         "nascar", "motogp", "ufc", "championship", "chess",
     ])
 
-    /// Builds 3 real pairs mixing sports and non-sports items strictly from live unsettled
-    /// `/api/feed` items (`Discover` + `Sports`). Never invents placeholder/fallback cards.
+    /// League order approved for the onboarding game slot (Fable Send-back 2):
+    /// NFL -> NBA -> MLB -> NHL -> college football -> men's college basketball -> top soccer.
+    static func leaguePriority(for sportKey: String?) -> Int? {
+        guard let raw = sportKey?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !raw.isEmpty else {
+            return nil
+        }
+        switch raw {
+        case "americanfootball_nfl":
+            return 0
+        case "basketball_nba":
+            return 1
+        case "baseball_mlb":
+            return 2
+        case "icehockey_nhl":
+            return 3
+        case "americanfootball_ncaaf", "americanfootball_ncaaf_fcs":
+            return 4
+        case "basketball_ncaab":
+            return 5
+        case "soccer_epl", "soccer_uefa_champs_league", "soccer_spain_la_liga",
+             "soccer_germany_bundesliga", "soccer_italy_serie_a",
+             "soccer_france_ligue_one", "soccer_usa_mls", "soccer_fifa_world_cup":
+            return 6
+        default:
+            return nil
+        }
+    }
+
+    private static let grimTopicPattern: NSRegularExpression? = {
+        let terms = [
+            // Crime & criminal cases
+            "murder", "homicide", "convict", "convicted", "indict", "indicted",
+            "arrest", "arrested", "prison", "jail", "guilty", "sentenced",
+            "felony", "assault", "shooting", "shooter", "trial", "defendant",
+            "trafficking", "crime", "criminal", "epstein", "clancy",
+            // Death
+            "die", "dies", "dead", "death", "funeral", "assassination",
+            "assassinate", "suicide", "fatal", "casualties", "killed", "kill",
+            // Disasters & outbreaks
+            "earthquake", "tsunami", "hurricane", "tornado", "wildfire", "flood",
+            "volcano", "eruption", "famine", "pandemic", "plague", "outbreak",
+            "plane crash", "disaster", "catastrophe",
+            // War & conflict
+            "invade", "invasion", "war", "airstrike", "ceasefire", "missile",
+            "nuclear", "bomb", "troops", "military", "annex", "conflict",
+            "ukraine", "gaza", "hamas", "hezbollah", "coup", "terror",
+        ]
+        let joined = terms.map(NSRegularExpression.escapedPattern(for:)).joined(separator: "|")
+        return try? NSRegularExpression(pattern: "\\b(?:\(joined))\\b", options: [.caseInsensitive])
+    }()
+
+    /// Rejects grim topics (crime, death, disaster, war) using word boundaries so
+    /// words like "Awards" or "Warriors" are never misclassified (Fable Send-back 2).
+    static func isGrimOrSensitiveTopic(title: String, outcomeName: String? = nil) -> Bool {
+        let text = [title, outcomeName ?? ""].joined(separator: " ")
+        guard let regex = grimTopicPattern else { return false }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return regex.firstMatch(in: text, options: [], range: range) != nil
+    }
+
+    private static func matchesKeyword(_ word: String, in text: String) -> Bool {
+        let escaped = NSRegularExpression.escapedPattern(for: word)
+        guard let regex = try? NSRegularExpression(pattern: "\\b\(escaped)\\b", options: [.caseInsensitive]) else {
+            return false
+        }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return regex.firstMatch(in: text, options: [], range: range) != nil
+    }
+
+    /// Shows a non-sports category pill ONLY when the category agrees with the title;
+    /// otherwise omits the pill (`nil`) rather than showing a wrong label (Fable Send-back 3).
+    static func trustedNonSportsPill(categoryKey: String, title: String) -> String? {
+        let cat = categoryKey.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let lowerTitle = title.lowercased()
+
+        let awardKeywords = ["oscar", "oscars", "grammy", "grammys", "emmy", "emmys", "tony", "golden globe", "bafta", "academy award"]
+        let entertainmentKeywords = [
+            "film", "movie", "movies", "spotify", "album", "song", "concert",
+            "coachella", "bond", "box office", "actor", "actress", "director",
+            "show", "series", "snl", "game awards", "engaged", "married",
+            "netflix", "streaming", "music", "artist", "gross", "opening weekend",
+        ]
+        let economyKeywords = [
+            "economy", "fed", "rate", "rates", "inflation", "cpi", "gdp",
+            "recession", "stock", "tariff", "tariffs", "jobs", "unemployment",
+            "dollar", "oil", "treasury", "budget", "earnings", "ipo", "aapl", "apple",
+        ]
+        let techKeywords = [
+            "ai", "openai", "claude", "gemini", "gpt", "anthropic", "llm",
+            "apple", "google", "tesla", "spacex", "mars", "rocket", "chip",
+            "nvidia", "meta", "microsoft", "amazon", "software", "model",
+            "ipo", "quantum", "robot", "iphone",
+        ]
+        let politicsKeywords = [
+            "election", "elections", "president", "presidential", "prime minister",
+            "senate", "house", "governor", "mayor", "congress", "parliament",
+            "vote", "ballot", "impeach", "cabinet", "secretary", "nominee",
+            "party", "bill", "supreme court",
+        ]
+        let weatherKeywords = [
+            "rain", "snow", "temperature", "high", "low", "wettest", "driest",
+            "inches", "degrees", "forecast", "rainfall", "snowfall", "snows", "rains",
+        ]
+
+        switch cat {
+        case "economics", "econ", "macro", "finance":
+            return economyKeywords.contains { matchesKeyword($0, in: lowerTitle) } ? "ECONOMY" : nil
+        case "entertainment", "awards", "movies", "film", "music", "tv":
+            if awardKeywords.contains(where: { matchesKeyword($0, in: lowerTitle) }) {
+                return "AWARDS"
+            }
+            return entertainmentKeywords.contains { matchesKeyword($0, in: lowerTitle) } ? "ENTERTAINMENT" : nil
+        case "tech", "ai":
+            if lowerTitle.contains("searched person") { return nil }
+            return techKeywords.contains { matchesKeyword($0, in: lowerTitle) } ? "TECH" : nil
+        case "politics", "elections":
+            return politicsKeywords.contains { matchesKeyword($0, in: lowerTitle) } ? "POLITICS" : nil
+        case "weather":
+            if matchesKeyword("earthquake", in: lowerTitle)
+                || matchesKeyword("volcano", in: lowerTitle)
+                || matchesKeyword("tsunami", in: lowerTitle)
+                || matchesKeyword("seismic", in: lowerTitle) {
+                return nil
+            }
+            if lowerTitle.contains("°c") || lowerTitle.contains("°f")
+                || weatherKeywords.contains(where: { matchesKeyword($0, in: lowerTitle) }) {
+                return "WEATHER"
+            }
+            return nil
+        default:
+            return nil
+        }
+    }
+
+    /// Resolves a futures market's headline probability without ever leading with `"No"`
+    /// on a yes-or-no card (Fable Send-back 1).
+    static func resolvePrimaryOutcome(for fut: FeedFuturesData) -> (outcomeName: String?, percent: Int, deltaPoints: Int?, isYesNo: Bool)? {
+        let outcomes = fut.topOutcomes ?? []
+        guard !outcomes.isEmpty else { return nil }
+
+        let mTypeLower = (fut.marketType ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let lowerNames = Set(outcomes.map { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() })
+        let isBinaryYesNoByNames = !lowerNames.isEmpty && lowerNames.isSubset(of: ["yes", "no"])
+        let hasYesOrNoPair = lowerNames.contains("yes") && lowerNames.contains("no")
+        let isYesNo = mTypeLower == "yes_no" || mTypeLower == "claim" || isBinaryYesNoByNames || hasYesOrNoPair
+
+        func computeDelta(_ move: Double?, invert: Bool) -> Int? {
+            guard let move, move.isFinite else { return nil }
+            let scaled = abs(move) <= 1.0 ? move * 100.0 : move
+            let diff = Int((invert ? -scaled : scaled).rounded())
+            return diff == 0 ? nil : diff
+        }
+
+        if isYesNo {
+            if let yesOut = outcomes.first(where: { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "yes" }),
+               let pct = resolvedPercent(rawProb: yesOut.probability, servedRenderedPercent: yesOut.renderedPercent) {
+                return (nil, pct, computeDelta(yesOut.movement, invert: false), true)
+            }
+            if let noOut = outcomes.first(where: { $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "no" }),
+               let noPct = resolvedPercent(rawProb: noOut.probability, servedRenderedPercent: noOut.renderedPercent) {
+                let yesProb = noOut.probability.map { p in p > 1.0 ? (100.0 - p) : (1.0 - p) }
+                let yesRend = 100 - noPct
+                if let yesPct = resolvedPercent(rawProb: yesProb, servedRenderedPercent: yesRend) {
+                    return (nil, yesPct, computeDelta(noOut.movement, invert: true), true)
+                }
+            }
+            return nil
+        }
+
+        let first = outcomes[0]
+        let firstNameLower = first.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard firstNameLower != "no" else { return nil }
+        guard let pct = resolvedPercent(rawProb: first.probability, servedRenderedPercent: first.renderedPercent) else {
+            return nil
+        }
+        return (
+            FirstRunLinkHandoffBridge212A.cleaned(first.name),
+            pct,
+            computeDelta(first.movement, invert: false),
+            false
+        )
+    }
+
+    /// Builds 3 real pairs strictly following Fable's approved pick rule:
+    /// each pick is 1 game (within 24h, league priority NFL > NBA > MLB > NHL > NCAAF > NCAAB > top soccer)
+    /// paired with 1 non-sports card from Discover's top-down order, all 5...95%, zero grim topics.
     static func buildPairs(
         from feedItems: [FeedItem],
         arrivedHeadline: String? = nil,
         now: Date = Date()
     ) -> [FirstRunPair212A] {
-        let nonSports = extractCards(from: feedItems, wantSports: false, now: now)
-        let sports = extractCards(from: feedItems, wantSports: true, now: now)
+        let games = extractGameCards(from: feedItems, now: now)
+        let nonSports = extractNonSportsCards(from: feedItems, now: now)
 
-        guard sports.count >= 2, nonSports.count >= 4 else {
+        guard games.count >= 3, nonSports.count >= 3 else {
             return []
         }
 
@@ -225,22 +410,22 @@ nonisolated struct FirstRunPair212A: Identifiable, Equatable, Sendable {
                 id: "pair-1",
                 promptTitle: "Which of these would you check?",
                 arrivedContextPill: pill,
-                topCard: withWorkedMeaning(sports[0]),
+                topCard: withWorkedMeaning(games[0]),
                 bottomCard: nonSports[0]
             ),
             FirstRunPair212A(
                 id: "pair-2",
                 promptTitle: "How about these two?",
                 arrivedContextPill: nil,
-                topCard: sports[1],
+                topCard: games[1],
                 bottomCard: nonSports[1]
             ),
             FirstRunPair212A(
                 id: "pair-3",
                 promptTitle: "And between these two?",
                 arrivedContextPill: nil,
-                topCard: nonSports[2],
-                bottomCard: nonSports[3]
+                topCard: games[2],
+                bottomCard: nonSports[2]
             ),
         ]
     }
@@ -267,28 +452,23 @@ nonisolated struct FirstRunPair212A: Identifiable, Equatable, Sendable {
         )
     }
 
-    private struct FlattenedEntry {
-        let item: FeedItem
-        let collectionRef: FeedThemeCollectionRef?
-    }
+    private static let isoWithFractional: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return f
+    }()
 
-    private static func flattenedEntries(from items: [FeedItem]) -> [FlattenedEntry] {
-        // Put standalone games/markets first in natural order, taking at most one lead open
-        // child per Discover bundle so no single bundle dominates all slots.
-        var singles: [FlattenedEntry] = []
-        var bundleLeads: [FlattenedEntry] = []
-        for item in items {
-            if let bundle = item.bundle {
-                if let lead = bundle.items.first(where: { $0.futures != nil || $0.event != nil }) {
-                    bundleLeads.append(FlattenedEntry(item: lead, collectionRef: bundle.collectionRef))
-                }
-            } else if item.event != nil {
-                singles.insert(FlattenedEntry(item: item, collectionRef: nil), at: 0)
-            } else {
-                singles.append(FlattenedEntry(item: item, collectionRef: nil))
-            }
+    private static let isoStandard: ISO8601DateFormatter = {
+        let f = ISO8601DateFormatter()
+        f.formatOptions = [.withInternetDateTime]
+        return f
+    }()
+
+    private static func parseCommenceDate(_ raw: String?) -> Date? {
+        guard let s = raw?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty else {
+            return nil
         }
-        return singles + bundleLeads
+        return isoWithFractional.date(from: s) ?? isoStandard.date(from: s)
     }
 
     static func classifyFuturesCategory(_ fut: FeedFuturesData) -> (isSports: Bool, isUnambiguous: Bool, categoryKey: String) {
@@ -337,130 +517,163 @@ nonisolated struct FirstRunPair212A: Identifiable, Equatable, Sendable {
         return diff == 0 ? nil : diff
     }
 
-    private static func extractCards(from rawItems: [FeedItem], wantSports: Bool, now: Date) -> [FirstRunCard212A] {
-        var candidates: [FirstRunCard212A] = []
+    private static func extractGameCards(from rawItems: [FeedItem], now: Date) -> [FirstRunCard212A] {
+        var ranked: [(prio: Int, seq: Int, card: FirstRunCard212A)] = []
         var seenIds: Set<String> = []
-        for entry in flattenedEntries(from: rawItems) {
-            let item = entry.item
-            if let ev = item.event, wantSports {
-                let statusLower = (ev.status ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                guard !FeedLifecycle.terminalScheduleStatuses.contains(statusLower) else { continue }
-                let prob = ev.currentOdds?.homeProbability ?? ev.openingOdds?.homeProbability
-                guard let pct = resolvedPercent(rawProb: prob, servedRenderedPercent: ev.currentOdds?.homeRenderedPercent) else {
-                    continue
-                }
-                let cardId = "ev-\(ev.id)"
-                guard seenIds.insert(cardId).inserted else { continue }
-                let cat = DiscoverCategory.token(forSport: ev.sport)
-                let leagueLabel = sportDisplayName(for: ev.sport)
-                let shortNames = TeamShortName.shortPair(away: ev.awayTeam, home: ev.homeTeam, sportKey: ev.sport)
-                let sportTag = leagueLabel.isEmpty ? "Sports" : leagueLabel
-                let subject = FollowedSubject295A.teamFromEventSide(event: ev, isHome: true)
-                let deltaPts = normalizedDelta(prob: prob, prev: ev.prematchOdds?.homeProbability ?? ev.openingOdds?.homeProbability)
+        var seq = 0
 
-                var detail: String?
-                if let proj = ev.pregameProjection,
-                   let awayProj = proj.projectedAwayScore,
-                   let homeProj = proj.projectedHomeScore {
-                    detail = "Projected: \(shortNames.away) \(Int(awayProj.rounded())) \u{2013} \(shortNames.home) \(Int(homeProj.rounded()))"
-                }
+        let earliestStart = now.addingTimeInterval(-4 * 3600)
+        let latestStart = now.addingTimeInterval(24 * 3600)
 
-                candidates.append(FirstRunCard212A(
-                    id: cardId,
-                    kicker: sportTag.uppercased(),
-                    subtitleRight: statusLower == "live" ? "Live now" : nil,
-                    title: "\(shortNames.away) at \(shortNames.home)",
-                    detailLine: detail,
-                    percent: pct,
-                    percentLabel: shortNames.home,
-                    deltaPoints: deltaPts,
-                    accentHex: ev.homeTeamData?.primaryColor ?? "#047857",
-                    sfSymbol: FirstRunCard212A.sfSymbol(forCategory: cat, isSports: true),
-                    logoUrl: ev.homeTeamData?.logoSmall ?? ev.homeTeamData?.logoLarge,
-                    isSports: true,
-                    affinityCategory: cat,
-                    workedMeaningLine: nil,
-                    followedSubject: subject,
-                    marketId: nil,
-                    matchKeywords: [shortNames.away, shortNames.home, ev.homeTeam, ev.awayTeam]
-                ))
-            } else if let fut = item.futures {
-                guard !FeedLifecycle.futuresIsSettled(fut, now: now) else { continue }
-                let mTypeLower = (fut.marketType ?? "").lowercased()
-                // Threshold / date-ladder buckets can show a different rung on Discover vs /futures/<id>.
-                if mTypeLower == "threshold" || mTypeLower == "quantity" || mTypeLower == "date" {
-                    continue
-                }
-                let classification = classifyFuturesCategory(fut)
-                guard classification.isUnambiguous, classification.isSports == wantSports else { continue }
-                guard let firstOutcome = fut.topOutcomes?.first,
-                      let pct = resolvedPercent(rawProb: firstOutcome.probability, servedRenderedPercent: firstOutcome.renderedPercent) else {
-                    continue
-                }
-                let cardId = "fut-\(fut.id)"
-                guard seenIds.insert(cardId).inserted else { continue }
+        func considerEvent(_ ev: FeedEventData) {
+            defer { seq += 1 }
+            let statusLower = (ev.status ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !FeedLifecycle.terminalScheduleStatuses.contains(statusLower) else { return }
+            guard let prio = leaguePriority(for: ev.sport) else { return }
+            guard let start = parseCommenceDate(ev.commenceTime),
+                  start >= earliestStart, start <= latestStart else {
+                return
+            }
+            let prob = ev.currentOdds?.homeProbability ?? ev.openingOdds?.homeProbability
+            guard let pct = resolvedPercent(rawProb: prob, servedRenderedPercent: ev.currentOdds?.homeRenderedPercent),
+                  (5...95).contains(pct) else {
+                return
+            }
+            let cardId = "ev-\(ev.id)"
+            guard seenIds.insert(cardId).inserted else { return }
 
-                let catKey = classification.categoryKey
-                let catDisplay = sportCategoryDisplayName(catKey)
-                let deltaPts: Int? = {
-                    guard let move = firstOutcome.movement, move.isFinite else { return nil }
-                    let scaled = abs(move) <= 1.0 ? move * 100.0 : move
-                    let diff = Int(scaled.rounded())
-                    return diff == 0 ? nil : diff
-                }()
-                let servedHook = FirstRunLinkHandoffBridge212A.cleaned(fut.hookDescription)
-                let ref = entry.collectionRef
-                let followedSet: FollowedSubject295A? = ref.map {
-                    FollowedSubject295A.set(slug: $0.slug, setKind: .container, name: $0.name)
-                }
+            let cat = DiscoverCategory.token(forSport: ev.sport)
+            let leagueLabel = sportDisplayName(for: ev.sport)
+            let shortNames = TeamShortName.shortPair(away: ev.awayTeam, home: ev.homeTeam, sportKey: ev.sport)
+            let sportTag = leagueLabel.isEmpty ? "Sports" : leagueLabel
+            let subject = FollowedSubject295A.teamFromEventSide(event: ev, isHome: true)
+            let deltaPts = normalizedDelta(prob: prob, prev: ev.prematchOdds?.homeProbability ?? ev.openingOdds?.homeProbability)
 
-                candidates.append(FirstRunCard212A(
-                    id: cardId,
-                    kicker: catDisplay.uppercased(),
-                    subtitleRight: FirstRunLinkHandoffBridge212A.cleaned(firstOutcome.name),
-                    title: fut.name,
-                    detailLine: servedHook,
-                    percent: pct,
-                    percentLabel: "chance",
-                    deltaPoints: deltaPts,
-                    accentHex: wantSports ? "#005CC2" : "#7C3AED",
-                    sfSymbol: FirstRunCard212A.sfSymbol(forCategory: catKey, isSports: wantSports),
-                    logoUrl: FirstRunLinkHandoffBridge212A.cleaned(fut.imageUrl),
-                    isSports: wantSports,
-                    affinityCategory: catKey,
-                    workedMeaningLine: nil,
-                    followedSubject: followedSet,
-                    marketId: fut.id,
-                    matchKeywords: [fut.name, firstOutcome.name, catDisplay]
-                ))
+            var detail: String?
+            if let proj = ev.pregameProjection,
+               let awayProj = proj.projectedAwayScore,
+               let homeProj = proj.projectedHomeScore {
+                detail = "Projected: \(shortNames.away) \(Int(awayProj.rounded())) \u{2013} \(shortNames.home) \(Int(homeProj.rounded()))"
+            }
+
+            let card = FirstRunCard212A(
+                id: cardId,
+                kicker: sportTag.uppercased(),
+                subtitleRight: statusLower == "live" ? "Live now" : nil,
+                title: "\(shortNames.away) at \(shortNames.home)",
+                detailLine: detail,
+                percent: pct,
+                percentLabel: shortNames.home,
+                deltaPoints: deltaPts,
+                accentHex: ev.homeTeamData?.primaryColor ?? "#047857",
+                sfSymbol: FirstRunCard212A.sfSymbol(forCategory: cat, isSports: true),
+                logoUrl: ev.homeTeamData?.logoSmall ?? ev.homeTeamData?.logoLarge,
+                isSports: true,
+                affinityCategory: cat,
+                workedMeaningLine: nil,
+                followedSubject: subject,
+                marketId: nil,
+                matchKeywords: [shortNames.away, shortNames.home, ev.homeTeam, ev.awayTeam]
+            )
+            ranked.append((prio, seq, card))
+        }
+
+        for item in rawItems {
+            if let ev = item.event {
+                considerEvent(ev)
+            } else if let bundle = item.bundle {
+                for child in bundle.items {
+                    if let ev = child.event {
+                        considerEvent(ev)
+                    }
+                }
             }
         }
 
-        // Prefer diverse categories and clear mid-range probabilities first without inventing anything.
-        // For sports, prefer live/upcoming games over futures when both exist.
-        let ordered = candidates.sorted { lhs, rhs in
-            if wantSports {
-                let lEv = lhs.id.hasPrefix("ev-")
-                let rEv = rhs.id.hasPrefix("ev-")
-                if lEv != rEv { return lEv }
+        ranked.sort { lhs, rhs in
+            if lhs.prio != rhs.prio { return lhs.prio < rhs.prio }
+            return lhs.seq < rhs.seq
+        }
+        return Array(ranked.prefix(6).map(\.card))
+    }
+
+    private static func extractNonSportsCards(from rawItems: [FeedItem], now: Date) -> [FirstRunCard212A] {
+        var candidates: [FirstRunCard212A] = []
+        var seenIds: Set<String> = []
+
+        func makeCard(fut: FeedFuturesData, collectionRef: FeedThemeCollectionRef?) -> FirstRunCard212A? {
+            guard !FeedLifecycle.futuresIsSettled(fut, now: now) else { return nil }
+            let mTypeLower = (fut.marketType ?? "").lowercased()
+            if mTypeLower == "threshold" || mTypeLower == "quantity" || mTypeLower == "date" {
+                return nil
             }
-            let lMid = (15...85).contains(lhs.percent)
-            let rMid = (15...85).contains(rhs.percent)
-            if lMid != rMid { return lMid }
-            return false
+            let classification = classifyFuturesCategory(fut)
+            guard classification.isUnambiguous, !classification.isSports else { return nil }
+            guard let resolved = resolvePrimaryOutcome(for: fut),
+                  (5...95).contains(resolved.percent) else {
+                return nil
+            }
+            guard !isGrimOrSensitiveTopic(title: fut.name, outcomeName: resolved.outcomeName) else {
+                return nil
+            }
+            let cardId = "fut-\(fut.id)"
+            guard seenIds.insert(cardId).inserted else { return nil }
+
+            let catKey = classification.categoryKey
+            let servedHook = FirstRunLinkHandoffBridge212A.cleaned(fut.hookDescription)
+            let followedSet: FollowedSubject295A? = collectionRef.map {
+                FollowedSubject295A.set(slug: $0.slug, setKind: .container, name: $0.name)
+            }
+
+            return FirstRunCard212A(
+                id: cardId,
+                kicker: trustedNonSportsPill(categoryKey: catKey, title: fut.name),
+                subtitleRight: resolved.outcomeName,
+                title: fut.name,
+                detailLine: servedHook,
+                percent: resolved.percent,
+                percentLabel: "chance",
+                deltaPoints: resolved.deltaPoints,
+                accentHex: "#7C3AED",
+                sfSymbol: FirstRunCard212A.sfSymbol(forCategory: catKey, isSports: false),
+                logoUrl: FirstRunLinkHandoffBridge212A.cleaned(fut.imageUrl),
+                isSports: false,
+                affinityCategory: catKey,
+                workedMeaningLine: nil,
+                followedSubject: followedSet,
+                marketId: fut.id,
+                matchKeywords: [fut.name, resolved.outcomeName ?? "", catKey].filter { !$0.isEmpty }
+            )
+        }
+
+        // Preserve exact Discover top-down order, taking at most one card per bundle.
+        for item in rawItems {
+            if let fut = item.futures {
+                if let card = makeCard(fut: fut, collectionRef: nil) {
+                    candidates.append(card)
+                }
+            } else if let bundle = item.bundle {
+                for child in bundle.items {
+                    if let fut = child.futures,
+                       let card = makeCard(fut: fut, collectionRef: bundle.collectionRef) {
+                        candidates.append(card)
+                        break
+                    }
+                }
+            }
         }
 
         var selected: [FirstRunCard212A] = []
         var usedCategories: Set<String> = []
-        for card in ordered {
+        for card in candidates {
             if usedCategories.insert(card.affinityCategory).inserted {
                 selected.append(card)
             }
-            if selected.count >= 4 { return selected }
+            if selected.count >= 3 { return selected }
         }
-        for card in ordered where !selected.contains(where: { $0.id == card.id }) {
+        for card in candidates where !selected.contains(where: { $0.id == card.id }) {
             selected.append(card)
-            if selected.count >= 4 { break }
+            if selected.count >= 3 { break }
         }
         return selected
     }
@@ -582,8 +795,8 @@ nonisolated enum FirstRunServedExamples212A {
         var ordered: [FirstRunExamplePrompt212A] = []
         if let cityExample { ordered.append(cityExample) }
         if let schoolExample { ordered.append(schoolExample) }
-        ordered.append(contentsOf: subjectExamples.prefix(3))
-        return ordered
+        ordered.append(contentsOf: subjectExamples)
+        return Array(ordered.prefix(5))
     }
 
     private static func deriveSubjectQueryAndDisplay(
@@ -594,28 +807,28 @@ nonisolated enum FirstRunServedExamples212A {
         let lowerName = future.name.lowercased()
         let bundleLower = (bundleTitle ?? "").lowercased()
         if lowerName.contains("oscar") || bundleLower.contains("oscar") {
-            return ("Oscars", "the Oscars")
+            return ("Oscars", "Oscars")
         }
         if lowerName.contains("inflation") || bundleLower.contains("inflation") {
-            return ("inflation", "inflation")
+            return ("inflation", "Inflation")
         }
         if lowerName.contains("fed") || bundleLower.contains("fed") || lowerName.contains("rate") {
-            return ("inflation", "inflation & rates")
+            return ("inflation", "Inflation")
         }
         if categoryKey == "entertainment" && (lowerName.contains("bond") || lowerName.contains("spotify") || lowerName.contains("album") || lowerName.contains("movie")) {
-            return ("Oscars", "the Oscars & film")
+            return ("Oscars", "Oscars")
         }
         if categoryKey == "economics" {
-            return ("inflation", "inflation")
+            return ("inflation", "Inflation")
         }
         if categoryKey == "weather" || lowerName.contains("rain") || lowerName.contains("snow") || lowerName.contains("temp") {
-            return ("weather", "weather")
+            return ("weather", "Weather")
         }
         if categoryKey == "tech" || lowerName.contains("ai") || lowerName.contains("openai") {
-            return ("AI", "AI & tech")
+            return ("AI", "AI")
         }
         if categoryKey == "politics" || categoryKey == "geopolitics" {
-            return ("elections", "elections")
+            return ("elections", "Elections")
         }
         return nil
     }
@@ -674,7 +887,7 @@ nonisolated struct FirstRunSuggestion212A: Identifiable, Equatable, Sendable {
     let matchKeywords: [String]
 
     var chipDisplayText: String {
-        if !sportOrCategoryLabel.isEmpty {
+        if !sportOrCategoryLabel.isEmpty, sportOrCategoryLabel != "Set" {
             return "\(name) \u{00B7} \(sportOrCategoryLabel)"
         }
         return name
@@ -691,6 +904,34 @@ nonisolated struct FirstRunSuggestion212A: Identifiable, Equatable, Sendable {
         case (nil, nil):
             return "Subject"
         }
+    }
+
+    private static func plainSubjectKind(label: String, rawCategory: String) -> String {
+        let lowerLabel = label.lowercased()
+        let lowerCat = rawCategory.lowercased()
+        if lowerLabel.contains("oscar") || lowerLabel.contains("grammy") || lowerLabel.contains("emmy")
+            || lowerLabel.contains("tony") || lowerLabel.contains("golden globe") || lowerLabel.contains("bafta")
+            || lowerCat == "awards" {
+            return "Awards"
+        }
+        if lowerCat.contains("econ") || lowerCat == "macro" || lowerCat == "finance"
+            || lowerLabel.contains("inflation") || lowerLabel.contains("fed") || lowerLabel.contains("rate") {
+            return "Economy"
+        }
+        if lowerCat == "entertainment" || lowerCat == "culture" || lowerCat == "movies" || lowerCat == "film"
+            || lowerCat == "music" || lowerCat == "tv" {
+            return "Entertainment"
+        }
+        if lowerCat == "tech" || lowerCat == "ai" || lowerCat == "science" {
+            return "Tech"
+        }
+        if lowerCat.contains("politic") || lowerCat.contains("election") || lowerCat.contains("geopolitic") {
+            return "Politics"
+        }
+        if lowerCat == "weather" || lowerCat == "climate" {
+            return "Weather"
+        }
+        return "Subject"
     }
 
     /// Expands `/api/me/teams/*` responses into distinct per-(team, sport) suggestions.
@@ -758,13 +999,16 @@ nonisolated struct FirstRunSuggestion212A: Identifiable, Equatable, Sendable {
         return out
     }
 
-    /// Expands `/api/events/search` response (`teams`, `collections`, `futuresFamilies`, and live open `futures`).
-    /// Never uses hardcoded client topic lists — every non-sports row is served live from the API.
+    /// Expands `/api/events/search` strictly into teams, schools, cities, and subjects ONLY
+    /// (Fable Send-back 4: zero rows of kind `"Set"` and zero single forecasts).
     static func fromEventSearchResponse(
         _ response: SearchResponse,
         query: String
     ) -> [FirstRunSuggestion212A] {
         var out: [FirstRunSuggestion212A] = []
+        let trimmedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lowerQuery = trimmedQuery.lowercased()
+        let teamNames = (response.teams ?? []).map(\.name)
 
         // 1. Teams
         for team in response.teams ?? [] {
@@ -793,77 +1037,41 @@ nonisolated struct FirstRunSuggestion212A: Identifiable, Equatable, Sendable {
             ))
         }
 
-        // 2. Real served collections / sets (e.g. Oscars Best Picture / Best Actor)
-        if let collections = response.collectionDiscovery?.collections {
-            for col in collections.prefix(3) {
-                let title = nonEmpty(col.name) ?? col.slug
-                let count = col.gameCount + col.questionCount
-                let countText = count > 0 ? "\(count) items" : nil
-                out.append(FirstRunSuggestion212A(
-                    id: "set:\(col.slug)",
-                    name: title,
-                    sportOrCategoryLabel: "Set",
-                    contextLine: countText,
-                    logoUrl: nil,
-                    primaryColorHex: "#7C3AED",
-                    teamId: nil,
-                    sportKey: nil,
-                    followedSubject: FollowedSubject295A.set(slug: col.slug, setKind: .container, name: title),
-                    affinityCategory: nil,
-                    marketId: nil,
-                    matchKeywords: [title, query].filter { !$0.isEmpty }
-                ))
-            }
-        }
+        // 2. Real served topical subjects (`Oscars`, `Fed & Rates`, `Inflation`, etc.)
+        // Never emit `"Set"`, single forecasts, or person/election collisions for unrelated team queries.
+        let sportsShortKeys: Set<String> = ["basketball", "football", "baseball", "hockey", "soccer", "tennis", "golf"]
+        for family in (response.futuresFamilies ?? []).prefix(5) {
+            let rawCat = (family.headline.llmSportCategory ?? family.headline.category ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            let labelMatchesQuery = trimmedQuery.isEmpty
+                || family.label.localizedCaseInsensitiveContains(trimmedQuery)
+                || trimmedQuery.localizedCaseInsensitiveContains(family.label)
+                || family.familyKey.localizedCaseInsensitiveContains(trimmedQuery)
+                || (family.familyKey == "story:macro_rates" && (lowerQuery.contains("inflation") || lowerQuery.contains("fed") || lowerQuery.contains("rate")))
+            guard labelMatchesQuery else { continue }
 
-        // 3. Real served topical families (`Oscars`, `Fed & Rates`, `Inflation`, etc.)
-        for family in (response.futuresFamilies ?? []).prefix(3) {
-            let rawCat = (family.headline.llmSportCategory ?? family.headline.category ?? "").lowercased()
-            let catDisplay = rawCat.isEmpty ? "Subject" : sportCategoryDisplayName(rawCat)
+            if family.familyKey.hasPrefix("entity:") {
+                let isSportsCat = FirstRunPair212A.explicitlySportsCategories.contains(rawCat) || sportsShortKeys.contains(rawCat)
+                let matchesReturnedTeam = teamNames.contains { $0.localizedCaseInsensitiveContains(family.label) }
+                if isSportsCat || matchesReturnedTeam {
+                    continue
+                }
+            }
+
+            let kindLabel = plainSubjectKind(label: family.label, rawCategory: rawCat)
             out.append(FirstRunSuggestion212A(
                 id: "family:\(family.familyKey)",
                 name: family.label,
-                sportOrCategoryLabel: catDisplay,
-                contextLine: nonEmpty(family.headline.name),
+                sportOrCategoryLabel: kindLabel,
+                contextLine: nil,
                 logoUrl: nil,
                 primaryColorHex: rawCat.contains("econ") ? "#005CC2" : "#B45309",
                 teamId: nil,
                 sportKey: rawCat.isEmpty ? nil : rawCat,
                 followedSubject: nil,
                 affinityCategory: rawCat.isEmpty ? nil : rawCat,
-                marketId: family.headline.id,
-                matchKeywords: [family.label, family.headline.name, query].filter { !$0.isEmpty }
+                marketId: nil,
+                matchKeywords: [family.label, trimmedQuery].filter { !$0.isEmpty }
             ))
-        }
-
-        // 4. Open / unsettled served futures matching query (never settled rows)
-        for fut in response.futures where !FeedLifecycle.settledStatuses.contains((fut.status ?? "").lowercased()) {
-            let rawCat = (fut.llmSportCategory ?? fut.category ?? fut.sport ?? "").lowercased()
-            let catDisplay = rawCat.isEmpty ? "Forecast" : sportCategoryDisplayName(rawCat)
-            var context: String?
-            if let top = fut.topOutcomes?.first {
-                let pct = top.renderedPercent ?? top.probability.map { p in Int((p > 1.0 ? p : p * 100.0).rounded()) }
-                if let pct, (1...99).contains(pct) {
-                    context = "\(top.name) \(pct)%"
-                } else {
-                    context = nonEmpty(top.name)
-                }
-            }
-            out.append(FirstRunSuggestion212A(
-                id: "fut:\(fut.id)",
-                name: fut.name,
-                sportOrCategoryLabel: catDisplay,
-                contextLine: context,
-                logoUrl: nil,
-                primaryColorHex: rawCat.contains("econ") ? "#005CC2" : "#7C3AED",
-                teamId: nil,
-                sportKey: rawCat.isEmpty ? nil : rawCat,
-                followedSubject: nil,
-                affinityCategory: rawCat.isEmpty ? nil : rawCat,
-                marketId: fut.id,
-                matchKeywords: [fut.name, fut.topOutcomes?.first?.name ?? "", query].filter { !$0.isEmpty }
-            ))
-            if out.count >= 12 { break }
         }
 
         return mergeDeduplicating(out)
