@@ -58,6 +58,12 @@ from app.utils.discover_fun_tags import (
     load_fun_markets_registry,
 )
 from app.utils.roundup_containers import validate_roundup_definition
+from app.utils.set_quality_13544 import (
+    build_row_context_line,
+    build_set_selection_explainer,
+    check_scout_no_repeated_rows,
+    check_scout_single_measure_family,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1092,6 +1098,7 @@ def validate_scout_proposed_set(
     min_volume: float = FUN_TAG_DEFAULT_MIN_LIFETIME_VOLUME,
     min_members: int = SCOUT_MIN_LIVE_MEMBERS,
     now: Optional[datetime] = None,
+    enforce_set_quality_13544: bool = True,
 ) -> tuple[Optional[ScoutValidatedSet], Optional[str]]:
     """Run all code-enforced checks on one model-proposed set."""
     slug = _slugify(proposal.slug or proposal.name)
@@ -1155,12 +1162,21 @@ def validate_scout_proposed_set(
         or "Separate markets grouped together. They do not add up to 100%."
     )
 
+    quality_checks = (
+        (
+            check_scout_single_measure_family(deduped_rows),
+            check_scout_no_repeated_rows(deduped_rows),
+        )
+        if enforce_set_quality_13544
+        else ()
+    )
     for rule_err in (
         check_scout_voice_words(name, kicker, why, footer),
         check_scout_no_mechanical_sales_downloads(name, why, deduped_rows),
         check_scout_no_politics_only_set(category, name, deduped_rows),
         check_scout_map_look_places(look, deduped_rows),
         check_scout_blurb_matches_members(why, deduped_rows, dropped_rows),
+        *quality_checks,
     ):
         if rule_err is not None:
             return None, rule_err
@@ -1203,10 +1219,11 @@ def build_scout_rule_file_definition(
     (never a bare hand list of market IDs). ``look == "faces"`` enforces
     ``image_credit_required: true`` per Ruling 195-A.
     """
+    card_rows_limit = min(5, len(validated_set.members))
     rule: dict[str, Any] = {
         "producer": "fun_scout_set",
         "min_numbered_members": SCOUT_MIN_LIVE_MEMBERS,
-        "card_rows": min(5, len(validated_set.members)),
+        "card_rows": card_rows_limit,
         "twins": "dedupe",
         "normalize": False,
         "relation": "same_subject",
@@ -1221,6 +1238,17 @@ def build_scout_rule_file_definition(
             rule["template"] = validated_set.template
     else:
         rule["selector"] = {"fun_tag": validated_set.slug}
+
+    row_contexts = {
+        str(m.market_id): ctx
+        for m in validated_set.members
+        if (ctx := build_row_context_line(m)) is not None
+    }
+    selection_explainer = build_set_selection_explainer(
+        shown_count=card_rows_limit,
+        pool_size=len(validated_set.members),
+        slug=validated_set.slug,
+    )
 
     definition: dict[str, Any] = {
         "slug": validated_set.slug,
@@ -1246,6 +1274,8 @@ def build_scout_rule_file_definition(
             "created_at": created_at.astimezone(timezone.utc).isoformat(),
             "verified_member_count": len(validated_set.members),
             "fun_tag": validated_set.slug,
+            "row_contexts": row_contexts,
+            "selection_explainer": selection_explainer,
         },
         "rule": rule,
     }
@@ -1566,7 +1596,8 @@ def run_scout_set_writing_pass(
     """Run the Claude set-writing pass to propose novel Discover sets."""
     system_prompt = (
         "You are Bain Luck's nightly Fun Scout. Your job is to invent 20 to 26 crisp, "
-        "shareable sets of prediction markets that are genuinely better together "
+        "shareable sets of prediction markets (aim for 25 to 26 clean sets so at least 22 pass every code check) "
+        "that are genuinely better together "
         'than alone — the kind a person texts to a friend (e.g. "Will it ever '
         'come out?", "White Christmas", "How 2026 gets summed up").\n'
         "Coverage rule: FIRST write one strong set for EVERY non-empty `group` listed in "
@@ -1592,6 +1623,16 @@ def run_scout_set_writing_pass(
         "7. No politics-only, cabinet/government-exit, or routine election sets.\n"
         "8. Taste guard: no named person's pregnancy, health, affairs, divorce, arrest, trial, or death "
         "(engagements are allowed); no war/violence/nukes. Never repeat a retired/down-graded set.\n"
+        "9. One kind of measure per set (#13544): NEVER mix incompatible measures in one set "
+        "(e.g. never mix box-office dollars with Rotten Tomatoes % scores, open-ended `...by?` / `When will` "
+        "timing ladders with fixed-deadline yes/no questions, rainfall/temperature counts with binary "
+        "event checks, or `#1` winner questions with `#2`/`#3` ordinal placement questions).\n"
+        "10. No repeated rows (#13544): NEVER put two markets in the same set that ask the same "
+        "question in different words, restate the same award/title, or compare sibling ordinal ranks "
+        "of the same contest (like `#1` beside `#2`/`Top 5` of the same list).\n"
+        "11. Selection clarity & zero invented readings (196-A): pick the 4–6 highest-signal markets "
+        "that cleanly share one measure, and never invent or guess unverified real-world prices, scores, "
+        "temperatures, or statistics in `name`, `why_better_together`, or `footer`.\n"
         "Return strict JSON only:\n"
         '{"sets": [{"slug": str, "name": str, "kicker": str, "category": str, '
         '"why_better_together": str, "look": "map"|"faces"|"bars", '

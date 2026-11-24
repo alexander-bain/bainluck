@@ -1631,8 +1631,13 @@ class TestStep3SetRulesAndRun3946Fixtures:
     def test_all_twenty_run_3946_sets_match_fable_rules(
         self, model_tag, proposal, expected_err_prefix
     ):
+        # Test #13102 Step-3 rules against historical Run-3946 baselines; #13544
+        # measure/dedup gates are tested explicitly in test_set_quality_gates_13544.py.
         vset, err = validate_scout_proposed_set(
-            proposal, _RUN_3946_MARKETS, now=FROZEN_NOW
+            proposal,
+            _RUN_3946_MARKETS,
+            now=FROZEN_NOW,
+            enforce_set_quality_13544=False,
         )
         if expected_err_prefix is None:
             assert err is None, f"{model_tag}/{proposal.slug} unexpectedly rejected: {err}"
