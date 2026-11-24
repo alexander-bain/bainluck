@@ -32408,12 +32408,321 @@ EVENT_HISTORY_PRE_WINDOW_SNAPSHOT_CAP = 3000
 EVENT_HISTORY_IN_WINDOW_SNAPSHOT_CAP = 6000
 
 
+_WIN_PROB_SINCE_START_LOOKBACK = timedelta(minutes=25)
+
+
+def _is_postgresql_session(db) -> bool:
+    """True when ``db`` is a PostgreSQL AsyncSession (False for SQLite / unit mocks)."""
+    if not isinstance(db, AsyncSession):
+        return False
+    try:
+        bind = db.get_bind()
+    except Exception:
+        return False
+    return getattr(getattr(bind, "dialect", None), "name", None) == "postgresql"
+
+
+def _ts_at_or_after(ts: Optional[datetime], boundary: datetime) -> bool:
+    """Timezone-normalized ``ts >= boundary`` check for pushdown fail-open guards."""
+    if ts is None:
+        return False
+    ts_utc = ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+    boundary_utc = boundary if boundary.tzinfo else boundary.replace(tzinfo=timezone.utc)
+    return ts_utc >= boundary_utc
+
+
+def _odds_bookmakers_cte_pg(event_id: int):
+    """Recursive loose index scan over ``(event_id, bookmaker)`` in ``odds_snapshots``."""
+    eid = int(event_id)
+    bookmakers = (
+        select(
+            cast(literal(eid), Integer).label("event_id"),
+            select(func.min(OddsSnapshot.bookmaker))
+            .where(OddsSnapshot.event_id == eid)
+            .scalar_subquery()
+            .label("bookmaker"),
+        )
+        .cte("odds_bookmakers", recursive=True)
+    )
+    prev = bookmakers.alias("prev_bookmaker")
+    return bookmakers.union_all(
+        select(
+            prev.c.event_id,
+            select(func.min(OddsSnapshot.bookmaker))
+            .where(
+                OddsSnapshot.event_id == prev.c.event_id,
+                OddsSnapshot.bookmaker > prev.c.bookmaker,
+            )
+            .scalar_subquery(),
+        ).where(prev.c.bookmaker.isnot(None))
+    )
+
+
+def _wp_sources_cte_pg(event_id: int):
+    """Recursive loose index scan over ``(event_id, source)`` in ``win_prob_snapshots``."""
+    from app.models.models import WinProbSnapshot
+
+    eid = int(event_id)
+    sources = (
+        select(
+            cast(literal(eid), Integer).label("event_id"),
+            select(func.min(WinProbSnapshot.source))
+            .where(WinProbSnapshot.event_id == eid)
+            .scalar_subquery()
+            .label("source"),
+        )
+        .cte("wp_sources", recursive=True)
+    )
+    prev = sources.alias("prev_source")
+    return sources.union_all(
+        select(
+            prev.c.event_id,
+            select(func.min(WinProbSnapshot.source))
+            .where(
+                WinProbSnapshot.event_id == prev.c.event_id,
+                WinProbSnapshot.source > prev.c.source,
+            )
+            .scalar_subquery(),
+        ).where(prev.c.source.isnot(None))
+    )
+
+
+def _build_odds_window_query_pg(
+    event_id: int,
+    *,
+    lower_bound=None,
+    upper_lt=None,
+    upper_le=None,
+    limit: Optional[int] = None,
+):
+    """Composite-index LATERAL window read for ``odds_snapshots`` on PostgreSQL.
+
+    Walks distinct bookmakers via ``_odds_bookmakers_cte_pg`` and seeks inside
+    ``(event_id, bookmaker, captured_at)``, avoiding the planner's
+    ``ix_odds_snapshots_captured_at`` full-window filter trap on Sunday slates.
+    """
+    bookmakers = _odds_bookmakers_cte_pg(event_id)
+    lateral_q = select(OddsSnapshot).where(
+        OddsSnapshot.event_id == bookmakers.c.event_id,
+        OddsSnapshot.bookmaker == bookmakers.c.bookmaker,
+    )
+    if lower_bound is not None:
+        lateral_q = lateral_q.where(OddsSnapshot.captured_at >= lower_bound)
+    if upper_lt is not None:
+        lateral_q = lateral_q.where(OddsSnapshot.captured_at < upper_lt)
+    if upper_le is not None:
+        lateral_q = lateral_q.where(OddsSnapshot.captured_at <= upper_le)
+    lateral_q = lateral_q.order_by(OddsSnapshot.captured_at.asc())
+    if limit is not None:
+        lateral_q = lateral_q.limit(limit)
+    lateral_subq = lateral_q.lateral("odds_window_snap")
+    snap = aliased(OddsSnapshot, lateral_subq)
+    stmt = (
+        select(snap)
+        .select_from(bookmakers)
+        .join(lateral_subq, true())
+        .where(bookmakers.c.bookmaker.isnot(None))
+        .order_by(snap.captured_at.asc())
+    )
+    if limit is not None:
+        stmt = stmt.limit(limit)
+    return stmt
+
+
+def _build_odds_boundary_query_pg(
+    event_id: int,
+    *,
+    before: datetime,
+    end_cap=None,
+):
+    """Latest pre-window snapshot per bookmaker on PG via D2 dual-LATERAL composite seek."""
+    bookmakers = _odds_bookmakers_cte_pg(event_id)
+    clock_filters = [
+        OddsSnapshot.event_id == bookmakers.c.event_id,
+        OddsSnapshot.bookmaker == bookmakers.c.bookmaker,
+        OddsSnapshot.captured_at < before,
+    ]
+    if end_cap is not None:
+        clock_filters.append(OddsSnapshot.captured_at <= end_cap)
+    clock_subq = (
+        select(OddsSnapshot.captured_at.label("latest_clock"))
+        .where(*clock_filters)
+        .order_by(OddsSnapshot.captured_at.desc())
+        .limit(1)
+        .correlate(bookmakers)
+        .lateral("odds_boundary_clock")
+    )
+    boundary_subq = (
+        select(OddsSnapshot)
+        .where(
+            OddsSnapshot.event_id == bookmakers.c.event_id,
+            OddsSnapshot.bookmaker == bookmakers.c.bookmaker,
+            OddsSnapshot.captured_at >= clock_subq.c.latest_clock,
+            OddsSnapshot.captured_at <= clock_subq.c.latest_clock,
+        )
+        .order_by(OddsSnapshot.id.desc())
+        .limit(1)
+        .correlate(bookmakers, clock_subq)
+        .lateral("odds_boundary_snap")
+    )
+    snap = aliased(OddsSnapshot, boundary_subq)
+    return (
+        select(snap)
+        .select_from(bookmakers)
+        .join(clock_subq, true())
+        .join(boundary_subq, true())
+        .where(bookmakers.c.bookmaker.isnot(None))
+    )
+
+
+def _build_win_prob_since_start_queries_pg(
+    event_id: int,
+    *,
+    window_start: datetime,
+    end_cap=None,
+):
+    """Return ``(in_window_stmt, boundary_stmt)`` for finished ``range=since_start`` PG reads.
+
+    Starts the full-density read ``_WIN_PROB_SINCE_START_LOOKBACK`` (25 min)
+    before ``window_start`` so pre-kickoff staleness carry-forward (5 min) and
+    #9111 candle-under-live-reading suppression (20 min) match the full read,
+    while ``boundary_stmt`` fetches at most one latest older row per source so
+    sparse/pregame-only sources keep their keys and ``pre_window_omitted`` stays exact.
+    """
+    from app.models.models import WinProbSnapshot
+
+    sources = _wp_sources_cte_pg(event_id)
+    wp_window_start = window_start - _WIN_PROB_SINCE_START_LOOKBACK
+
+    in_lateral_q = select(WinProbSnapshot).where(
+        WinProbSnapshot.event_id == sources.c.event_id,
+        WinProbSnapshot.source == sources.c.source,
+        WinProbSnapshot.captured_at >= wp_window_start,
+    )
+    if end_cap is not None:
+        in_lateral_q = in_lateral_q.where(WinProbSnapshot.captured_at <= end_cap)
+    in_lateral_subq = in_lateral_q.order_by(WinProbSnapshot.captured_at.asc()).lateral(
+        "wp_window_snap"
+    )
+    in_snap = aliased(WinProbSnapshot, in_lateral_subq)
+    in_window_stmt = (
+        select(in_snap)
+        .select_from(sources)
+        .join(in_lateral_subq, true())
+        .where(sources.c.source.isnot(None))
+        .order_by(in_snap.captured_at.asc())
+    )
+
+    clock_filters = [
+        WinProbSnapshot.event_id == sources.c.event_id,
+        WinProbSnapshot.source == sources.c.source,
+        WinProbSnapshot.captured_at < wp_window_start,
+    ]
+    if end_cap is not None:
+        clock_filters.append(WinProbSnapshot.captured_at <= end_cap)
+    clock_subq = (
+        select(WinProbSnapshot.captured_at.label("latest_clock"))
+        .where(*clock_filters)
+        .order_by(WinProbSnapshot.captured_at.desc())
+        .limit(1)
+        .correlate(sources)
+        .lateral("wp_boundary_clock")
+    )
+    boundary_subq = (
+        select(WinProbSnapshot)
+        .where(
+            WinProbSnapshot.event_id == sources.c.event_id,
+            WinProbSnapshot.source == sources.c.source,
+            WinProbSnapshot.captured_at >= clock_subq.c.latest_clock,
+            WinProbSnapshot.captured_at <= clock_subq.c.latest_clock,
+        )
+        .order_by(WinProbSnapshot.id.desc())
+        .limit(1)
+        .correlate(sources, clock_subq)
+        .lateral("wp_boundary_snap")
+    )
+    boundary_snap = aliased(WinProbSnapshot, boundary_subq)
+    boundary_stmt = (
+        select(boundary_snap)
+        .select_from(sources)
+        .join(clock_subq, true())
+        .join(boundary_subq, true())
+        .where(sources.c.source.isnot(None))
+    )
+    return in_window_stmt, boundary_stmt
+
+
+async def _read_odds_since_start_pg(
+    db,
+    event_id: int,
+    *,
+    window_start: datetime,
+    end_cap=None,
+) -> list:
+    """Read in-game odds rows plus one latest pre-window boundary row per bookmaker."""
+    boundary_stmt = _build_odds_boundary_query_pg(
+        event_id, before=window_start, end_cap=end_cap
+    )
+    in_stmt = _build_odds_window_query_pg(
+        event_id,
+        lower_bound=window_start,
+        upper_le=end_cap,
+        limit=EVENT_HISTORY_IN_WINDOW_SNAPSHOT_CAP,
+    )
+    boundary_rows = (await db.execute(boundary_stmt)).scalars().all()
+    in_rows = (await db.execute(in_stmt)).scalars().all()
+    return sorted([*boundary_rows, *in_rows], key=lambda s: s.captured_at)
+
+
+async def _read_win_prob_since_start_pg(
+    db,
+    event_id: int,
+    *,
+    window_start: datetime,
+    end_cap=None,
+) -> list:
+    """Read in-game + 25m lookback win-prob rows plus 1 older boundary row per source."""
+    in_stmt, boundary_stmt = _build_win_prob_since_start_queries_pg(
+        event_id, window_start=window_start, end_cap=end_cap
+    )
+    boundary_rows = (await db.execute(boundary_stmt)).scalars().all()
+    in_rows = (await db.execute(in_stmt)).scalars().all()
+    return sorted([*boundary_rows, *in_rows], key=lambda s: s.captured_at)
+
+
+async def _count_pre_window_venue_win_prob_pg(
+    db,
+    event_id: int,
+    *,
+    before: datetime,
+    end_cap=None,
+    limit: int,
+) -> int:
+    """Bounded count of pre-window venue rows so ``plan_on_demand_fill`` stays exact."""
+    if limit <= 0:
+        return 0
+    from app.models.models import WinProbSnapshot
+
+    subq = select(WinProbSnapshot.id).where(
+        WinProbSnapshot.event_id == int(event_id),
+        WinProbSnapshot.source.in_(("kalshi", "polymarket")),
+        WinProbSnapshot.captured_at < before,
+    )
+    if end_cap is not None:
+        subq = subq.where(WinProbSnapshot.captured_at <= end_cap)
+    subq = subq.order_by(WinProbSnapshot.captured_at.desc()).limit(limit).subquery()
+    count_val = (await db.execute(select(func.count()).select_from(subq))).scalar_one()
+    return int(count_val or 0)
+
+
 async def _snapshots_with_split_budget(
     db,
     base_query,
     *,
     split_at,
     pre_window_extra=None,
+    event_id: Optional[int] = None,
+    end_cap=None,
 ):
     """Read odds snapshots giving the rows the chart draws a budget of their own.
 
@@ -32470,33 +32779,55 @@ async def _snapshots_with_split_budget(
     "everything older" but the narrower set the old OR admitted: a snapshot
     banked before the cutoff that was still valid inside it.
     """
+    use_pg_lateral = event_id is not None and _is_postgresql_session(db)
     if split_at is None:
-        result = await db.execute(
-            base_query.order_by(OddsSnapshot.captured_at).limit(
+        stmt = (
+            _build_odds_window_query_pg(
+                event_id,
+                upper_le=end_cap,
+                limit=(
+                    EVENT_HISTORY_PRE_WINDOW_SNAPSHOT_CAP
+                    + EVENT_HISTORY_IN_WINDOW_SNAPSHOT_CAP
+                ),
+            )
+            if use_pg_lateral
+            else base_query.order_by(OddsSnapshot.captured_at).limit(
                 EVENT_HISTORY_PRE_WINDOW_SNAPSHOT_CAP
                 + EVENT_HISTORY_IN_WINDOW_SNAPSHOT_CAP
             )
         )
+        result = await db.execute(stmt)
         return list(result.scalars().all())
 
-    pre_query = base_query.where(OddsSnapshot.captured_at < split_at)
-    if pre_window_extra is not None:
-        pre_query = pre_query.where(pre_window_extra)
-    pre_rows = (
-        await db.execute(
-            pre_query.order_by(OddsSnapshot.captured_at).limit(
-                EVENT_HISTORY_PRE_WINDOW_SNAPSHOT_CAP
-            )
+    if use_pg_lateral and pre_window_extra is None:
+        pre_stmt = _build_odds_window_query_pg(
+            event_id,
+            upper_lt=split_at,
+            upper_le=end_cap,
+            limit=EVENT_HISTORY_PRE_WINDOW_SNAPSHOT_CAP,
         )
-    ).scalars().all()
+    else:
+        pre_query = base_query.where(OddsSnapshot.captured_at < split_at)
+        if pre_window_extra is not None:
+            pre_query = pre_query.where(pre_window_extra)
+        pre_stmt = pre_query.order_by(OddsSnapshot.captured_at).limit(
+            EVENT_HISTORY_PRE_WINDOW_SNAPSHOT_CAP
+        )
+    pre_rows = (await db.execute(pre_stmt)).scalars().all()
 
-    in_rows = (
-        await db.execute(
-            base_query.where(OddsSnapshot.captured_at >= split_at)
-            .order_by(OddsSnapshot.captured_at)
-            .limit(EVENT_HISTORY_IN_WINDOW_SNAPSHOT_CAP)
+    in_stmt = (
+        _build_odds_window_query_pg(
+            event_id,
+            lower_bound=split_at,
+            upper_le=end_cap,
+            limit=EVENT_HISTORY_IN_WINDOW_SNAPSHOT_CAP,
         )
-    ).scalars().all()
+        if use_pg_lateral
+        else base_query.where(OddsSnapshot.captured_at >= split_at)
+        .order_by(OddsSnapshot.captured_at)
+        .limit(EVENT_HISTORY_IN_WINDOW_SNAPSHOT_CAP)
+    )
+    in_rows = (await db.execute(in_stmt)).scalars().all()
 
     # Re-sorted rather than concatenated. Both halves come back ascending and
     # the two ranges cannot interleave, so `pre + in` is already ordered — but
@@ -33711,6 +34042,22 @@ def one_row_per_bookmaker_in_bucket(snaps: list) -> list:
 #: or ranges never share (#11186's lesson: equal hours is not the same view).
 #: The route reads no principal, so the key needs none. What is shared is the
 #: serialized body and its Cache-Control, never a session or an ORM row.
+def _encode_history_payload(payload: dict) -> bytes:
+    """Serialize chart history payload without per-dict ``jsonable_encoder`` overhead when pure JSON."""
+    try:
+        return json.dumps(
+            payload,
+            ensure_ascii=False,
+            allow_nan=False,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    except (TypeError, ValueError):
+        from fastapi.encoders import jsonable_encoder
+        from fastapi.responses import JSONResponse
+
+        return JSONResponse(content=jsonable_encoder(payload)).body
+
+
 _HISTORY_FRESH_BUILDS: dict[tuple, tuple[float, object]] = {}
 
 
@@ -33733,9 +34080,6 @@ async def get_event_odds_history_cached(
     the reason it is process memory only: `utils/event_history_cache.py`.
     """
     import asyncio as _asyncio
-
-    from fastapi.encoders import jsonable_encoder
-    from fastapi.responses import JSONResponse
 
     from app.utils import event_history_cache as ehc
     from app.utils import request_cache as _rc
@@ -33762,7 +34106,7 @@ async def get_event_odds_history_cached(
             )
         finally:
             ehc.end_marks(token)
-        body = JSONResponse(content=jsonable_encoder(payload)).body
+        body = _encode_history_payload(payload)
         cache_control = sub.headers.get("cache-control")
         if publish:
             ehc.write(key, body, cache_control, ehc.lease_for(marks, payload))
@@ -34054,6 +34398,11 @@ async def get_event_odds_history(
     end_cap = None
     end_cap_relaxed = False
     snapshots_override = None
+    _since_start_window = None
+    since_start_pushed = False
+    prefetched_wp_snapshots = None
+    prefetched_espn_snapshots = None
+    _series_single_id = oriented_series_ids[0] if len(oriented_series_ids) == 1 else None
     if is_stale_open:
         # No cutoff and no end cap — see `_event_started_long_ago_unsettled` on
         # why `commence_time` cannot be trusted to bound this cohort.
@@ -34069,6 +34418,7 @@ async def get_event_odds_history(
                 OddsSnapshot.event_id.in_(oriented_series_ids)
             ),
             split_at=event.commence_time,
+            event_id=_series_single_id,
         )
         cutoff = None
     elif is_finished:
@@ -34098,13 +34448,39 @@ async def get_event_odds_history(
         )
         if end_cap:
             query = query.where(OddsSnapshot.captured_at <= end_cap)
-        # #6921: the game gets a budget of its own. `_domain_start` for a
-        # finished event is `commence_time`, so that is the boundary between the
-        # months of pre-season drift the "All" range compresses onto a few
-        # pixels and the span the chart is actually a chart of.
-        snapshots_override = await _snapshots_with_split_budget(
-            db, query, split_at=event.commence_time
-        )
+
+        if (
+            chart_range == EVENT_HISTORY_RANGE_SINCE_START
+            and event.commence_time is not None
+            and not _commence_time_is_venue_expiration(event)
+            and _series_single_id is not None
+            and _is_postgresql_session(db)
+        ):
+            _ct = event.commence_time
+            if _ct.tzinfo is None:
+                _ct = _ct.replace(tzinfo=timezone.utc)
+            _since_start_window = _ct.replace(second=0, microsecond=0)
+            since_start_pushed = True
+
+        # #6921 / #13606: the game gets a budget of its own, and finished
+        # `range=since_start` PG reads push the window down to the composite
+        # `(event_id, bookmaker, captured_at)` index rather than reading months
+        # of pre-kickoff history only to trim it at the end.
+        if since_start_pushed:
+            snapshots_override = await _read_odds_since_start_pg(
+                db,
+                _series_single_id,
+                window_start=_since_start_window,
+                end_cap=end_cap,
+            )
+        else:
+            snapshots_override = await _snapshots_with_split_budget(
+                db,
+                query,
+                split_at=event.commence_time,
+                event_id=_series_single_id,
+                end_cap=end_cap,
+            )
         cutoff = None
 
         # live/068: a cap that lands before the first point is not trimming a
@@ -34130,12 +34506,15 @@ async def get_event_odds_history(
             if await _end_cap_hides_every_point(db, event_id, end_cap):
                 end_cap = None
                 end_cap_relaxed = True
+                since_start_pushed = False
                 snapshots_override = await _snapshots_with_split_budget(
                     db,
                     select(OddsSnapshot).where(
                         OddsSnapshot.event_id.in_(oriented_series_ids)
                     ),
                     split_at=event.commence_time,
+                    event_id=_series_single_id,
+                    end_cap=None,
                 )
     else:
         # Include snapshots where:
@@ -34165,8 +34544,59 @@ async def get_event_odds_history(
                 # Include if valid_until is NULL (snapshot never superseded)
                 OddsSnapshot.valid_until.is_(None),
             ),
+            event_id=_series_single_id,
         )
     snapshots = snapshots_override if snapshots_override is not None else []
+    if since_start_pushed:
+        _ct_norm = event.commence_time
+        if _ct_norm.tzinfo is None:
+            _ct_norm = _ct_norm.replace(tzinfo=timezone.utc)
+        _has_post_start = any(
+            _ts_at_or_after(s.captured_at.replace(second=0, microsecond=0), _ct_norm)
+            for s in snapshots
+        )
+        if not _has_post_start:
+            try:
+                prefetched_wp_snapshots = await _read_win_prob_since_start_pg(
+                    db,
+                    _series_single_id,
+                    window_start=_since_start_window,
+                    end_cap=end_cap,
+                )
+                _has_post_start = any(
+                    _ts_at_or_after(s.captured_at, _ct_norm)
+                    for s in prefetched_wp_snapshots
+                )
+            except Exception:
+                _history_mark_partial()
+                prefetched_wp_snapshots = None
+        if not _has_post_start:
+            try:
+                from app.models import ESPNSnapshot
+
+                _espn_q = select(ESPNSnapshot).where(
+                    ESPNSnapshot.event_id == event_id,
+                )
+                prefetched_espn_snapshots = (
+                    await db.execute(_espn_q.order_by(ESPNSnapshot.captured_at))
+                ).scalars().all()
+                _has_post_start = any(
+                    _ts_at_or_after(s.captured_at, _ct_norm)
+                    for s in prefetched_espn_snapshots
+                )
+            except Exception:
+                _history_mark_partial()
+                prefetched_espn_snapshots = None
+        if not _has_post_start:
+            since_start_pushed = False
+            prefetched_wp_snapshots = None
+            snapshots = await _snapshots_with_split_budget(
+                db,
+                query,
+                split_at=event.commence_time,
+                event_id=_series_single_id,
+                end_cap=end_cap,
+            )
     # #11105: where the read above may have lost rows, a per-minute book count
     # cannot be trusted. Asked of the rows as read, before the series filter.
     snapshot_read_complete_until = _snapshot_read_complete_until(
@@ -34284,8 +34714,6 @@ async def get_event_odds_history(
                 "projected_home_score": float(snap.projected_home_score) if snap.projected_home_score is not None else None,
                 "projected_away_score": float(snap.projected_away_score) if snap.projected_away_score is not None else None,
             }
-            # #8231 / #13112: the per-book line gets the consensus's refusal.
-            refuse_incoherent_projections([point_data], sport_key=_hist_sport_key)
             # #10461: additive `kind` ("recorded" / "synthetic") + `observed_at`
             # (the snapshot's original capture, never a venue trade clock), so a
             # client can tell a cutoff re-stamp from a new reading. Appended
@@ -34310,8 +34738,9 @@ async def get_event_odds_history(
                         **provenance,
                     })
 
-        # Sort by timestamp
+        # #8231 / #13112: the per-book line gets the consensus's refusal (hoisted once per bookmaker list).
         bm_points_sorted = sorted(bm_points, key=lambda p: p["timestamp"])
+        refuse_incoherent_projections(bm_points_sorted, sport_key=_hist_sport_key)
         bookmaker_history[bookmaker] = bm_points_sorted
 
     # Build score history from ScoreSnapshots
@@ -34392,15 +34821,19 @@ async def get_event_odds_history(
     espn_history = []
     try:
         from app.models import ESPNSnapshot
-        espn_query = select(ESPNSnapshot).where(
-            ESPNSnapshot.event_id == event_id,
-        )
-        if cutoff is not None:
-            espn_query = espn_query.where(ESPNSnapshot.captured_at >= cutoff)
-        espn_result = await db.execute(
-            espn_query.order_by(ESPNSnapshot.captured_at)
-        )
-        espn_snapshots = espn_result.scalars().all()
+
+        if prefetched_espn_snapshots is not None:
+            espn_snapshots = prefetched_espn_snapshots
+        else:
+            espn_query = select(ESPNSnapshot).where(
+                ESPNSnapshot.event_id == event_id,
+            )
+            if cutoff is not None:
+                espn_query = espn_query.where(ESPNSnapshot.captured_at >= cutoff)
+            espn_result = await db.execute(
+                espn_query.order_by(ESPNSnapshot.captured_at)
+            )
+            espn_snapshots = espn_result.scalars().all()
 
         espn_history = [
             {
@@ -34452,17 +34885,27 @@ async def get_event_odds_history(
             event_pre_kickoff,
         )
 
-        wp_query = select(WinProbSnapshot).where(
-            WinProbSnapshot.event_id.in_(oriented_series_ids),
-        )
-        if cutoff is not None:
-            wp_query = wp_query.where(WinProbSnapshot.captured_at >= cutoff)
-        if is_finished and end_cap:
-            wp_query = wp_query.where(WinProbSnapshot.captured_at <= end_cap)
-        wp_result = await db.execute(
-            wp_query.order_by(WinProbSnapshot.captured_at)
-        )
-        wp_snapshots = wp_result.scalars().all()
+        if prefetched_wp_snapshots is not None:
+            wp_snapshots = prefetched_wp_snapshots
+        elif since_start_pushed:
+            wp_snapshots = await _read_win_prob_since_start_pg(
+                db,
+                _series_single_id,
+                window_start=_since_start_window,
+                end_cap=end_cap,
+            )
+        else:
+            wp_query = select(WinProbSnapshot).where(
+                WinProbSnapshot.event_id.in_(oriented_series_ids),
+            )
+            if cutoff is not None:
+                wp_query = wp_query.where(WinProbSnapshot.captured_at >= cutoff)
+            if is_finished and end_cap:
+                wp_query = wp_query.where(WinProbSnapshot.captured_at <= end_cap)
+            wp_result = await db.execute(
+                wp_query.order_by(WinProbSnapshot.captured_at)
+            )
+            wp_snapshots = wp_result.scalars().all()
 
         # Group by source, taking each source's series from ONE row (#3810).
         # Two rows' readings of one source are two partial recordings of the
@@ -35489,9 +35932,12 @@ async def get_event_odds_history(
                         _trusted_until is None or end_cap < _trusted_until
                     ):
                         _trusted_until = end_cap
-                    _trusted_from = (
-                        cutoff + _BOOK_FLOOR_POLL_TOLERANCE if cutoff is not None else None
-                    )
+                    if cutoff is not None:
+                        _trusted_from = cutoff + _BOOK_FLOOR_POLL_TOLERANCE
+                    elif since_start_pushed and _since_start_window is not None:
+                        _trusted_from = _since_start_window
+                    else:
+                        _trusted_from = None
                     # The value each minute weighs is the headline's consensus
                     # over every standing book, not the books that repriced in
                     # it. Before the floor, so a span that closes returns the
@@ -36046,13 +36492,36 @@ async def get_event_odds_history(
     # decides and wins the claim; this line spends it.
     on_demand_backfill = None
     try:
-        from app.tasks.event_chart_backfill import plan_on_demand_fill
+        from app.tasks.event_chart_backfill import (
+            THIN_MAX_EXPECTED_POINTS,
+            plan_on_demand_fill,
+        )
 
         venue_points = sum(
             len(points)
             for source_key, points in win_prob_history.items()
             if source_key in ("kalshi", "polymarket")
         )
+        if (
+            since_start_pushed
+            and venue_points < THIN_MAX_EXPECTED_POINTS
+            and _since_start_window is not None
+        ):
+            _wp_floor = _since_start_window - _WIN_PROB_SINCE_START_LOOKBACK
+            _in_or_near_venue = sum(
+                1
+                for source_key in ("kalshi", "polymarket")
+                for pt in win_prob_history.get(source_key, ())
+                if (ts := pt.get("timestamp")) is not None
+                and _ts_at_or_after(datetime.fromisoformat(ts), _wp_floor)
+            )
+            venue_points = _in_or_near_venue + await _count_pre_window_venue_win_prob_pg(
+                db,
+                _series_single_id,
+                before=_wp_floor,
+                end_cap=end_cap,
+                limit=THIN_MAX_EXPECTED_POINTS - _in_or_near_venue,
+            )
         on_demand_backfill = await plan_on_demand_fill(
             db, event, served_points=venue_points
         )
