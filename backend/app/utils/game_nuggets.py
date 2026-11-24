@@ -1161,13 +1161,24 @@ def _plain_oddity_claim(
     low_m = mname.lower()
     low_o = oname.lower()
 
-    # Touchdown scorer markets ("1st Touchdown: Mike Gesicki", "Anytime Touchdown Scorer")
-    if "touchdown" in low_m or "touchdown" in low_o:
+    # Touchdown scorer markets ("1st Touchdown: Mike Gesicki", "Chase Brown: Anytime Touchdown")
+    if "touchdown" in low_m or "touchdown" in low_o or "first td" in low_m:
+        if "team first td" in low_m or re.search(
+            r"\b(?:1st|first)\s+(?!touchdown\b)[a-z0-9'.-]+\s+touchdown\b", low_m
+        ):
+            return None
         scorer = ""
         if ":" in mname:
             left, right = mname.split(":", 1)
             if "touchdown" in left.lower() and right.strip():
                 scorer = right.strip()
+            elif (
+                "touchdown" in right.lower()
+                and "touchdown" not in left.lower()
+                and left.strip()
+                and low_o in {"yes", ""}
+            ):
+                scorer = left.strip()
         if not scorer and low_o not in {"yes", "no", "over", "under", ""}:
             scorer = oname
         if scorer and "total" not in low_m and _looks_like_clean_claim(scorer):
@@ -1303,6 +1314,8 @@ def _format_player_prop_expectation(
         "passing_interceptions": ("interceptions", False),
         "three_pointers": ("three-pointers", False),
     }
+    if canonical_stat == "touchdowns" and num_str == "1":
+        return f"{player_name} scores a touchdown"
     if canonical_stat in yard_phrases:
         noun, is_yards = yard_phrases[canonical_stat]
         return f"{poss} {noun} line is {num_str}{' yards' if is_yards else ''}"
@@ -2185,7 +2198,14 @@ def _extract_candidates(
             is_set_line=True,
         )
         mid = row.get("_market_id")
-        dkey = f"oddities:{claim.lower()}"
+        if claim.endswith(" scores the first touchdown"):
+            dkey = "oddities:first_td"
+        elif claim.endswith(" scores the last touchdown"):
+            dkey = "oddities:last_td"
+        elif claim.endswith(" scores a touchdown"):
+            dkey = "oddities:anytime_td"
+        else:
+            dkey = f"oddities:{claim.lower()}"
         cand = _candidate_dict(
             nid=f"oddities:{mid or len(best_oddities)}:{oname.lower()}",
             kind="oddities",
@@ -2205,7 +2225,8 @@ def _extract_candidates(
             dedup_key=dkey,
             is_even_line=is_even,
         )
-        if dkey not in best_oddities or cand["score"] > best_oddities[dkey]["score"]:
+        cur = best_oddities.get(dkey)
+        if cur is None or (cand["score"], cand["probability"]) > (cur["score"], cur["probability"]):
             best_oddities[dkey] = cand
     candidates.extend(best_oddities.values())
 
@@ -2246,11 +2267,13 @@ def rank_game_nuggets(
 
     selected: list[dict[str, Any]] = []
     selected_ids: set[str] = set()
+    seen_claims: set[str] = set()
     kind_counts: Counter[str] = Counter()
     seen_subject_kinds: set[tuple[str, str]] = set()
 
     def _take(item: dict[str, Any]) -> None:
         selected_ids.add(item["id"])
+        seen_claims.add(str(item["claim"]).strip().lower())
         kind_counts[item["kind"]] += 1
         seen_subject_kinds.add((item["kind"], str(item["subject"]["name"]).lower()))
         clean = {k: v for k, v in item.items() if k not in {"_dedup_key", "_is_even_line"}}
@@ -2259,15 +2282,16 @@ def rank_game_nuggets(
 
     # Pass 1 (variety guarantee): pick the top-scoring nugget from each available kind
     # in score order so >= 4 kinds always enter the first eight.
-    top_per_kind: dict[str, dict[str, Any]] = {}
-    for item in pool:
-        k = item["kind"]
-        if k not in top_per_kind:
-            top_per_kind[k] = item
     first_eight_cap = min(clamped_limit, NUGGET_FIRST_EIGHT)
-    for item in sorted(top_per_kind.values(), key=lambda c: (-float(c["score"]), c["kind"], c["id"])):
+    seen_pass1_kinds: set[str] = set()
+    for item in pool:
         if len(selected) >= first_eight_cap:
             break
+        k = item["kind"]
+        ckey = str(item["claim"]).strip().lower()
+        if k in seen_pass1_kinds or ckey in seen_claims:
+            continue
+        seen_pass1_kinds.add(k)
         _take(item)
 
     # Pass 2 (first 8): fill remaining slots up to 8 respecting <= 2 per kind
@@ -2278,7 +2302,7 @@ def rank_game_nuggets(
         for item in pool:
             if len(selected) >= first_eight_cap:
                 break
-            if item["id"] in selected_ids:
+            if item["id"] in selected_ids or str(item["claim"]).strip().lower() in seen_claims:
                 continue
             if kind_counts[item["kind"]] >= NUGGET_MAX_PER_KIND_FIRST_EIGHT:
                 continue
@@ -2291,7 +2315,7 @@ def rank_game_nuggets(
     for item in pool:
         if len(selected) >= clamped_limit:
             break
-        if item["id"] in selected_ids:
+        if item["id"] in selected_ids or str(item["claim"]).strip().lower() in seen_claims:
             continue
         if kind_counts[item["kind"]] >= NUGGET_MAX_PER_KIND_EXTENDED:
             continue

@@ -1179,3 +1179,44 @@ def test_round_four_bengals_commanders_fixture_middle_of_ladder_and_named_templa
     assert "Over 67.5 total points, up 12 points since pregame" in moved_claims
     assert "Jayden Daniels 3+ passing touchdowns, up 7 points in 24 hours" in moved_claims
     assert all(match_claim_template(c) is not None for c in moved_claims)
+
+    # Real-data TD edge cases: drop team-first-TD, keep highest-probability 1st TD scorer only,
+    # parse "<Player>: Anytime Touchdown", and state 1-TD ladder rung as "{player} scores a touchdown".
+    td_res = rank_game_nuggets(
+        event_info={**_EVENT_INFO, "status": "scheduled"},
+        game_markets={
+            "player_props": [
+                {
+                    "_market_id": 8060,
+                    "player": {"key": "blake corum", "name": "Blake Corum"},
+                    "stat": {"key": "touchdowns", "label": "Touchdowns"},
+                    "line": {"kind": "count_at_least", "value": 1, "label": "1+"},
+                    "over_probability": 0.42,
+                    "side": "over",
+                    "observed_at": _fresh_ts(0.2),
+                    "source_mark": {"state": "single"},
+                },
+            ],
+            "other": [
+                {"_market_id": 8061, "market_name": "Cincinnati vs Washington: 1st Washington Touchdown", "outcome_name": "Luke McCaffrey", "probability": 0.14, "observed_at": _fresh_ts(0.2), "source_mark": {"state": "single"}},
+                {"_market_id": 8062, "market_name": "Ben Sinnott: Team First TD (Washington Commanders)", "outcome_name": "Yes", "probability": 0.12, "observed_at": _fresh_ts(0.2), "source_mark": {"state": "single"}},
+                {"_market_id": 8063, "market_name": "Cincinnati vs Washington: 1st Touchdown", "outcome_name": "Colbie Young", "probability": 0.02, "observed_at": _fresh_ts(0.2), "source_mark": {"state": "single"}},
+                {"_market_id": 8064, "market_name": "Cincinnati vs Washington: 1st Touchdown", "outcome_name": "Chase Brown", "probability": 0.19, "observed_at": _fresh_ts(0.2), "source_mark": {"state": "single"}},
+                {"_market_id": 8065, "market_name": "Chase Brown: Anytime Touchdown", "outcome_name": "Yes", "probability": 0.56, "observed_at": _fresh_ts(0.2), "source_mark": {"state": "single"}},
+                {"_market_id": 8066, "market_name": "Blake Corum: Anytime Touchdown", "outcome_name": "Yes", "probability": 0.38, "observed_at": _fresh_ts(0.2), "source_mark": {"state": "single"}},
+            ],
+        },
+        related_futures={},
+        team_progression={},
+        limit=12,
+        now=NOW,
+    )
+    td_claims = [n["claim"] for n in td_res["nuggets"]]
+    assert len(td_claims) == len(set(td_claims))
+    assert "Blake Corum scores a touchdown" in td_claims
+    assert "Chase Brown scores the first touchdown" in td_claims
+    assert all("Colbie Young" not in c for c in td_claims)
+    assert all("Luke McCaffrey" not in c for c in td_claims)
+    assert all("Ben Sinnott" not in c for c in td_claims)
+    assert td_res["excluded_counts"]["unreadable_claim"] >= 2
+    assert all(match_claim_template(c) is not None for c in td_claims)
