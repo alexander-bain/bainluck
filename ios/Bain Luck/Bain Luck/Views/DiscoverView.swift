@@ -1475,7 +1475,6 @@ struct DiscoverView: View {
                 }
             }
         }
-        .environment(\.liveOddsRefreshActive, vm.livePriceRefreshRunning)
         .modifier(ConditionalScrollAnchorModifier(anchorId: isGuessSlot ? gi.id : nil))
         .onDisappear { vm.setPriceCardsVisible(owner: gi.id, cards: [], visible: false) }
         .onChange(of: DiscoverPriceRefresh.leaves(gi.priceCards).map(\.id)) { _, _ in

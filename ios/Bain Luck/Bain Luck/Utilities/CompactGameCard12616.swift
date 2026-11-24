@@ -5,11 +5,11 @@ private struct LiveOddsRefreshActiveKey13634: EnvironmentKey {
 }
 
 extension EnvironmentValues {
-    /// Fail-closed live-tenths gate (#13634): cards and charts print tenths
-    /// (`54.2%`) ONLY while their owning surface has an active, healthy live
-    /// refresh running. Non-refreshing surfaces (Search, Team, League, Sport,
-    /// Hub, My Stuff landing) and offline/stopped/cached feeds inherit `false`
-    /// and print whole percents (`54%`) instead of frozen tenths.
+    /// Direction 395 (#12538 / #13634) — Tenths belong ONLY on numbers pushed at
+    /// sub-second stream pace. Cards refreshed on a timer (Discover 30s, Sports 30s,
+    /// My Stuff 15s) and non-refreshing surfaces leave this default `false` in 1.0.8
+    /// so every feed/card prints whole percents (`54%`). Kept as the fail-closed
+    /// gate for 1.0.9 per-card sub-second streams (`#10090`).
     var liveOddsRefreshActive: Bool {
         get { self[LiveOddsRefreshActiveKey13634.self] }
         set { self[LiveOddsRefreshActiveKey13634.self] = newValue }

@@ -4,11 +4,13 @@ import Vision
 import XCTest
 @testable import Bain_Luck
 
-/// `#13634` — Live game cards on Discover refresh chances and scores at the
-/// Sports tab's pace (`30 s`) and print tenths (`54.2%`) ONLY while that live
-/// refresh is actively running. Non-refreshing surfaces (My Stuff landing,
-/// Team, League, Sport, Search, Hub) and stopped/offline/cached states fail
-/// closed to whole percents (`54%`).
+/// `#13634` + Direction 395 (`#12538`) — Live game cards on Discover refresh
+/// chances and scores on the Sports tab's timer (`30 s`) and print **whole
+/// percents** (`54%`) across every timer-refreshed and non-refreshing surface in
+/// 1.0.8 (Discover, Sports tab, My Stuff, Search, Team, League, Sport, Hub).
+/// `liveOddsRefreshActive` / `showsLiveTenths` plumbing remains default `false`
+/// (nothing sets it `true` in 1.0.8) so 1.0.9 can turn tenths on for sub-second
+/// per-card streams. The game detail page is unchanged.
 @MainActor
 final class DiscoverLiveRefreshTenths13634Tests: XCTestCase {
 
@@ -359,20 +361,41 @@ final class DiscoverLiveRefreshTenths13634Tests: XCTestCase {
         XCTAssertTrue(vm.livePriceRefreshRunning)
         XCTAssertGreaterThanOrEqual(client.priceCallCount, 3)
 
+        let updatedEvent = try XCTUnwrap(vm.items.first?.event)
+        let prematch2 = PrematchReading.resolve(prematch: item2.event?.prematchOdds, opening: nil)
         let liveModel = DiscoverSingleGameCard190C.build(
-            event: try XCTUnwrap(vm.items.first?.event),
-            prematch: PrematchReading.resolve(prematch: item2.event?.prematchOdds, opening: nil),
-            usesPictureLayout: true,
-            showsLiveTenths: vm.livePriceRefreshRunning
+            event: updatedEvent,
+            prematch: prematch2,
+            usesPictureLayout: true
         )
-        XCTAssertEqual(liveModel.rows.map(\.primaryCell), [.probability("28.8%"), .probability("71.2%")])
+        XCTAssertEqual(liveModel.rows.map(\.primaryCell), [.probability("29%"), .probability("71%")])
         XCTAssertEqual(liveModel.rows.map(\.scoreText), ["17", "27"])
+
+        let chartModel = DiscoverPictureChart191A.build(
+            event: updatedEvent,
+            prematch: prematch2,
+            history: nil
+        )
+        XCTAssertFalse(
+            chartModel.rightEndLabel.contains("."),
+            "Direction 395: Discover picture chart 'Now' label must print whole percents/points, got: \(chartModel.rightEndLabel)"
+        )
+        let markModel = try XCTUnwrap(
+            EventCardView.resolvedCardSourceMarkPresentation(
+                event: updatedEvent,
+                canStillBeGraded: true,
+                currentAwayIsWithheld: false,
+                prematch: prematch2,
+                prematchAwayIsWithheld: false
+            )
+        )
+        XCTAssertFalse(markModel.showsTenths, "Direction 395: 'Where this number comes from' sheet must print whole percents on timer-refreshed Discover cards")
 
         vm.setPriceDeliveryActive(false)
         XCTAssertFalse(vm.livePriceRefreshRunning)
     }
 
-    // MARK: - 2. Network Off / Stopped / Cached States Flip Tenths -> Whole Percents
+    // MARK: - 2. Network Off / Stopped / Cached States Keep Whole Percents & Resume Refresh
 
     func testNetworkOffFlipsDiscoverLiveCardToWholePercentsAndRecoversWhenBackOnline() async throws {
         let d0 = makeLiveEventDict(
@@ -416,19 +439,17 @@ final class DiscoverLiveRefreshTenths13634Tests: XCTestCase {
         let offlineCard = DiscoverSingleGameCard190C.build(
             event: event,
             prematch: prematch,
-            usesPictureLayout: true,
-            showsLiveTenths: vm.livePriceRefreshRunning
+            usesPictureLayout: true
         )
         XCTAssertEqual(
             offlineCard.rows.map(\.primaryCell),
             [.probability("36%"), .probability("64%")],
-            "When refresh is not running, live Discover card must print whole percents (never a frozen tenth)"
+            "When refresh is not running, live Discover card must print whole percents"
         )
         let offlineChart = DiscoverPictureChart191A.build(
             event: event,
             prematch: prematch,
-            history: nil,
-            showsLiveTenths: vm.livePriceRefreshRunning
+            history: nil
         )
         XCTAssertFalse(
             offlineChart.rightEndLabel.contains("."),
@@ -440,13 +461,12 @@ final class DiscoverLiveRefreshTenths13634Tests: XCTestCase {
                 canStillBeGraded: true,
                 currentAwayIsWithheld: false,
                 prematch: prematch,
-                prematchAwayIsWithheld: false,
-                showsLiveTenths: vm.livePriceRefreshRunning
+                prematchAwayIsWithheld: false
             )
         )
         XCTAssertFalse(offlineMark.showsTenths)
 
-        // Cached content shown behind a failed feed load also keeps tenths off.
+        // Cached content shown behind a failed feed load keeps refresh inactive.
         client.setFeedResult(.failure(URLError(.notConnectedToInternet)))
         let cachedVM = DiscoverViewModel(
             client: client,
@@ -465,7 +485,7 @@ final class DiscoverLiveRefreshTenths13634Tests: XCTestCase {
         XCTAssertTrue(cachedVM.refreshFailedShowingCache)
         XCTAssertFalse(cachedVM.livePriceRefreshRunning)
 
-        // Restore network on primary VM -> recovers automatically back to live tenths.
+        // Restore network on primary VM -> recovers automatically and moves whole percents + score.
         let d1 = makeLiveEventDict(
             awayScore: 16,
             homeScore: 26,
@@ -482,13 +502,21 @@ final class DiscoverLiveRefreshTenths13634Tests: XCTestCase {
         let recovered = await waitUntil(timeout: 3.0) {
             vm.livePriceRefreshRunning && vm.items.first?.event?.currentOdds?.homeProbability == 0.6842
         }
-        XCTAssertTrue(recovered, "Coming back online must resume refresh and live tenths")
+        XCTAssertTrue(recovered, "Coming back online must resume refresh and move live odds/score")
+        let resumedEvent = try XCTUnwrap(vm.items.first?.event)
+        let resumedCard = DiscoverSingleGameCard190C.build(
+            event: resumedEvent,
+            prematch: prematch,
+            usesPictureLayout: true
+        )
+        XCTAssertEqual(resumedCard.rows.map(\.primaryCell), [.probability("32%"), .probability("68%")])
+        XCTAssertEqual(resumedCard.rows.map(\.scoreText), ["16", "26"])
         vm.setPriceDeliveryActive(false)
     }
 
-    // MARK: - 3. Non-Refreshing Surfaces Fail Closed + Sports & My Stuff ViewModels
+    // MARK: - 3. Direction 395 Whole Percents Across 1.0.8 Surfaces & Kept 1.0.9 Plumbing
 
-    func testNonRefreshingSurfacesAndStoppedFeedsFailClosedToWholePercents() async throws {
+    func testAll108SurfacesPrintWholePercentsAndKeep109StreamGatePlumbing() async throws {
         let dict = makeLiveEventDict(
             awayScore: 14,
             homeScore: 20,
@@ -503,24 +531,37 @@ final class DiscoverLiveRefreshTenths13634Tests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suiteName) }
         let pinManager = PinManager(defaults: defaults)
 
-        // Default environment (`liveOddsRefreshActive == false`) used by Search, Team,
-        // League, SportCategory, ContainerHub, GroupingMachinery, and My Stuff landing.
-        let nonRefreshingView = EventCardView(event: liveEvent, reason: nil)
+        // Default environment (`liveOddsRefreshActive == false`) used across ALL 1.0.8 cards
+        // (Discover 30s, Sports tab 30s, My Stuff 15s, Search, Team, League, Sport, Hub).
+        let defaultEventCard = EventCardView(event: liveEvent, reason: nil)
             .environmentObject(pinManager)
             .padding(16)
-        let nonRefreshingOCR = try ocrStrings(renderAt390(nonRefreshingView)).joined(separator: " ")
-        XCTAssertTrue(nonRefreshingOCR.contains("64%") && nonRefreshingOCR.contains("36%"), "Non-refreshing surface must print whole percents: \(nonRefreshingOCR)")
-        XCTAssertFalse(nonRefreshingOCR.contains("63.6%") || nonRefreshingOCR.contains("36.4%"), "Non-refreshing surface must never print frozen tenths: \(nonRefreshingOCR)")
+        let defaultEventOCR = try ocrStrings(renderAt390(defaultEventCard)).joined(separator: " ")
+        XCTAssertTrue(defaultEventOCR.contains("64%") && defaultEventOCR.contains("36%"), "1.0.8 card surface must print whole percents: \(defaultEventOCR)")
+        XCTAssertFalse(defaultEventOCR.contains("63.6%") || defaultEventOCR.contains("36.4%"), "1.0.8 card surface must never print tenths: \(defaultEventOCR)")
 
-        // Refreshing surface (`liveOddsRefreshActive == true`, e.g., Sports tab when armed & healthy).
-        let refreshingView = EventCardView(event: liveEvent, reason: nil)
+        let defaultDiscoverCard = NativeEventDiscoverCard(
+            event: liveEvent,
+            feedContext: nil,
+            expandedContext: nil,
+            navigationPath: .constant(NavigationPath())
+        )
+        .environmentObject(pinManager)
+        .padding(14)
+        let defaultDiscoverOCR = try ocrStrings(renderAt390(defaultDiscoverCard)).joined(separator: " ")
+        XCTAssertTrue(defaultDiscoverOCR.contains("64%") && defaultDiscoverOCR.contains("36%"), "1.0.8 Discover card must print whole percents: \(defaultDiscoverOCR)")
+        XCTAssertFalse(defaultDiscoverOCR.contains("63.6%") || defaultDiscoverOCR.contains("36.4%"), "1.0.8 Discover card must never print tenths: \(defaultDiscoverOCR)")
+
+        // Kept 1.0.9 plumbing (`liveOddsRefreshActive == true`, unused in 1.0.8; reserved for
+        // per-card sub-second SSE streams in 1.0.9).
+        let streamedPlumbingCard = EventCardView(event: liveEvent, reason: nil)
             .environment(\.liveOddsRefreshActive, true)
             .environmentObject(pinManager)
             .padding(16)
-        let refreshingOCR = try ocrStrings(renderAt390(refreshingView)).joined(separator: " ")
-        XCTAssertTrue(refreshingOCR.contains("63.6%") && refreshingOCR.contains("36.4%"), "Refreshing surface must print tenths: \(refreshingOCR)")
+        let streamedPlumbingOCR = try ocrStrings(renderAt390(streamedPlumbingCard)).joined(separator: " ")
+        XCTAssertTrue(streamedPlumbingOCR.contains("63.6%") && streamedPlumbingOCR.contains("36.4%"), "1.0.9 stream opt-in plumbing must still support tenths: \(streamedPlumbingOCR)")
 
-        // FeedViewModel: liveOddsRefreshRunning tracks refreshArmed && !refreshFailed.
+        // FeedViewModel and MyStuffViewModel keep timer health tracking without setting tenths in 1.0.8.
         let feedResponse = try makeFeedResponse(itemDicts: [dict])
         let sportsClient = FailingSportsClient(feed: feedResponse)
         let sportsVM = FeedViewModel(client: sportsClient, telemetry: nil, autoRefreshEnabled: true)
@@ -533,7 +574,6 @@ final class DiscoverLiveRefreshTenths13634Tests: XCTestCase {
         XCTAssertFalse(sportsVM.liveOddsRefreshRunning)
         sportsVM.viewDidStop()
 
-        // MyStuffViewModel: non-initial refresh failure sets lastRefreshFailed -> drops liveOddsRefreshRunning.
         let myClient = FailingMyStuffClient(feed: feedResponse)
         let myVM = MyStuffViewModel(
             client: myClient,
@@ -551,7 +591,7 @@ final class DiscoverLiveRefreshTenths13634Tests: XCTestCase {
         myVM.viewDidStop()
     }
 
-    // MARK: - 4. Simulator Proof Sheet (`0:00`, `+1:00`, and `Network off` at 390pt)
+    // MARK: - 4. Simulator Proof Sheet (`0:00`, `+1:00`, and `Network off` — All Whole Percents at 390pt)
 
     func testSimulatorCaptureProofTwoMinutesApartAndNetworkOffAt390() async throws {
         let (initialDict, initialItem, nextItem): ([String: Any], FeedItem, FeedItem) = try {
@@ -639,7 +679,6 @@ final class DiscoverLiveRefreshTenths13634Tests: XCTestCase {
                 navigationPath: .constant(NavigationPath()),
                 chartHistory: chartHistory0
             )
-            .environment(\.liveOddsRefreshActive, vm.livePriceRefreshRunning)
             .environmentObject(pinManager)
             .padding(14)
             let img = renderAt390(card, scheme: .light)
@@ -647,18 +686,21 @@ final class DiscoverLiveRefreshTenths13634Tests: XCTestCase {
             return (img, text)
         }
 
-        // Capture 1: t = 0:00, live refresh running -> tenths
+        // Capture 1: t = 0:00 -> whole percents, zero decimals
         let (img0, ocr0) = try captureDiscoverCard()
-        let expected0 = CompactGameCard12616.liveTenthsStrings(
+        let wholeDuel0 = duelPercents(
             away: event0.currentOdds?.awayProbability,
             home: event0.currentOdds?.homeProbability,
-            awayIsWithheld: CompactGameCard12616.currentAwayIsWithheld(event0)
+            servedAway: event0.currentOdds?.awayRenderedPercent,
+            servedHome: event0.currentOdds?.homeRenderedPercent
         )
-        if let h0 = expected0.home, h0.contains(".") {
-            XCTAssertTrue(ocr0.contains(h0), "Capture t=0 must show live tenths \(h0): \(ocr0)")
+        if let h0 = event0.currentOdds?.homeProbability {
+            let wholeHome0 = formatProbability(h0, renderedPercent: wholeDuel0[1])
+            XCTAssertTrue(ocr0.contains(wholeHome0), "Capture t=0 must print whole percent \(wholeHome0): \(ocr0)")
         }
+        XCTAssertNil(ocr0.range(of: #"\d+\.\d+%"#, options: .regularExpression), "Capture t=0 must show zero decimals: \(ocr0)")
 
-        // Capture 2: 1 minute later (updated odds & score via DiscoverViewModel auto-refresh) -> moved tenths
+        // Capture 2: ~1 minute later -> whole percents and score moved cleanly, zero decimals
         client.setPriceReplies([
             .success(DiscoverPriceCards(items: [nextItem], dispositions: [initialItem.id: "updated"], builtAt: 201))
         ])
@@ -669,32 +711,29 @@ final class DiscoverLiveRefreshTenths13634Tests: XCTestCase {
         }
         XCTAssertTrue(moved, "DiscoverViewModel must adopt moved +1m odds and score")
         let (img1, ocr1) = try captureDiscoverCard()
-        let expected1 = CompactGameCard12616.liveTenthsStrings(
-            away: event1.currentOdds?.awayProbability,
-            home: event1.currentOdds?.homeProbability,
-            awayIsWithheld: CompactGameCard12616.currentAwayIsWithheld(event1)
-        )
-        if let h1 = expected1.home, h1.contains(".") {
-            XCTAssertTrue(ocr1.contains(h1), "Capture +1:00 must show moved live tenths \(h1): \(ocr1)")
-        }
-
-        // Capture 3: Network off -> flips immediately to whole percents, zero frozen tenths
-        client.setPriceReplies([.failure(URLError(.notConnectedToInternet))])
-        let wentOffline = await waitUntil(timeout: 6.0) { !vm.livePriceRefreshRunning }
-        XCTAssertTrue(wentOffline)
-        let (imgOffline, ocrOffline) = try captureDiscoverCard()
-        let wholeDuel = duelPercents(
+        let wholeDuel1 = duelPercents(
             away: event1.currentOdds?.awayProbability,
             home: event1.currentOdds?.homeProbability,
             servedAway: event1.currentOdds?.awayRenderedPercent,
             servedHome: event1.currentOdds?.homeRenderedPercent
         )
+        if let h1 = event1.currentOdds?.homeProbability {
+            let wholeHome1 = formatProbability(h1, renderedPercent: wholeDuel1[1])
+            XCTAssertTrue(ocr1.contains(wholeHome1), "Capture +1:00 must print moved whole percent \(wholeHome1): \(ocr1)")
+        }
+        XCTAssertNotEqual(wholeDuel0[1], wholeDuel1[1], "Capture +1:00 must show moved whole percent across the two reads")
+        XCTAssertNil(ocr1.range(of: #"\d+\.\d+%"#, options: .regularExpression), "Capture +1:00 must show zero decimals: \(ocr1)")
+
+        // Capture 3: Network off -> stays whole percents, zero decimals
+        client.setPriceReplies([.failure(URLError(.notConnectedToInternet))])
+        let wentOffline = await waitUntil(timeout: 6.0) { !vm.livePriceRefreshRunning }
+        XCTAssertTrue(wentOffline)
+        let (imgOffline, ocrOffline) = try captureDiscoverCard()
         if let homeProb = event1.currentOdds?.homeProbability {
-            let wholeHome = formatProbability(homeProb, renderedPercent: wholeDuel[1])
+            let wholeHome = formatProbability(homeProb, renderedPercent: wholeDuel1[1])
             XCTAssertTrue(ocrOffline.contains(wholeHome), "Offline capture must print whole percent \(wholeHome): \(ocrOffline)")
         }
-        let hasFractionPercent = ocrOffline.range(of: #"\d+\.\d+%"#, options: .regularExpression) != nil
-        XCTAssertFalse(hasFractionPercent, "Offline capture must contain zero fractional percentages: \(ocrOffline)")
+        XCTAssertNil(ocrOffline.range(of: #"\d+\.\d+%"#, options: .regularExpression), "Offline capture must contain zero fractional percentages: \(ocrOffline)")
 
         let env = ProcessInfo.processInfo.environment
         if let outDir = env["OUTPUT_DIR"] ?? env["TEST_RUNNER_OUTPUT_DIR"], !outDir.isEmpty {
