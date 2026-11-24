@@ -3901,33 +3901,55 @@ struct NativeGroupCard: View {
             return event.sportName ?? sportDisplayName(for: event.sport)
         }()
         let isAX = dynamicTypeSize.isAccessibilitySize
-        let rowLayout = isAX
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
-            : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
-        return rowLayout {
-            VStack(alignment: .leading, spacing: 4) {
+        return VStack(alignment: .leading, spacing: 4) {
+            if let awayProb = cardOdds?.awayProbability, let homeProb = cardOdds?.homeProbability {
+                let awayText: String = {
+                    if isLive,
+                       let t = CompactGameCard12616.liveTenthsStrings(away: awayProb, home: homeProb, awayIsWithheld: false).away {
+                        return t
+                    }
+                    return formatProbability(awayProb, renderedPercent: cardOdds?.awayRenderedPercent)
+                }()
+                let homeText: String = {
+                    if isLive,
+                       let t = CompactGameCard12616.liveTenthsStrings(away: awayProb, home: homeProb, awayIsWithheld: false).home {
+                        return t
+                    }
+                    return formatProbability(homeProb, renderedPercent: cardOdds?.homeRenderedPercent)
+                }()
+                if isAX {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(short.away)\u{00A0}\(awayText)")
+                            .font(.subheadline.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(primaryInk)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("\(short.home)\u{00A0}\(homeText)")
+                            .font(.subheadline.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(primaryInk)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } else {
+                    Text("\(short.away)\u{00A0}\(awayText) · \(short.home)\u{00A0}\(homeText)")
+                        .font(.subheadline.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(primaryInk)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
                 Text("\(short.away) at \(short.home)")
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(primaryInk)
-                    .lineLimit(isAX ? nil : 2)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(secondaryInk)
+                    .lineLimit(nil)
                     .fixedSize(horizontal: false, vertical: true)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            if let awayProb = cardOdds?.awayProbability, let homeProb = cardOdds?.homeProbability {
-                let awayText = formatProbability(awayProb, renderedPercent: cardOdds?.awayRenderedPercent)
-                let homeText = formatProbability(homeProb, renderedPercent: cardOdds?.homeRenderedPercent)
-                Text("\(short.away) \(awayText) · \(short.home) \(homeText)")
-                    .font(.subheadline.weight(.bold).monospacedDigit())
-                    .foregroundStyle(primaryInk)
-                    .lineLimit(isAX ? 2 : 1)
-                    .fixedSize(horizontal: !isAX, vertical: true)
-            }
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(secondaryInk)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .onTapGesture {
             if let collectionRef {

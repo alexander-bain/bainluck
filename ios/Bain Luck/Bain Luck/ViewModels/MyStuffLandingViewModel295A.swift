@@ -533,16 +533,12 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         let live = acc.collectedEvents.filter { pair in EventState.section(of: pair.event, now: now) == .live }
 
         // 2. Next for you (upcoming games chronologically ascending + top active followed markets;
-        // exclude past-kickoff fixtures/games even if status still says "scheduled").
+        // exclude overdue `scheduled` games beyond the app's #10094 grace window while keeping
+        // games that just started and have not yet flipped to `live`).
         let upcomingSorted = acc.collectedEvents
             .filter { pair in
-                guard EventState.section(of: pair.event, now: now) == .upcoming else {
-                    return false
-                }
-                if let kickoff = pair.event.commenceTime?.asDate, kickoff < now {
-                    return false
-                }
-                return true
+                EventState.section(of: pair.event, now: now) == .upcoming
+                    && !FeedLifecycle.scheduledKickoffHasLapsed(pair.event, now: now)
             }
             .sorted { lhs, rhs in
                 switch (lhs.event.commenceTime?.asDate, rhs.event.commenceTime?.asDate) {

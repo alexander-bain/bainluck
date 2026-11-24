@@ -195,6 +195,18 @@ final class FollowAndMyStuff295ATests: XCTestCase {
           "current_odds": {"away_probability": 0.82, "home_probability": 0.18}
         }
         """)
+        let justStartedGame = try decodeEvent("""
+        {
+          "id": 90103,
+          "sport": "basketball_nba",
+          "sport_name": "NBA",
+          "away_team": "Atlanta Hawks",
+          "home_team": "Boston Celtics",
+          "commence_time": "2026-11-24T17:58:00Z",
+          "status": "scheduled",
+          "current_odds": {"away_probability": 0.31, "home_probability": 0.69}
+        }
+        """)
         let futureGame = try decodeEvent("""
         {
           "id": 90102,
@@ -202,7 +214,7 @@ final class FollowAndMyStuff295ATests: XCTestCase {
           "sport_name": "NBA",
           "away_team": "Miami Heat",
           "home_team": "Boston Celtics",
-          "commence_time": "2026-11-25T23:30:00Z",
+          "commence_time": "2026-11-24T22:00:00Z",
           "status": "scheduled",
           "current_odds": {"away_probability": 0.36, "home_probability": 0.64}
         }
@@ -218,7 +230,7 @@ final class FollowAndMyStuff295ATests: XCTestCase {
         let vm = MyStuffLandingViewModel295A(
             defaults: defaults,
             subjectHydrator: { _ in
-                [MyStuffLandingViewModel295A.HydratedSubjectPack(events: [(pastGame, true), (futureGame, true)])]
+                [MyStuffLandingViewModel295A.HydratedSubjectPack(events: [(pastGame, true), (futureGame, true), (justStartedGame, true)])]
             },
             discoverFetcher: { emptyDiscover },
             nowProvider: { tueNov24 }
@@ -232,7 +244,11 @@ final class FollowAndMyStuff295ATests: XCTestCase {
             signedInTeamFutures: nil
         )
 
-        XCTAssertEqual(vm.nextEvents.map(\.event.id), [90102], "Past-dated Sun Nov 22 game must never sit under Next for you")
+        XCTAssertEqual(
+            vm.nextEvents.map(\.event.id),
+            [90103, 90102],
+            "Lapsed >2h scheduled game (Sun Nov 22) must be excluded while a just-started game (2m past kickoff, within #10094 grace) stays in Next for you"
+        )
     }
 
     func testGameAlertsPromptOffersOnceAndShares13083Keys() {
