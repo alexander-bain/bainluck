@@ -416,6 +416,26 @@ async def test_cu_v2_write_still_bumps_updated_at(pg_engine, monkeypatch):
     assert all(r[1] > old for r in rows), f"CU v2 wrote the profile but left updated_at at {old}: {rows}"
 
 
+async def test_cu_v2_visits_an_eligible_null_category_and_skips_crypto(pg_engine, monkeypatch):
+    from app.tasks.enrich_markets import DISCOVER_LLM_METADATA_KEY, enrich_cu_v2_profiles
+
+    async with pg_engine.begin() as conn:
+        await conn.execute(
+            text("UPDATE futures_markets SET llm_sport_category = :category, volume_24h = :volume WHERE id = :id"),
+            [{"category": None, "volume": VOLUME - 1, "id": M1},
+             {"category": "crypto", "volume": VOLUME, "id": M2}],
+        )
+    stub = _LLMStub(_cu_payload())
+    _install(monkeypatch, stub)
+
+    await enrich_cu_v2_profiles(limit=1)
+
+    rows = await _rows(pg_engine)
+    assert stub.calls == 1
+    assert DISCOVER_LLM_METADATA_KEY in rows[M1]["market_metadata"]
+    assert DISCOVER_LLM_METADATA_KEY not in rows[M2]["market_metadata"]
+
+
 async def test_cu_v2_a_failed_llm_call_rolls_back_only_its_own_market(pg_engine, monkeypatch):
     from app.tasks.enrich_markets import DISCOVER_LLM_METADATA_KEY, enrich_cu_v2_profiles
 

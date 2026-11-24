@@ -43,7 +43,11 @@ from app.utils.cu_frame import (
     DROP_NO_MEASURE,
     DROP_NOT_AN_OBJECT,
     DROP_UNIT_NOT_IN_TITLE,
+    DROP_UNKNOWN_MEASURE,
+    DROP_VALUE_IS_DATE,
     DROP_VALUE_NOT_IN_TITLE,
+    DROP_VALUE_NOT_NUMERIC,
+    FRAME_SLOTS,
     NO_SUBJECT_MARKER,
     UNRESOLVED_PREFIX,
     clean_entity_mentions,
@@ -179,11 +183,53 @@ class TestFrameSanitizer:
             "value": "15,000",
             "unit": "Points",
             "horizon_kind": "multi_year",
+            "window_date": None,
         }
 
-    def test_all_five_slots_are_always_present(self):
+    def test_all_frame_slots_are_always_present(self):
         frame, _ = sanitize_cu_frame({"measure": "points"}, title=T_CLARK)
-        assert set(frame) == {"measure", "comparator", "value", "unit", "horizon_kind"}
+        assert set(frame) == set(FRAME_SLOTS)
+
+    @pytest.mark.parametrize("value", ["by", "bankruptcy", "all-time", "by December 31, 2027", True, "1,00", float("inf")])
+    def test_a_present_but_non_numeric_value_is_dropped(self, value):
+        frame, drop = sanitize_cu_frame(
+            {"measure": "result", "value": value},
+            title="Bankruptcy by December 31, 2027, or all-time?",
+        )
+        assert frame is None
+        assert drop == DROP_VALUE_NOT_NUMERIC
+
+    @pytest.mark.parametrize("title,value", [
+        ("Netanyahu out by end of 2026?", "2026"),
+        ("Before the 2026-27 season?", "2026"),
+        ("Highest temperature in NYC on Aug 9, 2026?", "9"),
+    ])
+    def test_a_date_token_cannot_become_a_numeric_threshold(self, title, value):
+        frame, drop = sanitize_cu_frame({"measure": "result", "value": value}, title=title)
+        assert frame is None
+        assert drop == DROP_VALUE_IS_DATE
+
+    @pytest.mark.parametrize("date_phrase,expected", [
+        ("December 31, 2027", "2027-12-31"),
+        ("Feb 29th, 2028", "2028-02-29"),
+        ("2028-02-29", "2028-02-29"),
+        ("August 2026", "2026-08"),
+        ("2026", "2026"),
+    ])
+    def test_window_dates_keep_the_titles_precision(self, date_phrase, expected):
+        frame, drop = sanitize_cu_frame(
+            {"measure": "market_cap", "value": "2.0T", "window_date": date_phrase},
+            title=f"Will Anthropic reach 2.0T by {date_phrase}?",
+        )
+        assert drop is None
+        assert frame["window_date"] == expected
+        assert frame["value"] == "2.0T"
+
+    def test_unknown_high_is_distinct_from_the_two_defined_price_measures(self):
+        frame, drop = sanitize_cu_frame({"measure": "high"}, title="WTI monthly high")
+        assert (frame, drop) == (None, DROP_UNKNOWN_MEASURE)
+        assert normalize_measure("Price high") == "price_high"
+        assert normalize_measure("Price record high") == "price_record_high"
 
     def test_invented_value_drops_the_whole_frame(self):
         frame, drop = sanitize_cu_frame(
@@ -630,8 +676,10 @@ class TestWriterEndToEnd:
         assert profile["schema_version"] == CU_V2_SCHEMA_VERSION
         assert profile["frame"] == {
             "measure": "points", "comparator": "gte", "value": "40",
-            "unit": "Points", "horizon_kind": "annual",
+            "unit": "Points", "horizon_kind": "annual", "window_date": None,
         }
+        assert profile["frame_drop_reason"] is None
+        assert profile["frame_slot_drops"] == {}
         assert profile["subject_ref"] == "entity:77"
         assert profile["subject_entity_id"] == 77
         assert profile["subject_resolved"] is True
@@ -657,6 +705,7 @@ class TestWriterEndToEnd:
         profile = _written_profile(write_session)
 
         assert profile["frame"] is None
+        assert profile["frame_drop_reason"] == DROP_VALUE_NOT_IN_TITLE
         # ...and every other slot is intact — the profile was NOT abandoned.
         assert profile["topic"] == "sports"
         assert profile["stakes"] == 2
@@ -679,8 +728,33 @@ class TestWriterEndToEnd:
         # frame-first consumer as "this writer never ran".
         assert "frame" in profile
         assert profile["frame"] is None
+        assert profile["frame_drop_reason"] == DROP_ABSENT
         assert stats["frames_absent"] == 1
         assert stats["frames_dropped_literal"] == 0
+
+    async def test_rejected_slots_have_stored_reasons(self, monkeypatch):
+        payload = _llm_payload(frame={
+            "measure": "points",
+            "value": "40",
+            "comparator": "unknown",
+            "horizon_kind": "fortnightly",
+            "window_date": "February 31, 2027",
+        })
+        write_session = _install_writer_fakes(
+            monkeypatch, payload=payload,
+            market_name="Will Caitlin Clark score 40 points by February 31, 2027?",
+            resolved={},
+        )
+        await enrich_cu_v2_profiles(limit=1)
+        profile = _written_profile(write_session)
+        assert profile["frame"]["value"] == "40"
+        assert profile["frame"]["window_date"] is None
+        assert profile["frame_drop_reason"] is None
+        assert profile["frame_slot_drops"] == {
+            "comparator": "unknown_token",
+            "horizon_kind": "unknown_token",
+            "window_date": "invalid_window_date",
+        }
 
     async def test_unresolved_subject_is_marked_never_silently_empty(self, monkeypatch):
         write_session = _install_writer_fakes(
