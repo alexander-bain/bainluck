@@ -28,12 +28,11 @@ import {
 } from '@/lib/discover/marketPreview';
 import { createPriceDelivery } from '@/lib/discover/priceDelivery';
 import { createLiveStreamController } from '@/lib/liveStreamController';
-import type { ChampionshipGridResponse, FeedItem } from '@/lib/types';
+import type { FeedItem } from '@/lib/types';
 import {
   adoptLeagueGameCards,
   adoptLeagueMarketCards,
   leagueGameStreamable,
-  leagueGridMarketIds,
   leagueMarketStreamable,
   leagueSectionMarkets,
   overlayLeagueGamePreview,
@@ -46,7 +45,6 @@ import {
 import { useMarketStream } from './useMarketStream';
 
 export const MAX_LEAGUE_EVENT_STREAMS = 10;
-const GRID_REFRESH_FLOOR_MS = 2_000;
 
 type EventPreviewView = {
   reader: AuthorityPreviewReader;
@@ -71,13 +69,10 @@ function afterFloor(
 
 /**
  * #10090: Live committed + provisional SSE prices (`authority-v3` for games,
- * `market_preview` for futures/binaries, plus server-blended championship grid
- * refresh on column invalidations) for `/sport/[sport]/[league]`.
+ * `market_preview` for futures/binaries) for `/sport/[sport]/[league]`.
  */
 export function useLeaguePriceStream(
   leagueMarkets: LeagueFuturesResponse | null,
-  grid: ChampionshipGridResponse | null,
-  onGridInvalidate: () => void,
 ): {
   upcomingGames: LeagueGameBrief[];
   sections: Record<string, LeagueMarket[]>;
@@ -103,8 +98,6 @@ export function useLeaguePriceStream(
     () => leagueSectionMarkets(leagueMarkets?.sections).filter(leagueMarketStreamable),
     [leagueMarkets],
   );
-  const gridMarketIds = useMemo(() => leagueGridMarketIds(grid), [grid]);
-  const gridMarketIdSet = useMemo(() => new Set(gridMarketIds), [gridMarketIds]);
 
   const streamedGames = useMemo(() => {
     const seen = new Set<number>();
@@ -203,53 +196,14 @@ export function useLeaguePriceStream(
     };
   }, [deliveryKey]);
 
-  // Debounced server-blended grid refresh (leading edge + 2s floor) when a grid market invalidates.
-  const onGridInvalidateRef = useRef(onGridInvalidate);
-  onGridInvalidateRef.current = onGridInvalidate;
-  const lastGridRefreshAt = useRef(0);
-  const gridTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(
-    () => () => {
-      if (gridTimer.current) {
-        clearTimeout(gridTimer.current);
-        gridTimer.current = null;
-      }
-    },
-    [],
-  );
-  const scheduleGridRefresh = useCallback(() => {
-    const now = Date.now();
-    const wait = GRID_REFRESH_FLOOR_MS - (now - lastGridRefreshAt.current);
-    if (wait <= 0) {
-      if (gridTimer.current) {
-        clearTimeout(gridTimer.current);
-        gridTimer.current = null;
-      }
-      lastGridRefreshAt.current = now;
-      onGridInvalidateRef.current();
-      return;
-    }
-    if (gridTimer.current) return;
-    gridTimer.current = setTimeout(() => {
-      gridTimer.current = null;
-      lastGridRefreshAt.current = Date.now();
-      onGridInvalidateRef.current();
-    }, wait);
-  }, []);
-
-  const streamedMarketIds = useMemo(() => {
-    const ids = new Set<number>(sectionMarkets.map((m) => m.id));
-    for (const id of gridMarketIds) ids.add(id);
-    return [...ids];
-  }, [sectionMarkets, gridMarketIds]);
+  const streamedMarketIds = useMemo(() => sectionMarkets.map((m) => m.id), [sectionMarkets]);
 
   const sectionMarketIdSet = useMemo(() => new Set(sectionMarkets.map((m) => m.id)), [sectionMarkets]);
   const handleMarketInvalidate = useCallback(
     (batch: number[]) => {
       if (batch.some((id) => sectionMarketIdSet.has(id))) invalidateCards();
-      if (batch.some((id) => gridMarketIdSet.has(id))) scheduleGridRefresh();
     },
-    [sectionMarketIdSet, gridMarketIdSet, invalidateCards, scheduleGridRefresh],
+    [sectionMarketIdSet, invalidateCards],
   );
 
   const handleMarketPreview = useCallback((frame: MarketPreviewFrame) => {

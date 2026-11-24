@@ -14,7 +14,7 @@ import { marketResolved, type DiscoverPriceCards } from '@/lib/discover/priceRef
 import { sportPricesADraw } from '@/lib/drawPricedWinner';
 import { isFinishedStatus } from '@/lib/eventState';
 import { compareFoldRevision, parseFoldRevision, type FoldRevision } from '@/lib/foldRevision';
-import type { ChampionshipGridResponse, FeedEventData, FeedFuturesData } from '@/lib/types';
+import type { FeedEventData, FeedFuturesData } from '@/lib/types';
 
 const PRICED_GAME_STATUSES = new Set(['scheduled', 'live']);
 const STREAMED_MARKET_SOURCES = new Set(['kalshi', 'polymarket']);
@@ -76,22 +76,6 @@ export function leagueSectionMarkets(
     }
   }
   return out;
-}
-
-export function leagueGridMarketIds(grid: ChampionshipGridResponse | null): number[] {
-  if (!grid) return [];
-  const ids = new Set<number>();
-  if (typeof grid.championship_market_id === 'number' && grid.championship_market_id > 0) {
-    ids.add(grid.championship_market_id);
-  }
-  for (const col of grid.columns ?? []) {
-    if (col.resolved) continue;
-    if (typeof col.market_id === 'number' && col.market_id > 0) ids.add(col.market_id);
-    for (const id of col.market_ids ?? []) {
-      if (typeof id === 'number' && id > 0) ids.add(id);
-    }
-  }
-  return [...ids];
 }
 
 function parseMs(raw: unknown): number | null {

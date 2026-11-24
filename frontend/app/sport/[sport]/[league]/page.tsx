@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import LoadingState from "@/components/LoadingState";
@@ -187,23 +187,11 @@ export default function LeagueShowcasePage() {
   const [leagueMarkets, setLeagueMarkets] = useState<LeagueFuturesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [failure, setFailure] = useState<SportResolutionFailure | null>(null);
-  const gridSlugRef = useRef<string | null>(null);
-
-  const refreshGrid = useCallback(() => {
-    const slug = gridSlugRef.current;
-    if (!slug) return;
-    void fetchChampionshipGrid(slug)
-      .then((fresh) => {
-        if (gridSlugRef.current === slug) setGrid(fresh);
-      })
-      .catch(() => {
-        // Keep current served grid on transient refresh failure.
-      });
-  }, []);
 
   // #10090: project live committed + provisional SSE prices onto rails, sections,
-  // binary board, and trigger grid refresh on championship column invalidation.
-  const livePrices = useLeaguePriceStream(leagueMarkets, grid, refreshGrid);
+  // and binary board (championship grid stays on its hourly server precompute
+  // until `/api/playoffs/{league}` invalidates on live market moves).
+  const livePrices = useLeaguePriceStream(leagueMarkets);
 
   // Analytics
   usePageTracking({
@@ -215,7 +203,6 @@ export default function LeagueShowcasePage() {
 
   useEffect(() => {
     let cancelled = false;
-    gridSlugRef.current = null;
     async function load() {
       setLoading(true);
       setFailure(null);
@@ -294,7 +281,6 @@ export default function LeagueShowcasePage() {
           // right here. The grid slug is register data — it now rides the
           // hierarchy payload, so the page holds no map to drift.
           const gridSlug = resolveGridSlug(l.grid_slug, sportKey);
-          gridSlugRef.current = gridSlug;
           const [gridResult, marketsResult] = await Promise.allSettled([
             fetchChampionshipGrid(gridSlug),
             fetchLeagueMarkets(sportKey),
