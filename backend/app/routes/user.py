@@ -99,6 +99,7 @@ _BAY_AREA = [
     "santa cruz",
     "santa clara",
     "san jose",
+    "san josé",
 ]
 _LOS_ANGELES = ["los angeles", "la", "anaheim", "inglewood", "carson"]
 _ST_LOUIS = ["st louis", "st. louis", "saint louis"]

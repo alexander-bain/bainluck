@@ -105,6 +105,7 @@ _CITY_CLUBS = {
         ("San Jose Sharks", "icehockey_nhl", "San Jose"),
         ("San Jose Earthquakes", MLS, "San Jose"),
         ("Bay FC", "soccer_usa_nwsl", None),
+        ("San Jose State Spartans", NCAAF, "San José State"),
     ),
     "Vegas": (
         ("Vegas Golden Knights", "icehockey_nhl", "Vegas"),
