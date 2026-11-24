@@ -1,6 +1,8 @@
 /**
  * #13550 (363: A) — Blind forms pile-sort & 20-container grader unit + render checks.
  */
+import fs from "node:fs";
+import path from "node:path";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
@@ -111,5 +113,59 @@ describe("363: A blind decks grading helpers and pages", () => {
       expect(formsHtml.toLowerCase()).not.toContain(forbidden);
       expect(containersHtml.toLowerCase()).not.toContain(forbidden);
     }
+  });
+
+  test("frontend blind manifests have no leaks and match backend manifests", () => {
+    const feDataDir = path.join(process.cwd(), "data");
+    const beDataDir = path.resolve(process.cwd(), "..", "backend", "data", "discover");
+
+    const publicFormsRaw = fs.readFileSync(
+      path.join(feDataDir, "forms_blind_deck_public_2026_11_23.json"),
+      "utf-8",
+    );
+    const backendForms = JSON.parse(
+      fs.readFileSync(path.join(beDataDir, "forms_blind_deck_2026_11_23.json"), "utf-8"),
+    );
+    const publicForms = JSON.parse(publicFormsRaw);
+
+    expect(publicForms.deck_id).toBe("forms-blind-deck-2026-11-23");
+    expect(publicForms.blind).toBe(true);
+    expect(publicForms.seed).toBe(2026112304);
+    expect(publicForms.sheet_image_url).toBeUndefined();
+    expect(publicForms.forms).toHaveLength(14);
+    expect(backendForms.forms).toHaveLength(14);
+
+    const lowered = publicFormsRaw.toLowerCase();
+    for (const secretKey of [
+      "form_id",
+      "display_name",
+      "source_slug",
+      "nominations",
+      "mvp",
+      "ladder",
+    ]) {
+      expect(lowered).not.toContain(secretKey);
+    }
+
+    const byId = Object.fromEntries(
+      backendForms.forms.map((f: Record<string, unknown>) => [f.item_id, f]),
+    );
+    for (const item of publicForms.forms) {
+      expect(Object.keys(item).sort()).toEqual(["height_px", "image_url", "item_id", "width_px"]);
+      const ref = byId[item.item_id];
+      expect(item.image_url).toBe(ref.image_url);
+      expect(item.width_px).toBe(ref.width_px);
+      expect(item.height_px).toBe(ref.height_px);
+    }
+
+    const feContainersRaw = fs.readFileSync(
+      path.join(feDataDir, "containers_blind_20_deck_2026_11_23.json"),
+      "utf-8",
+    );
+    const beContainersRaw = fs.readFileSync(
+      path.join(beDataDir, "containers_blind_20_deck_2026_11_23.json"),
+      "utf-8",
+    );
+    expect(feContainersRaw).toBe(beContainersRaw);
   });
 });

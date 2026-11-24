@@ -12,13 +12,9 @@ from fastapi.testclient import TestClient
 
 from app.routes import admin_judgments
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-DISCOVER_DATA_DIR = REPO_ROOT / "backend" / "data" / "discover"
-FRONTEND_DATA_DIR = REPO_ROOT / "frontend" / "data"
+DISCOVER_DATA_DIR = Path(__file__).resolve().parents[1] / "data" / "discover"
 FORMS_DECK_PATH = DISCOVER_DATA_DIR / "forms_blind_deck_2026_11_23.json"
-FRONTEND_FORMS_PUBLIC_PATH = FRONTEND_DATA_DIR / "forms_blind_deck_public_2026_11_23.json"
 CONTAINERS_DECK_PATH = DISCOVER_DATA_DIR / "containers_blind_20_deck_2026_11_23.json"
-FRONTEND_CONTAINERS_DECK_PATH = FRONTEND_DATA_DIR / "containers_blind_20_deck_2026_11_23.json"
 EXPECTED_SHA = "f164f38c7ff15874b1c7d85c10465dd954302d33"
 CARD_IMAGES_SHA = "cc1f3de00dcf9163409408ce5415d8ae861c43e0"
 EXPECTED_RAW_PREFIX = f"https://raw.githubusercontent.com/alexander-bain/bainluck/{EXPECTED_SHA}/"
@@ -91,33 +87,6 @@ def test_containers_blind_20_deck_is_unlabelled_and_key_not_committed() -> None:
     # Sealed key must remain outside the repository until Alex freezes grades.
     leaked = list(DISCOVER_DATA_DIR.rglob("*containers_blind_20_key*"))
     assert leaked == [], f"Blind key must not exist in repo: {leaked}"
-
-
-def test_frontend_blind_manifests_have_no_leaks() -> None:
-    backend_forms = json.loads(FORMS_DECK_PATH.read_text(encoding="utf-8"))
-    public_forms = json.loads(FRONTEND_FORMS_PUBLIC_PATH.read_text(encoding="utf-8"))
-
-    assert public_forms["deck_id"] == "forms-blind-deck-2026-11-23"
-    assert public_forms["blind"] is True
-    assert public_forms["seed"] == 2026112304
-    assert "sheet_image_url" not in public_forms
-    assert len(public_forms["forms"]) == len(backend_forms["forms"]) == 14
-
-    public_raw = FRONTEND_FORMS_PUBLIC_PATH.read_text(encoding="utf-8").lower()
-    for secret_key in ("form_id", "display_name", "source_slug", "nominations", "mvp", "ladder"):
-        assert secret_key not in public_raw, f"Leaked key/label {secret_key!r} in public forms manifest"
-
-    expected_by_id = {f["item_id"]: f for f in backend_forms["forms"]}
-    for item in public_forms["forms"]:
-        assert set(item.keys()) == {"item_id", "image_url", "width_px", "height_px"}
-        ref = expected_by_id[item["item_id"]]
-        assert item["image_url"] == ref["image_url"]
-        assert item["width_px"] == ref["width_px"]
-        assert item["height_px"] == ref["height_px"]
-
-    assert FRONTEND_CONTAINERS_DECK_PATH.read_text(encoding="utf-8") == CONTAINERS_DECK_PATH.read_text(
-        encoding="utf-8"
-    )
 
 
 class _DummyWriteDB:
