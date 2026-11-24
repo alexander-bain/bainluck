@@ -581,6 +581,7 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
 
     # --- Team futures (championship, conference, division, awards) ---
     futures_items: list = []
+    _futures_unavailable = False
     _futures_partial = False
     _futures_omitted_count = 0
     _ftime: dict = {}
@@ -619,7 +620,8 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
                 item.get("market_tier"), item.get("market_name")
             )
     except TeamFuturesScreenUnavailableError:
-        raise
+        logger.warning("team page: futures price screen unavailable for team %s", team.id)
+        _futures_unavailable = True
     except Exception:
         logger.exception("team page: futures section failed for team %s", team.id)
     _mark("futures")
@@ -672,9 +674,11 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
         "futures": futures_items,
         "championship_path": champ_path,
     }
+    if _futures_unavailable:
+        resp["futures_unavailable"] = True
     if _futures_partial:
-        resp["partial"] = True
-        resp["omitted_count"] = _futures_omitted_count
+        resp["futures_partial"] = True
+        resp["futures_omitted_count"] = _futures_omitted_count
     if debug_timing:
         resp["_timings_ms"] = _t
     return resp

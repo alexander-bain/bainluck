@@ -187,10 +187,13 @@ class TestTeamSeeded:
         assert isinstance(body["recent_events"], list)
         assert isinstance(body["futures"], list)
         assert isinstance(body["championship_path"], list)
-        assert "partial" not in body
-        assert "omitted_count" not in body
+        assert "futures_unavailable" not in body
+        assert "futures_partial" not in body
+        assert "futures_omitted_count" not in body
 
-    async def test_incomplete_price_screen_with_zero_survivors_returns_503(self, client, mock_db):
+    async def test_incomplete_price_screen_with_zero_survivors_serves_page_and_flags_section(
+        self, client, mock_db
+    ):
         from app.routes.user import TeamFuturesScreenUnavailableError
 
         team = _mock_team()
@@ -206,7 +209,15 @@ class TestTeamSeeded:
             AsyncMock(side_effect=TeamFuturesScreenUnavailableError()),
         ):
             resp = await client.get("/api/teams/lakers")
-        assert resp.status_code == 503
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["team"]["name"]
+        assert isinstance(body["upcoming_events"], list)
+        assert isinstance(body["recent_events"], list)
+        assert isinstance(body["championship_path"], list)
+        assert body["futures"] == []
+        assert body["futures_unavailable"] is True
+        assert "futures_partial" not in body
 
     async def test_incomplete_price_screen_with_survivors_sets_partial_and_omitted_count(self, client, mock_db):
         team = _mock_team()
@@ -236,8 +247,10 @@ class TestTeamSeeded:
         assert resp.status_code == 200
         body = resp.json()
         assert len(body["futures"]) == 1
-        assert body["partial"] is True
-        assert body["omitted_count"] == 7
+        assert body["futures_partial"] is True
+        assert body["futures_omitted_count"] == 7
+        assert "partial" not in body
+        assert "omitted_count" not in body
 
 
 # ============================================================================
