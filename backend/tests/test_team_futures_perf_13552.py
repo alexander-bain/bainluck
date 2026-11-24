@@ -544,10 +544,21 @@ async def test_wave_timeout_keeps_screened_omits_unscreened_logs_and_skips_cache
 
     # Wave 1 screened top 15 markets; wave 2 timed out -> 15 kept, 25 omitted.
     assert [it["market_id"] for it in res["items"]] == [8000 + i for i in range(15)]
+    assert res["partial"] is True
+    assert res["omitted_count"] == 25
     assert timings["screen_incomplete"] is True
     assert timings["screen_unscreened"] == 25
     assert timings["screen_waves"] == 2
     assert any("timed out" in rec.message and "25 unscreened" in rec.message for rec in caplog.records)
+
+    # Complete screen omits partial / omitted_count keys.
+    async def _no_withheld(*_a, **_k):
+        return {}
+
+    with patch("app.routes.futures.withheld_price_outcome_ids_for_markets", _no_withheld):
+        res_complete = await user_route._query_team_futures([1], db_t, limit=40)
+    assert "partial" not in res_complete
+    assert "omitted_count" not in res_complete
 
     # Route endpoints never cache an answer whose screen failed/timed out.
     class _FavAndPgDB:
@@ -567,21 +578,121 @@ async def test_wave_timeout_keeps_screened_omits_unscreened_logs_and_skips_cache
     fav_db = _FavAndPgDB()
     exec_count = 0
 
-    # Directly verify via route-level spy returning screen_incomplete=True
+    # Directly verify via route-level spy returning screen_incomplete=True + partial metadata
     async def _incomplete_query(team_ids, db, *, limit=20, timings=None):
         nonlocal exec_count
         exec_count += 1
         if timings is not None:
             timings["screen_incomplete"] = True
-        return {"items": [{"market_id": 8000, "probability": 0.9}], "teams": [], "team_ids": [1], "total_count": 1}
+        return {
+            "items": [{"market_id": 8000, "probability": 0.9}],
+            "teams": [],
+            "team_ids": [1],
+            "total_count": 1,
+            "partial": True,
+            "omitted_count": 25,
+        }
 
     with patch.object(user_route, "_query_team_futures", _incomplete_query):
-        await user_route.get_team_futures(limit=20, user=fake_user, db=fav_db)
+        me_out = await user_route.get_team_futures(limit=20, user=fake_user, db=fav_db)
+        assert me_out["partial"] is True
+        assert me_out["omitted_count"] == 25
         await user_route.get_team_futures(limit=20, user=fake_user, db=fav_db)
         assert exec_count == 2
-        await user_route.get_shared_team_futures(team_ids="1", limit=20, db=fav_db)
+        shared_out = await user_route.get_shared_team_futures(team_ids="1", limit=20, db=fav_db)
+        assert shared_out["partial"] is True
+        assert shared_out["omitted_count"] == 25
         await user_route.get_shared_team_futures(team_ids="1", limit=20, db=fav_db)
         assert exec_count == 4
+
+
+async def test_incomplete_screen_with_zero_survivors_raises_across_query_and_routes():
+    """Wave-1 timeout (or zero surviving markets after an incomplete screen) raises 503 cleanly without caching."""
+    now = _ts_now()
+    user_route._team_futures_cache.clear()
+    user_route._shared_team_futures_cache.clear()
+    team = SimpleNamespace(
+        id=1,
+        name="Boston Celtics",
+        sport_id=1,
+        espn_id="2",
+        logo_url_small=None,
+        logo_url=None,
+        primary_color=None,
+        alternate_names=None,
+        roster_players=None,
+    )
+    markets = [
+        _market(
+            8100 + i,
+            f"Celtics Market {i}",
+            [
+                _outcome(9100 + i, 8100 + i, "Boston Celtics", round(0.8 - i * 0.01, 4), stamp=now, team_id=1),
+                _outcome(9600 + i, 8100 + i, "Other Club", round(0.2 + i * 0.01, 4), stamp=now, team_id=None, rank=2),
+            ],
+            updated_at=now,
+            source="kalshi",
+        )
+        for i in range(10)
+    ]
+    fk_rows = [(m.outcomes[0], m, "basketball_nba") for m in markets]
+
+    # Case A: wave 1 itself times out -> zero survivors -> raises TeamFuturesScreenUnavailableError (503)
+    async def _timeout_on_wave1(_db, _screen_markets):
+        raise QueryCanceledError("canceling statement due to statement timeout")
+
+    db_w1, _, _ = _build_pg_session(teams=[team], fk_rows=fk_rows, markets=markets, fleet_stamp=now)
+    with patch("app.routes.futures.withheld_price_outcome_ids_for_markets", _timeout_on_wave1):
+        with pytest.raises(user_route.TeamFuturesScreenUnavailableError) as exc_info:
+            await user_route._query_team_futures([1], db_w1, limit=20)
+    assert exc_info.value.status_code == 503
+    assert db_w1._pg_state["aborted"] is False
+
+    # Case B: wave 1 succeeds with all prices withheld, then wave 2 times out -> zero survivors -> raises 503
+    orig_wave_size = user_route._SCREEN_WAVE_SIZE
+    call_num = 0
+
+    async def _withhold_wave1_timeout_wave2(_db, screen_markets):
+        nonlocal call_num
+        call_num += 1
+        if call_num == 1:
+            return {m.id: {o.id for o in m.outcomes} for m in screen_markets}
+        raise QueryCanceledError("canceling statement due to statement timeout")
+
+    db_w2, _, _ = _build_pg_session(teams=[team], fk_rows=fk_rows, markets=markets, fleet_stamp=now)
+    try:
+        user_route._SCREEN_WAVE_SIZE = 5
+        with patch("app.routes.futures.withheld_price_outcome_ids_for_markets", _withhold_wave1_timeout_wave2):
+            with pytest.raises(user_route.TeamFuturesScreenUnavailableError) as exc_info2:
+                await user_route._query_team_futures([1], db_w2, limit=20)
+        assert exc_info2.value.status_code == 503
+    finally:
+        user_route._SCREEN_WAVE_SIZE = orig_wave_size
+
+    # Verify /api/me/team-futures and /api/shared/team-futures propagate 503 and write nothing to cache
+    class _FavAndPgDB:
+        async def execute(self, stmt, *a, **k):
+            if "user_favorites" in str(stmt):
+                return _result([(1,)])
+            return await db_w1.execute(stmt, *a, **k)
+
+        async def begin_nested(self):
+            return await db_w1.begin_nested()
+
+        def get_bind(self):
+            return db_w1.get_bind()
+
+    fake_user = SimpleNamespace(id=7772)
+    fav_db = _FavAndPgDB()
+    with patch("app.routes.futures.withheld_price_outcome_ids_for_markets", _timeout_on_wave1):
+        with pytest.raises(user_route.TeamFuturesScreenUnavailableError) as me_exc:
+            await user_route.get_team_futures(limit=20, user=fake_user, db=fav_db)
+        assert me_exc.value.status_code == 503
+        with pytest.raises(user_route.TeamFuturesScreenUnavailableError) as sh_exc:
+            await user_route.get_shared_team_futures(team_ids="1", limit=20, db=fav_db)
+        assert sh_exc.value.status_code == 503
+    assert user_route._team_futures_cache == {}
+    assert user_route._shared_team_futures_cache == {}
 
 
 async def test_caller_transaction_isolated_on_normal_return_and_query_timeout():

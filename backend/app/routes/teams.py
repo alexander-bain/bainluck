@@ -581,9 +581,14 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
 
     # --- Team futures (championship, conference, division, awards) ---
     futures_items: list = []
+    _futures_partial = False
+    _futures_omitted_count = 0
     _ftime: dict = {}
     try:
-        from app.routes.user import _query_team_futures
+        from app.routes.user import (
+            TeamFuturesScreenUnavailableError,
+            _query_team_futures,
+        )
         # #9219: the club's rows, not only the URL's row — the same set the
         # games rails use (#7929), so a spelling the page reaches for games it
         # also reaches for futures. Narrowed to the team's OWN sport row: the
@@ -606,10 +611,15 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
             futures_team_ids, db, limit=30, timings=_ftime if debug_timing else None
         )
         futures_items = futures_data.get("items", [])
+        if futures_data.get("partial"):
+            _futures_partial = True
+            _futures_omitted_count = int(futures_data.get("omitted_count", 0))
         for item in futures_items:
             item["display_tier"] = _display_tier(
                 item.get("market_tier"), item.get("market_name")
             )
+    except TeamFuturesScreenUnavailableError:
+        raise
     except Exception:
         logger.exception("team page: futures section failed for team %s", team.id)
     _mark("futures")
@@ -662,6 +672,9 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
         "futures": futures_items,
         "championship_path": champ_path,
     }
+    if _futures_partial:
+        resp["partial"] = True
+        resp["omitted_count"] = _futures_omitted_count
     if debug_timing:
         resp["_timings_ms"] = _t
     return resp
