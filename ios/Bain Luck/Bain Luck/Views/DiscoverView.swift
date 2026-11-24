@@ -3903,20 +3903,8 @@ struct NativeGroupCard: View {
         let isAX = dynamicTypeSize.isAccessibilitySize
         return VStack(alignment: .leading, spacing: 4) {
             if let awayProb = cardOdds?.awayProbability, let homeProb = cardOdds?.homeProbability {
-                let awayText: String = {
-                    if isLive,
-                       let t = CompactGameCard12616.liveTenthsStrings(away: awayProb, home: homeProb, awayIsWithheld: false).away {
-                        return t
-                    }
-                    return formatProbability(awayProb, renderedPercent: cardOdds?.awayRenderedPercent)
-                }()
-                let homeText: String = {
-                    if isLive,
-                       let t = CompactGameCard12616.liveTenthsStrings(away: awayProb, home: homeProb, awayIsWithheld: false).home {
-                        return t
-                    }
-                    return formatProbability(homeProb, renderedPercent: cardOdds?.homeRenderedPercent)
-                }()
+                let awayText = formatProbability(awayProb, renderedPercent: cardOdds?.awayRenderedPercent)
+                let homeText = formatProbability(homeProb, renderedPercent: cardOdds?.homeRenderedPercent)
                 if isAX {
                     VStack(alignment: .leading, spacing: 2) {
                         Text("\(short.away)\u{00A0}\(awayText)")

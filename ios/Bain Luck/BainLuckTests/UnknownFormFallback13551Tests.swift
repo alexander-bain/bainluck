@@ -573,7 +573,7 @@ final class UnknownFormFallback13551Tests: XCTestCase {
                 }
                 for expected in [
                     "MIA 36%", "BOS 64%",
-                    "SE", "Louisiana", "39.1%", "N", "Colorado", "60.9%",
+                    "SE", "Louisiana", "39%", "N", "Colorado", "61%",
                     "Krawietz", "Puetz 54%", "Granollers", "Zeballos 46%"
                 ] {
                     XCTAssertTrue(
@@ -581,6 +581,7 @@ final class UnknownFormFallback13551Tests: XCTestCase {
                         "Game row missing '\(expected)' (\(sizeLabel), \(suffix)): \(ocr)"
                     )
                 }
+                XCTAssertFalse(ocrNorm.contains("39.1%") || ocrNorm.contains("60.9%"), "Grouped game row must print whole percents per Direction 395 (\(sizeLabel), \(suffix)): \(ocr)")
                 XCTAssertFalse(ocr.contains(" at "), "Drop duplicate 'X at Y' title when odds are present (\(sizeLabel), \(suffix)): \(ocr)")
                 XCTAssertFalse(ocr.contains("…") || ocr.contains("..."), "Zero ellipsis on game row (\(sizeLabel), \(suffix)): \(ocr)")
 
