@@ -17657,6 +17657,14 @@ _SUGGESTION_MOVERS_POOLED = os.getenv(
 _SUGGESTION_MOVERS_EXCLUDED_SHAPES = ("quantity", "unshaped", "container_member", "claim")
 
 
+def _suggestion_movers_market_outerjoins() -> tuple:
+    """PK-keyed 1-to-0..1 joins needed by `_suggestion_movers_market_conditions` (#13610)."""
+    return (
+        (Event, Event.id == FuturesMarket.event_id),
+        (Sport, Sport.id == Event.sport_id),
+    )
+
+
 def _suggestion_movers_market_conditions() -> tuple:
     """Section 3's MARKET-level eligibility — #3987 defects 2 and 3.
 
@@ -17673,6 +17681,13 @@ def _suggestion_movers_market_conditions() -> tuple:
     comprehension over `LEAGUE_TIERS`) is what keeps every Grand Slam match
     eligible: `events` spells them `tennis_atp_us_open`, the table spells them
     `tennis_us_open`, and a bare comprehension excludes the marquee (#2552).
+
+    🔴 #13610: resolved via PK-keyed `LEFT OUTER JOIN events` + `sports`
+    (`_suggestion_movers_market_outerjoins`) rather than `FuturesMarket.event_id
+    IN (SELECT Event.id ...)`, because materializing all historical tier-1/2
+    `events` rows past `work_mem` flips Postgres to an unhashed `SubPlan 1`
+    scan/temp spill (15-42 s), and correlated `EXISTS` flips the outer query to
+    `Parallel Seq Scan on futures_outcomes`.
 
     ⚠️ `event_id IS NULL` IS AN ARM OF THE GATE, NOT AN OVERSIGHT. A league tier
     is a fact about a GAME. Section 3's whole distinctive contribution is
@@ -17692,11 +17707,7 @@ def _suggestion_movers_market_conditions() -> tuple:
         ),
         or_(
             FuturesMarket.event_id.is_(None),
-            FuturesMarket.event_id.in_(
-                select(Event.id)
-                .join(Sport, Sport.id == Event.sport_id)
-                .where(Sport.key.in_(tier_12_sport_keys()))
-            ),
+            Sport.key.in_(tier_12_sport_keys()),
         ),
     )
 
@@ -17802,6 +17813,7 @@ def _build_suggestion_movers_query(*, pooled: bool):
     # arm. Both arms therefore rank the same population and the equivalence
     # oracle keeps grading the gate.
     market_conditions = _suggestion_movers_market_conditions()
+    market_outerjoins = _suggestion_movers_market_outerjoins()
 
     if pooled:
         # `market_id IN pool` carries the status filter — the pool is already
@@ -17815,18 +17827,18 @@ def _build_suggestion_movers_query(*, pooled: bool):
                     pool_size=_SUGGESTION_MOVERS_POOL,
                     statuses=_SUGGESTION_MOVERS_STATUSES,
                     conditions=market_conditions,
+                    outerjoins=market_outerjoins,
                 )
             ),
         )
     else:
-        query = (
-            select(FuturesOutcome)
-            .join(FuturesMarket)
-            .where(
-                FuturesMarket.status.in_(_SUGGESTION_MOVERS_STATUSES),
-                *market_conditions,
-                *conditions,
-            )
+        query = select(FuturesOutcome).join(FuturesMarket)
+        for target, onclause in market_outerjoins:
+            query = query.outerjoin(target, onclause)
+        query = query.where(
+            FuturesMarket.status.in_(_SUGGESTION_MOVERS_STATUSES),
+            *market_conditions,
+            *conditions,
         )
 
     return (
