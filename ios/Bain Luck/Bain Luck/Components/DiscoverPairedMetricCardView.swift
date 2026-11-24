@@ -837,8 +837,8 @@ struct DiscoverPairedMetricCardView: View {
                     }
 
                     VStack(alignment: .leading, spacing: 8) {
-                        stage1BarLine(s1: s1)
-                        stage2BarLine(s2: s2)
+                        stage1BarLine(entry: entry, s1: s1)
+                        stage2BarLine(entry: entry, s2: s2)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -869,8 +869,8 @@ struct DiscoverPairedMetricCardView: View {
                         }
 
                         VStack(alignment: .leading, spacing: 6) {
-                            stage1BarLine(s1: s1)
-                            stage2BarLine(s2: s2)
+                            stage1BarLine(entry: entry, s1: s1)
+                            stage2BarLine(entry: entry, s2: s2)
                         }
                         .padding(.top, 6)
                     }
@@ -900,7 +900,35 @@ struct DiscoverPairedMetricCardView: View {
     }
 
     @ViewBuilder
-    private func stage1BarLine(s1: FormattedPairedStageDisplay) -> some View {
+    private func stage1SourceMarkButton(for entry: PairedSubjectEntry) -> some View {
+        if let mark = SourceMarkButton(
+            entry.stage1SourceMark,
+            number: entry.stage1SourceMark?.state == .settled ? nil : entry.stage1Probability,
+            subject: entry.subject,
+            subtitle: "\(metricSet.title) · \(metricSet.stage1Label)",
+            numberSize: effectiveDetailSize,
+            compactRow: true
+        ) {
+            mark
+        }
+    }
+
+    @ViewBuilder
+    private func stage2SourceMarkButton(for entry: PairedSubjectEntry, numberSize: CGFloat? = nil) -> some View {
+        if let mark = SourceMarkButton(
+            entry.stage2SourceMark,
+            number: entry.stage2SourceMark?.state == .settled ? nil : entry.stage2Probability,
+            subject: entry.subject,
+            subtitle: "\(metricSet.title) · \(metricSet.stage2Label)",
+            numberSize: numberSize ?? effectiveSubjectSize,
+            compactRow: true
+        ) {
+            mark
+        }
+    }
+
+    @ViewBuilder
+    private func stage1BarLine(entry: PairedSubjectEntry, s1: FormattedPairedStageDisplay) -> some View {
         if dynamicTypeSize.isAccessibilitySize {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -911,30 +939,36 @@ struct DiscoverPairedMetricCardView: View {
                     Spacer(minLength: 6)
                     switch s1.kind {
                     case .percent:
-                        PairedQuietNumberBox(
-                            fraction: PairedMetricPresentation.quietFillFraction(for: s1) ?? 0,
-                            isPrimaryStage: false,
-                            trackColor: trackBgColor,
-                            fixedWidth: 48,
-                            contentAlignment: .trailing,
-                            horizontalPadding: 6,
-                            verticalPadding: 2.5
-                        ) {
-                            Text(s1.label)
-                                .font(.system(size: effectiveDetailSize, weight: .semibold).monospacedDigit())
-                                .foregroundStyle(primaryInk)
-                                .lineLimit(1)
-                        }
-                        .fixedSize(horizontal: true, vertical: false)
-                    case .tick:
-                        Text(s1.label)
-                            .font(.system(size: effectiveDetailSize, weight: .semibold))
-                            .foregroundStyle(greenReadableInk)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 2)
-                            .background(trackBgColor)
-                            .clipShape(RoundedRectangle(cornerRadius: 4))
+                        HStack(spacing: 3) {
+                            PairedQuietNumberBox(
+                                fraction: PairedMetricPresentation.quietFillFraction(for: s1) ?? 0,
+                                isPrimaryStage: false,
+                                trackColor: trackBgColor,
+                                fixedWidth: 48,
+                                contentAlignment: .trailing,
+                                horizontalPadding: 6,
+                                verticalPadding: 2.5
+                            ) {
+                                Text(s1.label)
+                                    .font(.system(size: effectiveDetailSize, weight: .semibold).monospacedDigit())
+                                    .foregroundStyle(primaryInk)
+                                    .lineLimit(1)
+                            }
                             .fixedSize(horizontal: true, vertical: false)
+                            stage1SourceMarkButton(for: entry)
+                        }
+                    case .tick:
+                        HStack(spacing: 3) {
+                            Text(s1.label)
+                                .font(.system(size: effectiveDetailSize, weight: .semibold))
+                                .foregroundStyle(greenReadableInk)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 2)
+                                .background(trackBgColor)
+                                .clipShape(RoundedRectangle(cornerRadius: 4))
+                                .fixedSize(horizontal: true, vertical: false)
+                            stage1SourceMarkButton(for: entry)
+                        }
                     case .cross:
                         HStack(spacing: 4) {
                             Text(s1.label)
@@ -950,6 +984,7 @@ struct DiscoverPairedMetricCardView: View {
                                     .font(.system(size: effectiveDetailSize, weight: .regular).monospacedDigit())
                                     .foregroundStyle(secondaryInk)
                             }
+                            stage1SourceMarkButton(for: entry)
                         }
                         .fixedSize(horizontal: true, vertical: false)
                     case .missing:
@@ -978,7 +1013,7 @@ struct DiscoverPairedMetricCardView: View {
                 }
             }
         } else {
-            HStack(alignment: .center, spacing: 8) {
+            HStack(alignment: .center, spacing: 6) {
                 Text(metricSet.stage1Label)
                     .font(.system(size: effectiveDetailSize, weight: .regular))
                     .foregroundStyle(mutedInk)
@@ -999,19 +1034,22 @@ struct DiscoverPairedMetricCardView: View {
                     }
                     .frame(height: 8)
 
-                    PairedQuietNumberBox(
-                        fraction: PairedMetricPresentation.quietFillFraction(for: s1) ?? 0,
-                        isPrimaryStage: false,
-                        trackColor: trackBgColor,
-                        fixedWidth: 48,
-                        contentAlignment: .trailing,
-                        horizontalPadding: 6,
-                        verticalPadding: 2.5
-                    ) {
-                        Text(s1.label)
-                            .font(.system(size: effectiveDetailSize, weight: .semibold).monospacedDigit())
-                            .foregroundStyle(primaryInk)
-                            .lineLimit(1)
+                    HStack(spacing: 3) {
+                        PairedQuietNumberBox(
+                            fraction: PairedMetricPresentation.quietFillFraction(for: s1) ?? 0,
+                            isPrimaryStage: false,
+                            trackColor: trackBgColor,
+                            fixedWidth: 48,
+                            contentAlignment: .trailing,
+                            horizontalPadding: 6,
+                            verticalPadding: 2.5
+                        ) {
+                            Text(s1.label)
+                                .font(.system(size: effectiveDetailSize, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(primaryInk)
+                                .lineLimit(1)
+                        }
+                        stage1SourceMarkButton(for: entry)
                     }
 
                 case .tick:
@@ -1022,6 +1060,7 @@ struct DiscoverPairedMetricCardView: View {
                         .padding(.vertical, 2)
                         .background(trackBgColor)
                         .clipShape(RoundedRectangle(cornerRadius: 4))
+                    stage1SourceMarkButton(for: entry)
                     Spacer(minLength: 0)
 
                 case .cross:
@@ -1039,6 +1078,7 @@ struct DiscoverPairedMetricCardView: View {
                             .font(.system(size: effectiveDetailSize, weight: .regular).monospacedDigit())
                             .foregroundStyle(secondaryInk)
                     }
+                    stage1SourceMarkButton(for: entry)
 
                 case .missing:
                     Text(s1.label)
@@ -1056,7 +1096,7 @@ struct DiscoverPairedMetricCardView: View {
     }
 
     @ViewBuilder
-    private func stage2BarLine(s2: FormattedPairedStageDisplay) -> some View {
+    private func stage2BarLine(entry: PairedSubjectEntry, s2: FormattedPairedStageDisplay) -> some View {
         if dynamicTypeSize.isAccessibilitySize {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
@@ -1067,21 +1107,24 @@ struct DiscoverPairedMetricCardView: View {
                     Spacer(minLength: 6)
                     switch s2.kind {
                     case .percent:
-                        PairedQuietNumberBox(
-                            fraction: PairedMetricPresentation.quietFillFraction(for: s2) ?? 0,
-                            isPrimaryStage: true,
-                            trackColor: trackBgColor,
-                            fixedWidth: 48,
-                            contentAlignment: .trailing,
-                            horizontalPadding: 6,
-                            verticalPadding: 2.5
-                        ) {
-                            Text(s2.label)
-                                .font(.system(size: effectiveSubjectSize, weight: .bold).monospacedDigit())
-                                .foregroundStyle(primaryInk)
-                                .lineLimit(1)
+                        HStack(spacing: 3) {
+                            PairedQuietNumberBox(
+                                fraction: PairedMetricPresentation.quietFillFraction(for: s2) ?? 0,
+                                isPrimaryStage: true,
+                                trackColor: trackBgColor,
+                                fixedWidth: 48,
+                                contentAlignment: .trailing,
+                                horizontalPadding: 6,
+                                verticalPadding: 2.5
+                            ) {
+                                Text(s2.label)
+                                    .font(.system(size: effectiveSubjectSize, weight: .bold).monospacedDigit())
+                                    .foregroundStyle(primaryInk)
+                                    .lineLimit(1)
+                            }
+                            .fixedSize(horizontal: true, vertical: false)
+                            stage2SourceMarkButton(for: entry)
                         }
-                        .fixedSize(horizontal: true, vertical: false)
                     case .cross:
                         Text(s2.label)
                             .font(.system(size: effectiveDetailSize, weight: .medium))
@@ -1113,7 +1156,7 @@ struct DiscoverPairedMetricCardView: View {
                 }
             }
         } else {
-            HStack(alignment: .center, spacing: 8) {
+            HStack(alignment: .center, spacing: 6) {
                 Text(metricSet.stage2Label)
                     .font(.system(size: effectiveDetailSize, weight: .medium))
                     .foregroundStyle(primaryInk)
@@ -1134,19 +1177,22 @@ struct DiscoverPairedMetricCardView: View {
                     }
                     .frame(height: 10)
 
-                    PairedQuietNumberBox(
-                        fraction: PairedMetricPresentation.quietFillFraction(for: s2) ?? 0,
-                        isPrimaryStage: true,
-                        trackColor: trackBgColor,
-                        fixedWidth: 48,
-                        contentAlignment: .trailing,
-                        horizontalPadding: 6,
-                        verticalPadding: 2.5
-                    ) {
-                        Text(s2.label)
-                            .font(.system(size: effectiveSubjectSize, weight: .bold).monospacedDigit())
-                            .foregroundStyle(primaryInk)
-                            .lineLimit(1)
+                    HStack(spacing: 3) {
+                        PairedQuietNumberBox(
+                            fraction: PairedMetricPresentation.quietFillFraction(for: s2) ?? 0,
+                            isPrimaryStage: true,
+                            trackColor: trackBgColor,
+                            fixedWidth: 48,
+                            contentAlignment: .trailing,
+                            horizontalPadding: 6,
+                            verticalPadding: 2.5
+                        ) {
+                            Text(s2.label)
+                                .font(.system(size: effectiveSubjectSize, weight: .bold).monospacedDigit())
+                                .foregroundStyle(primaryInk)
+                                .lineLimit(1)
+                        }
+                        stage2SourceMarkButton(for: entry)
                     }
 
                 case .cross:
@@ -1261,15 +1307,19 @@ struct DiscoverPairedMetricCardView: View {
                                 Text(s2Short)
                                     .font(.system(size: effectiveKickerSize, weight: .medium))
                                     .foregroundStyle(DS.textSecondaryReadable)
+                                stage2SourceMarkButton(for: spot.entry, numberSize: effectiveDetailSize)
                             }
                             .fixedSize(horizontal: true, vertical: false)
 
                             VStack(spacing: 1) {
-                                Text(s2.label)
-                                    .font(.system(size: effectivePodiumValueSize, weight: .bold).monospacedDigit())
-                                    .foregroundStyle(DS.textPrimary)
-                                    .lineLimit(1)
-                                    .minimumScaleFactor(0.85)
+                                HStack(alignment: .firstTextBaseline, spacing: 2) {
+                                    Text(s2.label)
+                                        .font(.system(size: effectivePodiumValueSize, weight: .bold).monospacedDigit())
+                                        .foregroundStyle(DS.textPrimary)
+                                        .lineLimit(1)
+                                        .minimumScaleFactor(0.85)
+                                    stage2SourceMarkButton(for: spot.entry, numberSize: effectiveDetailSize)
+                                }
                                 Text(s2Short)
                                     .font(.system(size: effectiveKickerSize, weight: .medium))
                                     .foregroundStyle(DS.textSecondaryReadable)
@@ -1302,17 +1352,23 @@ struct DiscoverPairedMetricCardView: View {
                         verticalPadding: 3
                     ) {
                         ViewThatFits(in: .horizontal) {
-                            Text("\(s1.label) \(s1Short)")
-                                .font(.system(size: effectiveDetailSize, weight: .medium).monospacedDigit())
-                                .foregroundStyle(DS.textPrimary)
-                                .lineLimit(1)
-                                .fixedSize(horizontal: true, vertical: false)
-
-                            VStack(spacing: 0) {
-                                Text(s1.label)
+                            HStack(alignment: .firstTextBaseline, spacing: 2) {
+                                Text("\(s1.label) \(s1Short)")
                                     .font(.system(size: effectiveDetailSize, weight: .medium).monospacedDigit())
                                     .foregroundStyle(DS.textPrimary)
                                     .lineLimit(1)
+                                stage1SourceMarkButton(for: spot.entry)
+                            }
+                            .fixedSize(horizontal: true, vertical: false)
+
+                            VStack(spacing: 0) {
+                                HStack(alignment: .firstTextBaseline, spacing: 2) {
+                                    Text(s1.label)
+                                        .font(.system(size: effectiveDetailSize, weight: .medium).monospacedDigit())
+                                        .foregroundStyle(DS.textPrimary)
+                                        .lineLimit(1)
+                                    stage1SourceMarkButton(for: spot.entry)
+                                }
                                 Text(s1Short)
                                     .font(.system(size: effectiveKickerSize, weight: .regular))
                                     .foregroundStyle(DS.textSecondaryReadable)
@@ -1421,9 +1477,9 @@ struct DiscoverPairedMetricCardView: View {
     }
 
     @ViewBuilder
-    private func tierRowValues(s1: FormattedPairedStageDisplay, s2: FormattedPairedStageDisplay) -> some View {
+    private func tierRowValues(entry: PairedSubjectEntry, s1: FormattedPairedStageDisplay, s2: FormattedPairedStageDisplay) -> some View {
         if s2.kind == .percent {
-            HStack(spacing: 5) {
+            HStack(spacing: 4) {
                 if s1.kind == .percent, let frac1 = PairedMetricPresentation.quietFillFraction(for: s1) {
                     PairedQuietNumberBox(
                         fraction: frac1,
@@ -1439,6 +1495,7 @@ struct DiscoverPairedMetricCardView: View {
                             .foregroundStyle(DS.textPrimary)
                             .lineLimit(1)
                     }
+                    stage1SourceMarkButton(for: entry)
                 } else {
                     Text(s1.label)
                         .font(.system(size: effectiveKickerSize, weight: .medium).monospacedDigit())
@@ -1459,10 +1516,11 @@ struct DiscoverPairedMetricCardView: View {
                         .foregroundStyle(DS.textPrimary)
                         .lineLimit(1)
                 }
+                stage2SourceMarkButton(for: entry, numberSize: effectiveDetailSize)
             }
             .fixedSize(horizontal: true, vertical: false)
         } else if s1.kind == .percent, let frac1 = PairedMetricPresentation.quietFillFraction(for: s1) {
-            HStack(spacing: 6) {
+            HStack(spacing: 5) {
                 PairedQuietNumberBox(
                     fraction: frac1,
                     isPrimaryStage: false,
@@ -1477,6 +1535,7 @@ struct DiscoverPairedMetricCardView: View {
                         .foregroundStyle(DS.textPrimary)
                         .lineLimit(1)
                 }
+                stage1SourceMarkButton(for: entry)
                 Text(s2.label)
                     .font(.system(size: effectiveKickerSize, weight: .medium))
                     .foregroundStyle(DS.textSecondaryReadable)
@@ -1516,7 +1575,7 @@ struct DiscoverPairedMetricCardView: View {
                     }
                     HStack {
                         Spacer(minLength: 0)
-                        tierRowValues(s1: s1, s2: s2)
+                        tierRowValues(entry: entry, s1: s1, s2: s2)
                     }
                 }
             } else {
@@ -1536,7 +1595,7 @@ struct DiscoverPairedMetricCardView: View {
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
 
-                    tierRowValues(s1: s1, s2: s2)
+                    tierRowValues(entry: entry, s1: s1, s2: s2)
                 }
             }
         }

@@ -119,6 +119,33 @@ nonisolated enum CardTeamNameSizing {
         maxSingleWordWidth(names: names, fontSize: fontSize, weight: weight)
     }
 
+    /// Natural line-break segments inside a team name: splits on whitespace and
+    /// after hyphens (`"Lausanne-Sport"` -> `["Lausanne-", "Sport"]`), matching
+    /// SwiftUI text wrapping boundaries while keeping hyphens attached to the leader.
+    static func lineBreakSegments(in raw: String) -> [String] {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return [] }
+        var segments: [String] = []
+        for word in trimmed.split(whereSeparator: \.isWhitespace).map(String.init) {
+            if !word.contains("-") {
+                segments.append(word)
+                continue
+            }
+            var current = ""
+            for ch in word {
+                current.append(ch)
+                if ch == "-" {
+                    segments.append(current)
+                    current = ""
+                }
+            }
+            if !current.isEmpty {
+                segments.append(current)
+            }
+        }
+        return segments
+    }
+
     /// Widest single word across `names` at `fontSize`, used by three-way cards (#13121)
     /// to decide whether a full-size club name fits beside trailing columns or should
     /// grow vertically rather than shrinking below a two-way card's type size.
@@ -130,10 +157,8 @@ nonisolated enum CardTeamNameSizing {
         let clampedSize = max(fontSize, 10)
         var maxWord: CGFloat = 0
         for raw in names {
-            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !trimmed.isEmpty else { continue }
-            for word in trimmed.split(whereSeparator: \.isWhitespace).map(String.init) {
-                maxWord = max(maxWord, singleLineWidth(word, fontSize: clampedSize, weight: weight))
+            for segment in lineBreakSegments(in: raw) {
+                maxWord = max(maxWord, singleLineWidth(segment, fontSize: clampedSize, weight: weight))
             }
         }
         return maxWord

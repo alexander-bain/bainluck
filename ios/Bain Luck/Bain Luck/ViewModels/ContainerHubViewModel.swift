@@ -29,6 +29,7 @@ final class ContainerHubViewModel: ObservableObject {
 
     let slug: String
     private let service: any ContainerHubLoading
+    private let retryDelayNanoseconds: UInt64
     private var issued = 0
     private var closedThrough = 0
     private var refreshVersion = 0
@@ -40,9 +41,14 @@ final class ContainerHubViewModel: ObservableObject {
     }
     private var heldPages: [HeldPage] = []
 
-    init(slug: String, service: any ContainerHubLoading = ContainerHubService()) {
+    init(
+        slug: String,
+        service: any ContainerHubLoading = ContainerHubService(),
+        retryDelayNanoseconds: UInt64 = 350_000_000
+    ) {
         self.slug = slug
         self.service = service
+        self.retryDelayNanoseconds = retryDelayNanoseconds
     }
 
     @MainActor
@@ -55,7 +61,7 @@ final class ContainerHubViewModel: ObservableObject {
         refreshError = nil
         defer { if refreshVersion == version { isRefreshing = false } }
         do {
-            async let responseTask = service.load(slug: slug)
+            async let responseTask = loadPrimaryWithSingleTransientRetry(version: version, ticket: ticket)
             async let ceremonySetsTask = service.loadPairedMetrics(slug: slug)
             let response = try await responseTask
             let ceremonySets = await ceremonySetsTask
@@ -258,6 +264,33 @@ final class ContainerHubViewModel: ObservableObject {
         let presentation = ContainerHubPresentation(response: combined)
         context.accept(presentation)
         state = .loaded(presentation)
+    }
+
+    @MainActor
+    private func loadPrimaryWithSingleTransientRetry(
+        version: Int,
+        ticket: Int
+    ) async throws -> ContainerHubResponse {
+        do {
+            return try await service.load(slug: slug)
+        } catch {
+            guard version == refreshVersion,
+                  admitted(ticket),
+                  !Task.isCancelled,
+                  !isCancellation(error),
+                  !isMissing(error) else {
+                throw error
+            }
+            if retryDelayNanoseconds > 0 {
+                try await Task.sleep(nanoseconds: retryDelayNanoseconds)
+            }
+            guard version == refreshVersion,
+                  admitted(ticket),
+                  !Task.isCancelled else {
+                throw CancellationError()
+            }
+            return try await service.load(slug: slug)
+        }
     }
 
     private func isMissing(_ error: Error) -> Bool {
