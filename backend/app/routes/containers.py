@@ -742,6 +742,20 @@ async def get_machinery_preview(
     }
 
 
+@router.get("/preview/kit-v1")
+async def get_kit_v1_preview(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Admin-only preview of Kit v1 (Ruling 366: B & 367: A) worked examples."""
+    from app.routes.admin_utils import _check_admin_auth
+    from app.utils.kit_v1_spec import build_kit_v1_worked_examples
+
+    if not await _check_admin_auth(None, request, db):
+        raise HTTPException(status_code=403, detail="Admin authentication required")
+    return build_kit_v1_worked_examples()
+
+
 @router.get("/{slug}")
 async def get_container(
     slug: str = Path(..., min_length=1, max_length=200),
