@@ -369,9 +369,10 @@ describe("#5105 the real page consumes the real server's responses", () => {
     expect(sequence(page)).toEqual(["H", ...E(...range(25, 1))]);
   });
 
-  it("a tournament starts under the pin: the retired page 20 stays seated until refreshed; one unpinned page zero replaces the deck with its newcomer", async () => {
+  it("a tournament starts under the pin: held seats stay put, unseen retired page 20 appends strictly below, and one unpinned page zero replaces on refresh", async () => {
     const [p0, retired, fresh, p1, lookahead] = transcript.scenarios.tournament_start;
     const before = ["futures:0", "tournament:t-open", ...F(...range(18, 1))];
+    const withRetiredTail = [...before, ...F(...range(19, 19))];
     const replaced = F(0, 500, ...range(8, 1)).concat("tournament:t-open", F(...range(9, 9)));
     const page = await mount();
     await serve(p0);
@@ -380,11 +381,21 @@ describe("#5105 the real page consumes the real server's responses", () => {
     await fireSentinel();
     const asked = await serve(retired);
     expect(query(asked)).toEqual({ limit: "20", offset: "20", event_pct: "0.15", edition: served(p0).edition });
-    // Nothing of the retired edition's page 20 reached the screen, and no uninvited page zero fired.
-    expect(sequence(page)).toEqual(before);
-    expect(open()).toEqual([]);
+    // Held cards never moved; unseen newer-edition cards appended below and lookahead queued offset=40 on the newer edition.
+    expect(sequence(page)).toEqual(withRetiredTail);
+    const tailInFlight = open();
+    expect(tailInFlight.map(query)).toEqual([{ limit: "20", offset: "40", event_pct: "0.15", edition: served(retired).edition }]);
 
     await clickTestId(page, "discover-new-cards-button");
+    // Late tail reply finishing after manual refresh request starts cannot touch the new edition.
+    tailInFlight[0].done = true;
+    await act(async () => {
+      tailInFlight[0].resolve(new Response(JSON.stringify({ items: [], offset: 40, total: 40, has_more: false }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }));
+    });
+    await settle();
     const restart = await serve(fresh);
     expect(query(restart)).toEqual({ limit: "20", event_pct: "0.15" });
     expect(sequence(page)).toEqual(replaced);
@@ -416,15 +427,26 @@ describe("#5105 the real page consumes the real server's responses", () => {
   it("the current deck is unsupported at replacement: the visible deck stays, Retry is actionable and recovers once, without duplicates", async () => {
     const [p0, retired, refused, retry] = transcript.scenarios.unavailable_replacement;
     const before = ["futures:0", "tournament:t-open", ...F(...range(18, 1))];
+    const withRetiredTail = [...before, ...F(...range(19, 19))];
     const page = await mount();
     await serve(p0);
     await fireSentinel();
     await serve(retired);
-    expect(sequence(page)).toEqual(before);
+    expect(sequence(page)).toEqual(withRetiredTail);
+    const tailInFlight = open();
+    expect(tailInFlight.map(query)).toEqual([{ limit: "20", offset: "40", event_pct: "0.15", edition: served(retired).edition }]);
 
     await clickTestId(page, "discover-new-cards-button");
+    tailInFlight[0].done = true;
+    await act(async () => {
+      tailInFlight[0].resolve(new Response(JSON.stringify({ items: [], offset: 40, total: 40, has_more: false }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }));
+    });
+    await settle();
     await serve(refused);
-    expect(sequence(page)).toEqual(before);
+    expect(sequence(page)).toEqual(withRetiredTail);
     expect(notice(page)).toBe("inline");
     expect(has(page, "data-end-of-feed")).toBe(false);
     await settle(10);

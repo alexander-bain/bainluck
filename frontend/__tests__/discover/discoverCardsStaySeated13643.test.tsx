@@ -8,9 +8,14 @@
  * 2. Fresh prices/numbers on held cards STILL land in place;
  * 3. When newer cards exist, `"New cards available"` appears at the top and
  *    replaces the deck ONLY when clicked;
- * 4. Hitting a retired edition while scrolling down (`offset > 0`) holds
- *    the seated cards, stops pagination, and offers top + bottom refresh;
- * 5. `useSWR` disables reconnect revalidation (`revalidateOnReconnect: false`).
+ * 4. Hitting a retired edition while scrolling down (`offset > 0`) OR after a
+ *    120s retired background tick holds seated cards AND keeps paging into
+ *    the newer edition strictly below held seats (zero bottom refresh wall);
+ * 5. A failed retired-tail read surfaces retry without moving held cards or
+ *    scrolling back to the top;
+ * 6. A held card whose fresh copy is old or empty keeps its prior body and
+ *    shows the "From earlier · no longer updating" mark (`discover-card-aged-mark`);
+ * 7. `useSWR` disables reconnect revalidation (`revalidateOnReconnect: false`).
  */
 
 import "../helpers/minimalDom";
@@ -19,7 +24,7 @@ import * as path from "path";
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { SWRConfig, useSWRConfig } from "swr";
-import { hasNewerDeckCards, refreshHeldBodiesInPlace } from "@/lib/discover/editionOrder";
+import { appendUnseenCards, hasNewerDeckCards, reconcileHeldBodies, refreshHeldBodiesInPlace } from "@/lib/discover/editionOrder";
 
 let mockOptionOn = true;
 jest.mock("@/lib/launchSurfaces", () => ({
@@ -111,9 +116,13 @@ jest.mock("@/components/discover/EndOfFeedCard", () => ({
   __esModule: true,
   default: ({ count }: { count: number }) => <div data-end-of-feed={count} />,
 }));
+const unavailableState: { onRetry?: () => void } = {};
 jest.mock("@/components/discover/FeedUnavailableNotice", () => ({
   __esModule: true,
-  default: ({ variant }: { variant: string }) => <div data-unavailable={variant} />,
+  default: ({ variant, onRetry }: { variant: string; onRetry?: () => void }) => {
+    unavailableState.onRetry = onRetry;
+    return <div data-unavailable={variant} />;
+  },
 }));
 jest.mock("@/components/discover/FeedBootScript", () => ({ __esModule: true, default: () => null }));
 jest.mock("@/components/discover/FirstRunOrientation", () => ({ __esModule: true, default: () => null }));
@@ -148,12 +157,13 @@ class FakeIntersectionObserver {
 const win = window as unknown as Record<string, unknown>;
 const local = new MemoryStorage();
 const session = new MemoryStorage();
+const scrollToCalls: Array<Record<string, unknown>> = [];
 Object.assign(win, {
   localStorage: local,
   sessionStorage: session,
   scrollY: 0,
   innerHeight: 844,
-  scrollTo: () => {},
+  scrollTo: (opts: Record<string, unknown>) => { scrollToCalls.push(opts); },
   setTimeout,
   clearTimeout,
 });
@@ -196,13 +206,13 @@ const card = (id: number, prob = 0.5, status = "live"): Card => ({
 });
 const list = (n: number, from = 0, prob = 0.5) => Array.from({ length: n }, (_, i) => card(from + i, prob));
 
-function reply(items: unknown[], offset: number, opts: { edition?: string; boundary?: number; status?: string; total?: number } = {}) {
+function reply(items: unknown[], offset: number, opts: { edition?: string; boundary?: number; status?: string; total?: number; hasMore?: boolean } = {}) {
   const total = opts.total ?? 60;
   return {
     items,
     offset,
     total,
-    has_more: offset + items.length < total,
+    has_more: opts.hasMore ?? offset + items.length < total,
     edition: opts.edition ?? "E1",
     ...(opts.boundary !== undefined ? { continuation_start: opts.boundary } : {}),
     ...(opts.status ? { edition_status: opts.status } : {}),
@@ -250,6 +260,7 @@ function reactProps(node: Node): { onClick?: () => void } {
   return key ? (node[key] as { onClick?: () => void }) : {};
 }
 const findByTestId = (container: Node, id: string) => walk(container).find((n) => n["data-testid"] === id);
+const findAllByTestId = (container: Node, id: string) => walk(container).filter((n) => n["data-testid"] === id);
 const cardsOf = (container: Node) => walk(container).flatMap((n) => (typeof n["data-card"] === "string" ? [n["data-card"] as string] : []));
 const textOf = (container: Node, id: string) => walk(container).find((n) => n["data-card"] === id)?.textContent;
 const ids = (from: number, to: number) => Array.from({ length: to - from }, (_, i) => `c${from + i}`);
@@ -285,6 +296,8 @@ beforeEach(() => {
   mockOptionOn = true;
   calls.length = 0;
   observers.length = 0;
+  scrollToCalls.length = 0;
+  unavailableState.onRetry = undefined;
   local.clear();
   session.clear();
 });
@@ -323,6 +336,24 @@ describe("#13643 — pure seat-preservation helpers", () => {
     expect(hasNewerDeckCards(base, [card(2), card(1), card(3)], (x) => String(x.data.id))).toBe(true);
     expect(hasNewerDeckCards(base, [card(99), card(1), card(2)], (x) => String(x.data.id))).toBe(true);
   });
+
+  it("reconcileHeldBodies tracks refreshed and rejected ids and appendUnseenCards appends only unseen tail", () => {
+    const prev = [card(1, 0.5), card(2, 0.4)];
+    const r = reconcileHeldBodies(
+      prev,
+      [card(1, 0.7), card(2, 0.99, "closed"), card(99, 0.3)],
+      (x) => String(x.data.id),
+      (x) => x.data.status !== "closed",
+    );
+    expect(r.items[0].data.prob).toBe(0.7);
+    expect(r.items[1]).toBe(prev[1]);
+    expect(r.refreshedIds).toEqual(["1"]);
+    expect(r.rejectedIds).toEqual(["2"]);
+
+    const appended = appendUnseenCards(r.items, [card(2, 0.4), card(99, 0.3), card(100, 0.2)], (x) => String(x.data.id));
+    expect(appended.appended.map((x) => x.data.id)).toEqual([99, 100]);
+    expect(appended.next.map((x) => x.data.id)).toEqual([1, 2, 99, 100]);
+  });
 });
 
 describe("#13643 — Discover on web never rearranges seated cards while open", () => {
@@ -352,9 +383,10 @@ describe("#13643 — Discover on web never rearranges seated cards while open", 
     expect(cardsOf(page)).toEqual(ids(0, 20));
     expect(calls).toHaveLength(3);
 
-    // Only clicking "New cards available" asks unpinned page 0 and swaps order.
+    // Only clicking "New cards available" asks unpinned page 0, scrolls to top, and swaps order.
     await act(async () => { reactProps(findByTestId(page, "discover-new-cards-button")!).onClick!(); });
     await settle();
+    expect(scrollToCalls.length).toBeGreaterThanOrEqual(1);
     expect(calls).toHaveLength(4);
     expect(calls[3].params).toEqual({ limit: 20, offset: 0, event_pct: 0.15 });
     await answer(calls[3], reply(list(20, 200, 0.2), 0, { edition: "E3", boundary: 2 }));
@@ -362,29 +394,99 @@ describe("#13643 — Discover on web never rearranges seated cards while open", 
     expect(findByTestId(page, "discover-new-cards-button")).toBeUndefined();
   });
 
-  it("holds seated cards and stops the spinner if scrolling hits a retired edition", async () => {
+  it("keeps paging below held cards after a 120s retired background tick without moving held seats", async () => {
     const page = await mount();
-    await answer(calls[0], reply(list(20, 0, 0.5), 0, { edition: "E1", boundary: 3 }));
+    await answer(calls[0], reply(list(20, 0, 0.5), 0, { edition: "E1", boundary: 3, total: 60 }));
+    expect(cardsOf(page)).toEqual(ids(0, 20));
+
+    // At 120s, E1 is retired and E2's page 0 introduces unseen cards 100..118 plus held c1.
+    await revalidate();
+    const retiredPage0 = [card(1, 0.66), ...list(19, 100, 0.4)];
+    await answer(calls[1], reply(retiredPage0, 0, { edition: "E2", boundary: 0, status: "invalidated", total: 60 }));
+    expect(cardsOf(page)).toEqual(ids(0, 20));
+    expect(textOf(page, "c1")).toBe("c1:0.66");
+    expect(findByTestId(page, "discover-new-cards-button")).toBeDefined();
+
+    // Reader scrolls down past card 20: E2's unseen page-0 cards flush strictly BELOW held seats,
+    // without dropping E1 seats or emitting any bottom refresh blocker.
+    await fireSentinel();
+    expect(cardsOf(page)).toEqual([...ids(0, 20), ...ids(100, 119)]);
+    expect(findByTestId(page, "discover-retired-refresh-button")).toBeUndefined();
+
+    // Lookahead/scroll continues fetching E2's offset=20 and offset=40 pinned to E2 until exhausted.
+    expect(calls).toHaveLength(3);
+    expect(calls[2].params).toEqual({ limit: 20, offset: 20, event_pct: 0.15, edition: "E2" });
+    await answer(calls[2], reply(list(20, 120, 0.3), 20, { edition: "E2", status: "pinned", total: 60 }));
+    await fireSentinel();
+    expect(cardsOf(page)).toEqual([...ids(0, 20), ...ids(100, 119), ...ids(120, 140)]);
+    expect(calls).toHaveLength(4);
+    expect(calls[3].params).toEqual({ limit: 20, offset: 40, event_pct: 0.15, edition: "E2" });
+    await answer(calls[3], reply(list(20, 140, 0.3), 40, { edition: "E2", status: "pinned", total: 60 }));
+    expect(cardsOf(page)).toEqual([...ids(0, 20), ...ids(100, 119), ...ids(120, 160)]);
+    expect(walk(page).some((n) => n["data-end-of-feed"] !== undefined)).toBe(true);
+  });
+
+  it("keeps paging below held cards when scrolling hits a retired edition, and retries failed tail without moving seats", async () => {
+    const page = await mount();
+    await answer(calls[0], reply(list(20, 0, 0.5), 0, { edition: "E1", boundary: 3, total: 60 }));
 
     await fireSentinel();
     expect(calls).toHaveLength(2);
     expect(calls[1].params).toEqual({ limit: 20, offset: 20, event_pct: 0.15, edition: "E1" });
-    await answer(calls[1], reply(list(20, 500, 0.5), 20, { edition: "E9", status: "expired" }));
+    await answer(calls[1], reply(list(20, 500, 0.5), 20, { edition: "E9", status: "expired", total: 60 }));
 
-    // Seated cards are untouched, no uninvited page-0 restart fired, top + bottom prompts offer manual refresh.
-    expect(calls).toHaveLength(2);
-    expect(cardsOf(page)).toEqual(ids(0, 20));
+    // Seated cards 0..19 stay untouched; unseen E9 cards append strictly below; lookahead continues at offset=40 with E9; no bottom wall.
+    expect(cardsOf(page)).toEqual([...ids(0, 20), ...ids(500, 520)]);
     expect(findByTestId(page, "discover-new-cards-button")).toBeDefined();
-    expect(findByTestId(page, "discover-retired-refresh-button")).toBeDefined();
-
-    await act(async () => { reactProps(findByTestId(page, "discover-retired-refresh-button")!).onClick!(); });
-    await settle();
+    expect(findByTestId(page, "discover-retired-refresh-button")).toBeUndefined();
     expect(calls).toHaveLength(3);
-    expect(calls[2].params).toEqual({ limit: 20, offset: 0, event_pct: 0.15 });
-    await answer(calls[2], reply(list(20, 300, 0.6), 0, { edition: "E10", boundary: 1 }));
+    expect(calls[2].params).toEqual({ limit: 20, offset: 40, event_pct: 0.15, edition: "E9" });
+
+    // A failed tail read raises inline retry (not end-of-feed), keeps every held card, and retry recovers WITHOUT scrolling to top.
+    await act(async () => { calls[2].reject(new Error("network")); });
+    await settle();
+    expect(findByTestId(page, "discover-retired-refresh-button")).toBeUndefined();
+    expect(walk(page).some((n) => n["data-unavailable"] === "inline")).toBe(true);
+    expect(unavailableState.onRetry).toBeDefined();
+    const scrollsBeforeRetry = scrollToCalls.length;
+    await act(async () => { unavailableState.onRetry!(); });
+    await settle();
+    expect(scrollToCalls.length).toBe(scrollsBeforeRetry);
+    expect(calls).toHaveLength(4);
+    expect(calls[3].params).toEqual({ limit: 20, offset: 40, event_pct: 0.15, edition: "E9" });
+    await answer(calls[3], reply(list(20, 520, 0.5), 40, { edition: "E9", status: "pinned", total: 60 }));
+    await fireSentinel();
+    expect(cardsOf(page)).toEqual([...ids(0, 20), ...ids(500, 540)]);
+
+    // Clicking the top pill resets atomically to the fresh edition.
+    await act(async () => { reactProps(findByTestId(page, "discover-new-cards-button")!).onClick!(); });
+    await settle();
+    expect(calls).toHaveLength(5);
+    expect(calls[4].params).toEqual({ limit: 20, offset: 0, event_pct: 0.15 });
+    await answer(calls[4], reply(list(20, 300, 0.6), 0, { edition: "E10", boundary: 1 }));
     expect(cardsOf(page)).toEqual(ids(300, 320));
     expect(findByTestId(page, "discover-new-cards-button")).toBeUndefined();
-    expect(findByTestId(page, "discover-retired-refresh-button")).toBeUndefined();
+  });
+
+  it("shows a quiet aged mark when a held card's fresh body is empty or old, and clears when updated", async () => {
+    const page = await mount();
+    await answer(calls[0], reply(list(20, 0, 0.5), 0, { edition: "E1", boundary: 3 }));
+    expect(findAllByTestId(page, "discover-card-aged-mark")).toHaveLength(0);
+
+    // Background reply carries an aged ("closed") replacement for c1. Seat & price stay, quiet mark appears.
+    await revalidate();
+    await answer(calls[1], reply([card(1, 0.99, "closed"), ...list(19, 100, 0.4)], 0, { edition: "E2", boundary: 0, status: "invalidated" }));
+    expect(cardsOf(page)).toEqual(ids(0, 20));
+    expect(textOf(page, "c1")).toBe("c1:0.5");
+    const marks = findAllByTestId(page, "discover-card-aged-mark");
+    expect(marks).toHaveLength(1);
+    expect(marks[0].textContent).toBe("From earlier · no longer updating");
+
+    // Later fresh renderable reply for c1 replaces body in place and clears the mark.
+    await revalidate();
+    await answer(calls[2], reply([card(1, 0.81, "live"), ...list(19, 100, 0.4)], 0, { edition: "E3", boundary: 0, status: "expired" }));
+    expect(textOf(page, "c1")).toBe("c1:0.81");
+    expect(findAllByTestId(page, "discover-card-aged-mark")).toHaveLength(0);
   });
 
   it("disables SWR focus and reconnect revalidation on discover-feed", () => {

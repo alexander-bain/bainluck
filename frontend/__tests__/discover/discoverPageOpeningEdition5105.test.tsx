@@ -524,7 +524,7 @@ describe("#5105 option ON — current bodies and late replies", () => {
   });
 });
 
-describe("#5105 option ON — a retired edition holds its seat and restarts from page zero when refreshed", () => {
+describe("#5105 option ON — a retired edition holds its seat, appends unseen tail below, and restarts from page zero when refreshed", () => {
   async function retiredTail() {
     const page = await mount();
     await answer(calls[0], reply(list(40), 0, { boundary: 3 }));
@@ -533,11 +533,11 @@ describe("#5105 option ON — a retired edition holds its seat and restarts from
     return page;
   }
 
-  it("keeps the visible deck without uninvited page-zero asks, then replaces atomically on refresh", async () => {
+  it("keeps the visible deck, appends unseen retired-edition cards strictly below without uninvited page-zero asks, then replaces atomically on refresh", async () => {
     const page = await retiredTail();
-    // Nothing of the retired page was appended; the reader's deck is intact and no uninvited page 0 fired.
+    // Held seats 0..19 stay put; unseen page-20 cards (c520..c539) append strictly below; no uninvited page 0 fired.
     expect(calls).toHaveLength(2);
-    expect(sequence(page)).toEqual(["c0", "c1", "c2", "H", ...ids(3, 20)]);
+    expect(sequence(page)).toEqual(["c0", "c1", "c2", "H", ...ids(3, 20), ...ids(520, 540)]);
     expect(findByTestId(page, "discover-new-cards-button")).toBeDefined();
 
     await clickTestId(page, "discover-new-cards-button");
@@ -558,7 +558,7 @@ describe("#5105 option ON — a retired edition holds its seat and restarts from
     const page = await retiredTail();
     await clickTestId(page, "discover-new-cards-button");
     await answer(calls[2], UNAVAILABLE);
-    expect(sequence(page)).toEqual(["c0", "c1", "c2", "H", ...ids(3, 20)]);
+    expect(sequence(page)).toEqual(["c0", "c1", "c2", "H", ...ids(3, 20), ...ids(520, 540)]);
     expect(walk(page).some((n) => n["data-unavailable"] === "inline")).toBe(true);
     await settle(10);
     expect(calls).toHaveLength(3);
@@ -582,7 +582,7 @@ describe("#5105 option ON — a retired edition holds its seat and restarts from
     const page = await retiredTail();
     await clickTestId(page, "discover-new-cards-button");
     await answer(calls[2], reply(list(40, 200), 0, { edition: null }));
-    expect(sequence(page)).toEqual(["c0", "c1", "c2", "H", ...ids(3, 20)]);
+    expect(sequence(page)).toEqual(["c0", "c1", "c2", "H", ...ids(3, 20), ...ids(520, 540)]);
     expect(walk(page).some((n) => n["data-unavailable"] === "inline")).toBe(true);
     expect(calls).toHaveLength(3);
   });
@@ -593,7 +593,7 @@ describe("#5105 option ON — a retired edition holds its seat and restarts from
     (calls[2] as Call & { done?: boolean }).done = true;
     await act(async () => { calls[2].reject(new Error("network")); });
     await settle();
-    expect(sequence(page)).toEqual(["c0", "c1", "c2", "H", ...ids(3, 20)]);
+    expect(sequence(page)).toEqual(["c0", "c1", "c2", "H", ...ids(3, 20), ...ids(520, 540)]);
     expect(walk(page).some((n) => n["data-unavailable"] === "inline")).toBe(true);
     expect(calls).toHaveLength(3);
   });
@@ -640,9 +640,9 @@ describe("#5105 option ON — Back restores the sections; refresh opens a new ed
     await fireSentinel();
     expect(calls.length).toBe(before + 1);
     expect(lastCall().params).toEqual({ limit: 20, offset: 40, event_pct: 0.15, edition: "E1" });
-    // ...and a retirement there keeps the restored cards seated until refreshed, then resets BOTH seeds.
+    // ...and a retirement there keeps the restored cards seated, appends unseen tail below, and refresh resets BOTH seeds.
     await answer(lastCall(), reply(list(60, 700), 40, { edition: "E7", status: "superseded" }));
-    expect(sequence(page)).toEqual(["c0", "c1", "c2", "H", ...ids(3, 40)]);
+    expect(sequence(page)).toEqual(["c0", "c1", "c2", "H", ...ids(3, 40), ...ids(740, 760)]);
     await clickTestId(page, "discover-new-cards-button");
     await answer(lastCall(), reply(list(60, 800), 0, { edition: "E8", boundary: 1 }));
     expect(sequence(page)).toEqual(["c800", "H", ...ids(801, 820)]);
