@@ -1199,19 +1199,6 @@ class FuturesOutcome(Base):
                 "resolution_source IS NULL AND current_probability IS NOT NULL"
             ),
         ),
-        # #13573: covers `_query_team_futures` (`q1_fk`: `team_id IN ...` joined to
-        # open `futures_markets`) and `_championship_path_stmt` as an Index-Only
-        # Scan over non-null `team_id` rows instead of probing ~62k cold historical
-        # heap pages on big clubs. Built by attended `CREATE INDEX CONCURRENTLY`
-        # (gotcha #31); declared here so `--autogenerate` never drops it.
-        Index(
-            "ix_fo_team_market_id",
-            "team_id",
-            "market_id",
-            postgresql_include=["id"],
-            postgresql_where=text("team_id IS NOT NULL"),
-            sqlite_where=text("team_id IS NOT NULL"),
-        ),
     )
 
     # Relationships

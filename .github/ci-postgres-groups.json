@@ -239,8 +239,7 @@
     "#4437 open markets' outcome copy: maintainer and both routes (real Postgres)",
     "#12288 grouping preview loads every candidate definition on real Postgres",
     "#12612 feed static tag filter (real Postgres)",
-    "#12612 calibration real-Postgres contracts",
-    "#13573 team futures Q1 rewrite equivalence (real Postgres)"
+    "#12612 calibration real-Postgres contracts"
   ],
   "shared-suffix": [
     "#10024 'dodgers world series' reaches the World Series board, not No results (real Postgres)",
