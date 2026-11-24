@@ -87,12 +87,15 @@ def local_tournament_cache(monkeypatch):
 
 
 @pytest.mark.usefixtures("opening_seating_off")
+@pytest.mark.parametrize("has_settlement_time", [True, False], ids=["dated", "missing-date"])
 async def test_tournament_futures_and_discover_agree_after_one_venue_grades(
-    client, mock_db, monkeypatch, tournament_end, local_tournament_cache
+    client, mock_db, monkeypatch, tournament_end, local_tournament_cache, has_settlement_time
 ):
     end = tournament_end
     open_copy = _rsm_market(70502669, end)
     settled_board = _rsm_market(70709343, end, resolved=True)
+    if not has_settlement_time:
+        settled_board.settled_at = None
     markets = {m.id: m for m in (open_copy, settled_board)}
     schedule = _schedule(end)
     monkeypatch.setattr(golf, "_get_golf_schedule", AsyncMock(return_value=[schedule]))

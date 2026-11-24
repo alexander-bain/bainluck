@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from app.services.datagolf_api import DataGolfPlayer
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
-from sqlalchemy import or_, select, text, func as sqlfunc
+from sqlalchemy import literal, or_, select, text, func as sqlfunc
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -3852,30 +3852,39 @@ async def get_golf(
     """Get golf tournament futures with aggregated odds across sources."""
     now = datetime.now(timezone.utc)
 
+    # Fixed predicates let PostgreSQL use the partial golf indexes even if a
+    # prepared statement switches to a generic plan.
     golf_query = (
         select(FuturesMarket)
         .options(selectinload(FuturesMarket.outcomes))
         .where(
             or_(
-                FuturesMarket.external_id.ilike("golf_%"),
-                FuturesMarket.llm_sport_category == "golf",
+                FuturesMarket.external_id.ilike(literal("golf_%", literal_execute=True)),
+                FuturesMarket.llm_sport_category == literal("golf", literal_execute=True),
             ),
         )
     )
     query = golf_query.where(FuturesMarket.status == "open")
     result = await db.execute(query)
     markets_by_id = {market.id: market for market in result.scalars().unique().all()}
-    # The settlement clock is indexed. Keep this read separate so the open
-    # listing can still use its status index without scanning resolved history.
     graded_query = golf_query.where(
-        FuturesMarket.settled_at >= now - timedelta(days=7),
         FuturesMarket.status == "resolved",
         FuturesMarket.mutually_exclusive.is_(True),
         FuturesMarket.outcomes.any(FuturesOutcome.is_winner.is_(True)),
     )
-    # A market can settle between the two reads. Prefer the freshly graded row.
-    graded = await db.execute(graded_query.execution_options(populate_existing=True))
-    markets_by_id.update((market.id, market) for market in graded.scalars().unique().all())
+    recent = now - timedelta(days=7)
+    # Keep both graded reads separate from the open listing. A dated grade can
+    # use the settlement index. An undated grade uses the existing golf identity
+    # indexes, then checks the venue close and the stored winner.
+    dated_grade_query = graded_query.where(FuturesMarket.settled_at >= recent)
+    undated_grade_query = graded_query.where(
+        FuturesMarket.settled_at.is_(None),
+        FuturesMarket.resolution_date.between(recent, now + _GOLF_WINNER_CLOSE_GRACE),
+    )
+    # A market can settle after the open read. Prefer the freshly graded row.
+    for grade_query in (dated_grade_query, undated_grade_query):
+        graded = await db.execute(grade_query.execution_options(populate_existing=True))
+        markets_by_id.update((market.id, market) for market in graded.scalars().unique().all())
     markets_all = [market for market in markets_by_id.values() if _is_golf_market(market)]
     # UX-P168. The name-side gate above cannot see a market whose title is
     # domain-neutral and whose FIELD is another sport — "Asia Masters 2026 Winner"
