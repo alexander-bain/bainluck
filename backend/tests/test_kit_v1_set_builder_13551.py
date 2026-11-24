@@ -196,8 +196,19 @@ def test_real_sets_fable_followups_and_shape_priority() -> None:
         assert " x " not in card_blob
         assert "ptb" not in card_blob
 
-    # 6. Genuine refusals remain blocked honestly
-    assert "benedict cumberbatch" in refused_by_slug["machinery-cast-delayed-cancelled"]["refusal_reason"].lower()
+    # 6. Genuine refusals remain blocked honestly; 387: A strips wrong Casting portrait & draws initials + valid posters
+    cast = by_slug["machinery-cast-delayed-cancelled"]
+    assert cast["fits"] is True and cast["variant"] == "casting_sheet"
+    cast_blob = json.dumps(cast["kit_card"])
+    assert "wz3MRiMmoz6b5X3oSzMRC9nLxY1" not in cast_blob
+    cast_pics = [
+        m
+        for it in cast["kit_card"]["body"]["items"]
+        for m in it["marks"]
+        if m.get("mark") == "picture"
+    ]
+    assert cast_pics[0]["url"] is None and cast_pics[0]["initials"] == "HJ"
+    assert cast_pics[1]["url"] and cast_pics[2]["url"]
     assert "crests" in refused_by_slug["liga-profesional-relegation-2026"]["refusal_reason"].lower()
     assert "settled" in refused_by_slug["nfl-2026-week-11"]["refusal_reason"].lower()
 
@@ -792,3 +803,136 @@ def test_v6_before_labels_threshold_ladder_no_dash_captions_slates_and_alex_exam
                 assert hdr_text == "3 OF 16 GAMES"
             times = [it["sub_marks"][0]["text"] for it in card["body"]["items"]]
             assert len(times) == n_shown and _parse_iso_dt("2026-11-24T00:00:00Z") is not None
+
+
+def test_v7_387a_388a_389c_live_caption_and_split_bar_parity() -> None:
+    # 1. 387: A — partial verified pictures show held pictures + initials circle; 0-pictured casting refuses for person/team/film
+    partial_bundle = {
+        "data": {
+            "kind": "roundup",
+            "collection_ref": {"id": 9001, "slug": "test-partial-cast", "name": "Test Partial Art"},
+            "roundup": {
+                "kicker": "FILM",
+                "machinery_card": {
+                    "form_id": "benchmark_strip",
+                    "rows": [
+                        {
+                            "name": "Hugh Jackman as Wolverine",
+                            "probability": 0.94,
+                            "rendered_percent": 94,
+                            "art": {
+                                "url": "https://image.tmdb.org/t/p/w185/wrong.jpg",
+                                "kind": "person",
+                                "detail": "Benedict Cumberbatch TMDB portrait",
+                            },
+                        },
+                        {
+                            "name": "Dune: Part Three",
+                            "probability": 0.81,
+                            "rendered_percent": 81,
+                            "art": {
+                                "url": "https://image.tmdb.org/t/p/w342/glt0v4I89rMWstDNCaFXc5SNyO1.jpg",
+                                "kind": "tmdb_poster",
+                            },
+                        },
+                        {
+                            "name": "Mystery Sequel",
+                            "probability": 0.67,
+                            "rendered_percent": 67,
+                            "art": {"url": None, "kind": "monogram"},
+                        },
+                    ],
+                },
+            },
+        }
+    }
+    res_partial = build_kit_card_for_real_set(partial_bundle, None, now=FIXED_NOW)
+    assert res_partial["fits"] is True and res_partial["variant"] == "casting_sheet"
+    pics = [m for it in res_partial["kit_card"]["body"]["items"] for m in it["marks"] if m["mark"] == "picture"]
+    assert pics[0]["url"] is None and pics[0]["initials"] == "HJ"
+    assert pics[1]["url"] == "https://image.tmdb.org/t/p/w342/glt0v4I89rMWstDNCaFXc5SNyO1.jpg"
+    assert pics[2]["url"] is None and pics[2]["initials"] == "MS"
+    assert "wrong.jpg" not in json.dumps(res_partial["kit_card"])
+
+    # 2. 388: A — non-(person/team/film) plain_bar_stack only as last resort; dated_tiles wins when dated
+    climate_bundle = {
+        "data": {
+            "kind": "roundup",
+            "collection_ref": {"id": 9002, "slug": "test-climate-plain", "name": "Climate Metrics"},
+            "roundup": {
+                "kicker": "CLIMATE",
+                "machinery_card": {
+                    "form_id": "benchmark_strip",
+                    "rows": [
+                        {"name": "Melbourne wettest month: October", "probability": 0.91, "rendered_percent": 91},
+                        {"name": "Napa seasonal rainfall: Above 10 inches", "probability": 0.87, "rendered_percent": 87},
+                        {"name": "Top primary energy in 2030: Oil", "probability": 0.66, "rendered_percent": 66},
+                    ],
+                },
+            },
+        }
+    }
+    res_plain = build_kit_card_for_real_set(climate_bundle, None, now=FIXED_NOW)
+    assert res_plain["fits"] is True and res_plain["variant"] == "plain_bar_stack"
+
+    # Weather city "Pittsburgh" must not attach an NFL Steelers helmet
+    white_xmas_snap = _load_fixture()
+    rep = build_real_sets_audit_report(white_xmas_snap, now=FIXED_NOW, resolver=_default_art_resolver())
+    assert rep["alex_question_examples"] == []
+
+    # 3. 389: C — NHL bubble card has % under crest, zero footer_marks, two one-line end summaries
+    by_slug = {e["slug"]: e for e in rep["top_10"] + rep["fitting_beyond_top_10"]}
+    nhl = by_slug["nhl-playoffs-2026-27"]["kit_card"]
+    assert nhl["body"].get("footer_marks") is None
+    bubble_dots = [d for d in nhl["body"]["marks"] if d.get("in_band")]
+    assert bubble_dots and all(d.get("badge_text", "").endswith("%") for d in bubble_dots)
+    summaries = nhl["body"]["summary_marks"]
+    assert len(summaries) == 2
+    assert "25% or less (" in summaries[0]["text"]
+    assert "75% or more (" in summaries[1]["text"]
+
+    # 4. Live-game caption guard (slate & road_ahead) + same-hue blue split bar separation
+    live_slate_bundle = {
+        "headline": "Pistons (61%) at Magic (39%) live now",
+        "data": {
+            "kind": "roundup",
+            "collection_ref": {"id": 9003, "slug": "test-live-nba", "name": "NBA Night"},
+            "roundup": {
+                "kicker": "NBA",
+                "machinery_card": {
+                    "form_id": "matchup_slate",
+                    "rows": [
+                        {
+                            "event_id": 1,
+                            "sport": "basketball_nba",
+                            "status": "live",
+                            "away_team": "Detroit Pistons",
+                            "home_team": "Orlando Magic",
+                            "away_short": "DET",
+                            "home_short": "ORL",
+                            "home_pct": 39,
+                            "away_pct": 61,
+                            "commence_time": "2026-11-24T20:00:00Z",
+                        },
+                        {
+                            "event_id": 2,
+                            "sport": "basketball_nba",
+                            "status": "scheduled",
+                            "away_team": "Boston Celtics",
+                            "home_team": "Miami Heat",
+                            "away_short": "BOS",
+                            "home_short": "MIA",
+                            "home_pct": 38,
+                            "away_pct": 62,
+                            "commence_time": "2026-11-24T22:00:00Z",
+                        },
+                    ],
+                },
+            },
+        },
+    }
+    res_live = build_kit_card_for_real_set(live_slate_bundle, None, now=FIXED_NOW, resolver=_default_art_resolver())
+    assert res_live["fits"] is True
+    assert "61%" not in res_live["stat_caption"] and "39%" not in res_live["stat_caption"]
+    split_bar = next(m for m in res_live["kit_card"]["body"]["items"][0]["marks"] if m["mark"] == "bar")
+    assert split_bar["segments"][0]["color"] != split_bar["segments"][1]["color"]

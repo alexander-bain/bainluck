@@ -79,7 +79,13 @@ function validateMarksRecursive(node: unknown, insideMarksArray: boolean): boole
       return false;
     }
     if (obj.mark === "picture") {
-      if (typeof obj.url !== "string" || !obj.url.startsWith("https://")) {
+      const hasUrl = typeof obj.url === "string" && obj.url.startsWith("https://");
+      const hasInitials =
+        obj.url === null &&
+        typeof obj.initials === "string" &&
+        obj.initials.trim().length > 0 &&
+        obj.initials.trim().length <= 3;
+      if (!hasUrl && !hasInitials) {
         return false;
       }
     }
@@ -178,12 +184,47 @@ function PictureMarkView({ mark }: { mark: KitV1PictureMark }) {
       : mark.size === "md"
       ? "h-8 w-8"
       : "h-6 w-6";
-  const contain = mark.contain ?? mark.subject_kind !== "person";
+  if (!mark.url) {
+    return (
+      <span
+        aria-hidden="true"
+        title={mark.alt}
+        className={`${dim} inline-flex shrink-0 items-center justify-center rounded-full border border-surface-border bg-surface-elevated text-[10px] font-bold leading-none text-text-secondary`}
+      >
+        {mark.initials ?? "?"}
+      </span>
+    );
+  }
+  if (mark.subject_kind === "film") {
+    const posterDim =
+      mark.size === "xs"
+        ? "h-7 w-[19px]"
+        : mark.size === "md"
+        ? "h-10 w-[27px]"
+        : "h-8 w-[22px]";
+    return (
+      <img
+        src={mark.url}
+        alt={mark.alt}
+        className={`${posterDim} shrink-0 rounded-[4px] border border-surface-border bg-surface-base object-cover`}
+      />
+    );
+  }
+  if (mark.subject_kind === "person") {
+    return (
+      <img
+        src={mark.url}
+        alt={mark.alt}
+        className={`${dim} aspect-square shrink-0 rounded-full border border-surface-border bg-surface-base object-cover object-top`}
+      />
+    );
+  }
+  const contain = mark.contain ?? true;
   return (
     <img
       src={mark.url}
       alt={mark.alt}
-      className={`${dim} shrink-0 rounded-full border border-surface-border bg-surface-base ${
+      className={`${dim} shrink-0 rounded-md border border-surface-border bg-surface-base ${
         contain ? "object-contain p-0.5" : "object-cover"
       }`}
     />
@@ -375,7 +416,7 @@ function BarMarkView({ mark }: { mark: KitV1BarMark }) {
           <div
             key={`${seg.label ?? idx}-${idx}`}
             className={`h-full ${
-              idx === 0 ? "bg-accent-brand" : "border-l border-surface-card bg-accent-live"
+              idx === 0 ? "bg-accent-brand" : "border-l-2 border-surface-card bg-accent-live"
             }`}
             style={{
               width: `${Math.max(0, Math.min(100, seg.fill * 100))}%`,
@@ -390,9 +431,9 @@ function BarMarkView({ mark }: { mark: KitV1BarMark }) {
     const leftPct = Math.max(0, Math.min(96, mark.lo * 100));
     const widthPct = Math.max(4, Math.min(100 - leftPct, (mark.hi - mark.lo) * 100));
     return (
-      <div className="relative h-5 flex-1 rounded bg-surface-elevated">
+      <div className="relative h-5 flex-1 rounded border border-surface-border/80 bg-surface-elevated">
         <div
-          className="absolute top-1 bottom-1 flex items-center justify-center rounded bg-accent-brand/25 px-1 text-[10px] font-bold tabular-nums text-text-primary"
+          className="absolute top-0.5 bottom-0.5 flex items-center justify-center rounded border-2 border-accent-brand bg-accent-brand/20 px-1 text-[10px] font-bold tabular-nums text-text-primary"
           style={{
             left: `${leftPct}%`,
             width: `${widthPct}%`,
@@ -700,18 +741,86 @@ function toAxisPercent(val: number, min: number, max: number): number {
   return Math.max(0, Math.min(100, ((val - min) / span) * 100));
 }
 
-function AxisLayout({ body }: { body: KitV1AxisBody }) {
+function useIsLargeRootText(): boolean {
+  const [isLarge, setIsLarge] = React.useState(false);
+  React.useEffect(() => {
+    if (typeof window === "undefined") return;
+    const check = () => {
+      const px = Number.parseFloat(window.getComputedStyle(document.documentElement).fontSize);
+      setIsLarge(Number.isFinite(px) && px >= 20);
+    };
+    check();
+    window.addEventListener("resize", check);
+    const observer =
+      typeof MutationObserver !== "undefined" ? new MutationObserver(check) : null;
+    observer?.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ["style", "class"],
+    });
+    return () => {
+      window.removeEventListener("resize", check);
+      observer?.disconnect();
+    };
+  }, []);
+  return isLarge;
+}
+
+function AxisLayout({
+  body,
+  forceLargeText = false,
+}: {
+  body: KitV1AxisBody;
+  forceLargeText?: boolean;
+}) {
   const { scale, highlight_band: band } = body;
+  const isLargeText = useIsLargeRootText() || forceLargeText;
   const dots = (body.marks ?? []).filter((m): m is KitV1DotMark => m.mark === "dot");
   const lines = (body.marks ?? []).filter((m): m is KitV1LineMark => m.mark === "line");
   const elevatedDots = dots.filter((d) => d.picture && typeof d.y_lane === "number");
   const baseDots = dots.filter((d) => !(d.picture && typeof d.y_lane === "number"));
   const maxLane = elevatedDots.reduce((m, d) => Math.max(m, d.y_lane ?? 0), 0);
-  const trackHeight = (maxLane + 1) * 38 + 56;
+  const trackHeight = (maxLane + 1) * 48 + 56;
+  const stackedSummaries = (body.summary_marks ?? []).some(
+    (m) => m.mark === "word" && m.text.length > 24,
+  );
+  const sortedBubbleDots = [...elevatedDots].sort((a, b) => b.x - a.x);
 
   return (
     <div className="space-y-2.5">
-      {dots.length > 0 && (
+      {dots.length > 0 && isLargeText && sortedBubbleDots.length > 0 && (
+        <div
+          data-testid="axis-large-text-list"
+          className="space-y-1.5 rounded-xl border border-surface-border bg-surface-elevated/60 px-3 py-2"
+        >
+          {band && (
+            <div className="text-[11px] font-semibold uppercase tracking-wide text-text-muted">
+              {band.label} ({Math.round(band.lo)}%–{Math.round(band.hi)}%)
+            </div>
+          )}
+          <div className="divide-y divide-surface-border/60">
+            {sortedBubbleDots.map((pt, idx) => {
+              const teamName = pt.label.split(":", 1)[0].trim() || pt.picture?.alt || pt.label;
+              const pctText = pt.badge_text ?? `${Math.round(pt.x)}%`;
+              return (
+                <div
+                  key={`lt-${pt.label}-${idx}`}
+                  className="flex items-center justify-between gap-2 py-1.5 first:pt-0 last:pb-0"
+                >
+                  <div className="flex min-w-0 items-center gap-2">
+                    {pt.picture && <PictureMarkView mark={pt.picture} />}
+                    <span className="text-sm font-medium text-text-primary">{teamName}</span>
+                  </div>
+                  <span className="shrink-0 text-sm font-bold tabular-nums text-text-primary">
+                    {pctText}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {dots.length > 0 && !(isLargeText && sortedBubbleDots.length > 0) && (
         <div className="relative w-full" style={{ height: `${trackHeight}px` }}>
           {band && (
             <div
@@ -745,30 +854,41 @@ function AxisLayout({ body }: { body: KitV1AxisBody }) {
             />
           ))}
 
-          {elevatedDots.map((pt, idx) => (
-            <div
-              key={`ed-${pt.label}-${idx}`}
-              title={pt.label}
-              className="absolute flex -translate-x-1/2 flex-col items-center"
-              style={{
-                left: `${toAxisPercent(pt.x, scale.min, scale.max)}%`,
-                bottom: `${26 + (pt.y_lane ?? 0) * 36}px`,
-              }}
-            >
-              {pt.picture && (
-                <img
-                  src={pt.picture.url}
-                  alt={pt.picture.alt}
-                  className="h-5 w-5 rounded-full border border-surface-border bg-surface-card object-contain p-0.5 shadow-sm"
-                />
-              )}
-              {pt.picture?.alt && pt.picture.alt.length <= 5 && (
-                <span className="mt-0.5 rounded bg-surface-card/90 px-0.5 text-[9px] font-bold leading-none text-text-secondary">
-                  {pt.picture.alt}
-                </span>
-              )}
-            </div>
-          ))}
+          {elevatedDots.map((pt, idx) => {
+            const pctText = pt.badge_text ?? `${Math.round(pt.x)}%`;
+            return (
+              <div
+                key={`ed-${pt.label}-${idx}`}
+                title={pt.label}
+                className="absolute flex -translate-x-1/2 flex-col items-center"
+                style={{
+                  left: `${toAxisPercent(pt.x, scale.min, scale.max)}%`,
+                  bottom: `${28 + (pt.y_lane ?? 0) * 48}px`,
+                }}
+              >
+                {pt.picture &&
+                  (pt.picture.url ? (
+                    <img
+                      src={pt.picture.url}
+                      alt={pt.picture.alt}
+                      className="h-5 w-5 rounded-full border border-surface-border bg-surface-card object-contain p-0.5 shadow-sm"
+                    />
+                  ) : (
+                    <PictureMarkView mark={pt.picture} />
+                  ))}
+                {pt.picture?.alt && pt.picture.alt.length <= 5 && (
+                  <span className="mt-0.5 rounded bg-surface-card/90 px-0.5 text-[9px] font-bold leading-none text-text-secondary">
+                    {pt.picture.alt}
+                  </span>
+                )}
+                {(pt.badge_text || pt.in_band) && (
+                  <span className="rounded bg-surface-card/90 px-0.5 text-[9px] font-extrabold leading-none tabular-nums text-text-primary">
+                    {pctText}
+                  </span>
+                )}
+              </div>
+            );
+          })}
 
           <div className="absolute bottom-0 left-0 right-0 flex justify-between text-[10px] tabular-nums text-text-muted">
             {scale.ticks.map((t) => (
@@ -776,6 +896,14 @@ function AxisLayout({ body }: { body: KitV1AxisBody }) {
             ))}
           </div>
         </div>
+      )}
+
+      {sortedBubbleDots.length > 0 && !(isLargeText && sortedBubbleDots.length > 0) && (
+        <ul className="sr-only">
+          {sortedBubbleDots.map((pt, idx) => (
+            <li key={`sr-bubble-${idx}`}>{pt.label}</li>
+          ))}
+        </ul>
       )}
 
       {lines.length > 0 && dots.length === 0 && (
@@ -817,11 +945,21 @@ function AxisLayout({ body }: { body: KitV1AxisBody }) {
       )}
 
       {body.summary_marks && body.summary_marks.length > 0 && (
-        <div className="flex items-center justify-between gap-2 text-[11px] font-semibold text-text-secondary">
-          {body.summary_marks.map((m, idx) => (
-            <KitMarkView key={`as-${idx}`} mark={m} />
-          ))}
-        </div>
+        stackedSummaries ? (
+          <div className="space-y-1 text-[11px] font-medium text-text-secondary">
+            {body.summary_marks.map((m, idx) => (
+              <div key={`as-${idx}`} className="truncate">
+                <KitMarkView mark={m} />
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="flex items-center justify-between gap-2 text-[11px] font-semibold text-text-secondary">
+            {body.summary_marks.map((m, idx) => (
+              <KitMarkView key={`as-${idx}`} mark={m} />
+            ))}
+          </div>
+        )
       )}
 
       {body.footer_marks && body.footer_marks.length > 0 && (
@@ -839,7 +977,13 @@ function AxisLayout({ body }: { body: KitV1AxisBody }) {
 // Public KitCardRenderer entry point
 // ---------------------------------------------------------------------------
 
-export function KitCardRenderer({ spec }: { spec: KitV1CardSpec }) {
+export function KitCardRenderer({
+  spec,
+  forceLargeText = false,
+}: {
+  spec: KitV1CardSpec;
+  forceLargeText?: boolean;
+}) {
   const parsed = parseKitCardV1(spec);
   if (!parsed || !parsed.layout || !parsed.body) {
     return (
@@ -892,7 +1036,7 @@ export function KitCardRenderer({ spec }: { spec: KitV1CardSpec }) {
           <CalendarLayout body={parsed.body as KitV1CalendarBody} />
         )}
         {parsed.layout === "axis" && (
-          <AxisLayout body={parsed.body as KitV1AxisBody} />
+          <AxisLayout body={parsed.body as KitV1AxisBody} forceLargeText={forceLargeText} />
         )}
       </div>
 
