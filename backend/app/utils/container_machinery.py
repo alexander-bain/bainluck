@@ -628,6 +628,82 @@ _PLACEHOLDER_CREST_SUFFIX = "/default.png"
 _TEAM_CLUB_PREFIX_RE = re.compile(r"^(?:fc|cf|sc|ac|afc|sv|fk)\s+", re.IGNORECASE)
 _TEAM_CLUB_SUFFIX_RE = re.compile(r"\s+(?:fc|cf|sc|ac|afc)$", re.IGNORECASE)
 _TEAM_STATIC_LOGO_KINDS: frozenset[str] = frozenset({"team_logo", "espn_team_logo"})
+_PERSON_ART_KINDS: frozenset[str] = frozenset(
+    {"person", "headshot", "portrait", "tmdb_headshot", "tmdb_person"}
+)
+_CAST_AS_SPLIT_RE = re.compile(r"\s+as\s+", re.IGNORECASE)
+_PORTRAIT_DETAIL_SUFFIX_RE = re.compile(
+    r"\s+(?:tmdb\s+portrait|espn\s+headshot|wikimedia\s+commons\s+portrait|portrait|headshot)$",
+    re.IGNORECASE,
+)
+_NUMERIC_RANGE_OUTCOME_RE = re.compile(r"\d+(?:\s*(?:[-–]|to)\s*\d+)?%?")
+_NON_ENTITY_EXACT_LABELS: frozenset[str] = frozenset(
+    {
+        "yes",
+        "no",
+        "rock",
+        "pop",
+        "country",
+        "rap",
+        "hip-hop",
+        "hip hop",
+        "r&b",
+        "jazz",
+        "metal",
+        "electronic",
+        "indie",
+        "folk",
+        "latin",
+        "classical",
+        "alternative",
+    }
+)
+_NON_ENTITY_PREFIXES: tuple[str, ...] = ("before ", "after ", "by ", "in ", "rank ", "top ", "<", ">")
+# Intentional artist-work and stage-name pairs validated against public sets (#13587).
+_ARTIST_WORK_AND_STAGE_ALLOWLIST: tuple[tuple[str, str], ...] = (
+    ("all i want for christmas is you", "mariah carey"),
+    ("tame impala", "kevin parker"),
+    ("djo", "joe keery"),
+)
+
+
+def _split_cast_actor_prefix(text: str) -> Optional[str]:
+    """Return the actor name before ' as <Role>' when structured as a cast credit."""
+    parts = _CAST_AS_SPLIT_RE.split(str(text or "").strip(), maxsplit=1)
+    if len(parts) == 2 and parts[0].strip() and parts[1].strip():
+        return parts[0].strip()
+    return None
+
+
+def _portrait_name_from_detail(detail: str) -> Optional[str]:
+    """Extract the person name preceding a portrait/headshot suffix in ``art.detail``."""
+    cleaned = str(detail or "").strip()
+    m = _PORTRAIT_DETAIL_SUFFIX_RE.search(cleaned)
+    if not m:
+        return None
+    prefix = cleaned[: m.start()].strip()
+    return prefix or None
+
+
+def is_non_entity_outcome_label(label: str) -> bool:
+    """True when an outcome label is structural (Yes/No, date, rank, genre) rather than a named entity."""
+    cleaned = str(label or "").strip().lower()
+    if not cleaned or cleaned in _NON_ENTITY_EXACT_LABELS:
+        return True
+    if cleaned.startswith(_NON_ENTITY_PREFIXES):
+        return True
+    return bool(_NUMERIC_RANGE_OUTCOME_RE.fullmatch(cleaned))
+
+
+def _monogram_art(subject: str) -> dict[str, Any]:
+    """Return a clean no-picture monogram art dict for ``subject``."""
+    return {
+        "url": None,
+        "kind": "monogram",
+        "detail": "",
+        "accent_color": _fallback_color(subject),
+        "initials": _initials(subject),
+    }
 _ESPN_TEAMLOGO_LEAGUE_RE = re.compile(r"/teamlogos/([a-z0-9_-]+)/", re.IGNORECASE)
 _ESPN_LEAGUE_SPORT_PREFIXES: dict[str, tuple[str, ...]] = {
     "nfl": ("americanfootball_nfl",),
@@ -887,6 +963,7 @@ class SubjectArtResolver:
         self._team_lookup = team_lookup
         self._team_keys_by_norm: dict[str, list[str]] = {}
         self._team_prefix_unique: dict[str, str] = {}
+        self._person_names_by_url: dict[str, set[str]] = {}
         if _static_by_norm is not None:
             self._by_norm = _static_by_norm
         else:
@@ -1054,6 +1131,37 @@ class SubjectArtResolver:
 
         return None
 
+    def _record_person_url_aliases(
+        self,
+        url: Optional[str],
+        names: Sequence[str],
+        *,
+        kind: Optional[str],
+        detail: Optional[str],
+    ) -> None:
+        if not url:
+            return
+        k_low = str(kind or "").strip().lower()
+        d_str = str(detail or "").strip()
+        det_name = _portrait_name_from_detail(d_str)
+        if not (k_low in _PERSON_ART_KINDS or det_name is not None or "/headshots/" in url.lower()):
+            return
+        bucket = self._person_names_by_url.setdefault(url, set())
+        candidates = list(names)
+        if det_name:
+            candidates.append(det_name)
+        elif "," in d_str and k_low in _PERSON_ART_KINDS:
+            candidates.append(d_str.split(",", 1)[0].strip())
+        for raw in candidates:
+            s = str(raw or "").strip()
+            if not s:
+                continue
+            actor_prefix = _split_cast_actor_prefix(s)
+            if actor_prefix:
+                s = actor_prefix
+            if s:
+                bucket.add(s)
+
     def _register(
         self,
         aliases: Sequence[str],
@@ -1062,6 +1170,12 @@ class SubjectArtResolver:
         display_aliases: Optional[Sequence[str]] = None,
     ) -> None:
         disp_list = [str(a) for a in (display_aliases if display_aliases is not None else aliases) if str(a).strip()]
+        self._record_person_url_aliases(
+            record.get("url"),
+            disp_list,
+            kind=record.get("kind"),
+            detail=record.get("detail"),
+        )
         primary_disp = disp_list[0] if disp_list else None
         by_fold: dict[str, list[str]] = {}
         for raw in disp_list:
@@ -1208,6 +1322,14 @@ class SubjectArtResolver:
         nk = _norm_key(clean_subj) or _norm_key(subject)
         fk = _ascii_fold_key(clean_subj) or _ascii_fold_key(subject)
         hit = self._by_norm.get(nk) or (self._by_norm.get(fk) if fk else None)
+        if hit is None:
+            actor_name = _split_cast_actor_prefix(clean_subj or subject)
+            if actor_name:
+                a_nk = _norm_key(actor_name)
+                a_fk = _ascii_fold_key(actor_name)
+                actor_hit = self._by_norm.get(a_nk) or (self._by_norm.get(a_fk) if a_fk else None)
+                if actor_hit and str(actor_hit.get("kind") or "").lower() in _PERSON_ART_KINDS:
+                    hit = actor_hit
         if hit and hit.get("kind") in _TEAM_STATIC_LOGO_KINDS:
             if allow_team_lookup is False or not _static_team_logo_matches_sport(
                 hit.get("url"), sport_key
@@ -1233,6 +1355,103 @@ class SubjectArtResolver:
         if hit and hit.get("canonical_name"):
             out["canonical_name"] = str(hit["canonical_name"])
         return out
+
+
+def _extract_portrait_person_names(
+    art: Mapping[str, Any],
+    resolver: Optional[SubjectArtResolver] = None,
+) -> tuple[list[str], set[str]]:
+    """Return ``(display_names, folded_names)`` when ``art`` depicts a named person portrait."""
+    url = str(art.get("url") or "").strip()
+    if not url:
+        return [], set()
+    kind = str(art.get("kind") or "").strip().lower()
+    detail = str(art.get("detail") or "").strip()
+    det_name = _portrait_name_from_detail(detail)
+    is_portrait = (
+        kind in _PERSON_ART_KINDS
+        or det_name is not None
+        or "/headshots/" in url.lower()
+    )
+    if not is_portrait:
+        return [], set()
+
+    raw_names: list[str] = []
+    if det_name:
+        raw_names.append(det_name)
+        if "," in det_name:
+            raw_names.append(det_name.split(",", 1)[0].strip())
+    elif "," in detail and kind in _PERSON_ART_KINDS:
+        raw_names.append(detail.split(",", 1)[0].strip())
+    if resolver is not None:
+        for reg_name in sorted(resolver._person_names_by_url.get(url, ())):
+            raw_names.append(reg_name)
+
+    display_names: list[str] = []
+    folded_names: set[str] = set()
+    for nm in raw_names:
+        cleaned = str(nm or "").strip()
+        fk = _ascii_fold_key(cleaned)
+        if cleaned and fk and fk not in folded_names:
+            folded_names.add(fk)
+            display_names.append(cleaned)
+    return display_names, folded_names
+
+
+def art_subject_mismatch_reason(
+    subject_texts: Sequence[str],
+    art: Mapping[str, Any],
+    *,
+    resolver: Optional[SubjectArtResolver] = None,
+) -> Optional[str]:
+    """Return a mismatch reason when a person portrait depicts someone other than the subject."""
+    if not isinstance(art, Mapping) or not art.get("url"):
+        return None
+    display_names, portrait_folds = _extract_portrait_person_names(art, resolver=resolver)
+    if not portrait_folds:
+        return None
+    hay_parts = [_ascii_fold_key(t) for t in subject_texts if t]
+    hay = " ".join(part for part in hay_parts if part)
+    if not hay:
+        return None
+    padded_hay = f" {hay} "
+    hay_tokens = set(hay.split())
+
+    for work_or_stage, artist_fold in _ARTIST_WORK_AND_STAGE_ALLOWLIST:
+        if f" {work_or_stage} " in padded_hay and artist_fold in portrait_folds:
+            return None
+
+    for p_fold in portrait_folds:
+        if f" {p_fold} " in padded_hay:
+            return None
+        tokens = [t for t in p_fold.split() if len(t) >= 3]
+        if tokens and all(t in hay_tokens for t in tokens):
+            return None
+
+    primary_subj = next((str(t).strip() for t in subject_texts if str(t or "").strip()), "")
+    return f"Portrait depicts {', '.join(display_names)} rather than {primary_subj!r}"
+
+
+def _gate_outcome_art(
+    outcome_name: str,
+    context_texts: Sequence[str],
+    art: Mapping[str, Any],
+    *,
+    resolver: Optional[SubjectArtResolver] = None,
+    fallback_subject: Optional[str] = None,
+) -> dict[str, Any]:
+    """Strip any mismatched person portrait so a row serves no picture rather than a wrong face."""
+    clean_out = str(outcome_name or "").strip()
+    if not isinstance(art, Mapping):
+        return _monogram_art(str(fallback_subject or clean_out or "Subject"))
+    if not art.get("url"):
+        return dict(art)
+    check_texts: Sequence[str] = (
+        [clean_out, *context_texts] if is_non_entity_outcome_label(clean_out) else [clean_out]
+    )
+    if art_subject_mismatch_reason(check_texts, art, resolver=resolver) is None:
+        return dict(art)
+    return _monogram_art(str(fallback_subject or clean_out or "Subject"))
 
 
 @lru_cache(maxsize=1)
@@ -2286,6 +2505,22 @@ def _hydrate_market_visual_item(
                     yes_art = probed
                     break
         outcomes_out[0]["art"] = yes_art
+
+    # Portrait/subject gate (#13587): never serve a person's face on another subject's row.
+    if outcomes_out:
+        art_context_texts = (display_title, clean_raw_name)
+        for oc in outcomes_out:
+            oc["art"] = _gate_outcome_art(
+                str(oc.get("name") or ""),
+                art_context_texts,
+                oc.get("art") or {},
+                resolver=resolver,
+                fallback_subject=(
+                    str(display_title or clean_raw_name or f"Market {mid}")
+                    if shape_is_yes
+                    else str(oc.get("name") or display_title or clean_raw_name or f"Market {mid}")
+                ),
+            )
 
     headline_phrase: Optional[str] = None
     headline_with_phrase: Optional[str] = None
