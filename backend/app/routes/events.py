@@ -34714,6 +34714,8 @@ async def get_event_odds_history(
                 "projected_home_score": float(snap.projected_home_score) if snap.projected_home_score is not None else None,
                 "projected_away_score": float(snap.projected_away_score) if snap.projected_away_score is not None else None,
             }
+            # #8231 / #13112: the per-book line gets the consensus's refusal.
+            refuse_incoherent_projections([point_data], sport_key=_hist_sport_key)
             # #10461: additive `kind` ("recorded" / "synthetic") + `observed_at`
             # (the snapshot's original capture, never a venue trade clock), so a
             # client can tell a cutoff re-stamp from a new reading. Appended
@@ -34738,9 +34740,8 @@ async def get_event_odds_history(
                         **provenance,
                     })
 
-        # #8231 / #13112: the per-book line gets the consensus's refusal (hoisted once per bookmaker list).
+        # Sort by timestamp
         bm_points_sorted = sorted(bm_points, key=lambda p: p["timestamp"])
-        refuse_incoherent_projections(bm_points_sorted, sport_key=_hist_sport_key)
         bookmaker_history[bookmaker] = bm_points_sorted
 
     # Build score history from ScoreSnapshots

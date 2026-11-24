@@ -38,7 +38,6 @@ from app.routes.events import (
     _is_postgresql_session,
     get_event_odds_history,
 )
-from app.utils.odds_math import refuse_incoherent_projections
 
 UTC = timezone.utc
 
@@ -48,10 +47,10 @@ def test_encode_history_payload_byte_identical_to_jsonresponse():
         "event_id": 14639207,
         "home_team": "San Francisco 49ers",
         "away_team": "Minnesota Vikings — Été",
-        "commence_time": "2026-11-22T21:05:00+00:00",
+        "commence_time": "2026-06-14T21:05:00+00:00",
         "history": [
             {
-                "timestamp": "2026-11-22T21:05:00+00:00",
+                "timestamp": "2026-06-14T21:05:00+00:00",
                 "home_probability": 0.625,
                 "away_probability": 0.375,
                 "over_under": 46.5,
@@ -64,7 +63,7 @@ def test_encode_history_payload_byte_identical_to_jsonresponse():
         "bookmaker_history": {
             "draftkings": [
                 {
-                    "timestamp": "2026-11-22T21:05:00+00:00",
+                    "timestamp": "2026-06-14T21:05:00+00:00",
                     "home_probability": 0.63,
                     "away_probability": 0.37,
                     "valid_until": None,
@@ -85,7 +84,7 @@ def test_encode_history_payload_byte_identical_to_jsonresponse():
 def test_encode_history_payload_falls_back_on_decimal_and_datetime():
     payload = {
         "event_id": 42,
-        "commence_time": datetime(2026, 11, 22, 21, 5, tzinfo=UTC),
+        "commence_time": datetime(2026, 6, 14, 21, 5, tzinfo=UTC),
         "home_probability": Decimal("0.625"),
         "nested": [{"prob": Decimal("0.375")}],
     }
@@ -94,42 +93,9 @@ def test_encode_history_payload_falls_back_on_decimal_and_datetime():
     assert fast_bytes == oracle_bytes
 
 
-def test_refuse_incoherent_projections_hoisted_matches_per_point():
-    sample_points = [
-        # Coherent: home favored in both moneyline (0.64) and score (27 > 20)
-        {
-            "home_probability": 0.64,
-            "projected_home_score": 27.0,
-            "projected_away_score": 20.0,
-        },
-        # Incoherent: home favored in moneyline (0.68) but trailing in score (17 < 24)
-        {
-            "home_probability": 0.68,
-            "projected_home_score": 17.0,
-            "projected_away_score": 24.0,
-        },
-        # Null projection preserved
-        {
-            "home_probability": 0.50,
-            "projected_home_score": None,
-            "projected_away_score": None,
-        },
-    ]
-    for sport_key in ("americanfootball_nfl", "baseball_mlb"):
-        per_point = []
-        for pt in sample_points:
-            row = dict(pt)
-            refuse_incoherent_projections([row], sport_key=sport_key)
-            per_point.append(row)
-
-        hoisted = [dict(pt) for pt in sample_points]
-        refuse_incoherent_projections(hoisted, sport_key=sport_key)
-        assert hoisted == per_point
-
-
 def test_pg_since_start_queries_compile_to_recursive_lateral_d2_bounds():
-    kickoff = datetime(2026, 11, 22, 21, 5, tzinfo=UTC)
-    end_cap = datetime(2026, 11, 23, 0, 55, tzinfo=UTC)
+    kickoff = datetime(2026, 6, 14, 21, 5, tzinfo=UTC)
+    end_cap = datetime(2026, 6, 15, 0, 55, tzinfo=UTC)
     dialect = postgresql.dialect()
 
     wp_in, wp_bd = _build_win_prob_since_start_queries_pg(
@@ -238,7 +204,7 @@ def _build_sqlite_fake_pg_route_session(
 
 
 def test_pushdown_gating_excludes_venue_exp_twins_range_all_and_live(monkeypatch):
-    kickoff = datetime(2026, 11, 22, 21, 5, tzinfo=UTC)
+    kickoff = datetime(2026, 6, 14, 21, 5, tzinfo=UTC)
     comp = kickoff + timedelta(hours=3)
     sport = Sport(id=1, key="basketball_nba", name="NBA")
 
@@ -357,7 +323,7 @@ def test_pushdown_gating_excludes_venue_exp_twins_range_all_and_live(monkeypatch
 
 
 def test_pushdown_fails_open_when_no_post_start_data(monkeypatch):
-    kickoff = datetime(2026, 11, 22, 21, 5, tzinfo=UTC)
+    kickoff = datetime(2026, 6, 14, 21, 5, tzinfo=UTC)
     comp = kickoff + timedelta(hours=3)
     sport = Sport(id=1, key="basketball_nba", name="NBA")
     ev = Event(
