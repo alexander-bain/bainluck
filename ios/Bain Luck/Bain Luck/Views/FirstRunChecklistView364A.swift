@@ -97,23 +97,26 @@ struct FirstRunChecklistView364A: View {
             .frame(maxWidth: .infinity)
             .background(DS.surface)
 
-            ScrollView {
-                VStack(alignment: .leading, spacing: 11) {
-                    if dynamicTypeSize.isAccessibilitySize {
-                        headerBlock
+            GeometryReader { proxy in
+                let columnWidth = min(680, max(1, proxy.size.width))
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 11) {
+                        if dynamicTypeSize.isAccessibilitySize {
+                            headerBlock
+                        }
+                        rowsCard
+                        if !content.startWithTonight.isEmpty {
+                            startWithTonightBlock
+                        }
                     }
-                    rowsCard
-                    if !content.startWithTonight.isEmpty {
-                        startWithTonightBlock
-                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 2)
+                    .padding(.bottom, 14)
+                    .frame(width: columnWidth, alignment: .leading)
+                    .frame(maxWidth: .infinity)
                 }
-                .padding(.horizontal, 16)
-                .padding(.top, 2)
-                .padding(.bottom, 14)
-                .frame(maxWidth: 680)
-                .frame(maxWidth: .infinity)
+                .scrollBounceBehavior(.basedOnSize)
             }
-            .scrollBounceBehavior(.basedOnSize)
 
             if state.completedCount >= state.totalCount {
                 doneFooter
@@ -212,18 +215,20 @@ struct FirstRunChecklistView364A: View {
                 .foregroundStyle(DS.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Text(FirstRunChecklistContent364A.butlerQuote)
-                .font(.caption)
-                .foregroundStyle(DS.textSecondaryReadable)
-                .fixedSize(horizontal: false, vertical: true)
-                .accessibilityIdentifier("checklist364A.butlerQuote")
+            if dynamicTypeSize < .accessibility4 {
+                Text(FirstRunChecklistContent364A.butlerQuote)
+                    .font(.caption)
+                    .foregroundStyle(DS.textSecondaryReadable)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("checklist364A.butlerQuote")
+            }
         }
     }
 
     private var rowsCard: some View {
         let syncLit = state.isSyncLitUp
         let syncPreview = FirstRunChecklistRowPreview364A(
-            subtitle: syncLit ? "Sign in to sync across devices" : "Follow or pick first",
+            subtitle: syncLit ? "Sign in to sync across devices" : "Follow something first",
             percentText: nil,
             imageUrl: syncLit ? (content.followRowPreview?.imageUrl ?? content.setsRowPreview?.imageUrl) : nil,
             sfSymbol: "laptopcomputer.and.iphone",
@@ -253,7 +258,7 @@ struct FirstRunChecklistView364A: View {
                 preview: syncPreview,
                 lit: syncLit,
                 mutedNote: syncPreview.subtitle,
-                badgePillText: syncLit ? "\(max(1, state.savedCount)) saved" : nil
+                badgePillText: syncLit ? "\(max(1, state.savedCount)) followed" : nil
             )
             Divider().padding(.leading, 14)
             standardRow(
@@ -319,6 +324,7 @@ struct FirstRunChecklistView364A: View {
                     .textFieldStyle(.plain)
                     .font(.subheadline)
                     .submitLabel(.search)
+                    .frame(minWidth: 0, maxWidth: .infinity)
                     .onSubmit {
                         onSubmitInlineSearch()
                     }
@@ -679,6 +685,7 @@ struct FirstRunLookupStepView364A: View {
     var onDone: () -> Void = {}
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.dismiss) private var dismiss
 
     private var trimmedQuery: String {
@@ -788,41 +795,10 @@ struct FirstRunLookupStepView364A: View {
                                     Button {
                                         onSelectResult(row)
                                     } label: {
-                                        HStack(spacing: 12) {
-                                            ChecklistThumbnail364A(
-                                                urlString: row.imageUrl,
-                                                sfSymbol: row.sfSymbol,
-                                                accentHex: row.accentHex,
-                                                size: 36
-                                            )
-                                            VStack(alignment: .leading, spacing: 2) {
-                                                Text(row.title)
-                                                    .font(.subheadline.weight(.semibold))
-                                                    .foregroundStyle(DS.textPrimary)
-                                                    .multilineTextAlignment(.leading)
-                                                    .fixedSize(horizontal: false, vertical: true)
-                                                Text(row.subtitle.isEmpty ? row.badgeText : "\(row.badgeText) \u{00B7} \(row.subtitle)")
-                                                    .font(.caption)
-                                                    .foregroundStyle(DS.textSecondaryReadable)
-                                                    .fixedSize(horizontal: false, vertical: true)
-                                            }
-                                            Spacer(minLength: 8)
-                                            HStack(spacing: 4) {
-                                                if !row.subjectLabel.isEmpty {
-                                                    Text(row.subjectLabel)
-                                                        .font(.caption.weight(.semibold))
-                                                        .foregroundStyle(DS.textSecondaryReadable)
-                                                        .lineLimit(1)
-                                                }
-                                                Text("\(row.percent)%")
-                                                    .font(.headline.weight(.bold).monospacedDigit())
-                                                    .foregroundStyle(DS.blueReadable)
-                                            }
-                                            .fixedSize(horizontal: true, vertical: false)
-                                        }
-                                        .padding(.horizontal, 12)
-                                        .padding(.vertical, 10)
-                                        .contentShape(Rectangle())
+                                        lookupResultRow(row)
+                                            .padding(.horizontal, 12)
+                                            .padding(.vertical, 10)
+                                            .contentShape(Rectangle())
                                     }
                                     .buttonStyle(.plain)
                                     .accessibilityIdentifier("checklist364A.lookup.result.\(row.id)")
@@ -866,6 +842,87 @@ struct FirstRunLookupStepView364A: View {
         .toolbar(.hidden, for: .navigationBar)
         #endif
     }
+
+    @ViewBuilder
+    private func lookupResultRow(_ row: FirstRunLookupResult364A) -> some View {
+        let subtitleLine = row.subtitle.isEmpty ? row.badgeText : "\(row.badgeText) \u{00B7} \(row.subtitle)"
+        if dynamicTypeSize.isAccessibilitySize {
+            stackedLookupRow(row, subtitleLine: subtitleLine)
+        } else {
+            ViewThatFits(in: .horizontal) {
+                sideBySideLookupRow(row, subtitleLine: subtitleLine)
+                stackedLookupRow(row, subtitleLine: subtitleLine)
+            }
+        }
+    }
+
+    private func sideBySideLookupRow(_ row: FirstRunLookupResult364A, subtitleLine: String) -> some View {
+        HStack(spacing: 12) {
+            ChecklistThumbnail364A(
+                urlString: row.imageUrl,
+                sfSymbol: row.sfSymbol,
+                accentHex: row.accentHex,
+                size: 36
+            )
+            VStack(alignment: .leading, spacing: 2) {
+                Text(row.title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(DS.textPrimary)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                Text(subtitleLine)
+                    .font(.caption)
+                    .foregroundStyle(DS.textSecondaryReadable)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+            }
+            Spacer(minLength: 8)
+            lookupAnswerView(row, multiline: false)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func stackedLookupRow(_ row: FirstRunLookupResult364A, subtitleLine: String) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            ChecklistThumbnail364A(
+                urlString: row.imageUrl,
+                sfSymbol: row.sfSymbol,
+                accentHex: row.accentHex,
+                size: 36
+            )
+            VStack(alignment: .leading, spacing: 4) {
+                Text(row.title)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(DS.textPrimary)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
+                Text(subtitleLine)
+                    .font(.caption)
+                    .foregroundStyle(DS.textSecondaryReadable)
+                    .fixedSize(horizontal: false, vertical: true)
+                lookupAnswerView(row, multiline: true)
+                    .padding(.top, 2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    private func lookupAnswerView(_ row: FirstRunLookupResult364A, multiline: Bool) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 5) {
+            if !row.subjectLabel.isEmpty {
+                Text(row.subjectLabel)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(DS.textSecondaryReadable)
+                    .lineLimit(multiline ? nil : 1)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: !multiline, vertical: true)
+            }
+            Text("\(row.percent)%")
+                .font(.headline.weight(.bold).monospacedDigit())
+                .foregroundStyle(DS.blueReadable)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+    }
 }
 
 // MARK: - Step 2: Follow what you care about (teams, cities, schools, subjects w/ pictures + 359:A)
@@ -906,7 +963,7 @@ struct FirstRunFollowStepView364A: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    Text("Teams, cities, schools, or just type what you like \u{2014} all saved in My Stuff.")
+                    Text("Teams, cities, schools, or just type what you like \u{2014} everything you follow lives in My Stuff.")
                         .font(.subheadline)
                         .foregroundStyle(DS.textSecondaryReadable)
                         .fixedSize(horizontal: false, vertical: true)
@@ -1021,7 +1078,7 @@ struct FirstRunFollowStepView364A: View {
                                         HStack(spacing: 4) {
                                             Image(systemName: picked ? "checkmark" : "plus")
                                                 .font(.caption2.weight(.bold))
-                                            Text(picked ? "Added" : "Add")
+                                            Text(picked ? "Following" : "Follow")
                                                 .font(.caption.weight(.bold))
                                         }
                                         .foregroundStyle(picked ? solidButtonForeground : DS.blueReadable)
@@ -1048,7 +1105,7 @@ struct FirstRunFollowStepView364A: View {
 
             Divider()
             Button(action: onDone) {
-                Text(vm.pickedItems.isEmpty ? "Skip" : "Save & back")
+                Text(vm.pickedItems.isEmpty ? "Skip" : "Done")
                     .font(.headline)
                     .foregroundStyle(solidButtonForeground)
                     .frame(maxWidth: .infinity, minHeight: 50)
@@ -1273,7 +1330,7 @@ struct FirstRunSignInStepView364A: View {
                                     .font(.headline.weight(.bold))
                                     .foregroundStyle(DS.textPrimary)
                             }
-                            Text("Everything you follow or pick on this iPhone stays backed up to your account.")
+                            Text("Everything you follow on this iPhone stays backed up to your account.")
                                 .font(.footnote)
                                 .foregroundStyle(DS.textSecondaryReadable)
                             Button("Back to checklist", action: onBackOrSkip)
@@ -1582,7 +1639,8 @@ struct FirstRunPickedChipFlow212A: Layout {
         subviews: Subviews,
         cache: inout ()
     ) -> CGSize {
-        let maxWidth = proposal.width ?? 358
+        let hasFiniteWidth = (proposal.width ?? .infinity).isFinite
+        let maxWidth = hasFiniteWidth ? max(1, proposal.width!) : 280
         var x: CGFloat = 0
         var y: CGFloat = 0
         var rowHeight: CGFloat = 0
@@ -1599,7 +1657,7 @@ struct FirstRunPickedChipFlow212A: Layout {
             rowHeight = max(rowHeight, size.height)
             x += size.width + spacing
         }
-        return CGSize(width: maxWidth.isFinite ? maxWidth : usedWidth, height: y + rowHeight)
+        return CGSize(width: hasFiniteWidth ? maxWidth : usedWidth, height: y + rowHeight)
     }
 
     func placeSubviews(

@@ -499,14 +499,60 @@ nonisolated enum FirstRunChecklistExtractor364A {
         return out
     }
 
+    private static func favoredArt(
+        homeTeamData: TeamData?,
+        awayTeamData: TeamData?,
+        homeImageUrl: String?,
+        awayImageUrl: String?,
+        homeFavored: Bool
+    ) -> (logoUrl: String?, accentHex: String?) {
+        let teamData = homeFavored ? homeTeamData : awayTeamData
+        let fallbackImage = homeFavored ? homeImageUrl : awayImageUrl
+        let logo = FirstRunSubjectArt364A.cleanHTTPS(teamData?.logoSmall ?? teamData?.logoLarge ?? fallbackImage)
+        return (logo, teamData?.primaryColor)
+    }
+
+    private static func favoredArt(for event: FeedEventData, homeFavored: Bool) -> (logoUrl: String?, accentHex: String?) {
+        favoredArt(
+            homeTeamData: event.homeTeamData,
+            awayTeamData: event.awayTeamData,
+            homeImageUrl: event.homeImageUrl,
+            awayImageUrl: event.awayImageUrl,
+            homeFavored: homeFavored
+        )
+    }
+
+    private static func favoredArt(for event: SearchEvent, homeFavored: Bool) -> (logoUrl: String?, accentHex: String?) {
+        favoredArt(
+            homeTeamData: event.homeTeamData,
+            awayTeamData: event.awayTeamData,
+            homeImageUrl: event.homeImageUrl,
+            awayImageUrl: event.awayImageUrl,
+            homeFavored: homeFavored
+        )
+    }
+
+    private typealias RankedGameEntry = (
+        prio: Int,
+        seq: Int,
+        event: FeedEventData,
+        favoredTeam: String,
+        pct: Int,
+        shortTitle: String,
+        favoredLogoUrl: String?,
+        favoredAccentHex: String?,
+        deltaPoints: Int?,
+        deltaWindow: String?
+    )
+
     private static func rankedGamesWithin24h(
         from feedItems: [FeedItem],
         previousSnapshot: [String: Double],
         now: Date
-    ) -> [(prio: Int, seq: Int, event: FeedEventData, favoredTeam: String, pct: Int, shortTitle: String, deltaPoints: Int?, deltaWindow: String?)] {
+    ) -> [RankedGameEntry] {
         let earliest = now.addingTimeInterval(-4 * 3600)
         let latest = now.addingTimeInterval(24 * 3600)
-        var list: [(prio: Int, seq: Int, event: FeedEventData, favoredTeam: String, pct: Int, shortTitle: String, deltaPoints: Int?, deltaWindow: String?)] = []
+        var list: [RankedGameEntry] = []
 
         for (idx, ev) in flattenedEvents(from: feedItems).enumerated() {
             let statusLower = (ev.status ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -526,9 +572,10 @@ nonisolated enum FirstRunChecklistExtractor364A {
             }
             let awayPct = duel[0] ?? (100 - homePct)
             let pairs = TeamShortName.shortPair(away: ev.awayTeam, home: ev.homeTeam, sportKey: ev.sport)
+            let homeFavored = homePct >= awayPct
             let favoredTeam: String
             let favoredPct: Int
-            if homePct >= awayPct {
+            if homeFavored {
                 favoredTeam = pairs.home
                 favoredPct = homePct
             } else {
@@ -536,6 +583,8 @@ nonisolated enum FirstRunChecklistExtractor364A {
                 favoredPct = awayPct
             }
             guard (5...95).contains(favoredPct) else { continue }
+
+            let art = favoredArt(for: ev, homeFavored: homeFavored)
 
             let baseline = resolvedEventBaseline(event: ev, previousSnapshot: previousSnapshot)
             var deltaPts: Int?
@@ -549,7 +598,18 @@ nonisolated enum FirstRunChecklistExtractor364A {
                     deltaWindow = baseline.window
                 }
             }
-            list.append((prio, idx, ev, favoredTeam, favoredPct, "\(pairs.away) at \(pairs.home)", deltaPts, deltaWindow))
+            list.append((
+                prio,
+                idx,
+                ev,
+                favoredTeam,
+                favoredPct,
+                "\(pairs.away) at \(pairs.home)",
+                art.logoUrl,
+                art.accentHex,
+                deltaPts,
+                deltaWindow
+            ))
         }
 
         list.sort { lhs, rhs in
@@ -587,25 +647,21 @@ nonisolated enum FirstRunChecklistExtractor364A {
 
         var previews: [FirstRunChecklistRowID364A: FirstRunChecklistRowPreview364A] = [:]
 
-        // Point 3 & Fix a & e: reserve `rankedGames[0]` (`Start with tonight` Biggest game)
-        // so its team/percent appears once; give every other row its own distinct game/subject
-        // and name what each number is for.
-        if let leadGame = lookupExamples.first(where: { $0.kind == .game }) ?? lookupExamples.first {
-            previews[.lookUp] = FirstRunChecklistRowPreview364A(
-                subtitle: "No account \u{00B7} \(leadGame.title) \(leadGame.percent)%",
-                percentText: nil,
-                imageUrl: leadGame.imageUrl,
-                sfSymbol: leadGame.sfSymbol,
-                accentHex: "#005CC2"
-            )
+        var usedGameEventIds: Set<Int> = []
+        if let biggest = rankedGames.first {
+            usedGameEventIds.insert(biggest.event.id)
+        }
+        if let chipGame = rankedGames.dropFirst().first ?? rankedGames.first {
+            usedGameEventIds.insert(chipGame.event.id)
         }
 
-        if let secondGame = rankedGames.dropFirst(2).first ?? rankedGames.dropFirst().first ?? rankedGames.first {
-            let art = FirstRunSubjectArt364A.cleanHTTPS(secondGame.event.homeTeamData?.logoSmall ?? secondGame.event.homeTeamData?.logoLarge)
+        let secondGame = rankedGames.dropFirst(2).first ?? rankedGames.dropFirst().first ?? rankedGames.first
+        if let secondGame {
+            usedGameEventIds.insert(secondGame.event.id)
             previews[.follow] = FirstRunChecklistRowPreview364A(
                 subtitle: "\(secondGame.favoredTeam) tonight \(secondGame.pct)% \u{00B7} teams & topics",
                 percentText: nil,
-                imageUrl: art,
+                imageUrl: secondGame.favoredLogoUrl,
                 sfSymbol: FirstRunCard212A.sfSymbol(forCategory: DiscoverCategory.token(forSport: secondGame.event.sport), isSports: true),
                 accentHex: "#047857"
             )
@@ -632,7 +688,7 @@ nonisolated enum FirstRunChecklistExtractor364A {
         }
 
         previews[.syncDevices] = FirstRunChecklistRowPreview364A(
-            subtitle: "Follow or pick first",
+            subtitle: "Follow something first",
             percentText: nil,
             imageUrl: nil,
             sfSymbol: "laptopcomputer.and.iphone",
@@ -649,13 +705,33 @@ nonisolated enum FirstRunChecklistExtractor364A {
                 accentHex: "#D97706"
             )
         } else if let fourthGame = rankedGames.dropFirst(3).first ?? rankedGames.dropFirst().last ?? rankedGames.first {
-            let art = FirstRunSubjectArt364A.cleanHTTPS(fourthGame.event.homeTeamData?.logoSmall ?? fourthGame.event.homeTeamData?.logoLarge)
+            usedGameEventIds.insert(fourthGame.event.id)
             previews[.alerts] = FirstRunChecklistRowPreview364A(
                 subtitle: "\(fourthGame.favoredTeam) tonight \(fourthGame.pct)% \u{00B7} alerts",
                 percentText: nil,
-                imageUrl: art,
+                imageUrl: fourthGame.favoredLogoUrl,
                 sfSymbol: "bell.badge.fill",
                 accentHex: "#D97706"
+            )
+        }
+
+        // Row 1 subtitle must not repeat Row 1's own first chip (`lookupExamples` game) or any other row's game.
+        if let distinctGame = rankedGames.first(where: { !usedGameEventIds.contains($0.event.id) }) {
+            previews[.lookUp] = FirstRunChecklistRowPreview364A(
+                subtitle: "No account \u{00B7} \(distinctGame.favoredTeam) tonight \(distinctGame.pct)%",
+                percentText: nil,
+                imageUrl: distinctGame.favoredLogoUrl,
+                sfSymbol: FirstRunCard212A.sfSymbol(forCategory: DiscoverCategory.token(forSport: distinctGame.event.sport), isSports: true),
+                accentHex: "#005CC2"
+            )
+        } else {
+            let leadChip = lookupExamples.first
+            previews[.lookUp] = FirstRunChecklistRowPreview364A(
+                subtitle: "No account \u{00B7} games, awards & elections",
+                percentText: nil,
+                imageUrl: nil,
+                sfSymbol: leadChip?.sfSymbol ?? "magnifyingglass",
+                accentHex: "#005CC2"
             )
         }
 
@@ -758,7 +834,7 @@ nonisolated enum FirstRunChecklistExtractor364A {
 
     private static func extractLookupExamples(
         from feedItems: [FeedItem],
-        rankedGames: [(prio: Int, seq: Int, event: FeedEventData, favoredTeam: String, pct: Int, shortTitle: String, deltaPoints: Int?, deltaWindow: String?)],
+        rankedGames: [RankedGameEntry],
         subjectArt: [String: String],
         now: Date
     ) -> [FirstRunLookupExample364A] {
@@ -773,7 +849,7 @@ nonisolated enum FirstRunChecklistExtractor364A {
                 title: "\(g.favoredTeam) tonight",
                 query: g.favoredTeam,
                 percent: g.pct,
-                imageUrl: FirstRunSubjectArt364A.cleanHTTPS(g.event.homeTeamData?.logoSmall ?? g.event.homeTeamData?.logoLarge),
+                imageUrl: g.favoredLogoUrl,
                 sfSymbol: FirstRunCard212A.sfSymbol(forCategory: DiscoverCategory.token(forSport: g.event.sport), isSports: true),
                 route: .eventDetail(id: g.event.id)
             ))
@@ -871,7 +947,7 @@ nonisolated enum FirstRunChecklistExtractor364A {
 
     private static func extractStartWithTonight(
         from feedItems: [FeedItem],
-        rankedGames: [(prio: Int, seq: Int, event: FeedEventData, favoredTeam: String, pct: Int, shortTitle: String, deltaPoints: Int?, deltaWindow: String?)],
+        rankedGames: [RankedGameEntry],
         previousSnapshot: [String: Double],
         subjectArt: [String: String],
         now: Date
@@ -882,7 +958,6 @@ nonisolated enum FirstRunChecklistExtractor364A {
         // 1. Biggest game on tonight
         if let topGame = rankedGames.first {
             usedEventIds.insert(topGame.event.id)
-            let pairs = TeamShortName.shortPair(away: topGame.event.awayTeam, home: topGame.event.homeTeam, sportKey: topGame.event.sport)
             let league = sportDisplayName(for: topGame.event.sport)
             let deltaCopy = topGame.deltaWindow.flatMap { window in
                 FirstRunCard212A.shiftText(points: topGame.deltaPoints, window: window)
@@ -891,13 +966,13 @@ nonisolated enum FirstRunChecklistExtractor364A {
                 id: "tonight-game-\(topGame.event.id)",
                 slotLabel: "Biggest game",
                 title: topGame.shortTitle,
-                subtitle: league.isEmpty ? pairs.home : "\(league) \u{00B7} \(pairs.home)",
+                subtitle: league,
                 subjectLabel: topGame.favoredTeam,
                 percent: topGame.pct,
                 deltaText: deltaCopy,
-                imageUrl: FirstRunSubjectArt364A.cleanHTTPS(topGame.event.homeTeamData?.logoSmall ?? topGame.event.homeTeamData?.logoLarge),
+                imageUrl: topGame.favoredLogoUrl,
                 sfSymbol: FirstRunCard212A.sfSymbol(forCategory: DiscoverCategory.token(forSport: topGame.event.sport), isSports: true),
-                accentHex: topGame.event.homeTeamData?.primaryColor ?? "#047857",
+                accentHex: topGame.favoredAccentHex ?? "#047857",
                 route: .eventDetail(id: topGame.event.id)
             ))
         }
@@ -923,11 +998,11 @@ nonisolated enum FirstRunChecklistExtractor364A {
                     id: "tonight-mover-ev-\(ev.id)",
                     slotLabel: "Biggest mover",
                     title: "\(pairs.away) at \(pairs.home)",
-                    subtitle: league.isEmpty ? pairs.home : "\(league) \u{00B7} \(pairs.home)",
+                    subtitle: league,
                     subjectLabel: pairs.home,
                     percent: pct,
                     deltaText: FirstRunCard212A.shiftText(points: diff, window: baseline.window),
-                    imageUrl: FirstRunSubjectArt364A.cleanHTTPS(ev.homeTeamData?.logoSmall ?? ev.homeTeamData?.logoLarge),
+                    imageUrl: FirstRunSubjectArt364A.cleanHTTPS(ev.homeTeamData?.logoSmall ?? ev.homeTeamData?.logoLarge ?? ev.homeImageUrl),
                     sfSymbol: FirstRunCard212A.sfSymbol(forCategory: DiscoverCategory.token(forSport: ev.sport), isSports: true),
                     accentHex: "#D97706",
                     route: .eventDetail(id: ev.id)
@@ -1052,7 +1127,7 @@ nonisolated enum FirstRunChecklistExtractor364A {
             let league = sportDisplayName(for: sportSlug)
             let badge = league.isEmpty ? "Match" : league
             let sub: String = isSettled ? "Final" : (statusLower == "live" || statusLower == "in_progress" ? "Live now" : "Upcoming game")
-            let img = FirstRunSubjectArt364A.cleanHTTPS(ev.homeTeamData?.logoSmall ?? ev.homeImageUrl ?? ev.awayTeamData?.logoSmall)
+            let art = favoredArt(for: ev, homeFavored: homePct >= awayPct)
             let rowId = "search-event-\(ev.id)"
             guard seenIds.insert(rowId).inserted else { continue }
             out.append(FirstRunLookupResult364A(
@@ -1062,9 +1137,9 @@ nonisolated enum FirstRunChecklistExtractor364A {
                 subtitle: sub,
                 subjectLabel: subjectName,
                 percent: displayPct,
-                imageUrl: img,
+                imageUrl: art.logoUrl,
                 sfSymbol: FirstRunCard212A.sfSymbol(forCategory: DiscoverCategory.token(forSport: sportSlug), isSports: true),
-                accentHex: ev.homeTeamData?.primaryColor ?? "#005CC2",
+                accentHex: art.accentHex ?? "#005CC2",
                 route: .eventDetail(id: ev.id)
             ))
         }

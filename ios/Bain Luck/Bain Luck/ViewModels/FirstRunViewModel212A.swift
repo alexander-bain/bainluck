@@ -355,15 +355,68 @@ final class FirstRunViewModel212A: ObservableObject {
         guard searchQuery.trimmingCharacters(in: .whitespacesAndNewlines) == trimmed else { return }
 
         var combined: [FirstRunSuggestion212A] = []
-        if let globalResponse {
-            combined.append(contentsOf: FirstRunSuggestion212A.fromEventSearchResponse(globalResponse, query: trimmed))
+        let prioritizedCityTeams = Self.prioritizedCityTeams(locResults, query: trimmed)
+        if !prioritizedCityTeams.isEmpty {
+            // City lookups lead with the city's teams (`/api/me/teams/by-location`), then name & general matches.
+            combined.append(contentsOf: FirstRunSuggestion212A.fromTeamSearchResults(prioritizedCityTeams))
+            combined.append(contentsOf: FirstRunSuggestion212A.fromTeamSearchResults(nameResults))
+            if let globalResponse {
+                combined.append(contentsOf: FirstRunSuggestion212A.fromEventSearchResponse(globalResponse, query: trimmed))
+            }
+        } else {
+            if let globalResponse {
+                combined.append(contentsOf: FirstRunSuggestion212A.fromEventSearchResponse(globalResponse, query: trimmed))
+            }
+            combined.append(contentsOf: FirstRunSuggestion212A.fromTeamSearchResults(nameResults))
         }
-        combined.append(contentsOf: FirstRunSuggestion212A.fromTeamSearchResults(nameResults))
-        combined.append(contentsOf: FirstRunSuggestion212A.fromTeamSearchResults(locResults))
 
         suggestions = FirstRunSuggestion212A.mergeDeduplicating(combined)
         isSearching = false
         searchCompletedOnce = true
+    }
+
+    private static func prioritizedCityTeams(_ results: [TeamSearchResult], query: String) -> [TeamSearchResult] {
+        guard !results.isEmpty else { return [] }
+        let lowerQuery = query.lowercased()
+        let wantsOffseasonVariant = lowerQuery.contains("preseason") || lowerQuery.contains("summer")
+
+        func primarySportKey(for team: TeamSearchResult) -> String {
+            (team.sportKey ?? team.sports?.first?.sportKey ?? "")
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased()
+        }
+
+        func isOffseasonVariant(_ key: String) -> Bool {
+            key.hasSuffix("_preseason") || key.hasSuffix("_summer_league")
+        }
+
+        let regularOnly = results.filter { !isOffseasonVariant(primarySportKey(for: $0)) }
+        let base = (!wantsOffseasonVariant && !regularOnly.isEmpty) ? regularOnly : results
+
+        func rank(for key: String) -> Int {
+            switch key {
+            case "americanfootball_nfl": return 0
+            case "basketball_nba": return 1
+            case "baseball_mlb": return 2
+            case "icehockey_nhl": return 3
+            case "soccer_usa_mls", "soccer_epl", "soccer_uefa_champs_league",
+                 "soccer_spain_la_liga", "soccer_germany_bundesliga",
+                 "soccer_italy_serie_a", "soccer_france_ligue_one",
+                 "soccer_fifa_world_cup", "basketball_wnba":
+                return 4
+            case "americanfootball_ncaaf", "americanfootball_ncaaf_fcs": return 5
+            case "basketball_ncaab", "basketball_wncaab": return 6
+            default:
+                return isOffseasonVariant(key) ? 99 : 7
+            }
+        }
+
+        return base.enumerated().sorted { lhs, rhs in
+            let lRank = rank(for: primarySportKey(for: lhs.element))
+            let rRank = rank(for: primarySportKey(for: rhs.element))
+            if lRank != rRank { return lRank < rRank }
+            return lhs.offset < rhs.offset
+        }.map(\.element)
     }
 
     /// Runs `359: A` plain-sentence parsing bounded by `sentenceTimeoutNs` (5s).

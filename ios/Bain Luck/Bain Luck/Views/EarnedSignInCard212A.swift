@@ -23,19 +23,19 @@ struct EarnedSignInCard212A: View {
                 .tracking(0.8)
                 .foregroundStyle(DS.blueReadable)
 
-            Text("Keep your pins on iPad, the web, and a new phone")
+            Text("Keep what you follow on iPad, the web and a new phone")
                 .font(.title3.weight(.bold))
                 .foregroundStyle(DS.textPrimary)
                 .fixedSize(horizontal: false, vertical: true)
 
-            Text("Your pins and alerts already work on this iPhone and paired Watch without an account. Sign in only to:")
+            Text("What you follow and your alerts already work on this iPhone and paired Watch without an account. Sign in only to:")
                 .font(.footnote)
                 .foregroundStyle(DS.textSecondaryReadable)
                 .fixedSize(horizontal: false, vertical: true)
 
             VStack(alignment: .leading, spacing: 6) {
-                bulletRow("Open your pins on iPad, bainluck.com, and a new phone")
-                bulletRow("Restore your pins if you replace this iPhone")
+                bulletRow("Open what you follow on iPad, bainluck.com and a new phone")
+                bulletRow("Restore what you follow if you replace this iPhone")
             }
 
             VStack(spacing: 10) {
