@@ -210,6 +210,31 @@ function wordWidthClass(width?: string): string {
   return "shrink-0";
 }
 
+export function computeCountdownDaysLeft(
+  deadlineIso: string,
+  now: Date = new Date(),
+): number | null {
+  const target = new Date(deadlineIso);
+  if (Number.isNaN(target.getTime())) return null;
+  const toPtMidnightUtcMs = (d: Date): number | null => {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Los_Angeles",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(d);
+    const y = Number(parts.find((p) => p.type === "year")?.value);
+    const m = Number(parts.find((p) => p.type === "month")?.value);
+    const day = Number(parts.find((p) => p.type === "day")?.value);
+    if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(day)) return null;
+    return Date.UTC(y, m - 1, day);
+  };
+  const targetDayMs = toPtMidnightUtcMs(target);
+  const nowDayMs = toPtMidnightUtcMs(now);
+  if (targetDayMs === null || nowDayMs === null) return null;
+  return Math.round((targetDayMs - nowDayMs) / 86_400_000);
+}
+
 function WordMarkView({ mark }: { mark: KitV1WordMark }) {
   if (mark.style === "pill") {
     return (
@@ -219,9 +244,18 @@ function WordMarkView({ mark }: { mark: KitV1WordMark }) {
     );
   }
   if (mark.style === "hero_label") {
+    const liveDays = mark.deadline_iso ? computeCountdownDaysLeft(mark.deadline_iso) : null;
+    const heroText =
+      liveDays === null
+        ? mark.text
+        : liveDays <= 0
+        ? "ends today"
+        : liveDays === 1
+        ? "day left"
+        : "days left";
     return (
       <div className="min-w-0 flex-1">
-        <div className="text-xs font-bold text-text-primary">{mark.text}</div>
+        <div className="text-xs font-bold text-text-primary">{heroText}</div>
         {mark.secondary_text && (
           <div className="text-[11px] text-text-muted">{mark.secondary_text}</div>
         )}
@@ -271,6 +305,20 @@ function WordMarkView({ mark }: { mark: KitV1WordMark }) {
       </span>
     );
   }
+  if (mark.secondary_text) {
+    return (
+      <div className={`min-w-0 leading-snug ${alignClass(mark.align)} ${wordWidthClass(mark.width)}`}>
+        <div
+          className={`text-xs leading-snug ${mark.bold ? "font-semibold" : ""} ${toneClass(
+            mark.tone,
+          )}`}
+        >
+          {mark.text}
+        </div>
+        <div className="text-[10px] font-medium text-text-muted">{mark.secondary_text}</div>
+      </div>
+    );
+  }
   return (
     <span
       className={`text-xs leading-snug ${mark.bold ? "font-semibold" : ""} ${toneClass(
@@ -283,10 +331,16 @@ function WordMarkView({ mark }: { mark: KitV1WordMark }) {
 }
 
 function NumberMarkView({ mark }: { mark: KitV1NumberMark }) {
+  const liveDays =
+    mark.unit === "days" && mark.deadline_iso
+      ? computeCountdownDaysLeft(mark.deadline_iso)
+      : null;
+  const shownDisplay =
+    liveDays === null ? mark.display : liveDays <= 0 ? "Today" : String(liveDays);
   if (mark.prominence === "hero") {
     return (
       <span className={`text-2xl font-extrabold tabular-nums ${toneClass(mark.tone)}`}>
-        {mark.display}
+        {shownDisplay}
       </span>
     );
   }
@@ -308,7 +362,7 @@ function NumberMarkView({ mark }: { mark: KitV1NumberMark }) {
         mark.align,
       )} ${widthCls}`}
     >
-      {mark.display}
+      {shownDisplay}
     </span>
   );
 }

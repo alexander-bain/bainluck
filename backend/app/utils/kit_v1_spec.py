@@ -13,6 +13,7 @@ Builder C (`comment-7122170383`, `KitCardEnvelope366B.swift`) and Fable's 9:40 P
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -227,6 +228,7 @@ def _mark_word(
     width: str = "auto",
     bold: bool = False,
     secondary_text: str | None = None,
+    deadline_iso: str | None = None,
 ) -> dict[str, Any]:
     out: dict[str, Any] = {
         "mark": "word",
@@ -239,6 +241,8 @@ def _mark_word(
     }
     if secondary_text is not None:
         out["secondary_text"] = secondary_text
+    if deadline_iso is not None:
+        out["deadline_iso"] = deadline_iso
     return out
 
 
@@ -251,8 +255,9 @@ def _mark_number(
     prominence: str = "primary",
     align: str = "right",
     width: str = "sm",
+    deadline_iso: str | None = None,
 ) -> dict[str, Any]:
-    return {
+    out: dict[str, Any] = {
         "mark": "number",
         "value": int(value),
         "display": display,
@@ -262,6 +267,9 @@ def _mark_number(
         "align": align,
         "width": width,
     }
+    if deadline_iso is not None:
+        out["deadline_iso"] = deadline_iso
+    return out
 
 
 def _mark_bar_single(
@@ -512,7 +520,16 @@ def _walk_and_validate_marks(
                 stats["saw_person_picture"] = True
         elif mark_val == "number" and node.get("unit") == "%":
             _check_pct(node.get("value"), "number mark", errors)
-        elif mark_val == "bar":
+        if node.get("deadline_iso") is not None:
+            raw_dl = node.get("deadline_iso")
+            if not isinstance(raw_dl, str) or not raw_dl.strip():
+                errors.append(f"{mark_val or 'mark'}.deadline_iso must be a non-empty ISO datetime string")
+            else:
+                try:
+                    datetime.fromisoformat(raw_dl.strip().replace("Z", "+00:00"))
+                except ValueError:
+                    errors.append(f"Invalid deadline_iso {raw_dl!r} on {mark_val or 'mark'}")
+        if mark_val == "bar":
             if node.get("fill_color") is not None:
                 _validate_adaptive_color(node.get("fill_color"), "bar.fill_color", errors)
             for idx_seg, seg in enumerate(node.get("segments") or []):

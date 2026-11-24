@@ -5,7 +5,11 @@ import fs from "node:fs";
 import path from "node:path";
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { KitCardRenderer, parseKitCardV1 } from "@/components/discover/kit/KitCardRenderer";
+import {
+  KitCardRenderer,
+  computeCountdownDaysLeft,
+  parseKitCardV1,
+} from "@/components/discover/kit/KitCardRenderer";
 import type { KitV1CardSpec, KitV1StackBody } from "@/components/discover/kit/types";
 
 describe("Kit v1 layout-generic web renderer & fail-closed envelope (366: B, 367: A, 7 rules)", () => {
@@ -140,6 +144,79 @@ describe("Kit v1 layout-generic web renderer & fail-closed envelope (366: B, 367
     );
     expect(html).toContain("Standard card fallback");
     expect(html).toContain("Slate mixes &gt;1 sport_key");
+  });
+
+  test("countdown marks compute live PT days left (1 day left, ends today) and row secondary_text renders", () => {
+    const deadlineIso = "2026-11-30T23:59:00+00:00";
+    expect(computeCountdownDaysLeft(deadlineIso, new Date("2026-11-24T17:20:00Z"))).toBe(6);
+    expect(computeCountdownDaysLeft(deadlineIso, new Date("2026-11-29T17:20:00Z"))).toBe(1);
+    expect(computeCountdownDaysLeft(deadlineIso, new Date("2026-11-30T17:20:00Z"))).toBe(0);
+
+    const countdownCard: KitV1CardSpec = {
+      ...golden.items[2],
+      body: {
+        ...(golden.items[2].body as KitV1StackBody),
+        header_marks: [
+          {
+            mark: "number",
+            value: 6,
+            display: "6",
+            unit: "days",
+            deadline_iso: deadlineIso,
+            tone: "accent",
+            prominence: "hero",
+            align: "left",
+            width: "auto",
+          },
+          {
+            mark: "word",
+            text: "days left",
+            style: "hero_label",
+            deadline_iso: deadlineIso,
+            tone: "primary",
+            align: "left",
+            width: "flex",
+            bold: true,
+            secondary_text: "all of these end on November 30",
+          },
+        ],
+      },
+    };
+
+    jest.useFakeTimers();
+    try {
+      jest.setSystemTime(new Date("2026-11-29T17:20:00Z"));
+      const oneDayHtml = renderToStaticMarkup(<KitCardRenderer spec={countdownCard} />);
+      expect(oneDayHtml).toContain(">1<");
+      expect(oneDayHtml).toContain("day left");
+      expect(oneDayHtml).not.toContain("days left");
+
+      jest.setSystemTime(new Date("2026-11-30T17:20:00Z"));
+      const todayHtml = renderToStaticMarkup(<KitCardRenderer spec={countdownCard} />);
+      expect(todayHtml).toContain("Today");
+      expect(todayHtml).toContain("ends today");
+    } finally {
+      jest.useRealTimers();
+    }
+
+    const withSecondary = {
+      ...golden.items[0],
+      body: {
+        ...(golden.items[0].body as any),
+        rows: [
+          {
+            ...(golden.items[0].body as any).rows[0],
+            leading: [
+              ...(golden.items[0].body as any).rows[0].leading.slice(0, -1),
+              { mark: "word", text: "Inde Navarrette", secondary_text: "Actor", style: "row", width: "flex", bold: true },
+            ],
+          },
+        ],
+      },
+    } as KitV1CardSpec;
+    const secHtml = renderToStaticMarkup(<KitCardRenderer spec={withSecondary} />);
+    expect(secHtml).toContain("Inde Navarrette");
+    expect(secHtml).toContain("Actor");
   });
 
   test("uses light-mode semantic tokens only with zero dark classes, zero raw hexes, and zero variant branches", () => {

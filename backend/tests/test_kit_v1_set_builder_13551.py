@@ -11,6 +11,8 @@ import pytest
 from app.utils.container_machinery import _default_art_resolver
 from app.utils.kit_v1_set_builder import (
     REAL_SETS_FIXTURE_PATH,
+    _parse_outcome_deadline,
+    _restate_source_question,
     build_kit_card_for_real_set,
     build_real_sets_audit_report,
     load_real_sets_audit_report,
@@ -85,11 +87,10 @@ def test_real_sets_fable_followups_and_shape_priority() -> None:
     assert by_slug["roundup-tomorrows-highs"]["variant"] == "shared_scale"
     assert by_slug["machinery-2026-box-office-showdown"]["variant"] == "shared_scale"
 
-    # 2. Oscars + CFP + 2028 Presidential + Google Search grids include column headers
+    # 2. Oscars + 2028 Presidential + Google Search grids include column headers
     for grid_slug in (
         "machinery-oscars-best-picture",
         "machinery-oscars-best-actor-2027",
-        "machinery-cfp-national-championship",
         "machinery-2028-presidential",
         "machinery-google-year-in-search-2026",
     ):
@@ -101,6 +102,13 @@ def test_real_sets_fable_followups_and_shape_priority() -> None:
         assert len(body["columns"]) == 2
         assert all(str(c.get("label") or "").strip() for c in body["columns"])
 
+    cfp = by_slug["machinery-cfp-national-championship"]
+    assert cfp["variant"] == "casting_sheet"
+    cfp_bars = [
+        m for it in cfp["kit_card"]["body"]["items"] for m in it["marks"] if m.get("mark") == "bar"
+    ]
+    assert cfp_bars and all(b.get("fill_color") for b in cfp_bars)
+
     # 3. NHL bubble axis carries all 32 teams + crests on bubble teams
     nhl = by_slug["nhl-playoffs-2026-27"]
     assert nhl["layout"] == "axis"
@@ -109,11 +117,13 @@ def test_real_sets_fable_followups_and_shape_priority() -> None:
     assert len(nhl_dots) == 32
     elevated_crests = [d for d in nhl_dots if d.get("picture") and isinstance(d.get("y_lane"), int)]
     assert len(elevated_crests) >= 10
-    assert "%" in nhl["stat_caption"]
+    assert "Edmonton Oilers lead at 98%" in nhl["stat_caption"]
 
-    # 4. Casting sheets: uniform bar color for non-teams; team color kept for teams; Mariah Carey allowed
+    # 4. Casting sheets: uniform bar color for non-teams or mixed rows; team color kept for all-team sets
     odd = by_slug["machinery-pop-culture-oddities"]
     assert odd["variant"] == "casting_sheet"
+    assert odd["common_headline"] == "Pop Culture Oddities"
+    assert "long shots" not in odd["common_headline"].lower()
     odd_bars = [
         m
         for it in odd["kit_card"]["body"]["items"]
@@ -122,16 +132,61 @@ def test_real_sets_fable_followups_and_shape_priority() -> None:
     ]
     assert odd_bars and all("fill_color" not in b for b in odd_bars)
 
+    mixed_bundle = {
+        "headline": "Jeremiah Smith for Heisman Trophy is at 84%, with Victor Wembanyama at 52%",
+        "data": {
+            "kind": "roundup",
+            "title": "2026–27 Championship Races",
+            "collection_ref": {"id": 9999, "slug": "test-mixed-championships", "name": "2026–27 Championship Races"},
+            "roundup": {
+                "kicker": "Awards & Cups",
+                "machinery_card": {
+                    "form_id": "benchmark_strip",
+                    "rows": [
+                        {
+                            "name": "Heisman Trophy: Jeremiah Smith",
+                            "probability": 0.84,
+                            "rendered_percent": 84,
+                            "art": {"url": "https://a.espncdn.com/i/headshots/college-football/players/full/5079720.png", "kind": "person", "accent_color": "#008348"},
+                        },
+                        {
+                            "name": "NBA MVP: Victor Wembanyama",
+                            "probability": 0.52,
+                            "rendered_percent": 52,
+                            "art": {"url": "https://a.espncdn.com/i/headshots/nba/players/full/5104157.png", "kind": "person", "accent_color": "#008348"},
+                        },
+                        {
+                            "name": "UEFA Champions League: Barcelona",
+                            "probability": 0.22,
+                            "rendered_percent": 22,
+                            "art": {"url": "https://a.espncdn.com/i/teamlogos/soccer/500/83.png", "kind": "team_logo", "accent_color": "#990000"},
+                        },
+                    ],
+                },
+            },
+        },
+    }
+    mixed = build_kit_card_for_real_set(mixed_bundle, None, now=FIXED_NOW, resolver=_default_art_resolver())
+    assert mixed["fits"] is True
+    assert mixed["variant"] == "casting_sheet"
+    mixed_bars = [
+        m for it in mixed["kit_card"]["body"]["items"] for m in it["marks"] if m.get("mark") == "bar"
+    ]
+    assert mixed_bars and all("fill_color" not in b for b in mixed_bars)
+
     nfl_front = by_slug["roundup-nfl-division-front-runners"]
     assert "bain luck blend" not in nfl_front["stat_caption"].lower()
-    assert "%" in nfl_front["stat_caption"]
+    assert "NFC East: Giants lead at 67%" in nfl_front["stat_caption"]
+    assert " each" not in json.dumps(nfl_front["kit_card"]).lower()
+    assert " each" not in json.dumps(by_slug["machinery-elon-musk-side-quests"]["kit_card"]).lower()
 
     # 5. Road captions & declarative headlines
     celtics = by_slug["celtics-next-3-games"]
     assert celtics["variant"] == "road_ahead"
     assert "Boston is " in celtics["stat_caption"]
     assert "Washington Wizards (" not in celtics["stat_caption"]
-    assert by_slug["machinery-who-gets-engaged"]["common_headline"] == "Celebrity engagements by Dec 31"
+    assert by_slug["machinery-who-gets-engaged"]["common_headline"] == "Getting engaged"
+    assert _restate_source_question("Who gets the stage and the cover") == "Stage and cover"
     assert by_slug["machinery-nba-night"]["common_headline"].startswith("NBA, ")
     assert by_slug["machinery-nfl-week"]["common_headline"].startswith("NFL, ")
 
@@ -222,3 +277,138 @@ def test_real_sets_scrubs_venue_names_and_opens_at_copy() -> None:
     assert res["fits"] is True
     assert "opens at" not in res["stat_caption"].lower()
     assert "kalshi" not in res["stat_caption"].lower()
+
+
+def test_v4_2028_presidential_keeps_jd_vance_fails_closed_and_ignores_section_order() -> None:
+    snap = _load_fixture()
+    c_pres = json.loads(json.dumps(snap["containers"]["machinery-2028-presidential"]))
+    b_pres = next(
+        b for b in snap["bundles"]
+        if (b["data"].get("collection_ref") or {}).get("slug") == "machinery-2028-presidential"
+    )
+    res = build_kit_card_for_real_set(b_pres, c_pres, now=FIXED_NOW, resolver=_default_art_resolver())
+    assert res["fits"] is True
+    body = res["kit_card"]["body"]
+    assert [c["label"] for c in body["columns"]] == ["Presidential", "Wins party nomination"]
+    row_names = [
+        next(m["text"] for m in rw["leading"] if m.get("style") == "row")
+        for rw in body["rows"]
+    ]
+    assert row_names[:4] == ["Jon Ossoff", "JD Vance", "Alexandria Ocasio-Cortez", "Marco Rubio"]
+    ranks = [
+        next(m["text"] for m in rw["leading"] if m.get("style") == "rank")
+        for rw in body["rows"]
+    ]
+    assert ranks == ["1", "2", "3", "4"]
+    vance_cells = [c["marks"][0]["center_label"] for c in body["rows"][1]["cells"]]
+    assert vance_cells == ["13%", "33%"]
+
+    # Reordering sections must produce the exact same rows and columns
+    shuffled = json.loads(json.dumps(c_pres))
+    shuffled["sections"] = list(reversed(shuffled["sections"]))
+    res_shuffled = build_kit_card_for_real_set(b_pres, shuffled, now=FIXED_NOW, resolver=_default_art_resolver())
+    assert res_shuffled["kit_card"]["body"]["rows"] == body["rows"]
+    assert res_shuffled["kit_card"]["body"]["columns"] == body["columns"]
+
+    # Fail closed if a Column 1 top-4 contender lacks a Column 2 number (never skip/renumber)
+    broken = json.loads(json.dumps(c_pres))
+    for sec in broken["sections"]:
+        for mem in sec.get("members") or []:
+            c = mem.get("card") or {}
+            if "nominee" in str(c.get("name") or "").lower():
+                c["top_outcomes"] = [
+                    o for o in (c.get("top_outcomes") or []) if "vance" not in str(o.get("name") or "").lower()
+                ]
+    res_broken = build_kit_card_for_real_set(b_pres, broken, now=FIXED_NOW, resolver=_default_art_resolver())
+    assert res_broken["fits"] is False
+    assert "JD Vance" in (res_broken["refusal_reason"] or "")
+
+
+def test_v4_year_in_search_lists_headers_and_no_rank_marks() -> None:
+    snap = _load_fixture()
+    c_yis = json.loads(json.dumps(snap["containers"]["machinery-google-year-in-search-2026"]))
+    b_yis = next(
+        b for b in snap["bundles"]
+        if (b["data"].get("collection_ref") or {}).get("slug") == "machinery-google-year-in-search-2026"
+    )
+    res = build_kit_card_for_real_set(b_yis, c_yis, now=FIXED_NOW, resolver=_default_art_resolver())
+    assert res["fits"] is True
+    body = res["kit_card"]["body"]
+    assert [c["label"] for c in body["columns"]] == ["#1 in its list", "Top 5 in its list"]
+    assert all(m.get("style") != "rank" for rw in body["rows"] for m in rw["leading"])
+    sec_labels = [
+        next(m.get("secondary_text") for m in rw["leading"] if m.get("style") == "row")
+        for rw in body["rows"]
+    ]
+    assert sec_labels == ["Actor", "Athlete", "Movie", "TV show"]
+
+
+def test_v4_dated_tiles_drops_expired_keeps_quoted_peak_and_uses_resolution_year() -> None:
+    # Yearless deadline inherits market's resolution_date year instead of hardcoded 2026
+    assert _parse_outcome_deadline("Before Mar 1", reference_year=2027) == ((2027, 3, 1), "Mar 1 '27")
+
+    snap = _load_fixture()
+    now_nov24 = datetime(2026, 11, 24, 17, 20, tzinfo=timezone.utc)
+    report = build_real_sets_audit_report(snap, now=now_nov24, resolver=_default_art_resolver())
+    ai_entry = next(
+        e for e in (report["top_10"] + report["fitting_beyond_top_10"]) if e["slug"] == "ai"
+    )
+    ai_card = ai_entry["kit_card"]
+    ai_blob = json.dumps(ai_card)
+    assert "Dec 31 '25" not in ai_blob
+    assert "Mar 31 '26" not in ai_blob
+    assert "Oct 31 '26" not in ai_blob
+    assert "solution is " not in ai_card["stat_caption"]
+    assert "43% by Jun 1 '27" in ai_card["stat_caption"]
+    shown_labels = {
+        m.get("center_label") + " " + (m.get("top_label") or "")
+        for rw in ai_card["body"]["rows"]
+        for cell in rw["cells"]
+        for m in cell["marks"]
+    }
+    assert "43% by Jun 1 '27" in shown_labels
+    assert "62% by Dec 31 '27" in shown_labels
+    assert "ai" in report["dated_tiles_left_off"]
+
+
+def test_v4_box_office_posters_countdown_client_iso_and_zero_slug_branches() -> None:
+    snap = _load_fixture()
+    c_bo = snap["containers"]["machinery-2026-box-office-showdown"]
+    res_bo = build_kit_card_for_real_set(None, c_bo, now=FIXED_NOW, resolver=_default_art_resolver())
+    assert res_bo["fits"] is True
+    assert res_bo["variant"] == "shared_scale"
+    series = res_bo["kit_card"]["body"]["series"]
+    pics = [m for s in series for m in s["leading"] if m.get("mark") == "picture"]
+    assert len(pics) == 2
+    assert all(p.get("subject_kind") == "film" and p.get("url", "").startswith("https://") for p in pics)
+
+    b_nov30 = next(
+        b for b in snap["bundles"]
+        if (b["data"].get("collection_ref") or {}).get("slug") == "by-november-30"
+    )
+    for dt_utc, exp_val, exp_disp, exp_label in [
+        (datetime(2026, 11, 24, 17, 20, tzinfo=timezone.utc), 6, "6", "days left"),
+        (datetime(2026, 11, 29, 17, 20, tzinfo=timezone.utc), 1, "1", "day left"),
+        (datetime(2026, 11, 30, 17, 20, tzinfo=timezone.utc), 0, "Today", "ends today"),
+    ]:
+        res_cd = build_kit_card_for_real_set(b_nov30, None, now=dt_utc, resolver=_default_art_resolver())
+        assert res_cd["fits"] is True
+        hdr = res_cd["kit_card"]["body"]["header_marks"]
+        assert hdr[0]["value"] == exp_val
+        assert hdr[0]["display"] == exp_disp
+        assert hdr[0].get("deadline_iso")
+        assert hdr[1]["text"] == exp_label
+        assert hdr[1].get("deadline_iso") == hdr[0]["deadline_iso"]
+
+    builder_src = open(
+        REAL_SETS_FIXTURE_PATH.parents[2] / "app" / "utils" / "kit_v1_set_builder.py",
+        encoding="utf-8",
+    ).read()
+    assert "_DECLARATIVE_HEADLINES" not in builder_src
+    assert '== "machinery-2028-presidential"' not in builder_src
+    assert '== "machinery-google-year-in-search-2026"' not in builder_src
+    assert '== "machinery-elon-musk-side-quests"' not in builder_src
+    assert '== "roundup-nfl-division-front-runners"' not in builder_src
+    assert "secs[1]" not in builder_src and "secs[3]" not in builder_src
+    assert "mixed non-comparable questions" not in builder_src
+    assert "distinct question shapes" not in builder_src
