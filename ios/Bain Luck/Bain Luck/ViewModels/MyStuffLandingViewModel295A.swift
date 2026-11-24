@@ -143,6 +143,8 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         var discoverItems: [FeedItem] = []
         var loadFailed: Bool = false
         var hydratingRemainingCount: Int = 0
+        var teamFuturesFailed: Bool = false
+        var teamFuturesRetrying: Bool = false
     }
 
     struct HydratedSubjectPack: Sendable {
@@ -163,6 +165,8 @@ final class MyStuffLandingViewModel295A: ObservableObject {
     @Published private(set) var loading: Bool = false
     @Published private(set) var loadFailed: Bool = false
     @Published private(set) var hydratingRemainingCount: Int = 0
+    @Published private(set) var teamFuturesFailed: Bool = false
+    @Published private(set) var teamFuturesRetrying: Bool = false
 
     private let defaults: UserDefaults
     private let isPreloaded: Bool
@@ -196,6 +200,8 @@ final class MyStuffLandingViewModel295A: ObservableObject {
             self.loading = false
             self.loadFailed = preloaded.loadFailed
             self.hydratingRemainingCount = preloaded.hydratingRemainingCount
+            self.teamFuturesFailed = preloaded.teamFuturesFailed
+            self.teamFuturesRetrying = preloaded.teamFuturesRetrying
         } else {
             self.isPreloaded = false
         }
@@ -210,6 +216,8 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         self.discoverItems = Self.stripModelWrittenText(snapshot.discoverItems, limit: 3)
         self.loadFailed = snapshot.loadFailed
         self.hydratingRemainingCount = snapshot.hydratingRemainingCount
+        self.teamFuturesFailed = snapshot.teamFuturesFailed
+        self.teamFuturesRetrying = snapshot.teamFuturesRetrying
     }
 
     /// Computes the moved-game banner line from the exact `CompactGameCard12616.currentOddsForCard`
@@ -667,9 +675,19 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         savedPins: [SavedPin],
         pinContent: [SavedPin: SavedPinContent],
         signedInItems: [FeedItem],
-        signedInTeamFutures: TeamFuturesResponse?
+        signedInTeamFutures: TeamFuturesResponse?,
+        signedInTeamFeedFailed: Bool = false,
+        signedInTeamFuturesFailed: Bool = false,
+        signedInTeamFuturesLoading: Bool = false
     ) async {
         guard !isPreloaded else { return }
+
+        teamFuturesRetrying = signedInTeamFuturesLoading && signedInTeamFutures == nil
+        if signedInTeamFutures != nil {
+            teamFuturesFailed = false
+        } else if signedInTeamFuturesFailed {
+            teamFuturesFailed = true
+        }
 
         if !hasRotatedSession {
             MyStuffVisitLedger295A.rotateSessionIfNeeded(defaults: defaults)
@@ -809,14 +827,21 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         MyStuffVisitLedger295A.recordObservedReadings(finalAcc.newReadings, defaults: defaults)
         let finalPartition = Self.buildPartitionedSections(from: finalAcc, discoverFeed: discoverFeed)
         let newFollowedSectionsEmpty = !finalPartition.hasFollowedContent
+        let teamFuturesDidFail = signedInTeamFuturesFailed && signedInTeamFutures == nil
+        teamFuturesFailed = teamFuturesDidFail
+        teamFuturesRetrying = signedInTeamFuturesLoading && signedInTeamFutures == nil
 
-        if (anyHydrationFailed || discoverFailed) && newFollowedSectionsEmpty && finalPartition.discover.isEmpty {
+        if (anyHydrationFailed || discoverFailed || signedInTeamFeedFailed)
+            && newFollowedSectionsEmpty
+            && finalPartition.discover.isEmpty {
             loadFailed = true
             loading = false
             return
         }
 
-        if anyHydrationFailed && newFollowedSectionsEmpty && !subjectsToHydrate.isEmpty {
+        if (anyHydrationFailed || signedInTeamFeedFailed)
+            && newFollowedSectionsEmpty
+            && (!subjectsToHydrate.isEmpty || signedInTeamFeedFailed) {
             loadFailed = true
             if !hadExistingSections {
                 discoverItems = finalPartition.discover
