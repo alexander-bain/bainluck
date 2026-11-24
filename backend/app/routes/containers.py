@@ -832,8 +832,8 @@ async def _build_live_real_sets_audit_report(
             if c_slug and c_slug not in seen_slugs:
                 seen_slugs.add(c_slug)
                 slugs.append(c_slug)
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.warning("kit-v1 real-sets discovery read degraded: %s", exc)
     for c_slug in sorted(roundup_producers or ROUNDUP_PRODUCERS):
         if c_slug not in seen_slugs:
             seen_slugs.add(c_slug)
@@ -850,7 +850,11 @@ async def _build_live_real_sets_audit_report(
                 payload = json.loads(bytes(payload.body).decode("utf-8"))
             if isinstance(payload, dict) and (payload.get("sections") or payload.get("container")):
                 containers_map[c_slug] = payload
-        except (HTTPException, Exception):
+        except HTTPException as exc:
+            logger.debug("kit-v1 real-sets container %s skipped (http): %s", c_slug, exc.detail)
+            continue
+        except Exception as exc:
+            logger.warning("kit-v1 real-sets container %s skipped: %s", c_slug, exc)
             continue
 
     return build_real_sets_audit_report(
