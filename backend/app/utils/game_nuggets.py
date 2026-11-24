@@ -708,10 +708,6 @@ _SPREAD_PAREN_TEAM_RE = re.compile(
 _SPREAD_INLINE_TEAM_RE = re.compile(
     r"([A-Za-z0-9'.-]+(?:\s+[A-Za-z0-9'.-]+){0,3})\s+([+-]\d+(?:\.\d+)?)\b"
 )
-_BINARY_EVENT_PROP_RE = re.compile(
-    r"\b(?:touchdown|double[\s-]double|triple[\s-]double|hole in one|hat trick|clean sheet|home run)\b",
-    re.IGNORECASE,
-)
 _GOAL_SPORT_TOKENS = ("soccer", "hockey", "nhl", "ahl", "khl")
 
 _LEAGUE_CONFERENCE_TEAMS: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
