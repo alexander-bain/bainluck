@@ -7,8 +7,10 @@ import SwiftUI
 struct KitCardView366B: View {
     let spec: KitV1CardSpec
     var onRoute: ((KitV1Route) -> Void)? = nil
+    var now: Date = Date()
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     static func supportsLayout(_ layout: KitV1Layout) -> Bool {
         switch layout {
@@ -17,12 +19,13 @@ struct KitCardView366B: View {
         }
     }
 
-    init?(spec: KitV1CardSpec, onRoute: ((KitV1Route) -> Void)? = nil) {
+    init?(spec: KitV1CardSpec, onRoute: ((KitV1Route) -> Void)? = nil, now: Date = Date()) {
         guard spec.body.isRenderable, Self.supportsLayout(spec.layout) else {
             return nil
         }
         self.spec = spec
         self.onRoute = onRoute
+        self.now = now
     }
 
     var body: some View {
@@ -41,6 +44,7 @@ struct KitCardView366B: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(KitTones366B.cardBorder(for: colorScheme), lineWidth: 1)
         )
+        .environment(\.kitNow366B, now)
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("kitV1.\(spec.layout.rawValue)Card.\(spec.id)")
     }
@@ -71,20 +75,38 @@ struct KitCardView366B: View {
     private var cardHeader: some View {
         VStack(alignment: .leading, spacing: 4) {
             if hasTopRow {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    if let kicker = spec.kicker, !kicker.isEmpty {
-                        Text(kicker.uppercased())
-                            .font(.caption2.weight(.bold))
-                            .tracking(0.8)
-                            .foregroundStyle(KitTones366B.brandAccent(for: colorScheme))
-                            .fixedSize(horizontal: false, vertical: true)
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 2) {
+                        if let kicker = spec.kicker, !kicker.isEmpty {
+                            Text(kicker.uppercased())
+                                .font(.caption2.weight(.bold))
+                                .tracking(0.8)
+                                .foregroundStyle(KitTones366B.brandAccent(for: colorScheme))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        if let sourceLabel = spec.sourceMark?.label, !sourceLabel.isEmpty {
+                            Text(sourceLabel)
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(KitTones366B.textColor(for: .muted, scheme: colorScheme))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
                     }
-                    Spacer(minLength: 4)
-                    if let sourceLabel = spec.sourceMark?.label, !sourceLabel.isEmpty {
-                        Text(sourceLabel)
-                            .font(.caption2.weight(.medium))
-                            .foregroundStyle(KitTones366B.textColor(for: .muted, scheme: colorScheme))
-                            .fixedSize(horizontal: true, vertical: false)
+                } else {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        if let kicker = spec.kicker, !kicker.isEmpty {
+                            Text(kicker.uppercased())
+                                .font(.caption2.weight(.bold))
+                                .tracking(0.8)
+                                .foregroundStyle(KitTones366B.brandAccent(for: colorScheme))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Spacer(minLength: 4)
+                        if let sourceLabel = spec.sourceMark?.label, !sourceLabel.isEmpty {
+                            Text(sourceLabel)
+                                .font(.caption2.weight(.medium))
+                                .foregroundStyle(KitTones366B.textColor(for: .muted, scheme: colorScheme))
+                                .fixedSize(horizontal: true, vertical: false)
+                        }
                     }
                 }
             }
@@ -181,11 +203,28 @@ struct KitStackBodyView366B: View {
     @ViewBuilder
     private var stackHeader: some View {
         if let headers = stackBody.headerMarks, !headers.isEmpty {
+            let numberDeadlineIso: String? = headers.compactMap { mark in
+                if case .number(let n) = mark, n.unit == .days {
+                    return n.deadlineIso
+                }
+                return nil
+            }.first
+
             switch stackBody.headerLayout ?? .banner {
             case .banner:
-                HStack(alignment: .center, spacing: 10) {
-                    ForEach(Array(headers.enumerated()), id: \.offset) { _, mark in
-                        KitMarkView366B(mark: mark)
+                Group {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(Array(headers.enumerated()), id: \.offset) { _, mark in
+                                KitMarkView366B(mark: mark, inheritedCountdownDeadlineIso: numberDeadlineIso)
+                            }
+                        }
+                    } else {
+                        HStack(alignment: .center, spacing: 10) {
+                            ForEach(Array(headers.enumerated()), id: \.offset) { _, mark in
+                                KitMarkView366B(mark: mark, inheritedCountdownDeadlineIso: numberDeadlineIso)
+                            }
+                        }
                     }
                 }
                 .padding(.horizontal, 12)
@@ -203,7 +242,7 @@ struct KitStackBodyView366B: View {
             case .split:
                 HStack(alignment: .center, spacing: 8) {
                     ForEach(Array(headers.enumerated()), id: \.offset) { idx, mark in
-                        KitMarkView366B(mark: mark)
+                        KitMarkView366B(mark: mark, inheritedCountdownDeadlineIso: numberDeadlineIso)
                         if idx < headers.count - 1 {
                             Spacer(minLength: 4)
                         }
@@ -369,10 +408,7 @@ struct KitGridBodyView366B: View {
     }
 
     private var matrixColumnWidth: CGFloat {
-        if dynamicTypeSize.isAccessibilitySize {
-            return 84
-        }
-        return gridBody.columns.count <= 2 ? 68 : 56
+        gridBody.columns.count <= 2 ? 64 : 46
     }
 
     private var matrixBody: some View {
@@ -380,7 +416,7 @@ struct KitGridBodyView366B: View {
         let colWidth = matrixColumnWidth
 
         return VStack(alignment: .leading, spacing: 0) {
-            if gridBody.showColumnHeaders {
+            if gridBody.showColumnHeaders && !dynamicTypeSize.isAccessibilitySize {
                 HStack(alignment: .bottom, spacing: 6) {
                     if hasRank {
                         Text("#")
@@ -392,13 +428,15 @@ struct KitGridBodyView366B: View {
                         .font(.caption2.weight(.semibold))
                         .foregroundStyle(KitTones366B.textColor(for: .muted, scheme: colorScheme))
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    ForEach(gridBody.columns, id: \.key) { col in
-                        Text(col.label)
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(KitTones366B.textColor(for: .muted, scheme: colorScheme))
-                            .multilineTextAlignment(.center)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .frame(width: colWidth, alignment: .center)
+                    HStack(alignment: .bottom, spacing: 4) {
+                        ForEach(gridBody.columns, id: \.key) { col in
+                            Text(col.label)
+                                .font(.caption2.weight(.semibold))
+                                .foregroundStyle(KitTones366B.textColor(for: .muted, scheme: colorScheme))
+                                .multilineTextAlignment(.center)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .frame(width: colWidth, alignment: .center)
+                        }
                     }
                 }
                 .padding(.bottom, 6)
@@ -409,9 +447,48 @@ struct KitGridBodyView366B: View {
                     .fill(KitTones366B.divider(for: colorScheme))
                     .frame(height: 1)
 
-                matrixRow(row, hasRank: hasRank, colWidth: colWidth)
-                    .padding(.top, 7)
-                    .padding(.bottom, index == gridBody.rows.count - 1 ? 0 : 7)
+                if dynamicTypeSize.isAccessibilitySize {
+                    accessibleMatrixRow(row, hasRank: hasRank)
+                        .padding(.top, 9)
+                        .padding(.bottom, index == gridBody.rows.count - 1 ? 0 : 9)
+                } else {
+                    matrixRow(row, hasRank: hasRank, colWidth: colWidth)
+                        .padding(.top, 7)
+                        .padding(.bottom, index == gridBody.rows.count - 1 ? 0 : 7)
+                }
+            }
+        }
+    }
+
+    private func accessibleMatrixRow(_ row: KitV1GridRow, hasRank: Bool) -> some View {
+        let rankMark: KitV1Mark? = hasRank ? row.leading.first : nil
+        let entityMarks: [KitV1Mark] = hasRank ? Array(row.leading.dropFirst()) : row.leading
+        let cellByKey = Dictionary(uniqueKeysWithValues: row.cells.map { ($0.columnKey, $0) })
+
+        return VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .center, spacing: 6) {
+                if let rankMark {
+                    KitMarkView366B(mark: rankMark)
+                }
+                ForEach(Array(entityMarks.enumerated()), id: \.offset) { _, mark in
+                    KitMarkView366B(mark: mark)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(gridBody.columns, id: \.key) { col in
+                    if let cell = cellByKey[col.key] {
+                        HStack(alignment: .center, spacing: 8) {
+                            Text(col.label)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(KitTones366B.textColor(for: .secondary, scheme: colorScheme))
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 8)
+                            gridCellView(cell)
+                        }
+                    }
+                }
             }
         }
     }
@@ -434,10 +511,12 @@ struct KitGridBodyView366B: View {
             }
             .frame(maxWidth: .infinity, alignment: .leading)
 
-            ForEach(gridBody.columns, id: \.key) { col in
-                let cell = cellByKey[col.key]
-                gridCellView(cell)
-                    .frame(width: colWidth)
+            HStack(alignment: .center, spacing: 4) {
+                ForEach(gridBody.columns, id: \.key) { col in
+                    let cell = cellByKey[col.key]
+                    gridCellView(cell)
+                        .frame(width: colWidth)
+                }
             }
         }
     }
@@ -512,18 +591,32 @@ struct KitCalendarBodyView366B: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             if let headers = calendarBody.headerMarks, !headers.isEmpty {
-                HStack(alignment: .center, spacing: 8) {
-                    ForEach(Array(headers.enumerated()), id: \.offset) { idx, mark in
-                        KitMarkView366B(mark: mark)
-                        if idx < headers.count - 1 {
-                            Spacer(minLength: 4)
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(headers.enumerated()), id: \.offset) { _, mark in
+                            KitMarkView366B(mark: mark)
+                        }
+                    }
+                } else {
+                    HStack(alignment: .center, spacing: 8) {
+                        ForEach(Array(headers.enumerated()), id: \.offset) { idx, mark in
+                            KitMarkView366B(mark: mark)
+                            if idx < headers.count - 1 {
+                                Spacer(minLength: 4)
+                            }
                         }
                     }
                 }
             }
 
             if dynamicTypeSize.isAccessibilitySize {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 72), spacing: 6)], spacing: 8) {
+                LazyVGrid(
+                    columns: [
+                        GridItem(.flexible(), spacing: 8),
+                        GridItem(.flexible(), spacing: 8)
+                    ],
+                    spacing: 8
+                ) {
                     ForEach(calendarBody.days, id: \.dateKey) { day in
                         dayColumn(day)
                     }
@@ -568,6 +661,7 @@ struct KitAxisBodyView366B: View {
     let axisBody: KitV1AxisBody
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     private var dots: [KitV1DotMark] {
         (axisBody.marks ?? []).compactMap {
@@ -596,7 +690,7 @@ struct KitAxisBodyView366B: View {
     }
 
     private var trackHeight: CGFloat {
-        CGFloat(maxLane + 1) * 24 + 80
+        CGFloat(maxLane + 1) * 28 + 82
     }
 
     private func xFraction(_ value: Double) -> CGFloat {
@@ -621,21 +715,12 @@ struct KitAxisBodyView366B: View {
                     ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
                         KitLineMarkView366B(mark: line)
                     }
-                    HStack {
-                        ForEach(Array(axisBody.scale.ticks.enumerated()), id: \.offset) { idx, tick in
-                            Text(tick.label)
-                                .font(.caption2.monospacedDigit())
-                                .foregroundStyle(KitTones366B.textColor(for: .muted, scheme: colorScheme))
-                            if idx < axisBody.scale.ticks.count - 1 {
-                                Spacer(minLength: 4)
-                            }
-                        }
-                    }
+                    scaleTicksView
                 }
             }
 
             if let series = axisBody.series, !series.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
+                VStack(alignment: .leading, spacing: 10) {
                     ForEach(series, id: \.id) { row in
                         VStack(alignment: .leading, spacing: 4) {
                             if let leading = row.leading, !leading.isEmpty {
@@ -645,22 +730,47 @@ struct KitAxisBodyView366B: View {
                                     }
                                 }
                             }
-                            HStack(alignment: .center, spacing: 8) {
-                                ForEach(Array(row.marks.enumerated()), id: \.offset) { _, mark in
-                                    KitMarkView366B(mark: mark)
+                            if dynamicTypeSize.isAccessibilitySize {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    ForEach(Array(row.marks.enumerated()), id: \.offset) { _, mark in
+                                        KitMarkView366B(mark: mark)
+                                    }
+                                }
+                            } else {
+                                HStack(alignment: .center, spacing: 8) {
+                                    ForEach(Array(row.marks.enumerated()), id: \.offset) { _, mark in
+                                        KitMarkView366B(mark: mark)
+                                    }
                                 }
                             }
                         }
+                    }
+
+                    if dots.isEmpty && lines.isEmpty && !axisBody.scale.ticks.isEmpty {
+                        Rectangle()
+                            .fill(KitTones366B.divider(for: colorScheme))
+                            .frame(height: 1)
+                        scaleTicksView
                     }
                 }
             }
 
             if let summaries = axisBody.summaryMarks, !summaries.isEmpty {
-                HStack(alignment: .center, spacing: 8) {
-                    ForEach(Array(summaries.enumerated()), id: \.offset) { idx, mark in
-                        KitMarkView366B(mark: mark)
-                        if idx < summaries.count - 1 {
-                            Spacer(minLength: 4)
+                Group {
+                    if dynamicTypeSize.isAccessibilitySize {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(Array(summaries.enumerated()), id: \.offset) { _, mark in
+                                KitMarkView366B(mark: mark)
+                            }
+                        }
+                    } else {
+                        HStack(alignment: .center, spacing: 8) {
+                            ForEach(Array(summaries.enumerated()), id: \.offset) { idx, mark in
+                                KitMarkView366B(mark: mark)
+                                if idx < summaries.count - 1 {
+                                    Spacer(minLength: 4)
+                                }
+                            }
                         }
                     }
                 }
@@ -676,10 +786,56 @@ struct KitAxisBodyView366B: View {
         }
     }
 
+    @ViewBuilder
+    private var scaleTicksView: some View {
+        let ticks = axisBody.scale.ticks
+        if dynamicTypeSize.isAccessibilitySize, let first = ticks.first {
+            HStack(spacing: 8) {
+                Text(first.label)
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(KitTones366B.textColor(for: .muted, scheme: colorScheme))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
+                if ticks.count > 1, let last = ticks.last {
+                    Spacer(minLength: 8)
+                    Text(last.label)
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(KitTones366B.textColor(for: .muted, scheme: colorScheme))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.85)
+                }
+            }
+        } else {
+            HStack {
+                ForEach(Array(ticks.enumerated()), id: \.offset) { idx, tick in
+                    Text(tick.label)
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(KitTones366B.textColor(for: .muted, scheme: colorScheme))
+                        .fixedSize(horizontal: true, vertical: false)
+                    if idx < ticks.count - 1 {
+                        Spacer(minLength: 4)
+                    }
+                }
+            }
+        }
+    }
+
+    private var axisPlotVisibleTicks: [(offset: Int, tick: KitV1AxisTick)] {
+        let ticks = axisBody.scale.ticks
+        guard dynamicTypeSize.isAccessibilitySize, ticks.count > 3 else {
+            return Array(ticks.enumerated()).map { (offset: $0.offset, tick: $0.element) }
+        }
+        let midIndex = ticks.count / 2
+        return [0, midIndex, ticks.count - 1].map { idx in
+            (offset: idx, tick: ticks[idx])
+        }
+    }
+
     private var axisPlotView: some View {
         let totalH = trackHeight
         let baselineY = totalH - 24
         let ticks = axisBody.scale.ticks
+        let visibleTicks = axisPlotVisibleTicks
 
         return GeometryReader { geo in
             let w = geo.size.width
@@ -699,6 +855,8 @@ struct KitAxisBodyView366B: View {
                             .font(.caption2.weight(.semibold))
                             .tracking(0.6)
                             .foregroundStyle(KitTones366B.textColor(for: .muted, scheme: colorScheme))
+                            .dynamicTypeSize(...DynamicTypeSize.xLarge)
+                            .lineLimit(1)
                             .padding(.top, 5)
                     }
                     .frame(width: bandW, height: baselineY)
@@ -728,16 +886,18 @@ struct KitAxisBodyView366B: View {
 
                 ForEach(Array(elevatedDots.enumerated()), id: \.offset) { _, dot in
                     let lane = CGFloat(max(0, Int((dot.yLane ?? 0).rounded())))
-                    let px = clampedX(dot.x, width: w, inset: 14)
-                    let py = baselineY - 26 - lane * 24
+                    let px = clampedX(dot.x, width: w, inset: 16)
+                    let py = baselineY - 28 - lane * 28
                     if let pic = dot.picture {
-                        KitPictureMarkView366B(mark: pic)
+                        KitPictureMarkView366B(mark: pic, fixedSquareBox: 24)
                             .position(x: px, y: py)
                             .accessibilityLabel(dot.label)
                     }
                 }
 
-                ForEach(Array(ticks.enumerated()), id: \.offset) { idx, tick in
+                ForEach(visibleTicks, id: \.offset) { item in
+                    let idx = item.offset
+                    let tick = item.tick
                     let tx: CGFloat = {
                         if idx == 0 { return 16 }
                         if idx == ticks.count - 1 { return max(16, w - 20) }
@@ -746,6 +906,7 @@ struct KitAxisBodyView366B: View {
                     Text(tick.label)
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(KitTones366B.textColor(for: .muted, scheme: colorScheme))
+                        .dynamicTypeSize(...DynamicTypeSize.xLarge)
                         .fixedSize(horizontal: true, vertical: false)
                         .position(x: tx, y: totalH - 10)
                 }

@@ -239,6 +239,20 @@ nonisolated struct KitCardEnvelope366B: Decodable, Equatable, Sendable {
             if case .string("number")? = dict["mark"] {
                 try validateMeaningToken(in: dict, keys: ["unit"], allowed: ["%", "days", "one_in_n"], label: "number.unit", codingPath: codingPath)
             }
+            for dlKey in ["deadline_iso", "deadlineIso"] {
+                if let dlVal = dict[dlKey] {
+                    if case .null = dlVal { continue }
+                    guard case .string(let rawDL) = dlVal,
+                          KitCountdownClock366B.parseISO(rawDL) != nil else {
+                        throw DecodingError.dataCorrupted(
+                            DecodingError.Context(
+                                codingPath: codingPath,
+                                debugDescription: "Invalid kit deadline_iso value"
+                            )
+                        )
+                    }
+                }
+            }
             for colorKey in ["fill_color", "fillColor", "color"] {
                 if let colorVal = dict[colorKey], case .null = colorVal {
                     continue

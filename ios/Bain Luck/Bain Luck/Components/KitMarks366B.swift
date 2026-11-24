@@ -9,10 +9,19 @@ private struct KitPreloadedImagesKey366B: EnvironmentKey {
     static let defaultValue: [URL: PlatformImage] = [:]
 }
 
+private struct KitNowEnvironmentKey366B: EnvironmentKey {
+    static let defaultValue: Date = Date()
+}
+
 extension EnvironmentValues {
     var kitPreloadedImages366B: [URL: PlatformImage] {
         get { self[KitPreloadedImagesKey366B.self] }
         set { self[KitPreloadedImagesKey366B.self] = newValue }
+    }
+
+    var kitNow366B: Date {
+        get { self[KitNowEnvironmentKey366B.self] }
+        set { self[KitNowEnvironmentKey366B.self] = newValue }
     }
 }
 
@@ -21,13 +30,14 @@ extension EnvironmentValues {
 /// Renders one of the 8 shared Kit v1 marks purely from its geometric payload.
 struct KitMarkView366B: View {
     let mark: KitV1Mark
+    var inheritedCountdownDeadlineIso: String? = nil
 
     var body: some View {
         switch mark {
         case .picture(let m):
             KitPictureMarkView366B(mark: m)
         case .word(let m):
-            KitWordMarkView366B(mark: m)
+            KitWordMarkView366B(mark: m, inheritedCountdownDeadlineIso: inheritedCountdownDeadlineIso)
         case .number(let m):
             KitNumberMarkView366B(mark: m)
         case .bar(let m):
@@ -44,20 +54,68 @@ struct KitMarkView366B: View {
     }
 }
 
-// MARK: - 1. Picture Mark
+// MARK: - 1. Picture Mark (Unified Shape Rule)
+
+/// Canonical Kit v1 picture shape rule (#13589 / Ruling 366: B):
+/// - `person`: circle (aspect `.fill`, top-anchored face crop)
+/// - `team` / `organization` / `flag`: contained crest (`aspectRatio(.fit)`) inside a
+///   uniform `24×24` square box on every row (`32×32` at `md`) and uniform `24×24`
+///   contained crest badge on every axis dot.
+/// - `film`: upright `2:3` poster rectangle (`20×30` default, `24×36` at `md`, `.fill`).
+/// - `topic` / fallback: uniform `24×24` rounded square (`32×32` at `md`, `.fill`).
+enum KitPictureShape366B: Equatable {
+    case roundPerson
+    case containedCrest
+    case uprightPoster
+    case roundedTopic
+
+    static func resolve(forSubjectKind kind: String) -> KitPictureShape366B {
+        switch kind.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "person":
+            return .roundPerson
+        case "team", "organization", "flag":
+            return .containedCrest
+        case "film":
+            return .uprightPoster
+        default:
+            return .roundedTopic
+        }
+    }
+}
 
 struct KitPictureMarkView366B: View {
     let mark: KitV1PictureMark
+    /// When set (e.g. elevated axis dot badges), enforces exact square box dimensions
+    /// across every mark instance so crests render at identical sizes.
+    var fixedSquareBox: CGFloat? = nil
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.kitPreloadedImages366B) private var preloadedImages
     @State private var loadedImage: PlatformImage?
 
-    private var dimension: CGFloat {
-        switch mark.size ?? .sm {
-        case .xs: return 18
-        case .sm: return 24
-        case .md: return 32
+    var pictureShape: KitPictureShape366B {
+        KitPictureShape366B.resolve(forSubjectKind: mark.subjectKind)
+    }
+
+    var renderedBoxSize: CGSize {
+        if let fixedSquareBox {
+            return CGSize(width: fixedSquareBox, height: fixedSquareBox)
+        }
+        let isMd = (mark.size == .md)
+        switch pictureShape {
+        case .roundPerson:
+            let side: CGFloat = isMd ? 32 : 24
+            return CGSize(width: side, height: side)
+        case .containedCrest:
+            // Uniform box across all rows (`xs` and `sm` match at `24×24`).
+            let side: CGFloat = isMd ? 32 : 24
+            return CGSize(width: side, height: side)
+        case .uprightPoster:
+            let w: CGFloat = isMd ? 24 : 20
+            return CGSize(width: w, height: w * 1.5)
+        case .roundedTopic:
+            let side: CGFloat = isMd ? 32 : 24
+            return CGSize(width: side, height: side)
         }
     }
 
@@ -72,41 +130,75 @@ struct KitPictureMarkView366B: View {
         return nil
     }
 
-    private var isPortraitCrop: Bool {
-        mark.contain == false || mark.subjectKind == "person"
-    }
-
     var body: some View {
-        let size = dimension
-        let radius = mark.subjectKind == "flag" ? 3 : (isPortraitCrop ? size / 2 : size * 0.22)
+        let box = renderedBoxSize
+        let radius: CGFloat = {
+            switch pictureShape {
+            case .roundPerson: return box.width / 2
+            case .containedCrest: return fixedSquareBox != nil ? (box.width / 2) : 6
+            case .uprightPoster: return 4
+            case .roundedTopic: return 6
+            }
+        }()
+
         Group {
             if let img = activeImage {
-                if isPortraitCrop {
+                switch pictureShape {
+                case .roundPerson:
                     Image(platformImage: img)
                         .resizable()
                         .aspectRatio(contentMode: .fill)
-                        .frame(width: size, height: size)
-                        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-                } else {
-                    let darkBacking = colorScheme == .dark
-                        && mark.subjectKind == "team"
-                        && TeamLogoView.needsDarkSurfaceBacking(img)
+                        .frame(width: box.width, height: box.height, alignment: .top)
+                        .clipShape(Circle())
+                        .overlay(Circle().stroke(KitTones366B.cardBorder(for: colorScheme), lineWidth: 0.75))
+
+                case .containedCrest:
+                    let needsLightBacking = colorScheme == .dark && TeamLogoView.needsDarkSurfaceBacking(img)
+                    let backingFill: Color = needsLightBacking
+                        ? Color.white.opacity(0.92)
+                        : KitTones366B.elevatedBackground(for: colorScheme)
                     ZStack {
-                        if darkBacking {
-                            Circle().fill(Color.white.opacity(0.92))
-                        }
+                        RoundedRectangle(cornerRadius: radius, style: .continuous)
+                            .fill(backingFill)
                         Image(platformImage: img)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
-                            .padding(darkBacking ? size * 0.10 : 0)
+                            .padding(2.5)
                     }
-                    .frame(width: size, height: size)
+                    .frame(width: box.width, height: box.height)
                     .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: radius, style: .continuous)
+                            .stroke(KitTones366B.cardBorder(for: colorScheme), lineWidth: 0.75)
+                    )
+
+                case .uprightPoster:
+                    Image(platformImage: img)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: box.width, height: box.height)
+                        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                                .stroke(KitTones366B.cardBorder(for: colorScheme), lineWidth: 0.75)
+                        )
+
+                case .roundedTopic:
+                    Image(platformImage: img)
+                        .resizable()
+                        .aspectRatio(contentMode: .fill)
+                        .frame(width: box.width, height: box.height)
+                        .clipShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: radius, style: .continuous)
+                                .stroke(KitTones366B.cardBorder(for: colorScheme), lineWidth: 0.75)
+                        )
                 }
             } else {
-                fallbackBadge(size: size, radius: radius)
+                fallbackBadge(box: box, radius: radius)
             }
         }
+        .frame(width: box.width, height: box.height)
         .accessibilityLabel(mark.alt)
         .task(id: mark.url) {
             guard activeImage == nil, let url = resolvedURL else { return }
@@ -114,12 +206,13 @@ struct KitPictureMarkView366B: View {
         }
     }
 
-    private func fallbackBadge(size: CGFloat, radius: CGFloat) -> some View {
+    private func fallbackBadge(box: CGSize, radius: CGFloat) -> some View {
         let symbolName: String? = {
             switch mark.subjectKind {
             case "person": return "person.fill"
             case "flag": return "flag.fill"
-            case "team": return nil
+            case "film": return "film"
+            case "team", "organization": return nil
             default: return "photo"
             }
         }()
@@ -132,15 +225,15 @@ struct KitPictureMarkView366B: View {
             .overlay {
                 if let symbolName {
                     Image(systemName: symbolName)
-                        .font(.system(size: max(9, size * 0.44), weight: .semibold))
+                        .font(.system(size: max(9, min(box.width, box.height) * 0.42), weight: .semibold))
                         .foregroundStyle(KitTones366B.textColor(for: .secondary, scheme: colorScheme))
                 } else {
                     Text(TeamLogoView.badge(teamName: mark.alt, opponentName: nil))
-                        .font(.system(size: max(8, size * 0.36), weight: .bold))
+                        .font(.system(size: max(8, box.width * 0.36), weight: .bold))
                         .foregroundStyle(KitTones366B.textColor(for: .secondary, scheme: colorScheme))
                 }
             }
-            .frame(width: size, height: size)
+            .frame(width: box.width, height: box.height)
     }
 }
 
@@ -148,8 +241,24 @@ struct KitPictureMarkView366B: View {
 
 struct KitWordMarkView366B: View {
     let mark: KitV1WordMark
+    var inheritedCountdownDeadlineIso: String? = nil
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.kitNow366B) private var kitNow
+
+    private var heroCountdownText: String {
+        guard let deadline = mark.deadlineIso ?? inheritedCountdownDeadlineIso,
+              let days = KitCountdownClock366B.daysLeft(from: deadline, now: kitNow) else {
+            return mark.text
+        }
+        if days <= 0 {
+            return "ends today"
+        }
+        if days == 1 {
+            return "day left"
+        }
+        return "days left"
+    }
 
     private var textAlignment: TextAlignment {
         switch mark.align ?? .left {
@@ -173,7 +282,7 @@ struct KitWordMarkView366B: View {
             switch mark.style ?? .row {
             case .heroLabel:
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(mark.text)
+                    Text(heroCountdownText)
                         .font(.subheadline.weight(mark.bold == false ? .medium : .bold))
                         .foregroundStyle(baseColor)
                         .fixedSize(horizontal: false, vertical: true)
@@ -265,6 +374,16 @@ struct KitNumberMarkView366B: View {
     let mark: KitV1NumberMark
 
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.kitNow366B) private var kitNow
+
+    private var displayedText: String {
+        guard mark.unit == .days,
+              let deadline = mark.deadlineIso,
+              let days = KitCountdownClock366B.daysLeft(from: deadline, now: kitNow) else {
+            return mark.display
+        }
+        return days <= 0 ? "Today" : "\(days)"
+    }
 
     private var frameAlignment: Alignment {
         switch mark.align ?? .right {
@@ -299,7 +418,7 @@ struct KitNumberMarkView366B: View {
     }
 
     var body: some View {
-        Text(mark.display)
+        Text(displayedText)
             .font(font)
             .foregroundStyle(KitTones366B.textColor(for: mark.tone, scheme: colorScheme))
             .lineLimit(1)
@@ -411,19 +530,28 @@ struct KitBarMarkView366B: View {
         )
         return GeometryReader { geo in
             let leftX = geo.size.width * lo
-            let spanW = max(12, geo.size.width * (hi - lo))
+            let spanW = max(12, min(geo.size.width - leftX, geo.size.width * (hi - lo)))
+            let label = mark.pctLabel ?? ""
             ZStack(alignment: .leading) {
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
                     .fill(KitTones366B.trackBackground(for: colorScheme))
                 RoundedRectangle(cornerRadius: 4, style: .continuous)
-                    .fill(accent.opacity(0.26))
+                    .fill(accent.opacity(0.28))
                     .overlay(
-                        Text(mark.pctLabel ?? "")
-                            .font(.caption2.weight(.bold).monospacedDigit())
-                            .foregroundStyle(KitTones366B.textColor(for: .primary, scheme: colorScheme))
+                        RoundedRectangle(cornerRadius: 4, style: .continuous)
+                            .stroke(accent.opacity(0.55), lineWidth: 1)
                     )
-                    .frame(width: min(geo.size.width - leftX, spanW), height: 18)
+                    .frame(width: spanW, height: 18)
                     .offset(x: leftX)
+                if !label.isEmpty {
+                    Text(label)
+                        .font(.caption2.weight(.bold).monospacedDigit())
+                        .foregroundStyle(KitTones366B.textColor(for: .primary, scheme: colorScheme))
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .frame(width: spanW >= 72 ? spanW : geo.size.width, height: 18)
+                        .offset(x: spanW >= 72 ? leftX : 0)
+                }
             }
         }
         .frame(height: 20)
@@ -525,7 +653,7 @@ struct KitDotMarkView366B: View {
         )
         Group {
             if let pic = mark.picture {
-                KitPictureMarkView366B(mark: pic)
+                KitPictureMarkView366B(mark: pic, fixedSquareBox: 24)
             } else {
                 Circle()
                     .fill(dotColor)

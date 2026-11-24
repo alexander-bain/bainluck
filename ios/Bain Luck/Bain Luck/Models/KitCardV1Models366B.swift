@@ -14,6 +14,46 @@ enum KitV1Contract366B {
     static let supportedKitVersion = 1
 }
 
+/// Computes Pacific Time (`America/Los_Angeles`) calendar days left from an ISO-8601 `deadline_iso`
+/// timestamp, matching web `computeCountdownDaysLeft`.
+nonisolated enum KitCountdownClock366B {
+    private static let pacificTimeZone = TimeZone(identifier: "America/Los_Angeles") ?? .current
+
+    static func parseISO(_ raw: String) -> Date? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        let frac = ISO8601DateFormatter()
+        frac.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = frac.date(from: trimmed) {
+            return date
+        }
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        if let date = plain.date(from: trimmed) {
+            return date
+        }
+        let df = DateFormatter()
+        df.locale = Locale(identifier: "en_US_POSIX")
+        df.timeZone = pacificTimeZone
+        for format in ["yyyy-MM-dd'T'HH:mm:ss", "yyyy-MM-dd"] {
+            df.dateFormat = format
+            if let date = df.date(from: trimmed) {
+                return date
+            }
+        }
+        return nil
+    }
+
+    static func daysLeft(from deadlineISO: String, now: Date = Date()) -> Int? {
+        guard let target = parseISO(deadlineISO) else { return nil }
+        var cal = Calendar(identifier: .gregorian)
+        cal.timeZone = pacificTimeZone
+        let nowDay = cal.startOfDay(for: now)
+        let targetDay = cal.startOfDay(for: target)
+        return cal.dateComponents([.day], from: nowDay, to: targetDay).day
+    }
+}
+
 private extension KeyedDecodingContainer {
     /// Decodes a cosmetic `String`-backed enum cleanly, returning `nil` on unknown string tokens
     /// instead of throwing, while still throwing if a non-string JSON type is supplied.
@@ -164,6 +204,7 @@ nonisolated struct KitV1WordMark: Codable, Equatable, Sendable {
 
     let text: String
     let secondaryText: String?
+    let deadlineIso: String?
     let style: Style?
     let tone: KitV1Tone?
     let align: KitV1Align?
@@ -173,6 +214,7 @@ nonisolated struct KitV1WordMark: Codable, Equatable, Sendable {
     init(
         text: String,
         secondaryText: String? = nil,
+        deadlineIso: String? = nil,
         style: Style? = nil,
         tone: KitV1Tone? = nil,
         align: KitV1Align? = nil,
@@ -181,6 +223,7 @@ nonisolated struct KitV1WordMark: Codable, Equatable, Sendable {
     ) {
         self.text = text
         self.secondaryText = secondaryText
+        self.deadlineIso = deadlineIso
         self.style = style
         self.tone = tone
         self.align = align
@@ -192,6 +235,17 @@ nonisolated struct KitV1WordMark: Codable, Equatable, Sendable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         text = try c.decode(String.self, forKey: .text)
         secondaryText = try c.decodeIfPresent(String.self, forKey: .secondaryText)
+        let rawDeadline = try c.decodeIfPresent(String.self, forKey: .deadlineIso)
+        if let rawDeadline {
+            guard KitCountdownClock366B.parseISO(rawDeadline) != nil else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .deadlineIso,
+                    in: c,
+                    debugDescription: "Invalid word.deadline_iso: \(rawDeadline)"
+                )
+            }
+        }
+        deadlineIso = rawDeadline
         style = try c.decodeCosmeticIfPresent(Style.self, forKey: .style)
         tone = try c.decodeCosmeticIfPresent(KitV1Tone.self, forKey: .tone)
         align = try c.decodeCosmeticIfPresent(KitV1Align.self, forKey: .align)
@@ -200,7 +254,7 @@ nonisolated struct KitV1WordMark: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case text, secondaryText, style, tone, align, width, bold
+        case text, secondaryText, deadlineIso, style, tone, align, width, bold
     }
 }
 
@@ -222,6 +276,7 @@ nonisolated struct KitV1NumberMark: Codable, Equatable, Sendable {
     let display: String
     /// Meaning-carrying: unknown `unit` throws -> card fails closed.
     let unit: Unit?
+    let deadlineIso: String?
     let tone: KitV1Tone?
     let prominence: Prominence?
     let align: KitV1Align?
@@ -231,6 +286,7 @@ nonisolated struct KitV1NumberMark: Codable, Equatable, Sendable {
         value: Double,
         display: String,
         unit: Unit? = nil,
+        deadlineIso: String? = nil,
         tone: KitV1Tone? = nil,
         prominence: Prominence? = nil,
         align: KitV1Align? = nil,
@@ -239,6 +295,7 @@ nonisolated struct KitV1NumberMark: Codable, Equatable, Sendable {
         self.value = value
         self.display = display
         self.unit = unit
+        self.deadlineIso = deadlineIso
         self.tone = tone
         self.prominence = prominence
         self.align = align
@@ -250,6 +307,17 @@ nonisolated struct KitV1NumberMark: Codable, Equatable, Sendable {
         value = try c.decode(Double.self, forKey: .value)
         display = try c.decode(String.self, forKey: .display)
         unit = try c.decodeIfPresent(Unit.self, forKey: .unit)
+        let rawDeadline = try c.decodeIfPresent(String.self, forKey: .deadlineIso)
+        if let rawDeadline {
+            guard KitCountdownClock366B.parseISO(rawDeadline) != nil else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .deadlineIso,
+                    in: c,
+                    debugDescription: "Invalid number.deadline_iso: \(rawDeadline)"
+                )
+            }
+        }
+        deadlineIso = rawDeadline
         tone = try c.decodeCosmeticIfPresent(KitV1Tone.self, forKey: .tone)
         prominence = try c.decodeCosmeticIfPresent(Prominence.self, forKey: .prominence)
         align = try c.decodeCosmeticIfPresent(KitV1Align.self, forKey: .align)
@@ -257,7 +325,7 @@ nonisolated struct KitV1NumberMark: Codable, Equatable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case value, display, unit, tone, prominence, align, width
+        case value, display, unit, deadlineIso, tone, prominence, align, width
     }
 }
 
