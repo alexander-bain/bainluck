@@ -323,7 +323,8 @@ private struct MyStuffLandingBody295A: View {
                                         url: subject.logoUrl,
                                         teamName: subject.name,
                                         color: Color(hex: MyStuffTeamTextColour.logoTintHex(subject.primaryColor)),
-                                        size: 18
+                                        size: 18,
+                                        sportKey: subject.sportKey
                                     )
                                 } else {
                                     Image(systemName: subject.kind == .league ? "trophy.fill" : "square.stack.3d.up.fill")
