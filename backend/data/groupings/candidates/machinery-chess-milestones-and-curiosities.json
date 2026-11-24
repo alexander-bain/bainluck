@@ -1,6 +1,6 @@
 {
   "slug": "machinery-chess-milestones-and-curiosities",
-  "stage": "preview",
+  "stage": "public",
   "look": "bars",
   "membership": "computed-produced",
   "kind": "roundup",
@@ -9,11 +9,11 @@
     "sibling"
   ],
   "level": "member",
-  "kicker": "ODD · CURIOSITIES",
-  "name": "Chess, Milestones & Curiosities",
+  "kicker": "ODD · CHESS",
+  "name": "World Chess & Grandmaster Races",
   "category": "entertainment",
   "tag": "ODD",
-  "section_title": "Wildcard Markets",
+  "section_title": "Titles, Ratings & AI vs. Humans",
   "footer": "",
   "rule": {
     "producer": "container_machinery",
@@ -21,12 +21,13 @@
     "materialize": "read-time",
     "extra_llm_categories": [
       "chess",
-      "tech",
-      "culture"
+      "tech"
     ],
     "card_rows": 3,
     "card_section_key": "curiosities",
-    "hide_row_art": true,
+    "card_omit_ids": [
+      59165041
+    ],
     "suppress_card_photo": true,
     "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/f0/Chess_game_Staunton_No._6.jpg/960px-Chess_game_Staunton_No._6.jpg",
     "card_image_alt": "Wooden Staunton chess pieces arranged on a tournament board",
@@ -37,16 +38,35 @@
     "sections": [
       {
         "key": "curiosities",
-        "title": "Wildcard Markets",
+        "title": "Grandmaster Titles & Awards",
         "item_noun": "markets",
-        "note": "World Chess, wedding couture, Rock Hall expansion, psychedelic therapy, and Person of the Year.",
+        "note": "World Chess Championship, Chess.com awards, and FIDE rating races.",
         "atom_query": {
           "kind": "markets",
           "fun_sub_tag": "batch8-chess-milestones-curiosities",
+          "date_ladder_pick": "nearest_open",
           "shape": "any",
           "order_by": "lead_prob_desc",
           "min_items": 3,
-          "max_items": 8,
+          "max_items": 6,
+          "max_outcomes": 1,
+          "initial_visible_limit": 5,
+          "min_lifetime_volume": 1
+        }
+      },
+      {
+        "key": "chess_ai",
+        "title": "AI vs. Grandmasters",
+        "item_noun": "markets",
+        "note": "Can an artificial intelligence model beat a chess grandmaster in match play?",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch8-chess-ai-milestones",
+          "date_ladder_pick": "nearest_open",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 1,
+          "max_items": 3,
           "max_outcomes": 1,
           "initial_visible_limit": 3,
           "min_lifetime_volume": 1

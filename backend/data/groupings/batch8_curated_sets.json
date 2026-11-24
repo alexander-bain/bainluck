@@ -138,11 +138,27 @@
     "batch8-tv-and-gaming-2026": {
       "entries": [
         {
+          "id": 65536362,
+          "short_label": "Critics Choice Comedy Series Actor",
+          "headline_phrase": "{answer} winning Critics Choice Comedy Series Actor",
+          "headline_with_phrase": "{answer} winning Critics Choice Comedy Actor"
+        },
+        {
           "id": 60481087,
           "short_label": "Dancing with the Stars Season 35 winner",
           "headline_phrase": "{answer} winning Dancing with the Stars",
           "headline_with_phrase": "{answer} for the Mirrorball trophy"
         },
+        {
+          "id": 108480,
+          "short_label": "Next SNL showrunner",
+          "headline_phrase": "{answer} running Saturday Night Live next",
+          "headline_with_phrase": "{answer} taking over Saturday Night Live"
+        }
+      ]
+    },
+    "batch8-tv-other-races": {
+      "entries": [
         {
           "id": 70160350,
           "short_label": "The Voice Season 30 winner",
@@ -150,40 +166,10 @@
           "headline_with_phrase": "{answer} winning The Voice"
         },
         {
-          "id": 60473244,
-          "short_label": "GTA VI Online launch window",
-          "headline_phrase": "GTA VI Online launching {answer}",
-          "headline_with_phrase": "a GTA VI Online launch {answer}"
-        },
-        {
-          "id": 63336233,
-          "short_label": "Rockstar launches GTA VI on PC",
-          "headline_phrase": "Rockstar releasing GTA VI on PC {answer}",
-          "headline_with_phrase": "a PC launch {answer}"
-        },
-        {
-          "id": 71176017,
-          "short_label": "GTA VI units sold before 2027",
-          "headline_phrase": "GTA VI crossing {answer} units sold before 2027",
-          "headline_with_phrase": "{answer} GTA VI copies sold"
-        },
-        {
-          "id": 69096405,
-          "short_label": "PGL Major Singapore 2026 champion",
-          "headline_phrase": "{answer} winning the Counter-Strike Major in Singapore",
-          "headline_with_phrase": "{answer} winning the Singapore Major"
-        },
-        {
-          "id": 65536362,
-          "short_label": "Critics Choice Best Comedy Series Actor",
-          "headline_phrase": "{answer} winning Critics Choice Best Comedy Actor",
-          "headline_with_phrase": "{answer} for Comedy Actor"
-        },
-        {
-          "id": 65536308,
-          "short_label": "Critics Choice Best Foreign Film",
-          "headline_phrase": "{answer} winning Critics Choice Best Foreign Film",
-          "headline_with_phrase": "{answer} for Best Foreign Film"
+          "id": 109441,
+          "short_label": "First streamer with an AI scripted series",
+          "headline_phrase": "{answer} releasing an AI scripted TV series first",
+          "headline_with_phrase": "{answer} shipping an AI TV series"
         }
       ]
     },
@@ -237,9 +223,9 @@
       "entries": [
         {
           "id": 60607593,
-          "short_label": "Millennium Prize solutions by AI in 2026",
+          "short_label": "More AI Millennium Prize solutions in 2026",
           "headline_phrase": "AI solving {answer} more Millennium Prize problem in 2026",
-          "headline_with_phrase": "{answer} Millennium solution this year"
+          "headline_with_phrase": "{answer} more AI Millennium solution this year"
         },
         {
           "id": 60626097,
@@ -249,14 +235,14 @@
         },
         {
           "id": 60518652,
-          "short_label": "Next AI Millennium Prize deadline",
-          "headline_phrase": "An AI lab announcing a Millennium solution {answer}",
-          "headline_with_phrase": "an AI proof arriving {answer}"
+          "short_label": "AI solves another Millennium Prize",
+          "headline_phrase": "An AI lab announcing another Millennium Prize solution {answer}",
+          "headline_with_phrase": "another AI Millennium proof arriving {answer}"
         },
         {
           "id": 2415248,
-          "short_label": "When any lab announces AGI",
-          "headline_phrase": "An AI lab declaring AGI {answer}",
+          "short_label": "Any lab announces AGI",
+          "headline_phrase": "Any lab achieving AGI {answer}",
           "headline_with_phrase": "AGI arrival {answer}"
         },
         {
@@ -343,32 +329,41 @@
           "id": 221,
           "short_label": "World Chess Championship 2026 winner",
           "headline_phrase": "{answer} winning the 2026 World Chess Championship",
-          "headline_with_phrase": "{answer} winning the World Chess crown",
-          "art_subject": "Javokhir Sindarov"
+          "headline_with_phrase": "{answer} winning the World Chess crown"
         },
         {
-          "id": 59693602,
-          "short_label": "Rock Hall of Fame expansion finished",
-          "headline_phrase": "The Rock & Roll Hall of Fame expansion finishing {answer}",
-          "headline_with_phrase": "the Rock Hall expansion wrapping up {answer}"
+          "id": 59165041,
+          "short_label": "Chess.com Player of the Year",
+          "headline_phrase": "{answer} winning Chess.com Player of the Year",
+          "headline_with_phrase": "{answer} winning Chess.com's top award"
         },
         {
-          "id": 52755900,
-          "short_label": "Taylor Swift wedding dress designer",
-          "headline_phrase": "{answer} designing Taylor Swift's wedding dress",
-          "headline_with_phrase": "{answer} for Taylor Swift's dress"
+          "id": 70160273,
+          "short_label": "FIDE Women's #2 rating in Jan 2027",
+          "headline_phrase": "{answer} holding women's #2 FIDE chess rating in Jan 2027",
+          "headline_with_phrase": "{answer} holding women's #2 chess rating"
         },
         {
-          "id": 109379,
-          "short_label": "FDA approval of a psychedelic medicine this year",
-          "headline_phrase": "FDA approval of a psychedelic therapy this year",
-          "headline_with_phrase": "a psychedelic FDA approval"
+          "id": 59165040,
+          "short_label": "Chess.com Woman Player of the Year",
+          "headline_phrase": "{answer} winning Chess.com Woman Player of the Year",
+          "headline_with_phrase": "{answer} leading Woman Player of the Year"
         },
         {
-          "id": 109264,
-          "short_label": "Time's Person of the Year 2026",
-          "headline_phrase": "{answer} named Time's 2026 Person of the Year",
-          "headline_with_phrase": "{answer} for Person of the Year"
+          "id": 70160279,
+          "short_label": "FIDE Blitz #2 rating in Jan 2027",
+          "headline_phrase": "{answer} holding #2 FIDE blitz chess rating in Jan 2027",
+          "headline_with_phrase": "{answer} holding blitz #2 rating"
+        }
+      ]
+    },
+    "batch8-chess-ai-milestones": {
+      "entries": [
+        {
+          "id": 62368048,
+          "short_label": "An LLM beats a chess grandmaster",
+          "headline_phrase": "an LLM beating a chess grandmaster {answer}",
+          "headline_with_phrase": "an AI grandmaster upset {answer}"
         }
       ]
     }

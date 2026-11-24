@@ -4042,6 +4042,16 @@ async def get_feed(
     _prewarm_rebuild = bool(
         getattr(request, "scope", None) and request.scope.get(FEED_PREWARM_SCOPE_KEY)
     )
+
+    async def _finish_feed_payload(payload: dict) -> dict:
+        if (mode or "").lower() != "sports" or not payload.get("items"):
+            return payload
+        from app.routes.title_feed_projection import project_super_bowl_card
+
+        wait_seconds = min(5.0, _feed_budget_remaining_s()) if _prewarm_rebuild else 0.0
+        items = await project_super_bowl_card(payload["items"], db, wait_seconds=wait_seconds)
+        return {**payload, "items": items} if items is not payload["items"] else payload
+
     # --- LAT-P271 (#2143): the warm rail refreshes its inputs, it does not
     # inherit them -------------------------------------------------------------
     #
@@ -4440,7 +4450,7 @@ async def get_feed(
             ),
             **finalize,
         )
-        return sanitize_feed_response_images(page)
+        return await _finish_feed_payload(sanitize_feed_response_images(page))
 
     def _opening_refusal(reason, *, singleflight="none"):
         """#5105: the seated route's truthful availability refusal.
@@ -4726,7 +4736,7 @@ async def get_feed(
                             returned=len(payload.get("items") or []),
                         ),
                     )
-                    return sanitize_feed_response_images(payload)
+                    return await _finish_feed_payload(sanitize_feed_response_images(payload))
                 # Malformed fresh value → typed miss; fall through to stale/build.
             # Stale fallback: serve old data if primary cache expired.
             if _stale.is_ok:
@@ -4768,7 +4778,7 @@ async def get_feed(
                             returned=len(payload.get("items") or []),
                         ),
                     )
-                    return sanitize_feed_response_images(payload)
+                    return await _finish_feed_payload(sanitize_feed_response_images(payload))
             if _fresh.is_failure or _stale.is_failure:
                 # Redis stalled/errored (NOT a clean miss). Serve process-local
                 # last-good before paying a cold compute — a Redis blip must not
@@ -4800,7 +4810,7 @@ async def get_feed(
                             returned=len(out.get("items") or []),
                         ),
                     )
-                    return sanitize_feed_response_images(out)
+                    return await _finish_feed_payload(sanitize_feed_response_images(out))
         except Exception:
             _cache_status = "error"
             _lg = _live_bounded_last_good(_cache_key)
@@ -4826,7 +4836,7 @@ async def get_feed(
                         returned=len(out.get("items") or []),
                     ),
                 )
-                return sanitize_feed_response_images(out)
+                return await _finish_feed_payload(sanitize_feed_response_images(out))
     elif debug:
         _cache_status = "disabled_debug"
     elif exclude_reviewed:
@@ -4925,7 +4935,7 @@ async def get_feed(
                         returned=len(out.get("items") or []),
                     ),
                 )
-                return sanitize_feed_response_images(out)
+                return await _finish_feed_payload(sanitize_feed_response_images(out))
             # Budget exhausted / leader produced nothing usable — serve bounded
             # process-local last-good before ever paying (or duplicating) a build.
             _lg = _live_bounded_last_good(_cache_key)
@@ -4951,7 +4961,7 @@ async def get_feed(
                         returned=len(out.get("items") or []),
                     ),
                 )
-                return sanitize_feed_response_images(out)
+                return await _finish_feed_payload(sanitize_feed_response_images(out))
             # #11259: no process-local last-good — this dyno may have just
             # started — so the anonymous base's durable copy comes before an
             # empty page. Same bounds and label; still no build of its own.
@@ -5230,7 +5240,7 @@ async def get_feed(
                             returned=len(_shared_payload.get("items") or []),
                         ),
                     )
-                    return sanitize_feed_response_images(_shared_payload)
+                    return await _finish_feed_payload(sanitize_feed_response_images(_shared_payload))
 
         # --- LAT-P141: page 2 is the same build as page 1 --------------------
         #
@@ -5632,7 +5642,7 @@ async def get_feed(
                         returned=len(_base_page.get("items") or []),
                     ),
                 )
-                return sanitize_feed_response_images(_base_page)
+                return await _finish_feed_payload(sanitize_feed_response_images(_base_page))
 
         # Build team name set once (used by both scoring functions + response).
         # Only uses Team.name (full ESPN display name like "Brown Bears"), NOT
@@ -5730,7 +5740,7 @@ async def get_feed(
                     shared_reuse=_shared_reuse,
                     shared_tiers=_shared_tiers,
                 )
-                return _prior_out
+                return await _finish_feed_payload(_prior_out)
             # #11259: this process holds nothing (a release wipes every dyno's
             # store), so the anonymous base's durable copy before an empty page.
             # `durable=False` is the one caller whose build FINISHED but whose
@@ -7145,7 +7155,7 @@ async def get_feed(
                     shared_reuse=_shared_reuse,
                     shared_tiers=_shared_tiers,
                 )
-                return _prior_out
+                return await _finish_feed_payload(_prior_out)
             # (c) Nothing valid to serve. An empty, truthfully labelled page —
             # the same terminal a coalescing waiter reaches, for the same reason:
             # a wrong answer wearing a 200 is worse than an honest empty one.
@@ -7646,7 +7656,7 @@ async def get_feed(
         # capture at the seam, so this call is inert for it (#5105).
         if _capture is not None:
             _capture.record_response(payload, feed_items, timings=_timings)
-        return payload
+        return await _finish_feed_payload(payload)
     except BaseException:
         # Release any coalescing waiters (result=None → they fall back to
         # bounded last-good or the truthful unavailable terminal) and remove the
@@ -18315,7 +18325,8 @@ async def _score_golf_tournaments(
                     "name": g["name"],
                     "probability": g["probability"],
                     "source_mark": (
-                        golfer_result_mark(g["name"], matched_champion) if champion
+                        g["source_mark"] if t.get("winner_market_id")
+                        else golfer_result_mark(g["name"], matched_champion) if champion
                         else g.get("source_mark") or no_source_mark("source_evidence_incomplete")
                     ),
                     **({"rendered_percent": g["rendered_percent"]}
@@ -18420,7 +18431,7 @@ def _tournament_blended_market_ids(t: dict) -> frozenset[int]:
         if _NON_WINNER_MARKET_RE.search(name):
             continue
         blended.add(market_id)
-    return frozenset(blended)
+    return frozenset(blended.union(t.get("settled_winner_sibling_ids") or ()))
 
 
 def _drop_futures_blended_into_tournaments(items: list[dict]) -> list[dict]:
@@ -18507,7 +18518,7 @@ def _score_tournament(t: dict, now: datetime) -> int:
             if days_until <= 0 and days_until >= -4:
                 # Currently in progress or just started (4-day tournament window)
                 score += 20
-            elif days_until < -4:
+            elif days_until < -4 and not t.get("winner_market_id"):
                 # Stale — started more than 4 days ago, probably over
                 return 0
             elif days_until <= 3:

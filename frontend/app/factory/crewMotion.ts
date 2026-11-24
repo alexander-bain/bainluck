@@ -11,6 +11,7 @@ export type FloorCrew = {
   identity: NameableBuilder;
   pose: WorkerState;
   position?: { line: Line; station: Station };
+  change?: Change;
 };
 
 export function placeCrew(data: FactoryData, now: string, visible: Change[]): FloorCrew[] {
@@ -30,7 +31,7 @@ export function placeCrew(data: FactoryData, now: string, visible: Change[]): Fl
       changes.find(crate => crate.live_at && recentlyActive(crate.live_at, now));
     const post = data.crew_posts?.[identity];
     return change
-      ? { identity, pose: status.pose, position: { line: change.line, station: change.station } }
+      ? { identity, pose: status.pose, change, position: { line: change.line, station: change.station } }
       : { identity, pose: post && recentlyActive(post.at, now) ? status.pose : "asleep" };
   });
 }

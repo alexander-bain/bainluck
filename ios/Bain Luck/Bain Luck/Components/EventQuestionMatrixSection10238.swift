@@ -1,3 +1,4 @@
+import Charts
 import SwiftUI
 
 /// #10396 / #10238: a renderer for one independently delivered Game or Series
@@ -20,6 +21,10 @@ struct EventQuestionMatrixSection10238: View {
     @State private var returnSelection: QuestionMatrixSelection?
     /// #10830 — the questions the browser has on screen right now.
     @State private var visibleRowIDs: Set<EventQuestionMatrixAdapter.RowID> = []
+    @State private var visibleSegmentIDs: Set<String> = []
+    @State private var expandedLadders: Set<String> = []
+    @State private var activeQuery = ""
+    @State private var measuredWidth: CGFloat = 358
     @AccessibilityFocusState private var focus: Focus?
     @Environment(\.dynamicTypeSize) private var typeSize
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -60,18 +65,46 @@ struct EventQuestionMatrixSection10238: View {
                 // Each question is still `question(_:)`, and selection still
                 // resolves against the latest payload. The period ("Game",
                 // "1st half") is a heading over its run of lines, said once.
+                let segments = EventQuestionMatrixLadderGroup10830.segment(rows)
                 MarketBrowserView(
                     label: title,
-                    items: rows,
-                    group: Self.family,
-                    searchText: Self.searchText,
+                    items: segments,
+                    group: { $0.family },
+                    searchText: { $0.searchText },
                     pageSize: Self.pageSize,
                     searchPrompt: "team or line",
-                    visibleIDs: $visibleRowIDs,
-                    heading: { $0.period?.label ?? "" }
-                ) { row in
-                    question(row)
+                    visibleIDs: $visibleSegmentIDs,
+                    heading: { $0.periodLabel },
+                    browseItemCount: rows.count,
+                    onQueryChange: { activeQuery = $0 }
+                ) { segment in
+                    switch segment {
+                    case .row(let row):
+                        question(row)
+                    case .ladder(let group):
+                        ladderGroupView(group)
+                    }
                 }
+                .onChange(of: visibleSegmentIDs, initial: true) { _, _ in
+                    syncVisibleRowIDs(segments: segments)
+                }
+                .onChange(of: expandedLadders) { _, _ in
+                    syncVisibleRowIDs(segments: segments)
+                }
+                .onChange(of: activeQuery) { _, _ in
+                    syncVisibleRowIDs(segments: segments)
+                }
+                .onChange(of: rows.map(\.id)) { _, _ in
+                    syncVisibleRowIDs(segments: EventQuestionMatrixLadderGroup10830.segment(rows))
+                }
+            }
+            .background(
+                GeometryReader { geo in
+                    Color.clear.preference(key: LadderWidthKey10830.self, value: geo.size.width)
+                }
+            )
+            .onPreferenceChange(LadderWidthKey10830.self) { width in
+                if width > 0 { measuredWidth = width }
             }
             .sheet(item: $open, onDismiss: restoreFocus) { selected in
                 detail(selected.id)
@@ -132,6 +165,15 @@ struct EventQuestionMatrixSection10238: View {
         return (row.label, row.options.map { ScanLine(label: $0.label, option: $0) })
     }
 
+    private func syncVisibleRowIDs(segments: [EventQuestionMatrixLadderGroup10830.Segment]) {
+        visibleRowIDs = EventQuestionMatrixLadderGroup10830.visibleRowIDs(
+            forVisibleSegments: visibleSegmentIDs,
+            segments: segments,
+            expandedLadderIDs: expandedLadders,
+            query: activeQuery
+        )
+    }
+
     private func question(_ row: EventQuestionMatrixAdapter.Row) -> some View {
         let scan = Self.scan(row)
         return VStack(alignment: .leading, spacing: 0) {
@@ -169,23 +211,43 @@ struct EventQuestionMatrixSection10238: View {
             returnSelection = option.selection
             open = OpenOption(id: option.selection)
         } label: {
-            let layout = stacked
-                ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4))
-                : AnyLayout(HStackLayout(alignment: .center, spacing: 10))
-            layout {
-                Text(line.label)
-                    .font(.subheadline)
-                    .foregroundStyle(.primary)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(width: stacked ? nil : labelColumn, alignment: .leading)
-                HStack(spacing: 10) {
-                    bar(option.value)
-                    Text(valueText(option.value))
-                        .font(.subheadline.monospacedDigit().weight(.semibold))
-                        .foregroundStyle(.primary)
-                        .contentTransition(.numericText())
-                        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: option.value)
-                        .frame(minWidth: valueColumn, alignment: .trailing)
+            Group {
+                if stacked {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(line.label)
+                            .font(.subheadline)
+                            .foregroundStyle(.primary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        HStack(spacing: 10) {
+                            bar(option.value)
+                            Text(valueText(option.value))
+                                .font(.subheadline.monospacedDigit().weight(.semibold))
+                                .foregroundStyle(.primary)
+                                .fixedSize(horizontal: true, vertical: true)
+                                .contentTransition(.numericText())
+                                .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: option.value)
+                                .frame(minWidth: valueColumn, alignment: .trailing)
+                        }
+                    }
+                } else {
+                    HStack(alignment: .center, spacing: 10) {
+                        Text(line.label)
+                            .font(.subheadline)
+                            .foregroundStyle(.primary)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(width: labelColumn, alignment: .leading)
+                        HStack(spacing: 10) {
+                            bar(option.value)
+                            Text(valueText(option.value))
+                                .font(.subheadline.monospacedDigit().weight(.semibold))
+                                .foregroundStyle(.primary)
+                                .fixedSize(horizontal: true, vertical: true)
+                                .contentTransition(.numericText())
+                                .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: option.value)
+                                .frame(minWidth: valueColumn, alignment: .trailing)
+                        }
+                    }
                 }
             }
             .padding(.vertical, 6)
@@ -382,5 +444,206 @@ struct EventQuestionMatrixSection10238: View {
         if probability > 0 && probability < 0.00001 { return "<0.001%" }
         if probability < 1 && probability > 0.99999 { return ">99.999%" }
         return probability.formatted(.percent.precision(.fractionLength(0...3)))
+    }
+
+    @ViewBuilder
+    private func ladderGroupView(_ group: EventQuestionMatrixLadderGroup10830.LadderGroup) -> some View {
+        let hasQuery = !MarketBrowserLogic.terms(activeQuery).isEmpty
+        let isExpanded = expandedLadders.contains(group.id)
+        let shownRungs = group.visibleRungs(query: activeQuery, expanded: isExpanded)
+        let chartPoints = group.chartPoints
+        let columns = Array(
+            repeating: GridItem(.flexible(), spacing: 6),
+            count: EventQuestionMatrixLadderGroup10830.columnCount(forWidth: measuredWidth)
+        )
+
+        VStack(alignment: .leading, spacing: 8) {
+            if !typeSize.isAccessibilitySize, chartPoints.count >= 2 {
+                ladderChart(chartPoints, xAxisLabel: group.xAxisUnitLabel)
+            }
+            if shownRungs.isEmpty && hasQuery {
+                Text("No matching lines.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.vertical, 6)
+            } else if typeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(shownRungs) { rung in
+                        ladderLine(ScanLine(label: rung.row.label, option: rung.option), question: rung.row.label)
+                    }
+                }
+            } else {
+                LazyVGrid(columns: columns, spacing: 6) {
+                    ForEach(shownRungs) { rung in
+                        ladderTile(rung)
+                    }
+                }
+            }
+            if !hasQuery && group.rungs.count > EventQuestionMatrixLadderGroup10830.defaultVisibleTileLimit {
+                let footerLabel = Text("\(shownRungs.count) of \(group.rungs.count) lines")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                let toggleButton = Button {
+                    if isExpanded {
+                        expandedLadders.remove(group.id)
+                    } else {
+                        expandedLadders.insert(group.id)
+                    }
+                } label: {
+                    Text(isExpanded ? "Show fewer" : "Show all \(group.rungs.count) lines")
+                        .font(.caption.weight(.semibold))
+                        .padding(.horizontal, typeSize.isAccessibilitySize ? 0 : 10)
+                        .frame(minHeight: 44)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("ladder-group-toggle")
+
+                if typeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 2) {
+                        footerLabel
+                        toggleButton
+                    }
+                } else {
+                    HStack {
+                        footerLabel
+                        Spacer()
+                        toggleButton
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func ladderChart(_ points: [EventQuestionMatrixLadderGroup10830.ChartPoint], xAxisLabel: String? = nil) -> some View {
+        let lower = points.first?.bound ?? 0
+        let rawUpper = points.last?.bound ?? lower
+        let upper = rawUpper > lower ? rawUpper : lower + 1
+        return VStack(spacing: 2) {
+            Chart(points) { pt in
+                AreaMark(
+                    x: .value("Threshold", pt.bound),
+                    yStart: .value("Baseline", 0.0),
+                    yEnd: .value("Probability", pt.probability * 100.0)
+                )
+                .foregroundStyle(Color.accentColor.opacity(0.12))
+                .interpolationMethod(.linear)
+
+                LineMark(
+                    x: .value("Threshold", pt.bound),
+                    y: .value("Probability", pt.probability * 100.0)
+                )
+                .foregroundStyle(Color.accentColor)
+                .lineStyle(StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round))
+                .interpolationMethod(.linear)
+
+                PointMark(
+                    x: .value("Threshold", pt.bound),
+                    y: .value("Probability", pt.probability * 100.0)
+                )
+                .symbolSize(16)
+                .foregroundStyle(Color.accentColor)
+            }
+            .chartYScale(domain: 0...100)
+            .chartXScale(domain: lower...upper)
+            .chartYAxis {
+                AxisMarks(values: [0, 50, 100]) { val in
+                    AxisGridLine(stroke: StrokeStyle(lineWidth: 0.3))
+                    AxisValueLabel {
+                        if let pct = val.as(Int.self) {
+                            Text("\(pct)%")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+            }
+            .chartXAxis {
+                AxisMarks(values: .automatic(desiredCount: 4)) { _ in
+                    AxisValueLabel()
+                        .font(.caption2.monospacedDigit())
+                }
+            }
+            .frame(height: 88)
+
+            if let xAxisLabel, !xAxisLabel.isEmpty {
+                Text(xAxisLabel)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
+        }
+        .accessibilityHidden(true)
+    }
+
+    private func ladderTile(_ rung: EventQuestionMatrixLadderGroup10830.Rung) -> some View {
+        let option = rung.option
+        return Button {
+            focus = nil
+            returnSelection = option.selection
+            open = OpenOption(id: option.selection)
+        } label: {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(rung.row.label)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                Text(valueText(option.value))
+                    .font(.subheadline.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .contentTransition(.numericText())
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: option.value)
+                tileBar(option.value)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 6)
+            .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+            .background(Color.secondary.opacity(0.06))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.barTrack.opacity(0.45), lineWidth: 0.5))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("\(rung.row.label), \(option.label), \(valueText(option.value))")
+        .accessibilityHint("Shows this exact line and its sources")
+        .accessibilityFocused($focus, equals: .option(option.selection))
+    }
+
+    @ViewBuilder
+    private func tileBar(_ value: EventQuestionMatrixAdapter.Value) -> some View {
+        switch value {
+        case .quoted(let probability):
+            GeometryReader { geo in
+                Capsule()
+                    .fill(Color.secondary.opacity(0.12))
+                    .overlay(alignment: .leading) {
+                        Capsule()
+                            .fill(Color.accentColor.opacity(0.65))
+                            .frame(width: max(2, geo.size.width * min(max(probability, 0), 1)))
+                    }
+            }
+            .frame(height: 3)
+            .accessibilityHidden(true)
+        case .unavailable:
+            Capsule()
+                .fill(Color.secondary.opacity(0.12))
+                .frame(height: 3)
+                .accessibilityHidden(true)
+        case .won, .lost:
+            Color.clear
+                .frame(height: 3)
+                .accessibilityHidden(true)
+        }
+    }
+}
+
+private struct LadderWidthKey10830: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }

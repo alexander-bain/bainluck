@@ -1,6 +1,6 @@
 {
   "slug": "machinery-soccer-cups-and-relegation",
-  "stage": "preview",
+  "stage": "public",
   "look": "bars",
   "membership": "computed-produced",
   "kind": "roundup",
@@ -9,11 +9,11 @@
     "sibling"
   ],
   "level": "member",
-  "kicker": "SPORTS · SOCCER CUPS",
-  "name": "Soccer Cups & Relegation",
+  "kicker": "SPORTS · SOCCER",
+  "name": "Global Soccer Races",
   "category": "soccer",
   "tag": "SOCCER",
-  "section_title": "Cups, Boots & Drops",
+  "section_title": "Golden Boot, Survival & Cup Races",
   "footer": "",
   "rule": {
     "producer": "container_machinery",
@@ -21,7 +21,6 @@
     "materialize": "read-time",
     "card_rows": 3,
     "card_section_key": "soccer_cups",
-    "hide_row_art": true,
     "suppress_card_photo": true,
     "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/98/Playing_football_in_evening_%28Unsplash%29.jpg/960px-Playing_football_in_evening_%28Unsplash%29.jpg",
     "card_image_alt": "Soccer players huddled on an illuminated grass pitch at dusk",

@@ -211,7 +211,9 @@ async def _market_cards(db, ids, now):
             outcome["price_revision_at"] = clocks.get(str(outcome["id"]))
             outcome["price_observed_at"] = outcome["price_revision_at"]  # Legacy ordering only.
         dispositions[f"futures-{market.id}"] = "updated"
-    return terminal_items + items, dispositions
+    from app.routes.title_feed_projection import project_super_bowl_card
+
+    return terminal_items + await project_super_bowl_card(items, db), dispositions
 
 
 @router.get("/outcome-prices")

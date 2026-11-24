@@ -234,9 +234,7 @@ def test_batch7_sets_are_preview_and_disjoint_from_prior_batches() -> None:
 
     categories = set()
     held_preview = {
-        "machinery-afc-west-duel",
         "machinery-college-basketball-slate",
-        "machinery-tech-and-space-movers",
     }
     for slug in BATCH7_SLUGS:
         defn = load_machinery_definition(CANDIDATES_DIR / f"{slug}.json")
@@ -415,6 +413,7 @@ async def test_batch7_fable_fixes_big_ten_college_slate_and_history_first_to_las
     assert spx_card["form_id"] == "probability_history_chart"
     assert spx_card["title"] == "The chance SpaceX ends 2026 valued between $1.70T and $2.00T rose 15 points since Nov 17"
     assert len(spx_card["rows"]) == 3
+    assert len({int(r["market_id"]) for r in spx_card["rows"]}) == 3
 
     # When peak-to-trough range itself is < 10 across all items, it falls back to
     # benchmark_strip + JWST photo with >=3 rows naming each leading outcome explicitly.
@@ -456,6 +455,10 @@ async def test_batch7_fable_fixes_big_ten_college_slate_and_history_first_to_las
     assert moved_card["form_id"] == "probability_history_chart"
     assert moved_card.get("mini_chart") is not None
     assert not moved_card.get("image_url")
+    assert len(moved_card["rows"]) == 3
+    assert len({int(r["market_id"]) for r in moved_card["rows"]}) == 3
+    # No row portrait leaks next to monogram rows on Tech & Space Weekly Movers
+    assert not any((r.get("art") or {}).get("url") for r in moved_card["rows"])
 
 
 @pytest.mark.asyncio
@@ -471,3 +474,27 @@ async def test_european_league_titles_takes_zero_lesser_soccer_penalty_348b() ->
         compose_roundup_feed_item(build_container_machinery_producer(defn), res)
     )
     assert _roundup_lesser_soccer_penalty(feed_item) == 0
+
+
+@pytest.mark.asyncio
+async def test_tech_and_space_movers_drops_rows_when_only_one_moving_market_350a() -> None:
+    """Fable #13489 / Alex 350: A: one row per market (>=2) or no rows (<2)."""
+    clear_fun_markets_cache()
+    db_one = _make_batch7_snapshot()
+    db_one["markets"] = [m for m in db_one["markets"] if int(m["id"]) != 24647105]
+    # Keep 1 moving history market while min_items=1 copy verifies 0 card rows
+    defn = load_machinery_definition(CANDIDATES_DIR / "machinery-tech-and-space-movers.json")
+    defn_one = json.loads(json.dumps(defn))
+    defn_one["rule"]["sections"][0]["atom_query"]["min_items"] = 1
+    db_one["market_histories"] = {
+        688367481: [
+            {"timestamp": (NOW - timedelta(days=5)).isoformat(), "probability": 0.15},
+            {"timestamp": (NOW - timedelta(days=1)).isoformat(), "probability": 0.30},
+        ],
+    }
+    res_one = await produce_container_machinery(db_one, defn_one, now=NOW)
+    card_one = sanitize_discover_feed_item(
+        compose_roundup_feed_item(build_container_machinery_producer(defn_one), res_one)
+    )["data"]["roundup"]["machinery_card"]
+    assert card_one["form_id"] == "probability_history_chart"
+    assert card_one["rows"] == []

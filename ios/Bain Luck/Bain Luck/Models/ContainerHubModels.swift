@@ -118,6 +118,30 @@ nonisolated struct ContainerHubEdition: Decodable, Equatable, Sendable {
     let week: Int?
     let subject: String?
     let edition: Int?
+    let family: String?
+    let role: String?
+
+    init(
+        kind: String,
+        league: String? = nil,
+        season: Int? = nil,
+        stage: String? = nil,
+        week: Int? = nil,
+        subject: String? = nil,
+        edition: Int? = nil,
+        family: String? = nil,
+        role: String? = nil
+    ) {
+        self.kind = kind
+        self.league = league
+        self.season = season
+        self.stage = stage
+        self.week = week
+        self.subject = subject
+        self.edition = edition
+        self.family = family
+        self.role = role
+    }
 
     var isTheme: Bool { kind == "theme_continuing" || kind == "theme_edition" }
     func matches(slug: String) -> Bool {

@@ -588,6 +588,7 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
         source: str = "kalshi",
         sport_id: int | None = None,
         with_history: bool = False,
+        mutually_exclusive: bool = True,
     ) -> FuturesMarket:
         kw = {"id": market_id} if market_id is not None else {}
         fm = FuturesMarket(
@@ -599,7 +600,7 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
             category=category,
             llm_sport_category=category,
             market_tier=1,
-            mutually_exclusive=True,
+            mutually_exclusive=mutually_exclusive,
             status="open",
             volume=250_000,
             resolution_date=res_future,
@@ -987,9 +988,10 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
 
     # 12. #12288 Batch 5 preview groupings (March Madness 2027, AI Model Leaderboard, Big Tech Deals & Hardware, NHL 100-Point Club)
     for mid, ext, name, cat, sid, outs in (
-        (52755955, "PMB5-APPOLL", "AP Poll #1 team on December 7", "basketball", ncaab.id, [("Houston", 0.54, 0.50), ("Duke", 0.25, 0.27)]),
+        (52755955, "PMB5-APPOLL", "AP Poll #1 team on December 7", "basketball", ncaab.id, [("Houston", 0.54, 0.50), ("Duke", 0.25, 0.27), ("Florida", 0.14, 0.13)]),
         (68954772, "PMB5-DUKEFF", "Will Duke reach the 2027 Final Four?", "basketball", ncaab.id, [("Yes", 0.37, 0.35)]),
         (68954773, "PMB5-FLAFF", "Will Florida reach the 2027 Final Four?", "basketball", ncaab.id, [("Yes", 0.32, 0.30)]),
+        (68954775, "PMB5-HOUFF", "Will Houston reach the 2027 Final Four?", "basketball", ncaab.id, [("Yes", 0.31, 0.29)]),
         (109596, "KXB5-BESTAI", "Best AI model at year-end?", "tech", None, [("Gemini", 0.83, 0.80), ("Claude", 0.10, 0.12)]),
         (62134324, "KXB5-OPUS", "Next Claude Opus released by?", "tech", None, [("Dec 31", 0.79, 0.75)]),
         (109623, "KXB5-CODEAI", "Best coding AI model at year-end?", "tech", None, [("Anthropic", 0.49, 0.46), ("OpenAI", 0.31, 0.33)]),
@@ -1023,9 +1025,10 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
         (114149, "KXB6-DUNEAV", "Will Dune 3 or Avengers: Doomsday gross more on opening weekend?", "entertainment", [("Avengers: Doomsday", 0.98, 0.96), ("Dune 3", 0.02, 0.04)]),
         (113355, "KXB6-TOP2026", "Highest grossing movie in 2026?", "entertainment", [("Spider-Man: Brand New Day", 0.91, 0.89)]),
         (113356, "KXB6-OPEN2026", "Which movie has biggest opening weekend in 2026?", "entertainment", [("Avengers: Doomsday", 0.90, 0.88)]),
-        (70160313, "PMB6-GGACTF", "Golden Globe Winner: Best Actress - Musical or Comedy", "entertainment", [("Julianne Moore", 0.77, 0.75)]),
+        (70160313, "PMB6-GGACTF", "Golden Globe Winner: Best Actress - Musical or Comedy", "entertainment", [("Julianne Moore", 0.77, 0.75), ("Olivia Wilde", 0.06, 0.06), ("Inde Navarrette", 0.06, 0.05), ("Olivia Colman", 0.02, 0.02)]),
         (70160296, "PMB6-GGACTRLS", "Golden Globe Winner: Best Actress in a Limited Series", "entertainment", [("Florence Pugh", 0.72, 0.70)]),
         (70160294, "PMB6-GGSUPATV", "Golden Globe Winner: Best Supporting Actress on TV", "entertainment", [("Kate O'Flynn", 0.71, 0.68)]),
+        (70160314, "PMB6-GGACTM", "Golden Globe Winner: Best Actor - Musical or Comedy", "entertainment", [("Timothée Chalamet", 0.65, 0.62)]),
     ):
         await _add_market(
             market_id=mid,
@@ -1034,6 +1037,14 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
             category=cat,
             outcomes=outs,
         )
+    await _add_market(
+        market_id=61484904,
+        external_id="KXB6-GGNOM",
+        name="Golden Globe Nominations: Best Actress in a Motion Picture – Musical or Comedy",
+        category="entertainment",
+        outcomes=[("Julianne Moore", 0.98, 0.96), ("Olivia Wilde", 0.96, 0.94), ("Inde Navarrette", 0.90, 0.88), ("Olivia Colman", 0.77, 0.74)],
+        mutually_exclusive=False,
+    )
 
     # 14. #12288 Batch 7 preview groupings (8 forms across Oscars, CFB, NFL, NHL, NCAAB, Euro Soccer, Tech & Space, Weather)
     actor_outcomes = [
@@ -1115,8 +1126,11 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
         (114134, "PMB8-QUAKE", "How many 7.0 or above earthquakes in 2026?", "weather", [("14–16", 0.75, 0.72), ("17–19", 0.19, 0.21)]),
         (58435808, "PMB8-CYCL", "How many tropical cyclones will make landfall in China during 2026?", "weather", [("8", 0.74, 0.70), ("Greater than 8", 0.14, 0.16)]),
         (221, "KXB8-CHESS", "FIDE World Chess Championship 2026 Winner", "chess", [("Javokhir Sindarov", 0.77, 0.74), ("Gukesh Dommaraju", 0.24, 0.26)]),
-        (59693602, "KXB8-HOF", "When will the Rock & Roll Hall of Fame expansion be completed?", "entertainment", [("Before Mar 1, 2027", 0.81, 0.78), ("Before Mar 1, 2028", 0.90, 0.88)]),
-        (52755900, "KXB8-DRESS", "Taylor Swift: Wedding Dress", "entertainment", [("Dior", 0.42, 0.40), ("Armani Privé", 0.05, 0.05)]),
+        (59165041, "KXB8-CHESS-W2", "FIDE Women's #2 rating in January 2027?", "chess", [("Zhu Jiner", 0.63, 0.60), ("Aleksandra Goryachkina", 0.22, 0.24)]),
+        (70160273, "KXB8-CHESS-B2", "FIDE Blitz #2 rating in January 2027?", "chess", [("Hikaru Nakamura", 0.28, 0.25), ("Alireza Firouzja", 0.22, 0.24)]),
+        (59165040, "KXB8-CHESS-W1", "FIDE Women's #1 rating in January 2027?", "chess", [("Hou Yifan", 0.72, 0.70), ("Ju Wenjun", 0.18, 0.19)]),
+        (70160279, "KXB8-CHESS-B1", "FIDE Blitz #1 rating in January 2027?", "chess", [("Magnus Carlsen", 0.85, 0.82), ("Hikaru Nakamura", 0.10, 0.11)]),
+        (62368048, "KXB8-CHESS-US", "2026 U.S. Chess Champion", "chess", [("Fabiano Caruana", 0.64, 0.61), ("Hans Niemann", 0.18, 0.19)]),
         (65521875, "KXB8-NAPA", "How much will it rain in Napa in November 2026 through March 2027?", "weather", [("Above 10 inches", 0.88, 0.85), ("Above 15 inches", 0.79, 0.77)]),
         (63828305, "PMB8-MELB", "Melbourne's wettest month of 2026?", "weather", [("October", 0.91, 0.89), ("December", 0.05, 0.06)]),
         (108250, "KXB8-ENERGY", "What will be the largest source of global primary energy consumption in 2030?", "weather", [("Oil", 0.65, 0.62), ("Coal", 0.14, 0.15)]),
@@ -1126,6 +1140,8 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
         (60481087, "KXB8-DWTS", "Dancing with the Stars Season 35 Winner", "entertainment", [("Ezra Frech", 0.48, 0.45), ("Amber Glenn", 0.28, 0.29)]),
         (70160350, "KXB8-VOICE", "Who will win The Voice Season 30?", "entertainment", [("Joey Henley", 0.56, 0.53), ("Mia Knight", 0.13, 0.14)]),
         (65536362, "KXB8-CCCOM", "Critics Choice Awards: Best Actor in a Comedy Series", "entertainment", [("Matthew Rhys", 0.82, 0.80), ("Jeremy Allen White", 0.04, 0.05)]),
+        (108480, "KXB8-SNL", "SNL: Lorne Michaels' successor for showrunner", "entertainment", [("Tina Fey", 0.39, 0.37), ("Steve Higgins", 0.35, 0.34)]),
+        (109441, "KXB8-AISER", "Which companies will release a Fully AI-generated multi-episode scripted series before 2027?", "entertainment", [("Amazon", 0.05, 0.05), ("Netflix", 0.04, 0.04)]),
         (59156925, "PMB8-LLBOOT", "LaLiga: Top Goalscorer 2026-27", "soccer", [("Kylian Mbappé", 0.52, 0.50), ("Robert Lewandowski", 0.14, 0.15)]),
         (59516509, "PMB8-EPLREL", "Premier League: Teams relegated (2026-27)", "soccer", [("Coventry City", 0.50, 0.48), ("Leeds United", 0.35, 0.36)]),
         (128718, "PMB8-MLSCUP", "MLS Cup Winner 2026", "soccer", [("Vancouver Whitecaps FC", 0.28, 0.26), ("Inter Miami", 0.22, 0.23)]),
@@ -1134,7 +1150,8 @@ async def _seed_all_candidates(session, now_dt: datetime) -> None:
         (52755859, "KXB8-NFC1", "Pro Football: NFC #1 Seed", "football", [("San Francisco", 0.69, 0.67), ("Chicago", 0.17, 0.18)]),
         (60607593, "PMB8-MILLN", "How many more Millennium Prize Problems will AI solve in 2026?", "tech", [("1", 0.42, 0.40), ("0", 0.39, 0.41)]),
         (60626097, "PMB8-MILLW", "Which Millennium Prize Problem will AI solve next?", "tech", [("Riemann Hypothesis", 0.64, 0.61), ("Birch and Swinnerton-Dyer", 0.09, 0.10)]),
-        (2415248, "KXB8-AGI", "When will any company achieve AGI?", "tech", [("Before Jan 1, 2031", 0.76, 0.74), ("Before Jan 1, 2029", 0.70, 0.68)]),
+        (60518652, "PMB8-MILL1", "AI lab announces another Millennium Prize solution by...?", "tech", [("December 31, 2027", 0.93, 0.90), ("December 31, 2026", 0.71, 0.68)]),
+        (2415248, "KXB8-AGI", "When will any company achieve AGI?", "tech", [("Before Jan 1, 2031", 0.76, 0.74), ("Before Jan 1, 2027", 0.05, 0.05)]),
     ):
         await _add_market(
             market_id=mid,
