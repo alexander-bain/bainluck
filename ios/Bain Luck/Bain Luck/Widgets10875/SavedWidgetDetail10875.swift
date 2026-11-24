@@ -30,6 +30,7 @@ nonisolated struct SavedWidgetEventDetail10875: Decodable, Equatable, Sendable {
     /// The quote's own clock — the instant the price behind the pair was
     /// observed, not when anyone fetched it.
     let heroProbabilityObservedAt: String?
+    var scoreObservedAt: String? = nil
     let heroSettledResult: String?
     let venueSettled: Bool?
     let venueSettledResult: String?

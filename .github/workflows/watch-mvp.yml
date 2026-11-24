@@ -412,7 +412,7 @@ jobs:
           retention-days: 7
       - name: Bound the execution step independently of its child supervisor
         id: execute_budget
-        timeout-minutes: 1
+        timeout-minutes: 5
         run: python3 tools/watch_ui_stage.py execution-timeout --output-dir build/watch-ui-journey >> "$GITHUB_OUTPUT"
       - name: Execute retained selected-game cases within the remaining global budget
         id: execute_cases
@@ -420,7 +420,7 @@ jobs:
         run: python3 tools/watch_ui_stage.py execute --output-dir build/watch-ui-journey -- bash tools/watch-ui-journey.sh execute
       - name: Keep failed or interrupted execution receipts unpaid
         if: always()
-        timeout-minutes: 1
+        timeout-minutes: 5
         env:
           EXECUTION_OUTCOME: ${{ steps.execute_cases.outcome }}
         run: python3 tools/watch_ui_stage.py execution-receipt --output-dir build/watch-ui-journey --step-outcome "$EXECUTION_OUTCOME"

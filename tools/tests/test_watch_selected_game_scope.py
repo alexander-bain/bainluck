@@ -56,6 +56,8 @@ def require_product(view, content, widget):
         "watch.complication.fallback",
         "watch.complication.circular.fallback",
         "watch.complication.corner.fallback",
+        "watch.complication.circular.reading",
+        "watch.complication.corner.reading",
     ):
         assert f'.accessibilityIdentifier("{identifier}")' in content
     for retained_rectangular in (
@@ -66,13 +68,11 @@ def require_product(view, content, widget):
         "watch.complication.rectangular.metadata",
     ):
         assert retained_rectangular in content
-    for circular_corner_numerical in (
+    for circular_corner_disallowed in (
         "TimelineView",
         "ProgressView",
-        "corner.reading",
-        "circular.reading",
     ):
-        assert circular_corner_numerical not in content
+        assert circular_corner_disallowed not in content
     assert "BainLuckEntry(date: Date(), snapshot: nil)" in widget
     assert "WatchComplicationSnapshot.read(from: directory, now: now)" in widget
     assert "else if family == .accessoryCorner" in widget
@@ -119,6 +119,8 @@ class SelectedGameScopeTests(unittest.TestCase):
             ),
             (1, "snapshot.validatedRectangularReading(now: now)", "REMOVED"),
             (1, LABEL, "64%"),
+            (1, "watch.complication.corner.reading", "REMOVED"),
+            (1, "watch.complication.circular.reading", "REMOVED"),
             (2, "WatchComplicationSnapshot.read(from: directory, now: now)", "REMOVED"),
             (2, ".widgetURL(WatchLaunchRoute.url)", ""),
             (2, ".accessoryCorner", ".accessoryInline"),
