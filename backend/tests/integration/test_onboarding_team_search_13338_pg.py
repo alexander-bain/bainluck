@@ -76,6 +76,7 @@ _CITY_CLUBS = {
         ("New York Liberty", "basketball_wnba", "Brooklyn"),
         ("New York City FC", MLS, "New York City"),
         ("New York Red Bulls", MLS, "Harrison"),
+        ("LIU Sharks", NCAAB, "Long Island University"),
     ),
     "LA": (
         ("Los Angeles Lakers", NBA, "Los Angeles"),
@@ -472,6 +473,8 @@ async def test_issue_and_additional_onboarding_queries_return_real_clubs(
         (1237, "Philadelphia Union", "soccer_concacaf_leagues_cup", "Philadelphia"),
         (1238, "Los Angeles FC", "soccer_concacaf_leagues_cup", "Los Angeles"),
         (1239, "Sporting Kansas City", "soccer_concacaf_leagues_cup", "Kansas City"),
+        (1240, "New York Yankees", MLS, "New York"),
+        (1400, "Long Island University Sharks", "baseball_ncaa", "Long Island University"),
         *((tid, *club) for tid, club in enumerate(
             (club for region in _CITY_CLUBS.values() for club in region), start=1300
         )),
@@ -537,7 +540,7 @@ async def test_issue_and_additional_onboarding_queries_return_real_clubs(
         assert len(names) == len(wanted) and set(names) == wanted, (
             city, sorted(names), sorted(wanted)
         )
-        assert all(row["id"] not in range(1229, 1240) for row in response.json()), city
+        assert all(row["id"] not in range(1229, 1241) for row in response.json()), city
 
 
 async def test_prefixes_keep_other_clubs_separate_and_group_confirmed_spurs_variants(

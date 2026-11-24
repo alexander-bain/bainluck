@@ -39,6 +39,7 @@ from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only, selectinload
 
+from app.config.major_team_search import MAJOR_TEAM_QUERY_ALIASES
 from app.dependencies.auth import get_current_user, get_optional_user
 from app.models.models import (
     User,
@@ -108,6 +109,11 @@ _DC = ["dc", "d.c.", "washington", "washington dc", "washington, dc"]
 _METRO_CLUB_LEAGUES = {
     "americanfootball_nfl", "baseball_mlb", "basketball_nba", "basketball_wnba",
     "icehockey_nhl", "soccer_usa_mls", "soccer_usa_nwsl",
+}
+_METRO_MAJOR_CLUBS = {
+    name.casefold(): league
+    for (league, name) in MAJOR_TEAM_QUERY_ALIASES
+    if league in _METRO_CLUB_LEAGUES
 }
 _METRO_LEAGUE_SCOPE = {
     "boston", "new york", "los angeles", "kansas city", "bay area",
@@ -1247,10 +1253,16 @@ async def teams_by_location(
         if scoped_metro and not college_team and sport_key not in _METRO_CLUB_LEAGUES:
             continue
         name = " ".join(team.name.casefold().split())
+        if scoped_metro and _METRO_MAJOR_CLUBS.get(name, sport_key) != sport_key:
+            continue
         key = (sport_key, name)
         if college_team:
             school = school_label(team.name, team.location) or team.name
-            key = ("college", " ".join(school.casefold().split()))
+            school_key = " ".join(school.casefold().split())
+            campus = (team.location or "").casefold().split()
+            if campus and campus[-1] == "university" and school_key == "".join(word[0] for word in campus):
+                school_key = " ".join(campus)
+            key = ("college", school_key)
             if team.espn_id:
                 if team.espn_id in seen_schools:
                     continue
