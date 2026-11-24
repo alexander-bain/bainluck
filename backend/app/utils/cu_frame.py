@@ -117,17 +117,27 @@ _NUMBER = re.compile(
 )
 _MONTH_NAME = (
     r"Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|"
-    r"Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?"
+    r"Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?"
 )
 _TITLE_DATES = re.compile(
-    rf"\b(?:(?:{_MONTH_NAME})\s+(?:[0-9]{{1,2}}(?:st|nd|rd|th)?(?:,?\s+))?"
-    r"[0-9]{4}|[0-9]{4}[-–][0-9]{2,4}(?:-[0-9]{2})?)\b"
-    r"|\b(?:by|before|after|through|until|in|during|end of)\s+(?:the end of\s+)?"
-    r"(?:19|20|21)[0-9]{2}\b",
+    rf"\b(?:(?:{_MONTH_NAME})\.?\s+"
+    r"(?:[0-9]{1,2}(?:st|nd|rd|th)?(?:,?\s+[0-9]{4})?|[0-9]{4})"
+    r"|[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}"
+    r"|[0-9]{4}[-–][0-9]{2,4}(?:-[0-9]{2})?)\b",
+    re.IGNORECASE,
+)
+_BARE_YEAR = re.compile(r"(?<![\w.+\-−])(?:19|20|21)[0-9]{2}(?!\w|\.\d)")
+_CURRENCY_SIGNS = ("$", "£", "€", "¥", "₹", "₩")
+_AFTER_YEAR_UNIT = re.compile(
+    r"\s*(?:[%°]|(?:USD|EUR|GBP|JPY|CAD|AUD|dollars?|cents?|basis points?|bps|"
+    r"points?|runs?|goals?|votes?|fans?|people|views?|subscribers?|followers?|"
+    r"games?|wins?|days?|hours?|minutes?|seconds?|miles?|kilomet(?:er|re)s?|"
+    r"yards?|feet|meters?|units?|cases?|million|billion|trillion)\b)",
     re.IGNORECASE,
 )
 _WINDOW_DATE_FORMATS = (
     ("%Y-%m-%d", "%Y-%m-%d"),
+    ("%m/%d/%Y", "%Y-%m-%d"),
     ("%Y-%m", "%Y-%m"),
     ("%Y", "%Y"),
     ("%B %d, %Y", "%Y-%m-%d"),
@@ -137,6 +147,7 @@ _WINDOW_DATE_FORMATS = (
     ("%B %Y", "%Y-%m"),
     ("%b %Y", "%Y-%m"),
 )
+_MONTH_DAY_FORMATS = ("%B %d", "%b %d")
 
 
 def normalize_measure(value: Any) -> str | None:
@@ -196,12 +207,31 @@ def _normalize_window_date(raw: Any, title: str) -> str | None:
     if not value_appears_in_title(token, title):
         return None
     token = re.sub(r"(?<=\d)(?:st|nd|rd|th)\b", "", token, flags=re.IGNORECASE)
+    token = re.sub(r"(?<=[A-Za-z])\.(?=\s)", "", token)
+    token = re.sub(r"\bSept\b", "Sep", token, flags=re.IGNORECASE)
     for source_format, target_format in _WINDOW_DATE_FORMATS:
         try:
             return datetime.strptime(token, source_format).strftime(target_format)
         except ValueError:
             continue
+    for source_format in _MONTH_DAY_FORMATS:
+        try:
+            # Use a leap year to validate month and day without inventing a year.
+            return datetime.strptime(f"{token} 2000", f"{source_format} %Y").strftime("--%m-%d")
+        except ValueError:
+            continue
     return None
+
+
+def _title_without_dates(title: str) -> str:
+    def keep_quantified_year(match: re.Match) -> str:
+        if match.string[:match.start()].rstrip().endswith(_CURRENCY_SIGNS):
+            return match[0]
+        if _AFTER_YEAR_UNIT.match(match.string, match.end()):
+            return match[0]
+        return " "
+
+    return _BARE_YEAR.sub(keep_quantified_year, _TITLE_DATES.sub(" ", title))
 
 
 def value_appears_in_title(value: str, title: str) -> bool:
@@ -288,7 +318,7 @@ def sanitize_cu_frame(
         return None, DROP_VALUE_NOT_NUMERIC
     if value is not None and not value_appears_in_title(value, title_text):
         return None, DROP_VALUE_NOT_IN_TITLE
-    if value is not None and not value_appears_in_title(value, _TITLE_DATES.sub(" ", title_text)):
+    if value is not None and not value_appears_in_title(value, _title_without_dates(title_text)):
         return None, DROP_VALUE_IS_DATE
 
     raw_unit = raw.get("unit")

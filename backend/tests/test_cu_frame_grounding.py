@@ -231,12 +231,47 @@ class TestFrameSanitizer:
         assert frame is None
         assert drop == DROP_VALUE_IS_DATE
 
+    @pytest.mark.parametrize("title,value,unit", [
+        ("Will gas hit $4 by June 30?", "30", None),
+        ("Will Bitcoin reach $150,000 by December 31?", "31", None),
+        ("Will the high in NYC be 41° or above on Nov 24?", "24", "°"),
+        ("Will Spain win the 2026 World Cup?", "2026", None),
+        ("Who will win the 2028 Democratic nomination?", "2028", None),
+        ("Will Opus 5 be released before 12/31/2026?", "12", None),
+        ("Will Bitcoin reach $150,000 by December 31, 2026?", "31", None),
+        ("Will the Fed cut rates at the December 2026 meeting?", "2026", None),
+        ("By 2028, will the count exceed 90 votes?", "2028", "votes"),
+    ])
+    def test_deadline_tokens_are_refused_even_when_another_number_has_a_unit(self, title, value, unit):
+        frame, drop = sanitize_cu_frame(
+            {"measure": "result", "value": value, "unit": unit}, title=title
+        )
+        assert (frame, drop) == (None, DROP_VALUE_IS_DATE)
+
+    @pytest.mark.parametrize("title,value", [
+        ("Will the price reach $2026 by June 30?", "2026"),
+        ("Will it close at € 2026 before 12/31/2026?", "2026"),
+        ("Will there be 2026 votes before 2026 ends?", "2026"),
+        ("Will total attendance reach 2,026?", "2026"),
+        ("Will the index reach 2026.5 by December 31?", "2026.5"),
+    ])
+    def test_a_genuine_quantity_in_the_year_range_is_retained(self, title, value):
+        frame, drop = sanitize_cu_frame({"measure": "result", "value": value}, title=title)
+        assert drop is None
+        assert frame["value"] == value
+
     @pytest.mark.parametrize("date_phrase,expected", [
         ("December 31, 2027", "2027-12-31"),
         ("Feb 29th, 2028", "2028-02-29"),
         ("2028-02-29", "2028-02-29"),
+        ("12/31/2026", "2026-12-31"),
         ("August 2026", "2026-08"),
         ("2026", "2026"),
+        ("June 30", "--06-30"),
+        ("December 31", "--12-31"),
+        ("Nov 24", "--11-24"),
+        ("Sept. 1st", "--09-01"),
+        ("Feb 29", "--02-29"),
     ])
     def test_window_dates_keep_the_titles_precision(self, date_phrase, expected):
         frame, drop = sanitize_cu_frame(
