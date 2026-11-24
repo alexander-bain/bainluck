@@ -20,6 +20,7 @@ import time
 from typing import Any, Mapping, Optional
 import unicodedata
 import urllib.error
+import urllib.parse
 import urllib.request
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -76,6 +77,10 @@ def _extract_filename(url: str) -> str:
     return clean.rsplit("/", 1)[-1]
 
 
+def _url_hostname(url: str) -> str:
+    return (urllib.parse.urlparse(url).hostname or "").lower()
+
+
 def _curl_fetch(url: str, *, retries: int = 3) -> tuple[int, str]:
     last_err = ""
     for attempt in range(retries + 1):
@@ -106,7 +111,8 @@ def _curl_fetch(url: str, *, retries: int = 3) -> tuple[int, str]:
                     continue
                 return code, body
             except ValueError:
-                pass
+                # Non-numeric HTTP code trailer falls through to retry/error return.
+                last_err = f"invalid_http_code:{code_str.strip()}"
         last_err = proc.stderr.strip() or f"rc={proc.returncode}"
     return 0, last_err
 
@@ -361,8 +367,9 @@ def verify_records(
     targets: list[dict[str, Any]] = []
     for entry in entries:
         url = str(entry.get("url") or "")
-        is_tmdb = "image.tmdb.org" in url
-        is_espn = "a.espncdn.com" in url
+        host = _url_hostname(url)
+        is_tmdb = host == "image.tmdb.org"
+        is_espn = host == "a.espncdn.com"
         if not (is_tmdb or is_espn):
             continue
         key = str(entry.get("entity_key") or "")
@@ -376,7 +383,11 @@ def verify_records(
     with ThreadPoolExecutor(max_workers=max_workers) as pool:
         futs = {}
         for idx, entry in enumerate(targets):
-            fn = _verify_tmdb_entry if "image.tmdb.org" in str(entry.get("url") or "") else _verify_espn_entry
+            fn = (
+                _verify_tmdb_entry
+                if _url_hostname(str(entry.get("url") or "")) == "image.tmdb.org"
+                else _verify_espn_entry
+            )
             futs[pool.submit(fn, entry, infer_source=infer_source)] = idx
         ordered: dict[int, dict[str, Any]] = {}
         for fut in as_completed(futs):

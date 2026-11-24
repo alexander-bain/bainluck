@@ -164,3 +164,25 @@ def test_short_company_names_match_whole_name_only_not_nature_or_horoscope() -> 
         art_r = resolver.resolve(negative, allow_team_lookup=False)
         assert art_m["url"] is None, f"Unexpected logo on {negative!r}: {art_m}"
         assert art_r["url"] is None, f"Unexpected resolver logo on {negative!r}: {art_r}"
+
+
+def test_verify_discover_art_subjects_uses_exact_hostname() -> None:
+    import sys
+
+    scripts_dir = str(REPO_ROOT / "backend" / "scripts")
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    import verify_discover_art_subjects as vdas
+
+    assert vdas._url_hostname("https://image.tmdb.org/t/p/w500/abc.jpg") == "image.tmdb.org"
+    assert vdas._url_hostname("https://a.espncdn.com/i/headshots/nba/players/full/123.png") == "a.espncdn.com"
+    assert vdas._url_hostname("https://evil.example/image.tmdb.org/p.jpg") == "evil.example"
+
+    spoofed = vdas.verify_records(
+        [
+            {"entity_key": "spoof1", "url": "https://evil.example/image.tmdb.org/p.jpg"},
+            {"entity_key": "spoof2", "url": "https://evil.example/?u=a.espncdn.com"},
+        ],
+        scope="all",
+    )
+    assert spoofed["total"] == 0
