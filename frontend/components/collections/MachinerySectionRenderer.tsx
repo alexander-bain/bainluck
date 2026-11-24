@@ -12,7 +12,7 @@ import type {
   MachineryVisualBlock,
 } from "@/lib/collections";
 import type { Event } from "@/lib/types";
-import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
+import { formatGroupedProbability } from "@/lib/probabilityDisplay";
 import { renderedPercent } from "@/lib/renderedPercent";
 
 export function isMachinerySlice1Enabled(): boolean {
@@ -362,7 +362,7 @@ function DuelBarBlock({ items }: { items: Record<string, unknown>[] }) {
               <span>{left.name}</span>
             </div>
             <div className="text-xl font-extrabold tabular-nums text-text-primary">
-              {left.rendered_percent}%
+              {formatGroupedProbability(left)}
             </div>
           </div>
         </div>
@@ -378,7 +378,7 @@ function DuelBarBlock({ items }: { items: Record<string, unknown>[] }) {
               )}
             </div>
             <div className="text-xl font-extrabold tabular-nums text-text-primary">
-              {right.rendered_percent}%
+              {formatGroupedProbability(right)}
             </div>
           </div>
           {right.art?.url ? (
@@ -450,7 +450,7 @@ function ContenderSpotlightBlock({
                         isFav ? "font-extrabold text-text-primary" : "font-semibold text-text-secondary"
                       }`}
                     >
-                      {formatProbabilityPercent(o.probability, { rendered: o.rendered_percent })}
+                      {formatGroupedProbability(o)}
                     </span>
                   </div>
                   <div className="mt-1.5 h-2 w-full overflow-hidden rounded-full bg-surface-elevated">
@@ -495,7 +495,7 @@ function ContenderSpotlightBlock({
               <div className="mb-1.5 flex w-full items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-text-muted">
                 <span>#{idx + 1}</span>
                 <span className="text-sm font-extrabold tabular-nums text-text-primary">
-                  {formatProbabilityPercent(o.probability, { rendered: o.rendered_percent })}
+                  {formatGroupedProbability(o)}
                 </span>
               </div>
               <SubjectAvatar
@@ -556,7 +556,7 @@ function ContenderSpotlightBlock({
                 </div>
               </div>
               <span className="relative text-sm font-bold tabular-nums text-text-primary">
-                {formatProbabilityPercent(o.probability, { rendered: o.rendered_percent })}
+                {formatGroupedProbability(o)}
               </span>
             </Link>
           ))}
@@ -637,7 +637,7 @@ function SiblingFieldsGridBlock({
                               isFav ? "font-bold text-text-primary" : "font-semibold text-text-secondary"
                             }`}
                           >
-                            {formatProbabilityPercent(o.probability, { rendered: o.rendered_percent })}
+                            {formatGroupedProbability(o)}
                           </span>
                         </div>
                         <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-surface-elevated">
@@ -712,7 +712,7 @@ function BenchmarkStripBlock({
                 <span className="break-words text-xs font-medium leading-snug text-text-primary">{title}</span>
               </div>
               <span className="shrink-0 rounded-md bg-surface-elevated px-2 py-1 text-xs font-bold tabular-nums text-text-primary">
-                {yes.rendered_percent}%
+                {formatGroupedProbability(yes)}
               </span>
             </Link>
           );
@@ -1049,7 +1049,7 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
                     <div className="mb-1 flex w-full items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-text-muted">
                       <span>#{idx + 1}</span>
                       <span className="text-xs font-extrabold tabular-nums text-text-primary">
-                        {formatProbabilityPercent(probability, { rendered: pct })}
+                        {formatGroupedProbability(r)}
                       </span>
                     </div>
                     {podiumAnyArt && (
@@ -1166,7 +1166,7 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
                           isFav ? "font-bold text-text-primary" : "font-semibold text-text-secondary"
                         }`}
                       >
-                        {formatProbabilityPercent(probability, { rendered: allocation ?? undefined })}
+                        {formatGroupedProbability(r)}
                       </span>
                     </div>
                     <div className="mt-1 h-1.5 w-full overflow-hidden rounded-full bg-surface-elevated">

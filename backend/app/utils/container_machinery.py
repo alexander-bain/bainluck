@@ -38,7 +38,7 @@ from app.utils.container_presentation import (
 )
 from app.utils.draw_priced_winner import printable_away
 from app.utils.event_taxonomy import compute_event_tags
-from app.utils.graded_card import rendered_card_percents, rendered_duel_percents
+from app.utils.graded_card import rendered_card_percents, rendered_duel_percents, rendered_percent
 from app.utils.team_short_name import is_college_sport, school_label
 
 
@@ -2012,6 +2012,11 @@ def _market_matches_query(
     return True
 
 
+def _legacy_grouped_percent(probability: float, allocated: int) -> int:
+    """Keep the integer printed directly by existing iPhone builds."""
+    return max(1, min(99, allocated)) if 0.0 < probability < 1.0 else allocated
+
+
 def _canonical_market_outcome_map(
     raw_outcomes: Sequence[Mapping[str, Any]],
     *,
@@ -2070,7 +2075,11 @@ def _canonical_market_outcome_map(
             rp = int(card_pcts[idx])
         if rp is None:
             rp = _half_up_pct(float(r["probability"]))
-        pct_int = int(rp)
+        unfloored = r.get("unfloored_percent")
+        if not isinstance(unfloored, int) or isinstance(unfloored, bool):
+            unfloored = int(rp)
+        pct_int = _legacy_grouped_percent(float(r["probability"]), int(rp))
+        r["unfloored_percent"] = unfloored
         r["rendered_percent"] = pct_int
         by_oid[int(r["id"])] = pct_int
         nk = _norm_key(_clean_outcome_label(str(r["name"])))
@@ -2296,6 +2305,7 @@ def _hydrate_market_visual_item(
                 "name": "Yes",
                 "probability": p,
                 "rendered_percent": yes_pct,
+                "unfloored_percent": yes_row.get("unfloored_percent"),
                 "art": {"url": None, "kind": "monogram", "detail": ""},
             }
         ]
@@ -2375,7 +2385,8 @@ def _hydrate_market_visual_item(
             canon_subj = art.get("canonical_name")
             if canon_subj and _ascii_fold_key(canon_subj) == _ascii_fold_key(o_name):
                 o_name = str(canon_subj)
-            pct_val = int(o["rendered_percent"])
+            rendered = o.get("rendered_percent")
+            pct_val = int(rendered) if rendered is not None else _half_up_pct(p)
             for fk_alias in (_norm_key(o_name), _ascii_fold_key(o_name)):
                 if fk_alias and fk_alias not in canon_by_key:
                     canon_by_key[fk_alias] = pct_val
@@ -2385,6 +2396,7 @@ def _hydrate_market_visual_item(
                     "name": o_name,
                     "probability": p,
                     "rendered_percent": pct_val,
+                    "unfloored_percent": o.get("unfloored_percent"),
                     "opening_probability": (
                         o.get("opening_probability") if openings_ok else None
                     ),
@@ -3644,7 +3656,7 @@ async def _load_snapshot_from_db(
                 card_pcts = rendered_card_percents([row.get("probability") for row in d_outs])
                 by_oid: dict[int, int] = {}
                 by_key: dict[str, int] = {}
-                by_fold: dict[str, tuple[float, int]] = {}
+                by_fold: dict[str, tuple[float, int, int]] = {}
                 formatted_outs: list[dict[str, Any]] = []
                 img_by_oid = {o.id: getattr(o, "image_url", None) for o in (fm.outcomes or ())}
                 upd_by_oid = {o.id: getattr(o, "last_updated", None) for o in (fm.outcomes or ())}
@@ -3657,11 +3669,11 @@ async def _load_snapshot_from_db(
                     oid = int(row["id"])
                     rp = row.get("rendered_percent")
                     if rp is not None:
-                        pct_int = int(rp)
+                        unfloored = pct_int = int(rp)
                     else:
                         card_pct = card_pcts[idx] if idx < len(card_pcts) else None
-                        rp = card_pct if card_pct is not None else _half_up_pct(p_f)
-                        pct_int = int(rp)
+                        unfloored = card_pct if card_pct is not None else _half_up_pct(p_f)
+                        pct_int = _legacy_grouped_percent(p_f, unfloored)
                     by_oid[oid] = pct_int
                     r_name = str(row.get("name") or "")
                     for nk in (
@@ -3674,7 +3686,7 @@ async def _load_snapshot_from_db(
                             by_key[nk] = pct_int
                     fk = fold_outcome_key(r_name)
                     if fk and fk not in by_fold:
-                        by_fold[fk] = (p_f, pct_int)
+                        by_fold[fk] = (p_f, pct_int, unfloored)
                     o_upd_dt = _parse_iso_dt_utc(upd_by_oid.get(oid))
                     if o_upd_dt is not None and (newest_live_upd is None or o_upd_dt > newest_live_upd):
                         newest_live_upd = o_upd_dt
@@ -3684,6 +3696,7 @@ async def _load_snapshot_from_db(
                             "name": r_name,
                             "probability": p_f,
                             "rendered_percent": pct_int,
+                            "unfloored_percent": unfloored,
                             "opening_probability": row.get("opening_probability"),
                             "image_url": img_by_oid.get(oid),
                             "last_updated": o_upd_dt.isoformat() if o_upd_dt is not None else None,
@@ -3698,7 +3711,12 @@ async def _load_snapshot_from_db(
                 detail_by_mid[fm.id] = {
                     "top_outcomes": formatted_outs,
                     "newest_outcome_updated_at": newest_live_upd.isoformat() if newest_live_upd is not None else None,
-                    "by_oid_prob_pct": {int(o["id"]): (float(o["probability"]), int(o["rendered_percent"])) for o in formatted_outs},
+                    "by_oid_prob_pct": {
+                        int(o["id"]): (
+                            o["probability"], o["rendered_percent"], o["unfloored_percent"],
+                        )
+                        for o in formatted_outs
+                    },
                     "by_fold_prob_pct": by_fold,
                 }
 
@@ -3740,12 +3758,13 @@ async def _load_snapshot_from_db(
                         else s1_det["by_fold_prob_pct"].get(fk)
                     )
                     if match_s1 is not None:
-                        p_s1, pct_s1 = match_s1
+                        p_s1, pct_s1, unfloored_s1 = match_s1
                         # Ensure client renderedPercent(stage_1_probability) equals pct_s1 exactly
                         entry["stage_1_probability"] = (
                             p_s1 if _half_up_pct(p_s1) == pct_s1 else round(pct_s1 / 100.0, 4)
                         )
                         entry["stage_1_rendered_percent"] = pct_s1
+                        entry["stage_1_unfloored_percent"] = unfloored_s1
             # Re-sort entries by stage_2_probability desc, stage_1_probability desc, subject asc
             pset["entries"] = sorted(
                 [e for e in (pset.get("entries") or ()) if isinstance(e, dict)],
@@ -5390,12 +5409,17 @@ async def produce_container_machinery(
                 "label": str(e.get("subject") or ""),
                 "probability": win_p,
                 "rendered_percent": win_pct,
+                "unfloored_percent": int(allocated) if allocated is not None else rendered_percent(win_p),
             }
             if isinstance(nom_p, (int, float)):
                 row_d["secondary_probability"] = float(nom_p)
                 nomination_percent = e.get("stage_1_rendered_percent")
-                row_d["secondary_rendered_percent"] = (
-                    int(nomination_percent) if nomination_percent is not None else _half_up_pct(float(nom_p))
+                row_d["secondary_rendered_percent"] = int(nomination_percent or _half_up_pct(float(nom_p)))
+                unfloored = e.get("stage_1_unfloored_percent")
+                if unfloored is None:
+                    unfloored = nomination_percent
+                row_d["secondary_unfloored_percent"] = (
+                    int(unfloored) if unfloored is not None else rendered_percent(nom_p)
                 )
             rows_out.append(row_d)
     elif vb_form in {"coin_flip_matchups", "matchup_slate"}:
@@ -5429,6 +5453,7 @@ async def produce_container_machinery(
                     "label": bm_title,
                     "probability": float(yes["probability"]),
                     "rendered_percent": int(yes["rendered_percent"]),
+                    "unfloored_percent": yes.get("unfloored_percent"),
                 }
             )
             card_visual_rows.append(
@@ -5454,6 +5479,7 @@ async def produce_container_machinery(
                     "label": sib_label,
                     "probability": float(lead["probability"]),
                     "rendered_percent": int(lead["rendered_percent"]),
+                    "unfloored_percent": lead.get("unfloored_percent"),
                 }
             )
             card_visual_rows.append(
@@ -5531,6 +5557,7 @@ async def produce_container_machinery(
                     "label": str(o["name"]),
                     "probability": float(o["probability"]),
                     "rendered_percent": int(o["rendered_percent"]),
+                    "unfloored_percent": o.get("unfloored_percent"),
                 }
             )
             card_visual_rows.append(

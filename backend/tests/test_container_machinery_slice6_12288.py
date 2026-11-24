@@ -34,19 +34,27 @@ CORE_FOUR_SLUGS = [
 ]
 
 
-@pytest.mark.parametrize("allocated", [0, None])
-def test_grouped_field_retains_a_zero_display_allocation(allocated):
-    probability = 0.007 if allocated is not None else 0.003
+@pytest.mark.parametrize(
+    "probability,allocated,unfloored,legacy",
+    [(0.007, 0, 0, 1), (0.003, None, 0, 1), (0.997, 100, 100, 99), (0.997, None, 99, 99)],
+)
+def test_grouped_field_keeps_legacy_integer_and_passes_unfloored_allocation(
+    probability, allocated, unfloored, legacy,
+):
     outcomes = [
         {"id": 101, "name": "Contender", "probability": probability, "rendered_percent": allocated},
-        {"id": 102, "name": "Leader", "probability": 0.87, "rendered_percent": 87},
+        {"id": 102, "name": "Reference", "probability": 0.01, "rendered_percent": 1},
         {"id": 103, "name": "Other", "probability": None},
     ]
     rows, by_id, by_name = _canonical_market_outcome_map(outcomes)
-    assert by_id == {101: 0, 102: 87}
-    assert by_name["contender"] == 0
+    assert by_id == {101: legacy, 102: 1}
+    assert by_name["contender"] == legacy
     assert rows[0]["probability"] == probability
-    assert rows[0]["rendered_percent"] == 0
+    assert rows[0]["rendered_percent"] == legacy
+    assert rows[0]["unfloored_percent"] == unfloored
+    # Hydration from the already serialized snapshot keeps the original allocation.
+    replay, _, _ = _canonical_market_outcome_map(rows)
+    assert replay == rows
 
 
 @pytest.mark.asyncio

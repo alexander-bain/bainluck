@@ -93,6 +93,7 @@ export interface PairedSubjectEntry {
   stage_1_polymarket_probability?: number | null;
   stage_1_probability: number | null;
   stage_1_rendered_percent?: number | null;
+  stage_1_unfloored_percent?: number | null;
   stage_1_blend_rule?: string | null;
   stage_1_divergence?: Record<string, unknown> | null;
   stage_1_blend_authority?: ServerBlendAuthority;
@@ -418,7 +419,7 @@ export function formatStage1Display(
     };
   }
 
-  const pct = entry.stage_1_rendered_percent ?? Math.max(0, Math.min(99, rawPct));
+  const pct = entry.stage_1_unfloored_percent ?? entry.stage_1_rendered_percent ?? rawPct;
   return {
     kind: "percent",
     percent: pct,
@@ -475,7 +476,7 @@ export function formatStage2Display(
     };
   }
 
-  const pct = Math.max(0, Math.min(99, rawPct));
+  const pct = rawPct;
   return {
     kind: "percent",
     percent: pct,
