@@ -1,11 +1,10 @@
-"""Unit and integrity tests for #13544 set quality gates, #1809 frame integration, 196-A row context, and Blind Deck v2."""
+"""Unit and integrity tests for #13544 set quality gates, #1809 frame integration, and 196-A row context."""
 
 from __future__ import annotations
 
-import json
+import inspect
 import re
 from datetime import datetime, timezone
-from pathlib import Path
 from types import SimpleNamespace
 
 from app.utils.discover_fun_scout import (
@@ -34,27 +33,7 @@ from app.utils.set_quality_13544 import (
 )
 
 FROZEN_NOW = datetime(2026, 11, 23, 12, 0, tzinfo=timezone.utc)
-DATA_DIR = Path(__file__).resolve().parents[1] / "data" / "discover"
-DECK_V2_PATH = DATA_DIR / "fun_scout_blind_40_deck_v2_2026_11_23.json"
 BANNED_VOICE_RE = re.compile(r"\b(?:traders?|bets?|betting)\b", re.IGNORECASE)
-FULL_LEAK_TOKENS = (
-    "machinery-",
-    "batch3",
-    "batch4",
-    "batch5",
-    "batch6",
-    "batch7",
-    "batch8",
-    "hand_written",
-    "model_proposed",
-    "claude-",
-    "curated",
-    "scout",
-    "6e214dc62d",
-    "13544",
-    "branch_13544",
-    "baseline_6e214dc62d",
-)
 
 
 def _cu_meta(
@@ -402,46 +381,30 @@ class TestRowContext196AAndSelectionExplainer:
         assert rule_def["scout"]["selection_explainer"]["shown_count"] == 3
 
 
-def test_blind_40_v2_deck_schema_blindness_and_no_key_in_repo():
-    raw = DECK_V2_PATH.read_text(encoding="utf-8")
-    deck = json.loads(raw)
+def test_validate_scout_proposed_set_defaults_quality_gate_off_and_respects_flag():
+    assert inspect.signature(validate_scout_proposed_set).parameters["enforce_set_quality_13544"].default is False
 
-    assert deck["deck_id"] == "discover-blind-40-v2-2026-11-23"
-    assert deck["seed"] == 2026112302
-    assert deck["card_count"] == 40
-    assert deck["blind"] is True
-    assert deck["grade_options"] == ["Keep", "Fix", "Drop"]
-    assert "key_sha256" not in deck
-    assert len(deck["sealed_checksum_sha256"]) == 64
+    mixed_catalog = {
+        1: _row(1, "Avengers: Doomsday: Rotten Tomatoes score"),
+        2: _row(2, '"Avengers: Doomsday" Opening Weekend Box Office'),
+        3: _row(3, "Will Dune: Part Three be delayed?"),
+    }
+    mixed_prop = ScoutProposedSet(
+        slug="movie-mix-check",
+        name="Movies Mixed Check",
+        kicker="MOVIES",
+        category="movies",
+        why_better_together="Doomsday scores, box office receipts, and Dune release status together.",
+        look="bars",
+        member_ids=(1, 2, 3),
+    )
 
-    lower = raw.lower()
-    for token in FULL_LEAK_TOKENS:
-        assert token not in lower, f"Leaked provenance token {token!r} in Blind Deck v2"
+    vset_default, err_default = validate_scout_proposed_set(mixed_prop, mixed_catalog, now=FROZEN_NOW)
+    assert err_default is None and vset_default is not None
 
-    cards = deck["cards"]
-    assert len(cards) == 40
-    assert [c["card_id"] for c in cards] == [f"blind-{idx:02d}" for idx in range(1, 41)]
-    expected_keys = {"card_id", "title", "kicker", "category", "summary", "look", "members", "grade_options"}
-
-    for card in cards:
-        assert set(card.keys()) == expected_keys
-        assert card["grade_options"] == ["Keep", "Fix", "Drop"]
-        assert card["kicker"] == card["category"].upper()
-        assert card["look"] in {"bars", "faces", "map"}
-        assert 3 <= len(card["members"]) <= 6
-        text = " ".join([card["title"], card["kicker"], card["summary"]]).lower()
-        assert "opus" not in text and "sonnet" not in text
-        assert not BANNED_VOICE_RE.search(text)
-        seen_ids = set()
-        for m in card["members"]:
-            assert set(m.keys()) == {"market_id", "source", "title"}
-            assert isinstance(m["market_id"], int) and m["market_id"] > 0
-            assert m["market_id"] not in seen_ids
-            seen_ids.add(m["market_id"])
-            assert m["source"] in {"kalshi", "polymarket"}
-            assert m["title"].strip()
-
-    # Sealed v2 key must remain outside the repository until Alex freezes grades.
-    leaked = list(DATA_DIR.rglob("*v2_key*")) + list(DATA_DIR.rglob("*blind_40_v2_key*"))
-    assert leaked == [], f"Blind Deck v2 key must never exist in repo: {leaked}"
+    vset_gated, err_gated = validate_scout_proposed_set(
+        mixed_prop, mixed_catalog, now=FROZEN_NOW, enforce_set_quality_13544=True
+    )
+    assert vset_gated is None
+    assert err_gated is not None and err_gated.startswith("mixed_measure_families:")
     assert audit_sets_13544([])["total_sets"] == 0

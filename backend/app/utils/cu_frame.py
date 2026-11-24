@@ -31,11 +31,34 @@ coverage gap from a resolver bug.
 
 from __future__ import annotations
 
+import math
 import re
+from datetime import datetime
 from typing import Any, Iterable
 
-# The five frame slots, in the order #1809 names them.
-FRAME_SLOTS = ("measure", "comparator", "value", "unit", "horizon_kind")
+FRAME_SLOTS = ("measure", "comparator", "value", "unit", "horizon_kind", "window_date")
+
+# Terms name what is measured. The subject, unit and window are separate
+# fields, so a monthly price high and an all-time record have distinct terms.
+MEASURES = frozenset({
+    "appointment", "approval_rating", "asset_price", "atp_points", "award_result",
+    "bankruptcy_filing", "box_office_revenue", "ceasefire", "close_price",
+    "daily_views", "data_center_moratorium", "economic_growth", "election_result",
+    "employment", "event_count", "exchange_rate", "goals", "high_temperature",
+    "housing_starts", "index_close", "inflation_rate", "interest_rate",
+    "low_temperature", "market_cap", "magnitude", "nomination", "poll_share", "points",
+    "precipitation", "price_high", "price_low", "price_record_high",
+    "price_record_low", "ranking", "release_date", "result", "revenue", "rt_score", "runs",
+    "snowfall", "subscriber_count", "touchdowns", "tweet_count",
+    "unemployment_rate", "victory_margin", "vote_share", "wins",
+})
+_MEASURE_ALIASES = {
+    "fed_funds_rate": "interest_rate",
+    "margin": "victory_margin",
+    "market_capitalization": "market_cap",
+    "rotten_tomatoes_score": "rt_score",
+    "subscribers": "subscriber_count",
+}
 
 # Comparator vocabulary. Closed set — an unrecognised comparator becomes None
 # rather than dropping the frame, because a measure+value with an unreadable
@@ -79,21 +102,63 @@ NO_SUBJECT_MARKER = "unresolved:__none__"
 DROP_ABSENT = "absent"
 DROP_NOT_AN_OBJECT = "not_an_object"
 DROP_NO_MEASURE = "no_measure"
+DROP_UNKNOWN_MEASURE = "unknown_measure"
+DROP_VALUE_NOT_NUMERIC = "value_not_numeric"
+DROP_VALUE_IS_DATE = "value_is_date"
 DROP_VALUE_NOT_IN_TITLE = "value_not_in_title"
 DROP_UNIT_NOT_IN_TITLE = "unit_not_in_title"
 
 _WS = re.compile(r"\s+")
 _MEASURE_STRIP = re.compile(r"[^a-z0-9_]+")
+_NULL_TOKENS = {"", "null", "none", "n/a"}
+_NUMBER = re.compile(
+    r"[+\-−]?(?:(?:[0-9]{1,3}(?:,[0-9]{3})+|[0-9]+)(?:\.[0-9]+)?|\.[0-9]+)[kmbt]?",
+    re.IGNORECASE,
+)
+_MONTH_NAME = (
+    r"Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|"
+    r"Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?"
+)
+_TITLE_DATES = re.compile(
+    rf"\b(?:(?:{_MONTH_NAME})\.?\s+"
+    r"(?:[0-9]{1,2}(?:st|nd|rd|th)?(?:,?\s+[0-9]{4})?|[0-9]{4})"
+    r"|[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}"
+    r"|[0-9]{4}[-–][0-9]{2,4}(?:-[0-9]{2})?)\b",
+    re.IGNORECASE,
+)
+_BARE_YEAR = re.compile(r"(?<![\w.+\-−])(?:19|20|21)[0-9]{2}(?!\w|\.\d)")
+_CURRENCY_SIGNS = ("$", "£", "€", "¥", "₹", "₩")
+_AFTER_YEAR_UNIT = re.compile(
+    r"\s*(?:[%°]|(?:USD|EUR|GBP|JPY|CAD|AUD|dollars?|cents?|basis points?|bps|"
+    r"points?|runs?|goals?|votes?|fans?|people|views?|subscribers?|followers?|"
+    r"games?|wins?|days?|hours?|minutes?|seconds?|miles?|kilomet(?:er|re)s?|"
+    r"yards?|feet|meters?|units?|cases?|million|billion|trillion)\b)",
+    re.IGNORECASE,
+)
+_WINDOW_DATE_FORMATS = (
+    ("%Y-%m-%d", "%Y-%m-%d"),
+    ("%m/%d/%Y", "%Y-%m-%d"),
+    ("%Y-%m", "%Y-%m"),
+    ("%Y", "%Y"),
+    ("%B %d, %Y", "%Y-%m-%d"),
+    ("%b %d, %Y", "%Y-%m-%d"),
+    ("%B %d %Y", "%Y-%m-%d"),
+    ("%b %d %Y", "%Y-%m-%d"),
+    ("%B %Y", "%Y-%m"),
+    ("%b %Y", "%Y-%m"),
+)
+_MONTH_DAY_FORMATS = ("%B %d", "%b %d")
 
 
-def normalize_measure(value: Any, *, max_len: int = 40) -> str | None:
-    """Lowercase snake_case measure token, or None when unusable."""
+def normalize_measure(value: Any) -> str | None:
+    """Return the canonical measure only when the vocabulary defines it."""
     if not isinstance(value, str):
         return None
     token = _WS.sub("_", value.strip().lower())
     token = _MEASURE_STRIP.sub("_", token).strip("_")
     token = re.sub(r"_{2,}", "_", token)
-    return token[:max_len] or None
+    token = _MEASURE_ALIASES.get(token, token)
+    return token if token in MEASURES else None
 
 
 def normalize_comparator(value: Any) -> str | None:
@@ -118,23 +183,55 @@ def normalize_horizon_kind(value: Any) -> str | None:
 
 
 def normalize_value(value: Any) -> str | None:
-    """Render an extracted value as the string we will look for in the title.
-
-    Numbers arrive as JSON ints/floats or as strings. A float that is integral
-    renders without its ``.0`` (json gives ``70.0`` for a title's ``70``).
-    """
-    if value is None or isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return str(value)
-    if isinstance(value, float):
-        return str(int(value)) if value.is_integer() else repr(value)
-    if isinstance(value, str):
+    """Accept a finite numeric token, preserving commas, signs and magnitudes."""
+    if type(value) is int:
+        token = str(value)
+    elif isinstance(value, float) and math.isfinite(value):
+        token = str(int(value)) if value.is_integer() else repr(value)
+    elif isinstance(value, str):
         token = value.strip()
-        if not token or token.lower() in {"null", "none", "n/a"}:
-            return None
-        return token[:40]
+    else:
+        return None
+    return token if len(token) <= 40 and _NUMBER.fullmatch(token) else None
+
+
+def _supplied(raw: Any) -> bool:
+    return raw is not None and (not isinstance(raw, str) or raw.strip().lower() not in _NULL_TOKENS)
+
+
+def _normalize_window_date(raw: Any, title: str) -> str | None:
+    """Keep only a date stated in the title, at the precision it gives."""
+    if not isinstance(raw, str) or len(raw) > 40:
+        return None
+    token = raw.strip()
+    if not value_appears_in_title(token, title):
+        return None
+    token = re.sub(r"(?<=\d)(?:st|nd|rd|th)\b", "", token, flags=re.IGNORECASE)
+    token = re.sub(r"(?<=[A-Za-z])\.(?=\s)", "", token)
+    token = re.sub(r"\bSept\b", "Sep", token, flags=re.IGNORECASE)
+    for source_format, target_format in _WINDOW_DATE_FORMATS:
+        try:
+            return datetime.strptime(token, source_format).strftime(target_format)
+        except ValueError:
+            continue
+    for source_format in _MONTH_DAY_FORMATS:
+        try:
+            # Use a leap year to validate month and day without inventing a year.
+            return datetime.strptime(f"{token} 2000", f"{source_format} %Y").strftime("--%m-%d")
+        except ValueError:
+            continue
     return None
+
+
+def _title_without_dates(title: str) -> str:
+    def keep_quantified_year(match: re.Match) -> str:
+        if match.string[:match.start()].rstrip().endswith(_CURRENCY_SIGNS):
+            return match[0]
+        if _AFTER_YEAR_UNIT.match(match.string, match.end()):
+            return match[0]
+        return " "
+
+    return _BARE_YEAR.sub(keep_quantified_year, _TITLE_DATES.sub(" ", title))
 
 
 def value_appears_in_title(value: str, title: str) -> bool:
@@ -154,13 +251,18 @@ def value_appears_in_title(value: str, title: str) -> bool:
     """
     if not value or not title:
         return False
+    numeric = _NUMBER.fullmatch(value)
+    left = r"(?<![+\-−])(?<!\d,)" if numeric else ""
+    right = r"(?!,\d{3}(?:\D|$))" if numeric else ""
     pattern = re.compile(
-        r"(?<![0-9A-Za-z.])(?<!\d-)" + re.escape(value) + r"(?![0-9A-Za-z])(?!\.\d)",
+        r"(?<![0-9A-Za-z.])(?<!\d-)" + left + re.escape(value)
+        + r"(?![0-9A-Za-z])(?!\.\d)" + right,
         re.IGNORECASE,
     )
     if pattern.search(title):
         return True
-    return bool(pattern.search(title.replace(",", "")))
+    grouped_title = re.sub(r"(?<=\d),(?=\d{3}(?:\D|$))", "", title)
+    return grouped_title != title and bool(pattern.search(grouped_title))
 
 
 def unit_appears_in_title(unit: str, title: str) -> bool:
@@ -189,14 +291,15 @@ def unit_appears_in_title(unit: str, title: str) -> bool:
 
 
 def sanitize_cu_frame(
-    raw: Any, *, title: str | None
+    raw: Any, *, title: str | None, slot_drops: dict[str, str] | None = None
 ) -> tuple[dict[str, Any] | None, str | None]:
     """Validate the LLM's frame against the title.
 
     Returns ``(frame, drop_reason)``. Exactly one is non-None: a surviving frame
-    carries all five slots (``measure`` always populated, the rest nullable), and
+    carries all frame slots (``measure`` always populated, the rest nullable), and
     a dropped frame carries the reason it was dropped so the writer can count
-    invariant violations apart from frames the model simply did not emit.
+    invariant violations apart from frames the model simply did not emit. The
+    optional slot log records rejected inputs on an otherwise valid frame.
     """
     if raw is None:
         return None, DROP_ABSENT
@@ -205,28 +308,39 @@ def sanitize_cu_frame(
 
     measure = normalize_measure(raw.get("measure"))
     if not measure:
-        return None, DROP_NO_MEASURE
+        return None, DROP_UNKNOWN_MEASURE if _supplied(raw.get("measure")) else DROP_NO_MEASURE
 
     title_text = title or ""
 
-    value = normalize_value(raw.get("value"))
+    raw_value = raw.get("value")
+    value = normalize_value(raw_value)
+    if value is None and _supplied(raw_value):
+        return None, DROP_VALUE_NOT_NUMERIC
     if value is not None and not value_appears_in_title(value, title_text):
         return None, DROP_VALUE_NOT_IN_TITLE
+    if value is not None and not value_appears_in_title(value, _title_without_dates(title_text)):
+        return None, DROP_VALUE_IS_DATE
 
-    unit = raw.get("unit")
-    unit = unit.strip()[:20] if isinstance(unit, str) and unit.strip() else None
-    if unit is not None and unit.lower() in {"null", "none", "n/a"}:
-        unit = None
+    raw_unit = raw.get("unit")
+    unit = raw_unit.strip() if isinstance(raw_unit, str) and _supplied(raw_unit) else None
+    if _supplied(raw_unit) and (unit is None or len(unit) > 20):
+        return None, DROP_UNIT_NOT_IN_TITLE
     if unit is not None and not unit_appears_in_title(unit, title_text):
         return None, DROP_UNIT_NOT_IN_TITLE
 
-    return {
+    frame = {
         "measure": measure,
         "comparator": normalize_comparator(raw.get("comparator")),
         "value": value,
         "unit": unit,
         "horizon_kind": normalize_horizon_kind(raw.get("horizon_kind")),
-    }, None
+        "window_date": _normalize_window_date(raw.get("window_date"), title_text),
+    }
+    if slot_drops is not None:
+        for slot in ("comparator", "horizon_kind", "window_date"):
+            if frame[slot] is None and _supplied(raw.get(slot)):
+                slot_drops[slot] = "invalid_window_date" if slot == "window_date" else "unknown_token"
+    return frame, None
 
 
 def clean_entity_mentions(raw: Any, *, max_items: int = 8) -> list[dict[str, str]]:

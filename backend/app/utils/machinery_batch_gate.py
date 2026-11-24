@@ -512,11 +512,65 @@ def _scan_number_cells_for_ellipsis(obj: Mapping[str, Any], *, prefix: str) -> l
     return out
 
 
+def _norm_card_copy(val: Any) -> str:
+    return " ".join(str(val or "").split()).casefold()
+
+
+def _check_duplicate_card_headline(
+    card: Optional[Mapping[str, Any]],
+    feed_item: Optional[Mapping[str, Any]],
+) -> list[GateViolation]:
+    """Ensure secondary text slots on a Discover card do not repeat its headline."""
+    data = feed_item.get("data") if isinstance(feed_item, Mapping) and isinstance(feed_item.get("data"), Mapping) else {}
+    roundup = data.get("roundup") if isinstance(data.get("roundup"), Mapping) else {}
+    paired = roundup.get("paired_metric_set") if isinstance(roundup.get("paired_metric_set"), Mapping) else None
+    cref = data.get("collection_ref") if isinstance(data.get("collection_ref"), Mapping) else {}
+
+    raw_headline = ""
+    if paired is not None:
+        raw_headline = str(paired.get("title") or "").strip()
+    if not raw_headline and isinstance(card, Mapping):
+        raw_headline = str(card.get("title") or "").strip()
+    if not raw_headline and isinstance(feed_item, Mapping):
+        raw_headline = str(feed_item.get("headline") or "").strip()
+
+    norm_headline = _norm_card_copy(raw_headline)
+    if not norm_headline:
+        return []
+
+    secondary_slots: list[tuple[str, Any]] = []
+    if isinstance(card, Mapping):
+        for field_name in ("kicker", "subtitle", "footer"):
+            secondary_slots.append((f"card.{field_name}", card.get(field_name)))
+        mini_chart = card.get("mini_chart")
+        if isinstance(mini_chart, Mapping):
+            secondary_slots.append(("card.mini_chart.title", mini_chart.get("title")))
+    if paired is not None:
+        for field_name in ("kicker", "subtitle", "footer_note"):
+            secondary_slots.append((f"paired_metric_set.{field_name}", paired.get(field_name)))
+        secondary_slots.append(("collection_ref.name", cref.get("name")))
+
+    violations: list[GateViolation] = []
+    for location, candidate_val in secondary_slots:
+        candidate_text = str(candidate_val or "").strip()
+        if candidate_text and _norm_card_copy(candidate_text) == norm_headline:
+            violations.append(
+                GateViolation(
+                    rule="duplicate_card_headline",
+                    location=location,
+                    detail=f"Secondary card slot {location} repeats the card headline",
+                    text=candidate_text,
+                )
+            )
+    return violations
+
+
 def check_machinery_wording(
     card: Optional[Mapping[str, Any]] = None,
     *,
     container: Optional[Mapping[str, Any]] = None,
     definition: Optional[Mapping[str, Any]] = None,
+    feed_item: Optional[Mapping[str, Any]] = None,
     slug: str = "",
     max_headline_lines_390px: int = MAX_HEADLINE_LINES_390PX,
 ) -> WordingCheckResult:
@@ -782,6 +836,9 @@ def check_machinery_wording(
                                         check_row_rules=False,
                                     )
                                 )
+
+    if isinstance(card, Mapping) or isinstance(feed_item, Mapping):
+        errors.extend(_check_duplicate_card_headline(card, feed_item))
 
     # Deduplicate identical violations while preserving order.
     deduped: list[GateViolation] = []
@@ -1460,6 +1517,7 @@ async def audit_public_assembly_for_definition(
         card=card,
         container=container_payload,
         definition=definition,
+        feed_item=feed_item,
         slug=slug,
     )
     picture_res = audit_picture_policy_for_definition(definition, card=card)

@@ -285,7 +285,7 @@ struct EventDetailView: View {
             // fit, never a name cut in half ("RMA vs Dubai Bas…").
             ViewThatFits(in: .horizontal) {
                 Text(scorelessTitle).font(.headline).lineLimit(1)
-                Text(scorelessCompactTitle).font(.headline).lineLimit(1)
+                Text(scorelessCompactTitle).font(.headline).lineLimit(1).minimumScaleFactor(0.65)
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(dynamicTitle)
@@ -301,6 +301,7 @@ struct EventDetailView: View {
             Text(c.homeScore).layoutPriority(1)
         }
         .font(.headline)
+        .minimumScaleFactor(0.65)
     }
     #endif
 
@@ -369,9 +370,18 @@ struct EventDetailView: View {
                     ToolbarItem(placement: .confirmationAction) {
                         HStack(spacing: 4) {
                             ShareLink(item: shareURL) {
+                                // #11177 — Pin's 44 pt tap target (`#10880` / `5d3931e735`):
+                                // `.plain` escapes the toolbar's 36 pt cap so the control is
+                                // 44×44, and `.primary` keeps Share's toolbar ink instead of
+                                // accent blue.
                                 Image(systemName: "square.and.arrow.up")
                                     .font(.system(size: 14))
+                                    .foregroundStyle(.primary)
+                                    .frame(width: 44, height: 44)
+                                    .contentShape(Rectangle())
                             }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Share")
                             .recordsShareOpened {
                                 ShareInstrumentation.recordShareOpened(
                                     itemType: "event",

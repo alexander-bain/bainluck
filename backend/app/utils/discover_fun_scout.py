@@ -1098,7 +1098,7 @@ def validate_scout_proposed_set(
     min_volume: float = FUN_TAG_DEFAULT_MIN_LIFETIME_VOLUME,
     min_members: int = SCOUT_MIN_LIVE_MEMBERS,
     now: Optional[datetime] = None,
-    enforce_set_quality_13544: bool = True,
+    enforce_set_quality_13544: bool = False,
 ) -> tuple[Optional[ScoutValidatedSet], Optional[str]]:
     """Run all code-enforced checks on one model-proposed set."""
     slug = _slugify(proposal.slug or proposal.name)

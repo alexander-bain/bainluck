@@ -30,6 +30,32 @@ nonisolated struct SourceMark: Decodable, Equatable, Sendable {
         let observedAt: String?
         /// Sportsbooks only: how many books the line stands for.
         var count: Int? = nil
+
+        init(key: String, name: String, probability: Double?, observedAt: String?, count: Int? = nil) {
+            self.key = key
+            self.name = name
+            self.probability = probability
+            self.observedAt = observedAt
+            self.count = count
+        }
+
+        private nonisolated struct DynamicKey: CodingKey {
+            var stringValue: String
+            var intValue: Int? { nil }
+            init(_ string: String) { self.stringValue = string }
+            init?(stringValue: String) { self.stringValue = stringValue }
+            init?(intValue: Int) { return nil }
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: DynamicKey.self)
+            self.key = try c.decode(String.self, forKey: DynamicKey("key"))
+            self.name = try c.decode(String.self, forKey: DynamicKey("name"))
+            self.probability = try c.decodeIfPresent(Double.self, forKey: DynamicKey("probability"))
+            self.observedAt = (try? c.decodeIfPresent(String.self, forKey: DynamicKey("observedAt")))
+                ?? (try? c.decodeIfPresent(String.self, forKey: DynamicKey("observed_at")))
+            self.count = try c.decodeIfPresent(Int.self, forKey: DynamicKey("count"))
+        }
     }
 
     nonisolated struct Settled: Decodable, Equatable, Sendable {
@@ -38,22 +64,44 @@ nonisolated struct SourceMark: Decodable, Equatable, Sendable {
         let at: String?
     }
 
+    /// Optional dev-only metadata (`#11920` rev 2, Dev Signal C): omitted on public payloads,
+    /// decoded leniently when present so the owner-only dev overlay can inspect breadth and weights.
+    nonisolated struct Dev: Decodable, Equatable, Sendable {
+        let of: Int?
+        let missing: [String]?
+        let weights: [String: Double]?
+
+        init(of: Int? = nil, missing: [String]? = nil, weights: [String: Double]? = nil) {
+            self.of = of
+            self.missing = missing
+            self.weights = weights
+        }
+    }
+
     let state: State
     let sources: [Source]
     let settled: Settled?
     let method: String?
+    var dev: Dev? = nil
 
-    init(state: State, sources: [Source], settled: Settled? = nil, method: String? = nil) {
+    init(
+        state: State,
+        sources: [Source],
+        settled: Settled? = nil,
+        method: String? = nil,
+        dev: Dev? = nil
+    ) {
         self.state = state
         self.sources = sources
         self.settled = settled
         self.method = method
+        self.dev = dev
     }
 
-    private enum CodingKeys: String, CodingKey { case state, sources, settled, method }
+    private enum CodingKeys: String, CodingKey { case state, sources, settled, method, dev }
 
     /// Decodes `[Source]` element by element so one bad entry drops alone.
-    private struct Lenient<T: Decodable>: Decodable {
+    private nonisolated struct Lenient<T: Decodable>: Decodable {
         let value: T?
         init(from decoder: Decoder) throws { value = try? T(from: decoder) }
     }
@@ -61,7 +109,7 @@ nonisolated struct SourceMark: Decodable, Equatable, Sendable {
     init(from decoder: Decoder) throws {
         // Not an object at all: no mark, and the row it rides on still decodes.
         guard let c = try? decoder.container(keyedBy: CodingKeys.self) else {
-            state = .unknown; sources = []; settled = nil; method = nil
+            state = .unknown; sources = []; settled = nil; method = nil; dev = nil
             return
         }
         switch (try? c.decodeIfPresent(String.self, forKey: .state)) ?? nil {
@@ -75,6 +123,7 @@ nonisolated struct SourceMark: Decodable, Equatable, Sendable {
             .compactMap(\.value) ?? []
         settled = (try? c.decodeIfPresent(Settled.self, forKey: .settled)) ?? nil
         method = (try? c.decodeIfPresent(String.self, forKey: .method)) ?? nil
+        dev = (try? c.decodeIfPresent(Dev.self, forKey: .dev)) ?? nil
     }
 
     /// Does this mark draw at all? Only when the sheet would have something to

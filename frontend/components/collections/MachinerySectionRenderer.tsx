@@ -1026,6 +1026,64 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
 
       {!card.image_url && card.mini_chart && <SingleHistoryChartCard chart={card.mini_chart} compact />}
 
+      {card.form_id === "contender_spotlight" && !isEventCard && !card.scale_ordered && card.rows.length >= 2 ? (
+        (() => {
+          const topThree = card.rows.slice(0, 3);
+          const podiumAnyPoster = topThree.some(
+            (r) => (r.art as MachinerySubjectArt | undefined)?.kind === "tmdb_poster",
+          );
+          const podiumAnyArt = topThree.some((r) =>
+            Boolean((r.art as MachinerySubjectArt | undefined)?.url),
+          );
+          return (
+            <div className="mt-3 grid grid-cols-3 gap-2">
+              {topThree.map((r, idx) => {
+                const oid = Number(r.outcome_id ?? idx);
+                const name = String(r.name ?? "");
+                const pct = Number(r.rendered_percent ?? 0);
+                const art = r.art as MachinerySubjectArt | undefined;
+                const isPoster = art?.kind === "tmdb_poster";
+                return (
+                  <div
+                    key={oid}
+                    data-testid="machinery-spotlight-tile"
+                    className="flex flex-col items-center rounded-lg border border-surface-border bg-surface-elevated/40 p-2 text-center"
+                  >
+                    <div className="mb-1 flex w-full items-center justify-between text-[10px] font-semibold uppercase tracking-wide text-text-muted">
+                      <span>#{idx + 1}</span>
+                      <span className="text-xs font-extrabold tabular-nums text-text-primary">
+                        {pct}%
+                      </span>
+                    </div>
+                    {podiumAnyArt && (
+                      <SubjectAvatar
+                        art={art}
+                        label={name}
+                        sizeClass={podiumAnyPoster ? "h-12 w-8" : "h-10 w-10"}
+                        widthClass={podiumAnyPoster ? "w-8 h-12" : "w-10 h-10"}
+                        poster={isPoster}
+                        reserveSlotWhenMissing
+                      />
+                    )}
+                    <div className="mt-1.5 line-clamp-2 break-words text-[11px] font-semibold leading-tight text-text-primary">
+                      {name}
+                    </div>
+                    <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-surface-elevated">
+                      <div
+                        className="h-full rounded-full bg-accent-brand"
+                        style={{
+                          width: `${Math.max(6, Math.min(100, pct))}%`,
+                          backgroundColor: art?.accent_color || undefined,
+                        }}
+                      />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()
+      ) : (
       <div className="mt-3 divide-y divide-surface-border">
         {isEventCard
           ? card.rows.map((r) => {
@@ -1149,6 +1207,7 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
               );
             })}
       </div>
+      )}
 
       <div className="mt-3 flex flex-col gap-1 border-t border-surface-border pt-2.5 text-xs text-text-secondary">
         {card.selection_note ? (

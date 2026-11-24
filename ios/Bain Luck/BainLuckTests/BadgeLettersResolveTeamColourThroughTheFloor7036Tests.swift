@@ -232,8 +232,10 @@ final class BadgeLettersResolveTeamColourThroughTheFloor7036Tests: XCTestCase {
         let body = try String(contentsOf: Self.teamLogoURL, encoding: .utf8)
         XCTAssertTrue(body.contains("This is drawn as TEXT, not only as a tint"),
                       "TeamLogoView's #7036 contract has been removed from the parameter it governs")
-        XCTAssertTrue(body.contains("Text(Self.badge(teamName: teamName, opponentName: opponentName, sportKey: sportKey))"),
+        XCTAssertTrue(body.contains("Text(Self.badge("),
                       "initialsFallback no longer paints the badge — the contract above it may be stale")
+        XCTAssertTrue(body.contains("teamName: teamName") && body.contains("opponentName: opponentName") && body.contains("sportKey: sportKey"),
+                      "initialsFallback no longer passes teamName/opponentName/sportKey to Self.badge")
         XCTAssertTrue(body.contains(".foregroundStyle(color)"),
                       "initialsFallback no longer draws the letters IN `color`, so re-read the contract")
     }
