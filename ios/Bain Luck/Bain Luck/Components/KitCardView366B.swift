@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Ruling 366: B / #13551 — Layout-generic Kit v1 card view (`stack`, `grid`, and in 6B `axis`/`calendar`).
+/// Ruling 366: B / #13551 — Layout-generic Kit v1 card view (`stack`, `grid`, `calendar`, `axis`).
 ///
 /// Renders strictly from `spec.layout` and the 8 shared marks. Never inspects `spec.variant`.
 /// Public readers cannot reach this view yet (`363: A`: blind grade required before wiring).
@@ -10,13 +10,10 @@ struct KitCardView366B: View {
 
     @Environment(\.colorScheme) private var colorScheme
 
-    /// Layouts implemented on the current milestone (`stack` and `grid`; `axis` / `calendar` arrive in 6B).
     static func supportsLayout(_ layout: KitV1Layout) -> Bool {
         switch layout {
-        case .stack, .grid:
+        case .stack, .grid, .calendar, .axis:
             return true
-        case .calendar, .axis:
-            return false
         }
     }
 
@@ -63,8 +60,10 @@ struct KitCardView366B: View {
                 defaultRoute: spec.route,
                 onRoute: onRoute
             )
-        case .calendar, .axis:
-            EmptyView()
+        case .calendar(let calendarBody):
+            KitCalendarBodyView366B(calendarBody: calendarBody)
+        case .axis(let axisBody):
+            KitAxisBodyView366B(axisBody: axisBody)
         }
     }
 
@@ -500,6 +499,259 @@ struct KitGridBodyView366B: View {
                 content
             }
         }
+    }
+}
+
+// MARK: - 3. Calendar Body Layout
+
+struct KitCalendarBodyView366B: View {
+    let calendarBody: KitV1CalendarBody
+
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if let headers = calendarBody.headerMarks, !headers.isEmpty {
+                HStack(alignment: .center, spacing: 8) {
+                    ForEach(Array(headers.enumerated()), id: \.offset) { idx, mark in
+                        KitMarkView366B(mark: mark)
+                        if idx < headers.count - 1 {
+                            Spacer(minLength: 4)
+                        }
+                    }
+                }
+            }
+
+            if dynamicTypeSize.isAccessibilitySize {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 72), spacing: 6)], spacing: 8) {
+                    ForEach(calendarBody.days, id: \.dateKey) { day in
+                        dayColumn(day)
+                    }
+                }
+            } else {
+                HStack(alignment: .top, spacing: 4) {
+                    ForEach(calendarBody.days, id: \.dateKey) { day in
+                        dayColumn(day)
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+            }
+
+            if let footers = calendarBody.footerMarks, !footers.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(footers.enumerated()), id: \.offset) { _, mark in
+                        KitMarkView366B(mark: mark)
+                    }
+                }
+            }
+        }
+    }
+
+    private func dayColumn(_ day: KitV1CalendarDay) -> some View {
+        VStack(spacing: 3) {
+            ForEach(Array(day.marks.enumerated()), id: \.offset) { _, mark in
+                switch mark {
+                case .tile(let tile):
+                    KitTileMarkView366B(mark: tile, compact: true)
+                default:
+                    KitMarkView366B(mark: mark)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                }
+            }
+        }
+    }
+}
+
+// MARK: - 4. Axis Body Layout
+
+struct KitAxisBodyView366B: View {
+    let axisBody: KitV1AxisBody
+
+    @Environment(\.colorScheme) private var colorScheme
+
+    private var dots: [KitV1DotMark] {
+        (axisBody.marks ?? []).compactMap {
+            if case .dot(let d) = $0 { return d }
+            return nil
+        }
+    }
+
+    private var lines: [KitV1LineMark] {
+        (axisBody.marks ?? []).compactMap {
+            if case .line(let l) = $0 { return l }
+            return nil
+        }
+    }
+
+    private var elevatedDots: [KitV1DotMark] {
+        dots.filter { $0.picture != nil && $0.yLane != nil }
+    }
+
+    private var baseDots: [KitV1DotMark] {
+        dots.filter { !($0.picture != nil && $0.yLane != nil) }
+    }
+
+    private var maxLane: Int {
+        Int((elevatedDots.compactMap(\.yLane).max() ?? 0).rounded())
+    }
+
+    private var trackHeight: CGFloat {
+        CGFloat(maxLane + 1) * 24 + 80
+    }
+
+    private func xFraction(_ value: Double) -> CGFloat {
+        let span = max(1e-6, axisBody.scale.max - axisBody.scale.min)
+        let raw = (value - axisBody.scale.min) / span
+        return CGFloat(min(1.0, max(0.0, raw)))
+    }
+
+    private func clampedX(_ value: Double, width: CGFloat, inset: CGFloat = 12) -> CGFloat {
+        let usable = max(1, width - inset * 2)
+        return inset + usable * xFraction(value)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if !dots.isEmpty {
+                axisPlotView
+            }
+
+            if !lines.isEmpty && dots.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                        KitLineMarkView366B(mark: line)
+                    }
+                    HStack {
+                        ForEach(Array(axisBody.scale.ticks.enumerated()), id: \.offset) { idx, tick in
+                            Text(tick.label)
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(KitTones366B.textColor(for: .muted, scheme: colorScheme))
+                            if idx < axisBody.scale.ticks.count - 1 {
+                                Spacer(minLength: 4)
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let series = axisBody.series, !series.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(series, id: \.id) { row in
+                        VStack(alignment: .leading, spacing: 4) {
+                            if let leading = row.leading, !leading.isEmpty {
+                                HStack(alignment: .center, spacing: 8) {
+                                    ForEach(Array(leading.enumerated()), id: \.offset) { _, mark in
+                                        KitMarkView366B(mark: mark)
+                                    }
+                                }
+                            }
+                            HStack(alignment: .center, spacing: 8) {
+                                ForEach(Array(row.marks.enumerated()), id: \.offset) { _, mark in
+                                    KitMarkView366B(mark: mark)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let summaries = axisBody.summaryMarks, !summaries.isEmpty {
+                HStack(alignment: .center, spacing: 8) {
+                    ForEach(Array(summaries.enumerated()), id: \.offset) { idx, mark in
+                        KitMarkView366B(mark: mark)
+                        if idx < summaries.count - 1 {
+                            Spacer(minLength: 4)
+                        }
+                    }
+                }
+            }
+
+            if let footers = axisBody.footerMarks, !footers.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(footers.enumerated()), id: \.offset) { _, mark in
+                        KitMarkView366B(mark: mark)
+                    }
+                }
+            }
+        }
+    }
+
+    private var axisPlotView: some View {
+        let totalH = trackHeight
+        let baselineY = totalH - 24
+        let ticks = axisBody.scale.ticks
+
+        return GeometryReader { geo in
+            let w = geo.size.width
+            ZStack(alignment: .topLeading) {
+                if let band = axisBody.highlightBand {
+                    let loX = clampedX(band.lo, width: w, inset: 8)
+                    let hiX = clampedX(band.hi, width: w, inset: 8)
+                    let bandW = max(24, hiX - loX)
+                    ZStack(alignment: .top) {
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(KitTones366B.elevatedBackground(for: colorScheme).opacity(0.9))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .stroke(KitTones366B.divider(for: colorScheme), lineWidth: 1)
+                            )
+                        Text(band.label.uppercased())
+                            .font(.caption2.weight(.semibold))
+                            .tracking(0.6)
+                            .foregroundStyle(KitTones366B.textColor(for: .muted, scheme: colorScheme))
+                            .padding(.top, 5)
+                    }
+                    .frame(width: bandW, height: baselineY)
+                    .offset(x: loX, y: 0)
+                }
+
+                Rectangle()
+                    .fill(KitTones366B.cardBorder(for: colorScheme))
+                    .frame(width: max(1, w - 16), height: 1.5)
+                    .offset(x: 8, y: baselineY)
+
+                ForEach(Array(baseDots.enumerated()), id: \.offset) { idx, dot in
+                    let px = clampedX(dot.x, width: w, inset: 10)
+                    let py = baselineY - 7 - CGFloat(idx % 3) * 5
+                    Circle()
+                        .fill(KitTones366B.barColor(
+                            hex: dot.color?.light,
+                            darkHex: dot.colorDark ?? dot.color?.dark,
+                            fallbackIndex: idx,
+                            scheme: colorScheme
+                        ))
+                        .overlay(Circle().stroke(KitTones366B.cardBackground(for: colorScheme), lineWidth: 1.25))
+                        .frame(width: 9, height: 9)
+                        .position(x: px, y: py)
+                        .accessibilityLabel(dot.label)
+                }
+
+                ForEach(Array(elevatedDots.enumerated()), id: \.offset) { _, dot in
+                    let lane = CGFloat(max(0, Int((dot.yLane ?? 0).rounded())))
+                    let px = clampedX(dot.x, width: w, inset: 14)
+                    let py = baselineY - 26 - lane * 24
+                    if let pic = dot.picture {
+                        KitPictureMarkView366B(mark: pic)
+                            .position(x: px, y: py)
+                            .accessibilityLabel(dot.label)
+                    }
+                }
+
+                ForEach(Array(ticks.enumerated()), id: \.offset) { idx, tick in
+                    let tx: CGFloat = {
+                        if idx == 0 { return 16 }
+                        if idx == ticks.count - 1 { return max(16, w - 20) }
+                        return clampedX(tick.x, width: w, inset: 18)
+                    }()
+                    Text(tick.label)
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(KitTones366B.textColor(for: .muted, scheme: colorScheme))
+                        .fixedSize(horizontal: true, vertical: false)
+                        .position(x: tx, y: totalH - 10)
+                }
+            }
+        }
+        .frame(height: totalH)
     }
 }
 

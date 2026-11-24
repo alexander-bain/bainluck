@@ -374,26 +374,22 @@ final class KitV1Renderer366BTests: XCTestCase {
         XCTAssertTrue(joined.contains("34%") && joined.contains("26%"), "Fallback card must show real percents: \(joined)")
         XCTAssertFalse(joined.contains("0%"), "Fallback card must never show 0%: \(joined)")
         assertZeroEllipsis(lines: lines, context: "refusal fallback")
-        try maybeExportPNG(fallbackImg, filename: "kit6a-refusal-fallback-light-390.png")
+        try maybeExportPNG(fallbackImg, filename: "kit6b-refusal-fallback-light-390.png")
         #endif
     }
 
-    // MARK: - 3. Milestone 6A Render Parity (`stack + grid`, Light & Dark, 390pt)
+    // MARK: - 3. Milestone 6B Full Render Parity (All 4 Layouts / 8 Examples, Light & Dark, 390pt)
 
-    func testStackAndGridCardsRenderCleanlyLightAndDarkAt390pt() async throws {
+    func testAllEightGoldenExamplesRenderCleanlyLightAndDarkAt390pt() async throws {
         let items = try loadGoldenItems()
-        let milestoneItems = items.filter {
-            let layout = ($0["layout"] as? String) ?? ""
-            return layout == "stack" || layout == "grid"
-        }
-        XCTAssertEqual(milestoneItems.count, 6, "Expected 4 stack + 2 grid examples in Milestone 6A")
+        XCTAssertEqual(items.count, 8, "Expected all 8 worked examples (stack, grid, axis, calendar)")
 
-        let urls = collectHTTPSImageURLs(in: milestoneItems)
+        let urls = collectHTTPSImageURLs(in: items)
         let preloaded = await preloadImages(for: urls)
-        XCTAssertFalse(preloaded.isEmpty, "Expected CDN artwork preloaded for Milestone 6A sheets")
+        XCTAssertFalse(preloaded.isEmpty, "Expected CDN artwork preloaded for Milestone 6B sheets")
 
         #if canImport(UIKit)
-        for rawItem in milestoneItems {
+        for rawItem in items {
             let id = try XCTUnwrap(rawItem["id"] as? String)
             let data = try JSONSerialization.data(withJSONObject: rawItem)
             let spec = try XCTUnwrap(KitV1CardSpec.parse(from: data))
@@ -402,6 +398,12 @@ final class KitV1Renderer366BTests: XCTestCase {
             variantRemoved.removeValue(forKey: "variant")
             let noVariantSpec = try XCTUnwrap(
                 KitV1CardSpec.parse(from: JSONSerialization.data(withJSONObject: variantRemoved))
+            )
+
+            var variantRenamed = rawItem
+            variantRenamed["variant"] = "unheard_of_future_bracket_2027"
+            let renamedVariantSpec = try XCTUnwrap(
+                KitV1CardSpec.parse(from: JSONSerialization.data(withJSONObject: variantRenamed))
             )
 
             for scheme in [ColorScheme.light, ColorScheme.dark] {
@@ -422,22 +424,30 @@ final class KitV1Renderer366BTests: XCTestCase {
                     XCTAssertTrue(joined.contains("66%") && joined.contains("81%"), "Expected deadline percents on \(id) (\(scheme)); got: \(joined)")
                 } else if id == "kit-elon-side-quests" {
                     XCTAssertTrue(joined.contains("1 in 8") || joined.contains("1in8"), "Expected '1 in 8' beside 12% (\(scheme)); got: \(joined)")
+                } else if id == "kit-nhl-playoffs-bubble" {
+                    XCTAssertTrue(joined.contains("0%") && joined.contains("50%") && joined.contains("100%"), "Expected axis scale ticks on \(id) (\(scheme)); got: \(joined)")
+                    XCTAssertTrue(joined.contains("OTT 73%"), "Expected elevated bubble team percents on \(id) (\(scheme)); got: \(joined)")
+                    XCTAssertTrue(joined.contains("9 at 25%") && joined.contains("10 at 75%"), "Expected axis summary marks on \(id) (\(scheme)); got: \(joined)")
+                } else if id == "kit-spotify-wrapped-2026" {
+                    XCTAssertTrue(joined.contains("Nov") && joined.contains("67%") && joined.contains("Dec"), "Expected calendar strip dates and peak percent on \(id) (\(scheme)); got: \(joined)")
                 }
 
-                // Variant-agnostic render check (Light check is sufficient per scheme parity):
+                // Variant-agnostic pixel parity across all 8 examples (both missing and renamed variant):
                 if scheme == .light {
+                    let baselinePNG = img.pngData()
                     let noVariantCard = try XCTUnwrap(KitCardView366B(spec: noVariantSpec))
                         .environment(\.kitPreloadedImages366B, preloaded)
                     let (noVarImg, _) = try renderAndRecognize(view: noVariantCard, scheme: .light)
-                    XCTAssertEqual(
-                        img.pngData(),
-                        noVarImg.pngData(),
-                        "Rendered PNG must be byte-identical when variant is missing on \(id)"
-                    )
+                    XCTAssertEqual(baselinePNG, noVarImg.pngData(), "Rendered PNG must be identical when variant is removed on \(id)")
+
+                    let renamedVariantCard = try XCTUnwrap(KitCardView366B(spec: renamedVariantSpec))
+                        .environment(\.kitPreloadedImages366B, preloaded)
+                    let (renVarImg, _) = try renderAndRecognize(view: renamedVariantCard, scheme: .light)
+                    XCTAssertEqual(baselinePNG, renVarImg.pngData(), "Rendered PNG must be identical when variant is renamed on \(id)")
                 }
 
                 let tag = scheme == .dark ? "dark" : "light"
-                try maybeExportPNG(img, filename: "kit6a-\(id)-\(tag)-390.png")
+                try maybeExportPNG(img, filename: "kit6b-\(id)-\(tag)-390.png")
             }
 
             if id == "kit-by-december-31" {
@@ -447,7 +457,7 @@ final class KitV1Renderer366BTests: XCTestCase {
                 let axJoined = axLines.joined(separator: " ")
                 XCTAssertTrue(axJoined.contains("By December"), "AX5 countdown must keep full headline; got: \(axJoined)")
                 assertZeroEllipsis(lines: axLines, context: "\(id) AX5")
-                try maybeExportPNG(axImg, filename: "kit6a-\(id)-ax5-light-390.png")
+                try maybeExportPNG(axImg, filename: "kit6b-\(id)-ax5-light-390.png")
             }
         }
         #endif
