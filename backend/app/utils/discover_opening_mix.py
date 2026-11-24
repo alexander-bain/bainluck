@@ -60,8 +60,29 @@ from app.utils.roundup_containers import (
 OPENING_MIX_SIZE = 10
 OPENING_MIX_GROUPED_TARGET = 9
 OPENING_MIX_SINGLE_CAP = 1
+OPENING_MIX_MAX_PER_FORM = 2
 OPENING_MIX_DEFAULT_SINGLE_SEAT = 4  # 0-based index -> seat 5
 OPENING_MIX_LIVE_SPORTS_FLAG = "opening_mix_live_sports_seat"
+
+
+def card_visual_form_id(item: Mapping[str, Any]) -> Optional[str]:
+    """Return the visual ``machinery_card.form_id`` of a Discover item, if any."""
+    if not isinstance(item, Mapping):
+        return None
+    data = item.get("data")
+    if not isinstance(data, Mapping):
+        return None
+    roundup = data.get("roundup")
+    if not isinstance(roundup, Mapping):
+        return None
+    machinery_card = roundup.get("machinery_card")
+    if not isinstance(machinery_card, Mapping):
+        return None
+    form_id = machinery_card.get("form_id")
+    if isinstance(form_id, str):
+        cleaned = form_id.strip()
+        return cleaned or None
+    return None
 
 PACIFIC_TZ = ZoneInfo("America/Los_Angeles")
 PWM_SUBTOPIC_POLITICS_WORLD = "politics_or_world"
@@ -1079,15 +1100,36 @@ def apply_discover_opening_mix(
             if chosen_pwm_seat10 is not None:
                 break
 
+    distinct_group_forms: set[Optional[str]] = {
+        card_visual_form_id(it) for _, it in sorted_groups
+    }
+    if chosen_live_sports_group is not None:
+        distinct_group_forms.add(card_visual_form_id(chosen_live_sports_group[1]))
+    # Ruling 353: A — when every eligible grouped card shares the exact same non-null
+    # visual form, skip the form cap so the rule does nothing rather than starving seats.
+    apply_form_cap = not (
+        len(distinct_group_forms) == 1 and next(iter(distinct_group_forms)) is not None
+    )
+
     chosen_groups: list[tuple[int, dict[str, Any]]] = []
     chosen_indices: set[int] = set()
     seen_sibling_groups: list[Mapping[str, Any]] = []
     topic_counts: Counter[str] = Counter()
+    form_counts: Counter[str] = Counter()
 
-    def _can_take_group(it: Mapping[str, Any], limit_map: Mapping[str, int]) -> bool:
+    def _can_take_group(
+        it: Mapping[str, Any],
+        limit_map: Mapping[str, int],
+        *,
+        enforce_form_cap: bool = True,
+    ) -> bool:
         t = classify_discover_opening_topic(it)
         if topic_counts[t] >= limit_map.get(t, 0):
             return False
+        if enforce_form_cap and apply_form_cap:
+            fid = card_visual_form_id(it)
+            if fid is not None and form_counts[fid] >= OPENING_MIX_MAX_PER_FORM:
+                return False
         if _is_sibling_family_bundle(it) and any(
             _is_near_identical_sibling_family(it, prev) for prev in seen_sibling_groups
         ):
@@ -1098,12 +1140,18 @@ def apply_discover_opening_mix(
         chosen_groups.append((idx, it))
         chosen_indices.add(idx)
         topic_counts[classify_discover_opening_topic(it)] += 1
+        fid = card_visual_form_id(it)
+        if fid is not None:
+            form_counts[fid] += 1
         if _is_sibling_family_bundle(it):
             seen_sibling_groups.append(it)
 
     if chosen_pwm_seat10 is not None:
         chosen_indices.add(chosen_pwm_seat10[0])
         topic_counts[TOPIC_PWM] += 1
+        fid10 = card_visual_form_id(chosen_pwm_seat10[1])
+        if fid10 is not None:
+            form_counts[fid10] += 1
         if _is_sibling_family_bundle(chosen_pwm_seat10[1]):
             seen_sibling_groups.append(chosen_pwm_seat10[1])
 
@@ -1237,6 +1285,63 @@ def apply_discover_opening_mix(
             if _can_take_group(it, relaxed_non_pwm_caps):
                 _add_group(idx, it)
 
+    # Multi-form thin-supply fallback: if enforcing <= 2 per form could not fill
+    # all grouped seats, relax only the form cap while preserving topic order and mix.
+    if apply_form_cap and len(chosen_groups) < non_pwm_grouped_target:
+        for topic in NON_PWM_TOPICS:
+            target_min = TOPIC_MIN_GROUPS[topic]
+            for idx, it in sorted_groups:
+                if len(chosen_groups) >= non_pwm_grouped_target:
+                    break
+                if idx in chosen_indices or classify_discover_opening_topic(it) != topic:
+                    continue
+                if topic_counts[topic] >= target_min:
+                    break
+                if _group_conflicts_with_single(it):
+                    continue
+                if _can_take_group(it, TOPIC_MAX_TOTAL, enforce_form_cap=False):
+                    _add_group(idx, it)
+
+        for topic in (TOPIC_ODD, TOPIC_SPORTS):
+            for idx, it in sorted_groups:
+                if len(chosen_groups) >= non_pwm_grouped_target:
+                    break
+                if idx in chosen_indices or classify_discover_opening_topic(it) != topic:
+                    continue
+                if _group_conflicts_with_single(it):
+                    continue
+                if _can_take_group(it, TOPIC_MAX_TOTAL, enforce_form_cap=False):
+                    _add_group(idx, it)
+
+        while len(chosen_groups) < non_pwm_grouped_target:
+            best_fallback: Optional[tuple[int, dict[str, Any]]] = None
+            for topic in NON_PWM_TOPICS:
+                if topic_counts[topic] >= TOPIC_MAX_TOTAL[topic]:
+                    continue
+                for idx, it in sorted_groups:
+                    if idx in chosen_indices or classify_discover_opening_topic(it) != topic:
+                        continue
+                    if _group_conflicts_with_single(it):
+                        continue
+                    if _can_take_group(it, TOPIC_MAX_TOTAL, enforce_form_cap=False):
+                        if best_fallback is None or idx < best_fallback[0]:
+                            best_fallback = (idx, it)
+                        break
+            if best_fallback is None:
+                break
+            _add_group(*best_fallback)
+
+        if len(chosen_groups) < non_pwm_grouped_target:
+            for idx, it in sorted_groups:
+                if len(chosen_groups) >= non_pwm_grouped_target:
+                    break
+                if idx in chosen_indices or classify_discover_opening_topic(it) == TOPIC_PWM:
+                    continue
+                if _group_conflicts_with_single(it):
+                    continue
+                if _can_take_group(it, relaxed_non_pwm_caps, enforce_form_cap=False):
+                    _add_group(idx, it)
+
     if chosen_pwm_seat10 is not None:
         chosen_groups.append(chosen_pwm_seat10)
 
@@ -1280,22 +1385,35 @@ def apply_discover_opening_mix(
     )
     if len(opening) < seat_count:
         insert_before_pwm = max(0, len(opening) - (1 if chosen_pwm_seat10 is not None else 0))
-        for allow_same_deadline in (False, True):
+        form_cap_passes = (True, False) if apply_form_cap else (False,)
+        for enforce_form_cap in form_cap_passes:
             if len(opening) >= seat_count:
                 break
-            for idx, it in enumerate(items):
+            for allow_same_deadline in (False, True):
                 if len(opening) >= seat_count:
                     break
-                if idx in chosen_indices or it.get("type") == "concept":
-                    continue
-                if not allow_same_deadline and is_same_deadline_roundup(it):
-                    continue
-                if _contains_live_event_signal(it, now=effective_now):
-                    continue
-                chosen_indices.add(idx)
-                marked = _mark_opening_mix_card(it, anchor=anchor)
-                opening.insert(insert_before_pwm, marked)
-                insert_before_pwm += 1
+                for idx, it in enumerate(items):
+                    if len(opening) >= seat_count:
+                        break
+                    if idx in chosen_indices or it.get("type") == "concept":
+                        continue
+                    if not allow_same_deadline and is_same_deadline_roundup(it):
+                        continue
+                    if _contains_live_event_signal(it, now=effective_now):
+                        continue
+                    fid = card_visual_form_id(it)
+                    if (
+                        enforce_form_cap
+                        and fid is not None
+                        and form_counts[fid] >= OPENING_MIX_MAX_PER_FORM
+                    ):
+                        continue
+                    chosen_indices.add(idx)
+                    if fid is not None:
+                        form_counts[fid] += 1
+                    marked = _mark_opening_mix_card(it, anchor=anchor)
+                    opening.insert(insert_before_pwm, marked)
+                    insert_before_pwm += 1
 
     remainder = [
         _clear_opening_mix_marker(it) if isinstance(it, Mapping) and it.get("type") == "bundle" else it
