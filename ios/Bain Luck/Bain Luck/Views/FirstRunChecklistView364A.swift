@@ -97,26 +97,13 @@ struct FirstRunChecklistView364A: View {
             .frame(maxWidth: .infinity)
             .background(DS.surface)
 
+            #if os(iOS)
             GeometryReader { proxy in
-                let columnWidth = min(680, max(1, proxy.size.width))
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 11) {
-                        if dynamicTypeSize.isAccessibilitySize {
-                            headerBlock
-                        }
-                        rowsCard
-                        if !content.startWithTonight.isEmpty {
-                            startWithTonightBlock
-                        }
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 2)
-                    .padding(.bottom, 14)
-                    .frame(width: columnWidth, alignment: .leading)
-                    .frame(maxWidth: .infinity)
-                }
-                .scrollBounceBehavior(.basedOnSize)
+                checklistScrollBody(columnWidth: min(680, max(1, proxy.size.width)))
             }
+            #else
+            checklistScrollBody(columnWidth: nil)
+            #endif
 
             if state.completedCount >= state.totalCount {
                 doneFooter
@@ -127,6 +114,35 @@ struct FirstRunChecklistView364A: View {
         .toolbar(.hidden, for: .navigationBar)
         #endif
         .accessibilityIdentifier("checklist364A.root")
+    }
+
+    @ViewBuilder
+    private func checklistScrollBody(columnWidth: CGFloat?) -> some View {
+        ScrollView {
+            let column = VStack(alignment: .leading, spacing: 11) {
+                if dynamicTypeSize.isAccessibilitySize {
+                    headerBlock
+                }
+                rowsCard
+                if !content.startWithTonight.isEmpty {
+                    startWithTonightBlock
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 2)
+            .padding(.bottom, 14)
+
+            if let columnWidth {
+                column
+                    .frame(width: columnWidth, alignment: .leading)
+                    .frame(maxWidth: .infinity)
+            } else {
+                column
+                    .frame(maxWidth: 680, alignment: .leading)
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .scrollBounceBehavior(.basedOnSize)
     }
 
     private var topBar: some View {

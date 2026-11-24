@@ -266,6 +266,9 @@ struct FirstRunChecklistRootView364A: View {
                 }
             }
         }
+        #if os(macOS)
+        .frame(minWidth: 520, idealWidth: 580, minHeight: 620, idealHeight: 720)
+        #endif
         .task {
             syncStoreExternalSignals()
             draftSetSlugs = checklistStore.state.selectedSetSlugs
