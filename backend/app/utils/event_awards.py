@@ -65,6 +65,7 @@ _GRAMMY_PRE_NOMINATION_BOARDS = {
     ticker: external_id for external_id, ticker in GRAMMY_NOMINEE_FIELDS.items()
 }
 GRAMMY_TIE_LABEL = "Tie (co-winners)"
+_GRAMMY_TRAILING_NOTE = re.compile(r"(?:\s*(?:\([^()]*\)|\[[^\[\]]*\]))+$")
 _GRAMMY_SONG_NOMINEES = frozenset({
     "berghain",
     "choosin' texas",
@@ -86,7 +87,7 @@ def is_grammy_general_field_market(market: Any) -> bool:
 
 
 def is_grammy_tie(name: str) -> bool:
-    return name.strip().casefold() == "tie"
+    return name.strip().casefold() in {"tie", GRAMMY_TIE_LABEL.casefold()}
 
 
 def is_grammy_graded_loss(
@@ -108,6 +109,9 @@ def _grammy_name_key(name: str) -> str:
     return " ".join(text.split()).replace(" – ", " - ").replace(" — ", " - ")
 
 
+def _grammy_song_title_key(name: str) -> str:
+    return _GRAMMY_TRAILING_NOTE.sub("", _grammy_name_key(name)).rstrip()
+
 def is_grammy_song_of_the_year(market: Any) -> bool:
     source = getattr(market, "source", None)
     external_id = getattr(market, "external_id", None)
@@ -120,12 +124,12 @@ def is_grammy_song_of_the_year(market: Any) -> bool:
 def is_grammy_song_contender(name: str | None, source: str) -> bool:
     if not name:
         return False
-    key = _grammy_name_key(name)
+    if _grammy_song_title_key(name) in _GRAMMY_SONG_NOMINEES:
+        return True
     if source == "polymarket":
-        title, _, artist = key.rpartition(" - ")
-        if artist and title in _GRAMMY_SONG_NOMINEES:
-            return True
-    return key in _GRAMMY_SONG_NOMINEES or (source == "kalshi" and is_grammy_tie(name))
+        title, separator, artist = _grammy_name_key(name).rpartition(" - ")
+        return bool(separator and artist and _grammy_song_title_key(title) in _GRAMMY_SONG_NOMINEES)
+    return source == "kalshi" and is_grammy_tie(name)
 
 
 def append_grammy_out_rows(
@@ -190,6 +194,7 @@ async def grammy_nominee_fields(
             or market.status not in ("open", "resolved")
         ):
             continue
+        song_field = market.external_id == _GRAMMY_SONG_OF_THE_YEAR
         nominees = set()
         for outcome in market.outcomes:
             name = (outcome.name or "").strip()
@@ -209,8 +214,8 @@ async def grammy_nominee_fields(
                 values.get("current_probability"),
             ):
                 continue
-            nominees.add(_grammy_name_key(name))
-        if market.external_id == _GRAMMY_SONG_OF_THE_YEAR:
+            nominees.add(_grammy_song_title_key(name) if song_field else _grammy_name_key(name))
+        if song_field:
             if nominees == _GRAMMY_SONG_NOMINEES:
                 found[market.external_id] = market
             continue
