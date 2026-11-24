@@ -116,7 +116,7 @@ def test_the_reason_does_not_name_a_subject_the_card_never_draws():
     assert (
         "Canberra Raiders" not in said
     ), "the card's sentence names a team that is not on the card: " + repr(said)
-    assert "46.5" not in said, (
+    assert "46 points" not in said and "46.5" not in said, (
         "the move survived with the name stripped off it — #4640's refusal was "
         "written precisely against that shape: " + repr(said)
     )
@@ -131,7 +131,7 @@ def test_the_headline_does_not_name_a_subject_the_card_never_draws():
     """
     said = _headline(top_surprise_is_printed=False)
     assert "Canberra Raiders" not in said, said
-    assert "46.5" not in said, said
+    assert "46 points" not in said and "46.5" not in said, said
 
 
 def test_the_card_still_gets_a_sentence_about_a_row_it_draws():
@@ -195,7 +195,7 @@ def test_a_subject_the_card_draws_still_speaks():
     """
     said = _reason(top_surprise_is_printed=True)
     assert "Canberra Raiders" in said, said
-    assert "46.5" in said, said
+    assert "46 points" in said and "46.5" not in said, said
 
 
 def test_a_headline_subject_the_card_draws_still_speaks():
