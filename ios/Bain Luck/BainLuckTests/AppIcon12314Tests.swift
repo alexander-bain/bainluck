@@ -1,14 +1,16 @@
+import CoreGraphics
+import CryptoKit
+import Foundation
 import ImageIO
 import XCTest
 
-/// #12314 — the layered icon for iOS 26's glass look (`AppIcon.icon`) is well
-/// formed, and it is still the icon both apps name.
-///
-/// Xcode prefers an `AppIcon.icon` over the `AppIcon.appiconset` beside it, and
-/// generates the flat iOS 17/18 icons and the Mac's from it, so a broken
-/// document would break every icon at once. These read the source tree, as the
-/// other source-scan tests do; the rendered look is checked on the simulator.
+/// #13633 / #12314 (ruling 382: B) — app icon and in-app Bain Luck mark use the
+/// whole clover drawing (original artwork supplied by Alex), unaltered across
+/// iOS light, dark, one-color/tinted, macOS, watchOS, and in-app surfaces.
 final class AppIcon12314Tests: XCTestCase {
+
+    static let expectedSourceRGBASHA256 =
+        "620805dcaf0cd80539bdf66d2296ddec8946dedc9dde17a8a5aa6a811147ec59"
 
     private var projectDir: URL {
         URL(fileURLWithPath: #filePath)
@@ -16,47 +18,152 @@ final class AppIcon12314Tests: XCTestCase {
             .deletingLastPathComponent()   // Bain Luck (project dir)
     }
 
-    private var iconDir: URL { projectDir.appendingPathComponent("Bain Luck/AppIcon.icon") }
-
-    private func document() throws -> [String: Any] {
-        let data = try Data(contentsOf: iconDir.appendingPathComponent("icon.json"))
-        return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+    private var iosIconSetDir: URL {
+        projectDir.appendingPathComponent("Bain Luck/Assets.xcassets/AppIcon.appiconset")
     }
 
-    func testTheDocumentParsesAndEveryImageItNamesIsInTheBundle() throws {
-        let groups = try XCTUnwrap(document()["groups"] as? [[String: Any]])
-        let names = groups.flatMap { group in
-            (group["layers"] as? [[String: Any]] ?? []).compactMap { $0["image-name"] as? String }
+    private var watchIconSetDir: URL {
+        projectDir.appendingPathComponent("BainLuckWatch Watch App/Assets.xcassets/AppIcon.appiconset")
+    }
+
+    private var markImageSetDir: URL {
+        projectDir.appendingPathComponent("Bain Luck/Assets.xcassets/BainLuckMark.imageset")
+    }
+
+    private func inspectPNG(at url: URL) throws -> (width: Int, height: Int, colorType: UInt8, cgImage: CGImage) {
+        let data = try Data(contentsOf: url)
+        XCTAssertGreaterThan(data.count, 30, "PNG too small: \(url.lastPathComponent)")
+        let pngSig: [UInt8] = [0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]
+        XCTAssertEqual(Array(data.prefix(8)), pngSig, "Not a PNG: \(url.lastPathComponent)")
+        let colorType = data[25]
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(data as CFData, nil))
+        let cg = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        return (cg.width, cg.height, colorType, cg)
+    }
+
+    private func rgbaSHA256(of cgImage: CGImage) throws -> String {
+        let width = cgImage.width
+        let height = cgImage.height
+        let bytesPerPixel = cgImage.bitsPerPixel / 8
+        XCTAssertTrue(bytesPerPixel == 3 || bytesPerPixel == 4, "Unexpected pixel stride: \(cgImage.bitsPerPixel)")
+        XCTAssertTrue(
+            cgImage.alphaInfo == .none || cgImage.alphaInfo == .noneSkipLast,
+            "Unexpected alpha info: \(cgImage.alphaInfo.rawValue)"
+        )
+        let rawData = try XCTUnwrap(cgImage.dataProvider?.data as Data?)
+        let bytesPerRow = cgImage.bytesPerRow
+        var rgba = Data(capacity: width * height * 4)
+        rawData.withUnsafeBytes { rawBuf in
+            let base = rawBuf.bindMemory(to: UInt8.self).baseAddress!
+            for y in 0..<height {
+                let row = base.advanced(by: y * bytesPerRow)
+                for x in 0..<width {
+                    let i = x * bytesPerPixel
+                    rgba.append(row[i])
+                    rgba.append(row[i + 1])
+                    rgba.append(row[i + 2])
+                    rgba.append(255)
+                }
+            }
         }
-        XCTAssertEqual(names, ["clover.svg"], "one pure vector organic clover layer (309: B)")
-        for name in names {
-            let path = iconDir.appendingPathComponent("Assets").appendingPathComponent(name).path
-            XCTAssertTrue(FileManager.default.fileExists(atPath: path), "missing \(name)")
+        return SHA256.hash(data: rgba).map { String(format: "%02x", $0) }.joined()
+    }
+
+    func testLayeredAppIconBundleRemovedSoFlattenedIconSetCompilesUnaltered() {
+        let layeredIconDir = projectDir.appendingPathComponent("Bain Luck/AppIcon.icon").path
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: layeredIconDir),
+            "AppIcon.icon must be absent so Xcode compiles AppIcon.appiconset without added effects"
+        )
+    }
+
+    func testColor1024IconsAndMarkAreFlattenedRGBAndMatchVerifiedPixelHash() throws {
+        let targets: [URL] = [
+            iosIconSetDir.appendingPathComponent("icon_1024.png"),
+            iosIconSetDir.appendingPathComponent("icon_1024_dark.png"),
+            watchIconSetDir.appendingPathComponent("icon_1024.png"),
+            markImageSetDir.appendingPathComponent("bainluck_mark_1024.png"),
+        ]
+        for url in targets {
+            let info = try inspectPNG(at: url)
+            XCTAssertEqual(info.width, 1024, url.lastPathComponent)
+            XCTAssertEqual(info.height, 1024, url.lastPathComponent)
+            XCTAssertEqual(info.colorType, 2, "Must be flattened 24-bit RGB with no alpha: \(url.lastPathComponent)")
+            let sha = try rgbaSHA256(of: info.cgImage)
+            XCTAssertEqual(sha, Self.expectedSourceRGBASHA256, "Pixel hash mismatch: \(url.path)")
         }
-        let legacyRasterPath = iconDir.appendingPathComponent("Assets/clover.png").path
-        XCTAssertFalse(FileManager.default.fileExists(atPath: legacyRasterPath), "traced clover.png must not ship")
     }
 
-    /// Dark gets its own background, so the Dark Home Screen never shows a
-    /// white tile; the light one stays white like today's icon.
-    func testTheBackgroundIsWhiteAndDarkHasItsOwn() throws {
-        let fills = try XCTUnwrap(document()["fill-specializations"] as? [[String: Any]])
-        let base = fills.first { $0["appearance"] == nil }?["value"] as? [String: String]
-        let dark = fills.first { $0["appearance"] as? String == "dark" }?["value"] as? [String: String]
-        XCTAssertEqual(base?["solid"], "extended-srgb:1.00000,1.00000,1.00000,1.00000")
-        XCTAssertNotNil(dark?["solid"], "a dark background")
-        XCTAssertNotEqual(dark?["solid"], base?["solid"])
+    func testOneColorTintedIconIsGrayscaleOfDrawingWithoutAlpha() throws {
+        let url = iosIconSetDir.appendingPathComponent("icon_1024_tinted.png")
+        let info = try inspectPNG(at: url)
+        XCTAssertEqual(info.width, 1024)
+        XCTAssertEqual(info.height, 1024)
+        XCTAssertEqual(info.colorType, 2, "Must have no alpha channel")
+        let rawData = try XCTUnwrap(info.cgImage.dataProvider?.data as Data?)
+        let bytesPerRow = info.cgImage.bytesPerRow
+        let bytesPerPixel = info.cgImage.bitsPerPixel / 8
+        rawData.withUnsafeBytes { rawBuf in
+            let base = rawBuf.bindMemory(to: UInt8.self).baseAddress!
+            for y in stride(from: 0, to: info.height, by: 8) {
+                let row = base.advanced(by: y * bytesPerRow)
+                for x in stride(from: 0, to: info.width, by: 8) {
+                    let i = x * bytesPerPixel
+                    XCTAssertEqual(row[i], row[i + 1])
+                    XCTAssertEqual(row[i + 1], row[i + 2])
+                }
+            }
+        }
     }
 
-    /// The layer is pure mathematical vector artwork in a 1024 square canvas
-    /// without embedded raster payloads so Default/Dark/Clear/Tinted all render cleanly.
-    func testTheCloverVectorIsPure1024SVGWithoutEmbeddedRaster() throws {
-        let url = iconDir.appendingPathComponent("Assets/clover.svg")
-        let svg = try String(contentsOf: url, encoding: .utf8)
-        XCTAssertTrue(svg.contains("<svg"), "expected an SVG document")
-        XCTAssertTrue(svg.contains("viewBox=\"0 0 1024 1024\""), "expected 1024x1024 viewBox")
-        XCTAssertTrue(svg.contains("<path"), "expected vector path geometry")
-        XCTAssertFalse(svg.lowercased().contains("data:image/"), "vector clover must not embed raster artwork")
+    func testSmallerMacIconSizesArePresentAtExactDimensionsWithoutAlpha() throws {
+        let expected: [(String, Int)] = [
+            ("icon_16x16.png", 16),
+            ("icon_16x16@2x.png", 32),
+            ("icon_32x32.png", 32),
+            ("icon_32x32@2x.png", 64),
+            ("icon_128x128.png", 128),
+            ("icon_128x128@2x.png", 256),
+            ("icon_256x256.png", 256),
+            ("icon_256x256@2x.png", 512),
+            ("icon_512x512.png", 512),
+            ("icon_512x512@2x.png", 1024),
+        ]
+        for (filename, px) in expected {
+            let info = try inspectPNG(at: iosIconSetDir.appendingPathComponent(filename))
+            XCTAssertEqual(info.width, px, filename)
+            XCTAssertEqual(info.height, px, filename)
+            XCTAssertEqual(info.colorType, 2, "Must have no alpha: \(filename)")
+        }
+    }
+
+    func testInAppBrandMarkScreensUseBainLuckMarkViewInsteadOfEmoji() throws {
+        let replacedScreens = [
+            "Bain Luck/Views/WelcomeView.swift",
+            "Bain Luck/Views/MyStuffView.swift",
+            "Bain Luck/Views/MainTabView.swift",
+            "Bain Luck/Views/FeedView.swift",
+            "Bain Luck/Components/TelemetryConsentPrompt.swift",
+        ]
+        for rel in replacedScreens {
+            let text = try String(contentsOf: projectDir.appendingPathComponent(rel), encoding: .utf8)
+            XCTAssertFalse(text.contains("🍀"), "Unexpected clover emoji remaining in \(rel)")
+            XCTAssertFalse(text.lowercased().contains("\\u{1f340}"), "Unexpected clover Unicode escape remaining in \(rel)")
+            XCTAssertTrue(text.contains("BainLuckMarkView("), "Expected BainLuckMarkView in \(rel)")
+        }
+        let share = try String(
+            contentsOf: projectDir.appendingPathComponent("Bain Luck/Utilities/ShareCardRenderer.swift"),
+            encoding: .utf8
+        )
+        XCTAssertEqual(share.components(separatedBy: "BainLuckMarkView(").count - 1, 2)
+        let footerLines = share.components(separatedBy: "\n").filter { $0.contains("bainluck.com") || $0.contains("🍀") }
+        XCTAssertEqual(footerLines.filter { $0.contains("🍀") && !$0.contains("default:") }.count, 0)
+
+        let watchHome = try String(
+            contentsOf: projectDir.appendingPathComponent("BainLuckWatch Watch App/WatchHomeView.swift"),
+            encoding: .utf8
+        )
+        XCTAssertFalse(watchHome.contains("🍀"))
     }
 
     /// Same name as the asset-catalog set, so no build setting changed: both

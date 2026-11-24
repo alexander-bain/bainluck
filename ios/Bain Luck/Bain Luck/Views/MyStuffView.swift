@@ -308,8 +308,7 @@ struct MyStuffView: View {
                 pinnedStack
                     .padding(.top, 16)
                 VStack(spacing: 12) {
-                    Text("🍀")
-                        .font(.system(size: 48))
+                    BainLuckMarkView(size: 48)
                     // #6501: the headline is the loudest half of the pitch, and
                     // it led with the surface `ReleaseSurfaces` switched off.
                     // The two perks below that survive the flag are teams and

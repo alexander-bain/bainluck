@@ -61,7 +61,20 @@ struct FeedView: View {
                     feedList(state)
                 }
             }
-            .navigationTitle("🍀 Bain Luck")
+            .navigationTitle("Bain Luck")
+            #if os(iOS)
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    HStack(spacing: 6) {
+                        BainLuckMarkView(size: 20)
+                        Text("Bain Luck")
+                            .font(.headline.weight(.semibold))
+                    }
+                    .lineLimit(1)
+                }
+            }
+            #endif
             .navigationDestination(for: Route.self) { RouteDestination(route: $0) }
         }
         .onAppear {
