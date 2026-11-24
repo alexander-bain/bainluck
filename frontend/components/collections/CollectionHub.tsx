@@ -18,7 +18,9 @@ import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import type { PairedMetricSet } from "@/lib/discover/visualForms";
 import type { FeedFuturesData, FeedItem } from "@/lib/types";
 import { useDiscoverPriceStream } from "@/hooks/useDiscoverPriceStream";
+import { usePairedMetricSetStream } from "@/hooks/usePairedMetricSetStream";
 import { usePriceVisibility } from "@/hooks/usePriceVisibility";
+import { patchMachineryVisualBlock } from "@/lib/machineryVisualBlockPatch";
 import { priceKey } from "@/lib/discover/priceRefresh";
 import {
   acceptedCollection, collectionMemberDomId, collectionReadAdmitted, collectionRefreshInterval, fetchCollection, openCollectionRead, reconcileCollectionContext,
@@ -39,6 +41,17 @@ function PricedMemberShell({ owner, item, report, children }: {
   children: ReactNode;
 }) {
   const items = useMemo(() => [item], [item]);
+  const ref = usePriceVisibility(owner, items, report);
+  return <div ref={ref}>{children}</div>;
+}
+
+function PricedSectionShell({ owner, members, report, children }: {
+  owner: string;
+  members: CollectionMember[];
+  report: (owner: string, keys: string[], visible: boolean) => void;
+  children: ReactNode;
+}) {
+  const items = useMemo(() => members.map((m) => m.item), [members]);
   const ref = usePriceVisibility(owner, items, report);
   return <div ref={ref}>{children}</div>;
 }
@@ -160,6 +173,15 @@ export default function CollectionHub({ slug, initialHub = null }: { slug: strin
   const allowMachineryBlocks = isMachinerySlice1Enabled() || slug.startsWith("machinery-");
   const machinerySectionsActive =
     allowMachineryBlocks && Boolean(shown?.sections.some((s) => s.visualBlock));
+  const isMachinerySlug = slug.startsWith("machinery-");
+  const machineryReadIncomplete =
+    isMachinerySlug &&
+    Boolean(
+      shown &&
+        (shown.state !== "published" ||
+          Boolean(shown.note) ||
+          shown.sections.length === 0),
+    );
 
   const activePairedSets: PairedMetricSet[] = useMemo(() => {
     if (machinerySectionsActive) return [];
@@ -167,6 +189,32 @@ export default function CollectionHub({ slug, initialHub = null }: { slug: strin
     if (shown?.pairedMetricSet) return [shown.pairedMetricSet];
     return [];
   }, [machinerySectionsActive, isOscarsHub, oscarsPairedSets, shown?.pairedMetricSet]);
+
+  const machineryPairedSets: PairedMetricSet[] = useMemo(() => {
+    if (!allowMachineryBlocks || !shown?.sections) return [];
+    return shown.sections.flatMap((s) =>
+      s.visualBlock?.form_id === "paired_stage_bars" && s.visualBlock.paired_metric_set
+        ? [s.visualBlock.paired_metric_set]
+        : [],
+    );
+  }, [allowMachineryBlocks, shown?.sections]);
+
+  const pairedStreamSets = useMemo(
+    () => [...activePairedSets, ...machineryPairedSets],
+    [activePairedSets, machineryPairedSets],
+  );
+  const refreshPairedSets = useCallback(() => {
+    if (isOscarsHub && oscarsPairedSets.length > 0) {
+      void fetchPairedMetricsByCeremony("oscars")
+        .then((res) => setOscarsPairedSets(res.sets ?? []))
+        .catch(() => {
+          // Transient paired-metrics refresh failure keeps current served sets.
+        });
+      return;
+    }
+    void load();
+  }, [isOscarsHub, oscarsPairedSets.length, load]);
+  usePairedMetricSetStream(pairedStreamSets, refreshPairedSets, !machineryReadIncomplete);
 
   const pairedCoveredMarketIds = useMemo(() => {
     const ids = new Set<number>();
@@ -323,16 +371,6 @@ export default function CollectionHub({ slug, initialHub = null }: { slug: strin
     </>;
   };
 
-  const isMachinerySlug = slug.startsWith("machinery-");
-  const machineryReadIncomplete =
-    isMachinerySlug &&
-    Boolean(
-      shown &&
-        (shown.state !== "published" ||
-          Boolean(shown.note) ||
-          shown.sections.length === 0),
-    );
-
   const headerSubline = (() => {
     const candidate = shown?.subtitle ?? shown?.edition ?? null;
     if (!candidate) return null;
@@ -442,7 +480,16 @@ export default function CollectionHub({ slug, initialHub = null }: { slug: strin
         <p data-section-note={section.cls} className="text-sm text-text-secondary">{section.note}</p>
       )}
       {allowMachineryBlocks && section.visualBlock ? (
-        <MachinerySectionRenderer visualBlock={section.visualBlock} members={visibleSectionMembers} />
+        <PricedSectionShell
+          owner={`section-${section.key}`}
+          members={visibleSectionMembers}
+          report={reportPriceVisibility}
+        >
+          <MachinerySectionRenderer
+            visualBlock={patchMachineryVisualBlock(section.visualBlock, pricedByKey)}
+            members={visibleSectionMembers.map(priced)}
+          />
+        </PricedSectionShell>
       ) : section.layout === "party" && control(108620) && control(108621) ? (
         midterms && atlasEnabled ? (
           <MidtermsAtlasChamberControl senate={control(108620)} house={control(108621)} />

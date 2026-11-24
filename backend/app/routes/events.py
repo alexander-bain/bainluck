@@ -18,7 +18,7 @@ from dataclasses import dataclass, fields as dataclass_fields, replace as datacl
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
-from typing import Annotated, Optional, Sequence
+from typing import Annotated, Any, Optional, Sequence
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy import select, and_, or_, union, func, case, cast, any_, literal, Date, Integer, String, literal_column, text, true, false, Interval, exists
@@ -25559,6 +25559,35 @@ def _pregame_mark_is_pregame(pm, commence_time) -> bool:
     return (captured - commence).total_seconds() <= -_PREGAME_MARK_LEGACY_MARGIN_S
 
 
+def _resolve_pregame_mark_with_source(
+    market, outcome, is_over, is_under, opening_over, commence_time
+) -> tuple[Optional[float], Optional[str]]:
+    """Return ``(pregame_mark, source)`` where source is ``'kickoff_pin'``, ``'opening'``, or ``None``.
+
+    Only a genuineness-verified pin captured into ``market_metadata["pregame_mark"]``
+    before ``commence_time`` carries source ``'kickoff_pin'``; any fallback to the
+    first stored reading carries ``'opening'`` so downstream rankers never confuse an
+    opening fallback with a kickoff pin (#13529).
+    """
+    meta = market.__dict__.get("market_metadata")
+    if isinstance(meta, dict):
+        pm = meta.get("pregame_mark")
+        if isinstance(pm, dict) and _pregame_mark_is_pregame(pm, commence_time):
+            raw = (pm.get("outcomes") or {}).get(str(outcome.id))
+            if raw is not None:
+                try:
+                    rawf = float(raw)
+                    return (
+                        round(rawf if is_over or not is_under else 1.0 - rawf, 4),
+                        "kickoff_pin",
+                    )
+                except (TypeError, ValueError):
+                    pass
+    if opening_over is not None:
+        return opening_over, "opening"
+    return None, None
+
+
 def _resolve_pregame_mark(market, outcome, is_over, is_under, opening_over, commence_time):
     """#195: THE SCRIPT baseline for a prop outcome, as an OVER probability.
 
@@ -25578,18 +25607,9 @@ def _resolve_pregame_mark(market, outcome, is_over, is_under, opening_over, comm
     late pin carry one. ``commence_time`` is REQUIRED rather than defaulted so a
     new call site cannot opt out of that gate by omission.
     """
-    meta = market.__dict__.get("market_metadata")
-    if isinstance(meta, dict):
-        pm = meta.get("pregame_mark")
-        if isinstance(pm, dict) and _pregame_mark_is_pregame(pm, commence_time):
-            raw = (pm.get("outcomes") or {}).get(str(outcome.id))
-            if raw is not None:
-                try:
-                    rawf = float(raw)
-                    return round(rawf if is_over or not is_under else 1.0 - rawf, 4)
-                except (TypeError, ValueError):
-                    pass
-    return opening_over
+    return _resolve_pregame_mark_with_source(
+        market, outcome, is_over, is_under, opening_over, commence_time
+    )[0]
 
 
 def _stored_number(value) -> Optional[float]:
@@ -27839,6 +27859,10 @@ async def _build_game_markets(
                     if o.opening_probability is not None:
                         tt_op = float(o.opening_probability)
                         tt_opening_over = round(tt_op if is_over or not is_under else 1.0 - tt_op, 4)
+                    tt_pregame_mark, tt_pregame_mark_source = _resolve_pregame_mark_with_source(
+                        market, o, is_over, is_under, tt_opening_over,
+                        event.commence_time,
+                    )
                     pp = {
                         "market_name": market.name,
                         "outcome_name": o.name,
@@ -27850,10 +27874,8 @@ async def _build_game_markets(
                         # #5509: the event's own commence_time decides whether
                         # the pin is pregame — a pin stamped after first pitch
                         # is an in-play price and loses to the opening line.
-                        "pregame_mark": _resolve_pregame_mark(
-                            market, o, is_over, is_under, tt_opening_over,
-                            event.commence_time,
-                        ),
+                        "pregame_mark": tt_pregame_mark,
+                        "pregame_mark_source": tt_pregame_mark_source,
                         # #4390: this leg's numbers above are on the OVER axis,
                         # i.e. its sibling's. THE SCRIPT renders the row under
                         # this leg's own name and needs to know that.
@@ -27920,6 +27942,14 @@ async def _build_game_markets(
                         market_type, threshold, _gm_sport_prefix
                     )
                 ):
+                    _rescue_opening = (
+                        round(float(o.opening_probability), 4)
+                        if o.opening_probability is not None
+                        else None
+                    )
+                    _rescue_pm, _rescue_pm_src = _resolve_pregame_mark_with_source(
+                        market, o, True, False, _rescue_opening, event.commence_time,
+                    )
                     other_markets.append({
                         "market_name": market.name,
                         "outcome_name": o.name,
@@ -27928,16 +27958,8 @@ async def _build_game_markets(
                         # Same expression as the `other` branch below, so the
                         # two ways into this section cannot serve two shapes.
                         "probability": round(prob, 4) if prob else None,
-                        "pregame_mark": _resolve_pregame_mark(
-                            market,
-                            o,
-                            True,
-                            False,
-                            round(float(o.opening_probability), 4)
-                            if o.opening_probability is not None
-                            else None,
-                            event.commence_time,
-                        ),
+                        "pregame_mark": _rescue_pm,
+                        "pregame_mark_source": _rescue_pm_src,
                         "source": market.source,
                         **_grade,
                         "_market_id": market.id,
@@ -27946,6 +27968,13 @@ async def _build_game_markets(
 
                 _inverted = bool(is_under and not is_over)
                 _market_settled = market.id in markets_with_a_winner
+                _t_opening_over = None
+                if o.opening_probability is not None:
+                    _t_op = float(o.opening_probability)
+                    _t_opening_over = round(_t_op if is_over or not is_under else 1.0 - _t_op, 4)
+                _t_pm, _t_pm_src = _resolve_pregame_mark_with_source(
+                    market, o, is_over, is_under, _t_opening_over, event.commence_time,
+                )
                 totals_thresholds.append({
                     "threshold": threshold,
                     "over_probability": _settled_over_probability(
@@ -27954,6 +27983,8 @@ async def _build_game_markets(
                         round(over_prob, 4) if over_prob is not None else None,
                         _market_settled,
                     ),
+                    "pregame_mark": _t_pm,
+                    "pregame_mark_source": _t_pm_src,
                     "source": market.source,
                     "market_type": market_type,
                     "market_name": market.name,
@@ -28000,6 +28031,10 @@ async def _build_game_markets(
                     op = float(o.opening_probability)
                     opening_over = round(op if is_over or not is_under else 1.0 - op, 4)
 
+                _pp_pm, _pp_pm_src = _resolve_pregame_mark_with_source(
+                    market, o, is_over, is_under, opening_over,
+                    event.commence_time,
+                )
                 pp = {
                     "market_name": market.name,
                     "outcome_name": o.name,
@@ -28010,10 +28045,8 @@ async def _build_game_markets(
                     "opening_over_probability": opening_over,
                     # #5509: see the team_total branch — a pin stamped after
                     # first pitch is in-play and falls through to the opening.
-                    "pregame_mark": _resolve_pregame_mark(
-                        market, o, is_over, is_under, opening_over,
-                        event.commence_time,
-                    ),
+                    "pregame_mark": _pp_pm,
+                    "pregame_mark_source": _pp_pm_src,
                     # #4390: see the team_total branch — the over-axis numbers
                     # belong to the sibling leg, and THE SCRIPT prints this one's
                     # name beside them.
@@ -28031,6 +28064,14 @@ async def _build_game_markets(
                 threshold = _extract_threshold(o.name)
                 prob = float(o.current_probability) if o.current_probability is not None else None
                 _score_proved = o.id in _score_proved_ids
+                _sp_opening = (
+                    round(float(o.opening_probability), 4)
+                    if o.opening_probability is not None
+                    else None
+                )
+                _sp_pm, _sp_pm_src = _resolve_pregame_mark_with_source(
+                    market, o, True, False, _sp_opening, event.commence_time,
+                )
                 row = {
                     "market_name": market.name,
                     "outcome_name": o.name,
@@ -28045,6 +28086,8 @@ async def _build_game_markets(
                     # be served); it is load-bearing for the rows #6312 readmits,
                     # whose 0.0 IS the answer "this line did not come in".
                     "probability": round(prob, 4) if prob is not None else None,
+                    "pregame_mark": _sp_pm,
+                    "pregame_mark_source": _sp_pm_src,
                     "source": market.source,
                     **_settled_grade_fields(market, o, **_grade_ctx),
                     "_market_id": market.id,
@@ -28091,6 +28134,14 @@ async def _build_game_markets(
             for o in market_outcomes:
                 prob = float(o.current_probability) if o.current_probability is not None else None
                 threshold = _extract_period_threshold(o.name, market_type)
+                _pm_opening = (
+                    round(float(o.opening_probability), 4)
+                    if o.opening_probability is not None
+                    else None
+                )
+                _pm_val, _pm_src = _resolve_pregame_mark_with_source(
+                    market, o, True, False, _pm_opening, event.commence_time,
+                )
                 period_markets.append({
                     "market_name": market.name,
                     "outcome_name": o.name,
@@ -28098,6 +28149,8 @@ async def _build_game_markets(
                     "contributor_outcome_ids": [o.id],
                     "threshold": threshold,
                     "probability": round(prob, 4) if prob else None,
+                    "pregame_mark": _pm_val,
+                    "pregame_mark_source": _pm_src,
                     "source": market.source,
                     "market_type": market_type,
                     "period": market_period,
@@ -28203,6 +28256,10 @@ async def _build_game_markets(
                         if o.opening_probability is not None:
                             op = float(o.opening_probability)
                             opening_over = round(op if is_over or not is_under else 1.0 - op, 4)
+                        _r1_pm, _r1_pm_src = _resolve_pregame_mark_with_source(
+                            market, o, is_over, is_under, opening_over,
+                            event.commence_time,
+                        )
                         pp = {
                             "market_name": market.name,
                             "outcome_name": o.name,
@@ -28211,6 +28268,8 @@ async def _build_game_markets(
                             "threshold": threshold,
                             "over_probability": round(over_prob, 4),
                             "opening_over_probability": opening_over,
+                            "pregame_mark": _r1_pm,
+                            "pregame_mark_source": _r1_pm_src,
                             "source": market.source,
                             "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
                                 if o.opening_probability is not None and o.current_probability is not None else None,
@@ -28255,6 +28314,10 @@ async def _build_game_markets(
                     if o.opening_probability is not None:
                         op = float(o.opening_probability)
                         opening_over = round(op if is_over or not is_under else 1.0 - op, 4)
+                    _r2_pm, _r2_pm_src = _resolve_pregame_mark_with_source(
+                        market, o, is_over, is_under, opening_over,
+                        event.commence_time,
+                    )
                     pp = {
                         "market_name": market.name,
                         "outcome_name": o.name,
@@ -28263,6 +28326,8 @@ async def _build_game_markets(
                         "threshold": threshold,
                         "over_probability": round(over_prob, 4),
                         "opening_over_probability": opening_over,
+                        "pregame_mark": _r2_pm,
+                        "pregame_mark_source": _r2_pm_src,
                         "source": market.source,
                         "movement": round(float(o.current_probability) - float(o.opening_probability), 4)
                             if o.opening_probability is not None and o.current_probability is not None else None,
@@ -28275,6 +28340,14 @@ async def _build_game_markets(
                     continue
                 if _leg_is_a_line_with_no_subject(o.name):
                     continue
+                _om_opening = (
+                    round(float(o.opening_probability), 4)
+                    if o.opening_probability is not None
+                    else None
+                )
+                _om_pm, _om_pm_src = _resolve_pregame_mark_with_source(
+                    market, o, True, False, _om_opening, event.commence_time,
+                )
                 other_markets.append({
                     # #2127: a BTTS row is served under what it ASKS rather than
                     # the venue's abbreviation. Every other market keeps its own
@@ -28288,16 +28361,8 @@ async def _build_game_markets(
                     "observed_at": _observed(o),
                     "contributor_outcome_ids": [o.id],
                     "probability": round(prob, 4) if prob else None,
-                    "pregame_mark": _resolve_pregame_mark(
-                        market,
-                        o,
-                        True,
-                        False,
-                        round(float(o.opening_probability), 4)
-                        if o.opening_probability is not None
-                        else None,
-                        event.commence_time,
-                    ),
+                    "pregame_mark": _om_pm,
+                    "pregame_mark_source": _om_pm_src,
                     "source": market.source,
                     **_settled_grade_fields(market, o, **_grade_ctx),
                     **({"market_type": other_market_type} if other_market_type else {}),
@@ -29776,6 +29841,24 @@ _RELATED_FUTURES_LIVE_TTL = 60
 _RELATED_FUTURES_MAX_SIZE = 10
 
 
+def _strip_related_futures_american_odds(payload: Any) -> Any:
+    """Ensure no cached or freshly built /related-futures row carries `american_odds` (#13511)."""
+    if not isinstance(payload, dict):
+        return payload
+    for key in ("home_team_futures", "away_team_futures", "shared_futures", "series_markets"):
+        rows = payload.get(key)
+        if isinstance(rows, list):
+            for row in rows:
+                if isinstance(row, dict):
+                    row.pop("american_odds", None)
+                    outcomes = row.get("outcomes")
+                    if isinstance(outcomes, list):
+                        for out in outcomes:
+                            if isinstance(out, dict):
+                                out.pop("american_odds", None)
+    return payload
+
+
 @router.get("/{event_id}/related-futures")
 async def get_related_futures(
     event_id: int,
@@ -29826,14 +29909,16 @@ async def get_related_futures(
     # miss whenever the entry was built by another release.
     cached = _read_related_futures_memo(event_id)
     if cached is not None:
-        return cached
+        return _strip_related_futures_american_odds(cached)
 
     # L2 — the shared slot, and its mirror.
     body, state = rfc.read(event_id)
     if state == "live" and body is not None:
+        _strip_related_futures_american_odds(body)
         _write_related_futures_memo(event_id, rfc.source_status_of(body), body)
         return body
     if state == "stale_ok" and body is not None:
+        _strip_related_futures_american_odds(body)
         # Exactly one rebuild behind the mirror, fleet-wide-ish: single-flight is
         # per process (`_STALE_REFRESH_INFLIGHT`), and the shared slot the
         # rebuild publishes is what keeps the other processes from re-doing it
@@ -29848,6 +29933,7 @@ async def get_related_futures(
     response, source_status, market_ids, cacheable = await _build_related_futures(
         event_id, db
     )
+    _strip_related_futures_american_odds(response)
     if not cacheable:
         # An `empty` exit. NOT published, and that is carried across from the
         # pre-LAT-P136 behaviour rather than newly decided: the old dict was
@@ -29856,9 +29942,10 @@ async def get_related_futures(
         # futures have not been ingested yet answer "no futures" for a TTL after
         # they appear — a content change smuggled inside a latency change.
         return response
-    return await _publish_related_futures(
+    published = await _publish_related_futures(
         event_id, source_status, response, market_ids, db
     )
+    return _strip_related_futures_american_odds(published)
 
 
 def _read_related_futures_memo(event_id: int):
@@ -31572,7 +31659,6 @@ async def _build_related_futures(
             "external_id": outcome.external_id,
             "probability": probability,
             "source_mark": related_futures_quote_mark(market, outcome, probability),
-            "american_odds": outcome.current_american_odds,
             # #10248 D5 — `reader_change_24h`. The relevance score above keeps
             # the stored column: it chooses, it does not print.
             "probability_change_24h": (
@@ -32342,6 +32428,100 @@ async def get_team_progression(
     except Exception:
         pass
     return _response
+
+
+async def build_event_nuggets(
+    event_id: int,
+    db: AsyncSession,
+    *,
+    limit: int = 12,
+    now: Optional[datetime] = None,
+) -> dict:
+    """Build ranked below-the-charts nuggets from existing event sub-surfaces (#13511)."""
+    from app.utils.game_nuggets import NUGGET_DEFAULT_LIMIT, rank_game_nuggets
+
+    row = (
+        await db.execute(
+            select(Event)
+            .options(selectinload(Event.sport))
+            .where(Event.id == event_id)
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    served = await resolve_served_event(db, row, requested_id=event_id)
+    event = served.event
+    resolved_id = int(served.event_id)
+
+    home_logo: Optional[str] = None
+    away_logo: Optional[str] = None
+    team_ids = [tid for tid in (event.home_team_id, event.away_team_id) if isinstance(tid, int)]
+    if team_ids:
+        teams = (await db.execute(select(Team).where(Team.id.in_(team_ids)))).scalars().all()
+        by_tid = {int(t.id): t for t in teams if getattr(t, "id", None) is not None}
+        ht = by_tid.get(event.home_team_id) if event.home_team_id else None
+        at = by_tid.get(event.away_team_id) if event.away_team_id else None
+        if ht is not None:
+            home_logo = getattr(ht, "logo_small", None) or getattr(ht, "logo_url", None) or getattr(ht, "logo_large", None)
+        if at is not None:
+            away_logo = getattr(at, "logo_small", None) or getattr(at, "logo_url", None) or getattr(at, "logo_large", None)
+
+    safe_event_id = getattr(event, "id", None)
+    try:
+        game_markets = await get_game_markets(resolved_id, db=db, fresh=False, response=None)
+    except HTTPException:
+        game_markets = {}
+    except Exception:
+        logger.warning("nuggets: game_markets read failed for event %s", safe_event_id, exc_info=True)
+        game_markets = {}
+
+    try:
+        related_futures = await get_related_futures(resolved_id, debug=False, db=db)
+    except HTTPException:
+        related_futures = {}
+    except Exception:
+        logger.warning("nuggets: related_futures read failed for event %s", safe_event_id, exc_info=True)
+        related_futures = {}
+
+    try:
+        team_progression = await get_team_progression(resolved_id, db=db)
+    except HTTPException:
+        team_progression = {}
+    except Exception:
+        logger.warning("nuggets: team_progression read failed for event %s", safe_event_id, exc_info=True)
+        team_progression = {}
+
+    event_info = {
+        "event_id": resolved_id,
+        "home_team": event.home_team_name,
+        "away_team": event.away_team_name,
+        "home_logo": home_logo,
+        "away_logo": away_logo,
+        "sport": event.sport.key if event.sport else None,
+        "status": served_event_status(
+            event.status, event.commence_time, now or datetime.now(timezone.utc)
+        ),
+        "commence_time": event.commence_time.isoformat() if event.commence_time else None,
+    }
+    return rank_game_nuggets(
+        event_info=event_info,
+        game_markets=game_markets if isinstance(game_markets, dict) else {},
+        related_futures=related_futures if isinstance(related_futures, dict) else {},
+        team_progression=team_progression if isinstance(team_progression, dict) else {},
+        limit=max(1, min(int(limit), NUGGET_DEFAULT_LIMIT)),
+        now=now,
+    )
+
+
+@router.get("/{event_id}/nuggets")
+async def get_event_nuggets(
+    event_id: int,
+    limit: int = Query(12, ge=1, le=12),
+    db: AsyncSession = Depends(get_db),
+):
+    """Ranked below-the-charts nuggets and kind counts for an event (#13511)."""
+    return await build_event_nuggets(event_id, db, limit=limit)
 
 
 #: Five minutes, unchanged from the inline literal this replaced.

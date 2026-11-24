@@ -1641,6 +1641,56 @@ def nfl_weeks_in_window(
     return [NflWeek(season=season, week=week, stage=stage) for stage, week in ordered], None
 
 
+def _nfl_week_window_bounds(
+    fixtures: Iterable, target
+) -> tuple[Optional[datetime], Optional[datetime]]:
+    """Return ``(earliest_kickoff, latest_kickoff)`` for ``target`` across ``fixtures``."""
+    from app.utils.container_nfl import is_placeholder_contest, parse_round_identity
+
+    desired = (target.stage, target.week)
+    kickoffs: list[datetime] = []
+    for fixture in fixtures:
+        kickoff = getattr(fixture, "start_time", None)
+        if kickoff is None or getattr(fixture, "start_is_placeholder", False):
+            continue
+        if is_placeholder_contest(fixture):
+            continue
+        if parse_round_identity(getattr(fixture, "round_info", None)) == desired:
+            kickoffs.append(kickoff)
+    if not kickoffs:
+        return None, None
+    return min(kickoffs), max(kickoffs)
+
+
+async def _backfill_missing_nfl_week_windows(session) -> int:
+    """Fill ``window_start`` / ``window_end`` on existing ``nfl-%`` week rows where NULL."""
+    result = await session.execute(
+        text(
+            "UPDATE containers c "
+            "SET window_start = COALESCE(c.window_start, bounds.first_game_at), "
+            "    window_end = COALESCE(c.window_end, bounds.last_game_at) "
+            "FROM ("
+            "    SELECT e.parent_id AS container_id, "
+            "           MIN(ev.commence_time) AS first_game_at, "
+            "           MAX(ev.commence_time) AS last_game_at "
+            "    FROM event_edges e "
+            "    JOIN events ev ON ev.id = e.child_id "
+            "    WHERE e.parent_type = 'container' "
+            "      AND e.kind = 'contains' "
+            "      AND e.child_type = 'event' "
+            "      AND ev.commence_time IS NOT NULL "
+            "    GROUP BY e.parent_id"
+            ") bounds "
+            "WHERE c.id = bounds.container_id "
+            "  AND c.kind = :kind "
+            "  AND c.slug LIKE 'nfl-%' "
+            "  AND (c.window_start IS NULL OR c.window_end IS NULL)"
+        ),
+        {"kind": NFL_WEEK_KIND},
+    )
+    return int(getattr(result, "rowcount", 0) or 0)
+
+
 async def _collection_container(
     session,
     slug: str,
@@ -1653,8 +1703,9 @@ async def _collection_container(
 ) -> tuple[Optional["_ContainerRow"], str]:
     """The one flat container row a collection runs against, and how it got it.
 
-    ``existing`` — already there, never updated (its window or status may have
-    been corrected since). ``created`` — inserted now, ``ON CONFLICT (slug) DO
+    ``existing`` — already there; non-null windows are preserved, and missing
+    ``window_start`` / ``window_end`` values are filled when ``apply`` is true.
+    ``created`` — inserted now, ``ON CONFLICT (slug) DO
     NOTHING`` so two passes cannot make two. ``would_create`` — a dry run with
     no row gets a stand-in (no id) so the adapter still reports every member it
     WOULD edge; nothing is written. ``absent`` — apply, and the row is still not
@@ -1663,6 +1714,26 @@ async def _collection_container(
     validate_container_kind(kind)
     row = await _resolve_container(session, slug)
     if row is not None:
+        if apply and (
+            (row[2] is None and window_start is not None)
+            or (row[3] is None and window_end is not None)
+        ):
+            await session.execute(
+                text(
+                    "UPDATE containers "
+                    "SET window_start = COALESCE(window_start, :window_start), "
+                    "    window_end = COALESCE(window_end, :window_end) "
+                    "WHERE id = :id AND (window_start IS NULL OR window_end IS NULL)"
+                ),
+                {
+                    "id": int(row[0]),
+                    "window_start": window_start,
+                    "window_end": window_end,
+                },
+            )
+            refreshed = await _resolve_container(session, slug)
+            if refreshed is not None:
+                row = refreshed
         return _ContainerRow(int(row[0]), row[1], row[2], row[3]), "existing"
     if not apply:
         return _ContainerRow(None, slug, window_start, window_end), "would_create"
@@ -1775,10 +1846,16 @@ async def run_nfl_collection(
 
     runs = []
     for target, week_relocation in plan:
+        week_start, week_end = _nfl_week_window_bounds(fixtures, target)
 
-        async def _run(target=target, week_relocation=week_relocation):
+        async def _run(
+            target=target,
+            week_relocation=week_relocation,
+            week_start=week_start,
+            week_end=week_end,
+        ):
             container, bootstrap = await _collection_container(
-                session, target.slug, target.display_name, NFL_WEEK_KIND, None, None,
+                session, target.slug, target.display_name, NFL_WEEK_KIND, week_start, week_end,
                 apply=apply,
             )
             if container is None:
@@ -1790,6 +1867,14 @@ async def run_nfl_collection(
             return run
 
         runs.append(await _one_collection_run(session, target.slug, "nfl", _run, apply=apply))
+    if apply:
+        try:
+            updated = await _backfill_missing_nfl_week_windows(session)
+            if updated > 0:
+                await session.commit()
+        except Exception:  # noqa: BLE001 — never fail the week runs on best-effort backfill
+            await session.rollback()
+            logger.exception("NFL week window backfill failed")
     return runs
 
 

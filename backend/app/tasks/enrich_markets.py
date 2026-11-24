@@ -16,7 +16,7 @@ from types import SimpleNamespace
 from typing import Any
 
 import httpx
-from sqlalchemy import DateTime, Integer, String, column as sa_column, select, table as sa_table, update, func
+from sqlalchemy import DateTime, Integer, String, bindparam, case, column as sa_column, select, table as sa_table, update, func
 from sqlalchemy.dialects.postgresql import JSONB
 
 from app.services.llm_models import resolve_model
@@ -28,6 +28,7 @@ from app.utils.cu_frame import (
     DROP_ABSENT as CU_FRAME_DROP_ABSENT,
     DROP_UNIT_NOT_IN_TITLE as CU_FRAME_DROP_UNIT_NOT_IN_TITLE,
     DROP_VALUE_NOT_IN_TITLE as CU_FRAME_DROP_VALUE_NOT_IN_TITLE,
+    MEASURES as CU_FRAME_MEASURES,
     clean_entity_mentions,
     ground_subjects,
     is_resolved_ref,
@@ -61,7 +62,10 @@ DISCOVER_LLM_SCHEMA_VERSION = 1
 #: A rev bump is REQUIRED alongside any prompt change: `_cu_v2_needs_retag`
 #: gates on it, so without the bump a re-run reports `skipped_fresh` and
 #: generates nothing (CU-NEXT's named tell).
-CU_WRITER_REV = 6
+# rev 7 (#12273): numeric values, canonical measure names, window dates and
+# persisted validation reasons. Unclassified markets still face the volume/tier bar.
+# rev 8 (#1809): grounded aliases must be unique and compatible with the mention.
+CU_WRITER_REV = 8
 CU_V2_SCHEMA_VERSION = 2
 #: Per-run spend ceiling for ``enrich_cu_v2_profiles`` (USD).
 CU_V2_COST_CAP_USD = 30.0
@@ -1300,7 +1304,7 @@ CLASSIFICATION RULES (apply exactly — these are corrected from graded errors):
 3. stakes = magnitude of the real-world consequence, NOT market volume: ceasefires/peace deals 4–5, pandemics 3+, an esports match 1, a celebrity tweet count 1.
 4. breadth = how many ORDINARY people know/care about THIS market's specific subject — not the topic's global fame: an esports match is 1 (regardless of how popular the game is), an esports tournament winner 2, the World Cup 5.
 5. oddity baseline is 1. Ordinary markets — including dramatic ones — are 1. Reserve 3+ for genuine weirdness (clavicular pregnancy 5, Musk-buys-OnlyFans 5); a 2 must be justified.
-6. frame: fill it ONLY from what the title itself states, and copy `value` and `unit` CHARACTER-FOR-CHARACTER out of the title. The check applied to your answer is mechanical: the exact string you write must appear in the title as a STANDALONE token. Before emitting a frame, look for your `value` string in the title; if you cannot see it there, emit "frame": null instead. One wrong character discards the entire frame, so copying is always safer than reasoning.
+6. frame: use only what the title says. Choose a measure from {measure_vocabulary}. Use price_high for a high within a stated window and price_record_high for an all-time record. Use null for the frame when no listed measure fits. Copy a numeric threshold and its unit out of the title as standalone tokens. Copy a stated deadline into window_date, including exactly the year, month and day the title gives. A deadline year or phrase is never a threshold.
    ACCEPTED — the string is present in the title, verbatim:
      "Will X reach 13M subscribers?"   -> value "13M", unit "M"
      "Will it hit 70%?"                -> value "70",  unit "%"
@@ -1314,7 +1318,7 @@ CLASSIFICATION RULES (apply exactly — these are corrected from graded errors):
      2025       for a title saying "2026"   — never a nearby or remembered number
      any value you calculated, converted, rounded, summed or inferred
    A number embedded inside a longer word does NOT count as present: "7M" is not standalone in "W7M", so that title yields "frame": null.
-   If the title names no number at all, return "frame": null — that is a CORRECT answer and is expected for most titles, not a failure. A title can also carry a measure with no number ("Who wins the scoring title?" -> measure "points", value null).
+   A known measure can have value null ("Who wins the scoring title?" -> measure "points", value null). Leave window_date null when the title gives no explicit date. For a title ending "by December 31, 2027", copy "December 31, 2027" into window_date. Do not infer a date from the venue close.
 7. event_date sanity: the event_date must be plausible relative to the resolution date above. It should NOT be in the distant past for a market that has not yet resolved (e.g. a 2023 date on a 2026 market is wrong), and for an in-progress series/season an event_tied date more than 13 months in the future is almost certainly wrong. If your derived date falls outside roughly [a few weeks before the resolution date, ~13 months after today], re-derive it or return null rather than guessing a wild year.
 
 CALIBRATED EXAMPLES (market -> topic / temporal / stakes,breadth,oddity):
@@ -1341,7 +1345,7 @@ JSON schema:
   "breadth": <1-5, reach of THIS market's subject per rule 4>,
   "oddity": <1-5, baseline 1 per rule 5>,
   "arc": "race|comeback|collapse|milestone|upset_watch|none",
-  "frame": {{"measure": "<lowercase snake, e.g. points, high_temperature, rt_score, fed_funds_rate>", "comparator": "gte|gt|lte|lt|eq|ne|range|null", "value": "<number EXACTLY as the title writes it, or null>", "unit": "<unit token EXACTLY as the title writes it, or null>", "horizon_kind": "intraday|daily|weekly|monthly|quarterly|annual|multi_year|open_ended|null"}} or null,
+  "frame": {{"measure": "<one of the listed measures>", "comparator": "gte|gt|lte|lt|eq|ne|range|null", "value": "<numeric threshold EXACTLY as the title writes it, or null>", "unit": "<unit as written, or null>", "horizon_kind": "intraday|daily|weekly|monthly|quarterly|annual|multi_year|open_ended|null", "window_date": "<explicit date as written, or null>"}} or null,
   "hook_facts": [{{"type": "stat|context|comparison", "text": "<one falsifiable claim>"}}],
   "junk_flags": ["<ladder|dated_bucket|social_count|duplicate_phrasing — empty array if none>"],
   "confidence": <0.0-1.0, your confidence in this classification>
@@ -1400,7 +1404,9 @@ def _compute_liveness(outcome_probs: list[float] | None, status: str | None) -> 
     return "active"
 
 
-async def _resolve_entity_refs(session, names: list[str]) -> dict[str, dict[str, Any]]:
+async def _resolve_entity_refs(
+    session, names: list[str], *, mention_types: dict[str, str] | None = None
+) -> dict[str, dict[str, Any]]:
     """Resolve free-text entity mentions to registry refs — string/alias match ONLY.
 
     No LLM call anywhere in this path (#1809): grounding uses what the registry
@@ -1432,8 +1438,14 @@ async def _resolve_entity_refs(session, names: list[str]) -> dict[str, dict[str,
     if not wanted:
         return out
 
-    entities = await resolve_aliases(session, wanted)
+    mention_types = mention_types or {}
+    ambiguous_names: set[str] = set()
+    entities = await resolve_aliases(session, wanted, ambiguous_names=ambiguous_names)
     for name, entity in entities.items():
+        mention_type = mention_types.get(name)
+        compatible_event = mention_type == "event" and entity.kind in {"competition", "event_concept"}
+        if mention_type and entity.kind != mention_type and not compatible_event:
+            continue
         out[name] = {
             "ref": f"entity:{int(entity.id)}",
             "entity_id": int(entity.id),
@@ -1441,7 +1453,11 @@ async def _resolve_entity_refs(session, names: list[str]) -> dict[str, dict[str,
             "source": "registry_alias",
         }
 
-    missing = [n for n in wanted if n not in out]
+    missing = [
+        name for name in wanted
+        if name not in entities and name not in ambiguous_names
+        and mention_types.get(name, "") in {"", "team"}
+    ]
     if not missing:
         return out
 
@@ -1566,7 +1582,7 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                    ) AS outcomes
             FROM futures_markets fm
             WHERE fm.status = 'open'
-              AND fm.llm_sport_category != 'crypto'
+              AND fm.llm_sport_category IS DISTINCT FROM 'crypto'
               AND (fm.llm_sport_category = ANY(:cats) OR fm.volume_24h >= 5000 OR fm.market_tier <= 3)
             ORDER BY fm.volume_24h DESC NULLS LAST, fm.updated_at DESC NULLS LAST
             LIMIT :lim
@@ -1651,6 +1667,7 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                 source=item["source"] or "",
                 resolution_date=item["resolution_date"],
                 outcomes="\n".join(item["outcome_lines"]) if item["outcome_lines"] else "- unknown",
+                measure_vocabulary=", ".join(sorted(CU_FRAME_MEASURES)),
             )
 
             try:
@@ -1681,8 +1698,9 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                 # --- C1: the quantitative frame, verified against the title.
                 # A frame whose value/unit is not literally in the title is
                 # dropped WHOLE and the rest of the profile still written.
+                frame_slot_drops: dict[str, str] = {}
                 frame, frame_drop = sanitize_cu_frame(
-                    raw.get("frame"), title=item["name"] or ""
+                    raw.get("frame"), title=item["name"] or "", slot_drops=frame_slot_drops
                 )
                 if frame is not None:
                     stats["frames_written"] += 1
@@ -1704,7 +1722,8 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                 mentions = clean_entity_mentions(raw.get("entities"))
                 try:
                     resolved_refs = await _resolve_entity_refs(
-                        resolve_session, [m["name"] for m in mentions]
+                        resolve_session, [m["name"] for m in mentions],
+                        mention_types={m["name"]: m["type"] for m in mentions},
                     )
                 except Exception as resolve_exc:
                     # An empty map here would be indistinguishable from "nothing
@@ -1765,14 +1784,13 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                     # title states no number — an absent key would read as "this
                     # writer never ran" to a frame-first consumer.
                     "frame": frame,
+                    "frame_drop_reason": frame_drop,
+                    "frame_slot_drops": frame_slot_drops,
                     "subjects": subjects,
                     "subject_ref": subject_ref,
                     "subject_entity_id": subject_entity_id,
                     "subject_resolved": subject_resolved,
                 }
-
-                next_metadata = dict(item["metadata"])
-                next_metadata[DISCOVER_LLM_METADATA_KEY] = profile
 
                 # One statement: a second UPDATE of the row this transaction
                 # just wrote would run the `event_id` FK check (above).
@@ -1780,7 +1798,20 @@ async def enrich_cu_v2_profiles(limit: int = 125):
                 # through a table clause that names it.
                 # The table clause carries no `onupdate`, so the bump the ORM
                 # UPDATE made (`updated_at=now()`) is written here by name.
-                values = {"market_metadata": next_metadata, "updated_at": func.now()}
+                metadata = _FUTURES_MARKETS_CU_WRITE.c.market_metadata
+                base_metadata = case(
+                    (func.jsonb_typeof(metadata) == "object", metadata),
+                    (func.jsonb_typeof(metadata) == "string",
+                     bindparam("cu_legacy_metadata", item["metadata"], type_=JSONB)),
+                    else_=bindparam("cu_empty_metadata", {}, type_=JSONB),
+                )
+                profile_patch = bindparam(
+                    "cu_profile_patch", {DISCOVER_LLM_METADATA_KEY: profile}, type_=JSONB
+                )
+                values = {
+                    "market_metadata": base_metadata.op("||")(profile_patch),
+                    "updated_at": func.now(),
+                }
                 story_key = raw.get("story_key")
                 if story_key:
                     values["story_key"] = story_key

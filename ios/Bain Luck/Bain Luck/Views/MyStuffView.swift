@@ -101,7 +101,7 @@ struct MyStuffView: View {
     private var landingRefreshKey295A: String {
         let subj = followManager.subjects.map(\.id).joined(separator: ",")
         let pins = pinManager.savedPins.map(\.id).joined(separator: ",")
-        return "\(subj)|\(pins)|\(pinContent.content.count)|\(vm.items.count)|\(vm.teamFutures?.items.count ?? 0)"
+        return "\(subj)|\(pins)|\(pinContent.content.count)|\(vm.items.count)|\(vm.teamFutures?.items.count ?? 0)|\(vm.error != nil)|\(vm.teamFuturesFailed)|\(vm.teamFuturesLoading)"
     }
 
     var body: some View {
@@ -157,21 +157,45 @@ struct MyStuffView: View {
                                     savedPins: pinManager.savedPins,
                                     pinContent: pinContent.content,
                                     signedInItems: authManager.isAuthenticated ? vm.items : [],
-                                    signedInTeamFutures: authManager.isAuthenticated ? vm.teamFutures : nil
+                                    signedInTeamFutures: authManager.isAuthenticated ? vm.teamFutures : nil,
+                                    signedInTeamFeedFailed: authManager.isAuthenticated && vm.error != nil,
+                                    signedInTeamFuturesFailed: authManager.isAuthenticated && vm.teamFuturesFailed,
+                                    signedInTeamFuturesLoading: authManager.isAuthenticated && vm.teamFuturesLoading
                                 )
+                            },
+                            onRetryTeamFutures: {
+                                if authManager.isAuthenticated {
+                                    if vm.items.isEmpty && vm.error != nil {
+                                        await vm.startLoad()
+                                    } else {
+                                        await vm.retryTeamFutures()
+                                    }
+                                } else {
+                                    await landingVM.refresh(
+                                        followedSubjects: followManager.subjects,
+                                        savedPins: pinManager.savedPins,
+                                        pinContent: pinContent.content,
+                                        signedInItems: [],
+                                        signedInTeamFutures: nil
+                                    )
+                                }
                             }
                         )
+                        .task(id: authManager.activeFeedUserId) {
+                            guard authManager.isAuthenticated else { return }
+                            vm.viewDidStart()
+                            await vm.startLoad()
+                        }
                         .task(id: landingRefreshKey295A) {
-                            if authManager.isAuthenticated, vm.items.isEmpty {
-                                vm.viewDidStart()
-                                Task { await vm.startLoad() }
-                            }
                             await landingVM.refresh(
                                 followedSubjects: followManager.subjects,
                                 savedPins: pinManager.savedPins,
                                 pinContent: pinContent.content,
                                 signedInItems: authManager.isAuthenticated ? vm.items : [],
-                                signedInTeamFutures: authManager.isAuthenticated ? vm.teamFutures : nil
+                                signedInTeamFutures: authManager.isAuthenticated ? vm.teamFutures : nil,
+                                signedInTeamFeedFailed: authManager.isAuthenticated && vm.error != nil,
+                                signedInTeamFuturesFailed: authManager.isAuthenticated && vm.teamFuturesFailed,
+                                signedInTeamFuturesLoading: authManager.isAuthenticated && vm.teamFuturesLoading
                             )
                         }
                     } else if authManager.isLoading {
@@ -469,11 +493,23 @@ struct MyStuffView: View {
             } else if vm.loading {
                 SkeletonFeedView()
             } else if let error = vm.error, vm.items.isEmpty {
-                ContentUnavailableView(
-                    "Couldn't Load Feed",
-                    systemImage: "wifi.exclamationmark",
-                    description: Text(error)
-                )
+                ContentUnavailableView {
+                    Label("Couldn't Load Feed", systemImage: "wifi.exclamationmark")
+                } description: {
+                    Text(error)
+                } actions: {
+                    Button {
+                        Task { await vm.startLoad() }
+                    } label: {
+                        Text("Try again")
+                            .fontWeight(.semibold)
+                            .frame(minHeight: 36)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("myStuff.retryRequiredFeed")
+                }
+            } else if vm.items.isEmpty && (vm.teamFuturesFailed || vm.teamFuturesLoading) {
+                teamFuturesEmptyStateView
             } else if vm.items.isEmpty {
                 VStack(spacing: 16) {
                     Spacer()
@@ -621,6 +657,37 @@ struct MyStuffView: View {
         .accessibilityIdentifier("pinnedFallback.\(pin.id)")
     }
 
+    @ViewBuilder
+    private var teamFuturesEmptyStateView: some View {
+        if vm.teamFuturesFailed {
+            ContentUnavailableView {
+                Label("Couldn't Load Your Teams' Futures", systemImage: "exclamationmark.triangle")
+            } description: {
+                Text("Your followed teams are still saved — this read didn't finish.")
+            } actions: {
+                Button {
+                    Task { await vm.retryTeamFutures() }
+                } label: {
+                    if vm.teamFuturesLoading {
+                        ProgressView()
+                            .frame(minHeight: 36)
+                    } else {
+                        Text("Try again")
+                            .fontWeight(.semibold)
+                            .frame(minHeight: 36)
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(vm.teamFuturesLoading)
+                .accessibilityIdentifier("myStuff.retryTeamFutures")
+            }
+            .accessibilityIdentifier("myStuff.teamFuturesEmptyError")
+        } else {
+            ProgressView("Loading your teams' futures…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
     /// With pins on screen, an unloaded / failed / empty team feed is one row
     /// under them instead of a full-screen state that would hide them.
     @ViewBuilder
@@ -630,11 +697,83 @@ struct MyStuffView: View {
                 if vm.loading {
                     HStack(spacing: 8) { ProgressView(); Text("Loading your teams…").foregroundStyle(.secondary) }
                 } else if vm.error != nil {
-                    Text("Couldn't load your teams' games. Pull down to refresh.").foregroundStyle(.secondary)
+                    HStack(spacing: 12) {
+                        Text("Couldn't load your teams' games.")
+                            .foregroundStyle(.secondary)
+                        Spacer(minLength: 8)
+                        Button("Try again") {
+                            Task { await vm.startLoad() }
+                        }
+                        .buttonStyle(.bordered)
+                        .accessibilityIdentifier("myStuff.retryStatusRowFeed")
+                    }
+                } else if vm.teamFuturesFailed {
+                    HStack(alignment: .center, spacing: 12) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Couldn't load your teams' futures")
+                                .font(.subheadline.weight(.semibold))
+                            Text("Your followed teams are still saved — this read didn't finish.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer(minLength: 8)
+                        Button {
+                            Task { await vm.retryTeamFutures() }
+                        } label: {
+                            if vm.teamFuturesLoading {
+                                ProgressView()
+                                    .controlSize(.small)
+                            } else {
+                                Text("Try again")
+                            }
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(vm.teamFuturesLoading)
+                        .accessibilityIdentifier("myStuff.retryStatusRowFutures")
+                    }
+                } else if vm.teamFuturesLoading {
+                    HStack(spacing: 8) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Loading your teams' futures…")
+                            .foregroundStyle(.secondary)
+                    }
                 } else {
                     Text("Your teams don't have any games coming up.").foregroundStyle(.secondary)
                 }
             }
+        }
+    }
+
+    private var teamFuturesErrorSection: some View {
+        Section {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.orange)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Couldn't load your teams' futures")
+                        .font(.subheadline.weight(.semibold))
+                    Text("Your followed teams are still saved — this read didn't finish.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Button {
+                    Task { await vm.retryTeamFutures() }
+                } label: {
+                    if vm.teamFuturesLoading {
+                        ProgressView()
+                            .controlSize(.small)
+                    } else {
+                        Text("Try again")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(vm.teamFuturesLoading)
+                .accessibilityIdentifier("myStuff.retrySectionFutures")
+            }
+        } header: {
+            Label("Futures", systemImage: "trophy.fill")
         }
     }
 
@@ -709,6 +848,8 @@ struct MyStuffView: View {
                 }
                 if let futures = vm.teamFutures, !futures.items.isEmpty {
                     TeamFuturesSection(futures: futures, path: $path, twoColumns: twoColumns)
+                } else if vm.teamFuturesFailed {
+                    teamFuturesErrorSection
                 }
 
                 Section {

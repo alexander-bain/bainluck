@@ -489,3 +489,9 @@ class TestNflWeekAuthorityStatus11906:
         assert "THEN 'final'" in sql
         assert "THEN 'live'" in sql
         assert "THEN 'cancelled'" in sql
+
+    def test_discovery_sql_orders_most_recent_window_start_first(self):
+        sql = discovery._discovery_sql(
+            by_slug=False, by_prefix=True, by_season=True, by_events=False
+        )
+        assert "ORDER BY cardinality('{}'::bigint[]) DESC, hub.window_start DESC NULLS LAST, hub.id" in sql

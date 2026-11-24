@@ -430,3 +430,4 @@ tests/test_ci_shard_hints_fetch.py  the artifact and run stamps are fixture data
 tests/test_master_red_alarm.py  the dates are timestamps inside recorded CI log lines (fixture text); the parser never reads a clock
 tests/test_discover_game_reason_190.py  the game cards are a fixed fixture and every signal read is handed the fixed NOW (2026-11-15 23:30 UTC); no wall clock is read
 tests/test_no_blank_market_titles_13387.py  Pure string title-rewrite unit tests; November dates are static title strings never read by a clock
+tests/test_blind_decks_363a.py  Static Nov 23 blind-deck fixture manifests and URL slugs; no clock is ever read

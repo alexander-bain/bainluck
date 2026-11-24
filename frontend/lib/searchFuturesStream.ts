@@ -31,6 +31,7 @@
  */
 import type { FeedFuturesData, FuturesFamily, FuturesMarket } from '@/lib/types';
 import { marketResolved, type DiscoverPriceCards } from '@/lib/discover/priceRefresh';
+import type { MarketPreviews } from '@/lib/discover/marketPreview';
 
 /** One adopted leg: its price (null = withheld by the server) and revision. */
 export interface HeldLeg {
@@ -109,6 +110,47 @@ export function patchSearchFutures(market: FuturesMarket, book: SearchPriceBook)
     });
     return changed ? next : rows;
   };
+  const top = patchRows(market.top_outcomes);
+  const all = patchRows(market.outcomes);
+  if (top === market.top_outcomes && all === market.outcomes) return market;
+  return { ...market, top_outcomes: top, outcomes: all };
+}
+
+/**
+ * #10090: overlay provisional `market_preview` SSE prices onto a Search market card
+ * (flat cards and family rows) immediately upon receipt, only when newer than any
+ * committed `price-cards` revision held for each outcome.
+ */
+export function overlaySearchMarketPreview(
+  market: FuturesMarket,
+  previews: MarketPreviews,
+  now: number,
+  book?: SearchPriceBook,
+): FuturesMarket {
+  if (!searchFuturesStreamable(market)) return market;
+  const state = previews[market.id];
+  if (!state || state.source !== market.source) return market;
+  const heldLegs = book?.get(market.id);
+
+  const patchRows = (rows: FuturesMarket['outcomes']) => {
+    if (!rows) return rows;
+    let changed = false;
+    const next = rows.map((row) => {
+      if (row.probability === null) return row;
+      const leg = state.legs[String(row.id)];
+      if (!leg || leg.expiresAt <= now) return row;
+      const observedMs = Date.parse(leg.observedAt);
+      const committedRev = heldLegs?.get(row.id)?.revision ?? null;
+      if (committedRev !== null && Number.isFinite(observedMs) && observedMs <= committedRev) {
+        return row;
+      }
+      if (leg.p === row.probability) return row;
+      changed = true;
+      return { ...row, probability: leg.p };
+    });
+    return changed ? next : rows;
+  };
+
   const top = patchRows(market.top_outcomes);
   const all = patchRows(market.outcomes);
   if (top === market.top_outcomes && all === market.outcomes) return market;
