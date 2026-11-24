@@ -227,7 +227,7 @@ class TestCeleryInspect:
 
         def _slow_call():
             import time
-            time.sleep(0.10)
+            time.sleep(0.25)
             return {}
 
         mock_inspect = MagicMock()

@@ -471,9 +471,9 @@ async def get_task_metrics_endpoint(
 #: outage. 5s is chosen to be shorter than any plausible human refresh and longer
 #: than the tightest sane poll.
 _INSPECT_TTL_S = 5.0
-_INSPECT_PER_CALL_TIMEOUT_S = 0.9
+_INSPECT_PER_CALL_TIMEOUT_S = 3.5
 _INSPECT_TOTAL_TIMEOUT_S = 5.0
-_INSPECT_CACHE: dict = {"at": 0.0, "data": None}
+_INSPECT_CACHE: dict = {"at": 0.0, "data": None, "meta": {}}
 _INSPECT_LOCK = None
 
 
@@ -500,11 +500,15 @@ async def _inspect_snapshot(
     * **memoised** — a poller faster than `_INSPECT_TTL_S` gets the cached
       snapshot. This is the protection that would actually have prevented the
       LAT-P071 outage, because the load there was cadence, not concurrency.
-    * **bounded budget** — `control.inspect(timeout=timeout)` waits out its full
-      timeout across silent workers on every call, so five calls at `timeout=5`
-      held web worker threads for ~25s per heavy-sync poll. Capping each call
-      at `0.9s` (`<= 4.5s` worst case) plus a hard `5.0s` deadline makes the
-      endpoint give up cleanly at 5s instead of tying up web workers.
+    * **bounded parallel budget** — `control.inspect(timeout=timeout)` waits out
+      silent workers on every broadcast, so five sequential `timeout=5` calls
+      held web worker threads for ~25s per heavy-sync poll. Dispatching the
+      five broadcasts concurrently in the threadpool keeps at least a 3.5s reply
+      window for `active` while enforcing a hard 5.0s deadline across all five.
+    * **partial-reply disclosure** — if a worker answers another broadcast
+      (such as `ping`) within the window but misses `active`, `_cache` sets
+      `"partial": True` and lists `"missing_active_workers"` so callers do not
+      read an unanswered worker's missing tasks as idle.
 
     The cache state is DISCLOSED in the payload. A debug endpoint that silently
     serves a stale snapshot is worse than a slow one — it invites conclusions
@@ -535,15 +539,22 @@ async def _inspect_snapshot(
     now = _time.time()
     cached = _INSPECT_CACHE.get("data")
     if not fresh and cached is not None and (now - _INSPECT_CACHE["at"]) < _INSPECT_TTL_S:
-        return cached, {"cached": True, "age_s": round(now - _INSPECT_CACHE["at"], 2)}
+        return cached, {
+            "cached": True,
+            "age_s": round(now - _INSPECT_CACHE["at"], 2),
+            **(_INSPECT_CACHE.get("meta") or {}),
+        }
 
     async with _INSPECT_LOCK:
         # Re-check inside the lock: whoever we queued behind has just refreshed it.
         now = _time.time()
         cached = _INSPECT_CACHE.get("data")
         if not fresh and cached is not None and (now - _INSPECT_CACHE["at"]) < _INSPECT_TTL_S:
-            return cached, {"cached": True,
-                            "age_s": round(now - _INSPECT_CACHE["at"], 2)}
+            return cached, {
+                "cached": True,
+                "age_s": round(now - _INSPECT_CACHE["at"], 2),
+                **(_INSPECT_CACHE.get("meta") or {}),
+            }
 
         budget = max(
             0.05,
@@ -554,24 +565,44 @@ async def _inspect_snapshot(
             budget,
         )
 
-        def _blocking():
+        keys = ("active", "reserved", "registered", "ping", "stats")
+
+        def _call(key: str):
             from app.tasks import celery_app
-            deadline = _time.monotonic() + budget
+
             i = celery_app.control.inspect(timeout=per_call)
-            out = {}
-            for key in ("active", "reserved", "registered", "ping", "stats"):
-                if _time.monotonic() >= deadline:
-                    raise TimeoutError(f"celery inspect exceeded {budget:.1f}s budget")
-                out[key] = getattr(i, key)() or {}
-            return out
+            return getattr(i, key)() or {}
 
         try:
-            data = await asyncio.wait_for(run_in_threadpool(_blocking), timeout=budget)
+            values = await asyncio.wait_for(
+                asyncio.gather(*[run_in_threadpool(_call, key) for key in keys]),
+                timeout=budget,
+            )
         except asyncio.TimeoutError as exc:
             raise TimeoutError(f"celery inspect timed out after {budget:.1f}s") from exc
+
+        data = dict(zip(keys, values))
+
+        def _worker_keys(val):
+            return set(val.keys()) if isinstance(val, dict) else set()
+
+        observed = (
+            _worker_keys(data["ping"])
+            | _worker_keys(data["registered"])
+            | _worker_keys(data["reserved"])
+            | _worker_keys(data["stats"])
+        )
+        missing_active = sorted(observed - _worker_keys(data["active"]))
+        meta = (
+            {"partial": True, "missing_active_workers": missing_active}
+            if missing_active
+            else {}
+        )
+
         _INSPECT_CACHE["data"] = data
         _INSPECT_CACHE["at"] = _time.time()
-        return data, {"cached": False, "age_s": 0.0}
+        _INSPECT_CACHE["meta"] = meta
+        return data, {"cached": False, "age_s": 0.0, **meta}
 
 
 @router.get("/celery/inspect")
