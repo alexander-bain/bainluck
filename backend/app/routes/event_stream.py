@@ -329,6 +329,53 @@ async def _fold_stream_ids(db: AsyncSession, event_id: int) -> list[int]:
     return await folded_series_event_ids(db, event_id, absorbed)
 
 
+def _row_has_draw_chance(event: Event) -> bool:
+    """Return True when this event row prices or carries a three-way draw outcome."""
+    from app.utils.aggregation import valid_three_way_side_values
+    from app.utils.draw_priced_winner import sport_prices_a_draw
+
+    sport_key = getattr(getattr(event, "sport", None), "key", None)
+    if sport_prices_a_draw(sport_key):
+        return True
+    sources = getattr(event, "win_probability_sources", None)
+    if isinstance(sources, dict):
+        for block in sources.values():
+            if (
+                isinstance(block, dict)
+                and valid_three_way_side_values(
+                    block.get("away_value"), block.get("draw_value")
+                )
+                is not None
+            ):
+                return True
+    return False
+
+
+async def _event_has_draw_chance(
+    db: AsyncSession, event_id: int, contributor_ids: list[int]
+) -> bool:
+    """Check once at connect time whether any row in the stream prices a draw (#13509)."""
+    if not callable(getattr(db, "execute", None)):
+        return False
+    ids = list(dict.fromkeys([event_id, *(contributor_ids or [])]))
+    rows = (
+        await db.execute(
+            select(Event)
+            .options(selectinload(Event.sport))
+            .where(Event.id.in_(ids))
+        )
+    ).scalars().all()
+    return any(_row_has_draw_chance(row) for row in rows)
+
+
+def _strip_draw_frame_price(frame: dict) -> dict:
+    """Drop home price ``p`` and raw snapshots on three-way games so clients refetch all 3 chances."""
+    return {
+        **{k: v for k, v in frame.items() if k != "source_snapshot"},
+        "p": None,
+    }
+
+
 class _FoldSubscription:
     """Read contributor mailboxes concurrently through the existing shared hub."""
 
@@ -481,7 +528,11 @@ async def _current_reconcile(event_id: int, event_ids: list[int]):
 
 
 async def _stream(
-    event_id: int, request: Request, contributor_ids: Optional[list[int]] = None,
+    event_id: int,
+    request: Request,
+    contributor_ids: Optional[list[int]] = None,
+    *,
+    suppress_price: bool = False,
 ) -> AsyncIterator[str]:
     """Yield SSE frames for one event until the client leaves or time is up."""
     global _open_connections
@@ -498,7 +549,9 @@ async def _stream(
     subscription = _FoldSubscription(hub, authority_v3=authority_v3)
     stream_session = str(uuid4()) if authority_v3 else None
     stream_authority = None
-    preview_on = event_id in preview_route_events()
+    # #13509: preview frames carry only home `p` (1 - p fallback on client),
+    # so disable provisional previews alongside `p` on draw-priced games.
+    preview_on = (not suppress_price) and (event_id in preview_route_events())
     # Old readers treat a folded frame as a singleton claim. Require explicit
     # vector-aware admission support before sending provisional folded values.
     folded_preview_capable = (
@@ -953,7 +1006,8 @@ async def _stream(
                         note_floors(control.get("removal_rev"))
                         yield sse_encode(json.dumps(control), event="reconcile")
                     if frame.get("reconcile_only") is True:
-                        if (control is not None and control["custody_id"] ==
+                        if (not suppress_price and control is not None
+                                and control["custody_id"] ==
                                 f"normal-price:{origin_id}:{frame['rev'][str(origin_id)]}"):
                             pending_quote_control = (frame, control)
                         continue
@@ -983,10 +1037,17 @@ async def _stream(
                                  if k != "source_snapshot"}
                     project = getattr(hub, "project_folded_quote", None)
                     pending_quote = (
-                        len(subscription.subscriptions) > 1 and callable(project)
+                        not suppress_price
+                        and len(subscription.subscriptions) > 1
+                        and callable(project)
                         and not (origin_id == event_id and frame.get("status") not in QUOTE_STATUSES)
                     )
                     raw = {**frame, "folded_quote_pending": True} if pending_quote else frame
+                    if suppress_price:
+                        # #13509: pushed home-only `p` causes shipped iOS builds
+                        # to compute away = 1 - p on three-way games; emit p: null
+                        # so clients keep or refetch the full three-way triplet.
+                        raw = _strip_draw_frame_price(raw)
                     yield sse_encode(json.dumps(raw), event="probability")
                     # A frame is as good as a heartbeat for keeping the router
                     # from reaping us; a busy market should not also pay for
@@ -1080,6 +1141,7 @@ async def stream_event(event_id: int, request: Request):
     Opening the session explicitly bounds it to the lookup and returns the
     connection to the pool before the first byte of the stream is written.
     """
+    suppress_price = False
     async with async_session_maker() as session:
         status = await _event_status(session, event_id)
         contributor_ids = (
@@ -1088,6 +1150,10 @@ async def stream_event(event_id: int, request: Request):
         eligible = status in LIVE_STATUSES
         if status in QUOTE_STATUSES and not eligible:
             eligible = await _nonlive_stream_eligible(session, event_id, contributor_ids)
+        if eligible:
+            suppress_price = await _event_has_draw_chance(
+                session, event_id, contributor_ids
+            )
     if status is None:
         raise HTTPException(status_code=404, detail="Event not found")
     if not eligible:
@@ -1102,7 +1168,12 @@ async def stream_event(event_id: int, request: Request):
         )
 
     return StreamingResponse(
-        _stream(event_id, request, contributor_ids=contributor_ids),
+        _stream(
+            event_id,
+            request,
+            contributor_ids=contributor_ids,
+            suppress_price=suppress_price,
+        ),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",

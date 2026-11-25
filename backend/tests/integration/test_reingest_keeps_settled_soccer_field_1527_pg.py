@@ -369,6 +369,9 @@ async def client(db, isolated_database, monkeypatch):
 
 
 async def _served(client, mid):
+    from app.utils import futures_page_cache as _fpc
+
+    _fpc._reset_for_tests()
     r = await client.get(f"/api/futures/{mid}")
     assert r.status_code == 200, r.text
     body = r.json()

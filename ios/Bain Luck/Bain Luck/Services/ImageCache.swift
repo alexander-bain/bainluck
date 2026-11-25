@@ -7,12 +7,18 @@ import AppKit
 actor ImageCache {
     static let shared = ImageCache()
 
-    private let cache = NSCache<NSString, PlatformImage>()
+    /// `NSCache` is documented thread-safe for concurrent reads/writes, allowing
+    /// synchronous memory hits on first paint before an async `.task` resumes.
+    private nonisolated(unsafe) let cache = NSCache<NSString, PlatformImage>()
     private var inflight: [String: Task<PlatformImage?, Never>] = [:]
 
     private init() {
         cache.countLimit = 200
         cache.totalCostLimit = 50 * 1024 * 1024  // 50 MB
+    }
+
+    nonisolated func cachedImage(for url: URL) -> PlatformImage? {
+        cache.object(forKey: url.absoluteString as NSString)
     }
 
     func image(for url: URL) async -> PlatformImage? {
@@ -39,5 +45,9 @@ actor ImageCache {
         let result = await task.value
         inflight.removeValue(forKey: url.absoluteString)
         return result
+    }
+
+    func seedForTesting(_ image: PlatformImage, url: URL) {
+        cache.setObject(image, forKey: url.absoluteString as NSString)
     }
 }

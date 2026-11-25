@@ -49,6 +49,14 @@ VENUE_CLUB_SPELLINGS: dict[str, str] = {
     "KK Partizan Belgrade": "KK Partizan NIS",
     "BC Olympiakos Piraeus": "Olympiacos B.C.",
     "FC Bayern München": "Bayern Munich",
+    # #13238: Remaining EuroLeague club spellings (production pairs 15351540 /
+    # 15352078 and 15351920 / 15352631 on 2026-11-23).
+    "Pallacanestro Olimpia Milano": "Olimpia Milano",
+    "Baskonia Vitoria-Gasteiz": "Saski Baskonia",
+    "Anadolu Efes SK": "Anadolu Efes",
+    "Maccabi Tel-Aviv": "Maccabi Tel Aviv",
+    "Hapoel Tel-Aviv": "Hapoel Tel Aviv",
+    "ASVEL Lyon-Villeurbanne": "ASVEL Lyon Villeurbanne",
     # #13142: Women's college basketball spelling — Polymarket "Little Rock Trojans"
     # vs Odds API "Arkansas-Little Rock Trojans" (pair 15347844 / 15351848).
     "Little Rock Trojans": "Arkansas-Little Rock Trojans",
@@ -69,6 +77,13 @@ LEAGUE_CLUB_SPELLINGS: dict[str, dict[str, str]] = {
         "BC Olympiakos Piraeus": "Olympiacos",
         "Fenerbahce SK": "Fenerbahce",
         "FC Bayern München": "Bayern Munich",
+        "Pallacanestro Olimpia Milano": "Olimpia Milano",
+        "Saski Baskonia": "Baskonia",
+        "Baskonia Vitoria-Gasteiz": "Baskonia",
+        "Anadolu Efes SK": "Anadolu Efes",
+        "Maccabi Tel-Aviv": "Maccabi Tel Aviv",
+        "Hapoel Tel-Aviv": "Hapoel Tel Aviv",
+        "ASVEL Lyon-Villeurbanne": "ASVEL Lyon Villeurbanne",
     },
 }
 

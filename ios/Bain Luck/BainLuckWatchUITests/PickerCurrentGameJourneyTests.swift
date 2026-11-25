@@ -82,7 +82,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
     @MainActor
     private func checkCurrentCardReturnAffordance(large: Bool) throws {
         let app = try launchCurrentGame(large: large)
-        defer { app.terminate() }
+        defer { terminateAfterLeavingForeground(app) }
         try openPicker(app)
         let current = try assertCurrent(app, id: 111)
         let size = large ? "accessibility5" : "standard"
@@ -483,7 +483,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
     private func checkScheduledStartBoundaries(large: Bool) throws {
         continueAfterFailure = false
         let app = XCUIApplication()
-        defer { app.terminate() }
+        defer { terminateAfterLeavingForeground(app) }
         let suppliedStart = try XCTUnwrap(ISO8601DateFormatter().date(from: "2026-10-09T02:00:00Z"))
         let starts = "Scheduled " + suppliedStart.formatted(.dateTime.month().day().hour().minute())
         for (scenario, expectedHeader, expectedState, hasScores) in [
@@ -528,7 +528,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
             XCTAssertTrue(app.staticTexts["Probability observed 3 hours ago"].exists)
             if !expectedHeader.isEmpty { try captureComplete(header, in: app, name: "Complete supplied scheduled header - " + scenario) }
             capture(app, "Scheduled context boundary - " + scenario + (large ? " - AX" : " - standard"))
-            app.terminate()
+            terminateAfterLeavingForeground(app)
         }
     }
 
@@ -615,7 +615,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
             "BAINLUCK_WATCH_UI_RESET": "1", "BAINLUCK_WATCH_UI_SCORE_LAYOUT": scenario,
             "BAINLUCK_WATCH_UI_LARGE_TEXT": large ? "1" : "0"]
         app.launch()
-        defer { app.terminate() }
+        defer { terminateAfterLeavingForeground(app) }
         let state = app.descendants(matching: .any)["watch.game-state"].firstMatch
         XCTAssertTrue(state.waitForExistence(timeout: 15))
         XCTAssertTrue(state.label.contains(scenario == "short-live" ? "Live" : "Final"))
@@ -734,7 +734,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
             "BAINLUCK_WATCH_UI_RESET": "1", "BAINLUCK_WATCH_UI_SCORE_LAYOUT": scenario,
             "BAINLUCK_WATCH_UI_LARGE_TEXT": large ? "1" : "0"]
         app.launch()
-        defer { app.terminate() }
+        defer { terminateAfterLeavingForeground(app) }
         let state = app.descendants(matching: .any)["watch.game-state"].firstMatch
         XCTAssertTrue(state.waitForExistence(timeout: 15))
         if saved {
@@ -835,7 +835,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
             "BAINLUCK_WATCH_UI_RESET": "1", "BAINLUCK_WATCH_UI_SCORE_LAYOUT": scenario,
             "BAINLUCK_WATCH_UI_LARGE_TEXT": large ? "1" : "0"]
         app.launch()
-        defer { app.terminate() }
+        defer { terminateAfterLeavingForeground(app) }
         let state = app.descendants(matching: .any)["watch.game-state"].firstMatch
         XCTAssertTrue(state.waitForExistence(timeout: 15))
         if saved {
@@ -1157,7 +1157,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
     @MainActor
     private func checkTeamColorNames(large: Bool) throws {
         let app = try launchCurrentGame(large: large, scenario: "team-color")
-        defer { app.terminate() }
+        defer { terminateAfterLeavingForeground(app) }
         let size = large ? "accessibility5" : "standard"
         try captureMainScoreNames(in: app, away: "Los Angeles Dodgers", home: "San Francisco Giants", awayScore: 2, homeScore: 3, specimen: "missing-metadata-" + size)
         try openPicker(app)
@@ -1215,7 +1215,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
     @MainActor
     private func checkMainScoreColorFallback(scenario: String, large: Bool) throws {
         let app = try launchCurrentGame(large: large, scenario: scenario)
-        defer { app.terminate() }
+        defer { terminateAfterLeavingForeground(app) }
         let size = large ? "accessibility5" : "standard"
         if scenario == "team-color-alias" {
             // The first loaded feed colors101; accepted detail resolves it to111.
@@ -1305,7 +1305,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
     @MainActor
     private func checkScheduledTime(large: Bool) throws {
         let app = try launchCurrentGame(large: large, scenario: "scheduled-time")
-        defer { app.terminate() }
+        defer { terminateAfterLeavingForeground(app) }
         try openPicker(app)
         let other = app.buttons["watch.pick.202"]
         XCTAssertTrue(other.waitForExistence(timeout: 15))
@@ -1339,7 +1339,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
     func testAlternativeCardSelectionAndCurrentReturnAtAccessibilitySize() throws {
         executionTimeAllowance = 300
         let app = try launchCurrentGame(large: true)
-        defer { app.terminate() }
+        defer { terminateAfterLeavingForeground(app) }
         try openPicker(app)
         let other = app.buttons["watch.pick.202"]
         XCTAssertTrue(other.waitForExistence(timeout: 15))
@@ -1436,7 +1436,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
     func testCurrentGameAndOfflineDetailsAtAccessibilitySize() throws {
         executionTimeAllowance = 300
         let app = try launchCurrentGame(large: true)
-        defer { app.terminate() }
+        defer { terminateAfterLeavingForeground(app) }
         try openPicker(app)
         XCTAssertEqual(app.staticTexts["watch.picker-heading"].value as? String, "accessibility5")
         let current = try assertCurrent(app, id: 111)
@@ -1516,7 +1516,7 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
     @MainActor
     func testUnknownCurrentGameDoesNotInventProbabilityOrAgeAtAccessibilitySize() throws {
         let app = try launchCurrentGame(large: true, scenario: "unknown")
-        defer { app.terminate() }
+        defer { terminateAfterLeavingForeground(app) }
         try openPicker(app)
         let current = app.buttons["watch.pick.111"]
         XCTAssertTrue(current.waitForExistence(timeout: 15))
@@ -1859,6 +1859,31 @@ final class PickerCurrentGameJourneyTests: XCTestCase {
         XCTFail(message)
         return NSError(domain: "WatchCurrentGameJourney", code: 1,
                        userInfo: [NSLocalizedDescriptionKey: message])
+    }
+
+    @MainActor
+    private func terminateAfterLeavingForeground(_ app: XCUIApplication) {
+        if app.state == .notRunning { return }
+        // Let any active foreground task cancel cleanly through a normal scene
+        // transition before terminating (avoids #12513 `:0` terminate races without
+        // calling Carousel.activate(), which IOSSHLMainWorkspace can reject, and
+        // without passing `object: app` to XCTNSPredicateExpectation, which
+        // snapshots the accessibility hierarchy every second). Still fails closed
+        // if `app.terminate()` does not stop the app.
+        XCUIDevice.shared.press(.home)
+        func leftForeground(within seconds: TimeInterval) -> Bool {
+            let backgrounded = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                let state = app.state
+                return state == .runningBackground || state == .runningBackgroundSuspended || state == .notRunning
+            }, object: nil)
+            return XCTWaiter.wait(for: [backgrounded], timeout: seconds) == .completed
+        }
+        if !leftForeground(within: 10) && app.state == .runningForeground {
+            XCUIDevice.shared.press(.home)
+            _ = leftForeground(within: 10)
+        }
+        if app.state != .notRunning { app.terminate() }
+        XCTAssertEqual(app.state, .notRunning, "Watch app cleanup must stop the app")
     }
 }
 #endif

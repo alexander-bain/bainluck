@@ -14,6 +14,7 @@ import math
 import random
 import re
 import time
+from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any
@@ -1402,12 +1403,30 @@ _MIN_OUTCOMES_PER_HORIZON = 50
 #     is only published (and the WIP cleared) once every horizon is present.
 # Runs every 6h; a full refresh lands within ~12h, comfortably inside the 24h TTL.
 _TIME_HORIZON_WIP_KEY = "bainluck:calibration:time_horizon:wip"
-# Per-horizon statement_timeout (seconds). Bounds a single LATERAL probe.
-_HORIZON_STMT_TIMEOUT_S = 300
-# Internal deadline (seconds). A horizon is only started if it can run its full
-# statement_timeout and still finish before this deadline, which itself sits far
-# enough under the 600s soft limit that the run always returns cleanly.
-_HORIZON_DEADLINE_S = 560
+# Per-chunk statement_timeout (seconds). Each horizon executes in vm_id-cohesive
+# frozen_vm_roster chunks bounded by this timeout rather than one 300s full scan.
+_HORIZON_STMT_TIMEOUT_S = 45
+# Roster-read statement_timeout (seconds) for the one-shot virtual_market scan.
+_HORIZON_ROSTER_TIMEOUT_S = 120
+# Content-addressed virtual-question hash buckets (CAL-P016 / CAL-P028): keeping
+# bucket membership keyed by hash(vm_id) % buckets ensures a whole vm_id stays in
+# one unit and slot keys remain stable across 6h beats even as new markets resolve.
+# #13518: 256 buckets put ~3,600 markets in each initial unit over the ~923K
+# non-event roster, burning ~315-360s/beat on 45s timeouts while bisecting down to
+# ~231-465 market leaves (and a 462-market split still timed out once to (231, 231)).
+# 4096 cuts each initial unit ~16x (~225 markets/unit), matching the (231, 231)
+# leaf size that completed in ~9.6s with zero 45s timeouts.
+_HORIZON_UNIT_BUCKETS = 4096
+# Periodic WIP checkpoint cadence (units) during a single horizon pass.
+_HORIZON_WIP_SAVE_EVERY = 10
+# Internal deadline (seconds). A step (roster read or chunk query) is only started
+# if it can run its full statement_timeout and still finish before this deadline,
+# which itself sits far enough under the 600s soft limit that the run always
+# returns cleanly and resumes mid-horizon on the next beat.
+_HORIZON_DEADLINE_S = 540
+# Shared market_info scope for both _horizon_generation_sql and _build_time_horizon_sql
+# so global group_sizes / event_sizes / virtual_market match identically.
+_HORIZON_MARKET_INFO_EXTRA = "AND fm.event_id IS NULL AND fm.resolution_date IS NOT NULL"
 
 # #997 App Store ship-gate: a per-category / per-sport reliability chart below
 # this many resolved outcomes is statistical noise (a handful of resolutions
@@ -10543,84 +10562,523 @@ def _publish_time_horizon(rc, horizons_result: dict) -> None:
         logger.warning("time-horizon: main-key publish failed: %s", exc)
 
 
-def _load_time_horizon_wip(rc) -> dict:
-    """Load the resumable horizon WIP accumulator, rejecting stale populations.
+def _load_time_horizon_wip_state(rc) -> tuple[dict, dict | None]:
+    """Load completed horizons plus optional mid-horizon state from WIP.
 
-    Queue #263 Item 2: the WIP is version-wrapped
-    (``{"population_version": <v>, "horizons": {...}}``). A resume MUST discard:
-      * a LEGACY unwrapped accumulator (a bare ``{label: data}`` dict with no
-        wrapper — the pre-#263 shape),
-      * corrupt JSON, and
-      * any wrapper whose ``population_version`` != the current version,
-    so a horizon computed under an older population is never resumed (skipping its
-    recompute) nor republished under the new version. Returns ``{label: data}`` for
-    ONLY the current-version horizons, so the caller recomputes everything else.
+    Rejects legacy-unwrapped dicts, corrupt JSON, and wrappers whose
+    ``population_version`` != the current version, returning ``({}, None)``.
     """
     wip_raw = rc.get(_TIME_HORIZON_WIP_KEY)
     if not wip_raw:
-        return {}
+        return {}, None
     try:
         parsed = json.loads(wip_raw)
     except (ValueError, TypeError):
-        return {}
+        return {}, None
     if (
         not isinstance(parsed, dict)
         or parsed.get("population_version") != CALIBRATION_POPULATION_VERSION
     ):
         # Legacy unwrapped or version-mismatched accumulator — recompute from scratch.
-        return {}
+        return {}, None
     horizons = parsed.get("horizons")
     if not isinstance(horizons, dict):
-        return {}
+        return {}, None
     valid_labels = {label for label, _ in _HORIZONS}
     # Defense in depth: keep only current-version horizon entries. A mixed-version
     # wrapper should be impossible (writes always stamp the current version on both
     # the wrapper and every horizon's diag), but a stale horizon must never resume.
-    return {
+    valid_horizons = {
         k: v
         for k, v in horizons.items()
         if k in valid_labels
         and isinstance(v, dict)
         and v.get("population_version") == CALIBRATION_POPULATION_VERSION
     }
+    raw_in_progress = parsed.get("in_progress")
+    in_progress = raw_in_progress if isinstance(raw_in_progress, dict) else None
+    return valid_horizons, in_progress
 
 
-def _save_time_horizon_wip(rc, horizons_result: dict) -> None:
+def _load_time_horizon_wip(rc) -> dict:
+    """Load the resumable horizon WIP accumulator, rejecting stale populations.
+
+    Queue #263 Item 2: the WIP is version-wrapped
+    (``{"population_version": <v>, "horizons": {...}}``). Returns ``{label: data}``
+    for ONLY the current-version completed horizons.
+    """
+    horizons, _ = _load_time_horizon_wip_state(rc)
+    return horizons
+
+
+def _save_time_horizon_wip(
+    rc,
+    horizons_result: dict,
+    *,
+    in_progress: dict | None = None,
+) -> None:
     """Persist the horizon WIP accumulator wrapped with the current population
-    version (Queue #263 Item 2), so a later run can only resume horizons computed
-    under the SAME population. Best-effort, mirroring the publish helper."""
+    version (Queue #263 Item 2), optionally including mid-horizon progress so a
+    deadline-truncated horizon resumes without losing finished chunks."""
+    payload: dict[str, Any] = {
+        "population_version": CALIBRATION_POPULATION_VERSION,
+        "horizons": horizons_result,
+    }
+    if in_progress is not None:
+        payload["in_progress"] = in_progress
     try:
         rc.set(
             _TIME_HORIZON_WIP_KEY,
-            json.dumps({
-                "population_version": CALIBRATION_POPULATION_VERSION,
-                "horizons": horizons_result,
-            }),
+            json.dumps(payload),
             ex=_CACHE_TTL,
         )
     except Exception as exc:  # noqa: BLE001 — WIP persistence is best-effort
         logger.warning("time-horizon: WIP persist failed: %s", exc)
 
 
-def _build_time_horizon_sql(days: int) -> tuple[str, dict]:
+_HORIZON_DIAG_FIELDS: tuple[str, ...] = (
+    "candidate_n",
+    "final_n",
+    "distinct_questions",
+    "excl_illiquid",
+    "excl_poly_placeholder",
+    "excl_malformed_binary",
+    "excl_esports_bundle",
+    "excl_golf_placeholder",
+    "excl_kalshi_prop_threshold",
+    "excl_weather_wide_spread",
+    "excl_field_incomplete",
+    "ladder_questions",
+    "ladder_rungs_suppressed",
+)
+
+
+def _horizon_generation_sql() -> str:
+    """Build the one-shot horizon roster query over ``_calibration_population_ctes``.
+
+    Uses the exact ``_HORIZON_MARKET_INFO_EXTRA`` restriction as
+    :func:`_build_time_horizon_sql` so ``group_sizes``, ``event_sizes``, and
+    ``virtual_market`` assignments are identical across the monolith and every
+    frozen-roster chunk, and independent of ``:days``.
+    """
+    return (
+        "WITH "
+        + _calibration_population_ctes(market_info_extra=_HORIZON_MARKET_INFO_EXTRA)
+        + """
+            SELECT market_id, source, vm_id, is_grouped
+            FROM virtual_market
+            ORDER BY market_id
+        """
+    )
+
+
+async def _read_horizon_roster(db) -> list:
+    """Read the global horizon ``virtual_market`` roster as :class:`RosterRow`s.
+
+    Mirrors :func:`_read_futures_roster` by streaming in batches of
+    ``ROSTER_STREAM_BATCH`` on real asyncpg sessions and falling back to
+    ``execute()`` for test doubles.
+    """
+    from app.utils.calibration_staged_futures import slim_roster
+
+    statement = text(_horizon_generation_sql())
+    stream = getattr(db, "stream", None)
+    if stream is None:
+        rows = (await db.execute(statement)).all()
+        return slim_roster(rows)
+    result = await stream(statement.execution_options(yield_per=ROSTER_STREAM_BATCH))
+    roster: list = []
+    try:
+        async for batch in result.partitions(ROSTER_STREAM_BATCH):
+            slim_roster(batch, into=roster)
+    finally:
+        await result.close()
+    return roster
+
+
+def _plan_horizon_units(
+    roster: Sequence[Any],
+    *,
+    buckets: int = _HORIZON_UNIT_BUCKETS,
+) -> tuple[tuple, dict[int, tuple[str, bool]]]:
+    """Partition the horizon roster into content-addressed ``vm_id`` buckets."""
+    from app.utils.calibration_staged_futures import plan_units
+
+    units = plan_units(roster, buckets=buckets)
+    assignment: dict[int, tuple[str, bool]] = {
+        int(row.market_id): (str(row.vm_id), bool(row.is_grouped))
+        for row in roster
+    }
+    return units, assignment
+
+
+def _bisect_horizon_markets(
+    market_ids: Sequence[int],
+    assignment: Mapping[int, tuple[str, bool]],
+) -> tuple[tuple[int, ...], tuple[int, ...]] | None:
+    """Split a chunk's ``market_ids`` along whole-``vm_id`` boundaries.
+
+    Returns ``(left_market_ids, right_market_ids)`` or ``None`` when all
+    markets belong to fewer than two distinct ``vm_id``s.
+    """
+    by_vm: dict[str, list[int]] = {}
+    for mid in market_ids:
+        vm_id = assignment[int(mid)][0]
+        by_vm.setdefault(vm_id, []).append(int(mid))
+    if len(by_vm) < 2:
+        return None
+    # Keep deterministic vm_id ordering; cut closest to half the markets.
+    groups = sorted(by_vm.items(), key=lambda kv: (min(kv[1]), kv[0]))
+    total = sum(len(mids) for _, mids in groups)
+    half = total / 2.0
+    left: list[int] = []
+    best_idx = 1
+    running = 0
+    best_diff = float("inf")
+    for idx in range(1, len(groups)):
+        running += len(groups[idx - 1][1])
+        diff = abs(running - half)
+        if diff < best_diff:
+            best_diff = diff
+            best_idx = idx
+    right: list[int] = []
+    for idx, (_vm_id, mids) in enumerate(groups):
+        target = left if idx < best_idx else right
+        target.extend(mids)
+    left.sort()
+    right.sort()
+    return tuple(left), tuple(right)
+
+
+def _roster_bind_params(
+    market_ids: Sequence[int],
+    assignment: Mapping[int, tuple[str, bool]],
+) -> dict[str, list]:
+    """Build parallel array bind params for ``frozen_vm_roster`` unnest."""
+    mids = [int(m) for m in market_ids]
+    return {
+        VM_ROSTER_MARKET_IDS_PARAM: mids,
+        VM_ROSTER_VM_IDS_PARAM: [assignment[m][0] for m in mids],
+        VM_ROSTER_IS_GROUPED_PARAM: [assignment[m][1] for m in mids],
+    }
+
+
+def _empty_horizon_diag() -> dict[str, int]:
+    """Return a zero-initialized horizon diagnostics accumulator."""
+    return {field: 0 for field in _HORIZON_DIAG_FIELDS}
+
+
+def _fold_horizon_chunk_rows(
+    rows: Sequence[Any],
+    bucket_acc: dict[tuple[int, str, str], dict[str, Any]],
+    diag_acc: dict[str, int],
+) -> None:
+    """Fold one chunk's result rows into additive bucket and diag accumulators."""
+    if not rows:
+        return
+    first = rows[0]
+    for field in _HORIZON_DIAG_FIELDS:
+        diag_acc[field] += int(getattr(first, field) or 0)
+    for row in rows:
+        if row.bucket_idx is None:
+            continue
+        key = (int(row.bucket_idx), str(row.source), str(row.category))
+        slot = bucket_acc.get(key)
+        if slot is None:
+            bucket_acc[key] = {
+                "n": int(row.n),
+                "winners": int(row.winners),
+                "sum_prob": float(row.sum_prob),
+                "sum_sq_err": float(row.sum_sq_err),
+            }
+        else:
+            slot["n"] += int(row.n)
+            slot["winners"] += int(row.winners)
+            slot["sum_prob"] += float(row.sum_prob)
+            slot["sum_sq_err"] += float(row.sum_sq_err)
+
+
+def _merge_horizon_accumulators(
+    dst_buckets: dict[tuple[int, str, str], dict[str, Any]],
+    dst_diag: dict[str, int],
+    src_buckets: Mapping[tuple[int, str, str], Mapping[str, Any]],
+    src_diag: Mapping[str, int],
+) -> None:
+    """Merge unit-local accumulators into horizon-level accumulators atomically."""
+    for field in _HORIZON_DIAG_FIELDS:
+        dst_diag[field] += int(src_diag.get(field, 0))
+    for key, src_slot in src_buckets.items():
+        dst_slot = dst_buckets.get(key)
+        if dst_slot is None:
+            dst_buckets[key] = {
+                "n": int(src_slot["n"]),
+                "winners": int(src_slot["winners"]),
+                "sum_prob": float(src_slot["sum_prob"]),
+                "sum_sq_err": float(src_slot["sum_sq_err"]),
+            }
+        else:
+            dst_slot["n"] += int(src_slot["n"])
+            dst_slot["winners"] += int(src_slot["winners"])
+            dst_slot["sum_prob"] += float(src_slot["sum_prob"])
+            dst_slot["sum_sq_err"] += float(src_slot["sum_sq_err"])
+
+
+def _serialize_horizon_in_progress(
+    label: str,
+    buckets: int,
+    completed_keys: set[str],
+    bucket_acc: Mapping[tuple[int, str, str], Mapping[str, Any]],
+    diag_acc: Mapping[str, int],
+    unit_digests: Mapping[str, str],
+) -> dict[str, Any]:
+    """Serialize in-flight single-horizon chunk state for deadline resume."""
+    return {
+        "horizon": label,
+        "buckets": buckets,
+        "completed_keys": sorted(completed_keys),
+        "diag_acc": {field: int(diag_acc.get(field, 0)) for field in _HORIZON_DIAG_FIELDS},
+        "buckets_acc": [
+            {
+                "bucket_idx": idx,
+                "source": src,
+                "category": cat,
+                "n": int(slot["n"]),
+                "winners": int(slot["winners"]),
+                "sum_prob": float(slot["sum_prob"]),
+                "sum_sq_err": float(slot["sum_sq_err"]),
+            }
+            for (idx, src, cat), slot in sorted(bucket_acc.items())
+        ],
+        "unit_digests": dict(sorted(unit_digests.items())),
+    }
+
+
+def _deserialize_horizon_in_progress(
+    raw: Any,
+    *,
+    label: str,
+    buckets: int,
+) -> tuple[set[str], dict[tuple[int, str, str], dict[str, Any]], dict[str, int], dict[str, str]] | None:
+    """Validate and restore mid-horizon progress if it matches ``label`` and ``buckets``."""
+    if not isinstance(raw, dict):
+        return None
+    if raw.get("horizon") != label or raw.get("buckets") != buckets:
+        return None
+    raw_keys = raw.get("completed_keys")
+    raw_diag = raw.get("diag_acc")
+    raw_buckets = raw.get("buckets_acc")
+    raw_digests = raw.get("unit_digests")
+    if (
+        not isinstance(raw_keys, list)
+        or not all(isinstance(k, str) for k in raw_keys)
+        or not isinstance(raw_diag, dict)
+        or not isinstance(raw_buckets, list)
+        or not isinstance(raw_digests, dict)
+        or not all(isinstance(k, str) and isinstance(v, str) for k, v in raw_digests.items())
+    ):
+        return None
+
+    diag_acc = _empty_horizon_diag()
+    for field in _HORIZON_DIAG_FIELDS:
+        val = raw_diag.get(field)
+        if not isinstance(val, int) or isinstance(val, bool) or val < 0:
+            return None
+        diag_acc[field] = val
+
+    bucket_acc: dict[tuple[int, str, str], dict[str, Any]] = {}
+    for entry in raw_buckets:
+        if not isinstance(entry, dict):
+            return None
+        idx = entry.get("bucket_idx")
+        src = entry.get("source")
+        cat = entry.get("category")
+        n = entry.get("n")
+        winners = entry.get("winners")
+        sum_prob = entry.get("sum_prob")
+        sum_sq_err = entry.get("sum_sq_err")
+        if (
+            not isinstance(idx, int)
+            or isinstance(idx, bool)
+            or not isinstance(src, str)
+            or not isinstance(cat, str)
+            or not isinstance(n, int)
+            or isinstance(n, bool)
+            or n <= 0
+            or not isinstance(winners, int)
+            or isinstance(winners, bool)
+            or winners < 0
+            or not isinstance(sum_prob, (int, float))
+            or isinstance(sum_prob, bool)
+            or not isinstance(sum_sq_err, (int, float))
+            or isinstance(sum_sq_err, bool)
+        ):
+            return None
+        bucket_acc[(idx, src, cat)] = {
+            "n": n,
+            "winners": winners,
+            "sum_prob": float(sum_prob),
+            "sum_sq_err": float(sum_sq_err),
+        }
+
+    return set(raw_keys), bucket_acc, diag_acc, dict(raw_digests)
+
+
+def _finalize_horizon_result(
+    bucket_acc: Mapping[tuple[int, str, str], Mapping[str, Any]],
+    diag_acc: Mapping[str, int],
+) -> dict[str, Any]:
+    """Build the final horizon entry from folded chunk accumulators."""
+    diag = {
+        "population_version": CALIBRATION_POPULATION_VERSION,
+        "candidate_outcomes": int(diag_acc.get("candidate_n", 0)),
+        "final_outcomes": int(diag_acc.get("final_n", 0)),
+        "distinct_questions": int(diag_acc.get("distinct_questions", 0)),
+        "excluded": {
+            "illiquid": int(diag_acc.get("excl_illiquid", 0)),
+            "poly_placeholder": int(diag_acc.get("excl_poly_placeholder", 0)),
+            "malformed_binary": int(diag_acc.get("excl_malformed_binary", 0)),
+            "esports_bundle": int(diag_acc.get("excl_esports_bundle", 0)),
+            "golf_placeholder": int(diag_acc.get("excl_golf_placeholder", 0)),
+            "kalshi_prop_threshold": int(diag_acc.get("excl_kalshi_prop_threshold", 0)),
+            "weather_wide_spread": int(diag_acc.get("excl_weather_wide_spread", 0)),
+            "field_incomplete": int(diag_acc.get("excl_field_incomplete", 0)),
+        },
+        # #5305. Deliberately a SIBLING of "excluded", not a rung inside it.
+        "threshold_ladder": {
+            "questions": int(diag_acc.get("ladder_questions", 0)),
+            "rungs_suppressed": int(diag_acc.get("ladder_rungs_suppressed", 0)),
+        },
+    }
+
+    bucket_dicts = []
+    for (bucket_idx, source, category), slot in sorted(bucket_acc.items()):
+        n = int(slot["n"])
+        if n <= 0:
+            continue
+        winners = int(slot["winners"])
+        sum_prob = float(slot["sum_prob"])
+        sum_sq_err = float(slot["sum_sq_err"])
+        ci_lo, ci_hi = _wilson_ci(winners, n)
+        bucket_dicts.append({
+            "bucket_idx": bucket_idx,
+            "source": source,
+            "category": category,
+            "n": n,
+            "winners": winners,
+            "avg_prob": round(sum_prob / n, 4),
+            "sum_prob": round(sum_prob, 4),
+            "sum_sq_err": round(sum_sq_err, 4),
+            "ci_lower": round(ci_lo, 4),
+            "ci_upper": round(ci_hi, 4),
+        })
+
+    total_n = sum(b["n"] for b in bucket_dicts)
+    total_winners = sum(b["winners"] for b in bucket_dicts)
+
+    if total_n < _MIN_OUTCOMES_PER_HORIZON:
+        return {
+            "buckets": bucket_dicts,
+            "total_outcomes": total_n,
+            "total_winners": total_winners,
+            "mce": None,
+            "mce_ci_lower": None,
+            "mce_ci_upper": None,
+            "skipped": True,
+            "skip_reason": f"Only {total_n} outcomes (minimum {_MIN_OUTCOMES_PER_HORIZON})",
+            **diag,
+        }
+
+    # Aggregate for MCE using unrounded float sums across chunks
+    agg: dict[int, dict] = {}
+    for (idx, _src, _cat), slot in bucket_acc.items():
+        if idx not in agg:
+            agg[idx] = {"n": 0, "winners": 0, "sum_prob": 0.0}
+        agg[idx]["n"] += int(slot["n"])
+        agg[idx]["winners"] += int(slot["winners"])
+        agg[idx]["sum_prob"] += float(slot["sum_prob"])
+
+    mce = _compute_horizon_mce([
+        {"n": v["n"], "winners": v["winners"], "sum_prob": v["sum_prob"]}
+        for v in agg.values()
+    ])
+
+    agg_list = [
+        {"n": v["n"], "winners": v["winners"], "avg_prob": v["sum_prob"] / v["n"]}
+        for v in agg.values()
+        if v["n"] > 0
+    ]
+    mce_ci_lo, mce_ci_hi = _bootstrap_mce_ci(agg_list)
+
+    by_source: dict[str, dict[int, dict]] = {}
+    for (idx, src, _cat), slot in bucket_acc.items():
+        src_agg = by_source.setdefault(src, {})
+        if idx not in src_agg:
+            src_agg[idx] = {"n": 0, "winners": 0, "sum_prob": 0.0}
+        src_agg[idx]["n"] += int(slot["n"])
+        src_agg[idx]["winners"] += int(slot["winners"])
+        src_agg[idx]["sum_prob"] += float(slot["sum_prob"])
+    mce_by_source = {}
+    for src, src_agg in by_source.items():
+        src_total = sum(v["n"] for v in src_agg.values())
+        if src_total >= _MIN_OUTCOMES_PER_HORIZON:
+            mce_by_source[src] = _compute_horizon_mce([
+                {"n": v["n"], "winners": v["winners"], "sum_prob": v["sum_prob"]}
+                for v in src_agg.values()
+            ])
+
+    by_cat: dict[str, dict[int, dict]] = {}
+    for (idx, _src, cat), slot in bucket_acc.items():
+        cat_agg = by_cat.setdefault(cat, {})
+        if idx not in cat_agg:
+            cat_agg[idx] = {"n": 0, "winners": 0, "sum_prob": 0.0}
+        cat_agg[idx]["n"] += int(slot["n"])
+        cat_agg[idx]["winners"] += int(slot["winners"])
+        cat_agg[idx]["sum_prob"] += float(slot["sum_prob"])
+    mce_by_category = {}
+    for cat, cat_agg in by_cat.items():
+        cat_total = sum(v["n"] for v in cat_agg.values())
+        if cat_total >= _MIN_OUTCOMES_PER_HORIZON:
+            mce_by_category[cat] = _compute_horizon_mce([
+                {"n": v["n"], "winners": v["winners"], "sum_prob": v["sum_prob"]}
+                for v in cat_agg.values()
+            ])
+
+    return {
+        "buckets": bucket_dicts,
+        "total_outcomes": total_n,
+        "total_winners": total_winners,
+        "mce": mce,
+        "mce_ci_lower": round(mce_ci_lo * 100, 2),
+        "mce_ci_upper": round(mce_ci_hi * 100, 2),
+        "mce_by_source": mce_by_source,
+        "mce_by_category": mce_by_category,
+        **diag,
+    }
+
+
+def _build_time_horizon_sql(days: int, *, frozen_vm_roster: bool = False) -> tuple[str, dict]:
     """Build the horizon calibration SQL for one horizon (Queue #262 Item 1).
 
-    Pure string builder (no DB) so it is unit-testable. The horizon population
-    REUSES the canonical ``_calibration_population_ctes`` resolved-question
-    identity + independent-truth allowlist + artifact exclusions, finalized on the
-    horizon SNAPSHOT as the curve price — NOT the terminal ``deduped`` scalar.
-    Normalization, field completeness, mode/tail, and bucket assignment are all
-    evaluated on this horizon's price. ``market_info`` is scoped to the non-event,
-    resolution-date universe so the whole chain runs on the small horizon set;
-    ``horizon_price`` is a leading LATERAL selecting each outcome's last snapshot
-    at/under the cutoff, INNER-joined into the price-bearing CTEs so ONLY outcomes
-    actually priced at this horizon survive. Returns ``(sql, params)``.
+    Pure string builder (no DB) so it is unit-testable. When
+    ``frozen_vm_roster=True`` (``#13518``), both ``horizon_price`` and
+    ``market_info`` are scoped to ``:vm_roster_market_ids`` and
+    ``virtual_market`` is replayed from ``frozen_vm_roster`` so each bounded
+    chunk produces the exact same rows as the monolithic query. Returns
+    ``(sql, params)``.
     """
     cutoff_expr = (
         "fm.resolution_date"
         if days == 0
         else "fm.resolution_date - make_interval(days => :days)"
     )
+    horizon_roster_predicate = ""
+    market_info_extra = _HORIZON_MARKET_INFO_EXTRA
+    if frozen_vm_roster:
+        horizon_roster_predicate = (
+            f"\n                      {VM_ROSTER_MARKET_INFO_EXTRA}"
+            f"\n                      AND fo.market_id = ANY(CAST(:{VM_ROSTER_MARKET_IDS_PARAM} AS bigint[]))"
+        )
+        market_info_extra = f"{_HORIZON_MARKET_INFO_EXTRA} {VM_ROSTER_MARKET_INFO_EXTRA}"
     horizon_price_cte = f"""horizon_price AS (
                     SELECT fo.id AS outcome_id, horizon.probability AS horizon_prob
                     FROM futures_outcomes fo
@@ -10636,7 +11094,7 @@ def _build_time_horizon_sql(days: int) -> tuple[str, dict]:
                     ) horizon ON true
                     WHERE fm.status = 'resolved'
                       AND fm.event_id IS NULL
-                      AND fm.resolution_date IS NOT NULL
+                      AND fm.resolution_date IS NOT NULL{horizon_roster_predicate}
                       AND horizon.probability IS NOT NULL
                 ),
             """
@@ -10644,10 +11102,9 @@ def _build_time_horizon_sql(days: int) -> tuple[str, dict]:
         curve_price="hp.horizon_prob",
         curve_price_join="JOIN horizon_price hp ON hp.outcome_id = fo.id",
         rn_order="ABS(hp.horizon_prob - 0.5)",
-        market_info_extra=(
-            "AND fm.event_id IS NULL AND fm.resolution_date IS NOT NULL"
-        ),
+        market_info_extra=market_info_extra,
         leading_ctes=horizon_price_cte,
+        frozen_vm_roster=frozen_vm_roster,
     )
     sql = (
         "WITH " + population + """,
@@ -10705,53 +11162,42 @@ def _build_time_horizon_sql(days: int) -> tuple[str, dict]:
 
 
 async def _compute_time_horizon_calibration():
-    """Compute time-horizon calibration and store in Redis.
+    """Compute time-horizon calibration in bounded ``vm_id``-cohesive chunks.
 
-    Bounded + chunked + resumable (Item 1, Queue #220/221): each horizon runs
-    under a per-query statement_timeout, completed horizons are persisted to a
-    WIP accumulator, and an internal deadline stops the run cleanly (resuming the
-    remaining horizons next beat) so it never hits the 600s soft limit again.
-
-    #1171 (Queue #228): each horizon is ISOLATED (a statement_timeout / OOM-adjacent
-    DB error on one horizon rolls back and continues — one poison horizon never
-    kills the task, gotcha #42), and the served main key is published after EVERY
-    completed horizon (partial-first) so the endpoint serves 3/4 horizons instead of
-    "computing" forever when one horizon is persistently slow. The WIP cursor is
-    only cleared once all four are present."""
+    #13518: executing an entire horizon in one 539K-outcome LATERAL scan timed
+    out on 50/50 runs. Instead, read the global ``virtual_market`` roster once,
+    partition it into content-addressed ``vm_id`` buckets (``_HORIZON_UNIT_BUCKETS``),
+    and run each bucket under ``_HORIZON_STMT_TIMEOUT_S`` with recursive whole-``vm_id``
+    bisection on timeout and mid-horizon WIP checkpoint/resume in
+    ``_TIME_HORIZON_WIP_KEY``. Each completed horizon publishes partial-first
+    (#1171) and WIP is cleared only once all four horizons finish.
+    """
     from app.tasks.base import get_task_session
+    from app.tasks.calibration_main_build import is_statement_timeout, tag_scheduled_session
     from app.tasks.redis_state import get_redis_client
 
     rc = get_redis_client()
     start = time.monotonic()
 
-    # Resume from any WIP accumulator left by a prior (deadline-truncated) run.
-    # Queue #263 Item 2: the loader rejects legacy-unwrapped / corrupt / version-
-    # mismatched accumulators, so a horizon computed under an older population is
-    # recomputed rather than resumed or republished under the current version.
-    horizons_result: dict = _load_time_horizon_wip(rc)
+    horizons_result, in_progress = _load_time_horizon_wip_state(rc)
+    missing_horizons = [
+        (label, days) for label, days in _HORIZONS if label not in horizons_result
+    ]
 
-    from app.tasks.calibration_main_build import tag_scheduled_session
+    units: tuple = ()
+    assignment: dict[int, tuple[str, bool]] = {}
 
     async with get_task_session() as db:
         # Queue 300B Item 1: name this backend before its first LATERAL probe.
         await tag_scheduled_session(db, task="compute_time_horizon_calibration")
 
-        for label, days in _HORIZONS:
-            if label in horizons_result:
-                continue  # already computed in an earlier run — resumable cursor
-
-            # Deadline guard: only start a horizon if it can run its full
-            # statement_timeout and still finish before the internal deadline.
-            # Bounds the longest single uninterrupted op (not just loop
-            # boundaries — the budget-guard lesson), so the run always returns
-            # cleanly under the 600s soft limit.
+        if missing_horizons:
             elapsed = time.monotonic() - start
-            if elapsed + _HORIZON_STMT_TIMEOUT_S > _HORIZON_DEADLINE_S:
-                _save_time_horizon_wip(rc, horizons_result)
-                _publish_time_horizon(rc, horizons_result)  # serve partial now (#1171)
+            if elapsed + _HORIZON_ROSTER_TIMEOUT_S > _HORIZON_DEADLINE_S:
+                _save_time_horizon_wip(rc, horizons_result, in_progress=in_progress)
+                _publish_time_horizon(rc, horizons_result)
                 logger.info(
-                    "time-horizon: deadline at %.0fs, %d/%d horizons done — "
-                    "persisted WIP + published partial, resuming next run",
+                    "time-horizon: deadline at %.0fs before roster read, %d/%d horizons done",
                     elapsed, len(horizons_result), len(_HORIZONS),
                 )
                 return {
@@ -10760,205 +11206,193 @@ async def _compute_time_horizon_calibration():
                     "total": len(_HORIZONS),
                 }
 
-            # Fresh bounded transaction per horizon (mirror _begin_census): roll
-            # back any aborted state, then arm the per-query statement_timeout.
             try:
                 await db.rollback()
             except Exception:
                 pass
             try:
                 await db.execute(
-                    text(f"SET LOCAL statement_timeout = '{_HORIZON_STMT_TIMEOUT_S}s'")
+                    text(f"SET LOCAL statement_timeout = '{_HORIZON_ROSTER_TIMEOUT_S}s'")
                 )
             except Exception:
                 pass
-
-            horizon_sql_str, params = _build_time_horizon_sql(days)
-            horizon_sql = text(horizon_sql_str)
-
-            # ISOLATE the one risky op (#1171): the LATERAL probe is what hits the
-            # per-horizon statement_timeout — a QueryCanceledError here was
-            # previously UNCAUGHT and killed the whole task, so one persistently
-            # slow horizon (the poison T-0) blocked all four from ever publishing.
-            # Catch, roll back, and DEFER this horizon to the next run; the horizons
-            # already computed stay in WIP and are served (gotcha #42: one bad item
-            # must never wipe the whole pass).
             try:
-                result = await db.execute(horizon_sql, params)
-                rows = result.all()
-            except Exception as exc:  # noqa: BLE001 — statement_timeout / transient DB
+                roster = await _read_horizon_roster(db)
+            except Exception as exc:  # noqa: BLE001 — roster timeout / transient DB
                 logger.warning(
-                    "time-horizon: horizon %s failed (%s) — rolled back, deferring "
-                    "to next run; %d/%d horizons already computed are unaffected",
-                    label, type(exc).__name__, len(horizons_result), len(_HORIZONS),
+                    "time-horizon: roster read failed (%s) — rolled back, deferring to next run",
+                    type(exc).__name__,
                 )
                 try:
                     await db.rollback()
                 except Exception:
                     pass
-                continue
-
-            # Queue #262 Item 1: every row carries the same horizon diagnostics
-            # (candidate/final/distinct-question counts + per-reason exclusion
-            # counts) via a CROSS-shaped LEFT JOIN, and a diag-only row (bucket_idx
-            # NULL) is always present even when no rows survive to a bucket.
-            bucket_dicts = []
-            diag: dict = {}
-            for r in rows:
-                if not diag:
-                    diag = {
-                        "population_version": CALIBRATION_POPULATION_VERSION,
-                        "candidate_outcomes": int(r.candidate_n or 0),
-                        "final_outcomes": int(r.final_n or 0),
-                        "distinct_questions": int(r.distinct_questions or 0),
-                        "excluded": {
-                            "illiquid": int(r.excl_illiquid or 0),
-                            "poly_placeholder": int(r.excl_poly_placeholder or 0),
-                            "malformed_binary": int(r.excl_malformed_binary or 0),
-                            "esports_bundle": int(r.excl_esports_bundle or 0),
-                            "golf_placeholder": int(r.excl_golf_placeholder or 0),
-                            "kalshi_prop_threshold": int(r.excl_kalshi_prop_threshold or 0),
-                            "weather_wide_spread": int(r.excl_weather_wide_spread or 0),
-                            "field_incomplete": int(r.excl_field_incomplete or 0),
-                        },
-                        # #5305. Deliberately a SIBLING of "excluded", not a rung
-                        # inside it: the coverage bridge treats the exclusion rungs
-                        # as a precedence PARTITION and sums them, and a ladder rung
-                        # is collapsed (one representative survives), not excluded.
-                        # Filed under "excluded" it would double-count the bridge.
-                        "threshold_ladder": {
-                            "questions": int(r.ladder_questions or 0),
-                            "rungs_suppressed": int(r.ladder_rungs_suppressed or 0),
-                        },
-                    }
-                if r.bucket_idx is None:
-                    continue  # diag-only row — no surviving buckets this horizon
-                ci_lo, ci_hi = _wilson_ci(r.winners, r.n)
-                bucket_dicts.append({
-                    "bucket_idx": r.bucket_idx,
-                    "source": r.source,
-                    "category": r.category,
-                    "n": r.n,
-                    "winners": r.winners,
-                    "avg_prob": round(float(r.avg_prob), 4),
-                    "sum_prob": round(float(r.sum_prob), 4),
-                    "sum_sq_err": round(float(r.sum_sq_err), 4),
-                    "ci_lower": round(ci_lo, 4),
-                    "ci_upper": round(ci_hi, 4),
-                })
-
-            total_n = sum(b["n"] for b in bucket_dicts)
-            total_winners = sum(b["winners"] for b in bucket_dicts)
-
-            if total_n < _MIN_OUTCOMES_PER_HORIZON:
-                horizons_result[label] = {
-                    "buckets": bucket_dicts,
-                    "total_outcomes": total_n,
-                    "total_winners": total_winners,
-                    "mce": None,
-                    "mce_ci_lower": None,
-                    "mce_ci_upper": None,
-                    "skipped": True,
-                    "skip_reason": f"Only {total_n} outcomes (minimum {_MIN_OUTCOMES_PER_HORIZON})",
-                    **diag,
+                _save_time_horizon_wip(rc, horizons_result, in_progress=in_progress)
+                _publish_time_horizon(rc, horizons_result)
+                return {
+                    "status": "partial",
+                    "horizons_done": len(horizons_result),
+                    "total": len(_HORIZONS),
                 }
-                _save_time_horizon_wip(rc, horizons_result)
-                _publish_time_horizon(rc, horizons_result)  # serve partial (#1171)
+            units, assignment = _plan_horizon_units(roster, buckets=_HORIZON_UNIT_BUCKETS)
+            roster_count = len(roster)
+            del roster
+            logger.info(
+                "time-horizon: planned %d content-addressed units over %d markets (%d missing horizons)",
+                len(units), roster_count, len(missing_horizons),
+            )
+
+        for label, days in _HORIZONS:
+            if label in horizons_result:
+                continue  # already computed in an earlier run — resumable cursor
+
+            restored = _deserialize_horizon_in_progress(
+                in_progress, label=label, buckets=_HORIZON_UNIT_BUCKETS
+            )
+            if restored is not None:
+                completed_keys, bucket_acc, diag_acc, unit_digests = restored
+                drifted = sum(
+                    1
+                    for u in units
+                    if u.key in completed_keys
+                    and unit_digests.get(u.key) not in (None, u.member_digest)
+                )
+                logger.info(
+                    "time-horizon: resuming %s with %d/%d units done (%d drifted)",
+                    label, len(completed_keys), len(units), drifted,
+                )
+            else:
+                completed_keys = set()
+                bucket_acc = {}
+                diag_acc = _empty_horizon_diag()
+                unit_digests = {}
+
+            horizon_sql_str, base_params = _build_time_horizon_sql(days, frozen_vm_roster=True)
+            horizon_sql = text(horizon_sql_str)
+            chunks_since_save = 0
+            horizon_failed = False
+
+            for unit in units:
+                if unit.key in completed_keys:
+                    continue
+
+                pending: list[tuple[int, ...]] = [tuple(unit.market_ids)]
+                unit_buckets: dict[tuple[int, str, str], dict[str, Any]] = {}
+                unit_diag = _empty_horizon_diag()
+
+                while pending:
+                    # Deadline guard: only start a chunk if it can run its full
+                    # statement_timeout and still finish before the internal deadline.
+                    elapsed = time.monotonic() - start
+                    if elapsed + _HORIZON_STMT_TIMEOUT_S > _HORIZON_DEADLINE_S:
+                        saved_in_progress = _serialize_horizon_in_progress(
+                            label,
+                            _HORIZON_UNIT_BUCKETS,
+                            completed_keys,
+                            bucket_acc,
+                            diag_acc,
+                            unit_digests,
+                        )
+                        _save_time_horizon_wip(
+                            rc, horizons_result, in_progress=saved_in_progress
+                        )
+                        _publish_time_horizon(rc, horizons_result)  # serve partial now (#1171)
+                        logger.info(
+                            "time-horizon: deadline at %.0fs in %s (%d/%d units), "
+                            "%d/%d horizons done — persisted WIP, resuming next run",
+                            elapsed,
+                            label,
+                            len(completed_keys),
+                            len(units),
+                            len(horizons_result),
+                            len(_HORIZONS),
+                        )
+                        return {
+                            "status": "partial",
+                            "horizons_done": len(horizons_result),
+                            "total": len(_HORIZONS),
+                            "in_progress_horizon": label,
+                            "horizon_chunks_done": len(completed_keys),
+                            "horizon_chunks_total": len(units),
+                        }
+
+                    sub_mids = pending.pop()
+                    try:
+                        await db.rollback()
+                    except Exception:
+                        pass
+                    try:
+                        await db.execute(
+                            text(f"SET LOCAL statement_timeout = '{_HORIZON_STMT_TIMEOUT_S}s'")
+                        )
+                    except Exception:
+                        pass
+
+                    params = {**base_params, **_roster_bind_params(sub_mids, assignment)}
+                    try:
+                        result = await db.execute(horizon_sql, params)
+                        rows = result.all()
+                    except Exception as exc:  # noqa: BLE001 — statement_timeout / transient DB
+                        try:
+                            await db.rollback()
+                        except Exception:
+                            pass
+                        if is_statement_timeout(exc):
+                            split = _bisect_horizon_markets(sub_mids, assignment)
+                            if split is not None:
+                                left_mids, right_mids = split
+                                logger.warning(
+                                    "time-horizon: %s unit %s timed out on %d markets; "
+                                    "bisecting into (%d, %d)",
+                                    label, unit.key, len(sub_mids),
+                                    len(left_mids), len(right_mids),
+                                )
+                                pending.append(right_mids)
+                                pending.append(left_mids)
+                                continue
+                        logger.warning(
+                            "time-horizon: horizon %s failed at unit %s (%s, %d markets) "
+                            "— rolled back, deferring to next run; %d/%d horizons unaffected",
+                            label, unit.key, type(exc).__name__, len(sub_mids),
+                            len(horizons_result), len(_HORIZONS),
+                        )
+                        horizon_failed = True
+                        break
+
+                    _fold_horizon_chunk_rows(rows, unit_buckets, unit_diag)
+
+                if horizon_failed:
+                    break
+
+                _merge_horizon_accumulators(bucket_acc, diag_acc, unit_buckets, unit_diag)
+                completed_keys.add(unit.key)
+                unit_digests[unit.key] = unit.member_digest
+                chunks_since_save += 1
+
+                if chunks_since_save >= _HORIZON_WIP_SAVE_EVERY:
+                    saved_in_progress = _serialize_horizon_in_progress(
+                        label,
+                        _HORIZON_UNIT_BUCKETS,
+                        completed_keys,
+                        bucket_acc,
+                        diag_acc,
+                        unit_digests,
+                    )
+                    _save_time_horizon_wip(rc, horizons_result, in_progress=saved_in_progress)
+                    chunks_since_save = 0
+
+            if horizon_failed:
+                # Clear single-horizon scratch cursor so a deferred horizon never
+                # clashes with a subsequent independent horizon.
+                in_progress = None
                 continue
 
-            # Aggregate for MCE
-            agg: dict[int, dict] = {}
-            for b in bucket_dicts:
-                idx = b["bucket_idx"]
-                if idx not in agg:
-                    agg[idx] = {"n": 0, "winners": 0, "sum_prob": 0.0}
-                agg[idx]["n"] += b["n"]
-                agg[idx]["winners"] += b["winners"]
-                agg[idx]["sum_prob"] += b["sum_prob"]
-
-            mce = _compute_horizon_mce([
-                {"n": v["n"], "winners": v["winners"], "sum_prob": v["sum_prob"]}
-                for v in agg.values()
-            ])
-
-            # Bootstrap CI
-            agg_list = [
-                {"n": v["n"], "winners": v["winners"],
-                 "avg_prob": v["sum_prob"] / v["n"]}
-                for v in agg.values() if v["n"] > 0
-            ]
-            mce_ci_lo, mce_ci_hi = _bootstrap_mce_ci(agg_list)
-
-            # Per-source MCE
-            by_source: dict[str, dict[int, dict]] = {}
-            for b in bucket_dicts:
-                src = b["source"]
-                idx = b["bucket_idx"]
-                if src not in by_source:
-                    by_source[src] = {}
-                if idx not in by_source[src]:
-                    by_source[src][idx] = {"n": 0, "winners": 0, "sum_prob": 0.0}
-                by_source[src][idx]["n"] += b["n"]
-                by_source[src][idx]["winners"] += b["winners"]
-                by_source[src][idx]["sum_prob"] += b["sum_prob"]
-            mce_by_source = {}
-            for src, src_agg in by_source.items():
-                src_total = sum(v["n"] for v in src_agg.values())
-                if src_total >= _MIN_OUTCOMES_PER_HORIZON:
-                    mce_by_source[src] = _compute_horizon_mce([
-                        {"n": v["n"], "winners": v["winners"], "sum_prob": v["sum_prob"]}
-                        for v in src_agg.values()
-                    ])
-
-            # Per-category MCE
-            by_cat: dict[str, dict[int, dict]] = {}
-            for b in bucket_dicts:
-                cat = b["category"]
-                idx = b["bucket_idx"]
-                if cat not in by_cat:
-                    by_cat[cat] = {}
-                if idx not in by_cat[cat]:
-                    by_cat[cat][idx] = {"n": 0, "winners": 0, "sum_prob": 0.0}
-                by_cat[cat][idx]["n"] += b["n"]
-                by_cat[cat][idx]["winners"] += b["winners"]
-                by_cat[cat][idx]["sum_prob"] += b["sum_prob"]
-            mce_by_category = {}
-            for cat, cat_agg in by_cat.items():
-                cat_total = sum(v["n"] for v in cat_agg.values())
-                if cat_total >= _MIN_OUTCOMES_PER_HORIZON:
-                    mce_by_category[cat] = _compute_horizon_mce([
-                        {"n": v["n"], "winners": v["winners"], "sum_prob": v["sum_prob"]}
-                        for v in cat_agg.values()
-                    ])
-
-            horizons_result[label] = {
-                "buckets": bucket_dicts,
-                "total_outcomes": total_n,
-                "total_winners": total_winners,
-                "mce": mce,
-                "mce_ci_lower": round(mce_ci_lo * 100, 2),
-                "mce_ci_upper": round(mce_ci_hi * 100, 2),
-                "mce_by_source": mce_by_source,
-                "mce_by_category": mce_by_category,
-                **diag,
-            }
-            # Persist immediately so a later horizon's slowness (or the deadline
-            # guard firing next iteration) can never discard this one — and publish
-            # the served main key NOW so the endpoint reflects each horizon as it
-            # lands, never stranded on "computing" if a later horizon dies (#1171).
+            horizons_result[label] = _finalize_horizon_result(bucket_acc, diag_acc)
+            in_progress = None
             _save_time_horizon_wip(rc, horizons_result)
             _publish_time_horizon(rc, horizons_result)
 
-    # Publish whatever is computed. When all four are present this is the full
-    # payload and the WIP cursor is cleared; otherwise it is an honest PARTIAL
-    # (``complete: false``, ``missing: [...]``) that the endpoint still serves —
-    # the missing horizon(s) retry next run (#1171: never publish nothing).
     _publish_time_horizon(rc, horizons_result)
-    # Queue #263 Item 2: complete requires all four named horizons AND every one to
-    # carry the current population version — so a run that somehow still holds a
-    # stale-version horizon is reported partial (and its WIP is NOT cleared) rather
-    # than declared done. In practice the loader already drops off-version horizons,
-    # so this is a belt-and-braces invariant on the exit path.
     complete = len(horizons_result) == len(_HORIZONS) and all(
         isinstance(horizons_result.get(label), dict)
         and horizons_result[label].get("population_version")
@@ -10974,6 +11408,7 @@ async def _compute_time_horizon_calibration():
     return {
         "status": "ok" if complete else "partial",
         "horizons": len(horizons_result),
+        "horizons_done": len(horizons_result),
         "total": len(_HORIZONS),
     }
 

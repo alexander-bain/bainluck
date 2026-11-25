@@ -556,6 +556,23 @@ struct AboutView: View {
             .foregroundStyle(DS.textSecondaryReadable)
             .tint(DS.textSecondaryReadable)
             .frame(maxWidth: .infinity)
+
+            Link(destination: PairedMetricPresentation.tmdbAttributionURL) {
+                HStack(spacing: 6) {
+                    Image("TMDBLogoShort")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 56, height: 8)
+                    Text(PairedMetricPresentation.tmdbAttributionLine)
+                        .font(.caption2)
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .multilineTextAlignment(.center)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .accessibilityElement(children: .combine)
+            .accessibilityLabel(PairedMetricPresentation.tmdbAttributionLine)
+            .accessibilityIdentifier("about-tmdb-attribution")
         }
         .padding(.top, 4)
         .accessibilityIdentifier("about-bottom-links-row")

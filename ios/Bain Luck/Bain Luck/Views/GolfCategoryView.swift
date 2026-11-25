@@ -21,6 +21,7 @@ struct GolfCategoryView: View {
                     Button("Retry") { Task { await vm.load() } }
                 }
                 .padding()
+                .noteReviewPromptTrouble12304()
             case .loaded:
                 loadedView
             }
@@ -29,6 +30,15 @@ struct GolfCategoryView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.large)
         #endif
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                FollowButton295A(
+                    subject: .league(slug: "golf", sportKey: "golf", name: "Golf"),
+                    pageContextId: "league:golf",
+                    compact: true
+                )
+            }
+        }
         .task {
             await vm.load()
             AnalyticsService.trackScreen(name: "golf_category", type: "category")
@@ -40,6 +50,9 @@ struct GolfCategoryView: View {
     private var loadedView: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 0) {
+                GameAlertsInlinePageSlot295A(contextId: "league:golf")
+                    .padding(.top, 8)
+
                 // Live tournament hero card
                 if let current = vm.currentEvent, let tournament = vm.liveTournament {
                     liveSection(current, tournament)

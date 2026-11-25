@@ -35,6 +35,7 @@ struct EventCardView: View {
     /// `FinishedCardAccessibility11325`.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.liveOddsRefreshActive) private var liveOddsRefreshActive
 
     /// Unified onto `HeadlineStyleTable199` (`.card`) so team names, scores, and chances
     /// share one size and weight family across every surface.
@@ -230,6 +231,7 @@ struct EventCardView: View {
             teamsAndOdds
             if !compactScheduleStyle {
                 footer
+                GameCardTeamFollowBar295A(event: event)
             }
         }
         .padding(.vertical, 6)
@@ -470,7 +472,8 @@ struct EventCardView: View {
         canStillBeGraded: Bool,
         currentAwayIsWithheld: Bool,
         prematch: PrematchReading?,
-        prematchAwayIsWithheld: Bool
+        prematchAwayIsWithheld: Bool,
+        showsLiveTenths: Bool = false
     ) -> CardSourceMarkPresentation? {
         var event = rawEvent
         event.currentOdds = CompactGameCard12616.currentOddsForCard(rawEvent)
@@ -507,7 +510,7 @@ struct EventCardView: View {
                 return hasAwayCandidate
             }()
 
-            if event.status == "live" {
+            if event.status == "live" && showsLiveTenths {
                 let liveTenths = CompactGameCard12616.liveTenthsStrings(
                     away: event.currentOdds?.awayProbability,
                     home: event.currentOdds?.homeProbability,
@@ -572,7 +575,8 @@ struct EventCardView: View {
             canStillBeGraded: canStillBeGraded,
             currentAwayIsWithheld: currentAwayIsWithheld,
             prematch: prematch,
-            prematchAwayIsWithheld: prematchAwayIsWithheld
+            prematchAwayIsWithheld: prematchAwayIsWithheld,
+            showsLiveTenths: liveOddsRefreshActive
         ),
         let button = SourceMarkButton(
             resolved.mark,
@@ -671,11 +675,23 @@ struct EventCardView: View {
     }
 
     private var showsScheduledInlineProjectionColumn12616: Bool {
-        scheduledProjection12616 != nil && !dynamicTypeSize.isAccessibilitySize
+        guard scheduledProjection12616 != nil, !dynamicTypeSize.isAccessibilitySize else {
+            return false
+        }
+        let rowW = measuredCardWidth > 0 ? measuredCardWidth : 318
+        return CompactGameCard12616.scheduledInlineProjectedFits(
+            awayShortName: shortTeamNames.away,
+            homeShortName: shortTeamNames.home,
+            nameFontSize: uniformCompactTeamNameFontSize,
+            projColWidth: min(compactLiveScoreWidth, 44),
+            chanceColWidth: min(compactLargeChanceWidth, 86),
+            gutter: scoreToPregameGutter,
+            availableRowWidth: rowW
+        )
     }
 
     private var scheduledAccessibilityProjectedLine12616: (visible: String, spoken: String)? {
-        guard isScheduled, dynamicTypeSize.isAccessibilitySize, let pair = scheduledProjection12616 else {
+        guard isScheduled, !showsScheduledInlineProjectionColumn12616, let pair = scheduledProjection12616 else {
             return nil
         }
         let abbrevs = TeamShortName.abbreviationPair(
@@ -727,7 +743,8 @@ struct EventCardView: View {
                 isScheduled: isScheduled,
                 isLive: isLive,
                 isFinished: isFinished,
-                isSuspended: isSuspended
+                isSuspended: isSuspended,
+                showsLiveTenths: liveOddsRefreshActive
             )
 
         return VStack(spacing: 6) {
@@ -762,12 +779,7 @@ struct EventCardView: View {
             } else if isThreeWayCard13121 {
                 threeWayCompetitorStack13121(drawChance: drawChance)
             } else {
-                ViewThatFits(in: .horizontal) {
-                    compactCompetitorStack(rowWidth: 358, drawChance: drawChance, isFallback: false)
-                    compactCompetitorStack(rowWidth: 304, drawChance: drawChance, isFallback: false)
-                    compactCompetitorStack(rowWidth: 272, drawChance: drawChance, isFallback: false)
-                    compactCompetitorStack(rowWidth: 236, drawChance: drawChance, isFallback: true)
-                }
+                compactCompetitorStack(drawChance: drawChance)
             }
 
             if !compactScheduleStyle && !usesFinishedAccessibilityLayout {
@@ -813,11 +825,9 @@ struct EventCardView: View {
     }
 
     private func compactCompetitorStack(
-        rowWidth: CGFloat,
-        drawChance: String?,
-        isFallback: Bool
+        drawChance: String?
     ) -> some View {
-        let fontSize = sharedCompactTeamNameFontSize(forRowWidth: rowWidth)
+        let fontSize = uniformCompactTeamNameFontSize
         return VStack(spacing: 6) {
             singleRowTeamRow(
                 name: event.awayTeam,
@@ -828,7 +838,7 @@ struct EventCardView: View {
                 won: awayWon,
                 side: .away,
                 nameFontSize: fontSize,
-                preventSingleWordTruncation: !isFallback
+                preventSingleWordTruncation: false
             )
             if let drawChance {
                 compactDrawRow(drawChance: drawChance, nameFontSize: fontSize)
@@ -842,7 +852,7 @@ struct EventCardView: View {
                 won: homeWon,
                 side: .home,
                 nameFontSize: fontSize,
-                preventSingleWordTruncation: !isFallback
+                preventSingleWordTruncation: false
             )
         }
     }
@@ -863,7 +873,8 @@ struct EventCardView: View {
         return CompactGameCard12616.liveInlinePregameFits(
             awayShortName: shortTeamNames.away,
             homeShortName: shortTeamNames.home,
-            typeSize: dynamicTypeSize
+            typeSize: dynamicTypeSize,
+            availableRowWidth: measuredCardWidth > 0 ? measuredCardWidth : 318
         )
     }
 
@@ -887,22 +898,22 @@ struct EventCardView: View {
 
     private var effectiveMediumColWidth: CGFloat {
         if isScheduled {
-            return min(compactProjectedWidth, 92)
+            return min(compactLiveScoreWidth, 44)
         }
         if isFinished {
-            return min(max(compactPregameWidth, 60), 70)
+            return min(max(compactPregameWidth, 56), 62)
         }
-        return min(compactLiveScoreWidth, 52)
+        return min(compactLiveScoreWidth, 44)
     }
 
     private var effectiveLiveProjectedColWidth204C: CGFloat {
-        min(compactLiveScoreWidth, 52)
+        min(compactLiveScoreWidth, 44)
     }
 
     private var effectiveLargeColWidth: CGFloat {
-        if isFinished { return min(compactLiveScoreWidth, 50) }
+        if isFinished { return min(compactLiveScoreWidth, 48) }
         if isSuspended { return min(compactPregameWidth, 66) }
-        return min(compactLargeChanceWidth, 90)
+        return min(compactLargeChanceWidth, 86)
     }
 
     private var pregameColumnLeadingGap12616: CGFloat {
@@ -923,8 +934,15 @@ struct EventCardView: View {
         return medW + projW + lrgW
     }
 
+    /// #13013 (`246: A`) — One uniform Dynamic-Type-scaled team-name font size across
+    /// every standard game card (`Buccaneers`, `Timberwolves`, `Bills`, college teams, and
+    /// three-way soccer clubs alike).
+    var renderedCompactTeamNameFontSize13013: CGFloat {
+        uniformCompactTeamNameFontSize
+    }
+
     private var twoWayStandardNameFontSize13121: CGFloat {
-        min(compactNameSize, 21)
+        uniformCompactTeamNameFontSize
     }
 
     var isThreeWayCard13121: Bool {
@@ -934,7 +952,7 @@ struct EventCardView: View {
     }
 
     var resolvedCompactTeamNameFontSizeForTest13121: CGFloat {
-        isThreeWayCard13121 ? twoWayStandardNameFontSize13121 : sharedCompactTeamNameFontSize(forRowWidth: measuredCardWidth > 0 ? measuredCardWidth : 334)
+        isThreeWayCard13121 ? twoWayStandardNameFontSize13121 : sharedCompactTeamNameFontSize
     }
 
     private func threeWayNeedsStackedRow13121(cardWidth: CGFloat) -> Bool {
@@ -1081,20 +1099,12 @@ struct EventCardView: View {
         .accessibilityElement(children: .combine)
     }
 
-    private var sharedCompactTeamNameFontSize: CGFloat {
-        sharedCompactTeamNameFontSize(forRowWidth: 330)
+    private var uniformCompactTeamNameFontSize: CGFloat {
+        CompactGameCard12616.uniformCardNameFontSize(scaledBaseSize: compactNameSize)
     }
 
-    private func sharedCompactTeamNameFontSize(forRowWidth rowWidth: CGFloat) -> CGFloat {
-        let reservedChrome: CGFloat = isFinished ? 59 : 44
-        let availableWidth = max(rowWidth - reservedChrome - trailingColumnsClusterWidth12616, 48)
-        return CardTeamNameSizing.sharedWordSafeFontSize(
-            names: [shortTeamNames.away, shortTeamNames.home],
-            baseSize: min(compactNameSize, 21),
-            weight: .bold,
-            availableWidth: availableWidth,
-            minimumScale: 0.48
-        )
+    private var sharedCompactTeamNameFontSize: CGFloat {
+        uniformCompactTeamNameFontSize
     }
 
     private var compactHeaderFont12616: Font {
@@ -1327,7 +1337,7 @@ struct EventCardView: View {
                         .accessibilityHidden(true)
                 }
             }
-            Spacer(minLength: 8)
+            Spacer(minLength: 4)
             HStack(alignment: .firstTextBaseline, spacing: 0) {
                 if showsMediumColumn12616 {
                     reservedTrailingColumn13121(width: effectiveMediumColWidth) {
@@ -1838,7 +1848,7 @@ struct EventCardView: View {
         let color = side == .home ? homeColor : awayColor
 
         if let prob {
-            if isLive, let tenths = (side == .home ? liveTenthsPair12616.home : liveTenthsPair12616.away) {
+            if isLive && liveOddsRefreshActive, let tenths = (side == .home ? liveTenthsPair12616.home : liveTenthsPair12616.away) {
                 Text(tenths)
                     .font(HeadlineStyleTable199.now(.card, scaledSize: min(compactLargeSize, 24)))
                     .foregroundStyle(color)

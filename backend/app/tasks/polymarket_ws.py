@@ -69,6 +69,26 @@ FAST_GAME_FLUSH_SECONDS = 0.025
 # Optional DNPL game writers must not hold later arrivals inside a slow price
 # statement. Keep the separate lock budget; preserve any tighter prior cap.
 DNPL_PRICE_STATEMENT_TIMEOUT_MS = 250
+#: #13673: during the consumer's own half-hourly catalog refresh (and a short
+#: post-handover settle window as queued flushes and shard reconnects drain),
+#: widen the bounded DNPL game price statement budget from 250 ms to 1500 ms
+#: so the refresh does not self-cancel its own `WITH locked AS MATERIALIZED`
+#: updates on every flush across all five pooled connections.
+DNPL_REFRESH_PRICE_STATEMENT_TIMEOUT_MS = 1500
+REFRESH_PRICE_TIMEOUT_GRACE_S = 10.0
+
+
+def _statement_timeout_backoff_seconds(strikes: int) -> float:
+    """Bounded exponential cooldown after repeated price statement timeouts.
+
+    Strike 1 keeps 0s so a single transient slow chunk retries on the very next
+    flush; consecutive strikes (2, 3, 4, ...) back off 0.25s -> 0.5s -> 1.0s
+    up to PRICE_FLUSH_SECONDS so a saturated window stops cancelling the same
+    chunk across all five pooled connections every 25 ms (#13673).
+    """
+    if strikes <= 1:
+        return 0.0
+    return min(PRICE_FLUSH_SECONDS, 0.25 * (2 ** (strikes - 2)))
 ARM_DNPL_PRICE_STATEMENT_TIMEOUT_SQL = text("""
     WITH prior AS MATERIALIZED (
         SELECT current_setting('statement_timeout') AS value
@@ -146,6 +166,9 @@ class _PMCatalogFlushBoundary:
         self.standalone_active = 0
         self.standalone_fenced = False
         self.changing = False
+        self._refresh_depth = 0
+        self._refresh_grace_until = 0.0
+        self.statement_timeout_strikes: dict[int, int] = {}
         self.stamps: Optional["_PMStampOwner"] = None
         self.flush_wake = asyncio.Event()
         self.flush_work = 0
@@ -215,6 +238,24 @@ class _PMCatalogFlushBoundary:
     async def join_stamps(self, *, cancel=False) -> None:
         if self.stamps is not None:
             await self.stamps.join(cancel=cancel)
+
+    @property
+    def refreshing_catalog(self) -> bool:
+        """True while a catalog refresh or its immediate handover settle is running."""
+        return self._refresh_depth > 0 or time.monotonic() < self._refresh_grace_until
+
+    @contextlib.asynccontextmanager
+    async def reading_catalog(self, *, grace_s: float = REFRESH_PRICE_TIMEOUT_GRACE_S):
+        """Mark active catalog refresh/handover work so price flushes widen safely (#13673)."""
+        self._refresh_depth += 1
+        try:
+            yield
+        finally:
+            self._refresh_depth = max(0, self._refresh_depth - 1)
+            if self._refresh_depth == 0 and grace_s > 0:
+                self._refresh_grace_until = max(
+                    self._refresh_grace_until, time.monotonic() + grace_s
+                )
 
     @contextlib.asynccontextmanager
     async def flushing(self, *, standalone=False):
@@ -3939,12 +3980,30 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 # skips them before pairing; keep their market rows for counts,
                 # but do not read legs that cannot enter the open admission.
                 excluded = set(excluded_market_ids)
-                for stmt in open_contract_outcome_stmts(
+                stmts = open_contract_outcome_stmts(
                     r[0] for r in market_rows if r[0] not in excluded
-                ):
-                    await legs.add_rows_cooperatively(
-                        (await session.execute(stmt)).all()
-                    )
+                )
+                if len(stmts) <= 1:
+                    for stmt in stmts:
+                        await legs.add_rows_cooperatively(
+                            (await session.execute(stmt)).all()
+                        )
+            if len(stmts) > 1:
+                # #13673: multi-chunk outcome scans release their pooled DB
+                # connection and yield briefly between chunks so a half-hourly
+                # refresh never starves live WS writes on the 5-slot pool.
+                import asyncio as _asyncio
+
+                from app.tasks.polymarket_open_contracts import (
+                    OPEN_OUTCOME_CHUNK_PAUSE_S,
+                )
+
+                for chunk_index, stmt in enumerate(stmts):
+                    if chunk_index and OPEN_OUTCOME_CHUNK_PAUSE_S > 0:
+                        await _asyncio.sleep(OPEN_OUTCOME_CHUNK_PAUSE_S)
+                    async with get_task_session() as session:
+                        chunk_rows = (await session.execute(stmt)).all()
+                    await legs.add_rows_cooperatively(chunk_rows)
             # #10090: this mapping shares the loop with every PM socket.
             admission = await open_contract_asset_map_cooperatively(
                 market_rows, legs, taken_assets, excluded_market_ids,
@@ -4694,9 +4753,10 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
         from app.tasks.live_blend_refresh import _mono, _wall, price_commit_ack_log_on
         from app.tasks.polymarket_ws import (
             _PMPriceWriteResult, PM_QUOTE_LIVENESS_SECONDS,
-            DNPL_PRICE_STATEMENT_TIMEOUT_MS,
+            DNPL_PRICE_STATEMENT_TIMEOUT_MS, DNPL_REFRESH_PRICE_STATEMENT_TIMEOUT_MS,
             ARM_LOCK_AND_DNPL_PRICE_STATEMENT_TIMEOUT_SQL, RESTORE_DNPL_PRICE_TIMEOUTS_SQL,
             is_price_statement_timeout, _pm_game_flush_span,
+            _statement_timeout_backoff_seconds,
         )
         from app.utils.repair_lock_budget import SET_STATEMENT_TIMEOUT_SQL
 
@@ -4789,11 +4849,16 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                     or now - successful_price_write_at[oid] >= PM_QUOTE_LIVENESS_SECONDS
                 }
                 if fuse_timeout_sets:
+                    price_statement_timeout_ms = (
+                        DNPL_REFRESH_PRICE_STATEMENT_TIMEOUT_MS
+                        if getattr(catalog_boundary, "refreshing_catalog", False)
+                        else DNPL_PRICE_STATEMENT_TIMEOUT_MS
+                    )
                     previous_statement_timeout = (await session.execute(
                         ARM_LOCK_AND_DNPL_PRICE_STATEMENT_TIMEOUT_SQL,
                         {
                             "lock_ms": lock_timeout_value(price_lock_timeout_ms),
-                            "ms": lock_timeout_value(DNPL_PRICE_STATEMENT_TIMEOUT_MS),
+                            "ms": lock_timeout_value(price_statement_timeout_ms),
                         },
                     )).scalar_one()
                 clock_ticket = (
@@ -4946,8 +5011,25 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 # Separate from a row-lock refusal: the price statement spent
                 # its own runtime budget. Keep ordinary buffered retry/overlay
                 # admission; a cleanup replacement error never enters here.
+                # #13673: strike 1 retries immediately (0 delay); consecutive
+                # strikes back off exponentially up to PRICE_FLUSH_SECONDS so
+                # saturated refresh windows stop cancelling across all 5 slots.
                 stats["price_statement_timeouts"] = stats.get("price_statement_timeouts", 0) + 1
-                lock_retry_until.update({oid: lock_retry_until.get(oid, 0) for oid in chunk})
+                now_mono = _mono()
+                strikes_map = getattr(catalog_boundary, "statement_timeout_strikes", None)
+                for oid in chunk:
+                    if strikes_map is not None:
+                        strikes = strikes_map.get(oid, 0) + 1
+                        strikes_map[oid] = strikes
+                        backoff = _statement_timeout_backoff_seconds(strikes)
+                    else:
+                        backoff = 0.0
+                    if backoff > 0:
+                        lock_retry_until[oid] = max(
+                            lock_retry_until.get(oid, 0), now_mono + backoff
+                        )
+                    else:
+                        lock_retry_until[oid] = lock_retry_until.get(oid, 0)
                 lock_retry_events.update(event_ids_for_outcomes(event_id_by_outcome, chunk))
                 return None
             if price_statement_timeout_seen:
@@ -5072,9 +5154,12 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
 
         if stage_trace is not None:
             stage_trace.write_stage(chunk, "COMMITTED", rows=written_rows)
+        strikes_map = getattr(catalog_boundary, "statement_timeout_strikes", None)
         for oid in chunk:
             if oid not in held_back:
                 lock_retry_until.pop(oid, None)
+                if strikes_map is not None:
+                    strikes_map.pop(oid, None)
         successful_price_write_at.update(dict.fromkeys(
             (row.id for row in written_rows), _mono(),
         ))
@@ -7886,7 +7971,11 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
                 )
                 for token in books_by_asset.keys() - live_assets:
                     del books_by_asset[token]
-                for held in (lock_retry_until, withdrawal_retry_until):
+                for held in (
+                    lock_retry_until,
+                    withdrawal_retry_until,
+                    catalog_boundary.statement_timeout_strikes,
+                ):
                     for oid in held.keys() - protected:
                         del held[oid]
                 legged_market_ids.clear()
@@ -7963,42 +8052,43 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
 
     async def admit_open_contracts():
         nonlocal game_slate
-        if complete_startup_slate:
-            try:
+        async with catalog_boundary.reading_catalog(grace_s=0.0):
+            if complete_startup_slate:
+                try:
+                    started = time.monotonic()
+                    full_slate = await load_game_slate()
+                    # No open catalog has been admitted yet. Install the complete
+                    # game maps before subscribing their new tokens; never make a
+                    # recovered live token wait for the independent open read.
+                    await refresh_catalog(
+                        full_slate, (None, False, {}, False),
+                        _PMCatalogHandoverTiming(
+                            "startup-games", slate_read_s=time.monotonic() - started,
+                        ),
+                    )
+                    ws.update_asset_ids(
+                        asset_ids.copy(), preserve_existing_shards=True,
+                    )
+                    game_slate = full_slate
+                except Exception:
+                    logger.exception(
+                        "Polymarket WS full startup slate failed; retaining stored live subscriptions"
+                    )
+            open_read, open_read_s = preread, None
+            if open_read is None:
                 started = time.monotonic()
-                full_slate = await load_game_slate()
-                # No open catalog has been admitted yet. Install the complete
-                # game maps before subscribing their new tokens; never make a
-                # recovered live token wait for the independent open read.
-                await refresh_catalog(
-                    full_slate, (None, False, {}, False),
-                    _PMCatalogHandoverTiming(
-                        "startup-games", slate_read_s=time.monotonic() - started,
-                    ),
-                )
-                ws.update_asset_ids(
-                    asset_ids.copy(), preserve_existing_shards=True,
-                )
-                game_slate = full_slate
-            except Exception:
-                logger.exception(
-                    "Polymarket WS full startup slate failed; retaining stored live subscriptions"
-                )
-        open_read, open_read_s = preread, None
-        if open_read is None:
-            started = time.monotonic()
-            open_read = await read_catalog_open(game_slate)
-            open_read_s = time.monotonic() - started
-        await refresh_catalog(
-            game_slate,
-            open_read,
-            _PMCatalogHandoverTiming("initial", open_read_s=open_read_s),
-        )
-        # #10090: the first full catalog is the long-lived heap; freeze it out
-        # of the full collections, as each later handover does.
-        from app.utils.ws_gc import refreeze_long_lived as refreeze
+                open_read = await read_catalog_open(game_slate)
+                open_read_s = time.monotonic() - started
+            await refresh_catalog(
+                game_slate,
+                open_read,
+                _PMCatalogHandoverTiming("initial", open_read_s=open_read_s),
+            )
+            # #10090: the first full catalog is the long-lived heap; freeze it out
+            # of the full collections, as each later handover does.
+            from app.utils.ws_gc import refreeze_long_lived as refreeze
 
-        refreeze("polymarket")
+            refreeze("polymarket")
 
     admission_task = asyncio.create_task(admit_open_contracts())
 
@@ -8203,53 +8293,54 @@ async def _run_polymarket_ws_consumer(*, sessions, stop=None):
             # #10663: drop the previous refresh's source copies before the next
             # read builds one, so a read never overlaps two catalogs plus the maps.
             fresh_slate = fresh_open = None
-            try:
-                read_started = time.monotonic()
-                fresh_slate = await load_game_slate()
-                slate_read_s = time.monotonic() - read_started
-                read_started = time.monotonic()
-                fresh_open = await read_catalog_open(fresh_slate)
-                open_read_s = time.monotonic() - read_started
-                if fresh_open[1]:
-                    stats["open_contract_admission_error"] = True
-                    logger.warning(
-                        "Polymarket WS open admission failed; retaining the current catalog"
+            async with catalog_boundary.reading_catalog():
+                try:
+                    read_started = time.monotonic()
+                    fresh_slate = await load_game_slate()
+                    slate_read_s = time.monotonic() - read_started
+                    read_started = time.monotonic()
+                    fresh_open = await read_catalog_open(fresh_slate)
+                    open_read_s = time.monotonic() - read_started
+                    if fresh_open[1]:
+                        stats["open_contract_admission_error"] = True
+                        logger.warning(
+                            "Polymarket WS open admission failed; retaining the current catalog"
+                        )
+                        run_started_at = time.monotonic()
+                        continue
+                except Exception:
+                    logger.exception(
+                        "Polymarket WS catalog refresh failed; keeping subscriptions"
                     )
                     run_started_at = time.monotonic()
                     continue
-            except Exception:
-                logger.exception(
-                    "Polymarket WS catalog refresh failed; keeping subscriptions"
+                # Install new callback ownership before subscribing new tokens.
+                # The existing refreshable owner changes only affected shards, so
+                # unrelated live games keep their connections, books and coverage.
+                await refresh_catalog(
+                    fresh_slate,
+                    fresh_open,
+                    _PMCatalogHandoverTiming(
+                        "held" if held else ("admission" if admitted else "timer"),
+                        slate_read_s=slate_read_s,
+                        open_read_s=open_read_s,
+                    ),
                 )
-                run_started_at = time.monotonic()
-                continue
-            # Install new callback ownership before subscribing new tokens.
-            # The existing refreshable owner changes only affected shards, so
-            # unrelated live games keep their connections, books and coverage.
-            await refresh_catalog(
-                fresh_slate,
-                fresh_open,
-                _PMCatalogHandoverTiming(
-                    "held" if held else ("admission" if admitted else "timer"),
-                    slate_read_s=slate_read_s,
-                    open_read_s=open_read_s,
-                ),
-            )
-            # Installed: the live maps own the catalog now.
-            fresh_slate = fresh_open = None
-            # #10090: the new catalog is the long-lived heap now; freeze it out
-            # of the full collections (`app/utils/ws_gc.py`). The startup
-            # freeze collected everything; a handover pays no full collection.
-            refreeze_long_lived("polymarket", full=False)
-            # #11218: the reads' freed working set goes back to the OS now,
-            # instead of staying counted until the dyno's memory line.
-            release_free_heap("polymarket")
-            if game_run_task.done():
-                # Loading/updating can yield while the retained client exits.
-                # Propagate its failure (or end this run) just as the wait above.
-                game_run_task.result()
-                break
-            ws.update_asset_ids(asset_ids.copy())
+                # Installed: the live maps own the catalog now.
+                fresh_slate = fresh_open = None
+                # #10090: the new catalog is the long-lived heap now; freeze it out
+                # of the full collections (`app/utils/ws_gc.py`). The startup
+                # freeze collected everything; a handover pays no full collection.
+                refreeze_long_lived("polymarket", full=False)
+                # #11218: the reads' freed working set goes back to the OS now,
+                # instead of staying counted until the dyno's memory line.
+                release_free_heap("polymarket")
+                if game_run_task.done():
+                    # Loading/updating can yield while the retained client exits.
+                    # Propagate its failure (or end this run) just as the wait above.
+                    game_run_task.result()
+                    break
+                ws.update_asset_ids(asset_ids.copy())
             run_started_at = time.monotonic()
             stats["catalog_refreshes"] = stats.get("catalog_refreshes", 0) + 1
             stats["recycle_reason"] = (

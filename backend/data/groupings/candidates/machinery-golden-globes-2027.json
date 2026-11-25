@@ -1,0 +1,62 @@
+{
+  "slug": "machinery-golden-globes-2027",
+  "stage": "public",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_event",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "ENTERTAINMENT · AWARDS",
+  "name": "Golden Globes 2027",
+  "category": "entertainment",
+  "tag": "ENTERTAINMENT",
+  "section_title": "Golden Globes Favorites",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "extra_llm_categories": [
+      "culture"
+    ],
+    "card_rows": 3,
+    "card_section_key": "best_actress_paired",
+    "suppress_card_photo": true,
+    "sections": [
+      {
+        "key": "best_actress_paired",
+        "title": "Best Actress (Comedy or Musical): Nominated & Wins",
+        "item_noun": "contenders",
+        "note": "84th Golden Globes · Nominated % paired beside Wins %.",
+        "atom_query": {
+          "kind": "paired_stage",
+          "ceremony": "golden-globes-2027",
+          "category_name": "Best Actress",
+          "min_items": 3,
+          "max_items": 10,
+          "initial_visible_limit": 3
+        }
+      },
+      {
+        "key": "golden_globes",
+        "title": "Other Golden Globes Races",
+        "item_noun": "awards",
+        "note": "Leading film, drama, comedy, and television contenders for the 2027 Golden Globes.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch6-golden-globes-2027",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 10,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}

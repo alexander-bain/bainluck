@@ -67,8 +67,8 @@ it("keeps the earlier floor and shows when the last successful read happened", a
     expect(cacheWrite).toHaveBeenCalledTimes(1);
     expect(html).toContain('data-factory-row="Server"');
     expect(html).toContain('data-motion="paused"');
-    expect(html).toContain("Not updating");
-    expect(html).toContain("Last read 7:59 AM PT, 3 min ago. Updates have stopped.");
+    expect(html).not.toContain("Not updating");
+    expect(html).toContain("Last read 7:59 AM PT, 3 min ago. The latest read failed.");
     expect(html).toContain("7:58 AM PT");
   } finally {
     clock.mockRestore();

@@ -21,9 +21,9 @@ const spaceGrotesk = Space_Grotesk({
 const loadFactory = cache(loadFactoryReading);
 
 export async function generateMetadata(): Promise<Metadata> {
-  const { data, readFailed, renderedAt } = await loadFactory();
+  const { data, readFailed, renderedAt, activity } = await loadFactory();
   return {
-    title: { absolute: factoryTabTitle(floorVerdict(data, readFailed, renderedAt)) },
+    title: { absolute: factoryTabTitle(floorVerdict(data, readFailed, renderedAt, activity)) },
     description:
       "Follow each change to Bain Luck, from its first lines to going live.",
     alternates: { canonical: "/factory" },

@@ -7,13 +7,66 @@ Verifies that:
 4. Task names match the expected "app.tasks.*" pattern
 """
 
-import pytest
+from threading import Event
+from types import SimpleNamespace
+from unittest.mock import Mock
 
-from app.tasks import celery_app
+import pytest
+from celery.signals import worker_ready
+
+from app.tasks import celery_app, refresh_onboarding_team_membership
 
 
 class TestBeatScheduleWiring:
     """Every beat schedule entry must reference a registered Celery task."""
+
+    def test_onboarding_membership_runs_daily_without_expiry(self):
+        entry = celery_app.conf.beat_schedule["refresh-onboarding-team-membership"]
+        assert entry["schedule"].minute == {21}
+        assert entry["schedule"].hour == {11}
+        assert entry["options"] == {"queue": "background"}
+        task = celery_app.tasks[entry["task"]]
+        assert task == refresh_onboarding_team_membership
+        assert task.ignore_result
+        assert 120 < task.soft_time_limit < task.time_limit
+
+    def test_only_background_worker_ready_enqueues_onboarding_without_blocking(
+        self, monkeypatch
+    ):
+        entered = Event()
+        released = Event()
+        finished = Event()
+
+        def blocked_broker():
+            entered.set()
+            released.wait(5)
+            finished.set()
+
+        publish = Mock(side_effect=lambda **kwargs: blocked_broker())
+        monkeypatch.setattr(refresh_onboarding_team_membership, "apply_async", publish)
+        assert not publish.called
+
+        def send(app, *queues):
+            worker_ready.send(
+                sender=Mock(
+                    app=app,
+                    task_consumer=SimpleNamespace(
+                        queues=[SimpleNamespace(name=name) for name in queues]
+                    ),
+                )
+            )
+
+        send(SimpleNamespace(), "background")
+        send(celery_app, "realtime")
+        assert not publish.called
+        try:
+            send(celery_app, "discover_base", "background")
+            assert entered.wait(2)
+            assert not finished.is_set(), "worker-ready waited for the broker"
+        finally:
+            released.set()
+        assert finished.wait(2)
+        publish.assert_called_once_with(queue="background", retry=False)
 
     def test_all_beat_entries_reference_registered_tasks(self):
         registered = set(celery_app.tasks.keys())
@@ -393,6 +446,7 @@ class TestBeatScheduleCompleteness:
         # #12: this allowlist is the reason a new beat entry cannot land
         # silently.
         "warm-search-head",
+        "refresh-onboarding-team-membership",
         # #9982 — keeps each published collection hub built ahead of its expiry.
         # Gotcha #12: this allowlist is the reason a new beat entry cannot land
         # silently.

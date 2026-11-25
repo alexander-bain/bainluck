@@ -138,9 +138,13 @@ DEFAULT_IMMINENT = [
 ]
 DEFAULT_CANDIDATES = [
     _ns(id=9001, name="New York Mets vs. Milwaukee Brewers", external_id=None,
-        source="polymarket", llm_sport_category="baseball_mlb"),
+        source="polymarket", llm_sport_category="baseball_mlb",
+        market_metadata={"polymarket_event_slug": f"mlb-nym-mil-{COMMENCE.date().isoformat()}",
+                         "venue_game_start": COMMENCE.isoformat()}),
     _ns(id=9002, name="New York Mets vs. Milwaukee Brewers - Player Props", external_id=None,
-        source="polymarket", llm_sport_category="baseball_mlb"),
+        source="polymarket", llm_sport_category="baseball_mlb",
+        market_metadata={"polymarket_event_slug": f"mlb-nym-mil-{COMMENCE.date().isoformat()}",
+                         "venue_game_start": COMMENCE.isoformat()}),
 ]
 
 

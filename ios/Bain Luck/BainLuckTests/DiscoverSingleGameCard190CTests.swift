@@ -177,7 +177,8 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
         let liveModel = DiscoverSingleGameCard190C.build(
             event: liveNBA,
             prematch: prematch(liveNBA),
-            usesPictureLayout: true
+            usesPictureLayout: true,
+            showsLiveTenths: true
         )
         XCTAssertEqual(liveModel.headers, .init(score: "Score", pregame: "Proj.", primary: "Now"))
         XCTAssertEqual(liveModel.rows.map(\.scoreText), ["54", "61"])
@@ -258,7 +259,8 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
         let liveChart = DiscoverPictureChart191A.build(
             event: liveNBA,
             prematch: prematch(liveNBA),
-            history: liveHistory
+            history: liveHistory,
+            showsLiveTenths: true
         )
         XCTAssertEqual(liveChart.perspective, .home)
         XCTAssertEqual(liveChart.plottedTeamShortName, "Raptors")
@@ -319,7 +321,8 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
         let soccerChart = DiscoverPictureChart191A.build(
             event: liveSoccer,
             prematch: prematch(liveSoccer),
-            history: nil
+            history: nil,
+            showsLiveTenths: true
         )
         XCTAssertEqual(soccerChart.perspective, .home, "#5363: draw-priced sports always plot home rather than `1 - home`")
         XCTAssertEqual(soccerChart.leftEndLabel, "Pregame 60% NED")
@@ -414,7 +417,7 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
             {"timestamp": "2026-11-13T18:45:00Z", "home_probability": 0.69}
          ]}
         """)
-        let pinned = DiscoverPictureChart191A.build(event: event, prematch: pregame, history: pinnedHistory)
+        let pinned = DiscoverPictureChart191A.build(event: event, prematch: pregame, history: pinnedHistory, showsLiveTenths: true)
         XCTAssertFalse(pinned.showsPregameLabel)
         XCTAssertTrue(pinned.markedPoints.contains(where: \.isEndpoint))
         XCTAssertEqual(
@@ -458,13 +461,13 @@ final class DiscoverSingleGameCard190CTests: XCTestCase {
             navigationPath: .constant(NavigationPath()), chartHistory: history
         )
         let model = DiscoverSingleGameCard190C.build(
-            event: card.event, prematch: prematch(card.event), usesPictureLayout: card.usesPictureLayout190C
+            event: card.event, prematch: prematch(card.event), usesPictureLayout: card.usesPictureLayout190C, showsLiveTenths: true
         )
         XCTAssertEqual(card.event.heroProbabilityObservedAt, "2026-11-13T18:45:00Z")
         XCTAssertEqual(model.headers.primary, "Now")
         XCTAssertEqual(model.rows.map(\.primaryCell), [.probability("30.0%"), .probability("70.0%")])
         let chart = DiscoverPictureChart191A.build(
-            event: card.event, prematch: prematch(card.event), history: history
+            event: card.event, prematch: prematch(card.event), history: history, showsLiveTenths: true
         )
         XCTAssertFalse(chart.showsPregameLabel)
         XCTAssertTrue(chart.showsEndpointDot)

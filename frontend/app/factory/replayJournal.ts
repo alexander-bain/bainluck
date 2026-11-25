@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { pacificDay, stations, transferId } from "./activity";
-import type { DayReplay, FactoryData, FloorEvent } from "./types";
+import { isBuilder, type DayReplay, type FactoryData, type FloorEvent } from "./types";
 
 const storageKey = "factory-today-transfers-v1";
 
@@ -76,7 +76,7 @@ function storedReading(date: string): DayReplay | undefined {
       event && (event.kind === "move" || event.kind === "returned") &&
       ["Server", "Website", "Apps"].includes(event.line) &&
       Number.isSafeInteger(event.number) && event.number > 0 &&
-      (event.builder === undefined || ["S", "B", "C", "D", "E", "F", "W", "Other"].includes(event.builder)) &&
+      (event.builder === undefined || isBuilder(event.builder)) &&
       event.from !== undefined && stations.includes(event.from) && stations.includes(event.station) &&
       event.from !== event.station &&
       typeof event.at === "string" && Number.isFinite(Date.parse(event.at)) &&

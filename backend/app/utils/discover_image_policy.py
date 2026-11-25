@@ -29,7 +29,10 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
-from app.utils.music_image_guard import sanitize_market_image_fields
+from app.utils.music_image_guard import (
+    is_music_market_ineligible_for_tmdb,
+    sanitize_market_image_fields,
+)
 
 from app.utils.nation_flags import flag_url as nation_flag_url
 
@@ -1132,7 +1135,11 @@ def resolve_discover_market_image(
 
     # 2. Check verified entity/landmark register
     verified = _lookup_verified_entry(name, subject, top_outcomes)
-    if verified:
+    if verified and not (
+        is_music_market_ineligible_for_tmdb(name)
+        and is_tmdb_url(verified.get("url"))
+        and verified.get("url") not in _VERIFIED_TMDB_MUSIC_AWARD_URLS
+    ):
         return _entry_to_resolved_dict(verified)
 
     # 3. Check official team / club / nation crest map

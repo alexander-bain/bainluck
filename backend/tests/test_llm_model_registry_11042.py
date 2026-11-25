@@ -354,7 +354,7 @@ def _profiles(write_session):
     out = []
     for stmt, _ in write_session.executed:
         try:
-            md = stmt.compile().params.get("market_metadata")
+            md = stmt.compile().params.get("cu_profile_patch")
         except Exception:
             continue
         if isinstance(md, dict) and DISCOVER_LLM_METADATA_KEY in md:

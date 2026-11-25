@@ -55,7 +55,9 @@ class TestTheGateFiresOnTheWaitAReaderExperienced:
 
         recorded: list[dict] = []
 
-        async def _capture(normalized, duration_ms, cache_bucket, response, rss_mb, split):
+        async def _capture(
+            normalized, duration_ms, cache_bucket, response, rss_mb, split, user_agent=None
+        ):
             recorded.append(
                 {
                     "path": normalized,

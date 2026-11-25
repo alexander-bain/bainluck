@@ -31,7 +31,10 @@ struct TournamentHubView: View {
                 TournamentHubLoadingView()
             case .loaded(let presentation):
                 ScrollView {
-                    TournamentHubSurface(presentation: presentation)
+                    VStack(alignment: .leading, spacing: 14) {
+                        GameAlertsInlinePageSlot295A(contextId: "tournament-hub:\(slug)")
+                        TournamentHubSurface(presentation: presentation)
+                    }
                         .padding(.horizontal, 18)
                         .padding(.vertical, 16)
                         .frame(maxWidth: 900, alignment: .leading)
@@ -47,6 +50,15 @@ struct TournamentHubView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                FollowButton295A(
+                    subject: .set(slug: slug, setKind: .tournament, name: displayName),
+                    pageContextId: "tournament-hub:\(slug)",
+                    compact: true
+                )
+            }
+        }
         .task {
             await vm.load()
             AnalyticsService.trackScreen(name: "tournament_hub", type: slug)
@@ -652,5 +664,6 @@ private struct TournamentHubErrorView: View {
                 .buttonStyle(.borderedProminent)
         }
         .padding(30)
+        .noteReviewPromptTrouble12304()
     }
 }

@@ -11,7 +11,7 @@ struct SeriesProbabilityView: View {
     let awayTeamColor: Color
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    private var homeSeriesProb: Double {
+    var homeSeriesProb: Double {
         Self.computeSeriesWinProb(
             teamWinProb: homeWinProb,
             teamWon: homeSeriesWins,
@@ -20,7 +20,7 @@ struct SeriesProbabilityView: View {
         )
     }
 
-    private var awaySeriesProb: Double { 1.0 - homeSeriesProb }
+    var awaySeriesProb: Double { 1.0 - homeSeriesProb }
 
     /// #3430 — both competitors of one series, so the pair rule decides. Every
     /// sentence below names ONE of them and reports the other's position in the
@@ -29,107 +29,146 @@ struct SeriesProbabilityView: View {
         TeamShortName.shortPair(away: awayTeam, home: homeTeam)
     }
 
-    private var stateLabel: String {
-        let name = sides.home
-        if homeSeriesWins >= gamesToWin { return "\(name) win series \(homeSeriesWins)-\(awaySeriesWins)" }
-        if awaySeriesWins >= gamesToWin { return "\(name) lose series \(homeSeriesWins)-\(awaySeriesWins)" }
-        if homeSeriesWins == awaySeriesWins { return "Series tied \(homeSeriesWins)-\(awaySeriesWins)" }
-        if homeSeriesWins > awaySeriesWins { return "\(name) lead \(homeSeriesWins)-\(awaySeriesWins)" }
-        return "\(name) trail \(homeSeriesWins)-\(awaySeriesWins)"
+    var stateLabel: String {
+        if homeSeriesWins >= gamesToWin {
+            return "\(sides.home) win series \(homeSeriesWins)–\(awaySeriesWins)"
+        }
+        if awaySeriesWins >= gamesToWin {
+            return "\(sides.away) win series \(awaySeriesWins)–\(homeSeriesWins)"
+        }
+        if homeSeriesWins == awaySeriesWins {
+            return "Series tied \(homeSeriesWins)–\(awaySeriesWins)"
+        }
+        if homeSeriesWins > awaySeriesWins {
+            return "\(sides.home) lead \(homeSeriesWins)–\(awaySeriesWins)"
+        }
+        return "\(sides.home) trail \(homeSeriesWins)–\(awaySeriesWins)"
     }
 
-    private var isSeriesOver: Bool {
+    var isSeriesOver: Bool {
         homeSeriesWins >= gamesToWin || awaySeriesWins >= gamesToWin
     }
 
+    private var headerTitle: String {
+        isSeriesOver ? "Series Result" : "Series Probability"
+    }
+
     var body: some View {
-        if isSeriesOver { EmptyView() }
-        else {
-            VStack(alignment: .leading, spacing: 12) {
-                if dynamicTypeSize.isAccessibilitySize {
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("Series Probability")
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
+        VStack(alignment: .leading, spacing: 12) {
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(headerTitle)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("Best of \(gamesToWin * 2 - 1)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                HStack {
+                    Text(headerTitle)
+                        .font(.subheadline)
+                        .fontWeight(.semibold)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Spacer()
+                    Text("Best of \(gamesToWin * 2 - 1)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Text(stateLabel)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+
+            // Win dots
+            if dynamicTypeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 4) {
+                        Text(sides.home)
+                            .font(.caption2)
+                            .foregroundStyle(homeTeamColor)
                             .fixedSize(horizontal: false, vertical: true)
-                        Text("Best of \(gamesToWin * 2 - 1)")
+                        ForEach(0..<gamesToWin, id: \.self) { i in
+                            Circle()
+                                .strokeBorder(homeTeamColor, lineWidth: 2)
+                                .background(Circle().fill(i < homeSeriesWins ? homeTeamColor : .clear))
+                                .frame(width: 12, height: 12)
+                        }
+                    }
+                    HStack(spacing: 4) {
+                        Text(sides.away)
                             .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                } else {
-                    HStack {
-                        Text("Series Probability")
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                        Spacer()
-                        Text("Best of \(gamesToWin * 2 - 1)")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Text(stateLabel)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-
-                // Win dots
-                if dynamicTypeSize.isAccessibilitySize {
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack(spacing: 4) {
-                            Text(sides.home)
-                                .font(.caption2)
-                                .foregroundStyle(homeTeamColor)
-                            ForEach(0..<gamesToWin, id: \.self) { i in
-                                Circle()
-                                    .strokeBorder(homeTeamColor, lineWidth: 2)
-                                    .background(Circle().fill(i < homeSeriesWins ? homeTeamColor : .clear))
-                                    .frame(width: 12, height: 12)
-                            }
-                        }
-                        HStack(spacing: 4) {
-                            Text(sides.away)
-                                .font(.caption2)
-                                .foregroundStyle(awayTeamColor)
-                            ForEach(0..<gamesToWin, id: \.self) { i in
-                                Circle()
-                                    .strokeBorder(awayTeamColor, lineWidth: 2)
-                                    .background(Circle().fill(i < awaySeriesWins ? awayTeamColor : .clear))
-                                    .frame(width: 12, height: 12)
-                            }
-                        }
-                    }
-                } else {
-                    HStack {
-                        HStack(spacing: 4) {
-                            Text(sides.home)
-                                .font(.caption2)
-                                .foregroundStyle(homeTeamColor)
-                            ForEach(0..<gamesToWin, id: \.self) { i in
-                                Circle()
-                                    .strokeBorder(homeTeamColor, lineWidth: 2)
-                                    .background(Circle().fill(i < homeSeriesWins ? homeTeamColor : .clear))
-                                    .frame(width: 12, height: 12)
-                            }
-                        }
-                        Spacer()
-                        HStack(spacing: 4) {
-                            ForEach(0..<gamesToWin, id: \.self) { i in
-                                Circle()
-                                    .strokeBorder(awayTeamColor, lineWidth: 2)
-                                    .background(Circle().fill(i < awaySeriesWins ? awayTeamColor : .clear))
-                                    .frame(width: 12, height: 12)
-                            }
-                            Text(sides.away)
-                                .font(.caption2)
-                                .foregroundStyle(awayTeamColor)
+                            .foregroundStyle(awayTeamColor)
+                            .fixedSize(horizontal: false, vertical: true)
+                        ForEach(0..<gamesToWin, id: \.self) { i in
+                            Circle()
+                                .strokeBorder(awayTeamColor, lineWidth: 2)
+                                .background(Circle().fill(i < awaySeriesWins ? awayTeamColor : .clear))
+                                .frame(width: 12, height: 12)
                         }
                     }
                 }
+            } else {
+                HStack {
+                    HStack(spacing: 4) {
+                        Text(sides.home)
+                            .font(.caption2)
+                            .foregroundStyle(homeTeamColor)
+                            .lineLimit(1)
+                        ForEach(0..<gamesToWin, id: \.self) { i in
+                            Circle()
+                                .strokeBorder(homeTeamColor, lineWidth: 2)
+                                .background(Circle().fill(i < homeSeriesWins ? homeTeamColor : .clear))
+                                .frame(width: 12, height: 12)
+                        }
+                    }
+                    Spacer()
+                    HStack(spacing: 4) {
+                        ForEach(0..<gamesToWin, id: \.self) { i in
+                            Circle()
+                                .strokeBorder(awayTeamColor, lineWidth: 2)
+                                .background(Circle().fill(i < awaySeriesWins ? awayTeamColor : .clear))
+                                .frame(width: 12, height: 12)
+                        }
+                        Text(sides.away)
+                            .font(.caption2)
+                            .foregroundStyle(awayTeamColor)
+                            .lineLimit(1)
+                    }
+                }
+            }
 
-                // Probability bar
-                let homePct = Int((homeSeriesProb * 100).rounded())
-                let awayPct = 100 - homePct
-                GeometryReader { geo in
+            // Probability / clinched bar
+            let homePct = Int((homeSeriesProb * 100).rounded())
+            let awayPct = 100 - homePct
+            GeometryReader { geo in
+                if homePct >= 100 {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(homeTeamColor)
+                        Text("\(sides.home) 100%")
+                            .font(.caption2.weight(.bold).monospacedDigit())
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                    }
+                    .frame(width: geo.size.width)
+                } else if awayPct >= 100 {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(awayTeamColor)
+                        Text("\(sides.away) 100%")
+                            .font(.caption2.weight(.bold).monospacedDigit())
+                            .foregroundStyle(.white)
+                            .lineLimit(1)
+                    }
+                    .frame(width: geo.size.width)
+                } else {
+                    let clampedHomeShare = min(max(homeSeriesProb, 0.14), 0.86)
                     HStack(spacing: 0) {
                         ZStack {
                             RoundedRectangle(cornerRadius: 10)
@@ -137,34 +176,86 @@ struct SeriesProbabilityView: View {
                             Text("\(homePct)%")
                                 .font(.caption2.weight(.bold).monospacedDigit())
                                 .foregroundStyle(.white)
+                                .lineLimit(1)
                         }
-                        .frame(width: geo.size.width * homeSeriesProb)
+                        .frame(width: geo.size.width * clampedHomeShare)
                         ZStack {
                             RoundedRectangle(cornerRadius: 10)
                                 .fill(awayTeamColor)
                             Text("\(awayPct)%")
                                 .font(.caption2.weight(.bold).monospacedDigit())
                                 .foregroundStyle(.white)
+                                .lineLimit(1)
                         }
-                        .frame(width: geo.size.width * awaySeriesProb)
+                        .frame(width: geo.size.width * (1.0 - clampedHomeShare))
                     }
                 }
-                .frame(height: dynamicTypeSize.isAccessibilitySize ? 48 : 24)
-                .clipShape(RoundedRectangle(cornerRadius: 12))
+            }
+            .frame(height: dynamicTypeSize.isAccessibilitySize ? 48 : 24)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
 
+            if !isSeriesOver {
                 Text("Based on \(Int((homeWinProb * 100).rounded()))% game win probability via negative binomial model")
                     .font(.system(size: 10))
                     .foregroundStyle(.tertiary)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity)
                     .multilineTextAlignment(.center)
             }
-            .padding()
-            .background(Color.cardBackground)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
         }
+        .padding()
+        .background(Color.cardBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 
-    // MARK: - Negative Binomial
+    // MARK: - Negative Binomial & Playoff Series Contract (#13182)
+
+    private static let playoffRoundTagTokens: Set<String> = [
+        "round_1",
+        "round_2",
+        "conference_semis",
+        "conference_finals",
+        "nba_finals",
+        "stanley_cup",
+        "world_series",
+        "alcs",
+        "nlcs",
+        "alds",
+        "nlds"
+    ]
+
+    static func hasPlayoffSeriesTag(_ tags: [String]) -> Bool {
+        for raw in tags {
+            let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if trimmed == "competitive_structure:series" || trimmed.hasPrefix("competitive_structure:best_of_") {
+                return true
+            }
+            if playoffRoundTagTokens.contains(trimmed) {
+                return true
+            }
+            if let suffix = trimmed.split(separator: ":").last.map(String.init),
+               playoffRoundTagTokens.contains(suffix) {
+                return true
+            }
+        }
+        return false
+    }
+
+    static func resolvedGamesToWin(for event: EventDetail, tags: [String]) -> Int {
+        if let bestOf = event.bestOf ?? event.seriesBestOf ?? event.espn?.seriesBestOf,
+           bestOf >= 3 {
+            return max(1, (bestOf + 1) / 2)
+        }
+        for raw in tags {
+            let lower = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            if lower.hasSuffix("best_of_3") { return 2 }
+            if lower.hasSuffix("best_of_5") || lower == "alds" || lower == "nlds" || lower.hasSuffix(":alds") || lower.hasSuffix(":nlds") {
+                return 3
+            }
+            if lower.hasSuffix("best_of_7") { return 4 }
+        }
+        return 4
+    }
 
     private static func comb(_ n: Int, _ k: Int) -> Double {
         if k < 0 || k > n { return 0 }
@@ -176,16 +267,29 @@ struct SeriesProbabilityView: View {
         return result
     }
 
+    /// #13182 — requires authoritative series wins (`home_series_wins` / `away_series_wins`
+    /// or `espn.series_home_wins` / `espn.series_away_wins`). Withholds (`nil`) whenever
+    /// series wins are absent instead of assuming `0–0`, and avoids double-counting a
+    /// finished game when `series_wins_include_current_game == true` or the served
+    /// series standing has already clinched (`>= gamesToWin`).
     static func resolvedMountInputs(
         for event: EventDetail
     ) -> (homeWinProb: Double, homeSeriesWins: Int, awaySeriesWins: Int, gamesToWin: Int)? {
-        guard let tags = event.eventTags,
-              tags.contains("competitive_structure:series") || tags.contains("competitive_structure:best_of_7") else {
+        guard let tags = event.eventTags, hasPlayoffSeriesTag(tags) else {
             return nil
         }
-        let gamesToWin = 4
-        let baseHomeWins = event.espn?.seriesHomeWins ?? 0
-        let baseAwayWins = event.espn?.seriesAwayWins ?? 0
+        guard let rawHomeWins = event.homeSeriesWins ?? event.espn?.seriesHomeWins,
+              let rawAwayWins = event.awaySeriesWins ?? event.espn?.seriesAwayWins,
+              rawHomeWins >= 0,
+              rawAwayWins >= 0 else {
+            return nil
+        }
+
+        let gamesToWin = resolvedGamesToWin(for: event, tags: tags)
+        let winsAlreadyIncludeCurrentGame =
+            (event.seriesWinsIncludeCurrentGame ?? event.espn?.seriesWinsIncludeCurrentGame) == true
+            || rawHomeWins >= gamesToWin
+            || rawAwayWins >= gamesToWin
 
         if EventState.isFinished(event.status) || event.heroProbabilitySource == "settled" {
             let outcome = EventOutcome.resolve(
@@ -198,16 +302,26 @@ struct SeriesProbabilityView: View {
             let awayWins: Int
             switch outcome {
             case .home:
-                homeWins = baseHomeWins + 1
-                awayWins = baseAwayWins
+                homeWins = min(gamesToWin, rawHomeWins + (winsAlreadyIncludeCurrentGame ? 0 : 1))
+                awayWins = min(gamesToWin, rawAwayWins)
             case .away:
-                homeWins = baseHomeWins
-                awayWins = baseAwayWins + 1
+                homeWins = min(gamesToWin, rawHomeWins)
+                awayWins = min(gamesToWin, rawAwayWins + (winsAlreadyIncludeCurrentGame ? 0 : 1))
             case .draw, .undecided:
-                return nil
+                if rawHomeWins >= gamesToWin || rawAwayWins >= gamesToWin {
+                    homeWins = min(gamesToWin, rawHomeWins)
+                    awayWins = min(gamesToWin, rawAwayWins)
+                } else {
+                    return nil
+                }
             }
             if homeWins >= gamesToWin || awayWins >= gamesToWin {
-                return (homeWinProb: outcome == .home ? 1.0 : 0.0, homeSeriesWins: homeWins, awaySeriesWins: awayWins, gamesToWin: gamesToWin)
+                return (
+                    homeWinProb: homeWins >= gamesToWin ? 1.0 : 0.0,
+                    homeSeriesWins: homeWins,
+                    awaySeriesWins: awayWins,
+                    gamesToWin: gamesToWin
+                )
             }
             guard let pregameHome = PrematchReading.resolve(
                 prematch: event.prematchOdds,
@@ -215,14 +329,33 @@ struct SeriesProbabilityView: View {
             )?.homeProbability else {
                 return nil
             }
-            return (homeWinProb: pregameHome, homeSeriesWins: homeWins, awaySeriesWins: awayWins, gamesToWin: gamesToWin)
+            return (
+                homeWinProb: pregameHome,
+                homeSeriesWins: homeWins,
+                awaySeriesWins: awayWins,
+                gamesToWin: gamesToWin
+            )
+        }
+
+        if rawHomeWins >= gamesToWin || rawAwayWins >= gamesToWin {
+            return (
+                homeWinProb: rawHomeWins >= gamesToWin ? 1.0 : 0.0,
+                homeSeriesWins: min(gamesToWin, rawHomeWins),
+                awaySeriesWins: min(gamesToWin, rawAwayWins),
+                gamesToWin: gamesToWin
+            )
         }
 
         guard event.heroProbabilitySource != OpeningLineHero.openingSource,
               let homeProb = event.currentOdds?.homeProbability else {
             return nil
         }
-        return (homeWinProb: homeProb, homeSeriesWins: baseHomeWins, awaySeriesWins: baseAwayWins, gamesToWin: gamesToWin)
+        return (
+            homeWinProb: homeProb,
+            homeSeriesWins: rawHomeWins,
+            awaySeriesWins: rawAwayWins,
+            gamesToWin: gamesToWin
+        )
     }
 
     static func computeSeriesWinProb(teamWinProb: Double, teamWon: Int, oppWon: Int, gamesToWin: Int = 4) -> Double {

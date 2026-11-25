@@ -4,7 +4,7 @@ from collections import defaultdict
 from datetime import timedelta
 from hashlib import sha256
 
-from model import bot_review, fable_decision, instant, last_authored, latest_checks
+from model import bot_review, fable_accepted_at, fable_decision, instant, latest_checks
 from signals import on_floor
 
 WINDOW = timedelta(minutes=5)
@@ -23,16 +23,8 @@ def approvals(pull):
         and bot.get("submitted_at")
     ):
         cleared["bot"] = bot["submitted_at"]
-    if pull.get("comments_complete") and pull.get("commits_complete"):
-        look = fable_decision(pull)
-        revised = last_authored(pull)
-        if (
-            look.get("fable_accept")
-            and not look.get("fable_changes")
-            and revised
-            and instant(look["created_at"]) >= instant(revised["at"])
-        ):
-            cleared["fable"] = look["created_at"]
+    if accepted := fable_accepted_at(pull):
+        cleared["fable"] = accepted
     return cleared
 
 

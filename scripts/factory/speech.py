@@ -9,7 +9,7 @@ from model import BUILDERS, PACIFIC, instant, public_title
 from notes import LABELS, PLACES, chat_request_kwargs, model_request
 from signals import on_floor
 
-LANES = tuple(BUILDERS.values())
+LANES = tuple(dict.fromkeys(BUILDERS.values()))
 FRESH = timedelta(minutes=15)
 MAX_CHARACTERS = 140
 WORD = r"[A-Za-z]+(?:'[A-Za-z]+)?"

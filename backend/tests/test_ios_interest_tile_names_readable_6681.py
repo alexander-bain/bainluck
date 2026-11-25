@@ -8,8 +8,10 @@ one row from the next, because every row's capsules read the same four words.
 A reader scanning for College Football met the same truncated stem as College
 Basketball two rows down.
 
-The fix is a `minimumScaleFactor` floor on the name, sized by measurement rather
-than by eye.  The arithmetic is pinned in
+The fix combines a `minimumScaleFactor` floor on the name with two-line wrapping
+(#13386 extended #6681 for 390pt screens so "College Basketball" and "College
+Football" wrap cleanly instead of clipping), sized by measurement rather than by
+eye. The arithmetic is pinned in
 `BainLuckTests/SettingsInterestTileNamesAreReadable6681Tests.swift`, which
 measures the real font.
 
@@ -92,9 +94,9 @@ def _name_render_block(src: str) -> str:
 
 
 def test_the_tile_name_render_carries_the_scale_floor():
-    """The floor is on the NAME, anchored to that render and no other.
+    """The floor and two-line wrap stay on the NAME render, anchored to that render.
 
-    A floor added anywhere else in the file cannot satisfy this: the block is
+    A modifier added anywhere else in the file cannot satisfy this: the block is
     the tile-name render and its own chain, nothing else.
     """
     block = _name_render_block(_source())
@@ -107,10 +109,16 @@ def test_the_tile_name_render_carries_the_scale_floor():
         "guard, which measures the constant rather than the view, stays green."
     )
 
-    assert ".lineLimit(1)" in block, (
-        "The name render lost `.lineLimit(1)`. minimumScaleFactor only shrinks "
-        "text that would otherwise truncate; with wrapping allowed the row "
-        "grows instead and the measured budget stops describing it."
+    assert ".lineLimit(2)" in block, (
+        "The name render lost `.lineLimit(2)` (#13386). Long names like "
+        '"College Basketball" and "College Football" need two-line wrap at 390pt '
+        "alongside the scale floor so they never clip."
+    )
+
+    assert ".fixedSize(horizontal: false, vertical: true)" in block, (
+        "The name render lost `.fixedSize(horizontal: false, vertical: true)` "
+        "(#13386), which lets the two-line wrapped tile name expand vertically "
+        "without truncating."
     )
 
 

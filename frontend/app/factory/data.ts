@@ -1,5 +1,5 @@
-import { factoryEventKinds, factoryMoods, type Change, type ChecksQueue, type CrewHabits, type FactoryData, type FactoryPicture, type FloorEvent } from "./types";
-import { pacificDay, stationNames, stations, transferId } from "./activity";
+import { builderLanes, factoryEventKinds, factoryMoods, isBuilder, type Change, type ChecksQueue, type CrewHabits, type FactoryData, type FactoryPicture, type FloorEvent } from "./types";
+import { pacificDay, recentLaneUpdate, stationNames, stations, transferId } from "./activity";
 
 export const FACTORY_DATA_URL =
   "https://github.com/alexander-bain/bainluck/releases/download/factory-data/factory.json";
@@ -47,8 +47,7 @@ function isEvent(event: FloorEvent) {
     factoryEventKinds.includes(event.kind) &&
     Number.isSafeInteger(event.number) && event.number > 0 &&
     ["Server", "Website", "Apps"].includes(event.line) &&
-    typeof event.builder === "string" &&
-    ["S", "B", "C", "D", "E", "F", "W", "Other"].includes(event.builder) &&
+    isBuilder(event.builder) &&
     stations.includes(event.station) &&
     (event.from === undefined
       ? event.kind !== "move" && event.kind !== "returned"
@@ -68,7 +67,7 @@ function verifiedReplay(payload: FactoryData) {
   if (replay.events.every(event => event && (event.kind === "move" || event.kind === "returned") &&
       ["Server", "Website", "Apps"].includes(event.line) &&
       Number.isSafeInteger(event.number) && event.number > 0 &&
-      (event.builder === undefined || ["S", "B", "C", "D", "E", "F", "W", "Other"].includes(event.builder)) &&
+      (event.builder === undefined || isBuilder(event.builder)) &&
       event.from !== undefined && stations.includes(event.from) && stations.includes(event.station) &&
       event.from !== event.station &&
       Date.parse(event.at) <= Date.parse(event.observed_at) &&
@@ -91,7 +90,7 @@ function verifiedCrew(payload: FactoryData) {
   const through = Date.parse(payload.generated_at);
   if (!week?.builders || !(Date.parse(week.since) <= through)) return;
   const builders: NonNullable<FactoryData["crew_week"]>["builders"] = {};
-  for (const member of ["S", "B", "C", "D", "E", "F", "W", "Fable"] as const) {
+  for (const member of [...builderLanes, "Fable"] as const) {
     const habits = week.builders[member];
     if (habits && validHabits(habits, through)) builders[member] = habits;
   }
@@ -100,17 +99,31 @@ function verifiedCrew(payload: FactoryData) {
 
 function verifiedCrewPosts(payload: FactoryData) {
   const posts: NonNullable<FactoryData["crew_posts"]> = {};
-  const through = Date.parse(payload.generated_at);
-  for (const lane of ["S", "B", "C", "D", "E", "F", "W"] as const) {
+  for (const lane of builderLanes) {
     const post = payload.crew_posts?.[lane];
-    const at = typeof post?.at === "string" ? Date.parse(post.at) : NaN;
-    if (!(at <= through)) continue;
-    const number = post?.waiting_on;
-    posts[lane] = { at: new Date(at).toISOString() };
-    if (typeof number === "number" && Number.isSafeInteger(number) && number > 0)
-      posts[lane].waiting_on = number;
+    if (typeof post?.at !== "string" || !recentLaneUpdate(post.at, payload.generated_at)) continue;
+    const { waiting_on, comment_id } = post;
+    posts[lane] = { at: new Date(post.at).toISOString() };
+    if (typeof waiting_on === "number" && Number.isSafeInteger(waiting_on) && waiting_on > 0)
+      posts[lane].waiting_on = waiting_on;
+    if (typeof comment_id === "number" && Number.isSafeInteger(comment_id) && comment_id > 0)
+      posts[lane].comment_id = comment_id;
   }
   if (Object.keys(posts).length) return posts;
+}
+
+function verifiedLaneUpdates(payload: FactoryData) {
+  const updates: NonNullable<FactoryData["lane_updates"]> = {};
+  for (const lane of builderLanes) {
+    const update = payload.lane_updates?.[lane];
+    if (update && typeof update.at === "string" && recentLaneUpdate(update.at, payload.generated_at) &&
+        typeof update.text === "string" && [...update.text].length <= 80 &&
+        /^[\p{L}\p{N}_ #%,'’!.?()+-]+$/u.test(update.text) &&
+        !/(?:[a-z0-9-]+\.)+[a-z]{2,}\b/i.test(update.text)) {
+      updates[lane] = { at: update.at, text: update.text };
+    }
+  }
+  return Object.keys(updates).length ? updates : undefined;
 }
 
 function verifiedPictures(payload: FactoryData) {
@@ -154,7 +167,7 @@ function notesForSnapshot(payload: FactoryData) {
 
 function speechForSnapshot(payload: FactoryData): FactoryData["speech"] {
   const speech: FactoryData["speech"] = {};
-  for (const lane of ["S", "B", "C", "D", "E", "F", "W"] as const) {
+  for (const lane of builderLanes) {
     const line = payload.speech?.[lane];
     if (
       line && typeof line.text === "string" && line.text.length <= 140 &&
@@ -239,12 +252,7 @@ export function validateSnapshot(payload: FactoryData): FactoryData {
         (stop.number === undefined ||
           (Number.isSafeInteger(stop.number) && stop.number > 0)) &&
         (stop.waiting_since === undefined ||
-          Number.isFinite(Date.parse(stop.waiting_since))) &&
-        (stop.machines === undefined ||
-          (Number.isSafeInteger(stop.machines.running) &&
-            stop.machines.running >= 0 &&
-            Number.isSafeInteger(stop.machines.waiting) &&
-            stop.machines.waiting > 0)),
+          Number.isFinite(Date.parse(stop.waiting_since))),
     ) ||
     !payload.changes.every(
       (change: FactoryData["changes"][number]) =>
@@ -267,7 +275,7 @@ export function validateSnapshot(payload: FactoryData): FactoryData {
         ) &&
         Array.isArray(change.reasons) &&
         Number.isFinite(Date.parse(change.last_activity)) &&
-        ["S", "B", "C", "D", "E", "F", "W", "Other"].includes(change.builder) &&
+        isBuilder(change.builder) &&
         (change.testflight_build === undefined ||
           (Number.isSafeInteger(change.testflight_build) &&
             change.testflight_build > 0)) &&
@@ -289,9 +297,18 @@ export function validateSnapshot(payload: FactoryData): FactoryData {
   const replay = verifiedReplay(payload);
   const crew = verifiedCrew(payload);
   const posts = verifiedCrewPosts(payload);
+  const laneUpdates = verifiedLaneUpdates(payload);
   const pictures = verifiedPictures(payload);
-  const { checks_queue: rawQueue, ...signals } = payload.signals;
+  const {
+    checks_queue: rawQueue, testflight_post: postedBuild, oldest_running_ci_at: oldestCI, ...signals
+  } = payload.signals;
+  const oldestRunningCI = oldestCI === null ||
+    (typeof oldestCI === "string" && Date.parse(oldestCI) <= Date.parse(payload.generated_at))
+    ? oldestCI : undefined;
   const checksQueue = verifiedChecksQueue(rawQueue);
+  const testFlight = postedBuild && Number.isSafeInteger(postedBuild.build) && postedBuild.build > 0 &&
+    /^[a-f0-9]{40}$/.test(postedBuild.commit) && Date.parse(postedBuild.at) <= Date.parse(payload.generated_at)
+    ? { build: postedBuild.build, at: postedBuild.at, commit: postedBuild.commit } : undefined;
   const usage = payload.model_usage;
   const modelUsage = usage && /^\d{4}-\d{2}-\d{2}$/.test(usage.day) &&
     Number.isSafeInteger(usage.calls) && usage.calls >= 0 && usage.calls <= 200
@@ -308,6 +325,7 @@ export function validateSnapshot(payload: FactoryData): FactoryData {
     ...(replay ? { day_replay: replay } : {}),
     ...(crew ? { crew_week: crew } : {}),
     ...(posts ? { crew_posts: posts } : {}),
+    ...(laneUpdates ? { lane_updates: laneUpdates } : {}),
     ...(pictures?.length ? { pictures } : {}),
     ...(payload.injury_clock ? { injury_clock: payload.injury_clock } : {}),
     ...(payload.stops ? { stops: payload.stops } : {}),
@@ -316,7 +334,12 @@ export function validateSnapshot(payload: FactoryData): FactoryData {
     ...(modelUsage ? { model_usage: modelUsage } : {}),
     changes: payload.changes.map((change) => withVerifiedJourney(change, Date.parse(payload.generated_at))),
     jams: payload.jams,
-    signals: { ...signals, ...(checksQueue ? { checks_queue: checksQueue } : {}) },
+    signals: {
+      ...signals,
+      ...(oldestRunningCI !== undefined ? { oldest_running_ci_at: oldestRunningCI } : {}),
+      ...(checksQueue ? { checks_queue: checksQueue } : {}),
+      ...(testFlight ? { testflight_post: testFlight } : {}),
+    },
     coverage: payload.coverage,
   };
 }

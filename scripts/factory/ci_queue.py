@@ -84,7 +84,7 @@ def _run_inventory(api, endpoint: str, now: datetime) -> dict:
 
 
 def machine_queue(api, repo: str, now: datetime) -> dict:
-    """Return the public queue and the job counts used for dock attribution."""
+    """Count hosted runs separately from the machines their jobs occupy."""
     prefix = f"repos/{repo}/actions/runs"
     try:
         runs = _run_inventory(api, prefix, now)
@@ -95,10 +95,10 @@ def machine_queue(api, repo: str, now: datetime) -> dict:
                 api, endpoint, {}, "jobs", _page(api, endpoint, {}, 1)
             )
 
-        running_jobs, waiting_jobs = set(), set()
+        running_jobs = set()
         runs_running = runs_waiting = no_jobs = 0
         oldest = None
-        unknown_wait = master_waiting = False
+        unknown_wait = False
         with ThreadPoolExecutor(max_workers=4) as workers:
             for run, records in zip(runs.values(), workers.map(jobs, runs.values())):
                 no_jobs += not records and run.get("status") == "queued"
@@ -119,16 +119,10 @@ def machine_queue(api, repo: str, now: datetime) -> dict:
                             running_jobs.add(job["id"])
                             running = True
                     elif job["status"] == "queued" and not job.get("runner_name"):
-                        waiting_jobs.add(job["id"])
                         # For a queued job, GitHub records the time it created
                         # the job even when no separate queued timestamp is sent.
                         created = job.get("queued_at") or job.get("created_at")
                         waiting_since.append(moment(created) if created else None)
-                        master_waiting |= (
-                            run.get("name") == "CI"
-                            and run.get("head_branch") == "master"
-                            and run.get("event") == "push"
-                        )
                 if running:
                     runs_running += 1
                 elif waiting_since:
@@ -139,35 +133,16 @@ def machine_queue(api, repo: str, now: datetime) -> dict:
                         elif oldest is None or since < oldest:
                             oldest = since
         return {
-            "display": {
-                "machines": HOSTED_MACHINE_CAPACITY,
-                "machines_busy": len(running_jobs),
-                "running": runs_running,
-                "waiting": runs_waiting,
-                "longest_wait_minutes": (
-                    max(0, int((now - oldest).total_seconds() // 60))
-                    if oldest is not None and not unknown_wait
-                    else None
-                ),
-                "queued_without_jobs": no_jobs,
-            },
-            "master_jobs": (
-                {"running": len(running_jobs), "waiting": len(waiting_jobs)}
-                if master_waiting
+            "machines": HOSTED_MACHINE_CAPACITY,
+            "machines_busy": len(running_jobs),
+            "running": runs_running,
+            "waiting": runs_waiting,
+            "longest_wait_minutes": (
+                max(0, int((now - oldest).total_seconds() // 60))
+                if oldest is not None and not unknown_wait
                 else None
             ),
+            "queued_without_jobs": no_jobs,
         }
     except (OSError, urllib.error.URLError, KeyError, ValueError, TypeError):
-        return {
-            "display": {"machines": HOSTED_MACHINE_CAPACITY, "unavailable": True},
-            "master_jobs": None,
-        }
-
-
-def attach_machine_reason(result, queue):
-    if queue is None:
-        return
-    holds = {stop["line"] for stop in result["stops"] if stop["kind"] == "hold"}
-    for stop in result["stops"]:
-        if stop["kind"] == "line-stalled" and stop["line"] not in holds:
-            stop["machines"] = queue
+        return {"machines": HOSTED_MACHINE_CAPACITY, "unavailable": True}

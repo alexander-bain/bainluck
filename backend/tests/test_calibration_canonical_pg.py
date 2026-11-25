@@ -27,29 +27,51 @@ pytestmark = pytest.mark.skipif(
 )
 
 
-async def _seed_field(session, market_id, source, cps, winner_idx):
+async def _seed_field(session, market_id, source, cps, winner_idx, *, proved_exclusivity=False):
     """Seed one resolved field market with ``cps`` outcomes + liquidity snapshots."""
+    import json
     from sqlalchemy import text
+
+    params = {
+        "id": market_id,
+        "src": source,
+        "ext": f"cal-canon-m-{market_id}",
+        "nm": f"Field {market_id}?",
+    }
+    if proved_exclusivity:
+        meta_expr = "CAST(:meta AS jsonb)"
+        params["meta"] = json.dumps(
+            {
+                "shape": {
+                    "exhaustive": True,
+                    "expected_winners": 1,
+                    "outcome_relation": "competitors",
+                }
+            }
+        )
+    else:
+        meta_expr = "NULL"
 
     await session.execute(
         text(
-            "INSERT INTO futures_markets (id, source, status, mutually_exclusive, "
-            "market_type, llm_sport_category, volume) VALUES "
-            "(:id, :src, 'resolved', true, 'field', 'politics', 100)"
+            "INSERT INTO futures_markets (id, source, external_id, name, category, status, "
+            "mutually_exclusive, market_type, llm_sport_category, volume, market_metadata) VALUES "
+            f"(:id, :src, :ext, :nm, 'politics', 'resolved', true, 'field', 'politics', 100, {meta_expr})"
         ),
-        {"id": market_id, "src": source},
+        params,
     )
     for i, cp in enumerate(cps):
         oid = market_id * 1000 + i
         await session.execute(
             text(
-                "INSERT INTO futures_outcomes (id, market_id, name, opening_probability, "
+                "INSERT INTO futures_outcomes (id, market_id, external_id, name, opening_probability, "
                 "calibration_probability, is_winner, resolution_source, volume) VALUES "
-                "(:id, :mid, :nm, :op, :cp, :win, 'api_settlement', 10)"
+                "(:id, :mid, :ext, :nm, :op, :cp, :win, 'api_settlement', 10)"
             ),
             {
                 "id": oid,
                 "mid": market_id,
+                "ext": f"cal-canon-o-{oid}",
                 "nm": f"cand-{i}",
                 "op": cp,
                 "cp": cp,
@@ -59,8 +81,9 @@ async def _seed_field(session, market_id, source, cps, winner_idx):
         # A trade so kalshi/poly liquidity predicates pass (last_price > 0).
         await session.execute(
             text(
-                "INSERT INTO futures_odds_snapshots (outcome_id, last_price, yes_bid) "
-                "VALUES (:oid, :lp, :lp)"
+                "INSERT INTO futures_odds_snapshots (outcome_id, bookmaker, probability, "
+                "reading_count, last_price, yes_bid) "
+                "VALUES (:oid, 'test', :lp, 1, :lp, :lp)"
             ),
             {"oid": oid, "lp": max(cp, 0.001)},
         )
@@ -92,21 +115,22 @@ async def _seed_liquidity_outcome(
 
     await session.execute(
         text(
-            "INSERT INTO futures_markets (id, source, status, mutually_exclusive, "
-            "market_type, llm_sport_category, volume) VALUES "
-            "(:id, :src, 'resolved', false, 'binary', 'politics', 100)"
+            "INSERT INTO futures_markets (id, source, external_id, name, category, status, "
+            "mutually_exclusive, market_type, llm_sport_category, volume) VALUES "
+            "(:id, :src, :ext, :nm, 'politics', 'resolved', false, 'binary', 'politics', 100)"
         ),
-        {"id": outcome_id, "src": source},
+        {"id": outcome_id, "src": source, "ext": f"cal-canon-m-{outcome_id}", "nm": f"Market {outcome_id}?"},
     )
     await session.execute(
         text(
-            "INSERT INTO futures_outcomes (id, market_id, name, opening_probability, "
+            "INSERT INTO futures_outcomes (id, market_id, external_id, name, opening_probability, "
             "calibration_probability, is_winner, resolution_source, volume) VALUES "
-            "(:id, :mid, :nm, :op, :cp, true, 'api_settlement', :vol)"
+            "(:id, :mid, :ext, :nm, :op, :cp, true, 'api_settlement', :vol)"
         ),
         {
             "id": outcome_id,
             "mid": outcome_id,
+            "ext": f"cal-canon-o-{outcome_id}",
             "nm": f"o-{outcome_id}",
             "op": cp,
             "cp": cp,
@@ -116,8 +140,9 @@ async def _seed_liquidity_outcome(
     if snapshot:
         await session.execute(
             text(
-                "INSERT INTO futures_odds_snapshots (outcome_id, last_price, yes_bid) "
-                "VALUES (:oid, :lp, :yb)"
+                "INSERT INTO futures_odds_snapshots (outcome_id, bookmaker, probability, "
+                "reading_count, last_price, yes_bid) "
+                "VALUES (:oid, 'test', :lp, 1, :lp, :yb)"
             ),
             {"oid": outcome_id, "lp": last_price or 0, "yb": yes_bid or 0},
         )
@@ -186,6 +211,7 @@ async def test_liquidity_eligibility_matches_evidence_not_volume():
                     SELECT
                         COUNT(*) FILTER (WHERE source='kalshi' AND is_liquid) AS k_incl,
                         COUNT(*) FILTER (WHERE source='kalshi' AND NOT is_liquid) AS k_excl,
+                        COUNT(*) FILTER (WHERE source='kalshi' AND is_liquid AND is_below_writer_bar) AS k_below_wb,
                         COUNT(*) FILTER (WHERE source='polymarket' AND is_poly_placeholder) AS p_ph,
                         COUNT(*) FILTER (WHERE source='polymarket' AND NOT is_poly_placeholder) AS p_incl
                     FROM normalized WHERE outcome_id = ANY(:ids)
@@ -193,17 +219,23 @@ async def test_liquidity_eligibility_matches_evidence_not_volume():
             """), {"ids": ids})).one()
             assert liq.k_incl == 3, "K1(bid)+K2(trade)+K6(trade) must be included"
             assert liq.k_excl == 3, "K3+K4+K5 (no evidence, any volume) must be excluded"
+            assert liq.k_below_wb == 3, (
+                "K1+K2+K6 lack a two-sided book (yes_ask), so #5401 writer bar marks all 3"
+            )
             assert liq.p_ph == 1, "only P2 (in-band never-traded) is a poly placeholder"
             assert liq.p_incl == 1, "P1 (out-of-band never-traded) stays IN per declared poly policy"
 
             # (c) EXACT ``deduped`` (published-curve) outcome IDs.
+            # Under #5401 (is_below_writer_bar), Kalshi openings without a two-sided
+            # book (yes_ask IS NULL) are withheld from deduped while still counted in
+            # normalized above, leaving only the out-of-band Polymarket row {91007}.
             pub = (await session.execute(text(
                 "WITH " + ctes
                 + " SELECT outcome_id FROM deduped WHERE outcome_id = ANY(:ids)"
             ), {"ids": ids})).all()
-            assert {r.outcome_id for r in pub} == {91001, 91002, 91006, 91007}, (
-                "curve must publish exactly the bid/trade-bearing Kalshi rows "
-                "(incl. the zero-volume bid row) + the out-of-band poly row"
+            assert {r.outcome_id for r in pub} == {91007}, (
+                "curve must withhold Kalshi rows failing #5401 is_below_writer_bar "
+                "and publish the out-of-band poly row"
             )
     finally:
         async with engine.begin() as conn:
@@ -218,6 +250,7 @@ async def test_complete_field_publishes_whole_partition_summing_to_one():
 
     from app.models.models import Base
     from app.tasks.precompute_calibration import _calibration_population_ctes
+    from scripts.evals.cohort_sweep import load_from_session
 
     engine = create_async_engine(DB_URL)
     async with engine.begin() as conn:
@@ -225,8 +258,17 @@ async def test_complete_field_publishes_whole_partition_summing_to_one():
     Session = async_sessionmaker(engine, expire_on_commit=False)
     try:
         async with Session() as session:
-            # The C14 counterexample: a complete 0.99/0.20/0.001 field (cp_sum 1.191).
-            await _seed_field(session, 90001, "polymarket", [0.99, 0.20, 0.001], winner_idx=0)
+            # Queue #299: a bare field (no proved-exclusivity metadata) is NOT
+            # admitted to mex_field_candidates; it drops to the multi pool and
+            # publishes 1 un-normalized representative outcome (0.20, nearest 50%).
+            await _seed_field(
+                session, 90001, "polymarket", [0.99, 0.20, 0.001], winner_idx=0, proved_exclusivity=False
+            )
+            # With proved-exclusivity metadata, the same 0.99/0.20/0.001 field IS a
+            # complete partition: all 3 members publish and normalize to sum to ~1.0.
+            await _seed_field(
+                session, 90002, "polymarket", [0.99, 0.20, 0.001], winner_idx=0, proved_exclusivity=True
+            )
             await session.commit()
 
             sql = text(
@@ -234,26 +276,35 @@ async def test_complete_field_publishes_whole_partition_summing_to_one():
                 + _calibration_population_ctes()
                 + " SELECT market_id, adj_opening_probability AS p, is_mex_normalized, "
                 "vm_id AS question_id, outcome_id, is_winner FROM deduped "
-                "WHERE market_id = 90001 ORDER BY p DESC"
+                "WHERE market_id = :mid ORDER BY p DESC"
             )
-            rows = (await session.execute(sql)).all()
 
-            # INVARIANT: all three members published, partition sums to ~1.0.
-            assert len(rows) == 3, f"expected whole partition, got {len(rows)}"
-            assert all(r.is_mex_normalized for r in rows)
-            assert abs(sum(float(r.p) for r in rows) - 1.0) < 1e-6
-            # exactly one question id (size-gated vm identity), one winner.
-            assert len({r.question_id for r in rows}) == 1
-            assert sum(1 for r in rows if r.is_winner) == 1
+            # (1) Unproven field (90001): Queue #299 publishes 1 un-normalized representative row.
+            rows_unproven = (await session.execute(sql, {"mid": 90001})).all()
+            assert len(rows_unproven) == 1, f"expected 1 representative row under Queue #299, got {len(rows_unproven)}"
+            assert rows_unproven[0].outcome_id == 90001001
+            assert abs(float(rows_unproven[0].p) - 0.20) < 1e-6
+            assert rows_unproven[0].is_mex_normalized is False
+
+            sweep_unproven = [r for r in await load_from_session(session) if r["market_id"] == 90001]
+            assert len(sweep_unproven) == 1
+            assert sweep_unproven[0]["outcome_id"] == 90001001
+            assert abs(float(sweep_unproven[0]["probability"]) - 0.20) < 1e-6
+
+            # (2) Proved-exclusivity field (90002): all 3 members published, partition sums to ~1.0.
+            rows_proved = (await session.execute(sql, {"mid": 90002})).all()
+            assert len(rows_proved) == 3, f"expected whole partition, got {len(rows_proved)}"
+            assert all(r.is_mex_normalized for r in rows_proved)
+            assert abs(sum(float(r.p) for r in rows_proved) - 1.0) < 1e-6
+            assert len({r.question_id for r in rows_proved}) == 1
+            assert sum(1 for r in rows_proved if r.is_winner) == 1
 
             # ROW IDENTITY: the sweep loader returns the same members/probabilities.
-            from scripts.evals.cohort_sweep import load_from_session
-
-            sweep_rows = [r for r in await load_from_session(session) if r["market_id"] == 90001]
-            assert len(sweep_rows) == 3
-            assert abs(sum(float(r["probability"]) for r in sweep_rows) - 1.0) < 1e-6
-            payload_ids = {r.outcome_id for r in rows}
-            assert {r["outcome_id"] for r in sweep_rows} == payload_ids
+            sweep_proved = [r for r in await load_from_session(session) if r["market_id"] == 90002]
+            assert len(sweep_proved) == 3
+            assert abs(sum(float(r["probability"]) for r in sweep_proved) - 1.0) < 1e-6
+            payload_ids = {r.outcome_id for r in rows_proved}
+            assert {r["outcome_id"] for r in sweep_proved} == payload_ids
     finally:
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.drop_all)

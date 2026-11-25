@@ -392,6 +392,7 @@ struct EvolutionChartView: View {
     var onOpenAllField: (() -> Void)? = nil
     var preloadedTimeline: ProbabilityTimelineResponse? = nil
     var referenceNow: Date? = nil
+    var onTimelineOutcomesLoaded: (([TimelineOutcomeMeta]) -> Void)? = nil
 
     @State private var data: ProbabilityTimelineResponse?
     /// #10955 — the settled lines' results, set aside from `data`'s timeline.
@@ -436,6 +437,8 @@ struct EvolutionChartView: View {
     /// #4373 — the leaderboard's numeric columns are measured in the face they are
     /// drawn in, so they need the size the reader is actually at.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.timeZone) private var timeZone
+    @Environment(\.calendar) private var calendar
 
     init(
         marketId: Int,
@@ -455,7 +458,8 @@ struct EvolutionChartView: View {
         allFieldButtonLabel: String? = nil,
         onOpenAllField: (() -> Void)? = nil,
         preloadedTimeline: ProbabilityTimelineResponse? = nil,
-        referenceNow: Date? = nil
+        referenceNow: Date? = nil,
+        onTimelineOutcomesLoaded: (([TimelineOutcomeMeta]) -> Void)? = nil
     ) {
         self.marketId = marketId
         self.hours = hours
@@ -475,6 +479,7 @@ struct EvolutionChartView: View {
         self.onOpenAllField = onOpenAllField
         self.preloadedTimeline = preloadedTimeline
         self.referenceNow = referenceNow
+        self.onTimelineOutcomesLoaded = onTimelineOutcomesLoaded
         _data = State(initialValue: preloadedTimeline)
         _loading = State(initialValue: preloadedTimeline == nil)
         _requestedHours = State(initialValue: preloadedTimeline?.hours ?? 0)
@@ -558,6 +563,7 @@ struct EvolutionChartView: View {
                     .frame(height: height)
             } else if let error {
                 emptyState(error, retryable: errorIsRetryable)
+                    .noteReviewPromptTrouble12304()
             } else if data != nil {
                 switch Self.cardBody(
                     windowPoints: chartEntries.count,
@@ -843,6 +849,9 @@ struct EvolutionChartView: View {
             }
             error = nil
             loading = false
+            if let outcomes = data?.outcomes {
+                onTimelineOutcomesLoaded?(outcomes)
+            }
         } catch let apiError as APIError {
             guard !Task.isCancelled, generation == requestGeneration else { return }
             if apiError.isCancellation {
@@ -1303,6 +1312,72 @@ struct EvolutionChartView: View {
         return AxisLayout(plan: endsPlan, pointSize: endsSize, endpoints: [lo, hi])
     }
 
+    /// Tick instants chosen once for both the gridlines/reserved row and
+    /// `ChartTimeAxisLabels`, thinning any duplicate or edge-clamped collision.
+    static func axisTicks(
+        for dates: [Date], plotWidth: CGFloat, axis: AxisLayout,
+        calendar: Calendar = .current
+    ) -> [Date] {
+        guard let lo = dates.min(), let hi = dates.max() else { return [] }
+        guard hi > lo else { return [lo] }
+        let domain = lo...hi
+        let scale = axis.pointSize / axisLabelBasePointSize
+        let rawTicks: [Date]
+        if let endpoints = axis.endpoints {
+            rawTicks = endpoints
+        } else if plotWidth > 0 {
+            rawTicks = OddsChartView.xAxisContextTicks(
+                for: domain, plan: axis.plan, plotWidth: plotWidth,
+                labelScale: scale, calendar: calendar)
+        } else {
+            rawTicks = OddsChartView.xAxisTicks(
+                for: domain, plan: axis.plan, calendar: calendar)
+        }
+        guard rawTicks.count >= 2 else { return rawTicks }
+
+        var labelFormat = axis.plan.format(in: calendar.timeZone)
+        labelFormat.calendar = calendar
+        let firstLabel = labelFormat.format(rawTicks[0])
+        let lastLabel = labelFormat.format(rawTicks[rawTicks.count - 1])
+
+        var unique: [Date] = [rawTicks[0]]
+        var lastKeptLabel = firstLabel
+        for tick in rawTicks.dropFirst().dropLast() {
+            let formatted = labelFormat.format(tick)
+            guard formatted != lastKeptLabel, formatted != lastLabel else { continue }
+            unique.append(tick)
+            lastKeptLabel = formatted
+        }
+        if lastLabel != lastKeptLabel || unique.count == 1 {
+            unique.append(rawTicks[rawTicks.count - 1])
+        }
+
+        guard plotWidth > 0, unique.count >= 2 else { return unique }
+        let labelWidth = OddsChartView.xAxisLabelWidth(for: axis.plan.labelStyle) * scale
+        let minStep = labelWidth + OddsChartView.xAxisLabelMinGap
+        let duration = hi.timeIntervalSince(lo)
+        func center(_ date: Date) -> CGFloat {
+            let rawX = CGFloat(date.timeIntervalSince(lo) / duration) * plotWidth
+            return OddsChartView.xAxisLabelCenters(
+                tickPositions: [rawX], plotWidth: plotWidth, labelWidth: labelWidth)[0]
+        }
+
+        let closing = center(unique[unique.count - 1])
+        var cleared: [Date] = [unique[0]]
+        var prevCenter = center(unique[0])
+        for tick in unique.dropFirst().dropLast() {
+            let x = center(tick)
+            if x - prevCenter >= minStep && closing - x >= minStep {
+                cleared.append(tick)
+                prevCenter = x
+            }
+        }
+        if closing - prevCenter >= minStep {
+            cleared.append(unique[unique.count - 1])
+        }
+        return cleared
+    }
+
     /// The label two endpoints need to be told apart — the same no-duplicate rule
     /// as the stride ladder, with the whole window as the stride.
     static func endpointStyle(
@@ -1599,26 +1674,22 @@ struct EvolutionChartView: View {
         return ChartScaleRule201.futuresCeilingPercent(peakPercent: peak)
     }
 
-    nonisolated static func shortEndLabel192A(name: String, percentValue: Double?) -> String {
-        let stripped = name
-            .components(separatedBy: " · ").first?
-            .components(separatedBy: " — ").first?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? name
-        let shortName: String
-        if stripped.count <= 9 {
-            shortName = stripped
-        } else {
-            let words = stripped.split(whereSeparator: \.isWhitespace).map(String.init)
-            if let last = words.last, words.count >= 2, last.count >= 3, !last.hasPrefix("(") {
-                shortName = last.count <= 9 ? last : String(last.prefix(8)) + "…"
-            } else {
-                shortName = String(stripped.prefix(8)) + "…"
-            }
-        }
+    nonisolated static func shortEndLabel192A(
+        name: String, percentValue: Double?, renderedPercent: Int? = nil
+    ) -> String {
+        let shortName = TeamShortName.futuresChartLabel(name)
         if let pct = percentValue {
-            return "\(shortName) \(Int(pct.rounded()))%"
+            return "\(shortName) \(formatProbability(pct / 100, renderedPercent: renderedPercent))"
         }
         return shortName
+    }
+
+    nonisolated static func currentEndLabel192A(name: String, outcome: TimelineOutcomeMeta?) -> String {
+        shortEndLabel192A(
+            name: name,
+            percentValue: outcome?.currentProbability.map { $0 * 100 },
+            renderedPercent: outcome?.renderedPercent
+        )
     }
 
     private func lineWidth(for name: String, isCombined: Bool) -> CGFloat {
@@ -1655,6 +1726,15 @@ struct EvolutionChartView: View {
         } else {
             visibleBoundaries = roundBoundaries
         }
+        var axisCalendar = calendar
+        axisCalendar.timeZone = timeZone
+        let axis = Self.axisLayout(
+            for: entries.map(\.date), plotWidth: plotWidth,
+            maxPointSize: Self.axisLabelPointSize(at: dynamicTypeSize),
+            calendar: axisCalendar)
+        let ticks = Self.axisTicks(
+            for: entries.map(\.date), plotWidth: plotWidth,
+            axis: axis, calendar: axisCalendar)
 
         let plotChart = Chart {
             // Round boundary vertical lines
@@ -1743,11 +1823,20 @@ struct EvolutionChartView: View {
         // Round boundary labels
         .chartOverlay { proxy in
             GeometryReader { geo in
+                let plotFrame = geo[proxy.plotAreaFrame]
                 // The PLOT's width, not the chart's — the axis planner fits labels
                 // into the drawing area, and the y-axis gutter is not part of it.
                 Color.clear.preference(
                     key: PlotWidthPreferenceKey.self,
-                    value: geo[proxy.plotAreaFrame].width)
+                    value: plotFrame.width)
+
+                ChartTimeAxisLabels(
+                    ticks: ticks,
+                    plan: axis.plan,
+                    proxy: proxy,
+                    plotFrame: plotFrame,
+                    fontSizeOverride: axis.pointSize
+                )
 
                 ForEach(visibleBoundaries) { boundary in
                     if let xPos = proxy.position(forX: boundary.date) {
@@ -1854,32 +1943,18 @@ struct EvolutionChartView: View {
         }
         .chartXAxis {
             // #7077 — planned from the domain that is DRAWN. #4445 — at the size
-            // the dates are DRAWN, too: the planner charges the grown labels, so
-            // large text thins the ticks rather than overprinting them.
-            let axis = Self.axisLayout(
-                for: entries.map(\.date), plotWidth: plotWidth,
-                maxPointSize: Self.axisLabelPointSize(at: dynamicTypeSize))
-            let plan = axis.plan
-            if let endpoints = axis.endpoints {
-                AxisMarks(values: endpoints) { value in
-                    AxisValueLabel(
-                        format: plan.format,
-                        anchor: OddsChartView.xAxisLabelAnchor(
-                            index: value.index, count: value.count)
-                    )
-                    .font(.system(size: axis.pointSize))
-                }
-            } else {
-                AxisMarks(values: .stride(by: plan.component, count: plan.count)) { value in
+            // the dates are DRAWN, too. And the visible dates are positioned by
+            // `ChartTimeAxisLabels` from the same `ticks` so iOS 27's flipped
+            // anchor behavior never collides adjacent labels (e.g. "Nov 19 Nov 21").
+            AxisMarks(values: ticks) { _ in
+                if axis.endpoints == nil {
                     AxisGridLine(stroke: StrokeStyle(lineWidth: 0.15))
                         .foregroundStyle(.secondary.opacity(0.3))
-                    AxisValueLabel(
-                        format: plan.format,
-                        anchor: OddsChartView.xAxisLabelAnchor(
-                            index: value.index, count: value.count)
-                    )
-                    .font(.system(size: axis.pointSize))
                 }
+                ChartTimeAxisLabels.reservedRow(
+                    format: axis.plan.format,
+                    fontSize: axis.pointSize
+                )
             }
         }
         .onPreferenceChange(PlotWidthPreferenceKey.self) { width in
@@ -1899,7 +1974,7 @@ struct EvolutionChartView: View {
 
             if isFirstScreenInline192A && !dynamicTypeSize.isAccessibilitySize {
                 rightEdgeLabelsColumn192A(entries: entries, ceiling: ceiling192A)
-                    .frame(width: 84, height: height)
+                    .frame(width: 104, height: height)
             }
         }
         .padding(.horizontal, isFirstScreenInline192A ? 14 : 16)
@@ -1939,16 +2014,30 @@ struct EvolutionChartView: View {
             plotHeight: height - plotBottomInset
         )
 
+        let labels = names.map { name in
+            let current = servedOutcomes.first { $0.name == name }
+            return Self.currentEndLabel192A(name: name, outcome: current)
+        }
+        let sharedLabelFontSize = CardTeamNameSizing.sharedSingleLineFontSize(
+            names: labels,
+            baseSize: 10.5,
+            weight: .bold,
+            availableWidth: 100,
+            minimumScale: 0.68
+        )
+
         return ZStack(alignment: .topLeading) {
             ForEach(Array(names.enumerated()), id: \.element) { idx, name in
                 let styleIdx = displayedNames.firstIndex(of: name) ?? idx
                 let color = colorForOutcome(name: name, index: styleIdx)
-                let label = Self.shortEndLabel192A(name: name, percentValue: lastProbs[idx])
-                Text(label)
-                    .font(.system(size: 10, weight: .bold).monospacedDigit())
+                Text(labels[idx])
+                    .font(.system(size: sharedLabelFontSize, weight: .bold).monospacedDigit())
                     .foregroundStyle(color)
                     .lineLimit(1)
-                    .position(x: 42, y: yPositions[idx])
+                    .minimumScaleFactor(0.9)
+                    .allowsTightening(true)
+                    .frame(width: 102, alignment: .leading)
+                    .position(x: 52, y: yPositions[idx])
             }
         }
     }

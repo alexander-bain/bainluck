@@ -563,3 +563,37 @@ def test_the_lazy_safe_sport_read_is_public_and_its_old_name_still_resolves():
     assert mod.loaded_sport_key(row) == "soccer_spain_la_liga"
     assert mod._loaded_sport_key is mod.loaded_sport_key
     assert "loaded_sport_key" in mod.__all__
+
+
+def test_measured_euroleague_kalshi_occurrence_is_recovered_13238():
+    """Measured Nov 22 across all 4 anchored comparisons: 180m exact pad (#13238)."""
+    from app.utils.kalshi_occurrence_start import (
+        KALSHI_MEASURED_OCCURRENCE_SPORTS,
+        kalshi_occurrence_hour_is_recoverable,
+    )
+
+    assert "basketball_euroleague" in KALSHI_MEASURED_OCCURRENCE_SPORTS
+    assert kalshi_occurrence_hour_is_recoverable("basketball_euroleague") is True
+    assert kalshi_occurrence_hour_is_recoverable("basketball_nba") is False
+
+    kalshi_row = _Row(
+        15352077,
+        sport_key="basketball_euroleague",
+        commence_time=EXPECTED_EXPIRATION,
+        commence_time_source="kalshi",
+        external_id=None,
+    )
+    assert kalshi_occurrence_scheduled_start(kalshi_row, "basketball_euroleague") == KICKOFF
+    assert recover_kalshi_occurrence_starts([kalshi_row]) == 1
+    assert recover_kalshi_occurrence_starts([kalshi_row]) == 0
+    assert kalshi_row.commence_time == KICKOFF
+
+    # Anchored row and date-only ticker row stay untouched
+    anchored = _Row(
+        15351534,
+        sport_key="basketball_euroleague",
+        commence_time=KICKOFF,
+        commence_time_source="kalshi",
+        external_id="odds-1",
+    )
+    assert kalshi_occurrence_scheduled_start(anchored, "basketball_euroleague") is None

@@ -618,7 +618,7 @@ export interface ShareScorecardParams {
 }
 
 export interface SharedLinkOpenParams {
-  content_type: 'event' | 'futures' | 'grid';
+  content_type: 'event' | 'futures' | 'grid' | 'collection';
   item_id: number | string;
   source: string;
   medium?: string;

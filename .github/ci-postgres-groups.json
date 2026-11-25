@@ -5,6 +5,7 @@
     "#10305 one-row anchor-schedule move: lock, fence and reach (real Postgres)",
     "#10305 D2 participant fill: fences, rollback, restore and the code denylist (real Postgres)",
     "#12534 wrong-club venue identities are refused (real Postgres)",
+    "#13338 onboarding club search and save (real Postgres)",
     "#12519 team-merge dedup keeps distinct names (real Postgres)",
     "#8841 start-placeholder tag rewrites (real Postgres)",
     "#5821 and #10520 real-Postgres gates",
@@ -100,7 +101,10 @@
     "#2316 related-futures name match: one lowercase per row (real Postgres)",
     "#6757 a no-result marker cannot protect an unsupported price (real Postgres)",
     "#7021 twin drain candidate SQL folds punctuation (real Postgres)",
-    "#5789 the #5621 repair cannot select a real game (real Postgres)",
+    "#5789 the #5621 repair cannot select a real game (real Postgres)"
+  ],
+  "shared-middle-2": [
+    "#10717 shared middle 2 \u2014 provision pg_trgm on the fresh database",
     "#6073 the re-date declines a row that moved under it (real Postgres)",
     "#6073 the stuck-status rescue declines a row that moved under it (real Postgres)",
     "#5918 the league rail loads the sport the fold reads (real Postgres)",
@@ -234,7 +238,11 @@
     "#11315 the exact-market grade's roster locks hold a concurrent writer out (real Postgres)",
     "#4437 open markets' outcome copy: maintainer and both routes (real Postgres)",
     "#12288 grouping preview loads every candidate definition on real Postgres",
-    "#12612 calibration real-Postgres contracts"
+    "#12612 feed static tag filter (real Postgres)",
+    "#12612 calibration real-Postgres contracts",
+    "#13606 history since_start SQL pushdown plans and oracle equivalence (real Postgres)",
+    "#13573 team futures Q1 rewrite equivalence (real Postgres)",
+    "#12818 search untraded 60-row window guard (real Postgres)"
   ],
   "shared-suffix": [
     "#10024 'dodgers world series' reaches the World Series board, not No results (real Postgres)",

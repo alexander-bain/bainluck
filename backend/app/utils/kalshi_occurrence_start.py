@@ -99,6 +99,7 @@ from typing import Any, Optional
 __all__ = [
     "KALSHI_DERIVATIVE_SERIES_EXCESS",
     "KALSHI_EXPECTED_EXPIRATION_PAD",
+    "KALSHI_MEASURED_OCCURRENCE_SPORTS",
     "KALSHI_MEASURED_SOCCER_LEAGUE_PREFIXES",
     "KALSHI_OCCURRENCE_TIMED_SOURCES",
     "KALSHI_RECOVERY_STAMP",
@@ -115,10 +116,21 @@ __all__ = [
 #: a soccer kick-off. Venue-read and census-measured above: 180 minutes, exactly,
 #: on 11 of 11 anchored comparisons and on five series read at the venue.
 #:
+#: Measured additionally on 2026-11-23 for `basketball_euroleague` (`KXEUROLEAGUEGAME`)
+#: across all 4 anchored comparisons: 180 minutes on 4 of 4 (`15352077`/`15351534`,
+#: `15352078`/`15351540`, `15352630`/`15351900`, `15352631`/`15351920`).
+#:
 #: Not a tolerance and not a knob. If a future measurement finds a second value,
 #: the answer is a per-competition table with its own census — never a widening
 #: of this one, which would turn an exact recovery into an approximate one.
 KALSHI_EXPECTED_EXPIRATION_PAD = timedelta(hours=3)
+
+#: Non-soccer league keys explicitly measured to share the exact 180-minute
+#: `expected_expiration_time - commence_time` pad (#13238). Kept as an
+#: allowlist so unmeasured leagues remain refused.
+KALSHI_MEASURED_OCCURRENCE_SPORTS: frozenset[str] = frozenset(
+    {"basketball_euroleague"}
+)
 
 #: The `commence_time_source` values that mean "this hour came from Kalshi's
 #: expected-expiration instant".
@@ -309,6 +321,11 @@ def _soccer(sport_key: Optional[str]) -> bool:
     return bool(sport_key) and sport_key.startswith("soccer")
 
 
+def _kalshi_occurrence_sport_supported(sport_key: Optional[str]) -> bool:
+    """True for soccer or an explicitly measured allowlisted league (#13238)."""
+    return _soccer(sport_key) or (sport_key in KALSHI_MEASURED_OCCURRENCE_SPORTS)
+
+
 def kalshi_occurrence_hour_is_recoverable(sport_key: Optional[str]) -> bool:
     """Is a Kalshi occurrence hour convertible to a real start for this sport?
 
@@ -330,18 +347,19 @@ def kalshi_occurrence_hour_is_recoverable(sport_key: Optional[str]) -> bool:
     byte-identical to ``expected_expiration_time`` (the venue read at the top of
     this module), so it is never a kick-off anywhere — it is only *recoverable*
     where the pad from the real start has been measured and found exact.
-    :data:`KALSHI_EXPECTED_EXPIRATION_PAD` is that measurement and it is soccer's
-    alone: 180 minutes on 11 of 11 anchored rows, against 255/265/275/285/295/345
-    for MMA and ~14 days for boxing. **Tennis has no measurement at all** —
-    CERT-3342's specimen 15317314 stored 09:10Z for play in the 07:00Z hour — so
-    a tennis occurrence written as a start is an expiration wearing a kick-off's
-    label, which is the exact defect #5905 was filed for.
+    :data:`KALSHI_EXPECTED_EXPIRATION_PAD` is that measurement: 180 minutes on
+    11 of 11 anchored soccer rows (and 4 of 4 measured `basketball_euroleague`
+    rows), against 255/265/275/285/295/345 for MMA and ~14 days for boxing.
+    **Tennis has no measurement at all** — CERT-3342's specimen 15317314 stored
+    09:10Z for play in the 07:00Z hour — so a tennis occurrence written as a
+    start is an expiration wearing a kick-off's label, which is the exact defect
+    #5905 was filed for.
 
     Widening this is a census, never an edit. Adding a sport means measuring its
     ghost/real delta the way the module header does and finding a SINGLE value;
     a spread means there is no pad to recover and the answer stays ``False``.
     """
-    return _soccer(sport_key)
+    return _kalshi_occurrence_sport_supported(sport_key)
 
 
 def kalshi_occurrence_scheduled_start(
@@ -359,7 +377,7 @@ def kalshi_occurrence_scheduled_start(
     disable the whole fold and serve today's page. The caller resolves the key
     from what it has actually loaded, and passes ``None`` when it cannot.
     """
-    if not _soccer(sport_key):
+    if not _kalshi_occurrence_sport_supported(sport_key):
         return None
     if getattr(event, "external_id", None) is not None:
         return None  # a schedule provider reported this start; it is not ours to move

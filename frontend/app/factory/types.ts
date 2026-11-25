@@ -6,11 +6,23 @@ export type Station =
   | "Merge line"
   | "Ship"
   | "Live";
-export type Builder = "S" | "B" | "C" | "D" | "E" | "F" | "W" | "Other";
+export const builderLanes = ["S", "B", "C", "D", "E", "F", "W", "Factory"] as const;
+export type NamedBuilder = (typeof builderLanes)[number];
+export type Builder = NamedBuilder | "Other";
+
+export function isBuilder(value: unknown): value is Builder {
+  return value === "Other" || builderLanes.some(lane => lane === value);
+}
 
 export interface CrewPost {
   at: string;
+  comment_id?: number;
   waiting_on?: number;
+}
+
+export interface LaneUpdate {
+  at: string;
+  text: string;
 }
 
 export const factoryMoods = [
@@ -50,6 +62,7 @@ export interface Change {
   parked?: boolean;
   held_for_108?: boolean;
   checks_running?: boolean;
+  checks_failed?: boolean;
   merge_announced_at?: string;
   live_posted_at?: string;
   live_post_observed_at?: string;
@@ -131,7 +144,6 @@ export interface Stop {
   test?: string;
   number?: number;
   waiting_since?: string;
-  machines?: { running: number; waiting: number };
 }
 
 export interface Jam {
@@ -174,6 +186,7 @@ export interface FactoryData {
   transitions?: Transfer[];
   speech?: Partial<Record<Exclude<Builder, "Other">, LaneSpeech>>;
   crew_posts?: Partial<Record<Exclude<Builder, "Other">, CrewPost>>;
+  lane_updates?: Partial<Record<NamedBuilder, LaneUpdate>>;
   model_usage?: { day: string; calls: number };
   events?: FloorEvent[];
   day_replay?: DayReplay;
@@ -197,8 +210,9 @@ export interface FactoryData {
     testflight: string;
     checks_queue?: ChecksQueue;
     tests_at?: string;
+    oldest_running_ci_at?: string | null;
     last_merged_at?: Partial<Record<Line, string>>;
-    testflight_post?: { build: number; at: string };
+    testflight_post?: { build: number; at: string; commit: string };
   };
   coverage: string[];
 }

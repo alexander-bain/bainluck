@@ -299,6 +299,15 @@ enum EventAtlasGolfTournament11666 {
         return last + " " + parts.dropLast().joined(separator: " ")
     }
 
+    private nonisolated static func normalizeStatus(_ raw: String?) -> String? {
+        guard let trimmed = raw?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+              !trimmed.isEmpty
+        else {
+            return nil
+        }
+        return trimmed.replacingOccurrences(of: "-", with: "_")
+    }
+
     nonisolated static func resolvePhase(
         scheduleStatus: String?,
         commenceTime: String?,
@@ -306,14 +315,14 @@ enum EventAtlasGolfTournament11666 {
         field: [GolfTournamentFieldRow],
         now: Date = Date()
     ) -> GolfFinishPhase10868 {
-        let status = scheduleStatus?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let marketStatus = winnerMarket?.status?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let status = normalizeStatus(scheduleStatus)
+        let marketStatus = normalizeStatus(winnerMarket?.status)
         if EventState.isFinished(status)
             || SettledQuote.isSettled(status)
             || EventState.isFinished(marketStatus)
             || SettledQuote.isSettled(marketStatus)
-            || field.contains(where: { $0.isWinner == true })
-            || (winnerMarket?.outcomes.contains(where: { $0.isWinner != nil }) == true)
+            || field.contains(where: { GolfTournamentPresentation.resolvedWinnerFlag(for: $0) == true })
+            || (winnerMarket?.outcomes.contains(where: { $0.isWinner == true }) == true)
         {
             return .final
         }
@@ -330,9 +339,9 @@ enum EventAtlasGolfTournament11666 {
 
     nonisolated static func isMarketResolved(_ market: FuturesMarketDetail?) -> Bool {
         guard let market else { return false }
-        let st = market.status?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let st = normalizeStatus(market.status)
         if EventState.isFinished(st) || SettledQuote.isSettled(st) { return true }
-        return market.outcomes.contains(where: { $0.isWinner != nil })
+        return market.outcomes.contains(where: { $0.isWinner == true })
     }
 
     /// Finds an unambiguous 1-to-1 outcome match for `golferName` inside `market`.
@@ -407,6 +416,7 @@ enum EventAtlasGolfTournament11666 {
         market: FuturesMarketDetail?,
         tournamentCommenceTime: String? = nil,
         fallbackWinRow: GolfTournamentFieldRow? = nil,
+        hasConfirmedTournamentWinner: Bool = false,
         isTournamentSettled: Bool = false,
         loadFailed: Bool = false,
         now: Date
@@ -449,7 +459,7 @@ enum EventAtlasGolfTournament11666 {
         switch phase {
         case .before:
             // Before tee-off, never read openingProbability as the current quote.
-            let rawProb = validChance(outcome?.probability ?? fallbackWinRow?.probability)
+            let rawProb = validChance(fallbackWinRow?.probability ?? outcome?.probability)
             if let rawProb, recent {
                 let text = formatProbability(rawProb)
                 beforeObs = GolfFinishObservation10868(
@@ -478,7 +488,7 @@ enum EventAtlasGolfTournament11666 {
                 beforeObs = nil
                 beforeMissing = "Not recorded"
             }
-            let liveProb = validChance(outcome?.probability ?? fallbackWinRow?.probability)
+            let liveProb = validChance(fallbackWinRow?.probability ?? outcome?.probability)
             if let liveProb, recent {
                 recordedObs = GolfFinishObservation10868(
                     probability: liveProb,
@@ -523,23 +533,28 @@ enum EventAtlasGolfTournament11666 {
                 return GolfFinishResult10868(text: "Pending", mark: .unknown)
             }
             let resolved = isMarketResolved(market) || isTournamentSettled
-            if let outcome {
-                let verdict = OutcomeVerdict.verdict(
-                    isWinner: outcome.isWinner,
-                    resolutionSource: outcome.resolutionSource,
-                    marketResolved: resolved
-                )
+            if let outcome,
+               let verdict = OutcomeVerdict.verdict(
+                   isWinner: outcome.isWinner,
+                   resolutionSource: outcome.resolutionSource,
+                   marketResolved: resolved
+               ) {
                 switch verdict {
                 case .won:
                     return GolfFinishResult10868(text: positiveResultWord(for: selection), mark: .success)
                 case .lost:
                     return GolfFinishResult10868(text: negativeResultWord(for: selection), mark: .failure)
-                case nil:
-                    return GolfFinishResult10868(text: "Result not confirmed", mark: .unknown)
                 }
             }
-            if let fallbackWinRow, selection == "win", fallbackWinRow.isWinner == true {
-                return GolfFinishResult10868(text: "Won", mark: .success)
+            if selection == "win" {
+                if let fieldFlag = fallbackWinRow.flatMap({ GolfTournamentPresentation.resolvedWinnerFlag(for: $0) }) {
+                    return fieldFlag
+                        ? GolfFinishResult10868(text: positiveResultWord(for: selection), mark: .success)
+                        : GolfFinishResult10868(text: negativeResultWord(for: selection), mark: .failure)
+                }
+                if hasConfirmedTournamentWinner {
+                    return GolfFinishResult10868(text: negativeResultWord(for: selection), mark: .failure)
+                }
             }
             return GolfFinishResult10868(text: "Result not confirmed", mark: .unknown)
         }()
@@ -600,6 +615,11 @@ enum EventAtlasGolfTournament11666 {
         let target = normalizeGolferName(selectedGolferName)
         let fieldMatches = presentation.field.filter { normalizeGolferName($0.name) == target }
         let fallbackWinRow = fieldMatches.count == 1 ? fieldMatches[0] : nil
+        let hasConfirmedWinner = hasConfirmedTournamentWinner(
+            presentation: presentation,
+            winnerMarket: atlasData.winnerMarket,
+            phase: phase
+        )
 
         let winSlot = buildSlot(
             selection: "win",
@@ -610,6 +630,7 @@ enum EventAtlasGolfTournament11666 {
             market: atlasData.winnerMarket,
             tournamentCommenceTime: presentation.commenceTime,
             fallbackWinRow: fallbackWinRow,
+            hasConfirmedTournamentWinner: hasConfirmedWinner,
             isTournamentSettled: isSettled,
             loadFailed: atlasData.failedMarketSlots.contains("win"),
             now: now
@@ -668,6 +689,7 @@ enum EventAtlasGolfTournament11666 {
 
         let allSlots = [winSlot, top5Slot, top10Slot, top20Slot] + (makeCutSlot.map { [$0] } ?? [])
         let anyHasPregameBaseline = allSlots.contains { $0.before != nil }
+        let anyConfirmedResult = allSlots.contains { $0.actual.mark != .unknown }
 
         let contextText: String? = {
             let observedIso = findOutcome(for: selectedGolferName, in: atlasData.winnerMarket)?.observedAt
@@ -683,9 +705,14 @@ enum EventAtlasGolfTournament11666 {
                 }
                 return pt.map { "In play · latest recorded \($0)" } ?? "In play · recorded estimates"
             case .final:
+                if anyConfirmedResult {
+                    return anyHasPregameBaseline
+                        ? "Final · pregame chances beside confirmed results"
+                        : "Final · confirmed results"
+                }
                 return anyHasPregameBaseline
-                    ? "Final · pregame chances beside confirmed results"
-                    : "Final · confirmed results"
+                    ? "Final · pregame chances · results pending"
+                    : "Final · results pending"
             }
         }()
 
@@ -932,6 +959,25 @@ enum EventAtlasGolfTournament11666 {
         return filtered
     }
 
+    private nonisolated static func hasConfirmedTournamentWinner(
+        presentation: GolfTournamentPresentation,
+        winnerMarket: FuturesMarketDetail?,
+        phase: GolfFinishPhase10868
+    ) -> Bool {
+        if presentation.field.contains(where: { GolfTournamentPresentation.resolvedWinnerFlag(for: $0) == true }) {
+            return true
+        }
+        guard phase == .final else { return false }
+        let resolved = isMarketResolved(winnerMarket) || phase == .final
+        return winnerMarket?.outcomes.contains(where: {
+            OutcomeVerdict.verdict(
+                isWinner: $0.isWinner,
+                resolutionSource: $0.resolutionSource,
+                marketResolved: resolved
+            ) == .won
+        }) == true
+    }
+
     nonisolated static func buildJourneyContenders(
         presentation: GolfTournamentPresentation,
         atlasData: TournamentAtlasData,
@@ -947,6 +993,11 @@ enum EventAtlasGolfTournament11666 {
         )
         let resolved = isMarketResolved(atlasData.winnerMarket) || phase == .final
         let winFailed = atlasData.failedMarketSlots.contains("win")
+        let confirmedWinner = hasConfirmedTournamentWinner(
+            presentation: presentation,
+            winnerMarket: atlasData.winnerMarket,
+            phase: phase
+        )
 
         var chosenNames: [String] = Array(presentation.field.prefix(headlineContenderCount).map(\.name))
         if let selected = selectedGolferName,
@@ -997,23 +1048,44 @@ enum EventAtlasGolfTournament11666 {
             let currentProb: Double? = {
                 guard phase != .final, !winFailed else { return nil }
                 guard recent else { return nil }
-                return validChance(outcome?.probability ?? meta?.currentProbability ?? fieldRow?.probability)
+                return validChance(fieldRow?.probability ?? outcome?.probability ?? meta?.currentProbability)
             }()
 
             let verdict: OutcomeVerdict? = {
                 guard phase == .final, !winFailed else { return nil }
-                if let outcome {
-                    return OutcomeVerdict.verdict(
-                        isWinner: outcome.isWinner,
-                        resolutionSource: outcome.resolutionSource,
-                        marketResolved: resolved
-                    )
+                if let outcome,
+                   let marketVerdict = OutcomeVerdict.verdict(
+                       isWinner: outcome.isWinner,
+                       resolutionSource: outcome.resolutionSource,
+                       marketResolved: resolved
+                   ) {
+                    return marketVerdict
                 }
-                if fieldRow?.isWinner == true {
-                    return .won
+                if let fieldFlag = fieldRow.flatMap({ GolfTournamentPresentation.resolvedWinnerFlag(for: $0) }) {
+                    return fieldFlag ? .won : .lost
+                }
+                if confirmedWinner {
+                    return .lost
                 }
                 return nil
             }()
+
+            var anchoredPoints = pts
+            if phase != .final,
+               let liveProb = currentProb,
+               let lastPt = anchoredPoints.last,
+               abs(lastPt.probability - liveProb) >= 0.0005 {
+                if let liveDate = observedIso?.asDate,
+                   liveDate.timeIntervalSince(lastPt.date) > 60 {
+                    anchoredPoints.append(JourneyPoint(golferName: name, date: liveDate, probability: liveProb))
+                } else {
+                    anchoredPoints[anchoredPoints.count - 1] = JourneyPoint(
+                        golferName: name,
+                        date: lastPt.date,
+                        probability: liveProb
+                    )
+                }
+            }
 
             return JourneyContender(
                 name: name,
@@ -1022,7 +1094,7 @@ enum EventAtlasGolfTournament11666 {
                 currentProbability: currentProb,
                 finalVerdict: verdict,
                 loadFailed: winFailed,
-                points: pts
+                points: anchoredPoints
             )
         }
     }
@@ -1285,7 +1357,7 @@ struct EventAtlasGolfHeadlineCardView192A: View {
             }
             return "Golf"
         }
-        let parts = [presentation.tourLabel, presentation.venue ?? presentation.dateRange]
+        let parts = [presentation.tourLabel, presentation.dateRange]
             .compactMap { $0 }
             .filter { !$0.isEmpty }
         return parts.isEmpty ? "Golf" : parts.joined(separator: " · ")
@@ -1295,6 +1367,13 @@ struct EventAtlasGolfHeadlineCardView192A: View {
         VStack(alignment: .leading, spacing: 8) {
             topEyebrowRow
             titleAndFieldLinkRow
+            if let venue = presentation.venue?.trimmingCharacters(in: .whitespacesAndNewlines), !venue.isEmpty {
+                Text(venue)
+                    .font(.caption)
+                    .foregroundStyle(DS.textSecondaryReadable)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
             if !dynamicTypeSize.isAccessibilitySize {
                 columnHeaderRow
             }
@@ -1740,7 +1819,10 @@ struct EventAtlasGolfJourneyCardView11666: View {
         let usableHeight = max(40, EventAtlasGolfTournament11666.firstScreenChartHeight - plotTopInset - plotBottomInset)
         let plotted = contenders.filter { !$0.points.isEmpty }
         let rawTargets: [CGFloat] = plotted.map { contender in
-            let lastVal = min(max(contender.points.last?.probability ?? 0, 0), ceiling)
+            let lastVal = min(
+                max((phase != .final ? contender.currentProbability : nil) ?? contender.points.last?.probability ?? 0, 0),
+                ceiling
+            )
             let norm = ceiling > 0 ? (lastVal / ceiling) : 0
             return plotTopInset + usableHeight * CGFloat(1.0 - norm)
         }
@@ -1750,15 +1832,23 @@ struct EventAtlasGolfJourneyCardView11666: View {
             plotHeight: EventAtlasGolfTournament11666.firstScreenChartHeight - plotBottomInset
         )
 
+        let labels = plotted.map { EventAtlasGolfTournament11666.shortChartEndLabel(for: $0, phase: phase) }
+        let sharedLabelFontSize = CardTeamNameSizing.sharedSingleLineFontSize(
+            names: labels,
+            baseSize: 10.5,
+            weight: .bold,
+            availableWidth: 94,
+            minimumScale: 0.68
+        )
+
         return ZStack(alignment: .topLeading) {
             ForEach(Array(plotted.enumerated()), id: \.element.id) { idx, contender in
                 let color = EventAtlasGolfTournament11666.palette[contender.colorIndex % EventAtlasGolfTournament11666.palette.count]
-                let label = EventAtlasGolfTournament11666.shortChartEndLabel(for: contender, phase: phase)
-                Text(label)
-                    .font(.system(size: 10.5, weight: .bold).monospacedDigit())
+                Text(labels[idx])
+                    .font(.system(size: sharedLabelFontSize, weight: .bold).monospacedDigit())
                     .foregroundStyle(color)
                     .lineLimit(1)
-                    .minimumScaleFactor(0.68)
+                    .minimumScaleFactor(0.9)
                     .allowsTightening(true)
                     .frame(width: 96, alignment: .leading)
                     .position(x: 49, y: yPositions[idx])
@@ -2508,8 +2598,9 @@ struct EventAtlasGolfContenderChooserView11666: View {
 
     @ViewBuilder
     private func chooserPrimaryValue(_ row: GolfTournamentFieldRow) -> some View {
+        let winnerFlag = GolfTournamentPresentation.resolvedWinnerFlag(for: row)
         if phase == .final {
-            if row.isWinner == true {
+            if winnerFlag == true {
                 HStack(spacing: 4) {
                     Text("✓ Won")
                         .font(.subheadline.weight(.semibold))
@@ -2526,6 +2617,17 @@ struct EventAtlasGolfContenderChooserView11666: View {
                         .font(.caption)
                         .foregroundStyle(DS.textSecondaryReadable)
                         .monospacedDigit()
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                    if let mark = SourceMarkButton(row.sourceMark, number: nil, subject: row.name, numberSize: 13, compactRow: true) {
+                        mark.buttonStyle(.borderless)
+                    }
+                }
+            } else if winnerFlag == false {
+                HStack(spacing: 4) {
+                    Text("Lost")
+                        .font(.caption.weight(.medium))
+                        .foregroundStyle(DS.textSecondaryReadable)
                         .lineLimit(1)
                         .fixedSize(horizontal: true, vertical: false)
                     if let mark = SourceMarkButton(row.sourceMark, number: nil, subject: row.name, numberSize: 13, compactRow: true) {

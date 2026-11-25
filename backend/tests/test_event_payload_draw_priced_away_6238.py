@@ -262,15 +262,21 @@ async def test_a_two_way_sport_keeps_its_away_number_and_its_hundred():
 
 @pytest.mark.asyncio
 async def test_the_no_snapshot_fallback_withholds_too():
-    """The arm with no book rows at all, so nothing else contradicts the lie."""
+    """#13131 / #13479: no-snapshot one-leg soccer withholds all three chance legs."""
     payload = await _payload(
         _event(sport_key=SOCCER, home_prob=JUVENTUS_HOME, event_id=6238005)
     )
     odds = payload["current_odds"]
     assert odds.get("source") == "aggregate", f"not the fallback branch: {odds}"
+    assert odds["home_probability"] is None
     assert odds["away_probability"] is None
+    assert odds["draw_probability"] is None
+    assert odds["home_rendered_percent"] is None
     assert odds["away_rendered_percent"] is None
-    assert odds["home_probability"] == pytest.approx(JUVENTUS_HOME)
+    assert odds["draw_rendered_percent"] is None
+    assert payload["hero_probability"] is None
+    assert payload["hero_probability_away"] is None
+    assert payload["hero_probability_draw"] is None
 
 
 @pytest.mark.asyncio

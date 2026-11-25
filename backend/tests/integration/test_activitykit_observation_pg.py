@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import timedelta
+import json
 import os
 import pytest
 from sqlalchemy import Integer, column, event, insert, select, table, text, update
@@ -349,8 +350,9 @@ async def canonical_pg():
 async def test_actual_canonical_route_matches_persisted_projection(
     canonical_pg, sport, status
 ):
-    from app.models import Event, Sport
+    from app.models import Event, OddsSnapshot, Sport
     from app.routes.events import build_event_detail_uncoalesced
+    from app.utils.activitykit_payload import build_activitykit_update
     from app.utils.activitykit_projection import project_activitykit_snapshot
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -382,6 +384,21 @@ async def test_actual_canonical_route_matches_persisted_projection(
                 },
             )
         )
+        if sport == "soccer_epl":
+            # Draw-priced live fixtures need all three outcome probabilities under
+            # #13131/#13246/#13479 before a non-settled hero leg is printed.
+            await conn.execute(
+                insert(OddsSnapshot.__table__).values(
+                    event_id=42,
+                    bookmaker="draftkings",
+                    home_moneyline=-170,
+                    away_moneyline=270,
+                    home_win_probability=0.63,
+                    away_win_probability=0.27,
+                    captured_at=NOW,
+                    reading_count=1,
+                )
+            )
     waiting = asyncio.Event()
     capture_statements = []
     capture_connection = None
@@ -423,10 +440,61 @@ async def test_actual_canonical_route_matches_persisted_projection(
     if status == "live":
         assert observed.snapshot.home_rendered_percent == 63
         assert observed.snapshot.probability_observed_at == NOW
+        push = build_activitykit_update(observed.snapshot, sent_at=NOW)
+        aps = json.loads(push.body)["aps"]
+        snap_payload = aps["content-state"]["snapshot"]
+        assert snap_payload["homeScore"] == 3
+        assert snap_payload["homeRenderedPercent"] == 63
     else:
         assert observed.snapshot.home_rendered_percent is None
         assert observed.snapshot.probability_observed_at is None
     assert await ActivityKitObservationAdapter(engine).replay(42, 1) == observed
+
+    if sport == "soccer_epl" and status == "live":
+        # One-leg live soccer fixture (no OddsSnapshot rows) falls back to score-only
+        # ActivityKit state while #10568 CI remains at its exact 20-case count.
+        async with engine.begin() as conn:
+            await conn.execute(
+                insert(Event.__table__).values(
+                    id=43,
+                    sport_id=1,
+                    external_id="fixture43",
+                    home_team_name="Home",
+                    away_team_name="Away",
+                    commence_time=NOW,
+                    status="live",
+                    home_score=2,
+                    away_score=1,
+                    score_source="espn",
+                    score_observed_at=NOW,
+                    win_probability_sources={
+                        "espn": {
+                            "value": 0.63,
+                            "home_probability": 0.63,
+                            "away_probability": 0.27,
+                            "updated_at": NOW.isoformat(),
+                        }
+                    },
+                )
+            )
+        one_leg = await ActivityKitObservationAdapter(engine).capture(43)
+        async with AsyncSession(engine, autoflush=False) as db:
+            one_leg_detail = await build_event_detail_uncoalesced(db, 43)
+        assert one_leg.snapshot == project_activitykit_snapshot(one_leg_detail)
+        assert one_leg.snapshot.home_score == 2
+        assert one_leg.snapshot.away_score == 1
+        assert one_leg.snapshot.score_observed_at == NOW
+        assert one_leg.snapshot.is_terminal is False
+        assert one_leg.snapshot.home_rendered_percent is None
+        assert one_leg.snapshot.probability_observed_at is None
+        one_leg_push = build_activitykit_update(one_leg.snapshot, sent_at=NOW)
+        one_leg_aps = json.loads(one_leg_push.body)["aps"]
+        one_leg_snap = one_leg_aps["content-state"]["snapshot"]
+        assert one_leg_snap["homeScore"] == 2
+        assert "homeRenderedPercent" not in one_leg_snap
+        assert "probabilityObservedAt" not in one_leg_snap
+        assert one_leg_aps["stale-date"] > one_leg_aps["timestamp"]
+        assert await ActivityKitObservationAdapter(engine).replay(43, 1) == one_leg
 
 
 async def test_identical_capture_reuses_sequence_without_new_history_or_clock(pg):

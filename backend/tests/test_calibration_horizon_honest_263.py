@@ -146,16 +146,42 @@ _RES = datetime(2026, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
 
 async def _mk_market(session, mid, source, *, mex, mtype, category, res_date=_RES, volume=100):
+    import json
     from sqlalchemy import text
+
+    params = {
+        "id": mid,
+        "src": source,
+        "ext": f"cal263-m-{mid}",
+        "nm": f"Market {mid}?",
+        "mex": mex,
+        "mt": mtype,
+        "cat": category,
+        "vol": volume,
+        "rd": res_date,
+    }
+    if mtype == "field":
+        meta_expr = "CAST(:meta AS jsonb)"
+        params["meta"] = json.dumps(
+            {
+                "shape": {
+                    "exhaustive": True,
+                    "expected_winners": 1,
+                    "outcome_relation": "competitors",
+                }
+            }
+        )
+    else:
+        meta_expr = "NULL"
 
     await session.execute(
         text(
-            "INSERT INTO futures_markets (id, source, status, mutually_exclusive, "
-            "market_type, llm_sport_category, volume, resolution_date) VALUES "
-            "(:id, :src, 'resolved', :mex, :mt, :cat, :vol, :rd)"
+            "INSERT INTO futures_markets (id, source, external_id, name, category, status, "
+            "mutually_exclusive, market_type, llm_sport_category, volume, resolution_date, "
+            f"market_metadata) VALUES (:id, :src, :ext, :nm, :cat, 'resolved', :mex, :mt, "
+            f":cat, :vol, :rd, {meta_expr})"
         ),
-        {"id": mid, "src": source, "mex": mex, "mt": mtype, "cat": category,
-         "vol": volume, "rd": res_date},
+        params,
     )
 
 
@@ -166,13 +192,14 @@ async def _mk_outcome(session, mid, i, *, op, cp, win, src="api_settlement", vol
     oid = mid * 1000 + i
     await session.execute(
         text(
-            "INSERT INTO futures_outcomes (id, market_id, name, opening_probability, "
+            "INSERT INTO futures_outcomes (id, market_id, external_id, name, opening_probability, "
             "calibration_probability, is_winner, resolution_source, volume, "
             "current_yes_bid, current_yes_ask) VALUES "
-            "(:id, :mid, :nm, :op, :cp, :win, :src, :vol, :yb, :ya)"
+            "(:id, :mid, :ext, :nm, :op, :cp, :win, :src, :vol, :yb, :ya)"
         ),
-        {"id": oid, "mid": mid, "nm": name or f"cand-{i}", "op": op, "cp": cp,
-         "win": win, "src": src, "vol": volume, "yb": yes_bid, "ya": yes_ask},
+        {"id": oid, "mid": mid, "ext": f"cal263-o-{oid}", "nm": name or f"cand-{i}",
+         "op": op, "cp": cp, "win": win, "src": src, "vol": volume,
+         "yb": yes_bid, "ya": yes_ask},
     )
     return oid
 
@@ -183,8 +210,8 @@ async def _snap(session, oid, *, days_before_res, probability, yes_bid=None, las
     await session.execute(
         text(
             "INSERT INTO futures_odds_snapshots (outcome_id, bookmaker, probability, "
-            "yes_bid, last_price, captured_at) VALUES "
-            "(:oid, 'test', :p, :yb, :lp, :ts)"
+            "reading_count, yes_bid, last_price, captured_at) VALUES "
+            "(:oid, 'test', :p, 1, :yb, :lp, :ts)"
         ),
         {"oid": oid, "p": probability, "yb": yes_bid, "lp": last_price,
          "ts": _RES - timedelta(days=days_before_res)},

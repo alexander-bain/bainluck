@@ -623,4 +623,37 @@ describe("Unified Website Game Page Headline (Direction 199 & Rulings 200-B, 197
     expect(after.html).toContain('data-winner="Detroit Lions"');
     expect(after.html).not.toContain('data-testid="event-hero-probability"');
   });
+
+  it("#12938: live headline with withheld Proj. collapses projected column cleanly to Score and Now", () => {
+    const stanfordWithheld = resolveSpecimen(
+      {
+        id: 15350027,
+        sport: "basketball_ncaab",
+        sport_name: "NCAAB",
+        away_team: "UC Irvine Anteaters",
+        home_team: "Stanford Cardinal",
+        status: "live",
+        commence_time: LIVE_START,
+        away_score: 61,
+        home_score: 65,
+      },
+      {
+        bestAwayScore: 61,
+        bestHomeScore: 65,
+        heroScorePairPresent: true,
+        projectedPairRaw: null,
+        projectedPairAdmitted: false,
+        homeProb: 0.996,
+        servedAwayProb: 0.004,
+        homePct: 100,
+        servedAwayPct: 0,
+        tenthsOptIn: true,
+      },
+    );
+    expect(stanfordWithheld.model.columns.find((c) => c.role === "projected")?.header).toBe("");
+    expect(stanfordWithheld.html).not.toContain(">Proj.<");
+    expect(stanfordWithheld.html).not.toContain('data-headline-cell="projected"');
+    expect(stanfordWithheld.html).toContain('data-headline-cell="score"');
+    expect(stanfordWithheld.html).toContain('data-headline-cell="now"');
+  });
 });

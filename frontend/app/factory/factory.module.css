@@ -823,22 +823,10 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 .notes p {
   margin: 2px 0;
 }
-.scrollHint {
-  display: none;
-}
+.compactStation { display: none; }
 @keyframes belt {
   to {
     transform: translateX(25px);
-  }
-}
-@media (max-width: 990px) {
-  .scrollHint {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    padding: 0 var(--floor-inset) 5px;
-    font-size: 10px;
-    color: var(--secondary);
   }
 }
 @media (max-width: 640px) {
@@ -1277,7 +1265,8 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   opacity: 0.72;
   filter: saturate(0.35);
 }
-.factory[data-reader="behind"] .statusDot {
+.factory[data-reader="behind"] .statusDot,
+.factory[data-reading-state="waiting"] .statusDot {
   background: var(--amber);
 }
 .stopNotices {
@@ -1351,6 +1340,25 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   }
 }
 
+.wordLesson {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 12px;
+  margin-block: 0 6px;
+  padding: 5px 8px;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: var(--paper);
+  font-size: var(--screen-type, 13px);
+  line-height: 1.25;
+}
+.wordLesson p { margin: 0; }
+.wordLesson strong { margin-inline-end: 7px; }
+.wordLesson dfn { font-weight: 700; font-style: normal; }
+.wordLesson span { color: var(--secondary); }
+.wordLesson .checkLesson { flex-basis: 100%; color: var(--amber); }
+
 /* The foreman's clipboard and the shelf share the warm paper of the shop. */
 .foremanNote {
   display: flex;
@@ -1423,6 +1431,7 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   color: #a8b9c7;
 }
 .builderW { background: #496246; }
+.builderFactory { background: var(--workshop-copper); color: var(--paper); flex-wrap: wrap; }
 .worker[data-identity="S"] { --portrait: url("/factory/crew/speed.webp"); }
 .worker[data-identity="B"] { --portrait: url("/factory/crew/builder-b.webp"); }
 .worker[data-identity="C"] { --portrait: url("/factory/crew/builder-c.webp"); }
@@ -1877,6 +1886,7 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 
 .speechBubble strong { margin-inline-end: 4px; white-space: nowrap; }
 .crewSpeech { font-size: 11px; line-height: 1.4; margin: 3px 0 0; }
+.crewSpeech > a { color: inherit; text-decoration: underline; text-underline-offset: .16em; }
 
 @media (max-width: 720px) {
   .sectionHeading { flex-wrap: wrap; }
@@ -2023,7 +2033,7 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 .shelfGroup { grid-column: 1 / -1; }
 .shelfGroup .shelf { border: 1px solid var(--edge); border-radius: 8px; }
 
-/* The unattended overview fills a display. Phones keep the scrolling floor. */
+/* The unattended overview fills a display. */
 @media (min-width: 1000px) and (min-height: 680px) {
   :global(main):has(.factory) > :global(div) {
     width: 100%;
@@ -2361,6 +2371,8 @@ details[open] > .summary > svg { transform: rotate(90deg); }
 .builderCard[data-crew="E"] { --apron: #365a7e; }
 .builderCard[data-crew="F"] { --apron: #385371; }
 .builderCard[data-crew="W"] { --apron: #535b37; }
+.builderCard[data-crew="Factory"] { --apron: var(--workshop-copper); }
+.builderCard[data-crew="Factory"] > .nameTag { color: var(--paper); }
 .builderCard[data-crew="Fable"] { --apron: #834b57; }
 .builders {
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -2389,6 +2401,20 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   border-radius: 4px;
   color: white;
   background: var(--apron);
+}
+.crewLocation {
+  display: grid;
+  gap: 3px;
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1.3;
+  overflow-wrap: anywhere;
+}
+.crewLocation > p { margin: 0; }
+.crewStationDetail {
+  color: var(--secondary);
+  font-size: .875rem;
+  font-weight: 400;
 }
 .builderCard > :is(.temperament, .crewSpeech, .crewRecordNote) {
   margin: 0;
@@ -2761,4 +2787,36 @@ details[open] > .summary > svg { transform: rotate(90deg); }
   .factory[data-workshop-light="night"] .floorFooter::before {
     filter: brightness(0.24) sepia(0.35);
   }
+}
+
+
+@media (max-width: 999px) {
+  .floorScroll { overflow: visible; }
+  .floorGrid { min-width: 0; }
+  .stationHeadings { display: none; }
+  .lineRow { grid-template-columns: minmax(0, 1fr); margin-block-end: 16px; }
+  .lineRail { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+  .lineRail::before, .lineRail::after { display: none; }
+  .lineName { flex-direction: row; flex-wrap: wrap; min-height: 0; text-align: start; }
+  .crewRest { width: auto; margin-block-start: 0; }
+  .machines { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .compactStation {
+    display: flex;
+    align-items: flex-start;
+    gap: 5px;
+    margin-block-end: 5px;
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+  }
+  .compactStation > svg { flex: none; }
+  .compactStation > div { min-width: 0; }
+  .compactStation strong { display: block; font-size: 13px; }
+  .compactStation span, .compactStation p { display: block; margin: 0; font-size: 10px; }
+  .compactStation p { margin-block-start: 3px; }
+  .machineTop > .stationObject { display: none; }
+  .belts { inset-inline: 0; }
+}
+
+@media (max-width: 540px) {
+  .machines { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }

@@ -27,6 +27,7 @@ export interface MachineryOutcomeVisual {
   name: string;
   probability: number;
   rendered_percent: number;
+  unfloored_percent?: number | null;
   art: MachinerySubjectArt;
 }
 

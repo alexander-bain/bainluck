@@ -20,12 +20,14 @@ nonisolated struct FeedRoundupRow: Decodable, Equatable, Sendable {
     let dateLabel: String?
     let probability: Double
     let renderedPercent: Int?
+    let unflooredPercent: Int?
     let runnerUpLabel: String?
     let deltaLabel: String?
     let swingLabel: String?
     let periodLabel: String?
     let secondaryProbability: Double?
     let secondaryRenderedPercent: Int?
+    let secondaryUnflooredPercent: Int?
     let primaryBarLabel: String?
     let secondaryBarLabel: String?
     let observedAt: String?
@@ -49,6 +51,8 @@ nonisolated struct FeedRoundupRow: Decodable, Equatable, Sendable {
         case probability
         case renderedPercent
         case renderedPercentSnake = "rendered_percent"
+        case unflooredPercent
+        case unflooredPercentSnake = "unfloored_percent"
         case runnerUpLabel
         case runnerUpLabelSnake = "runner_up_label"
         case deltaLabel
@@ -61,6 +65,8 @@ nonisolated struct FeedRoundupRow: Decodable, Equatable, Sendable {
         case secondaryProbabilitySnake = "secondary_probability"
         case secondaryRenderedPercent
         case secondaryRenderedPercentSnake = "secondary_rendered_percent"
+        case secondaryUnflooredPercent
+        case secondaryUnflooredPercentSnake = "secondary_unfloored_percent"
         case primaryBarLabel
         case primaryBarLabelSnake = "primary_bar_label"
         case secondaryBarLabel
@@ -82,12 +88,14 @@ nonisolated struct FeedRoundupRow: Decodable, Equatable, Sendable {
         dateLabel: String? = nil,
         probability: Double,
         renderedPercent: Int? = nil,
+        unflooredPercent: Int? = nil,
         runnerUpLabel: String? = nil,
         deltaLabel: String? = nil,
         swingLabel: String? = nil,
         periodLabel: String? = nil,
         secondaryProbability: Double? = nil,
         secondaryRenderedPercent: Int? = nil,
+        secondaryUnflooredPercent: Int? = nil,
         primaryBarLabel: String? = nil,
         secondaryBarLabel: String? = nil,
         observedAt: String? = nil,
@@ -103,12 +111,14 @@ nonisolated struct FeedRoundupRow: Decodable, Equatable, Sendable {
         self.dateLabel = dateLabel
         self.probability = probability
         self.renderedPercent = renderedPercent
+        self.unflooredPercent = unflooredPercent
         self.runnerUpLabel = runnerUpLabel
         self.deltaLabel = deltaLabel
         self.swingLabel = swingLabel
         self.periodLabel = periodLabel
         self.secondaryProbability = secondaryProbability
         self.secondaryRenderedPercent = secondaryRenderedPercent
+        self.secondaryUnflooredPercent = secondaryUnflooredPercent
         self.primaryBarLabel = primaryBarLabel
         self.secondaryBarLabel = secondaryBarLabel
         self.observedAt = observedAt
@@ -134,6 +144,8 @@ nonisolated struct FeedRoundupRow: Decodable, Equatable, Sendable {
         probability = try c.decode(Double.self, forKey: .probability)
         renderedPercent = (try? c.decodeIfPresent(Int.self, forKey: .renderedPercent))
             ?? (try? c.decodeIfPresent(Int.self, forKey: .renderedPercentSnake))
+        unflooredPercent = (try? c.decodeIfPresent(Int.self, forKey: .unflooredPercent))
+            ?? (try? c.decodeIfPresent(Int.self, forKey: .unflooredPercentSnake))
         runnerUpLabel = (try? c.decodeIfPresent(String.self, forKey: .runnerUpLabel))
             ?? (try? c.decodeIfPresent(String.self, forKey: .runnerUpLabelSnake))
         deltaLabel = (try? c.decodeIfPresent(String.self, forKey: .deltaLabel))
@@ -146,6 +158,8 @@ nonisolated struct FeedRoundupRow: Decodable, Equatable, Sendable {
             ?? (try? c.decodeIfPresent(Double.self, forKey: .secondaryProbabilitySnake))
         secondaryRenderedPercent = (try? c.decodeIfPresent(Int.self, forKey: .secondaryRenderedPercent))
             ?? (try? c.decodeIfPresent(Int.self, forKey: .secondaryRenderedPercentSnake))
+        secondaryUnflooredPercent = (try? c.decodeIfPresent(Int.self, forKey: .secondaryUnflooredPercent))
+            ?? (try? c.decodeIfPresent(Int.self, forKey: .secondaryUnflooredPercentSnake))
         primaryBarLabel = (try? c.decodeIfPresent(String.self, forKey: .primaryBarLabel))
             ?? (try? c.decodeIfPresent(String.self, forKey: .primaryBarLabelSnake))
         secondaryBarLabel = (try? c.decodeIfPresent(String.self, forKey: .secondaryBarLabel))
@@ -168,6 +182,9 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
     let presentation: String?
     let rows: [FeedRoundupRow]
     let machineryCard: MachineryCardContract?
+    let kitCard: KitCardEnvelope366B?
+    let kitCardSpec: KitV1CardSpec?
+    let hasUnknownLookFallback: Bool
     let pairedMetricSet: PairedMetricSet?
 
     private enum CodingKeys: String, CodingKey {
@@ -180,6 +197,10 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
         case countLineSnake = "count_line"
         case machineryCard
         case machineryCardSnake = "machinery_card"
+        case kitCard
+        case kitCardSnake = "kit_card"
+        case kitSpec
+        case kitSpecSnake = "kit_spec"
         case pairedMetricSet
         case pairedMetricSetSnake = "paired_metric_set"
     }
@@ -195,6 +216,9 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
         presentation: String? = nil,
         rows: [FeedRoundupRow],
         machineryCard: MachineryCardContract? = nil,
+        kitCard: KitCardEnvelope366B? = nil,
+        kitCardSpec: KitV1CardSpec? = nil,
+        hasUnknownLookFallback: Bool = false,
         pairedMetricSet: PairedMetricSet? = nil
     ) {
         self.kicker = kicker
@@ -207,6 +231,9 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
         self.presentation = presentation
         self.rows = rows
         self.machineryCard = machineryCard
+        self.kitCard = kitCard
+        self.kitCardSpec = kitCardSpec
+        self.hasUnknownLookFallback = hasUnknownLookFallback
         self.pairedMetricSet = pairedMetricSet
     }
 
@@ -226,8 +253,27 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
         order = try? c.decodeIfPresent(String.self, forKey: .order)
         presentation = try? c.decodeIfPresent(String.self, forKey: .presentation)
         rows = (try? c.decodeIfPresent([FeedRoundupRow].self, forKey: .rows)) ?? []
+        let hasMachineryPayload = (c.contains(.machineryCard) && ((try? c.decodeNil(forKey: .machineryCard)) == false))
+            || (c.contains(.machineryCardSnake) && ((try? c.decodeNil(forKey: .machineryCardSnake)) == false))
+        let hasKitPayload = (c.contains(.kitCard) && ((try? c.decodeNil(forKey: .kitCard)) == false))
+            || (c.contains(.kitCardSnake) && ((try? c.decodeNil(forKey: .kitCardSnake)) == false))
+            || (c.contains(.kitSpec) && ((try? c.decodeNil(forKey: .kitSpec)) == false))
+            || (c.contains(.kitSpecSnake) && ((try? c.decodeNil(forKey: .kitSpecSnake)) == false))
         machineryCard = (try? c.decodeIfPresent(MachineryCardContract.self, forKey: .machineryCard))
             ?? (try? c.decodeIfPresent(MachineryCardContract.self, forKey: .machineryCardSnake))
+        kitCard = (try? c.decodeIfPresent(KitCardEnvelope366B.self, forKey: .kitCard))
+            ?? (try? c.decodeIfPresent(KitCardEnvelope366B.self, forKey: .kitCardSnake))
+            ?? (try? c.decodeIfPresent(KitCardEnvelope366B.self, forKey: .kitSpec))
+            ?? (try? c.decodeIfPresent(KitCardEnvelope366B.self, forKey: .kitSpecSnake))
+        if KitCardStandInSwitch366B.isEnabled {
+            kitCardSpec = (try? c.decodeIfPresent(KitV1CardSpec.self, forKey: .kitCard))
+                ?? (try? c.decodeIfPresent(KitV1CardSpec.self, forKey: .kitCardSnake))
+                ?? (try? c.decodeIfPresent(KitV1CardSpec.self, forKey: .kitSpec))
+                ?? (try? c.decodeIfPresent(KitV1CardSpec.self, forKey: .kitSpecSnake))
+        } else {
+            kitCardSpec = nil
+        }
+        hasUnknownLookFallback = ((machineryCard == nil) && hasMachineryPayload) || ((kitCard == nil) && hasKitPayload)
         pairedMetricSet = (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSet))
             ?? (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSetSnake))
     }
@@ -323,15 +369,24 @@ nonisolated struct DiscoverRoundupCardModel: Equatable, Sendable {
         return "\(title). \(rowSpeech). \(footer)"
     }
 
+    static func fallbackFooter(for ref: FeedThemeCollectionRef) -> String {
+        ref.collectionCount > 1 ? "See all \(ref.collectionCount) in \(ref.name)" : "Open \(ref.name)"
+    }
+
     static func build(
         title: String?,
         contract: FeedRoundupContract?,
+        fallbackKicker: String? = nil,
+        fallbackFooter: String? = nil,
+        allowFlexibleRowCount: Bool = false,
         now: Date = Date()
     ) -> DiscoverRoundupCardModel? {
         guard let contract else { return nil }
         let headline = trimmed(title)
-        let kicker = trimmed(contract.kicker)
-        let footer = trimmed(contract.footer)
+        let rawKicker = trimmed(contract.kicker)
+        let kicker = rawKicker.isEmpty ? trimmed(fallbackKicker) : rawKicker
+        let rawFooter = trimmed(contract.footer)
+        let footer = rawFooter.isEmpty ? trimmed(fallbackFooter) : rawFooter
         guard !headline.isEmpty, !kicker.isEmpty, !footer.isEmpty else { return nil }
 
         let upperKicker = kicker.uppercased()
@@ -341,9 +396,9 @@ nonisolated struct DiscoverRoundupCardModel: Equatable, Sendable {
         let isCompleteGroup = contract.completeGroup == true
         let isStrip = trimmed(contract.presentation).lowercased() == "strip"
 
-        let minRows = (isTwoRowPair || isWeekEvents) ? 2 : 3
-        let maxRows = isTwoRowPair ? 2 : isWeekEvents ? 4 : isCompleteGroup ? 8 : 5
-        let served = contract.rows
+        let minRows = allowFlexibleRowCount ? 1 : ((isTwoRowPair || isWeekEvents) ? 2 : 3)
+        let maxRows = allowFlexibleRowCount ? 8 : (isTwoRowPair ? 2 : isWeekEvents ? 4 : isCompleteGroup ? 8 : 5)
+        let served = allowFlexibleRowCount ? Array(contract.rows.prefix(maxRows)) : contract.rows
         guard served.count >= minRows, served.count <= maxRows else { return nil }
 
         struct ValidatedRow {
@@ -453,10 +508,16 @@ nonisolated struct DiscoverRoundupCardModel: Equatable, Sendable {
         let cardCadence: SourceAge.Cadence = validated.contains(where: { $0.cadence == .live }) ? .live : .futures
 
         let builtRows: [DiscoverRoundupRowModel] = zip(validated.indices, validated).map { idx, item in
-            let parts = probabilityParts(probability: item.row.probability, renderedPercent: item.row.renderedPercent)
+            let parts = probabilityParts(
+                probability: item.row.probability,
+                renderedPercent: item.row.unflooredPercent ?? item.row.renderedPercent
+            )
             let secondary: DiscoverRoundupSecondaryBarModel? = {
                 guard let secProb = item.row.secondaryProbability else { return nil }
-                let secParts = probabilityParts(probability: secProb, renderedPercent: item.row.secondaryRenderedPercent)
+                let secParts = probabilityParts(
+                    probability: secProb,
+                    renderedPercent: item.row.secondaryUnflooredPercent ?? item.row.secondaryRenderedPercent
+                )
                 return DiscoverRoundupSecondaryBarModel(
                     marker: secParts.marker,
                     digits: secParts.digits,
@@ -507,6 +568,11 @@ nonisolated struct DiscoverRoundupCardModel: Equatable, Sendable {
             cadence: cardCadence,
             cardMarkObservedAt: allOld ? SourceAge.oldestStamp(stamps) : nil
         )
+    }
+
+    static func probabilityText(probability: Double, renderedPercent: Int?) -> String {
+        let parts = probabilityParts(probability: probability, renderedPercent: renderedPercent)
+        return "\(parts.marker ?? "")\(parts.digits)%"
     }
 
     static func probabilityParts(probability: Double, renderedPercent: Int?) -> (marker: String?, digits: String) {

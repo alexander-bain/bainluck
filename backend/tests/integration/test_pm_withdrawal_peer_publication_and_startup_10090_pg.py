@@ -263,30 +263,36 @@ async def default_preview_redis(monkeypatch, real_redis, consumer, rig):
             await conn.execute(text("SET LOCAL lock_timeout = '100ms'"))
             await conn.execute(text("SET LOCAL statement_timeout = '100ms'"))
             await tx.rollback()
+    from app.services.dnpl_operator_budget import (
+        OperatorAuthorityStore,
+        OperatorBudgets,
+    )
+
     store = AuthorityStore(rig.maker)
+    setup_store = OperatorAuthorityStore(rig.maker, OperatorBudgets(2000, 5000))
     server, repl = await client.info('server'), await client.info('replication')
-    old = await store.read()
+    old = await setup_store.read()
     candidate = preparing_candidate(
         old, namespace=uuid4(), operation_id=uuid4(), redis_run_id=server['run_id'],
         redis_master_replid=repl['master_replid'],
         policy_fingerprint=blend_preview.registry().policy.fingerprint,
     )
     try:
-        current = await store.prepare(old, candidate)
+        current = await setup_store.prepare(old, candidate)
     except AuthorityWriteUncertain:
         # #11939: run 41756300234 attempt 1 errored here in setup — the store's
         # 100ms server statement timeout on a loaded runner. Resolve it the way
         # the error says (exact primary readback, never a blind retry): if the
         # candidate landed, use it; if the old authority still stands, the write
         # never applied and preparing it again is a first write, not a retry.
-        found = await store.read()
+        found = await setup_store.read()
         if found == candidate:
             current = found
         elif found == old:
-            current = await store.prepare(old, candidate)
+            current = await setup_store.prepare(old, candidate)
         else:
             raise
-    controller = ActivationController(store, client)
+    controller = ActivationController(setup_store, client, command_budget_s=2.0)
     await controller.arm(current)
     await controller.initialize(current)
     await controller.ready(current)
@@ -1113,8 +1119,9 @@ async def test_publish_error_retains_owed_notification(
     assert (await state(rig)).source is None and not t.invalidations
     t.r._client = old
     t.p.ns["withdraw_buffer"].clear()
+    await t.r.withdrawal_debt.join_publications()
     await asyncio.sleep(
-        max(0, t.r.withdrawal_debt._publication_retry_at - time.monotonic()) + 0.01
+        max(0, t.r.withdrawal_debt._publication_retry_at - time.monotonic()) + 0.05
     )
     await flush(t)
     result = {

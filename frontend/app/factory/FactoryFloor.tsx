@@ -36,22 +36,24 @@ import CrewCard from "./CrewCard";
 import DailyPictures from "./DailyPictures";
 import { crewAction, crewPose, placeCrew, type FloorCrew } from "./crewMotion";
 import {
-  builders, holdAuthorName, nameableBuilders, useBuilderNames,
-  type FactoryNames, type NameableBuilder, type NamedBuilder,
+  builders, crewIdentities, holdAuthorName, useBuilderNames,
+  type CrewIdentity, type FactoryNames, type NamedBuilder,
 } from "./builderNames";
 import CrateJourney from "./CrateJourney";
 import ChecksQueue from "./ChecksQueue";
 import FactoryMascot, { MascotMove, mascotAction } from "./FactoryMascot";
 import InjurySign from "./InjurySign";
+import { explainedCheck, hasFailedCheck, lessonForFloor, testDefinition } from "./lesson";
 import { builderOfDay, clipboard, median } from "./signs";
 import { useDayReplay } from "./useDayReplay";
 import { useFactoryDisplay } from "./useFactoryDisplay";
 import type { FactoryDisplayReading } from "./displayReading";
+import type { GitHubActivity } from "./githubActivity";
 import { validateSnapshot } from "./data";
 import { useReplayJournal } from "./replayJournal";
 import { remainingEvents, transfersSince } from "./liveTransfers";
 import { crossesSegment, eventText, WALK_PER_STATION_MS, useEventPlayer } from "./playback";
-import { factoryTabTitle, floorVerdict, type FloorVerdict } from "./verdict";
+import { factoryTabTitle, floorReadingState, floorVerdict, releaseStallText, type FloorVerdict } from "./verdict";
 import {
   stations,
   stationNames,
@@ -59,16 +61,15 @@ import {
   workshopLight,
   time,
   duration,
-  readerBehind,
   stopText,
   stopWaitText,
   bayActivity,
   crewActivity,
-  machineText,
   beltFlowing,
   shownStops,
   knownOrigin,
   onActiveFloor,
+  recentLaneUpdate,
   recentlyActive,
 } from "./activity";
 
@@ -153,9 +154,6 @@ function notice(stop: Stop, now: string, names: FactoryNames) {
       <span aria-hidden="true">{stop.level === "red" ? "■" : "▲"}</span>{" "}
       {stopText(stop, now)}
       {stop.test && <code className={styles.stopOrigin}>{stop.test}</code>}
-      {stop.machines && (
-        <small className={styles.stopOrigin}>{machineText(stop.machines)}</small>
-      )}
       {stop.kind === "hold" && <HoldOrigin stop={stop} names={names} />}
     </p>
   );
@@ -163,12 +161,14 @@ function notice(stop: Stop, now: string, names: FactoryNames) {
 
 function StackLight({
   verdict,
+  releaseWarning,
   hold,
   names,
   now,
   children,
 }: {
   verdict: FloorVerdict;
+  releaseWarning?: string;
   hold?: Stop;
   names: FactoryNames;
   now: string;
@@ -178,7 +178,7 @@ function StackLight({
   return (
     <div
       className={styles.verdict}
-      data-verdict={verdict.level}
+      data-verdict={releaseWarning ? "amber" : verdict.level}
       data-level={hold && "red"}
       role="status"
     >
@@ -188,7 +188,7 @@ function StackLight({
         <i data-light="green" />
       </div>
       <div>
-        <strong>{verdict.text}</strong>
+        <strong data-release-stall={releaseWarning ? true : undefined}>{releaseWarning ?? verdict.text}</strong>
         {waited && <small className={styles.stopOrigin}>{waited}</small>}
         {hold && <HoldOrigin stop={hold} names={names} />}
       </div>
@@ -218,20 +218,21 @@ export default function FactoryFloor(initial: {
   readAt?: string;
   readFailed?: boolean;
   buildCommit?: string | null;
+  activity?: GitHubActivity;
   renderedAt: string;
 }) {
   usePageTracking({ pageType: "home", pageTitle: "The Factory" });
   useScrollDepth({ pageType: "home" });
   useEngagementTime({ pageType: "home" });
   const [refresh, setRefresh] = useState<{ initialAt: string; reading: FactoryDisplayReading }>();
-  const { data: snapshot, lastGoodAt, readAt, readFailed = false } =
+  const { data: snapshot, lastGoodAt, readAt, readFailed = false, activity } =
     refresh?.initialAt === initial.renderedAt ? refresh.reading : initial;
   const receiveReading = useCallback((reading: FactoryDisplayReading) => {
     setRefresh({ initialAt: initial.renderedAt, reading });
   }, [initial.renderedAt]);
   const [selectedCrate, selectCrate] = useState<string | null>(null);
   const [selectedGroup, selectGroup] = useState<CrateGroup | null>(null);
-  const [selectedCrew, selectCrew] = useState<NameableBuilder | null>(null);
+  const [selectedCrew, selectCrew] = useState<CrewIdentity | null>(null);
   const [followed, setFollowed] = useState<number[]>([]);
   const [speaker, setSpeaker] = useState<NamedBuilder>();
   const { names, ...nameEditor } = useBuilderNames();
@@ -256,18 +257,43 @@ export default function FactoryFloor(initial: {
   const { now, tabVisible, reducedMotion } = useFactoryDisplay(
     initial.renderedAt, initial.buildCommit ?? null, rememberFloor, receiveReading,
   );
-  const behind = data !== null && (readFailed || readerBehind(data, now));
+  const readingState = data && floorReadingState(data, readFailed, now, activity);
+  const behind = readingState !== null && readingState !== "current";
+  const pauseBays = readingState === "failed" || readingState === "last-known";
   const motion = !behind && tabVisible && reducedMotion === false;
-  const verdict = floorVerdict(data, readFailed, now);
+  const verdict = floorVerdict(data, readFailed, now, activity);
+  const releaseStall = data ? releaseStallText(data, now, activity) : undefined;
   const tabTitle = factoryTabTitle(verdict);
   const today = pacificDay(now);
   const light = workshopLight(now);
   const journal = useReplayJournal(data, today);
   const replay = useDayReplay(motion);
   const speech = data?.speech;
-  const speakers = useMemo(() => builders.filter(key => speech?.[key]), [speech]);
-  const currentSpeaker = speakers.find(key => key === speaker) ?? speakers[0];
-  const currentSpeech = currentSpeaker && speech?.[currentSpeaker];
+  const { laneUpdates, laneCheckIns, laneLines } = useMemo(() => {
+    const updates: NonNullable<FactoryData["lane_updates"]> = {};
+    const checkIns: NonNullable<FactoryData["crew_posts"]> = {};
+    const lines: Partial<Record<NamedBuilder, { text: string; source: "lane" | "check-in" }>> = {};
+    const lanesOnFloor = new Set(data?.changes.filter(onActiveFloor).map(change => change.builder));
+    for (const lane of builders) {
+      const post = data?.crew_posts?.[lane];
+      const checkIn = post && recentLaneUpdate(post.at, now) ? post : undefined;
+      const update = data?.lane_updates?.[lane];
+      if (checkIn) checkIns[lane] = checkIn;
+      if (update && recentLaneUpdate(update.at, now) &&
+          (!checkIn || Date.parse(update.at) >= Date.parse(checkIn.at))) {
+        updates[lane] = update;
+        if (!lanesOnFloor.has(lane)) lines[lane] = { text: update.text, source: "lane" };
+      } else if (checkIn && !lanesOnFloor.has(lane)) {
+        lines[lane] = { text: `Posted on NOW at ${time(checkIn.at)} PT.`, source: "check-in" };
+      }
+    }
+    return { laneUpdates: updates, laneCheckIns: checkIns, laneLines: lines };
+  }, [data, now]);
+  const speakers = useMemo(() => builders.filter(key => laneLines[key] || speech?.[key]), [laneLines, speech]);
+  const currentSpeaker = speakers.find(key => key === speaker) ??
+    speakers.find(key => laneLines[key]?.source === "lane") ??
+    speakers.find(key => laneLines[key]) ?? speakers[0];
+  const currentSpeech = currentSpeaker && (laneLines[currentSpeaker] ?? speech?.[currentSpeaker]);
   const firstTransferRead = useRef(data?.generated_at);
   firstTransferRead.current ??= data?.generated_at;
   const firstRead = firstTransferRead.current;
@@ -410,12 +436,22 @@ export default function FactoryFloor(initial: {
     (c) => c.station === "Live" && c.live_at && pacificDay(c.live_at) === today,
   );
   const lastRead = shownReadAt ?? data.generated_at;
+  const publishedAge = duration((Date.parse(now) - Date.parse(data.generated_at)) / 1000);
+  const readLabel = {
+    failed: "Not updating",
+    quiet: "Quiet floor",
+    waiting: "Waiting for a machine",
+    "last-known": "Last published floor",
+    current: shownReadAt ? `Read at ${time(shownReadAt)} PT` : "Read from GitHub",
+  }[readingState ?? "current"];
   const canRankDeliveries = !behind && pacificDay(data.generated_at) === today && data.coverage.length === 0;
   const dayLeader = canRankDeliveries ? builderOfDay(shipped) : null;
   const dayLeaders = dayLeader ? new Intl.ListFormat("en-US").format(
     builders.filter(key => dayLeader.builders.includes(key)).map(key => names[key]),
   ) : null;
   const onFloor = data.changes.filter(onActiveFloor);
+  const lesson = lessonForFloor(data, now);
+  const checkLesson = explainedCheck(data);
   const recordTime = behind ? data.generated_at : now;
   const clockedIn = new Set(
     data.changes
@@ -427,7 +463,6 @@ export default function FactoryFloor(initial: {
     const post = data.crew_posts?.[lane];
     if (post && recentlyActive(post.at, recordTime)) clockedIn.add(lane);
   }
-  const foremanPose = crewPose(data, "Fable", recordTime, []);
   const engineeringRecords = clipboard(recordTime, shipped, onFloor);
   const mergesToday = new Set(
     data.changes
@@ -463,7 +498,7 @@ export default function FactoryFloor(initial: {
       note: "Changes with no activity for three days.",
     },
   };
-  const stops = behind ? [] : shownStops(data);
+  const stops = !behind || readingState === "quiet" ? shownStops(data) : [];
   const holds = stops.filter((stop) => stop.kind === "hold");
   const waits = stops.filter((stop) => stop.kind !== "hold");
   const explained = new Set(stops.map((stop) => `${stop.line}/${stop.station}`));
@@ -473,6 +508,7 @@ export default function FactoryFloor(initial: {
     .map((alert) => alert.text))];
   const floorAlertCount = waits.length + otherAlerts.length;
   const serverHold = holds.find((stop) => stop.line === "Server");
+  const headlineRelease = holds.length === 0 ? releaseStall : undefined;
   const testFlightPost = data.signals.testflight_post;
   const notes =
     data.notes?.snapshot_at === data.generated_at ? data.notes : null;
@@ -534,8 +570,8 @@ export default function FactoryFloor(initial: {
     }
   }
 
-  function openCrewCard(id: NameableBuilder) {
-    if (id !== "Fable" && data?.speech?.[id]) setSpeaker(id);
+  function openCrewCard(id: CrewIdentity) {
+    if (id !== "Fable" && (laneLines[id] || speech?.[id])) setSpeaker(id);
     selectCrew(id);
   }
 
@@ -559,18 +595,20 @@ export default function FactoryFloor(initial: {
     );
   }
 
-  function crewCard(id: NameableBuilder, titleId?: string) {
-    const lane = visible.filter(change => change.builder === id);
-    const status = id === "Fable" ? foremanPose : crewPose(data!, id, recordTime, lane);
+  function crewCard(id: CrewIdentity, titleId?: string) {
+    const person = floorCrew.find(crew => crew.identity === id);
+    const status = person ?? crewPose(data!, id, recordTime, visible.filter(change => change.builder === id));
     return (
       <CrewCard
         key={id}
         identity={id}
         name={names[id]}
         pose={status.pose}
-        clockedIn={id === "Fable" ? foremanPose.pose === "working" : clockedIn.has(id)}
-        number={status.change?.number}
-        post={id === "Fable" ? undefined : data?.crew_posts?.[id]}
+        clockedIn={id === "Fable" ? status.pose === "working" : clockedIn.has(id)}
+        station={person?.position?.station}
+        change={status.change ?? undefined}
+        post={id === "Fable" ? undefined : laneCheckIns[id]}
+        update={id === "Fable" ? undefined : laneUpdates[id]}
         voice={id === "Fable" ? undefined : data?.speech?.[id]}
         habits={data?.crew_week?.builders[id]}
         now={recordTime}
@@ -620,7 +658,8 @@ export default function FactoryFloor(initial: {
       className={styles.factory}
       data-factory="true"
       data-workshop-light={light}
-      data-reader={behind ? "behind" : "current"}
+      data-reader={pauseBays ? "behind" : "current"}
+      data-reading-state={readingState}
       data-motion={motion ? "running" : "paused"}
     >
       <header className={styles.heading}>
@@ -634,9 +673,7 @@ export default function FactoryFloor(initial: {
         <div className={styles.updated}>
           <span className={styles.statusDot} aria-hidden="true" />
           <div>
-            <strong>
-              {behind ? "Not updating" : shownReadAt ? `Read at ${time(shownReadAt)} PT` : "Read from GitHub"}
-            </strong>
+            <strong>{readLabel}</strong>
             <span>
               {behind && "Published "}
               {new Intl.DateTimeFormat("en-US", {
@@ -652,10 +689,10 @@ export default function FactoryFloor(initial: {
       </header>
 
       <div className={styles.statusBand}>
-        <StackLight verdict={verdict} hold={holds[0]} names={names} now={now}>
+        <StackLight verdict={verdict} releaseWarning={headlineRelease} hold={holds[0]} names={names} now={now}>
           {!mascotMove && (
             <FactoryMascot
-              level={verdict.level}
+              level={headlineRelease ? "amber" : verdict.level}
               pose={clockedIn.size ? "standing" : "asleep"}
               moving={sceneVisible && clockedIn.size > 0 && verdict.level !== "red"}
             />
@@ -704,17 +741,25 @@ export default function FactoryFloor(initial: {
           </ol>
         </details>
       )}
-      {behind && (
+      {(readingState === "failed" || readFailed) && (
         <div className={styles.readerWarning} role="status">
           <Pause size={20} aria-hidden="true" />
           <p>
             Last read {time(lastRead)} PT,{" "}
             {duration((Date.parse(now) - Date.parse(lastRead)) / 1000)}{" "}
-            ago. Updates have stopped.
+            ago. {readingState === "failed" ? "Updates have stopped." : "The latest read failed."}
           </p>
         </div>
       )}
-
+      {readingState === "quiet" && (
+        <p className={styles.sectionNote}>Last published {publishedAge} ago. No changes landed and no shared tests finished since then.</p>
+      )}
+      {releaseStall && !headlineRelease && (
+        <div className={styles.readerWarning} role="status" data-release-stall>
+          <Truck size={20} aria-hidden="true" />
+          <p>{releaseStall}</p>
+        </div>
+      )}
       <section className={styles.floorCard} aria-labelledby="floor-heading">
         <div className={styles.sectionHeading}>
           <h2 id="floor-heading">The floor</h2>
@@ -766,15 +811,7 @@ export default function FactoryFloor(initial: {
             </div>
           </details>
         )}
-        <div className={styles.scrollHint}>
-          <ArrowRight size={14} /> Scroll across to follow the line
-        </div>
-        <div
-          className={styles.floorScroll}
-          tabIndex={0}
-          role="region"
-          aria-label="Factory floor, scroll horizontally to see all six stations"
-        >
+        <div className={styles.floorScroll} tabIndex={0} role="region" aria-label="Factory floor">
           <div className={styles.floorGrid}>
             <div className={styles.stationHeadings}>
               <span />
@@ -823,7 +860,7 @@ export default function FactoryFloor(initial: {
                       <LineIcon size={20} strokeWidth={1.6} />
                       <strong>{line}</strong>
                       {line === "Apps" && testFlightPost && Number.isFinite(Date.parse(testFlightPost.at)) && (
-                        <span className={styles.buildPlate}>
+                        <span className={styles.buildPlate} title="Reported from TestFlight and matched to a successful build on GitHub">
                           TestFlight build {testFlightPost.build}
                           <time dateTime={testFlightPost.at}>
                             Posted {pacificPostingTime.format(new Date(testFlightPost.at))} PT
@@ -870,7 +907,7 @@ export default function FactoryFloor(initial: {
                           j.station === station &&
                           (j.kind === "crowd" ? backup : j.line === line),
                       );
-                      const bayState = behind ? "Paused" :
+                      const bayState = pauseBays ? "Paused" :
                         station === "Ship" && changes.some(c => c.merge_announced_at) ? "Merge announced" :
                         bayAlert && !activity.stop ? "Needs attention" : activity.label;
                       return (
@@ -883,6 +920,19 @@ export default function FactoryFloor(initial: {
                           data-waiting={changes.length}
                           data-worker-state={workerState}
                         >
+                          <div className={styles.compactStation}>
+                            <Icon size={16} aria-hidden="true" />
+                            <div>
+                              <strong>{stationNames[station]}</strong>
+                              <span>{engineering[station]}</span>
+                              {lineIndex === 0 && station === "Review" && (
+                                <span>{nameEditor.custom.Fable?.trim() ? names.Fable : "Foreman"}</span>
+                              )}
+                              {lineIndex === 0 && notes?.stations[stationNames[station]] && (
+                                <p>{notes.stations[stationNames[station]]}</p>
+                              )}
+                            </div>
+                          </div>
                           {station === "Merge line" && line === "Server" && (
                             <div
                               className={styles.dockSign}
@@ -914,7 +964,7 @@ export default function FactoryFloor(initial: {
                                     ? "stopped"
                                     : bayAlert?.level === "amber"
                                       ? backup ? "crowded" : "caution"
-                                      : !behind && activity.flowing
+                                      : !pauseBays && activity.flowing
                                         ? "flowing"
                                         : "idle"
                                 }
@@ -1076,6 +1126,9 @@ export default function FactoryFloor(initial: {
                 {selected.check_progress && (
                   <p>{selected.check_progress.done} of {selected.check_progress.total} checks finished.</p>
                 )}
+                {hasFailedCheck(selected) && (
+                  <p>{testDefinition} A check flagged this change before it could go live.</p>
+                )}
                 {selected.approvals?.bot && <p>Bot approved.</p>}
                 {selected.approvals?.fable && <p>{names.Fable} cleared.</p>}
                 {selected.unsure && <p>Unsure. {selected.reasons.join(" ")}</p>}
@@ -1118,6 +1171,11 @@ export default function FactoryFloor(initial: {
         )}
       </section>
 
+      <aside className={styles.wordLesson} aria-label="Word of the day" data-factory-lesson>
+        <p><strong>Word of the day</strong> <dfn>{lesson.word}</dfn> {lesson.definition}</p>
+        <span>{lesson.count}</span>
+        {checkLesson && <p className={styles.checkLesson} data-check-lesson>{testDefinition} {checkLesson}</p>}
+      </aside>
       <div className={styles.records}>
         <div className={styles.shelfGroup}>
           <section className={styles.shelf} aria-label="Side shelves">
@@ -1211,7 +1269,7 @@ export default function FactoryFloor(initial: {
             )} PT. Busiest hours use recorded commits, deliveries and looks.</p>
           )}
           <div className={styles.builders}>
-            {nameableBuilders.map(id => crewCard(id))}
+            {crewIdentities.map(id => crewCard(id))}
           </div>
         </details>
 
@@ -1302,9 +1360,9 @@ export default function FactoryFloor(initial: {
       </div>
       <footer className={styles.notes}>
         <p>
-          The floor is re-read after CI finishes and when master changes, with a
-          five-minute timer as a backstop. This page refreshes once a minute
-          while visible. All times are Pacific.
+          GitHub re-reads the floor after shared tests finish and when the main
+          branch changes. Its timer can run between changes. This page checks for
+          a new floor once a minute while visible. All times are Pacific.
         </p>
         {data.coverage.map((note) => (
           <p key={note}>{note}</p>
@@ -1324,6 +1382,7 @@ export default function FactoryFloor(initial: {
             Jam times begin and end with observed updates. A quiet page can cross
             a waiting-time threshold between updates.
           </p>
+          <p>The TestFlight number comes from a build report matched to a successful build on the main branch.</p>
         </details>
       </footer>
     </article>

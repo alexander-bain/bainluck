@@ -1,4 +1,7 @@
 import Foundation
+#if DEBUG && canImport(Bain_Luck) && !BAINLUCK_WIDGET_EXTENSION
+@testable import Bain_Luck
+#endif
 
 /// Public display-only snapshot. Shared access requires the entitled App Group container.
 nonisolated struct WatchComplicationSnapshot: Codable, Sendable {
@@ -72,6 +75,121 @@ nonisolated struct WatchComplicationSnapshot: Codable, Sendable {
               reading.kind == .forecast, let home = reading.home,
               (1...2).contains(home.abbreviation.count) else { return nil }
         return reading
+    }
+
+    /// #13430 — Small Watch complication model (corner and circular), governed by
+    /// the exact honesty gate of `accessoryRectangular` and `LockScreenSmallSlotFit13430`.
+    /// A number that `accessoryRectangular` refuses is also refused here -> bookmark fallback.
+    func smallSlotModel(now: Date = Date()) -> LockScreenSmallSlotModel13430? {
+        guard let reading = validatedRectangularReading(now: now) else { return nil }
+        guard !WatchMatchupReading217.finalHasPassed(self, now: now) else { return nil }
+
+        func fallbackShort(_ name: String) -> String {
+            let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let parts = trimmed.split(whereSeparator: \.isWhitespace)
+            if parts.count > 1, let last = parts.last { return String(last) }
+            return trimmed
+        }
+
+        let homeAbbr = (reading.home?.isValid == true) ? reading.home!.abbreviation : fallbackShort(reading.homeName)
+        let awayAbbr = (reading.away?.isValid == true) ? reading.away!.abbreviation : fallbackShort(reading.awayName)
+        let gameRows = [
+            LockScreenSmallSlotRow13430(label: reading.awayName, shortLabel: awayAbbr),
+            LockScreenSmallSlotRow13430(label: reading.homeName, shortLabel: homeAbbr),
+        ]
+
+        switch reading.kind {
+        case .scheduledForecast, .liveForecast:
+            if reading.kind == .scheduledForecast, let start = reading.commenceTime, now >= start {
+                return nil
+            }
+            guard let homePct = reading.homePercent, (0...100).contains(homePct) else { return nil }
+            let out = WatchMatchupReading217.resolveOutcomePresentation(
+                homePercent: homePct,
+                homeName: reading.homeName,
+                awayName: reading.awayName,
+                homeAbbreviation: homeAbbr,
+                awayAbbreviation: awayAbbr,
+                isThreeWay: matchup?.isThreeWay == true,
+                drawPercent: matchup?.drawPercent,
+                awayPercent: matchup?.awayPercent
+            )
+            let pct = Int(out.bigText.dropLast()) ?? homePct
+            let fitted = LockScreenSmallSlotFit13430.ringValue(
+                phase: .current,
+                headlineExists: true,
+                figure: out.bigText,
+                verdict: nil,
+                rows: gameRows
+            )
+            return LockScreenSmallSlotModel13430(
+                subjectLabel: out.ownerAbbr,
+                cornerLabel: out.ownerAbbr,
+                value: fitted,
+                gaugeShare: Double(pct) / 100.0,
+                isGame: true,
+                accessibilityText: "\(out.ownerName) \(fitted). \(reading.stateLabel). Open your game in Bain Luck."
+            )
+        case .futureForecast:
+            guard let homePct = reading.homePercent,
+                  (1...99).contains(homePct),
+                  let pctText = reading.formattedHomePercent else { return nil }
+            let outcome = reading.awayName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !outcome.isEmpty else { return nil }
+            let fitted = LockScreenSmallSlotFit13430.ringValue(
+                phase: .current,
+                headlineExists: true,
+                figure: pctText,
+                verdict: nil,
+                rows: [LockScreenSmallSlotRow13430(label: outcome, shortLabel: outcome)]
+            )
+            let share: Double = reading.subOnePercent == true
+                ? 0.005
+                : (reading.aboveNinetyNinePercent == true ? 0.995 : Double(homePct) / 100.0)
+            return LockScreenSmallSlotModel13430(
+                subjectLabel: outcome,
+                cornerLabel: outcome,
+                value: fitted,
+                gaugeShare: share,
+                isGame: false,
+                accessibilityText: "\(reading.homeName). \(outcome) \(fitted). Open in Bain Luck."
+            )
+        case .finalResult:
+            guard now.timeIntervalSince(reading.observedAt) < WatchMatchupReading217.finalHoldSeconds,
+                  let hs = reading.homeScore, let ascore = reading.awayScore,
+                  hs >= 0, ascore >= 0 else { return nil }
+            let subject: String
+            let verdict: String
+            let speech: String
+            if hs > ascore {
+                subject = homeAbbr
+                verdict = "Won"
+                speech = "Final, \(reading.awayName) \(ascore), \(reading.homeName) \(hs). \(reading.homeName) won."
+            } else if ascore > hs {
+                subject = awayAbbr
+                verdict = "Won"
+                speech = "Final, \(reading.awayName) \(ascore), \(reading.homeName) \(hs). \(reading.awayName) won."
+            } else {
+                subject = "Draw"
+                verdict = "Draw"
+                speech = "Final draw, \(reading.awayName) \(ascore), \(reading.homeName) \(hs)."
+            }
+            let fitted = LockScreenSmallSlotFit13430.ringValue(
+                phase: .result,
+                headlineExists: true,
+                figure: nil,
+                verdict: verdict,
+                rows: gameRows
+            )
+            return LockScreenSmallSlotModel13430(
+                subjectLabel: subject,
+                cornerLabel: subject,
+                value: fitted,
+                gaugeShare: nil,
+                isGame: true,
+                accessibilityText: "\(speech) Open your game in Bain Luck."
+            )
+        }
     }
 
     func isValid(now: Date) -> Bool {

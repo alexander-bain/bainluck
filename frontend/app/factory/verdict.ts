@@ -5,8 +5,10 @@ import {
   readerBehind,
   shownStops,
   stationNames,
+  stopText,
   time,
 } from "./activity";
+import { MACHINE_WAIT_MS, type GitHubActivity } from "./githubActivity";
 import type { FactoryData, Line, Station, Stop } from "./types";
 
 type BayAlert = {
@@ -23,12 +25,65 @@ export type FloorVerdict = {
   bays: BayAlert[];
 };
 
+const ACTIVITY_GRACE_MS = 15 * 60_000;
+const MAX_ACTIVITY_AGE_MS = 10 * 60_000;
+const RELEASE_WAIT_MS = 60 * 60_000;
+
+function recentActivity(now: string, activity?: GitHubActivity) {
+  const age = Date.parse(now) - Date.parse(activity?.checkedAt ?? "");
+  return age >= 0 && age <= MAX_ACTIVITY_AGE_MS ? activity : undefined;
+}
+
+export function floorReadingState(
+  data: FactoryData,
+  readFailed: boolean,
+  now: string,
+  activity?: GitHubActivity,
+) {
+  const published = Date.parse(data.generated_at);
+  const clock = Date.parse(now);
+  const recent = recentActivity(now, activity);
+  const masterAt = Date.parse(recent?.masterAt ?? "");
+  const ciAt = recent?.ciAt === null ? -Infinity : Date.parse(recent?.ciAt ?? "");
+  const collectorAt = Date.parse(recent?.collector?.at ?? "");
+  if (clock - published > ACTIVITY_GRACE_MS &&
+      recent?.collector?.failed && collectorAt > published && collectorAt <= clock) return "failed";
+  const queuedAt = Date.parse(recent?.collectorQueuedAt ?? "");
+  if (clock - queuedAt > MACHINE_WAIT_MS) return "waiting";
+  if ([masterAt, ciAt].some(at => at > published + ACTIVITY_GRACE_MS && at <= clock)) return "failed";
+  if (readFailed) return "last-known";
+  if (!readerBehind(data, now)) return "current";
+  if (collectorAt <= clock && masterAt <= published && ciAt <= published)
+    return "quiet";
+  return "last-known";
+}
+
 function elapsed(now: string, since: string) {
   const seconds = (Date.parse(now) - Date.parse(since)) / 1000;
   const minutes = Math.floor(seconds / 60);
   return minutes > 0 && minutes < 60
     ? `${minutes} ${minutes === 1 ? "minute" : "minutes"}`
     : duration(seconds);
+}
+
+export function releaseStallText(data: FactoryData, now: string, activity?: GitHubActivity) {
+  const recent = recentActivity(now, activity);
+  const separateRead = recent?.oldestRunningCI !== undefined &&
+    Date.parse(recent.checkedAt) >= Date.parse(data.generated_at);
+  const through = separateRead ? recent.checkedAt : data.generated_at;
+  const start = separateRead ? recent.oldestRunningCI : data.signals.oldest_running_ci_at;
+  const since = Date.parse(start ?? "");
+  const age = Date.parse(through) - since;
+  const alreadyReleased = data.changes.some(change =>
+    change.line === "Server" && change.station === "Live" && Date.parse(change.live_at ?? "") > since);
+  const running = start && age >= 0 && !alreadyReleased ? elapsed(through, start) : undefined;
+  const waiting = new Set(data.changes.filter(change =>
+    change.station === "Ship" && change.merged_at && !change.live_at).map(change => change.number)).size;
+  if (waiting < 5 && !(running && age > RELEASE_WAIT_MS)) return;
+  const queue = `${waiting} merged ${waiting === 1 ? "change" : "changes"} waiting to go live`;
+  return running
+    ? `Releases are stuck with ${queue}, and the oldest shared check has run for ${running}.`
+    : `Releases are stuck with ${queue}.`;
 }
 
 function place(station: Station, line: Line | null) {
@@ -42,9 +97,7 @@ function stopReason(stop: Stop, now: string) {
     case "master":
       return `shared tests failed at ${time(stop.since)} PT`;
     case "line-stalled":
-      return stop.machines
-        ? `waiting for GitHub’s test machines with ${stop.machines.running} jobs running and ${stop.machines.waiting} waiting`
-        : `nothing has merged for ${elapsed(now, stop.since)}`;
+      return `${stop.number ? `#${stop.number} is` : "changes are"} waiting for a merge`;
     case "announced":
       return `${stop.number ? `#${stop.number} is` : "a change is"} still waiting after its announced merge`;
     case "review-waiting":
@@ -56,17 +109,29 @@ export function floorVerdict(
   data: FactoryData | null,
   readFailed: boolean,
   now: string,
+  activity?: GitHubActivity,
 ): FloorVerdict {
   if (!data) return { level: "amber", text: "The floor can't be read right now.", bays: [] };
-  if (readFailed || readerBehind(data, now)) {
+  const state = floorReadingState(data, readFailed, now, activity);
+  if (state === "failed") {
     return { level: "amber", text: "Not updating.", bays: [] };
   }
+  if (state === "waiting") {
+    return { level: "amber", text: "The next reading is waiting for a machine.", bays: [] };
+  }
+  if (state === "last-known") {
+    return { level: "amber", text: "Showing the last published floor.", bays: [] };
+  }
 
-  const bays: BayAlert[] = shownStops(data).map((stop) => ({
+  const through = state === "quiet" ? data.generated_at : now;
+  const stops = shownStops(data);
+  const bays: BayAlert[] = stops.map((stop) => ({
     line: stop.line,
     station: stop.station,
     level: stop.kind === "hold" ? "red" : "amber",
-    text: `${place(stop.station, stop.line)}: ${stopReason(stop, now)}.`,
+    text: stop.kind === "master" && stop.station === "Ship"
+      ? stopText(stop, through)
+      : `${place(stop.station, stop.line)}: ${stopReason(stop, through)}.`,
   }));
 
   function add(line: Line | null, station: Station, reason: string) {
@@ -80,14 +145,15 @@ export function floorVerdict(
 
   if (data.signals.tests === "unknown" || !data.signals.tests)
     add("Server", "Test", "the shared test result is missing");
-  if (data.signals.tests === "failing" && !bays.some((bay) => bay.station === "Test"))
+  if (data.signals.tests === "failing" && !stops.some((stop) => stop.kind === "master") &&
+      !bays.some((bay) => bay.station === "Test"))
     add("Server", "Test", "the shared tests failed");
   if (["failure", "cancelled", "timed_out", "error"].includes(data.signals.testflight))
     add("Apps", "Ship", "the TestFlight build stopped");
   if (data.signals.testflight === "unknown" || !data.signals.testflight)
     add("Apps", "Ship", "the TestFlight result is missing");
 
-  const clock = Date.parse(now);
+  const clock = Date.parse(through);
   const crowdedStations = new Set(
     data.jams
       .filter((jam) => jam.kind === "crowd" && !jam.ended_at && Date.parse(jam.qualifies_at) <= clock)
@@ -114,6 +180,9 @@ export function floorVerdict(
   }
 
   const first = bays.find((bay) => bay.level === "red") ?? bays[0];
+  if (state === "quiet") {
+    return { level: first?.level ?? "green", text: "The floor is quiet.", bays };
+  }
   if (first) return { level: first.level, text: first.text, bays };
   if (!Array.isArray(data.stops) || data.coverage.length) {
     return {

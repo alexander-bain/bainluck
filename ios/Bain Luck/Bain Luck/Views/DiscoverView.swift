@@ -158,6 +158,10 @@ struct DiscoverView: View {
     }
     @Environment(\.scenePhase) private var priceScenePhase
     @State private var priceViewVisible = false
+
+    private var shouldDeliverLivePrices: Bool {
+        priceViewVisible && priceScenePhase == .active && navigationPath.isEmpty
+    }
     @EnvironmentObject private var authManager: AuthManager
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @State private var visibleCount: Int
@@ -308,6 +312,8 @@ struct DiscoverView: View {
     @State private var profileVersion = 0
     @State private var orderingProfileVersion = 0
     @State private var pullEpoch = 0
+    @State private var firstRunPreferences = FirstRunPreferences212A.load()
+    @State private var firstRunPrefsVersion = 0
 
     /// How many times the reader's pull-to-refresh has actually run.
     ///
@@ -1147,6 +1153,34 @@ struct DiscoverView: View {
                                 navigationPath.append(Route.containerHub(slug: slug, name: name))
                             }
                         )
+                    } else if KitCardStandInSwitch366B.isEnabled,
+                              kind == "roundup",
+                              let roundupBundle = Self.resolveRoundupBundle(
+                                  title: title,
+                                  collectionRef: collectionRef,
+                                  groupItems: items,
+                                  feedItems: vm.items
+                              ),
+                              case .kit(let kitSpec) = KitCardStandInSwitch366B.resolveDiscoverStandIn(
+                                  contract: roundupBundle.roundupContract
+                              ),
+                              let kitView = KitCardView366B(
+                                  spec: kitSpec,
+                                  onRoute: { kitRoute in
+                                      if let primary = items.first {
+                                          recordInteraction(for: primary, action: .detailOpen, source: "card")
+                                      }
+                                      if let dest = KitCardStandInSwitch366B.resolveRoute(
+                                          kitRoute,
+                                          fallbackCollectionRef: roundupBundle.roundupCollectionRef ?? collectionRef,
+                                          fallbackTitle: roundupBundle.title,
+                                          kitCardHeadline: kitSpec.commonHeadline
+                                      ) {
+                                          navigationPath.append(dest)
+                                      }
+                                  }
+                              ) {
+                        kitView
                     } else if kind == "roundup",
                               let roundupBundle = Self.resolveRoundupBundle(
                                   title: title,
@@ -1181,7 +1215,10 @@ struct DiscoverView: View {
                               let roundupRef = roundupBundle.roundupCollectionRef,
                               let roundupModel = DiscoverRoundupCardModel.build(
                                   title: roundupBundle.title,
-                                  contract: roundupBundle.roundupContract
+                                  contract: roundupBundle.roundupContract,
+                                  fallbackKicker: (roundupBundle.roundupContract?.hasUnknownLookFallback == true || roundupBundle.roundupContract?.kitCard != nil) ? roundupRef.name : nil,
+                                  fallbackFooter: (roundupBundle.roundupContract?.hasUnknownLookFallback == true || roundupBundle.roundupContract?.kitCard != nil) ? DiscoverRoundupCardModel.fallbackFooter(for: roundupRef) : nil,
+                                  allowFlexibleRowCount: (roundupBundle.roundupContract?.hasUnknownLookFallback == true || roundupBundle.roundupContract?.kitCard != nil)
                               ) {
                         DiscoverRoundupCardView(
                             model: roundupModel,
@@ -1220,6 +1257,15 @@ struct DiscoverView: View {
                                 )
                             )
                     }
+                }
+                .contextMenu {
+                    discoverGroupCardMenu(
+                        title: title,
+                        items: items,
+                        kind: kind,
+                        theme: theme,
+                        collectionRef: collectionRef
+                    )
                 }
             case .single(let item):
                 if let pairedSet = item.pairedMetricSet, !pairedSet.entries.isEmpty {
@@ -1459,7 +1505,7 @@ struct DiscoverView: View {
                 }
             }
         }
-        .id(gi.id)
+        .modifier(ConditionalScrollAnchorModifier(anchorId: isGuessSlot ? gi.id : nil))
         .onDisappear { vm.setPriceCardsVisible(owner: gi.id, cards: [], visible: false) }
         .onChange(of: DiscoverPriceRefresh.leaves(gi.priceCards).map(\.id)) { _, _ in
             vm.updateVisiblePriceCards(owner: gi.id, cards: gi.priceCards)
@@ -1671,7 +1717,7 @@ struct DiscoverView: View {
     ///     grouping is split by. It changes only beside an `items` reassign, but
     ///     naming it keeps a record change from ever reusing a flat memo.
     private var presentationSignature: String {
-        "\(vm.itemsVersion)|\(dismissVersion)|\(orderingProfileVersion)|\(pullEpoch)|\(vm.acceptedSeatedEdition ?? "")"
+        "\(vm.itemsVersion)|\(dismissVersion)|\(orderingProfileVersion)|\(pullEpoch)|\(firstRunPrefsVersion)|\(vm.acceptedSeatedEdition ?? "")"
     }
 
     /// Cards already admitted in the current sitting since the last pull-to-refresh
@@ -1760,6 +1806,7 @@ struct DiscoverView: View {
             dismissVersion: dismissVersion,
             dismissedAt: dismissedAt,
             profile: orderingProfile ?? interactionProfile,
+            firstRunPreferences: firstRunPreferences,
             sectionOf: vm.seatedSection(of:)
         )
     }
@@ -1781,6 +1828,7 @@ struct DiscoverView: View {
         dismissVersion: Int,
         dismissedAt: [String: TimeInterval],
         profile: DiscoverInteractionProfile?,
+        firstRunPreferences: FirstRunPreferences212A = .empty,
         now: Date = Date(),
         sectionOf: (FeedItem) -> FeedSection? = { _ in nil }
     ) -> GroupedPresentation {
@@ -1945,6 +1993,29 @@ struct DiscoverView: View {
                 spaceGrouped(personalizeGrouped(Array(floored[boundary...]), profile: profile)),
                 now: now
             )
+            if !firstRunPreferences.isEmpty {
+                let matchesFirstRun: (DiscoverGroupedItem) -> Bool = { grouped in
+                    guard let item = primaryFeedItem(grouped) else { return false }
+                    return FirstRunDiscoverBoost212A.itemMatches(
+                        item,
+                        category: groupedCategoryStatic(grouped),
+                        preferences: firstRunPreferences
+                    )
+                }
+                let promotedFromOpening = openingItems.filter(matchesFirstRun)
+                let promotedFromCont = continuationItems.filter(matchesFirstRun)
+                let remainingOpening = openingItems.filter { !matchesFirstRun($0) }
+                let remainingCont = continuationItems.filter { !matchesFirstRun($0) }
+                let boostedOpening = promotedFromOpening + promotedFromCont + remainingOpening
+                return GroupedPresentation(
+                    items: boostedOpening + remainingCont,
+                    continuationStart: remainingCont.isEmpty ? nil : boostedOpening.count,
+                    admittedIds: admitted,
+                    pullEpoch: pullEpoch,
+                    dismissVersion: dismissVersion,
+                    sourceItemIds: allSourceIds
+                )
+            }
             return GroupedPresentation(
                 items: openingItems + continuationItems,
                 continuationStart: openingItems.count,
@@ -1955,7 +2026,7 @@ struct DiscoverView: View {
             )
         }
         var unused = 0
-        let fullItems = DiscoverPageTeamSeat11985.seatItems(
+        let baseFullItems = DiscoverPageTeamSeat11985.seatItems(
             spaceGrouped(
                 personalizeGrouped(
                     enforceGroupFloorTarget(
@@ -1968,6 +2039,19 @@ struct DiscoverView: View {
             ),
             now: now
         )
+        let fullItems: [DiscoverGroupedItem]
+        if firstRunPreferences.isEmpty {
+            fullItems = baseFullItems
+        } else {
+            fullItems = FirstRunDiscoverBoost212A.promotePreferredItems(baseFullItems, preferences: firstRunPreferences) { grouped, prefs in
+                guard let item = primaryFeedItem(grouped) else { return false }
+                return FirstRunDiscoverBoost212A.itemMatches(
+                    item,
+                    category: groupedCategoryStatic(grouped),
+                    preferences: prefs
+                )
+            }
+        }
         return GroupedPresentation(
             items: fullItems,
             continuationStart: nil,
@@ -2109,6 +2193,55 @@ struct DiscoverView: View {
         if let matchedByTitle = feedItems.first(where: { $0.bundle?.kind == "roundup" && $0.bundle?.title == title })?.bundle,
            matchedByTitle.admitsRoundupCard {
             return matchedByTitle
+        }
+        return nil
+    }
+
+    static func groupCollectionSlug(
+        title: String,
+        kind: String?,
+        theme: String?,
+        collectionRef: FeedThemeCollectionRef?,
+        groupItems: [FeedItem],
+        feedItems: [FeedItem]
+    ) -> String? {
+        if let slug = collectionRef?.slug.trimmingCharacters(in: .whitespacesAndNewlines), !slug.isEmpty {
+            return slug
+        }
+        if kind == "roundup",
+           let roundupBundle = resolveRoundupBundle(
+               title: title,
+               collectionRef: collectionRef,
+               groupItems: groupItems,
+               feedItems: feedItems
+           ) {
+            if let slug = roundupBundle.roundupContract?.machineryCard?.slug.trimmingCharacters(in: .whitespacesAndNewlines), !slug.isEmpty {
+                return slug
+            }
+            if let slug = roundupBundle.roundupCollectionRef?.slug.trimmingCharacters(in: .whitespacesAndNewlines), !slug.isEmpty {
+                return slug
+            }
+        }
+        if let groupBundle = resolveGroupBundle(
+            title: title,
+            kind: kind,
+            theme: theme,
+            collectionRef: collectionRef,
+            groupItems: groupItems,
+            feedItems: feedItems
+        ) {
+            if let slug = groupBundle.themeCollectionRef?.slug.trimmingCharacters(in: .whitespacesAndNewlines), !slug.isEmpty {
+                return slug
+            }
+            if let slug = groupBundle.roundupCollectionRef?.slug.trimmingCharacters(in: .whitespacesAndNewlines), !slug.isEmpty {
+                return slug
+            }
+            if let slug = groupBundle.roundupContract?.machineryCard?.slug.trimmingCharacters(in: .whitespacesAndNewlines), !slug.isEmpty {
+                return slug
+            }
+            if let setId = groupBundle.pairedMetricSet?.setId, setId.hasPrefix("oscars-") {
+                return "oscars-2027"
+            }
         }
         return nil
     }
@@ -2428,6 +2561,7 @@ struct DiscoverView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 60)
+                    .noteReviewPromptTrouble12304()
                 }
 
                 // Honest staleness banner (#1465): we are showing the last-good
@@ -2461,6 +2595,7 @@ struct DiscoverView: View {
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("Showing recent markets. Couldn't refresh.")
                     .accessibilityHint("Double-tap Retry to reload the latest feed")
+                    .noteReviewPromptTrouble12304()
                 }
 
                 // Swipe hint (shown once)
@@ -2551,40 +2686,44 @@ struct DiscoverView: View {
                 let blocks = Self.sectionBlocks(
                     cardCount: pageGrouped.count,
                     continuationStart: groupedPresentation.continuationStart)
-                ScrollViewReader { proxy in
-                    VStack(spacing: 0) {
-                        ForEach(blocks, id: \.range.lowerBound) { block in
-                            let range = block.range
-                            if block.isContinuation {
-                                continuationHeading(leads: range.lowerBound == 0)
-                            }
-                            HStack(alignment: .top, spacing: DiscoverMasonry.spacing) {
-                                ForEach(Array(DiscoverMasonry.columns(
-                                    cardCount: range.count, columnCount: columnCount
-                                ).enumerated()), id: \.offset) { _, indices in
-                                    LazyVStack(spacing: DiscoverMasonry.spacing) {
-                                        ForEach(indices.map { $0 + range.lowerBound }, id: \.self) { idx in
-                                            discoverCard(
-                                                idx: idx,
-                                                gi: pageGrouped[idx],
-                                                pageGrouped: pageGrouped,
-                                                totalCount: grouped.count,
-                                                proxy: proxy
-                                            )
-                                        }
-                                    }
-                                    .frame(maxWidth: .infinity)
+                VStack(spacing: 0) {
+                    ForEach(blocks, id: \.range.lowerBound) { block in
+                        let range = block.range
+                        if block.isContinuation {
+                            continuationHeading(leads: range.lowerBound == 0)
+                        }
+                        if columnCount <= 1 {
+                            LazyVStack(spacing: DiscoverMasonry.spacing) {
+                                ForEach(range, id: \.self) { idx in
+                                    discoverCard(
+                                        idx: idx,
+                                        gi: pageGrouped[idx],
+                                        pageGrouped: pageGrouped,
+                                        totalCount: grouped.count,
+                                        proxy: feedProxy
+                                    )
                                 }
+                            }
+                            .frame(maxWidth: .infinity)
+                        } else {
+                            LazyMasonryColumns(
+                                range: range,
+                                columnCount: columnCount,
+                                spacing: DiscoverMasonry.spacing,
+                                horizontalAlignment: .center,
+                                cardAlignment: .center
+                            ) { idx in
+                                discoverCard(
+                                    idx: idx,
+                                    gi: pageGrouped[idx],
+                                    pageGrouped: pageGrouped,
+                                    totalCount: grouped.count,
+                                    proxy: feedProxy
+                                )
                             }
                         }
                     }
                 }
-                // The card area's own width, which is what decides the column
-                // count. Read from a `.background` so it cannot influence the
-                // layout it measures, and taken BEFORE `.padding(.horizontal)`
-                // so it is the width the cards actually get. There is no
-                // feedback loop: this width comes from the enclosing column, not
-                // from the cards, so `columnCount` never changes it.
                 .background(
                     GeometryReader { geo in
                         Color.clear
@@ -2651,6 +2790,7 @@ struct DiscoverView: View {
                         .accessibilityElement(children: .combine)
                         .accessibilityLabel("Couldn't find fresh markets")
                         .accessibilityHint("Double-tap to retry")
+                        .noteReviewPromptTrouble12304()
                     } else if vm.hasMore {
                         VStack(spacing: 12) {
                             ProgressView()
@@ -2811,10 +2951,13 @@ struct DiscoverView: View {
             #endif
             AnalyticsService.trackScreen(name: "discover", type: "discover")
             priceViewVisible = true
-            vm.setPriceDeliveryActive(priceScenePhase == .active)
+            vm.setPriceDeliveryActive(shouldDeliverLivePrices)
         }
-        .onChange(of: priceScenePhase) { _, phase in
-            vm.setPriceDeliveryActive(priceViewVisible && phase == .active)
+        .onChange(of: priceScenePhase) { _, _ in
+            vm.setPriceDeliveryActive(shouldDeliverLivePrices)
+        }
+        .onChange(of: navigationPath.isEmpty) { _, _ in
+            vm.setPriceDeliveryActive(shouldDeliverLivePrices)
         }
         .task {
             if vm.items.isEmpty {
@@ -2906,8 +3049,17 @@ struct DiscoverView: View {
             await refreshFeed()
         }
         .sheet(isPresented: $showOnboarding) {
-            WelcomeView()
-                .onDisappear { UserDefaults.standard.set(true, forKey: "discover_onboarded") }
+            FirstRunChecklistRootView364A(arrivedHeadline: FirstRunLinkHandoffBridge212A.currentHeadline()) {
+                firstRunPreferences = FirstRunPreferences212A.load()
+                firstRunPrefsVersion &+= 1
+                pullEpoch &+= 1
+            }
+            .onDisappear {
+                UserDefaults.standard.set(true, forKey: FirstRunStorageKeys212A.onboardedKey)
+                firstRunPreferences = FirstRunPreferences212A.load()
+                firstRunPrefsVersion &+= 1
+                pullEpoch &+= 1
+            }
         }
         .sheet(isPresented: $showFeedbackSignIn) {
             MyStuffView()
@@ -3355,6 +3507,64 @@ struct DiscoverView: View {
     }
 
     @ViewBuilder
+    private func discoverGroupCardMenu(
+        title: String,
+        items: [FeedItem],
+        kind: String?,
+        theme: String?,
+        collectionRef: FeedThemeCollectionRef?
+    ) -> some View {
+        let lessLikeThisAction: () -> Void = {
+            guard case .signedIn = feedbackAuthState else {
+                inviteSignInForFeedback()
+                return
+            }
+            if let primary = items.first {
+                recordInteraction(for: primary, action: .unlike, source: "context_menu")
+            }
+            hideForSession(ids: Self.dismissKeys(forGroupOf: items))
+        }
+
+        if let setSlug = Self.groupCollectionSlug(
+            title: title,
+            kind: kind,
+            theme: theme,
+            collectionRef: collectionRef,
+            groupItems: items,
+            feedItems: vm.items
+        ) {
+            CollectionContextMenuItems(
+                slug: setSlug,
+                onCopyLink: {
+                    if let primary = items.first {
+                        recordInteraction(for: primary, action: .share, source: "copy_link")
+                    }
+                },
+                onShare: {
+                    if let primary = items.first {
+                        recordInteraction(for: primary, action: .share, source: ShareSurface.discoverCard.rawValue)
+                    } else {
+                        ShareInstrumentation.recordShareOpened(
+                            itemType: "collection",
+                            itemId: setSlug,
+                            itemName: title,
+                            category: nil,
+                            surface: .discoverCard
+                        )
+                    }
+                },
+                onLessLikeThis: lessLikeThisAction
+            )
+        } else {
+            Button {
+                lessLikeThisAction()
+            } label: {
+                Label("Less Like This", systemImage: "hand.thumbsdown")
+            }
+        }
+    }
+
+    @ViewBuilder
     private func discoverCardMenu(_ item: FeedItem) -> some View {
         CardContextMenu(
             item: item,
@@ -3362,6 +3572,9 @@ struct DiscoverView: View {
             showsShareSectionDivider: false,
             onCopyLink: { _ in
                 recordInteraction(for: item, action: .share, source: "copy_link")
+            },
+            onShare: { _ in
+                recordInteraction(for: item, action: .share, source: ShareSurface.discoverCard.rawValue)
             },
             onLessLikeThis: {
                 guard case .signedIn = feedbackAuthState else {
@@ -3566,14 +3779,20 @@ struct NativeGroupCard: View {
                 .padding(12)
                 .background(expandedTrayColor)
             } else {
-                ForEach(Array(items.prefix(DiscoverGroupRows.visibleCount(itemCount: items.count, expanded: expanded))), id: \.id) { item in
+                let visibleItems = Array(items.prefix(DiscoverGroupRows.visibleCount(itemCount: items.count, expanded: expanded)))
+                let renderableItems = visibleItems.filter { $0.futures != nil || $0.event != nil }
+                ForEach(renderableItems, id: \.id) { item in
                     if let data = item.futures {
                         compactRow(data)
                             .padding(.horizontal, 14)
                             .padding(.vertical, 12)
-                        if item.id != items.prefix(DiscoverGroupRows.visibleCount(itemCount: items.count, expanded: expanded)).last?.id {
-                            Divider().padding(.horizontal, 14)
-                        }
+                    } else if let event = item.event {
+                        compactEventRow(event)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 12)
+                    }
+                    if item.id != renderableItems.last?.id {
+                        Divider().padding(.horizontal, 14)
                     }
                 }
             }
@@ -3750,6 +3969,72 @@ struct NativeGroupCard: View {
         .accessibilityElement(children: hasMark ? .contain : .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier(NativeCompactFuturesRow.rowIdentifier)
+    }
+
+    private func compactEventRow(_ event: FeedEventData) -> some View {
+        let short = TeamShortName.shortPair(
+            away: event.awayTeam,
+            home: event.homeTeam,
+            awayServed: event.awayTeamData?.abbreviation,
+            homeServed: event.homeTeamData?.abbreviation,
+            sportKey: event.sport
+        )
+        let cardOdds = CompactGameCard12616.currentOddsForCard(event)
+        let isLive = event.status == "live"
+        let subtitle: String = {
+            if isLive, let awayScore = event.awayScore, let homeScore = event.homeScore {
+                return "Live · \(awayScore)–\(homeScore)"
+            }
+            return event.sportName ?? sportDisplayName(for: event.sport)
+        }()
+        let isAX = dynamicTypeSize.isAccessibilitySize
+        return VStack(alignment: .leading, spacing: 4) {
+            if let awayProb = cardOdds?.awayProbability, let homeProb = cardOdds?.homeProbability {
+                let awayText = formatProbability(awayProb, renderedPercent: cardOdds?.awayRenderedPercent)
+                let homeText = formatProbability(homeProb, renderedPercent: cardOdds?.homeRenderedPercent)
+                if isAX {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(short.away)\u{00A0}\(awayText)")
+                            .font(.subheadline.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(primaryInk)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("\(short.home)\u{00A0}\(homeText)")
+                            .font(.subheadline.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(primaryInk)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } else {
+                    Text("\(short.away)\u{00A0}\(awayText) · \(short.home)\u{00A0}\(homeText)")
+                        .font(.subheadline.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(primaryInk)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                Text("\(short.away) at \(short.home)")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(primaryInk)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(secondaryInk)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if let collectionRef {
+                openContainer(collectionRef)
+            } else {
+                navigationPath.append(Route.eventDetail(id: event.id))
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
     }
 
     @ViewBuilder
@@ -4757,6 +5042,19 @@ struct MovementBadge: View {
             .padding(.vertical, 2)
             .background((up ? Color.green : Color.red).opacity(0.15))
             .clipShape(Capsule())
+        }
+    }
+}
+
+private struct ConditionalScrollAnchorModifier: ViewModifier {
+    let anchorId: String?
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if let anchorId {
+            content.id(anchorId)
+        } else {
+            content
         }
     }
 }

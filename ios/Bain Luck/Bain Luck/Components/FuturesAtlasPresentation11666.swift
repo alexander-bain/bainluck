@@ -975,10 +975,12 @@ struct FuturesAtlasPageView11666: View {
     var referenceNow: Date? = nil
 
     @State private var selectedOutcomeId: Int? = nil
+    @State private var loadedTimelineOutcomes: [TimelineOutcomeMeta]? = nil
     @State private var showDetailsSheet = false
     @State private var showFullFieldSheet = false
 
     var body: some View {
+        let effectiveTimelineOutcomes = preloadedTimeline?.outcomes ?? loadedTimelineOutcomes
         let presentation = FuturesAtlasPresentation11666.build(
             market: market,
             selectedOutcomeId: selectedOutcomeId,
@@ -997,11 +999,17 @@ struct FuturesAtlasPageView11666: View {
                 headlineRows: headlineRows,
                 allFieldLabel: allFieldLabel,
                 isNumericallyOrdered: presentation.body.shape.isNumericallyOrdered,
-                timelineOutcomes: preloadedTimeline?.outcomes,
+                timelineOutcomes: effectiveTimelineOutcomes,
                 onOpenDetails: { showDetailsSheet = true },
                 onOpenFullField: { showFullFieldSheet = true }
             )
             .contextualTipHero10876(type: "future", id: marketId, scrollSpace: FuturesDetailView.scrollSpace)
+
+            if market.outcomePricesAreIndependent == true {
+                Text("Each row is its own market.")
+                    .font(.subheadline)
+                    .foregroundStyle(DS.textSecondary)
+            }
 
             if let pairedSet = pairedMetricSet, !pairedSet.entries.isEmpty {
                 DiscoverPairedMetricCardView(
@@ -1044,7 +1052,10 @@ struct FuturesAtlasPageView11666: View {
                     allFieldButtonLabel: allFieldLabel,
                     onOpenAllField: allFieldLabel != nil ? { showFullFieldSheet = true } : nil,
                     preloadedTimeline: preloadedTimeline,
-                    referenceNow: referenceNow
+                    referenceNow: referenceNow,
+                    onTimelineOutcomesLoaded: { outcomes in
+                        loadedTimelineOutcomes = outcomes
+                    }
                 )
             }
 
@@ -1069,6 +1080,9 @@ struct FuturesAtlasPageView11666: View {
         }
         .padding(.horizontal, 16)
         .padding(.top, 10)
+        .onChange(of: marketId) { _, _ in
+            loadedTimelineOutcomes = nil
+        }
         .sheet(isPresented: $showDetailsSheet) {
             FuturesAtlasDetailsSheetView11666(details: presentation.detailsSheet)
         }
@@ -1123,12 +1137,44 @@ struct FuturesAtlasHeadlineCard192A: View {
         )
     }
 
-    private func badgeInitials(for name: String) -> String {
-        let core = name
-            .components(separatedBy: " · ").first?
-            .components(separatedBy: " — ").first?
-            .trimmingCharacters(in: .whitespacesAndNewlines) ?? name
-        return TeamShortName.abbreviation(core)
+    nonisolated static func matchingTimelineOutcome(
+        for name: String,
+        outcomeId: Int? = nil,
+        in timelineOutcomes: [TimelineOutcomeMeta]?
+    ) -> TimelineOutcomeMeta? {
+        guard let timelineOutcomes else { return nil }
+        if let outcomeId, let byId = timelineOutcomes.first(where: { $0.id == outcomeId }) {
+            return byId
+        }
+        return timelineOutcomes.first(where: { $0.name == name })
+    }
+
+    /// Prefer the server-served short code (`CAR`, `COL`, `FLA`, `MIL`, `SD`)
+    /// from `/probability-timeline` outcomes when present, refusing result words
+    /// and falling back to `TeamShortName.futuresBadgeInitials` when absent.
+    nonisolated static func resolvedBadgeInitials(
+        for name: String,
+        outcomeId: Int? = nil,
+        sportKey: String? = nil,
+        timelineOutcomes: [TimelineOutcomeMeta]?
+    ) -> String {
+        if let served = matchingTimelineOutcome(for: name, outcomeId: outcomeId, in: timelineOutcomes)?
+            .abbreviation?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !served.isEmpty
+        {
+            return TeamShortName.refusingResultWord(served, name: name, sportKey: sportKey)
+        }
+        return TeamShortName.futuresBadgeInitials(name)
+    }
+
+    private func badgeInitials(for name: String, outcomeId: Int? = nil) -> String {
+        Self.resolvedBadgeInitials(
+            for: name,
+            outcomeId: outcomeId,
+            sportKey: market.sport,
+            timelineOutcomes: timelineOutcomes
+        )
     }
 
     var body: some View {
@@ -1137,7 +1183,9 @@ struct FuturesAtlasHeadlineCard192A: View {
                 Text(cleanEyebrow)
                     .font(.caption.weight(.medium))
                     .foregroundStyle(DS.textSecondary)
-                    .lineLimit(1)
+                    .lineLimit(nil)
+                    .multilineTextAlignment(.leading)
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Spacer(minLength: 4)
 
@@ -1226,12 +1274,24 @@ struct FuturesAtlasHeadlineCard192A: View {
         index: Int
     ) -> some View {
         let color = contenderColor(for: row, index: index)
-        let logoURL = timelineOutcomes?.first(where: { $0.name == row.name })?.logoSmall
+        let timelineMeta = Self.matchingTimelineOutcome(
+            for: row.name,
+            outcomeId: row.id,
+            in: timelineOutcomes
+        )
+        let logoURL = timelineMeta?.logoSmall
+        let servedAbbreviation = timelineMeta?.abbreviation
 
         if dynamicTypeSize.isAccessibilitySize {
             VStack(alignment: .leading, spacing: 4) {
                 HStack(spacing: 8) {
-                    contenderMark(name: row.name, logoURL: logoURL, color: color)
+                    contenderMark(
+                        name: row.name,
+                        outcomeId: row.id,
+                        logoURL: logoURL,
+                        servedAbbreviation: servedAbbreviation,
+                        color: color
+                    )
                     Text(row.name)
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(DS.textPrimary)
@@ -1246,7 +1306,13 @@ struct FuturesAtlasHeadlineCard192A: View {
             .padding(.vertical, 2)
         } else {
             HStack(spacing: 8) {
-                contenderMark(name: row.name, logoURL: logoURL, color: color)
+                contenderMark(
+                    name: row.name,
+                    outcomeId: row.id,
+                    logoURL: logoURL,
+                    servedAbbreviation: servedAbbreviation,
+                    color: color
+                )
                 Text(row.name)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(DS.textPrimary)
@@ -1261,13 +1327,21 @@ struct FuturesAtlasHeadlineCard192A: View {
     }
 
     @ViewBuilder
-    private func contenderMark(name: String, logoURL: String?, color: Color) -> some View {
+    private func contenderMark(
+        name: String,
+        outcomeId: Int,
+        logoURL: String?,
+        servedAbbreviation: String?,
+        color: Color
+    ) -> some View {
         if let logoURL, !logoURL.isEmpty {
             TeamLogoView(
                 url: logoURL,
                 teamName: name,
                 color: color,
-                size: 22
+                size: 22,
+                sportKey: market.sport,
+                abbreviation: servedAbbreviation
             )
         } else if isNumericallyOrdered {
             Circle()
@@ -1275,9 +1349,11 @@ struct FuturesAtlasHeadlineCard192A: View {
                 .frame(width: 10, height: 10)
                 .frame(width: 16, height: 22)
         } else {
-            Text(badgeInitials(for: name))
+            Text(badgeInitials(for: name, outcomeId: outcomeId))
                 .font(.system(size: 8.5, weight: .bold))
                 .foregroundStyle(Color.white)
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
                 .frame(width: 22, height: 22)
                 .background(Circle().fill(color))
         }

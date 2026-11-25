@@ -28,6 +28,9 @@ struct ContainerHubView: View {
     let displayName: String
     @StateObject private var vm: ContainerHubViewModel
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.dismiss) private var dismiss
 
     private var hubSurface: Color { ContainerHubThemeTokens.surface(colorScheme) }
     private var hubCardBg: Color { ContainerHubThemeTokens.cardBg(colorScheme) }
@@ -49,7 +52,7 @@ struct ContainerHubView: View {
             case .loaded(let presentation):
                 hub(presentation)
             case .unavailable:
-                status("This collection isn't available right now.", retry: false)
+                status("We couldn’t find this collection, or it isn’t available right now.", retry: false)
             case .error(let message):
                 status(message, retry: true)
             }
@@ -59,6 +62,22 @@ struct ContainerHubView: View {
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
         #endif
+        .toolbar {
+            if isPubliclyShareable {
+                ToolbarItem(placement: .confirmationAction) {
+                    ShareLink(
+                        item: shareURL,
+                        subject: Text(effectiveShareTitle)
+                    ) {
+                        Image(systemName: "square.and.arrow.up")
+                            .font(.system(size: 14))
+                    }
+                    .accessibilityLabel("Share")
+                    .accessibilityIdentifier("hub.shareButton")
+                    .recordsShareOpened { recordShareOpened() }
+                }
+            }
+        }
         .task {
             // Returning revalidates publication/lifecycle while retaining the
             // existing view model and anchor. No new hub or loading skeleton.
@@ -67,27 +86,119 @@ struct ContainerHubView: View {
         }
     }
 
-    private var effectiveNavigationTitle: String {
-        if GroupingMachineryGate12288.isMachineryCandidateSlug(vm.slug), displayName.count > 28 {
+    static func shareLinkURL(slug: String) -> URL {
+        URL(string: collectionShareURL(slug)) ?? bainLuckFallbackURL
+    }
+
+    private var shareURL: URL {
+        Self.shareLinkURL(slug: vm.slug)
+    }
+
+    private var effectiveShareTitle: String {
+        if case .loaded(let presentation) = vm.state,
+           let title = presentation.title?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !title.isEmpty {
+            return title
+        }
+        let trimmed = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Bain Luck" : trimmed
+    }
+
+    private func recordShareOpened() {
+        ShareInstrumentation.recordShareOpened(
+            itemType: "collection",
+            itemId: vm.slug,
+            itemName: effectiveShareTitle,
+            category: nil,
+            surface: .collectionDetail
+        )
+    }
+
+    private var isPubliclyShareable: Bool {
+        guard case .loaded(let presentation) = vm.state,
+              presentation.response.state == .published else {
+            return false
+        }
+        return true
+    }
+
+    static func resolvedNavigationTitle(displayName: String, slug: String, loadedTitle: String?) -> String {
+        if let loaded = loadedTitle?.trimmingCharacters(in: .whitespacesAndNewlines), !loaded.isEmpty {
+            if loaded.count > 24 || (GroupingMachineryGate12288.isMachineryCandidateSlug(slug) && loaded.count > 28) {
+                return ""
+            }
+            return loaded
+        }
+        let trimmed = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty || trimmed == "Collection" {
             return ""
         }
-        return displayName
+        if GroupingMachineryGate12288.isMachineryCandidateSlug(slug), trimmed.count > 28 {
+            return ""
+        }
+        return trimmed
+    }
+
+    private var effectiveNavigationTitle: String {
+        let loadedTitle: String?
+        if case .loaded(let presentation) = vm.state {
+            loadedTitle = presentation.title
+        } else {
+            loadedTitle = nil
+        }
+        return Self.resolvedNavigationTitle(displayName: displayName, slug: vm.slug, loadedTitle: loadedTitle)
     }
 
     private func hub(_ presentation: ContainerHubPresentation) -> some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 16) {
-                if let title = presentation.title {
-                    Text(title)
-                        .font(.title2.weight(.bold))
-                        .foregroundStyle(hubTextPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
-                }
-                if let subtitle = presentation.subtitle {
-                    Text(subtitle)
+        let setName = presentation.title ?? displayName
+        let alertsContextId = "set-hub:\(vm.slug)"
+        let followSubject = FollowedSubject295A.set(
+            slug: vm.slug,
+            setKind: .container,
+            name: setName
+        )
+        return GeometryReader { proxy in
+            let innerWidth = ContainerHubGridLayout13417.innerContentWidth(
+                containerWidth: proxy.size.width
+            )
+            let hubColumnCount = ContainerHubGridLayout13417.columnCount(
+                horizontalSizeClass: horizontalSizeClass,
+                dynamicTypeSize: dynamicTypeSize,
+                availableWidth: innerWidth
+            )
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 16) {
+                    ViewThatFits(in: .horizontal) {
+                        HStack(alignment: .center, spacing: 12) {
+                            if let title = presentation.title {
+                                Text(title)
+                                    .font(.title2.weight(.bold))
+                                    .foregroundStyle(hubTextPrimary)
+                                    .lineLimit(1)
+                                    .fixedSize(horizontal: true, vertical: true)
+                            }
+                            Spacer(minLength: 8)
+                            FollowButton295A(subject: followSubject, pageContextId: alertsContextId)
+                        }
+
+                        VStack(alignment: .leading, spacing: 10) {
+                            if let title = presentation.title {
+                                Text(title)
+                                    .font(.title2.weight(.bold))
+                                    .foregroundStyle(hubTextPrimary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            FollowButton295A(subject: followSubject, pageContextId: alertsContextId)
+                        }
+                    }
+
+                    GameAlertsInlinePageSlot295A(contextId: alertsContextId)
+                    if let reasonLine = presentation.headerReasonLine {
+                        Text(reasonLine)
                         .font(.subheadline)
                         .foregroundStyle(hubTextSecondary)
                         .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("hub.reasonLine")
                 }
                 if let note = presentation.note {
                     Text(note)
@@ -99,10 +210,6 @@ struct ContainerHubView: View {
                     Button("Retry unavailable markets") { Task { await vm.load() } }
                         .disabled(vm.isRefreshing)
                 }
-                if let counts = presentation.countLabel {
-                    Text(counts).font(.subheadline).foregroundStyle(hubTextSecondary)
-                        .accessibilityIdentifier("hub.loadedCount")
-                }
                 if vm.refreshError != nil {
                     Text("Couldn’t refresh. Showing the last loaded collection.")
                         .font(.subheadline).foregroundStyle(hubTextSecondary)
@@ -111,7 +218,7 @@ struct ContainerHubView: View {
                         Task { await vm.load() }
                     }
                 }
-                ForEach(presentation.children) { child in
+                cardColumns(presentation.children, columnCount: hubColumnCount) { child in
                     NavigationLink(value: Route.containerHub(slug: child.slug, name: child.name)) {
                         HStack {
                             Text(child.name).font(.headline)
@@ -123,6 +230,20 @@ struct ContainerHubView: View {
                         .background(hubCardBg, in: RoundedRectangle(cornerRadius: 12))
                     }
                     .buttonStyle(.plain)
+                    .contextMenu {
+                        CollectionContextMenuItems(
+                            slug: child.slug,
+                            onShare: {
+                                ShareInstrumentation.recordShareOpened(
+                                    itemType: "collection",
+                                    itemId: child.slug,
+                                    itemName: child.name,
+                                    category: nil,
+                                    surface: .discoverCard
+                                )
+                            }
+                        )
+                    }
                     .simultaneousGesture(TapGesture().onEnded {
                         AnalyticsService.trackCollectionHubAction(slug: vm.slug, actionKind: "open_child_collection", itemType: "collection")
                     })
@@ -141,7 +262,7 @@ struct ContainerHubView: View {
                             }
                             .padding(.top, 4)
                         }
-                        ForEach(vm.pairedMetricSets) { pairedSet in
+                        cardColumns(vm.pairedMetricSets, columnCount: hubColumnCount, spacing: 14) { pairedSet in
                             DiscoverPairedMetricCardView(
                                 set: pairedSet,
                                 form: .pairedBarsTop5Expandable,
@@ -161,7 +282,8 @@ struct ContainerHubView: View {
                         Section {
                             MachinerySectionBlockView(
                                 visualBlock: visualBlock,
-                                members: section.members
+                                members: section.members,
+                                columnCount: hubColumnCount
                             )
                         } header: {
                             VStack(alignment: .leading, spacing: 3) {
@@ -185,7 +307,7 @@ struct ContainerHubView: View {
                             : section.members.filter { !($0.type == "market" && coveredIds.contains($0.memberId)) }
                         if !visibleMembers.isEmpty {
                             Section {
-                                ForEach(visibleMembers) { member in
+                                cardColumns(visibleMembers, columnCount: hubColumnCount) { member in
                                     memberCard(member, presentation: presentation)
                                         .id(member.id)
                                 }
@@ -199,8 +321,16 @@ struct ContainerHubView: View {
                         }
                     }
                 }
+                if let pagerCount = presentation.pagerCountLabel {
+                    Text(pagerCount)
+                        .font(.subheadline)
+                        .foregroundStyle(hubTextSecondary)
+                        .frame(maxWidth: .infinity, alignment: .center)
+                        .accessibilityIdentifier("hub.loadedCount")
+                }
                 if vm.pageError != nil {
                     Text("Couldn’t load more markets. Try again.").font(.subheadline).foregroundStyle(hubTextSecondary)
+                        .noteReviewPromptTrouble12304()
                 }
                 if presentation.response.state == .published, presentation.response.page?.nextCursor != nil {
                     Button {
@@ -218,12 +348,39 @@ struct ContainerHubView: View {
                 }
             }
             .scrollTargetLayout()
-            .padding(18)
-            .frame(maxWidth: 900, alignment: .leading)
+            .padding(ContainerHubGridLayout13417.contentHorizontalPadding)
+            .frame(maxWidth: ContainerHubGridLayout13417.maxContentWidth, alignment: .leading)
             .frame(maxWidth: .infinity)
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
+            .scrollPosition(id: Binding(get: { vm.context.scrollMemberId }, set: { vm.scrolled(to: $0) }), anchor: .top)
+            .refreshable { await vm.load() }
         }
-        .scrollPosition(id: Binding(get: { vm.context.scrollMemberId }, set: { vm.scrolled(to: $0) }), anchor: .top)
-        .refreshable { await vm.load() }
+    }
+
+    @ViewBuilder
+    private func cardColumns<Item: Identifiable, Card: View>(
+        _ items: [Item],
+        columnCount: Int,
+        spacing: CGFloat = ContainerHubGridLayout13417.spacing,
+        @ViewBuilder card: @escaping (Item) -> Card
+    ) -> some View {
+        if columnCount <= 1 || items.isEmpty {
+            ForEach(items) { item in
+                card(item)
+            }
+        } else {
+            LazyMasonryColumns(
+                range: 0..<items.count,
+                columnCount: columnCount,
+                spacing: spacing,
+                horizontalAlignment: .leading,
+                cardAlignment: .leading
+            ) { idx in
+                card(items[idx])
+            }
+            .scrollTargetLayout()
+        }
     }
 
     @ViewBuilder
@@ -335,12 +492,16 @@ struct ContainerHubView: View {
         VStack(spacing: 16) {
             Text(message).font(.subheadline).foregroundStyle(hubTextSecondary)
                 .multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
             if retry {
                 Button("Try Again") { Task { await vm.load() } }.buttonStyle(.borderedProminent)
+            } else {
+                Button("Back to Discover") { dismiss() }.buttonStyle(.borderedProminent)
             }
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .noteReviewPromptTrouble12304(when: retry)
     }
 }
 
@@ -363,6 +524,20 @@ struct ContainerHubCollectionLink: View {
                 .background(ContainerHubThemeTokens.cardBg(colorScheme), in: RoundedRectangle(cornerRadius: 12))
             }
             .buttonStyle(.plain)
+            .contextMenu {
+                CollectionContextMenuItems(
+                    slug: collection.slug,
+                    onShare: {
+                        ShareInstrumentation.recordShareOpened(
+                            itemType: "collection",
+                            itemId: collection.slug,
+                            itemName: collection.name,
+                            category: nil,
+                            surface: .discoverCard
+                        )
+                    }
+                )
+            }
         }
     }
 }
