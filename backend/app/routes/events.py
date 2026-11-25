@@ -1,6 +1,5 @@
 """Events API endpoints."""
 
-import asyncio
 import contextvars
 import json
 import logging
@@ -32056,7 +32055,6 @@ async def get_team_progression(
     return _response
 
 
-_ORIG_GET_GAME_MARKETS = get_game_markets
 _ORIG_GET_RELATED_FUTURES = get_related_futures
 _ORIG_GET_TEAM_PROGRESSION = get_team_progression
 
@@ -32071,7 +32069,7 @@ def _is_timeout_or_query_canceled(exc: BaseException) -> bool:
     cur: BaseException | None = exc
     while cur is not None and id(cur) not in seen:
         seen.add(id(cur))
-        if isinstance(cur, (asyncio.TimeoutError, TimeoutError)):
+        if isinstance(cur, TimeoutError) or type(cur).__name__ == "TimeoutError":
             return True
         code = getattr(cur, "sqlstate", None) or getattr(cur, "pgcode", None)
         if code == "57014":
@@ -32223,8 +32221,8 @@ async def _load_nuggets_open_season_markets(
 
             rc = get_redis_client(fast_fail=True)
         rc.setex(redis_key, _NUGGETS_SEASON_MARKETS_TTL, json.dumps(markets, separators=(",", ":")))
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("nuggets: failed writing season-markets redis cache: %s", exc)
     return markets
 
 
@@ -32294,8 +32292,8 @@ async def _load_fast_nugget_stakes(
         l2_rf, state = rfc.read(resolved_id)
         if state in ("live", "stale_ok") and isinstance(l2_rf, dict):
             return l2_rf
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("nuggets: L2 related_futures cache read failed for event %s: %s", resolved_id, exc)
 
     empty = {"home_team_futures": [], "away_team_futures": [], "series_markets": []}
     if not sport_key:
@@ -32446,8 +32444,8 @@ async def _load_nuggets_team_progression(
         cached = rc.get(_team_progression_cache_key(resolved_id))
         if cached:
             return json.loads(cached.decode("utf-8") if isinstance(cached, bytes) else str(cached))
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("nuggets: progression redis read failed for event %s: %s", resolved_id, exc)
 
     from app.config.league_configs import LEAGUE_TO_SPORT, get_league_for_sport_key
     from app.services.league_context import enrich_event_with_cached_context
@@ -32513,8 +32511,8 @@ async def _build_event_nuggets_inner(
         dialect_name = getattr(getattr(bind, "dialect", None), "name", None)
         if dialect_name == "postgresql":
             await db.execute(text(f"SET LOCAL statement_timeout = {int(NUGGETS_SQL_STATEMENT_TIMEOUT_MS)}"))
-    except Exception:
-        pass
+    except Exception as exc:
+        logger.debug("nuggets: unable to apply statement_timeout hint: %s", exc)
 
     row = (
         await db.execute(
@@ -32647,6 +32645,8 @@ async def build_event_nuggets(
     timeout_seconds: Optional[float] = None,
 ) -> dict:
     """Build ranked below-the-charts nuggets with caching and pre-router timeout (#13511, #13650)."""
+    import asyncio as _nuggets_asyncio
+
     from app.utils.game_nuggets import NUGGET_DEFAULT_LIMIT
 
     clamped_limit = max(1, min(int(limit), NUGGET_DEFAULT_LIMIT))
@@ -32656,7 +32656,7 @@ async def build_event_nuggets(
         else max(0.01, float(timeout_seconds))
     )
     try:
-        return await asyncio.wait_for(
+        return await _nuggets_asyncio.wait_for(
             _build_event_nuggets_inner(
                 event_id,
                 db,
@@ -32671,9 +32671,8 @@ async def build_event_nuggets(
     except Exception as exc:
         if _is_timeout_or_query_canceled(exc):
             logger.warning(
-                "nuggets: request timed out after %.2fs for event %s",
+                "nuggets: request timed out after %.2fs",
                 effective_timeout,
-                event_id,
             )
             raise HTTPException(
                 status_code=503,
