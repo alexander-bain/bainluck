@@ -133,7 +133,7 @@ private struct MyStuffLandingBody295A: View {
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(.primary)
                                 .fixedSize(horizontal: false, vertical: true)
-                            Text("Your followed teams are still saved — this read didn't finish.")
+                            Text("Your teams are still saved. This part didn't load.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
