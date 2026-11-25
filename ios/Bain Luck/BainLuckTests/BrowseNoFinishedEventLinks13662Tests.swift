@@ -142,8 +142,8 @@ final class BrowseNoFinishedEventLinks13662Tests: XCTestCase {
         }
 
         // Also test actual LeaguesView directly (verifying US Open is absent and Explore reaches bottom)
-        let pureBrowseLight = captureWindow(LeaguesView(), height: 1750, scheme: .light)
-        let pureBrowseDark = captureWindow(LeaguesView(), height: 1750, scheme: .dark)
+        let pureBrowseLight = captureWindow(LeaguesView(), height: 2350, scheme: .light)
+        let pureBrowseDark = captureWindow(LeaguesView(), height: 2350, scheme: .dark)
         let collectionsOnly = captureWindow(
             NavigationStack {
                 BrowseCollectionsView(service: StaticDiscoveryService(nflResponse: sampleCollections))

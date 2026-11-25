@@ -9,6 +9,11 @@ final class EntertainmentViewModel: ObservableObject {
     @Published private(set) var loading = true
     @Published private(set) var error: String?
 
+    init(preloadedData: EntertainmentResponse? = nil) {
+        self.data = preloadedData
+        self.loading = (preloadedData == nil)
+    }
+
     @MainActor
     func load() async {
         loading = data == nil

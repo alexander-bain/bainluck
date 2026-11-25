@@ -85,6 +85,7 @@ struct SearchView: View {
     /// results (the view model), the open detail and the results' scroll
     /// offset. `nil` everywhere else, which is today's behaviour.
     private let macPlace: MacReadingPlace<SearchViewModel>?
+    private let previewSets: [BrowsePublicSet402A]
     /// #10878 / #4940 — the result row the Mac arrow keys have picked, by its
     /// canonical route. Never set anywhere else, so iPhone and iPad draw and
     /// behave exactly as before.
@@ -92,9 +93,11 @@ struct SearchView: View {
 
     init(
         macPlace: MacReadingPlace<SearchViewModel>? = nil,
-        discoveryService: any ContainerDiscoveryLoading = ContainerDiscoveryService()
+        discoveryService: any ContainerDiscoveryLoading = ContainerDiscoveryService(),
+        previewSets: [BrowsePublicSet402A] = []
     ) {
         self.macPlace = macPlace
+        self.previewSets = previewSets
         _viewModel = StateObject(wrappedValue: macPlace?.models(orMake: { SearchViewModel() }) ?? SearchViewModel())
         _discoveryVM = StateObject(wrappedValue: ContainerDiscoveryViewModel(service: discoveryService))
         _path = State(initialValue: macPlace?.path ?? NavigationPath())
@@ -121,19 +124,24 @@ struct SearchView: View {
         .init(icon: "trophy.fill", label: "MVP", query: "MVP"),
     ]
 
-    private struct CategoryLink: Identifiable {
-        let icon: String
-        let label: String
-        let route: Route
-        var id: String { label }
+    private var combinedSetPills: [BrowsePublicSet402A] {
+        var seen = Set<String>()
+        var result: [BrowsePublicSet402A] = []
+        for s in previewSets where seen.insert(s.slug).inserted {
+            result.append(s)
+        }
+        for entry in discoveryVM.entries where seen.insert(entry.collection.slug).inserted {
+            result.append(
+                BrowsePublicSet402A(
+                    slug: entry.collection.slug,
+                    title: entry.collection.name,
+                    subtitle: entry.subtitle,
+                    imageURL: nil
+                )
+            )
+        }
+        return result
     }
-
-    private let categoryLinks: [CategoryLink] = [
-        .init(icon: "building.columns.fill", label: "Politics", route: .politics),
-        .init(icon: "cloud.sun.fill", label: "Weather", route: .weather),
-        .init(icon: "chart.line.uptrend.xyaxis", label: "Economics", route: .economics),
-        .init(icon: "star.fill", label: "Entertainment", route: .entertainment),
-    ]
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -536,15 +544,15 @@ struct SearchView: View {
                     }
                 }
 
-                // Live Sets matching Browse (402: A, never finished/archive hubs)
-                if !discoveryVM.entries.isEmpty {
+                // Sets matching Browse (402: A, never finished/archive hubs)
+                if !combinedSetPills.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
-                        emptySectionHeader13672("Live Sets")
+                        emptySectionHeader13672("Sets")
 
                         FlowLayout(spacing: 8) {
-                            ForEach(discoveryVM.entries) { entry in
-                                quickSearchChip(icon: "square.stack.3d.up.fill", label: entry.collection.name) {
-                                    path.append(entry.route)
+                            ForEach(combinedSetPills) { setItem in
+                                quickSearchChip(icon: "square.stack.3d.up.fill", label: setItem.title) {
+                                    path.append(setItem.route)
                                 }
                             }
                         }
@@ -556,8 +564,8 @@ struct SearchView: View {
                     emptySectionHeader13672("Categories")
 
                     FlowLayout(spacing: 8) {
-                        ForEach(categoryLinks) { item in
-                            quickSearchChip(icon: item.icon, label: item.label) {
+                        ForEach(BrowseCategoryLink402A.orderedAll) { item in
+                            quickSearchChip(icon: item.searchIcon, label: item.label) {
                                 path.append(item.route)
                             }
                         }

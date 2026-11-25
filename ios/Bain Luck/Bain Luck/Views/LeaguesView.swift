@@ -106,22 +106,6 @@ nonisolated func browseFeaturedHubs(
     )
 }
 
-private struct CategoryLink: Identifiable {
-    let id: String
-    let label: String
-    let desc: String
-    let icon: String
-    let color: Color
-    let route: Route
-}
-
-private let categoryLinks: [CategoryLink] = [
-    CategoryLink(id: "politics", label: "Politics", desc: "Elections, policy, geopolitics", icon: "building.columns.fill", color: .indigo, route: .politics),
-    CategoryLink(id: "entertainment", label: "Entertainment", desc: "Awards, box office, culture", icon: "film.fill", color: .pink, route: .entertainment),
-    CategoryLink(id: "economics", label: "Economics", desc: "Fed rates, inflation, GDP", icon: "chart.bar.fill", color: .purple, route: .economics),
-    CategoryLink(id: "weather", label: "Weather", desc: "Temperature, rainfall, storms", icon: "cloud.sun.fill", color: .orange, route: .weather),
-]
-
 // MARK: - View
 
 struct LeaguesView: View {
@@ -130,9 +114,17 @@ struct LeaguesView: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var path = NavigationPath()
     private let previewDiscoveryService: (any ContainerDiscoveryLoading)?
+    private let previewSets: [BrowsePublicSet402A]
+    private let preloadedSetImages: [String: Image]
 
-    init(previewDiscoveryService: (any ContainerDiscoveryLoading)? = nil) {
+    init(
+        previewDiscoveryService: (any ContainerDiscoveryLoading)? = nil,
+        previewSets: [BrowsePublicSet402A] = [],
+        preloadedSetImages: [String: Image] = [:]
+    ) {
         self.previewDiscoveryService = previewDiscoveryService
+        self.previewSets = previewSets
+        self.preloadedSetImages = preloadedSetImages
     }
 
     var body: some View {
@@ -141,9 +133,16 @@ struct LeaguesView: View {
                 VStack(alignment: .leading, spacing: 24) {
                     browseHeader
                     if let previewDiscoveryService {
-                        BrowseCollectionsView(service: previewDiscoveryService)
+                        BrowseCollectionsView(
+                            service: previewDiscoveryService,
+                            previewSets: previewSets,
+                            preloadedSetImages: preloadedSetImages
+                        )
                     } else {
-                        BrowseCollectionsView()
+                        BrowseCollectionsView(
+                            previewSets: previewSets,
+                            preloadedSetImages: preloadedSetImages
+                        )
                     }
                     topicSection
                     leagueSections
@@ -268,7 +267,7 @@ struct LeaguesView: View {
         }
         return BrowseSection(title: "Categories") {
             LazyVGrid(columns: columns, spacing: 12) {
-                ForEach(categoryLinks) { cat in
+                ForEach(BrowseCategoryLink402A.orderedAll) { cat in
                     BrowseTopicCard(category: cat)
                 }
             }
@@ -422,7 +421,7 @@ private struct BrowseFeatureCard: View {
 }
 
 private struct BrowseTopicCard: View {
-    let category: CategoryLink
+    let category: BrowseCategoryLink402A
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -531,6 +530,21 @@ private struct BrowseLeagueTile: View {
 }
 
 extension LeaguesView {
+    static func exploreSampleForTest() -> AnyView {
+        AnyView(
+            NavigationStack {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("EXPLORE")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
+                    LeaguesView().featuredGrid
+                }
+                .padding(.horizontal, 22)
+                .padding(.vertical, 16)
+            }
+        )
+    }
+
     static func leagueTilesSampleForTest() -> AnyView {
         let sampleSlugs = Set(["nba", "mlb", "nhl", "ncaa-women-basketball", "champions-league"])
         let picks = allLeagues.filter { sampleSlugs.contains($0.slug) }

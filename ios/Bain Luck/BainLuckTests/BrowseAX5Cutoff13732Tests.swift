@@ -35,12 +35,15 @@ final class BrowseAX5Cutoff13732Tests: XCTestCase {
         let shouldWrite = FileManager.default.fileExists(atPath: outPath)
 
         let browseView = LeaguesView()
+        let exploreView = LeaguesView.exploreSampleForTest()
         let leagueListView = LeaguesView.leagueTilesSampleForTest()
 
         for width in [390, 320] {
             let topHeight: CGFloat = width < 360 ? 2100 : 1650
+            let exploreHeight: CGFloat = width < 360 ? 1200 : 1050
             for (scheme, tag) in [(ColorScheme.light, "light"), (ColorScheme.dark, "dark")] {
                 let topImage = await renderPanel(view: browseView, width: CGFloat(width), height: topHeight, scheme: scheme)
+                let exploreImage = await renderPanel(view: exploreView, width: CGFloat(width), height: exploreHeight, scheme: scheme)
                 let tileImage = await renderPanel(view: leagueListView, width: CGFloat(width), height: 1550, scheme: scheme)
 
                 if shouldWrite {
@@ -55,10 +58,14 @@ final class BrowseAX5Cutoff13732Tests: XCTestCase {
 
                 let topLines = try ocrLines(topImage)
                 let topEllipses = topLines.filter { $0.contains("...") || $0.contains("\u{2026}") }
-                XCTAssertTrue(topEllipses.isEmpty, "Browse feature cards ellipsized at \(width) \(tag): \(topEllipses) in \(topLines)")
-                let topCompact = topLines.joined().lowercased().replacingOccurrences(of: "-", with: "").replacingOccurrences(of: " ", with: "")
+                XCTAssertTrue(topEllipses.isEmpty, "Browse top clipped at \(width) \(tag): \(topEllipses) in \(topLines)")
+
+                let exploreLines = try ocrLines(exploreImage)
+                let exploreEllipses = exploreLines.filter { $0.contains("...") || $0.contains("\u{2026}") }
+                XCTAssertTrue(exploreEllipses.isEmpty, "Browse feature cards ellipsized at \(width) \(tag): \(exploreEllipses) in \(exploreLines)")
+                let exploreCompact = exploreLines.joined().lowercased().replacingOccurrences(of: "-", with: "").replacingOccurrences(of: " ", with: "")
                 for token in ["prediction", "markets", "track", "record", "methodology"] {
-                    XCTAssertTrue(topCompact.contains(token), "Missing Browse feature copy '\(token)' at \(width) \(tag): \(topLines)")
+                    XCTAssertTrue(exploreCompact.contains(token), "Missing Browse feature copy '\(token)' at \(width) \(tag): \(exploreLines)")
                 }
 
                 let tileLines = try ocrLines(tileImage)
@@ -113,7 +120,10 @@ final class BrowseAX5Cutoff13732Tests: XCTestCase {
             try? await Task.sleep(for: .milliseconds(50))
         }
 
-        let renderer = UIGraphicsImageRenderer(size: frame.size)
+        let fmt = UIGraphicsImageRendererFormat()
+        fmt.scale = 1.5
+        fmt.opaque = true
+        let renderer = UIGraphicsImageRenderer(size: frame.size, format: fmt)
         return renderer.image { _ in
             container.view.drawHierarchy(in: container.view.bounds, afterScreenUpdates: true)
         }
@@ -121,10 +131,26 @@ final class BrowseAX5Cutoff13732Tests: XCTestCase {
 
     private func ocrLines(_ image: UIImage) throws -> [String] {
         guard let cg = image.cgImage else { return [] }
-        let req = VNRecognizeTextRequest()
-        req.recognitionLevel = .accurate
-        req.usesLanguageCorrection = false
-        try VNImageRequestHandler(cgImage: cg, options: [:]).perform([req])
-        return (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+        if cg.height <= 1800 {
+            let req = VNRecognizeTextRequest()
+            req.recognitionLevel = .accurate
+            req.usesLanguageCorrection = false
+            try VNImageRequestHandler(cgImage: cg, options: [:]).perform([req])
+            return (req.results ?? []).compactMap { $0.topCandidates(1).first?.string }
+        }
+        var lines: [String] = []
+        var yStart = 0
+        while yStart < cg.height {
+            let h = min(1400, cg.height - yStart)
+            guard let slice = cg.cropping(to: CGRect(x: 0, y: yStart, width: cg.width, height: h)) else { break }
+            let req = VNRecognizeTextRequest()
+            req.recognitionLevel = .accurate
+            req.usesLanguageCorrection = false
+            try VNImageRequestHandler(cgImage: slice, options: [:]).perform([req])
+            lines.append(contentsOf: (req.results ?? []).compactMap { $0.topCandidates(1).first?.string })
+            if yStart + h >= cg.height { break }
+            yStart += 1000
+        }
+        return lines
     }
 }

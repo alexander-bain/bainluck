@@ -390,6 +390,7 @@ nonisolated struct ContainerHubCollection: Decodable, Identifiable, Sendable {
     let revision: Int
     let edition: ContainerHubEdition
     let status: String?
+    let windowEnd: String?
     let gameCount: Int
     let questionCount: Int
     let matchedEventIds: [Int]

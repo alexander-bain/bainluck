@@ -32,7 +32,7 @@ final class ContainerDiscoveryViewModel: ObservableObject {
                 group.addTask {
                     do {
                         let response = try await service.load(request)
-                        return .available(league, request.entries(in: response))
+                        return .available(league, request.entries(in: response, asOf: now))
                     } catch {
                         // An optional-section failure is held internally, never
                         // presented as proof that no collection exists.

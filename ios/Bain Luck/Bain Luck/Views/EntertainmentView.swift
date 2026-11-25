@@ -76,8 +76,12 @@ enum EntertainmentSectionRows {
 // MARK: - View
 
 struct EntertainmentView: View {
-    @StateObject private var viewModel = EntertainmentViewModel()
+    @StateObject private var viewModel: EntertainmentViewModel
     @Environment(\.horizontalSizeClass) private var sizeClass
+
+    init(preloadedData: EntertainmentResponse? = nil) {
+        _viewModel = StateObject(wrappedValue: EntertainmentViewModel(preloadedData: preloadedData))
+    }
 
     private var isCompact: Bool {
         #if os(macOS)
@@ -114,7 +118,10 @@ struct EntertainmentView: View {
         .navigationBarTitleDisplayMode(.large)
         #endif
         .onAppear { AnalyticsService.trackScreen(name: "entertainment", type: "entertainment") }
-        .task { await viewModel.load() }
+        .task {
+            guard viewModel.data == nil else { return }
+            await viewModel.load()
+        }
         .refreshable { await viewModel.load() }
     }
 
