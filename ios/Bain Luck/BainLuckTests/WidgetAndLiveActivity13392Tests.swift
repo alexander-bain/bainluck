@@ -3,10 +3,10 @@ import UIKit
 import XCTest
 @testable import Bain_Luck
 
-/// Regression coverage for `#13392`:
+/// Regression coverage for `#13392` (updated for Direction 395 whole percents):
 /// 1. Medium `LiveGamesWidget` 3-way fallback prints `"%"` (`"RMA 52%"`).
 /// 2. Small `SavedGameHeadlineWidgetView12616` fits `"NCAAF · Final"` + `"Pregame 43%"` without `"…"`.
-/// 3. Dynamic Island Minimal shows whole percents (`"57%"`) on one line while larger forms keep tenths.
+/// 3. Dynamic Island Minimal and all Live Activity forms show whole percents (`"57%"`) on one line.
 /// 4. Widget gallery placeholder is date-free (`"NBA Champion"`).
 final class WidgetAndLiveActivity13392Tests: XCTestCase {
     private static func repoFile(_ relative: String) -> URL {
@@ -107,7 +107,6 @@ final class WidgetAndLiveActivity13392Tests: XCTestCase {
             awayAbbreviation: "HOU",
             periodLabel: "Q4 2:15"
         ))
-        XCTAssertEqual(snapshot.headlineNowText(home: false), "57.2%")
         XCTAssertEqual(snapshot.awayRenderedPercent, 57)
 
         let source = try String(
@@ -117,7 +116,11 @@ final class WidgetAndLiveActivity13392Tests: XCTestCase {
         XCTAssertTrue(source.contains("func minimalNowText(_ side: Side) -> String?"))
         XCTAssertTrue(source.contains("else if let now = reading.minimalNowText(reading.lead)"))
         XCTAssertTrue(source.contains("Text(now)\n                    .lineLimit(1)"))
-        XCTAssertTrue(source.contains("reading.nowText("), "Lock Screen, Compact, and Expanded must keep nowText tenths")
+        XCTAssertTrue(source.contains("reading.nowText("))
+        XCTAssertFalse(
+            source.contains("headlineNowText"),
+            "Direction 395: GameLiveActivity uses whole percents everywhere, never tenths"
+        )
     }
 
     func testWidgetPlaceholderHasNoHardcodedYear() throws {
