@@ -99,6 +99,30 @@ final class DiscoverStreamingPriceTests: XCTestCase {
         XCTAssertEqual(result.map(\.id), ["futures-1", "futures-2"])
     }
 
+    func testFieldCoverageWithdrawalClearsHeldLeaderCopy() throws {
+        let held = try decode([
+            "type": "futures", "headline": "Brooklyn Nets lead",
+            "context_summary": "Brooklyn Nets lead at 5%",
+            "data": ["id": 1, "name": "NBA Cup finalists", "source": "polymarket",
+                     "status": "open", "price_observed_at": "2026-09-29T00:01:00Z",
+                     "top_outcomes": [["id": 10, "name": "Brooklyn Nets", "probability": 0.0525]]],
+        ], as: FeedItem.self)
+        let fresh = try decode([
+            "type": "futures", "reason": "Limited price coverage",
+            "context_summary": "Limited price coverage",
+            "data": ["id": 1, "name": "NBA Cup finalists", "source": "polymarket",
+                     "status": "open", "field_price_coverage_incomplete": true,
+                     "top_outcomes": [] as [[String: Any]]],
+        ], as: FeedItem.self)
+        var epochs: [String: Double] = [:]
+        let response = DiscoverPriceCards(items: [fresh], dispositions: [held.id: "withheld"], builtAt: 100)
+        let shown = DiscoverPriceRefresh.apply(response, to: [held], epochs: &epochs)[0]
+        XCTAssertEqual(shown.id, held.id)
+        XCTAssertEqual(shown.futures?.topOutcomes?.count, 0)
+        XCTAssertNil(shown.headline)
+        XCTAssertEqual(shown.contextSummary, "Limited price coverage")
+    }
+
     func testNewerOrdinaryFeedAdoptionAdvancesTheRetainedFence() throws {
         let t1 = try market()
         let t2 = try market(p: 0.6, clocks: ["10": "2026-09-29T00:02:00Z", "20": "2026-09-29T00:02:00Z"])
