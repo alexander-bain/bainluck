@@ -303,5 +303,6 @@ struct GolfTournamentView: View {
         }
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .noteReviewPromptTrouble12304()
     }
 }

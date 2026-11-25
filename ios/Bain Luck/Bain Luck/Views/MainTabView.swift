@@ -142,7 +142,7 @@ struct MainTabView: View {
             .toolbar {
                 ToolbarItem(placement: .principal) {
                     HStack(spacing: 6) {
-                        Text("🍀")
+                        BainLuckMarkView(size: 20)
                         Text("Bain Luck")
                             .font(.headline.weight(.semibold))
                     }

@@ -507,6 +507,7 @@ struct EventDetailView: View {
                     systemImage: "exclamationmark.triangle",
                     description: Text(error)
                 )
+                .noteReviewPromptTrouble12304()
             }
         }
         return stackBoundary12278 {
@@ -1669,6 +1670,27 @@ struct EventDetailView: View {
             event.homeTeamData?.record.map { "\(named.home) \($0)" },
         ].compactMap { $0 }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    /// Resolves `EventSportHeadlines12472.Model` through `PeriodLabel.liveStatusText`
+    /// so arrival previews share the exact shipped headline contract (#4880, #11934).
+    static func resolvedHeadlineModel(for event: EventDetail) -> EventSportHeadlines12472.Model {
+        let hasScore = showsScore(
+            status: event.status,
+            away: event.awayScore,
+            home: event.homeScore
+        ) && event.scoreSourceUnavailable != true
+        return EventSportHeadlines12472.resolve(
+            event: event,
+            awayFullName: event.awayTeam,
+            homeFullName: event.homeTeam,
+            liveStatusText: PeriodLabel.liveStatusText(
+                period: event.espn?.period,
+                gameClock: event.espn?.gameClock
+            ),
+            hasScore: hasScore,
+            numberStreams: false
+        )
     }
 
     private func heroSection(_ event: EventDetail) -> some View {

@@ -8,6 +8,7 @@ struct GameAlertsPinPromptSheet13084: View {
     let onNotNow: @MainActor () -> Void
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.colorScheme) private var colorScheme
     @State private var isRequesting = false
     @State private var choiceHandled = false
 
@@ -61,10 +62,11 @@ struct GameAlertsPinPromptSheet13084: View {
                                 .multilineTextAlignment(.center)
                                 .fixedSize(horizontal: false, vertical: true)
                         }
+                        .foregroundStyle(colorScheme == .dark ? Color(hex: "#0F172A") : .white)
                         .frame(maxWidth: .infinity, minHeight: 44)
+                        .background(DS.greenReadable, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(DS.greenReadable)
+                    .buttonStyle(.plain)
                     .disabled(isRequesting)
                     .accessibilityIdentifier("gameAlertsPrompt.turnOn")
 

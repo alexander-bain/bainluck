@@ -262,6 +262,16 @@ struct GameActivityReading {
         case .unknown: return "STATUS UNAVAILABLE"
         }
     }
+    /// Clock-preserving compact pill label for narrow Watch Smart Stack slots (#13659):
+    /// drops `"LIVE · "` / `"PAUSED · "` while keeping the full game clock intact.
+    var compactStatusText: String {
+        guard matches else { return "UNAVAILABLE" }
+        if (snapshot.lifecycle == .live || snapshot.lifecycle == .suspended),
+           let chip = snapshot.periodLabel {
+            return chip
+        }
+        return statusText
+    }
     var statusSpoken: String {
         guard matches else { return "Game reading unavailable" }
         guard snapshot.lifecycle == .live || snapshot.lifecycle == .suspended,
@@ -940,14 +950,26 @@ struct GameActivitySmallView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 4) {
-                GameActivityStatusPill(reading: reading)
-                Spacer(minLength: 2)
-                if let value = reading.percent(reading.lead) {
-                    Text("\(reading.badge(reading.lead)) \(reading.percentText(value))")
-                        .font(.caption2.weight(.semibold))
-                        .monospacedDigit()
-                        .lineLimit(1)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 4) {
+                    GameActivityStatusPill(reading: reading)
+                        .fixedSize(horizontal: true, vertical: false)
+                    Spacer(minLength: 2)
+                    trailingChance(fontSize: nil)
+                }
+                HStack(spacing: 4) {
+                    compactStatusPill(fontSize: nil, horizontalPadding: 7, dotSize: 6)
+                    Spacer(minLength: 2)
+                    trailingChance(fontSize: nil)
+                }
+                HStack(spacing: 4) {
+                    compactStatusPill(fontSize: 10, horizontalPadding: 6, dotSize: 5)
+                    Spacer(minLength: 2)
+                    trailingChance(fontSize: 10)
+                }
+                VStack(alignment: .leading, spacing: 2) {
+                    compactStatusPill(fontSize: 10, horizontalPadding: 6, dotSize: 5)
+                    trailingChance(fontSize: 10)
                 }
             }
             if reading.matches {
@@ -963,6 +985,36 @@ struct GameActivitySmallView: View {
         .padding(8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .widgetURL(GameContinuation.url(eventID: reading.eventID))
+    }
+
+    @ViewBuilder
+    private func compactStatusPill(fontSize: CGFloat?, horizontalPadding: CGFloat, dotSize: CGFloat) -> some View {
+        HStack(spacing: 4) {
+            if reading.isLive {
+                Circle().fill(Color.white).frame(width: dotSize, height: dotSize)
+            }
+            Text(reading.compactStatusText)
+                .font(fontSize.map { .system(size: $0, weight: .bold) } ?? .caption2.weight(.bold))
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .padding(.horizontal, horizontalPadding)
+        .padding(.vertical, 3)
+        .foregroundStyle(reading.pillForeground)
+        .background(reading.pillBackground, in: Capsule())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(reading.statusSpoken)
+    }
+
+    @ViewBuilder
+    private func trailingChance(fontSize: CGFloat?) -> some View {
+        if let value = reading.percent(reading.lead) {
+            Text("\(reading.badge(reading.lead)) \(reading.percentText(value))")
+                .font(fontSize.map { .system(size: $0, weight: .semibold) } ?? .caption2.weight(.semibold))
+                .monospacedDigit()
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+        }
     }
 
     private func side(_ side: GameActivityReading.Side) -> some View {
