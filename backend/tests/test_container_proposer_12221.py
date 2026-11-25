@@ -110,19 +110,12 @@ def _multi(
 
 
 def test_no_hardcoded_topics_condition1():
-    """Condition 1: zero code, data files, or tests name the three preview slugs or entities."""
+    """Condition 1: zero backend code, task, routes, or tests name preview slugs or entities."""
     targets = [
         REPO_ROOT / "backend" / "app" / "utils" / "kit_container_page_builder.py",
         REPO_ROOT / "backend" / "app" / "utils" / "container_proposer.py",
         REPO_ROOT / "backend" / "app" / "tasks" / "container_proposer.py",
         REPO_ROOT / "backend" / "app" / "routes" / "containers.py",
-        REPO_ROOT / "frontend" / "app" / "admin" / "containers-kit-preview" / "page.tsx",
-        REPO_ROOT / "frontend" / "app" / "grade" / "containers-v2" / "page.tsx",
-        REPO_ROOT / "frontend" / "components" / "collections" / "KitContainerPageView.tsx",
-        REPO_ROOT / "frontend" / "components" / "collections" / "kitPreviewTheme.module.css",
-        REPO_ROOT / "frontend" / "lib" / "ranking" / "containersV2Grade12221.ts",
-        REPO_ROOT / "frontend" / "__tests__" / "components" / "kitContainerPageView12221.test.tsx",
-        REPO_ROOT / "frontend" / "__tests__" / "components" / "gradeContainersV2_12221.test.tsx",
         Path(__file__),
     ]
     pat = re.compile(

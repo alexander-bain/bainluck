@@ -147,4 +147,44 @@ describe("Decision 386: A (#12221) — /grade/containers-v2", () => {
       updated_at: "2026-11-25T01:00:00Z",
     });
   });
+
+  test("Condition 1: zero #12221 frontend files hardcode preview topic slugs or entities", () => {
+    const frontendRoot = path.resolve(__dirname, "../..");
+    const bannedTerms = [
+      "middle" + "-east",
+      "middle" + " east",
+      "fed-and" + "-rates",
+      "fed &" + " rates",
+      "russia-" + "uk" + "raine",
+      "russia\u2013" + "uk" + "raine",
+      "fo" + "mc",
+      "jerome " + "pow" + "ell",
+      "kham" + "enei",
+      "zelen" + "skyy",
+      "pu" + "tin",
+      "ir" + "an",
+      "uk" + "raine",
+    ];
+    const escaped = bannedTerms.map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+    const pat = new RegExp(`\\b(?:${escaped.join("|")})\\b`, "gi");
+    const targets = [
+      "app/admin/containers-kit-preview/page.tsx",
+      "app/grade/containers-v2/page.tsx",
+      "app/grade/containers-v2/layout.tsx",
+      "components/collections/KitContainerPageView.tsx",
+      "components/collections/kitPreviewTheme.module.css",
+      "lib/ranking/containersV2Grade12221.ts",
+      "__tests__/components/kitContainerPageView12221.test.tsx",
+      "__tests__/components/gradeContainersV2_12221.test.tsx",
+    ];
+    const hits: string[] = [];
+    for (const rel of targets) {
+      const text = fs.readFileSync(path.join(frontendRoot, rel), "utf-8");
+      const found = text.match(pat);
+      if (found) {
+        hits.push(`${rel}:${found.join(",")}`);
+      }
+    }
+    expect(hits).toEqual([]);
+  });
 });
