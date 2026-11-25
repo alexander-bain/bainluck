@@ -2024,20 +2024,34 @@ struct MachineryDiscoverCardView: View {
 
     // MARK: - Pile 7 (`duel_bar` split bar on Discover cards)
 
+    /// Resolves the two primary sides (plus an optional Draw/Tie/Neither middle leg).
+    /// When >= 3 rows arrive without an explicit draw/tie/neither row, the top two rows
+    /// (`rows[0]` and `rows[1]`) are the two sides and nothing grey is drawn in between.
+    static func resolveDuelBarSides(
+        _ rawRows: [MachineryOutcomeVisual]
+    ) -> (left: MachineryOutcomeVisual, right: MachineryOutcomeVisual, middle: MachineryOutcomeVisual?)? {
+        let rows = Array(rawRows.prefix(3))
+        guard rows.count >= 2 else { return nil }
+        let drawNames: Set<String> = ["tie", "draw", "neither"]
+        let midIdx: Int? = rows.count >= 3
+            ? rows.firstIndex {
+                drawNames.contains($0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
+            }
+            : nil
+        if let midIdx {
+            let sides = rows.enumerated().filter { $0.offset != midIdx }.map(\.element)
+            guard sides.count >= 2 else { return nil }
+            return (left: sides[0], right: sides[1], middle: rows[midIdx])
+        }
+        return (left: rows[0], right: rows[1], middle: nil)
+    }
+
     @ViewBuilder
     private var duelBarBody: some View {
-        let rows = Array(card.outcomeRows.prefix(3))
-        let midIdx: Int? = rows.count >= 3
-            ? (rows.firstIndex {
-                let lower = $0.name.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-                return lower == "tie" || lower == "draw" || lower == "neither"
-            } ?? 1)
-            : nil
-        let sides = rows.enumerated().filter { $0.offset != midIdx }.map(\.element)
-        if sides.count >= 2 {
-            let left = sides[0]
-            let right = sides[1]
-            let middle = midIdx.map { rows[$0] }
+        if let resolved = Self.resolveDuelBarSides(card.outcomeRows) {
+            let left = resolved.left
+            let right = resolved.right
+            let middle = resolved.middle
             let colors = MachineryColorContrast12288.pairHexes(
                 awayHex: left.art?.accentColor,
                 homeHex: right.art?.accentColor,
@@ -2060,8 +2074,8 @@ struct MachineryDiscoverCardView: View {
                         duelSideRow(outcome: right, dotColor: rightColor)
                     }
                 } else {
-                    HStack(alignment: .top, spacing: 12) {
-                        HStack(spacing: 10) {
+                    HStack(alignment: .bottom, spacing: 12) {
+                        HStack(alignment: .bottom, spacing: 10) {
                             MachinerySubjectArtView(art: left.art, width: 36, height: 36)
                             VStack(alignment: .leading, spacing: 2) {
                                 HStack(spacing: 6) {
@@ -2083,9 +2097,9 @@ struct MachineryDiscoverCardView: View {
                                 }
                             }
                         }
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .frame(maxWidth: .infinity, alignment: .bottomLeading)
 
-                        HStack(spacing: 10) {
+                        HStack(alignment: .bottom, spacing: 10) {
                             VStack(alignment: .trailing, spacing: 2) {
                                 HStack(spacing: 6) {
                                     Text(right.name)
@@ -2108,7 +2122,7 @@ struct MachineryDiscoverCardView: View {
                             }
                             MachinerySubjectArtView(art: right.art, width: 36, height: 36)
                         }
-                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .frame(maxWidth: .infinity, alignment: .bottomTrailing)
                     }
                 }
 

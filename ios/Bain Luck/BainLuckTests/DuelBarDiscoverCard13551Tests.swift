@@ -85,8 +85,8 @@ final class DuelBarDiscoverCard13551Tests: XCTestCase {
       "slug": "machinery-epl-derby-duel",
       "form_id": "duel_bar",
       "kicker": "SOCCER · HEAD TO HEAD",
-      "title": "Liverpool vs Arsenal title odds",
-      "subtitle": "Three-way split including draw",
+      "title": "Liverpool vs Arsenal match result",
+      "subtitle": "Three-way match split including draw",
       "footer": "",
       "scale_ordered": false,
       "section_count": 1,
@@ -172,6 +172,46 @@ final class DuelBarDiscoverCard13551Tests: XCTestCase {
                 try png.write(to: URL(fileURLWithPath: outDir).appendingPathComponent("\(cfg.tag).png"))
             }
         }
+    }
+
+    func testThreeNonDrawRowsUseFirstTwoSidesWithoutGreyMiddle() async throws {
+        let json = #"""
+        {
+          "slug": "machinery-afc-west-three-contenders",
+          "form_id": "duel_bar",
+          "kicker": "SPORTS · NFL DIVISIONS",
+          "title": "Denver vs Kansas City in the AFC West race",
+          "subtitle": "Three contenders sent without a draw row",
+          "footer": "",
+          "scale_ordered": false,
+          "section_count": 1,
+          "item_count": 3,
+          "item_noun": "contenders",
+          "destination_href": "/collections/machinery-afc-west-three-contenders",
+          "rows": [
+            { "market_id": 53675, "outcome_id": 1, "name": "Denver", "probability": 0.56, "rendered_percent": 56, "art": { "kind": "none", "accent_color": "#0A2343" } },
+            { "market_id": 53675, "outcome_id": 2, "name": "Kansas City", "probability": 0.42, "rendered_percent": 42, "art": { "kind": "none", "accent_color": "#E31837" } },
+            { "market_id": 53675, "outcome_id": 3, "name": "Las Vegas", "probability": 0.02, "rendered_percent": 2, "art": { "kind": "none", "accent_color": "#000000" } }
+          ]
+        }
+        """#
+        let dec = JSONDecoder()
+        dec.keyDecodingStrategy = .convertFromSnakeCase
+        let card = try dec.decode(MachineryCardContract.self, from: Data(json.utf8))
+        let sides = try XCTUnwrap(MachineryDiscoverCardView.resolveDuelBarSides(card.outcomeRows))
+        XCTAssertEqual(sides.left.name, "Denver")
+        XCTAssertEqual(sides.right.name, "Kansas City")
+        XCTAssertNil(sides.middle, "Three non-draw contenders must never demote row 2 to a grey middle slice")
+
+        let view = NavigationStack {
+            MachineryDiscoverCardView(card: card)
+                .padding(16)
+        }
+        let img = await renderCard(view: view, width: 390, scheme: .light, typeSize: .large, height: 340)
+        let ocr = try ocrLines(img).joined(separator: " ")
+        XCTAssertTrue(ocr.contains("Denver") && ocr.contains("56%"), "Missing left side Denver 56%: \(ocr)")
+        XCTAssertTrue(ocr.contains("Kansas City") && ocr.contains("42%"), "Missing right side Kansas City 42%: \(ocr)")
+        XCTAssertFalse(ocr.contains("Las Vegas"), "Row 3 must not replace row 2 or render in middle: \(ocr)")
     }
 
     private func renderCard<V: View>(
