@@ -924,10 +924,10 @@ async def write_market(
     The history bound runs after the write, on the last points of only the legs
     that moved plus the unchanged legs holding a deferred point.
     """
-    from sqlalchemy.dialects.postgresql import insert as pg_insert
-
-    from app.models.models import FuturesOddsSnapshot
-    from app.tasks.futures_price_refresh import _write_prices
+    from app.tasks.futures_price_refresh import (
+        _insert_futures_odds_snapshots,
+        _write_prices,
+    )
     from app.utils.futures_rank import rerank_market_field_skip_locked_stmt
     from app.utils.odds_math import probability_to_american
 
@@ -941,20 +941,21 @@ async def write_market(
     defer: set[int] = set()
     undefer: set[int] = set()
     last = await load_last_points(session, [oid for oid, _s in poll.moved] + carrying)
+    snapshot_rows: list[dict] = []
 
-    async def point(outcome_id, side, counter):
+    def add_point(outcome_id, side, counter):
         prob = side["probability"]
-        await session.execute(
-            pg_insert(FuturesOddsSnapshot).values(
-                outcome_id=outcome_id,
-                bookmaker=venue,
-                probability=prob,
-                american_odds=probability_to_american(prob),
-                yes_bid=side.get("yes_bid"),
-                yes_ask=side.get("yes_ask"),
-                last_price=side.get("last_price"),
-                captured_at=poll.now,
-            )
+        snapshot_rows.append(
+            {
+                "outcome_id": outcome_id,
+                "bookmaker": venue,
+                "probability": prob,
+                "american_odds": probability_to_american(prob),
+                "yes_bid": side.get("yes_bid"),
+                "yes_ask": side.get("yes_ask"),
+                "last_price": side.get("last_price"),
+                "captured_at": poll.now,
+            }
         )
         stats[counter] = stats.get(counter, 0) + 1
 
@@ -966,7 +967,7 @@ async def write_market(
             continue
         undefer.add(outcome_id)
         if due is not None:
-            await point(outcome_id, side, "history_points")
+            add_point(outcome_id, side, "history_points")
     for outcome_id in carrying:
         prob, bid, ask = poll.unchanged[outcome_id]
         due = poll.point_due(last.get(outcome_id), prob)
@@ -976,11 +977,12 @@ async def write_market(
         # A leg with no chart history gains its first point when its price
         # next moves, not because a pass read it.
         if due in ("big_move", "interval"):
-            await point(
+            add_point(
                 outcome_id,
                 {"probability": prob, "yes_bid": bid, "yes_ask": ask},
                 "history_trailing_points",
             )
+    await _insert_futures_odds_snapshots(session, snapshot_rows)
     await session.commit()
     deferred.add |= defer
     deferred.remove |= undefer

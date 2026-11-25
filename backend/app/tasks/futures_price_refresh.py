@@ -1536,6 +1536,29 @@ def _mark_label_attempted(market_ids: list[int]) -> None:
 
 # --- writing -----------------------------------------------------------------
 
+SNAPSHOT_INSERT_BATCH_SIZE = 100
+
+
+async def _insert_futures_odds_snapshots(
+    session,
+    rows: list[dict],
+    *,
+    batch_size: int = SNAPSHOT_INSERT_BATCH_SIZE,
+) -> None:
+    """Insert ``FuturesOddsSnapshot`` rows in bounded multi-row batches (#13673)."""
+    if not rows:
+        return
+    from app.models.models import FuturesOddsSnapshot
+
+    for idx in range(0, len(rows), batch_size):
+        chunk = rows[idx : idx + batch_size]
+        stmt = (
+            pg_insert(FuturesOddsSnapshot).values(**chunk[0])
+            if len(chunk) == 1
+            else pg_insert(FuturesOddsSnapshot).values(chunk)
+        )
+        await session.execute(stmt)
+
 
 async def _write_prices(
     session,
@@ -1638,7 +1661,7 @@ async def _write_prices(
       "no price" is refused upstream, and a refusal must not arrive here as a
       write.
     """
-    from app.models.models import FuturesOddsSnapshot, FuturesOutcome
+    from app.models.models import FuturesOutcome
     from app.utils.feed_market_quality import is_empty_book_midpoint
     from app.utils.market_staleness import OBSERVATION_LAG_DAYS  # #7582
     from app.utils.odds_math import probability_to_american
@@ -1711,6 +1734,7 @@ async def _write_prices(
 
     now = datetime.now(timezone.utc)
     written = 0
+    snapshot_rows: list[dict] = []
     # #7582. Partitioned rather than handled in place, because the clear below
     # is conditional on `written` and therefore cannot run until every quote on
     # this board has been written. Held as items (not ids) so `_legs` resolves
@@ -1984,19 +2008,21 @@ async def _write_prices(
                 poll.moved.append((outcome_id, side))
                 written += 1
                 continue
-            await session.execute(
-                pg_insert(FuturesOddsSnapshot).values(
-                    outcome_id=outcome_id,
-                    bookmaker=bookmaker,
-                    probability=side_prob,
-                    american_odds=american,
-                    yes_bid=side.get("yes_bid"),
-                    yes_ask=side.get("yes_ask"),
-                    last_price=side.get("last_price"),
-                    captured_at=now,
-                )
+            snapshot_rows.append(
+                {
+                    "outcome_id": outcome_id,
+                    "bookmaker": bookmaker,
+                    "probability": side_prob,
+                    "american_odds": american,
+                    "yes_bid": side.get("yes_bid"),
+                    "yes_ask": side.get("yes_ask"),
+                    "last_price": side.get("last_price"),
+                    "captured_at": now,
+                }
             )
             written += 1
+
+    await _insert_futures_odds_snapshots(session, snapshot_rows)
 
     # ── #7582: stop publishing a price the venue stopped quoting ─────────────
     #
