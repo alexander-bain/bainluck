@@ -1,0 +1,105 @@
+name: Nightly iPhone Tests (Proposal)
+
+# Run the full iPhone test suite (`BainLuckTests`, no `-only-testing` subset)
+# once every night on `master` on the standard hosted `xcode-27` runner
+# (`xcode-27-arm64`, runner group "GitHub Actions", not `-xlarge`). Because
+# `alexander-bain/bainluck` is a public repository, standard hosted macOS
+# minutes are $0.00 (free, uncapped; 90m/night x 30 = $0.00/mo).
+on:
+  schedule:
+    # 2:30 AM PT in winter, 3:30 AM in summer (10:30 UTC) — quiet runner window after 01:00/01:15 AM scheduled jobs.
+    # Note: GitHub Actions can trigger scheduled runs 1-2.5 hours late under queue load (starting near 5:00 AM PT)
+    # and hosted `xcode-27` jobs can wait 24-61 minutes for a machine; a late start is normal and not a failure.
+    - cron: "30 10 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: nightly-iphone-tests
+  cancel-in-progress: false
+
+jobs:
+  iphone-full-suite:
+    name: Full BainLuckTests suite (master nightly)
+    runs-on: xcode-27
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Select Xcode 27 toolchain
+        run: |
+          if [ -d /Applications/Xcode_27.2.app/Contents/Developer ]; then
+            echo "DEVELOPER_DIR=/Applications/Xcode_27.2.app/Contents/Developer" >> "$GITHUB_ENV"
+          elif [ -d /Applications/Xcode_27.0.app/Contents/Developer ]; then
+            echo "DEVELOPER_DIR=/Applications/Xcode_27.0.app/Contents/Developer" >> "$GITHUB_ENV"
+          else
+            echo "DEVELOPER_DIR=$(xcode-select -p)" >> "$GITHUB_ENV"
+          fi
+
+      - name: Run full BainLuckTests suite on disposable iPhone simulator
+        id: run_tests
+        run: |
+          set +e
+          bash tools/nightly-iphone-tests.sh
+          EXIT_CODE=$?
+          set -e
+          echo "exit_code=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
+          echo "run_date=$(date -u +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Upload BainLuckTests xcresult and receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: nightly-iphone-tests-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            build/nightly-iphone-tests/*.log
+            build/nightly-iphone-tests/*.txt
+            build/nightly-iphone-tests/*.json
+            build/nightly-iphone-tests/BainLuckTests.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: File or update single daily failure issue on scheduled master failure
+        if: github.event_name == 'schedule' && steps.run_tests.outputs.exit_code != '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          RUN_DATE: ${{ steps.run_tests.outputs.run_date }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.sha }}
+        run: |
+          PREFIX="Failed check: nightly iPhone test suite ("
+          TITLE="${PREFIX}${RUN_DATE})"
+          BODY_FILE="$(mktemp)"
+          PRIOR_JSON="$(mktemp)"
+          EXISTING="$(gh issue list -R "$REPO" --state open --search "Failed check: nightly iPhone test suite in:title" --json number,title --jq ".[] | select(.title | startswith(\"${PREFIX}\")) | .number" | head -n1)"
+          EXTRA_ARGS=()
+          if [ -n "$EXISTING" ]; then
+            gh issue view "$EXISTING" -R "$REPO" --json body,comments > "$PRIOR_JSON"
+            EXTRA_ARGS=(--previous-issue-json "$PRIOR_JSON")
+          fi
+          python3 tools/nightly_iphone_issue.py \
+            --receipt build/nightly-iphone-tests/receipt.json \
+            --run-date "$RUN_DATE" \
+            --sha "$SHA" \
+            --run-url "$RUN_URL" \
+            ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} \
+            --output "$BODY_FILE"
+          if [ -n "$EXISTING" ]; then
+            gh issue comment "$EXISTING" -R "$REPO" --body-file "$BODY_FILE"
+          else
+            gh issue create -R "$REPO" --title "$TITLE" --body-file "$BODY_FILE"
+          fi
+
+      - name: Fail job when BainLuckTests or receipt failed
+        if: steps.run_tests.outputs.exit_code != '0'
+        run: |
+          echo "::error::Nightly BainLuckTests exited with ${{ steps.run_tests.outputs.exit_code }}"
+          exit "${{ steps.run_tests.outputs.exit_code }}"
