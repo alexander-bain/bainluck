@@ -1,26 +1,30 @@
-// Types for /guess, the guessing game on bainluck.com (425: C, 426: A).
+// Types for /guess, the guessing game on bainluck.com (425: C, 426: A, 429: A).
+//
+// EVERY CARD IS ANSWERED WITH A SLIDER (429: A). The first set mixed sliders
+// with pick-one, ladder and put-in-order cards. Played on the live page, the
+// sliders were the fun: everyone lands somewhere different, the answer is a
+// number, and being close pays. The pick cards were all-or-nothing and often
+// the same for everybody. So those kinds are gone, and a card of ours is now a
+// slider too.
 //
 // Naming note: nothing here is called `GuessCard`. That name belongs to the
 // held-back quiz surface, and `webQuizSwitchedOff12601.test.tsx` scans `app/`
 // and `components/` for it. This game shares no code with that surface.
 
-/** What a player does with a card: slide to a number, pick one, or rank three. */
-export type CardKind = "chance" | "count" | "pick" | "ladder" | "order";
+/** What a player slides: one chance, one count, or two chances on one card. */
+export type CardKind = "chance" | "count" | "duo";
 
-/** The four flavors of a pick card. They share an input and differ in the rule that names the answer. */
-export type PickFlavor = "pair" | "field" | "match" | "longshot";
-
-/** One thing a player can pick, count or rank. `percent` is null only for a ladder's "not by then" rung. */
-export interface CardOption {
-  label: string;
-  short: string;
-  emoji: string;
-  percent: number | null;
-}
+/**
+ * What the card is, for the label on it and for learning which kinds people
+ * like. `straight` restates one market. The other four are ours: they put two
+ * or more markets side by side, which no single market page shows.
+ */
+export type CardFlavor = "straight" | "given" | "rest" | "count" | "duo";
 
 interface CardBase {
   id: string;
-  /** True when the card compares or counts across markets; false when it restates one market. */
+  flavor: CardFlavor;
+  /** True for every flavor but `straight`. Kept as its own field so a reader of the set sees it at a glance. */
   ours: boolean;
   topic: string;
   emoji: string;
@@ -29,8 +33,14 @@ interface CardBase {
   sub?: string;
   /** A few words naming the card, for lists and charts. */
   short: string;
-  /** One or two plain sentences on what the card is about, shown with the answer. */
+  /** One plain sentence on what the card is about, shown with the answer. */
   context: string;
+}
+
+/** A named piece of the answer, drawn as a bar when the answer is shown. */
+export interface AnswerPart {
+  label: string;
+  percent: number;
 }
 
 /** Slide to the chance, 0 to 100. */
@@ -38,52 +48,50 @@ export interface ChanceCard extends CardBase {
   kind: "chance";
   extras: string[];
   answer: number;
+  /**
+   * A related number shown BEFORE the guess ("given this, guess that"). `text`
+   * is the sentence on the card; `label` names it and `answerLabel` names the
+   * thing being guessed, for the two bars shown with the answer.
+   */
+  given?: { text: string; percent: number; label: string; answerLabel: string };
+  /** For a "none of the favorites" card: the favorites and what the world gives each, shown with the answer. */
+  parts?: AnswerPart[];
   roastHigh?: string;
   roastLow?: string;
 }
 
-/** Slide to how many of the listed items the world has at 50% or more. */
+/** Slide to how many of a named set the world has at 50% or more. */
 export interface CountCard extends CardBase {
   kind: "count";
-  items: CardOption[];
   answer: number;
   max: number;
   /** Points lost for each one the count is off by. */
   step: number;
+  /** What is being counted, plural ("teams"). */
+  noun: string;
   roastHigh?: string;
   roastLow?: string;
 }
 
-/** Pick one of two or four. */
-export interface PickCard extends CardBase {
-  kind: "pick";
-  flavor: PickFlavor;
-  /** For a "match" card: the reference percent the answer sits nearest to. */
-  target?: number;
-  options: CardOption[];
+/** One of the two sliders on a duo card. */
+export interface DuoPart {
+  label: string;
+  short: string;
+  emoji: string;
   answer: number;
-  /** Option index (as a string key) to the points a near miss earns. */
-  partial: Record<string, number>;
-  roastWrong: string;
 }
 
-/** Pick the earliest rung the world has at 50% or more. */
-export interface LadderCard extends CardBase {
-  kind: "ladder";
-  options: CardOption[];
-  answer: number;
-  partial: Record<string, number>;
-  roastWrong: string;
+/** Two chances on one card. A guess holds both: `first * 101 + second`. */
+export interface DuoCard extends CardBase {
+  kind: "duo";
+  parts: [DuoPart, DuoPart];
+  /** Shown when a player has the two the other way round from the world. */
+  roastFlip?: string;
+  /** Shown for the farthest player otherwise. `{part}` is the short name of the slider they missed by more. */
+  roastFar: string;
 }
 
-/** Put three in order, the surest first. */
-export interface OrderCard extends CardBase {
-  kind: "order";
-  items: CardOption[];
-  roastWrong: string;
-}
-
-export type PackCard = ChanceCard | CountCard | PickCard | LadderCard | OrderCard;
+export type PackCard = ChanceCard | CountCard | DuoCard;
 
 /** A dated edition of the game. Its numbers stay as they were read; `asOf` says when. */
 export interface GamePack {
@@ -97,9 +105,9 @@ export interface GamePack {
 }
 
 /**
- * One player's game. A guess is always one small whole number:
- * a percent (chance), a count (count), an option index (pick, ladder),
- * or an index into `ORDER_PERMS` (order). `null` means not answered yet.
+ * One player's game. A guess is always one whole number: a percent (chance), a
+ * count (count), or two percents packed as `first * 101 + second` (duo).
+ * `null` means not answered yet.
  */
 export interface PlayerEntry {
   name: string;
@@ -116,6 +124,6 @@ export interface PlayerEntry {
 export interface RoastLine {
   text: string;
   /** Which rule produced it, so ratings can be read by rule later. */
-  rule: "far" | "exact" | "wrong" | "coin" | "allhigh" | "alllow" | "hot" | "cold";
+  rule: "far" | "flip" | "exact" | "coin" | "allhigh" | "alllow" | "hot";
   names: string[];
 }

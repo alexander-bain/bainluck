@@ -1,18 +1,16 @@
-// /guess — THE LINE AFTER A CARD IS ABOUT THE FARTHEST PERSON, OR SOMEONE DEAD ON.
+// /guess — THE LINE AFTER A CARD HAS TO BE EARNED (429: A).
 //
-// Three rounds of playtesting, in the tester's words: "Roast the person who's
-// furthest away or closest. A bunch of times it seemed random who was chosen."
-// This file is that sentence as tests. A line never names anyone in between,
-// never names whoever is merely leading, and reads correctly for one name or
-// several.
+// Who it is about, from playtesting: "Roast the person who's furthest away or
+// closest. A bunch of times it seemed random who was chosen." And what the
+// first live set taught: a line on nearly every card is not funny. So a line
+// names only the farthest person, only when they scored nothing on the card;
+// or someone dead on; or, when nobody earned one, sometimes the whole table.
+// It calls people by first name and reads correctly for one name or several.
 
-import { coinEntry, emptyEntry, ORDER_PERMS, pointsFor } from "@/lib/guess/engine";
+import { coinEntry, emptyEntry, fullGuess, packDuo, pointsFor } from "@/lib/guess/engine";
 import { GUESS_PACK as pack } from "@/lib/guess/pack";
-import { fillLine, isEventLine, pickBadness, roastFor, roastHistory, sayNames } from "@/lib/guess/roast";
-import type { PackCard, PlayerEntry } from "@/lib/guess/types";
-
-const indexOfKind = (kind: PackCard["kind"], n = 0) =>
-  pack.cards.map((c, i) => (c.kind === kind ? i : -1)).filter((i) => i >= 0)[n];
+import { earnsLine, fillLine, isTableLine, roastFor, roastHistory, sayNames } from "@/lib/guess/roast";
+import type { ChanceCard, CountCard, DuoCard, PackCard, PlayerEntry } from "@/lib/guess/types";
 
 function person(name: string, guesses: Record<number, number>): PlayerEntry {
   const entry = emptyEntry(pack, name, "here");
@@ -22,104 +20,134 @@ function person(name: string, guesses: Record<number, number>): PlayerEntry {
   return entry;
 }
 
-describe("/guess — who the line is about", () => {
-  const i = pack.cards.findIndex((c) => c.kind === "chance" && c.answer <= 20);
-  const card = pack.cards[i] as Extract<PackCard, { kind: "chance" }>;
+const LOW = pack.cards.findIndex((c) => c.kind === "chance" && c.answer <= 20 && Boolean(c.roastHigh));
+const MID = pack.cards.findIndex((c) => c.kind === "chance" && c.answer >= 40 && c.answer <= 60);
+const COUNT = pack.cards.findIndex((c) => c.kind === "count");
+const DUO = pack.cards.findIndex((c) => c.kind === "duo");
+const low = pack.cards[LOW] as ChanceCard;
+const mid = pack.cards[MID] as ChanceCard;
+const count = pack.cards[COUNT] as CountCard;
+const duo = pack.cards[DUO] as DuoCard;
 
-  it("on a slider card, names only the farthest person", () => {
-    const near = person("Near", { [i]: card.answer + 4 });
-    const mid = person("Mid", { [i]: card.answer + 15 });
-    const far = person("Far", { [i]: card.answer + 40 });
+describe("/guess — who the line is about", () => {
+  it("names only the farthest person, whatever order they joined in", () => {
+    const near = person("Near", { [LOW]: low.answer + 4 });
+    const middling = person("Mid", { [LOW]: low.answer + 15 });
+    const far = person("Far", { [LOW]: low.answer + 40 });
     for (const order of [
-      [near, mid, far],
-      [far, near, mid],
-      [mid, far, near],
+      [near, middling, far],
+      [far, near, middling],
+      [middling, far, near],
     ]) {
-      const line = roastFor(pack, i, order, null, false);
+      const line = roastFor(pack, LOW, order, null, false);
       expect(line?.rule).toBe("far");
       expect(line?.names).toEqual(["Far"]);
       expect(line?.text).toContain("Far");
-      expect(line?.text).not.toContain("Mid");
       expect(line?.text).not.toContain("Near");
     }
   });
 
-  it("someone dead on gets the line instead, unless somebody else missed by 30 or more", () => {
-    const exact = person("Exact", { [i]: card.answer });
-    const off = person("Off", { [i]: card.answer + 18 });
-    const howler = person("Howler", { [i]: card.answer + 45 });
-    const quiet = roastFor(pack, i, [off, exact], null, false);
-    expect(quiet?.rule).toBe("exact");
-    expect(quiet?.names).toEqual(["Exact"]);
-    const loud = roastFor(pack, i, [exact, howler], null, false);
-    expect(loud?.rule).toBe("far");
-    expect(loud?.names).toEqual(["Howler"]);
+  it("says nothing unless the farthest person scored nothing on the card", () => {
+    const a = person("Ann", { [MID]: mid.answer + 4 });
+    const b = person("Bo", { [MID]: mid.answer - 19 });
+    expect(pointsFor(mid, mid.answer - 19)).toBe(1);
+    expect(roastFor(pack, MID, [a, b], null, false)).toBeNull();
+    const c = person("Cy", { [MID]: mid.answer - 20 });
+    expect(pointsFor(mid, mid.answer - 20)).toBe(0);
+    expect(roastFor(pack, MID, [a, c], null, false)?.names).toEqual(["Cy"]);
   });
 
-  it("says nothing about a card where nobody was far and nobody was dead on", () => {
-    const a = person("A", { [i]: card.answer + 3 });
-    const b = person("B", { [i]: card.answer + 6 });
-    expect(roastFor(pack, i, [a, b], null, true)).toBeNull();
+  it("someone dead on gets the line instead, unless somebody else missed by 30 or more", () => {
+    const exact = person("Dee", { [LOW]: low.answer });
+    const off = person("Off", { [LOW]: low.answer + 20 });
+    const line = roastFor(pack, LOW, [off, exact], null, false);
+    expect(line?.rule).toBe("exact");
+    expect(line?.names).toEqual(["Dee"]);
+    const howler = person("How", { [LOW]: low.answer + 45 });
+    const other = roastFor(pack, LOW, [exact, howler], null, false);
+    expect(other?.rule).toBe("far");
+    expect(other?.names).toEqual(["How"]);
   });
 
   it("names two people together only when they made the very same worst guess", () => {
-    const a = person("Ann", { [i]: card.answer + 30 });
-    const b = person("Bo", { [i]: card.answer + 30 });
-    const c = person("Cy", { [i]: card.answer + 5 });
-    const line = roastFor(pack, i, [a, b, c], null, false);
+    const a = person("Ann", { [LOW]: low.answer + 40 });
+    const b = person("Bo", { [LOW]: low.answer + 40 });
+    const c = person("Cy", { [LOW]: low.answer + 39 });
+    const line = roastFor(pack, LOW, [a, b, c], null, false);
     expect(line?.names).toEqual(["Ann", "Bo"]);
     expect(line?.text).toContain("Ann and Bo");
-    expect(line?.text).not.toMatch(/Ann and Bo (has|is|was|trusts)\b/);
+    expect(line?.text).not.toMatch(/\bCy\b/);
   });
 
-  it("on a pick card, names everyone who made the worst pick and nobody who was right", () => {
-    for (let k = 0; k < pack.cards.length; k += 1) {
-      const c = pack.cards[k];
-      if (c.kind !== "pick" && c.kind !== "ladder") continue;
-      const wrong = c.options.map((_, o) => o).filter((o) => o !== c.answer);
-      const worst = wrong.reduce((a, b) => (pickBadness(c, b) > pickBadness(c, a) ? b : a));
-      const right = person("Right", { [k]: c.answer });
-      const bad1 = person("BadOne", { [k]: worst });
-      const bad2 = person("BadTwo", { [k]: worst });
-      const line = roastFor(pack, k, [right, bad1, bad2], null, false);
-      expect(line?.rule).toBe("wrong");
-      expect(line?.names).toEqual(["BadOne", "BadTwo"]);
-      expect(line?.text).not.toContain("Right");
-      expect(line?.text).not.toMatch(/\{\w+\}/);
-      // Everyone right: the card has nothing to say.
-      expect(roastFor(pack, k, [right, person("AlsoRight", { [k]: c.answer })], null, true)).toBeNull();
-    }
+  it("calls people by first name, unless two at the table share one", () => {
+    const far = person("Sam Lee", { [LOW]: low.answer + 40 });
+    const near = person("Jo", { [LOW]: low.answer });
+    const line = roastFor(pack, LOW, [far, person("Kit", { [LOW]: low.answer + 3 })], null, false);
+    expect(line?.text).toContain("Sam");
+    expect(line?.text).not.toContain("Sam Lee");
+    expect(line?.names).toEqual(["Sam Lee"]); // the record keeps the whole name
+    const clash = roastFor(pack, LOW, [far, person("Sam Roe", { [LOW]: low.answer + 3 })], null, false);
+    expect(clash?.text).toContain("Sam Lee");
+    expect(near.name).toBe("Jo");
   });
 
-  it("on an order card, names whoever had the fewest pairs right", () => {
-    const k = indexOfKind("order");
-    const c = pack.cards[k];
-    const best = ORDER_PERMS.findIndex((_, g) => pointsFor(c, g) === 20);
-    const worst = ORDER_PERMS.findIndex((_, g) => pointsFor(c, g) === 0);
-    const line = roastFor(pack, k, [person("Good", { [k]: best }), person("Lost", { [k]: worst })], null, false);
-    expect(line?.names).toEqual(["Lost"]);
-    expect(roastFor(pack, k, [person("Good", { [k]: best })], null, true)).toBeNull();
+  it("on a count card, the line follows the direction of the miss and needs a big one", () => {
+    const high = roastFor(pack, COUNT, [person("Hi", { [COUNT]: count.max })], null, false);
+    expect(high?.rule).toBe("far");
+    expect(high?.text).toBe(fillLine(count.roastHigh as string, ["Hi"], { g: count.max, w: count.answer }));
+    const lowLine = roastFor(pack, COUNT, [person("Lo", { [COUNT]: 0 })], null, false);
+    expect(lowLine?.text).toBe(fillLine(count.roastLow as string, ["Lo"], { g: 0, w: count.answer }));
+    expect(roastFor(pack, COUNT, [person("Ok", { [COUNT]: count.answer + 2 })], null, false)).toBeNull();
   });
 
-  it("every card's own line fills completely, for one name and for several, in both directions", () => {
-    pack.cards.forEach((c, k) => {
-      const tries: number[] =
-        c.kind === "chance"
-          ? [0, 100]
-          : c.kind === "count"
-            ? [0, c.max]
-            : c.kind === "order"
-              ? ORDER_PERMS.map((_, g) => g)
-              : c.options.map((_, o) => o);
-      for (const g of tries) {
-        for (const names of [["Ann"], ["Ann", "Bo"]]) {
-          const people = names.map((n) => person(n, { [k]: g }));
-          const line = roastFor(pack, k, people, null, true);
+  it("on a two-number card, having the two the wrong way round gets its own line", () => {
+    const [a, b] = [duo.parts[0].answer, duo.parts[1].answer];
+    const worldFirstHigher = a > b;
+    const flipped = worldFirstHigher ? packDuo(20, 70) : packDuo(70, 20);
+    const line = roastFor(pack, DUO, [person("Flip", { [DUO]: flipped })], null, false);
+    expect(line?.rule).toBe("flip");
+    expect(line?.text).toContain("Flip");
+    expect(line?.text).not.toMatch(/[{}]/);
+  });
+
+  it("on a two-number card, otherwise names the slider that was missed by more, and by how much", () => {
+    const [a, b] = [duo.parts[0].answer, duo.parts[1].answer];
+    // Level sliders are not "the wrong way round". The first is the bigger miss here.
+    const level = roastFor(pack, DUO, [person("Lev", { [DUO]: packDuo(30, 30) })], null, false);
+    const missA = Math.abs(30 - a);
+    const missB = Math.abs(30 - b);
+    expect(level?.rule).toBe("far");
+    expect(level?.text).toContain(duo.parts[missB > missA ? 1 : 0].short);
+    expect(level?.text).toContain(String(Math.max(missA, missB)));
+    // Both sliders close: no line.
+    expect(roastFor(pack, DUO, [person("Ok", { [DUO]: packDuo(a > 50 ? a - 5 : a + 5, b > 50 ? b - 5 : b + 5) })], null, false)).toBeNull();
+  });
+
+  it("every card's own lines fill completely, for one name and for several, in every direction it can be earned", () => {
+    pack.cards.forEach((card, i) => {
+      const guesses: number[] = [];
+      if (card.kind === "chance") {
+        if (card.answer + 20 <= 100) guesses.push(Math.min(100, card.answer + 29));
+        if (card.answer - 20 >= 0) guesses.push(Math.max(0, card.answer - 29));
+      } else if (card.kind === "count") {
+        guesses.push(0, card.max);
+      } else {
+        // The two the wrong way round, both far, and one dead on with the other 50 off.
+        const [a, b] = [card.parts[0].answer, card.parts[1].answer];
+        guesses.push(packDuo(20, 70), packDuo(70, 20), packDuo(30, 30), packDuo(a, b > 50 ? b - 50 : b + 50));
+      }
+      const earning = guesses.filter((g) => earnsLine(card, g));
+      expect({ card: card.id, earning: earning.length >= (card.kind === "duo" ? 2 : guesses.length) && earning.length > 0 }).toEqual({ card: card.id, earning: true });
+      for (const guess of earning) {
+        for (const names of [["Sam Lee"], ["Sam Lee", "Jo"], ["Sam Lee", "Jo", "Kit", "Di", "Ed"]]) {
+          const line = roastFor(pack, i, names.map((n) => person(n, { [i]: guess })), null, false);
+          expect({ card: card.id, guess, got: line !== null }).toEqual({ card: card.id, guess, got: true });
           if (!line) continue;
-          expect(line.text).not.toMatch(/\{\w+\}/);
-          expect(line.text).not.toMatch(/undefined|NaN|null/);
-          expect(line.text).not.toMatch(/Ann and Bo (has|is|was)\b/);
-          expect(line.text.length).toBeLessThan(200);
+          expect({ card: card.id, text: line.text, holes: /[{}]|undefined|NaN/.test(line.text) }).toEqual({ card: card.id, text: line.text, holes: false });
+          expect(line.text.charAt(0)).toBe(line.text.charAt(0).toUpperCase());
+          expect(line.text.length).toBeLessThanOrEqual(150);
+          expect(line.text).not.toContain("Sam Lee");
+          if (names.length === 5) expect(line.text.toLowerCase()).toContain("all of you");
         }
       }
     });
@@ -129,81 +157,104 @@ describe("/guess — who the line is about", () => {
 describe("/guess — playing alone, and the lines about the whole table", () => {
   const coin = coinEntry(pack);
 
-  it("alone, the farthest person is you", () => {
-    const i = pack.cards.findIndex((c) => c.kind === "chance" && c.answer <= 20);
-    const line = roastFor(pack, i, [person("Solo", { [i]: 80 })], coin, false);
+  it("alone, the farthest person is you, and the Coin is never the target", () => {
+    const line = roastFor(pack, LOW, [person("Solo", { [LOW]: low.answer + 40 }), coin], coin, false);
     expect(line?.names).toEqual(["Solo"]);
+    // A person who did well gets no line even though the Coin did badly.
+    expect(pointsFor(low, 50)).toBe(0);
+    expect(roastFor(pack, LOW, [person("Solo", { [LOW]: low.answer + 3 }), coin], coin, false)).toBeNull();
   });
 
-  it("the Coin gets a line when it beats everyone by five or more, and is never itself the target", () => {
-    const i = pack.cards.findIndex((c) => c.kind === "chance" && Math.abs(c.answer - 50) <= 3);
-    expect(i).toBeGreaterThanOrEqual(0);
-    const answer = (pack.cards[i] as Extract<PackCard, { kind: "chance" }>).answer;
-    const solo = person("Solo", { [i]: answer + 8 });
-    const line = roastFor(pack, i, [solo], coin, false);
+  it("the Coin gets a line when it beats everyone by five or more and nobody earned one", () => {
+    const a = person("Ann", { [MID]: mid.answer + 9 });
+    const b = person("Bo", { [MID]: mid.answer + 10 });
+    expect(pointsFor(mid, 50) - pointsFor(mid, mid.answer + 9)).toBeGreaterThanOrEqual(5);
+    const line = roastFor(pack, MID, [a, b], coin, false);
     expect(line?.rule).toBe("coin");
-    expect(line?.text).toContain("Solo");
-    for (let k = 0; k < pack.cards.length; k += 1) {
-      const any = roastFor(pack, k, [coin], coin, false);
-      expect(any).toBeNull();
-    }
+    expect(line?.text).toContain("Ann and Bo");
+    expect(line?.text).not.toMatch(/[{}]/);
+    // Without the Coin on the board there is no such line.
+    expect(roastFor(pack, MID, [a, b], null, false)?.rule).not.toBe("coin");
   });
 
   it("says so when the whole table was too high, and never shows two table lines in a row", () => {
-    const i = pack.cards.findIndex((c) => c.kind === "chance" && c.answer <= 20);
-    const answer = (pack.cards[i] as Extract<PackCard, { kind: "chance" }>).answer;
-    const a = person("A", { [i]: answer + 6 });
-    const b = person("B", { [i]: answer + 8 });
-    const line = roastFor(pack, i, [a, b], null, false);
-    expect(line?.rule).toBe("allhigh");
-    expect(isEventLine(line)).toBe(true);
-    expect(roastFor(pack, i, [a, b], null, true)).toBeNull();
+    const first = pack.cards.findIndex((c, i) => c.kind === "chance" && pack.cards[i + 1]?.kind === "chance" && c.answer <= 80 && (pack.cards[i + 1] as ChanceCard).answer <= 80);
+    const a0 = (pack.cards[first] as ChanceCard).answer;
+    const a1 = (pack.cards[first + 1] as ChanceCard).answer;
+    const ann = person("Ann", { [first]: a0 + 6, [first + 1]: a1 + 6 });
+    const bo = person("Bo", { [first]: a0 + 8, [first + 1]: a1 + 8 });
+    expect(roastFor(pack, first, [ann, bo], null, false)?.rule).toBe("allhigh");
+    expect(roastFor(pack, first + 1, [ann, bo], null, false)?.rule).toBe("allhigh");
+    const history = roastHistory(pack, first + 1, [ann, bo], null);
+    expect(isTableLine(history[first])).toBe(true);
+    expect(history[first + 1]).toBeNull();
+  });
+
+  it("notices one person being the closest three cards running", () => {
+    // Ann two off and Bo five off on the first three cards: nobody far, nobody dead on.
+    const off = (i: number, by: number): number => {
+      const card = pack.cards[i];
+      if (card.kind === "chance") return card.answer + (card.answer > 50 ? -by : by);
+      if (card.kind === "count") return card.answer + (by > 2 ? 2 : 1);
+      return packDuo(card.parts[0].answer + (card.parts[0].answer > 50 ? -by : by), card.parts[1].answer + (card.parts[1].answer > 50 ? -by : by));
+    };
+    const ann = person("Ann", { 0: off(0, 2), 1: off(1, 2), 2: off(2, 2) });
+    const bo = person("Bo", { 0: off(0, 5), 1: off(1, 5), 2: off(2, 5) });
+    const history = roastHistory(pack, 2, [ann, bo], null);
+    expect(history[0]).toBeNull();
+    expect(history[1]).toBeNull();
+    expect(history[2]?.rule).toBe("hot");
+    expect(history[2]?.names).toEqual(["Ann"]);
   });
 
   it("rebuilds the same lines on any phone from the guesses alone", () => {
-    const everything = (name: string, shift: number) => {
-      const entry = emptyEntry(pack, name, "here");
-      entry.guesses = pack.cards.map((c) => {
-        if (c.kind === "chance") return Math.min(100, c.answer + shift);
-        if (c.kind === "count") return Math.min(c.max, c.answer + 1);
-        if (c.kind === "order") return 0;
-        return 0;
-      });
-      return entry;
+    // Ann is close on every other card and hopeless on the rest. Bo is always close.
+    const toward = (answer: number, max: number, by: number) => (answer > max / 2 ? answer - by : answer + by);
+    const close = (card: PackCard, by: number): number => {
+      if (card.kind === "chance") return toward(card.answer, 100, by);
+      if (card.kind === "count") return toward(card.answer, card.max, 1);
+      return packDuo(toward(card.parts[0].answer, 100, by), toward(card.parts[1].answer, 100, by));
     };
-    const people = [everything("A", 12), everything("B", 31)];
-    const first = roastHistory(pack, pack.cards.length - 1, people, null);
-    expect(first.length).toBe(pack.cards.length);
-    expect(roastHistory(pack, pack.cards.length - 1, people, null)).toEqual(first);
-    for (let k = 1; k < first.length; k += 1) {
-      expect(isEventLine(first[k]) && isEventLine(first[k - 1])).toBe(false);
-    }
+    const wayOff = (card: PackCard): number => {
+      if (card.kind === "chance") return card.answer > 50 ? 0 : 100;
+      if (card.kind === "count") return card.answer > card.max / 2 ? 0 : card.max;
+      return packDuo(card.parts[0].answer > 50 ? 0 : 100, card.parts[1].answer > 50 ? 0 : 100);
+    };
+    const ann = person("Ann", {});
+    const bo = person("Bo", {});
+    pack.cards.forEach((card, i) => {
+      ann.guesses[i] = i % 2 === 0 ? close(card, 3) : wayOff(card);
+      bo.guesses[i] = close(card, 4);
+      expect(pointsFor(card, fullGuess(card))).toBe(20);
+    });
+    const once = roastHistory(pack, pack.cards.length - 1, [ann, bo], coin);
+    expect(roastHistory(pack, pack.cards.length - 1, [ann, bo], coin)).toEqual(once);
+    expect(once.length).toBe(pack.cards.length);
+    // A line has to be earned: the cards where Ann was hopeless have one about her, and the rest say nothing.
+    once.forEach((l, i) => {
+      if (i % 2 === 1) expect({ at: i, names: l?.names }).toEqual({ at: i, names: ["Ann"] });
+      else expect({ at: i, line: l }).toEqual({ at: i, line: null });
+    });
+    once.forEach((l, i) => {
+      if (i > 0) expect(isTableLine(l) && isTableLine(once[i - 1])).toBe(false);
+    });
   });
 
   it("fills singular and plural forms", () => {
-    expect(fillLine("{n} {has} it. {n} trust{s} nobody. {n} {is} here, {n} {was} there.", ["Ann"])).toBe(
-      "Ann has it. Ann trusts nobody. Ann is here, Ann was there.",
+    expect(fillLine("{n} {has} it. {n} {is} sure, {n} {was} not, and {n} believe{s}.", ["Ann"])).toBe("Ann has it. Ann is sure, Ann was not, and Ann believes.");
+    expect(fillLine("{n} {has} it. {n} {is} sure, {n} {was} not, and {n} believe{s}.", ["Ann", "Bo"])).toBe(
+      "Ann and Bo have it. Ann and Bo are sure, Ann and Bo were not, and Ann and Bo believe.",
     );
-    expect(fillLine("{n} {has} it. {n} trust{s} nobody. {n} {is} here, {n} {was} there.", ["Ann", "Bo"])).toBe(
-      "Ann and Bo have it. Ann and Bo trust nobody. Ann and Bo are here, Ann and Bo were there.",
+    expect(fillLine("{n} said {g}, off by {d} on {part}. The world says {w}.", ["Ann"], { g: "5%", w: "40%", d: 35, part: "the first" })).toBe(
+      "Ann said 5%, off by 35 on the first. The world says 40%.",
     );
-    expect(fillLine("{n} said {g}%. {mystery}", ["Ann"], { g: 40 })).toBe("Ann said 40%. {mystery}");
   });
 
   it("does not read out a whole table of names", () => {
-    expect(sayNames(["Ann", "Bo", "Cy"], false)).toBe("Ann, Bo and Cy");
-    expect(sayNames(["Ann", "Bo", "Cy", "Di", "Ed"], false)).toBe("Ann, Bo and 3 others");
-    expect(sayNames(["Ann", "Bo", "Cy"], true)).toBe("all of you");
-    expect(sayNames(["Ann", "Bo"], true)).toBe("Ann and Bo");
-    expect(fillLine("{n} {was} wrong. Nobody blames {n}. Dead on, {n}.", ["A", "B", "C"], {}, true)).toBe(
-      "All of you were wrong. Nobody blames all of you. Dead on, all of you.",
-    );
-    const k = pack.cards.findIndex((c) => c.kind === "pick" && c.flavor === "pair");
-    const c = pack.cards[k] as Extract<PackCard, { kind: "pick" }>;
-    const wrong = c.answer === 0 ? 1 : 0;
-    const table = ["A", "B", "C", "D"].map((n) => person(n, { [k]: wrong }));
-    expect(roastFor(pack, k, table, null, false)?.text).toMatch(/^All of you /);
-    const most = [...table, person("E", { [k]: c.answer })];
-    expect(roastFor(pack, k, most, null, false)?.text).toMatch(/^A, B and 2 others /);
+    expect(sayNames(["A", "B", "C"], false)).toBe("A, B and C");
+    expect(sayNames(["A", "B", "C", "D", "E"], false)).toBe("A, B and 3 others");
+    expect(sayNames(["A", "B", "C"], true)).toBe("all of you");
+    expect(sayNames(["A", "B"], true)).toBe("A and B");
+    expect(fillLine("{n} said so. Tell {n}.", ["A", "B", "C"], {}, true)).toBe("All of you said so. Tell all of you.");
   });
 });
