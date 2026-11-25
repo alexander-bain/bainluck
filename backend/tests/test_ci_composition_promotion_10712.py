@@ -423,8 +423,18 @@ def _validate_current_composed_promotion(
     assert jobs["frontend-build"].get("if") == f"{LIVE} && needs.change-scope.outputs.scope != 'native'"
     assert jobs["e2e-contract"].get("if") is None
     for release_job in (deploy, deploy_full):
-        assert len(release_job["steps"]) == 4, "no artifact substitution step"
+        # Ruling 394 Change 1 adds the 3-step boot check right before Heroku deploy.
+        assert len(release_job["steps"]) == 7, "no artifact substitution step"
+        assert not any(
+            "artifact" in str(s.get("uses", "")).lower() for s in release_job["steps"]
+        ), "no artifact substitution step"
         assert _current_checkout(release_job) is release_job["steps"][1]
+        assert [s.get("uses", s.get("name")) for s in release_job["steps"][3:6]] == [
+            "actions/setup-python@v7",
+            "Install dependencies",
+            "Boot check for release (compile backend and run startup test, Ruling 394 Change 1)",
+        ]
+        assert release_job["steps"][-1] is _step(release_job, "Deploy to Heroku")
         assert _step(release_job, "Deploy to Heroku")["run"].strip() == "bash .github/scripts/heroku-deploy.sh"
     program = deploy_script_text if deploy_script_text is not None else HEROKU_DEPLOY_SH.read_text(encoding="utf-8")
     lines = [

@@ -318,29 +318,32 @@ def test_394d_master_red_alarm_holds_merges_and_names_run_and_release(monkeypatc
     assert "No further merge happens until Fable posts a line" in msg
 
 
-def test_394_change1_fast_gate_boots_backend_before_release_on_merge():
-    fast_gate = _workflow()["jobs"]["fast-gate"]
-    boot_step = next(
-        s for s in fast_gate["steps"] if "Boot check for release" in s.get("name", "")
-    )
-    assert boot_step["working-directory"] == "backend"
-    assert "python -m compileall -q app" in boot_step["run"]
-    assert "python -m pytest tests/test_startup.py -q" in boot_step["run"]
-    cond = boot_step["if"]
-    assert "needs.change-scope.outputs.live != 'true'" in cond
-    assert "github.event_name == 'push'" in cond
-    assert "github.ref == 'refs/heads/master'" in cond
-    assert "needs.change-scope.outputs.scope != 'native'" in cond
+def test_394_change1_deploy_boots_backend_before_release_on_merge():
+    wf = _workflow()
+    for job_name in ("deploy", "deploy-after-full"):
+        steps = wf["jobs"][job_name]["steps"]
+        boot_idx, boot_step = next(
+            (i, s) for i, s in enumerate(steps) if "Boot check for release" in s.get("name", "")
+        )
+        deploy_idx = next(i for i, s in enumerate(steps) if s.get("id") == "heroku_deploy")
+        assert boot_idx < deploy_idx, job_name
+        assert deploy_idx == len(steps) - 1, job_name
+        assert boot_step["working-directory"] == "backend"
+        assert "python -m compileall -q app" in boot_step["run"]
+        assert "python -m pytest tests/test_startup.py -q" in boot_step["run"]
+        cond = boot_step["if"]
+        assert "needs.change-scope.outputs.live != 'true'" in cond
+        assert "needs.change-scope.outputs.scope != 'frontend'" in cond
 
-    setup_step = next(
-        s for s in fast_gate["steps"] if s.get("uses", "").startswith("actions/setup-python")
-    )
-    install_step = next(
-        s for s in fast_gate["steps"] if s.get("name") == "Install dependencies"
-    )
-    for step in (setup_step, install_step):
-        assert "github.ref == 'refs/heads/master'" in step["if"]
-        assert "needs.change-scope.outputs.scope != 'native'" in step["if"]
+        setup_step = next(
+            s for s in steps if s.get("uses", "").startswith("actions/setup-python")
+        )
+        install_step = next(
+            s for s in steps if s.get("name") == "Install dependencies"
+        )
+        for step in (setup_step, install_step):
+            assert "needs.change-scope.outputs.live != 'true'" in step["if"]
+            assert "needs.change-scope.outputs.scope != 'frontend'" in step["if"]
 
 
 def test_394_change3_concurrent_master_merges_unblocked_and_superseded_search_recall_skips():
