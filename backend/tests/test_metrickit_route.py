@@ -12,6 +12,7 @@ The things only the ROUTE can get wrong:
   - admin reads that are not actually admin-gated
 """
 
+from datetime import date, timedelta
 import json
 import time
 from unittest.mock import AsyncMock, patch
@@ -114,6 +115,8 @@ async def client_and_db():
     db = _RecordingSession()
     # The sweep is its own test; here it has just run.
     metrickit._last_prune = time.monotonic()
+    metrickit._daily_bytes_day = None
+    metrickit._daily_bytes_stored = 0
     with patch("app.main.init_db", new_callable=AsyncMock):
         async with _client(db) as ac:
             yield ac, db
@@ -288,6 +291,8 @@ async def test_a_failed_save_answers_503_so_the_phone_keeps_it():
     """Gotcha #53: a 2xx here would make the phone delete a payload never stored."""
     db = _RecordingSession(fail_on_commit=True)
     metrickit._last_prune = time.monotonic()
+    metrickit._daily_bytes_day = None
+    metrickit._daily_bytes_stored = 0
     try:
         with patch("app.main.init_db", new_callable=AsyncMock):
             async with _client(db) as ac:
@@ -296,9 +301,35 @@ async def test_a_failed_save_answers_503_so_the_phone_keeps_it():
         assert resp.status_code == 503
         assert db.rolled_back
         assert db.commits == 0
+        assert metrickit._daily_bytes_stored == 0
         logged.assert_called_once()
     finally:
         app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_the_daily_stored_bytes_ceiling_rejects_excess_with_429_and_resets_tomorrow(
+    client_and_db, monkeypatch
+):
+    """Over the daily byte ceiling answers 429 so real phones keep queued files until tomorrow."""
+    ac, db = client_and_db
+    payload_bytes = len(json.dumps(HANG, separators=(",", ":")).encode())
+    # Allow two payloads today, reject the third across senders, then allow after UTC midnight.
+    monkeypatch.setattr(metrickit, "MAX_DAILY_STORED_BYTES", payload_bytes * 2)
+    day_one = date(2026, 11, 24)
+    day_two = day_one + timedelta(days=1)
+    monkeypatch.setattr(metrickit, "_utc_today", lambda: day_one)
+
+    assert (await ac.post(INGEST, json=_body())).status_code == 202
+    assert (await ac.post(INGEST, json=_body())).status_code == 202
+    over = await ac.post(INGEST, json=_body())
+    assert over.status_code == 429
+    assert "too many" in over.json()["detail"].lower()
+    assert len(db.added) == 2
+
+    monkeypatch.setattr(metrickit, "_utc_today", lambda: day_two)
+    assert (await ac.post(INGEST, json=_body())).status_code == 202
+    assert len(db.added) == 3
 
 
 # ---------------------------------------------------------------------------
@@ -307,9 +338,10 @@ async def test_a_failed_save_answers_503_so_the_phone_keeps_it():
 
 
 @pytest.mark.asyncio
-async def test_the_sweep_runs_once_per_period_and_after_the_save(client_and_db):
+async def test_the_sweep_runs_once_per_period_and_after_the_save(client_and_db, monkeypatch):
     ac, db = client_and_db
-    metrickit._last_prune = 0.0  # due
+    metrickit._last_prune = None  # never swept, even when process monotonic clock < 1h
+    monkeypatch.setattr(metrickit.time, "monotonic", lambda: 42.0)
     await ac.post(INGEST, json=_body())
     await ac.post(INGEST, json=_body())
 
@@ -325,9 +357,10 @@ async def test_the_sweep_runs_once_per_period_and_after_the_save(client_and_db):
 
 
 @pytest.mark.asyncio
-async def test_a_failed_sweep_never_costs_the_payload_just_stored(client_and_db):
+async def test_a_failed_sweep_never_costs_the_payload_just_stored(client_and_db, monkeypatch):
     ac, db = client_and_db
-    metrickit._last_prune = 0.0
+    metrickit._last_prune = None
+    monkeypatch.setattr(metrickit.time, "monotonic", lambda: 15.0)
 
     async def boom(statement, params=None):
         raise RuntimeError("simulated sweep failure")

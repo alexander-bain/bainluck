@@ -30,6 +30,7 @@ most once per `PRUNE_EVERY_SECONDS` per process.
 
 from __future__ import annotations
 
+from datetime import date, datetime, timezone
 import json
 import logging
 import time
@@ -57,11 +58,18 @@ ACCEPTED_KINDS = frozenset({"crash", "hang", "cpu_exception", "disk_write", "lau
 #: sending (`MetricKitRecord12309.maxBodyBytes`, the same number).
 MAX_BODY_BYTES = 512 * 1024
 
+#: Daily stored-bytes ceiling across all senders per UTC day (per worker
+#: process). Once reached, ingest answers 429 so consenting phones retain
+#: queued diagnostics (`isPermanentRefusal(429) == false`) and retry later.
+MAX_DAILY_STORED_BYTES = 50 * 1024 * 1024
+
 RETENTION_DAYS = 30
 PRUNE_EVERY_SECONDS = 3600
 
-#: `time.monotonic()` of the last retention sweep in this process.
-_last_prune: float = 0.0
+#: `time.monotonic()` of the last retention sweep in this process (`None` = never swept).
+_last_prune: Optional[float] = None
+_daily_bytes_day: Optional[date] = None
+_daily_bytes_stored: int = 0
 
 RECENT_DIAGNOSTICS = 25
 MAX_SUMMARY_ROWS = 200
@@ -106,6 +114,25 @@ async def _read_bounded(request: Request, cap: int) -> bytes:
     return bytes(body)
 
 
+def _utc_today() -> date:
+    return datetime.now(timezone.utc).date()
+
+
+def _current_daily_stored_bytes(today: Optional[date] = None) -> int:
+    global _daily_bytes_day, _daily_bytes_stored
+    day = today or _utc_today()
+    if _daily_bytes_day != day:
+        _daily_bytes_day = day
+        _daily_bytes_stored = 0
+    return _daily_bytes_stored
+
+
+def _record_daily_stored_bytes(nbytes: int, today: Optional[date] = None) -> None:
+    global _daily_bytes_stored
+    _current_daily_stored_bytes(today)
+    _daily_bytes_stored += nbytes
+
+
 async def _maybe_prune(db: AsyncSession) -> None:
     """Delete rows past retention, at most once per `PRUNE_EVERY_SECONDS`.
 
@@ -114,7 +141,7 @@ async def _maybe_prune(db: AsyncSession) -> None:
     """
     global _last_prune
     now = time.monotonic()
-    if now - _last_prune < PRUNE_EVERY_SECONDS:
+    if _last_prune is not None and (now - _last_prune) < PRUNE_EVERY_SECONDS:
         return
     _last_prune = now
     try:
@@ -163,6 +190,14 @@ async def ingest_metrickit(
             detail=f"Unknown kind. Expected one of: {sorted(ACCEPTED_KINDS)}",
         )
 
+    payload_bytes = len(json.dumps(submission.payload, separators=(",", ":")).encode())
+    today = _utc_today()
+    if _current_daily_stored_bytes(today) + payload_bytes > MAX_DAILY_STORED_BYTES:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many MetricKit bytes stored today; try again tomorrow",
+        )
+
     row = MetricKitPayload(
         kind=submission.kind,
         app_version=submission.app_version,
@@ -170,7 +205,7 @@ async def ingest_metrickit(
         os_version=submission.os_version,
         device_type=submission.device_type,
         payload=submission.payload,
-        payload_bytes=len(json.dumps(submission.payload, separators=(",", ":")).encode()),
+        payload_bytes=payload_bytes,
     )
     try:
         db.add(row)
@@ -180,6 +215,7 @@ async def ingest_metrickit(
         logger.exception("metrickit ingest failed to persist one %s payload", submission.kind)
         raise HTTPException(status_code=503, detail="Not stored; try again later")
 
+    _record_daily_stored_bytes(payload_bytes, today)
     await _maybe_prune(db)
     return {"stored": 1}
 
