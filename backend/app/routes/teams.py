@@ -3,6 +3,7 @@
 import logging
 import re
 import time
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 
 from app.utils.event_completion import served_commence_time
@@ -51,7 +52,8 @@ from app.utils.standings_shape import (
 from app.utils.source_mark import quote_source_mark, settled_source_mark
 
 from fastapi import APIRouter, Depends, HTTPException, Response
-from sqlalchemy import select, or_, and_
+from sqlalchemy import Integer, select, or_, and_, any_, bindparam
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import set_committed_value
@@ -62,6 +64,14 @@ from app.utils import season_windows
 from app.utils.proven_duplicates import (
     folded_probability_sources_batch,
     not_a_proven_duplicate,
+)
+from app.utils.team_page_cache import (
+    cache_scope_key as _team_cache_scope_key,
+    get_inflight_lock as _get_team_inflight_lock,
+    is_real_pg_engine as _is_real_pg_engine,
+    normalize_team_cache_id as _normalize_team_cache_id,
+    read_team_page_cache as _read_team_page_cache,
+    write_team_page_cache as _write_team_page_cache,
 )
 
 logger = logging.getLogger(__name__)
@@ -420,6 +430,30 @@ async def get_team_championship_path(
 @router.get("/{identifier}")
 async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession = Depends(get_db)):
     """Get a team page with upcoming/recent games, futures, and championship path."""
+    if not debug_timing and _is_real_pg_engine(db):
+        scope_key = _team_cache_scope_key(db)
+        norm_id = _normalize_team_cache_id(identifier)
+        cached = await _read_team_page_cache(scope_key, norm_id)
+        if cached is not None:
+            return cached
+        async with _get_team_inflight_lock(scope_key, norm_id):
+            cached = await _read_team_page_cache(scope_key, norm_id)
+            if cached is not None:
+                return cached
+            return await _build_team_response(
+                identifier, debug_timing, db, cache_target=(scope_key, norm_id)
+            )
+    return await _build_team_response(identifier, debug_timing, db)
+
+
+async def _build_team_response(
+    identifier: str,
+    debug_timing: bool,
+    db: AsyncSession,
+    *,
+    cache_target: tuple[int, str] | None = None,
+) -> dict:
+    """Build a fresh team page response (separated so ``get_team`` stays shallow)."""
     _t = {}
     _t0 = time.perf_counter()
 
@@ -675,6 +709,7 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
     futures_items: list = []
     _futures_unavailable = False
     _futures_partial = False
+    _futures_failed = False
     _futures_omitted_count = 0
     _ftime: dict = {}
     try:
@@ -716,6 +751,7 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
         _futures_unavailable = True
     except Exception:
         logger.exception("team page: futures section failed for team %s", team.id)
+        _futures_failed = True
     _mark("futures")
     if debug_timing:
         _t["futures_detail"] = _ftime
@@ -733,12 +769,14 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
     # --- Championship path (tier 1/2/4 probabilities) ---
     champ_path: list = []
     champ_market_ids: set[int] = set()
+    _championship_failed = False
     try:
         champ_path = await _get_championship_path(
             team.id, db, league_slug=league_slug, now=now, team_sport_key=sport_key, out_market_ids=champ_market_ids
         )
     except Exception:
         logger.exception("team page: championship path failed for team %s", team.id)
+        _championship_failed = True
     _mark("championship")
 
     # --- The grid's out verdict (#11493): cache-only, fails to today's answer ---
@@ -787,6 +825,14 @@ async def get_team(identifier: str, debug_timing: bool = False, db: AsyncSession
         resp["futures_omitted_count"] = _futures_omitted_count
     if debug_timing:
         resp["_timings_ms"] = _t
+    elif (
+        cache_target is not None
+        and not _futures_unavailable
+        and not _futures_partial
+        and not _futures_failed
+        and not _championship_failed
+    ):
+        await _write_team_page_cache(cache_target[0], cache_target[1], resp)
     return resp
 
 
@@ -1494,7 +1540,7 @@ def _tier_candidates_agree(probabilities: list[float]) -> bool:
     return spread <= _TIER_AGREEMENT_BAR
 
 
-def _championship_path_stmt(team_id: int):
+def _championship_path_stmt(team_id: int, market_ids: Sequence[int] | None = None):
     """The tier-1/2/4 selection for a team's championship path.
 
     Hoisted out of :func:`_get_championship_path` so a test can COMPILE it. The
@@ -1515,17 +1561,30 @@ def _championship_path_stmt(team_id: int):
         .correlate(FuturesMarket)
     )
 
-    return (
-        select(FuturesOutcome, FuturesMarket)
-        .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
-        .where(
-            FuturesOutcome.team_id == team_id,
+    conditions = [FuturesOutcome.team_id == team_id]
+    if market_ids is not None:
+        conditions.append(
+            FuturesOutcome.market_id
+            == any_(bindparam("open_title_ids", value=list(market_ids), type_=ARRAY(Integer)))
+        )
+    conditions.extend(
+        [
             FuturesMarket.status == "open",
             FuturesMarket.event_id.is_(None),
             FuturesMarket.market_tier.in_([1, 2, 4]),
             ~graded.exists(),
+        ]
+    )
+
+    return (
+        select(FuturesOutcome, FuturesMarket)
+        .join(FuturesMarket, FuturesOutcome.market_id == FuturesMarket.id)
+        .where(*conditions)
+        .order_by(
+            FuturesMarket.market_tier.asc(),
+            FuturesMarket.id.asc(),
+            FuturesOutcome.id.asc(),
         )
-        .order_by(FuturesMarket.market_tier.asc())
     )
 
 
@@ -1612,7 +1671,25 @@ async def _get_championship_path(
     """
     now = now or datetime.now(timezone.utc)
 
-    result = await db.execute(_championship_path_stmt(team_id))
+    if _is_real_pg_engine(db):
+        open_title_ids = list(
+            (
+                await db.execute(
+                    select(FuturesMarket.id).where(
+                        FuturesMarket.status == "open",
+                        FuturesMarket.event_id.is_(None),
+                        FuturesMarket.market_tier.in_([1, 2, 4]),
+                    )
+                )
+            ).scalars().all()
+        )
+        if not open_title_ids:
+            return []
+        result = await db.execute(
+            _championship_path_stmt(team_id, market_ids=open_title_ids)
+        )
+    else:
+        result = await db.execute(_championship_path_stmt(team_id))
 
     # Current-season cutoff: the maximum year that counts as "this season" — the
     # year the league's current season ENDS (#9660). For the 2026-27 NBA season
