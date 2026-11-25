@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import EmbedAwareLink from "@/components/EmbedAwareLink";
+import BainLuckMark from "@/components/BainLuckMark";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { fetchCalibration } from "@/lib/api";
 import { compactOutcomeCount, proofCohortFigures } from "@/lib/calibrationProofFigures";
@@ -119,7 +120,9 @@ export default function AboutPage() {
       {/* ── 1. THE ONE-LINER ── */}
       <RevealSection>
         <div className="text-center space-y-6 pt-2 pb-10 border-b border-surface-border">
-          <div className="text-6xl sm:text-7xl">🍀</div>
+          <div className="flex justify-center">
+            <BainLuckMark size={64} alt="Bain Luck" />
+          </div>
           <h1 className="text-display text-text-primary">Bain Luck</h1>
           <p className="text-body text-text-secondary max-w-xl mx-auto leading-relaxed">
             {STORY_ONE_LINER}
@@ -345,7 +348,8 @@ export default function AboutPage() {
             href="/discover"
             className="inline-flex items-center gap-2.5 bg-text-primary text-surface-deep px-8 py-3.5 rounded-full text-body-strong hover:bg-text-primary/90 hover:shadow-glow hover:scale-[1.02] transition-all duration-300"
           >
-            🍀 Start Exploring
+            <BainLuckMark size={20} />
+            Start Exploring
           </EmbedAwareLink>
         </div>
       </RevealSection>

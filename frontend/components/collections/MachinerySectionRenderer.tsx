@@ -330,24 +330,36 @@ function MatchupSlateBlock({
   );
 }
 
-function DuelBarBlock({ items }: { items: Record<string, unknown>[] }) {
-  const lead = items[0];
-  if (!lead) return null;
-  const outcomes = (lead.outcomes as MachineryOutcomeVisual[] | undefined) ?? [];
+function DuelBarVisual({
+  outcomes,
+  compact = false,
+}: {
+  outcomes: readonly MachineryOutcomeVisual[];
+  compact?: boolean;
+}) {
   if (outcomes.length < 2) return null;
-  const left = outcomes[0];
-  const right = outcomes[1];
-  const href = String(lead.href ?? "/discover");
+  const drawIdx =
+    outcomes.length >= 3
+      ? outcomes.findIndex((o) => /^(?:tie|draw)$/i.test(String(o.name ?? "").trim()))
+      : -1;
+  const nonDraw = drawIdx >= 0 ? outcomes.filter((_, i) => i !== drawIdx) : outcomes;
+  if (nonDraw.length < 2) return null;
+  const left = nonDraw[0];
+  const right = nonDraw[1];
+  const draw = drawIdx >= 0 ? outcomes[drawIdx] : undefined;
+  const drawPct = draw ? Math.max(2, Math.min(40, draw.rendered_percent)) : 0;
+  const leftPct = draw
+    ? Math.max(6, Math.min(92 - drawPct, left.rendered_percent))
+    : Math.max(6, Math.min(94, left.rendered_percent));
+  const avatarSize = compact ? "h-8 w-8" : "h-10 w-10";
+  const pctClass = compact ? "text-base font-extrabold tabular-nums text-text-primary" : "text-xl font-extrabold tabular-nums text-text-primary";
+
   return (
-    <Link
-      href={href}
-      data-machinery-form="duel_bar"
-      className="block rounded-card border border-surface-border bg-surface-card p-4 transition-colors hover:bg-surface-elevated"
-    >
+    <>
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2.5">
           {left.art?.url ? (
-            <SubjectAvatar art={left.art} label={left.name} sizeClass="h-10 w-10" />
+            <SubjectAvatar art={left.art} label={left.name} sizeClass={avatarSize} />
           ) : null}
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 text-sm font-semibold text-text-primary">
@@ -359,9 +371,7 @@ function DuelBarBlock({ items }: { items: Record<string, unknown>[] }) {
               )}
               <span>{left.name}</span>
             </div>
-            <div className="text-xl font-extrabold tabular-nums text-text-primary">
-              {left.rendered_percent}%
-            </div>
+            <div className={pctClass}>{left.rendered_percent}%</div>
           </div>
         </div>
         <div className="flex min-w-0 items-center gap-2.5 text-right">
@@ -375,28 +385,64 @@ function DuelBarBlock({ items }: { items: Record<string, unknown>[] }) {
                 />
               )}
             </div>
-            <div className="text-xl font-extrabold tabular-nums text-text-primary">
-              {right.rendered_percent}%
-            </div>
+            <div className={pctClass}>{right.rendered_percent}%</div>
           </div>
           {right.art?.url ? (
-            <SubjectAvatar art={right.art} label={right.name} sizeClass="h-10 w-10" />
+            <SubjectAvatar art={right.art} label={right.name} sizeClass={avatarSize} />
           ) : null}
         </div>
       </div>
+      {draw ? (
+        <div className="mt-2 flex items-center justify-center gap-1.5 text-xs font-medium text-text-secondary">
+          <span
+            className="inline-block h-2 w-2 shrink-0 rounded-full bg-slate-300"
+            style={{ backgroundColor: draw.art?.accent_color || undefined }}
+          />
+          <span>{draw.name}</span>
+          <span className="font-bold tabular-nums text-text-primary">
+            {draw.rendered_percent}%
+          </span>
+        </div>
+      ) : null}
       <div className="mt-3 flex h-3 w-full overflow-hidden rounded-full bg-surface-elevated">
         <div
           className="h-full bg-accent-brand"
           style={{
-            width: `${Math.max(6, Math.min(94, left.rendered_percent))}%`,
+            width: `${leftPct}%`,
             backgroundColor: left.art?.accent_color || undefined,
           }}
         />
+        {draw ? (
+          <div
+            className="h-full bg-slate-300"
+            style={{
+              width: `${drawPct}%`,
+              backgroundColor: draw.art?.accent_color || undefined,
+            }}
+          />
+        ) : null}
         <div
           className="h-full flex-1 bg-slate-400"
           style={{ backgroundColor: right.art?.accent_color || undefined }}
         />
       </div>
+    </>
+  );
+}
+
+function DuelBarBlock({ items }: { items: Record<string, unknown>[] }) {
+  const lead = items[0];
+  if (!lead) return null;
+  const outcomes = (lead.outcomes as MachineryOutcomeVisual[] | undefined) ?? [];
+  if (outcomes.length < 2) return null;
+  const href = String(lead.href ?? "/discover");
+  return (
+    <Link
+      href={href}
+      data-machinery-form="duel_bar"
+      className="block rounded-card border border-surface-border bg-surface-card p-4 transition-colors hover:bg-surface-elevated"
+    >
+      <DuelBarVisual outcomes={outcomes} />
     </Link>
   );
 }
@@ -1018,7 +1064,17 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
 
       {!card.image_url && card.mini_chart && <SingleHistoryChartCard chart={card.mini_chart} compact />}
 
-      {card.form_id === "contender_spotlight" && !isEventCard && !card.scale_ordered && card.rows.length >= 2 ? (
+      {card.form_id === "duel_bar" && !isEventCard && card.rows.length >= 2 ? (
+        <div
+          data-testid="machinery-discover-duel-bar"
+          className="mt-3 rounded-lg border border-surface-border bg-surface-elevated/40 p-3"
+        >
+          <DuelBarVisual
+            outcomes={card.rows as unknown as MachineryOutcomeVisual[]}
+            compact
+          />
+        </div>
+      ) : card.form_id === "contender_spotlight" && !isEventCard && !card.scale_ordered && card.rows.length >= 2 ? (
         (() => {
           const topThree = card.rows.slice(0, 3);
           const podiumAnyPoster = topThree.some(

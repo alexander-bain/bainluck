@@ -29,6 +29,7 @@ and ``ranking_grades``; the writes go only there.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
@@ -37,19 +38,23 @@ import math
 import os
 from pathlib import Path
 import re
+import time
 import urllib.parse
-from typing import Any, Mapping
+from typing import Any, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select, text
+from sqlalchemy.exc import DBAPIError, OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.models.models import Event, RankingGrade, RankingSlateSnapshot
+from app.models.models import Event, FuturesMarket, RankingGrade, RankingSlateSnapshot
 from app.routes.admin_utils import _check_admin_secret
 from app.services.database import get_db, get_db_rw
+from app.utils.game_nuggets import reader_league_name
+from app.utils.sport_keys import SPORT_PREFIX_TO_LLM_CATEGORY
 from app.utils.ranking_eval import (
     OPENING_CARDS,
     SURFACE_DISCOVER,
@@ -1859,27 +1864,156 @@ def _game_nugget_item_key(event_id: int, nugget_id: str) -> str:
     return f"event:{event_id}:{nugget_id}"[:120]
 
 
-def _select_eval_events(events: list[Event], *, limit: int) -> list[Event]:
-    """Select upcoming/live/recent events round-robin across distinct sports."""
-    buckets: dict[str, list[Event]] = {}
-    for ev in events:
+_GAME_NUGGETS_MIN_ITEMS = 6
+_GAME_NUGGETS_MIN_KINDS = 3
+_GAME_NUGGETS_MAX_PER_LEAGUE = 4
+_GAME_NUGGETS_PRE_CAP_PER_LEAGUE = 6
+_GAME_NUGGETS_EVAL_POOL_CAP = 48
+_GAME_NUGGETS_DECK_CACHE_TTL_S = 300
+_GAME_NUGGETS_OPEN_STATUS = "open"
+_GAME_NUGGETS_DECK_BUDGET_SECONDS = 8.0
+_GAME_NUGGETS_DECK_SQL_TIMEOUT_MS = 6000
+_GAME_NUGGETS_MIN_LINKED_MARKETS = 4
+_GAME_NUGGETS_MIN_LINKED_MAJOR = 3
+_GAME_NUGGETS_QUALIFY_PER_LEAGUE = 10
+_GAME_NUGGETS_QUALIFY_POOL_CAP = 80
+_GAME_NUGGETS_DECK_CACHE_KEY_VERSION = "v3"
+_GAME_NUGGETS_MOMENT_TYPES = frozenset({
+    "half_total",
+    "quarter_total",
+    "inning_total",
+    "half_spread",
+    "quarter_spread",
+    "inning_spread",
+    "period_winner",
+    "half_winner",
+    "quarter_winner",
+    "inning_winner",
+    "segment_winner",
+    "first_scorer",
+    "overtime",
+})
+_GAME_NUGGETS_MOMENT_TOKENS = (
+    "1st quarter",
+    "1st half",
+    "first quarter",
+    "first half",
+    "first td",
+    "first touchdown",
+    "first basket",
+    "first goal",
+    "overtime",
+    "go to ot",
+)
+
+_MAJOR_TIER_0_LEAGUES = frozenset({
+    "basketball_nba",
+    "americanfootball_nfl",
+    "americanfootball_ncaaf",
+    "basketball_ncaab",
+    "icehockey_nhl",
+    "baseball_mlb",
+    "soccer_epl",
+    "soccer_uefa_champs_league",
+})
+_MAJOR_TIER_1_LEAGUES = frozenset({
+    "basketball_wnba",
+    "basketball_wncaab",
+    "soccer_spain_la_liga",
+    "soccer_germany_bundesliga",
+    "soccer_italy_serie_a",
+    "soccer_france_ligue_one",
+    "soccer_usa_mls",
+    "soccer_uefa_europa_league",
+    "tennis_atp",
+    "tennis_wta",
+    "golf_pga",
+})
+
+
+def _league_coverage_tier(sport_key: str) -> int:
+    if sport_key in _MAJOR_TIER_0_LEAGUES:
+        return 0
+    if sport_key in _MAJOR_TIER_1_LEAGUES:
+        return 1
+    return 2
+
+
+def _pre_rank_eval_candidates(
+    events: list[Event],
+    *,
+    linked_counts: Mapping[int, int] | None = None,
+    max_per_league: int = _GAME_NUGGETS_PRE_CAP_PER_LEAGUE,
+    total_cap: int = _GAME_NUGGETS_EVAL_POOL_CAP,
+) -> list[Event]:
+    """Order candidate events so best-covered major/prop-rich games evaluate first."""
+    counts = linked_counts or {}
+
+    def _key(ev: Event) -> tuple[int, int, int, int, float, int]:
         sk = ev.sport.key if getattr(ev, "sport", None) is not None else "unknown"
-        buckets.setdefault(sk, []).append(ev)
-    order = sorted(buckets.keys(), key=lambda sk: (-len(buckets[sk]), sk))
+        eid = int(ev.id)
+        linked = int(counts.get(eid, 0))
+        has_linked_tier = 0 if linked >= 3 else (1 if linked >= 1 else 2)
+        major_tier = _league_coverage_tier(sk)
+        wps = getattr(ev, "win_probability_sources", None)
+        src_cnt = len(wps) if isinstance(wps, Mapping) else 0
+        ct = getattr(ev, "commence_time", None)
+        ct_ts = ct.timestamp() if ct is not None else float("inf")
+        return (has_linked_tier, major_tier, -linked, -src_cnt, ct_ts, eid)
+
+    ranked = sorted(events, key=_key)
     selected: list[Event] = []
-    while len(selected) < limit and order:
-        next_order: list[str] = []
-        for sk in order:
-            q = buckets[sk]
-            if not q:
-                continue
-            selected.append(q.pop(0))
-            if q:
-                next_order.append(sk)
-            if len(selected) >= limit:
-                break
-        order = next_order
+    league_counts: dict[str, int] = {}
+    for ev in ranked:
+        sk = ev.sport.key if getattr(ev, "sport", None) is not None else "unknown"
+        if league_counts.get(sk, 0) >= max_per_league:
+            continue
+        league_counts[sk] = league_counts.get(sk, 0) + 1
+        selected.append(ev)
+        if len(selected) >= total_cap:
+            break
     return selected
+
+
+def _select_best_covered_qualified(
+    qualified: list[dict[str, Any]],
+    *,
+    limit: int,
+    max_per_league: int = _GAME_NUGGETS_MAX_PER_LEAGUE,
+) -> list[dict[str, Any]]:
+    """Sort qualified games best-covered first and enforce <= max_per_league in the deck."""
+    ordered = sorted(
+        qualified,
+        key=lambda row: (
+            -int(row.get("kind_count") or 0),
+            -int(row.get("nugget_count") or 0),
+            -int(row.get("_total_items") or 0),
+            -int(row.get("_linked_count") or 0),
+            int(row.get("_major_tier") if row.get("_major_tier") is not None else 2),
+            float(row.get("_commence_ts") if row.get("_commence_ts") is not None else float("inf")),
+            int(row["event_id"]),
+        ),
+    )
+    picked: list[dict[str, Any]] = []
+    per_league: dict[str, int] = {}
+    for row in ordered:
+        sk = str(row.get("sport") or "unknown")
+        if per_league.get(sk, 0) >= max_per_league:
+            continue
+        per_league[sk] = per_league.get(sk, 0) + 1
+        picked.append(row)
+        if len(picked) >= limit:
+            break
+    return picked
+
+
+def _select_eval_events(events: list[Event], *, limit: int) -> list[Event]:
+    """Select candidate events capped per league, prioritizing best-covered leagues."""
+    return _pre_rank_eval_candidates(
+        events,
+        max_per_league=_GAME_NUGGETS_MAX_PER_LEAGUE,
+        total_cap=limit,
+    )
 
 
 def _summarize_game_nugget_grades(rows: list[RankingGrade]) -> dict[str, Any]:
@@ -1927,39 +2061,293 @@ def _summarize_game_nugget_grades(rows: list[RankingGrade]) -> dict[str, Any]:
     }
 
 
+_GAME_NUGGETS_WINNER_NOISE_RE = re.compile(
+    r"\b(?:moneyline|match winner|match result|3-way|three-way|full time result)\b",
+    re.IGNORECASE,
+)
+
+
+def _classify_market_to_nugget_kind(name: str, external_id: str | None = None) -> str | None:
+    """Map a game market title/ticker to one of the six nugget kinds (or None if skipped)."""
+    from app.routes.events import _classify_game_market
+
+    mtype = _classify_game_market(name or "", external_id=external_id)
+    if mtype in ("game_total", "spread"):
+        return "game_flow"
+    if mtype == "player_prop":
+        return "players"
+    if mtype in ("team_total", "scoring_race"):
+        return "teams"
+    low = (name or "").lower()
+    if mtype in _GAME_NUGGETS_MOMENT_TYPES or any(tok in low for tok in _GAME_NUGGETS_MOMENT_TOKENS):
+        return "moments"
+    if mtype == "moneyline" or _GAME_NUGGETS_WINNER_NOISE_RE.search(name or ""):
+        return None
+    return "oddities"
+
+
+def _estimate_event_nugget_coverage(
+    ev: Event,
+    market_rows: Sequence[tuple[str, str | None]],
+    *,
+    open_stakes_categories: set[str],
+) -> tuple[int, int, int]:
+    """Estimate (first_eight_items, kind_count, total_items) from grouped linked market metadata."""
+    kind_counts: dict[str, int] = {}
+    seen_pairs: set[tuple[str, str]] = set()
+    for mname, ext_id in market_rows:
+        norm_name = " ".join((mname or "").lower().split())
+        kind = _classify_market_to_nugget_kind(mname or "", ext_id)
+        if kind is None:
+            continue
+        dedup_key = (kind, norm_name)
+        if dedup_key in seen_pairs:
+            continue
+        seen_pairs.add(dedup_key)
+        kind_counts[kind] = kind_counts.get(kind, 0) + 1
+
+    wps = getattr(ev, "win_probability_sources", None)
+    if isinstance(wps, Mapping) and wps and kind_counts.get("game_flow", 0) == 0:
+        kind_counts["game_flow"] = 1
+
+    sk = ev.sport.key if getattr(ev, "sport", None) is not None else "unknown"
+    prefix = sk.split("_")[0] if sk and sk != "unknown" else ""
+    llm_cat = SPORT_PREFIX_TO_LLM_CATEGORY.get(prefix, prefix) if prefix else ""
+    if _league_coverage_tier(sk) == 0 and llm_cat and llm_cat in open_stakes_categories:
+        kind_counts["stakes"] = kind_counts.get("stakes", 0) + 1
+
+    estimated_kind_count = sum(1 for c in kind_counts.values() if c > 0)
+    estimated_nugget_count = min(8, sum(min(2, c) for c in kind_counts.values()))
+    total_items = sum(kind_counts.values())
+    return estimated_nugget_count, estimated_kind_count, total_items
+
+
 @router.get("/game-nuggets/deck")
 async def get_game_nuggets_deck(
     request: Request,
     limit: int = Query(20, ge=1, le=30),
     slate: str | None = Query(None, max_length=64),
+    fresh: bool = Query(False),
     secret: str = Query(None),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Return lightweight 20-game slate metadata + grade summary (#13511).
+    """Return qualified best-covered game-nuggets slate metadata + grade summary (#13511, #13642).
 
-    Does NOT build nuggets inside the deck call; the grading UI loads one game
-    per request via ``/game-nuggets/games/{event_id}`` so neither cold latency
-    nor L1 cache eviction hits the web workers.
+    Qualifies games via grouped linked-market SQL queries (never calling
+    ``build_event_nuggets`` in a loop), ordered best-covered first and capped
+    at 4 per league, under a strict 8-second ceiling that returns a short deck
+    rather than hanging past the router timeout.
     """
     _check_admin_secret(secret, request=request)
     now = datetime.now(timezone.utc)
     slate_id = _game_nugget_slate_id(slate, now)
 
-    candidate_events = (
-        await db.execute(
-            select(Event)
-            .options(selectinload(Event.sport))
-            .where(
-                Event.status.in_(["live", "in_progress", "scheduled", "completed"]),
-                Event.commence_time >= now - timedelta(hours=6),
-                Event.commence_time <= now + timedelta(days=5),
-            )
-            .order_by(Event.commence_time.asc(), Event.id.asc())
-            .limit(max(limit * 4, 80))
-        )
-    ).scalars().all()
+    use_redis = isinstance(db, AsyncSession)
+    cache_key = f"game_nuggets:deck:{_GAME_NUGGETS_DECK_CACHE_KEY_VERSION}:{slate_id}:{limit}"
+    built_at: str | None = None
+    deck_games_raw: list[dict[str, Any]] | None = None
+    deck_truncated = False
 
-    chosen_candidates = _select_eval_events(list(candidate_events), limit=limit)
+    if use_redis and not fresh:
+        try:
+            from app.tasks.redis_state import get_redis_client
+
+            cached_raw = get_redis_client(fast_fail=True).get(cache_key)
+            if cached_raw:
+                cached_text = cached_raw.decode("utf-8") if isinstance(cached_raw, bytes) else str(cached_raw)
+                cached_obj = json.loads(cached_text)
+                if isinstance(cached_obj, dict) and isinstance(cached_obj.get("games"), list):
+                    built_at = cached_obj.get("built_at")
+                    deck_games_raw = cached_obj["games"]
+        except Exception:
+            deck_games_raw = None
+
+    if deck_games_raw is None:
+        partial_qualified: list[dict[str, Any]] = []
+        started = time.monotonic()
+
+        async def _qualify_deck_candidates() -> None:
+            nonlocal deck_truncated
+            try:
+                bind = db.get_bind() if isinstance(db, AsyncSession) else getattr(db, "bind", None)
+                if getattr(getattr(bind, "dialect", None), "name", None) == "postgresql":
+                    await db.execute(text(f"SET LOCAL statement_timeout = {int(_GAME_NUGGETS_DECK_SQL_TIMEOUT_MS)}"))
+            except Exception:
+                pass
+
+            candidate_events = list(
+                (
+                    await db.execute(
+                        select(Event)
+                        .options(selectinload(Event.sport))
+                        .where(
+                            Event.status.in_(["live", "in_progress", "scheduled", "completed"]),
+                            Event.commence_time >= now - timedelta(hours=6),
+                            Event.commence_time <= now + timedelta(days=5),
+                        )
+                        .order_by(Event.commence_time.asc(), Event.id.asc())
+                        .limit(max(limit * 40, 800))
+                    )
+                ).scalars().all()
+            )
+            if not candidate_events:
+                return
+
+            active_market_filter = or_(
+                FuturesMarket.status.in_(("open", "closed", "resolved")),
+                FuturesMarket.status.is_(None),
+            )
+            linked_counts: dict[int, int] = {}
+            cand_ids = [int(ev.id) for ev in candidate_events if getattr(ev, "id", None) is not None]
+            if cand_ids:
+                fm_rows = (
+                    await db.execute(
+                        select(FuturesMarket.event_id, func.count(FuturesMarket.id))
+                        .where(
+                            FuturesMarket.event_id.in_(cand_ids),
+                            active_market_filter,
+                        )
+                        .group_by(FuturesMarket.event_id)
+                    )
+                ).all()
+                for row in fm_rows:
+                    if (isinstance(row, (tuple, list)) or hasattr(row, "_fields")) and len(row) == 2 and row[0] is not None:
+                        linked_counts[int(row[0])] = int(row[1] or 0)
+
+            eligible_candidates = [
+                ev
+                for ev in candidate_events
+                if int(linked_counts.get(int(ev.id), 0))
+                >= (
+                    _GAME_NUGGETS_MIN_LINKED_MAJOR
+                    if _league_coverage_tier(
+                        ev.sport.key if getattr(ev, "sport", None) is not None else "unknown"
+                    )
+                    == 0
+                    else _GAME_NUGGETS_MIN_LINKED_MARKETS
+                )
+            ]
+            eval_pool = _pre_rank_eval_candidates(
+                eligible_candidates,
+                linked_counts=linked_counts,
+                max_per_league=_GAME_NUGGETS_QUALIFY_PER_LEAGUE,
+                total_cap=max(limit * 3 + 20, _GAME_NUGGETS_QUALIFY_POOL_CAP),
+            )
+            if not eval_pool:
+                return
+
+            pool_ids = [int(ev.id) for ev in eval_pool]
+            markets_by_event: dict[int, list[tuple[str, str | None]]] = {}
+            mkt_rows = (
+                await db.execute(
+                    select(FuturesMarket.event_id, FuturesMarket.name, FuturesMarket.external_id).where(
+                        FuturesMarket.event_id.in_(pool_ids),
+                        active_market_filter,
+                    )
+                )
+            ).all()
+            for row in mkt_rows:
+                if (isinstance(row, (tuple, list)) or hasattr(row, "_fields")) and len(row) >= 3 and row[0] is not None:
+                    markets_by_event.setdefault(int(row[0]), []).append(
+                        (str(row[1] or ""), str(row[2]) if row[2] is not None else None)
+                    )
+
+            tier0_categories = tuple(
+                sorted(
+                    {
+                        SPORT_PREFIX_TO_LLM_CATEGORY.get(sk.split("_")[0], sk.split("_")[0])
+                        for sk in _MAJOR_TIER_0_LEAGUES
+                    }
+                )
+            )
+            stakes_cats_raw = (
+                await db.execute(
+                    select(FuturesMarket.llm_sport_category)
+                    .where(
+                        FuturesMarket.status == _GAME_NUGGETS_OPEN_STATUS,
+                        FuturesMarket.event_id.is_(None),
+                        FuturesMarket.llm_sport_category.in_(tier0_categories),
+                        FuturesMarket.market_tier.in_([1, 2, 3]),
+                    )
+                    .distinct()
+                )
+            ).scalars().all()
+            open_stakes_categories = {str(c).strip().lower() for c in stakes_cats_raw if isinstance(c, str) and c.strip()}
+
+            for ev in eval_pool:
+                if (time.monotonic() - started) >= _GAME_NUGGETS_DECK_BUDGET_SECONDS:
+                    deck_truncated = True
+                    break
+                eid = int(ev.id)
+                sk = ev.sport.key if getattr(ev, "sport", None) is not None else None
+                linked = int(linked_counts.get(eid, 0))
+                major_tier = _league_coverage_tier(sk or "unknown")
+                nugget_count, kind_count, total_items = _estimate_event_nugget_coverage(
+                    ev,
+                    markets_by_event.get(eid, ()),
+                    open_stakes_categories=open_stakes_categories,
+                )
+                if nugget_count < _GAME_NUGGETS_MIN_ITEMS or kind_count < _GAME_NUGGETS_MIN_KINDS:
+                    continue
+                ct = getattr(ev, "commence_time", None)
+                partial_qualified.append(
+                    {
+                        "event_id": eid,
+                        "home_team": ev.home_team_name,
+                        "away_team": ev.away_team_name,
+                        "sport": sk,
+                        "sport_name": reader_league_name(getattr(ev, "sport", None)),
+                        "status": ev.status,
+                        "commence_time": ct.isoformat() if ct else None,
+                        "nugget_count": nugget_count,
+                        "kind_count": kind_count,
+                        "_total_items": total_items,
+                        "_linked_count": linked,
+                        "_major_tier": major_tier,
+                        "_commence_ts": ct.timestamp() if ct is not None else float("inf"),
+                    }
+                )
+
+        try:
+            await asyncio.wait_for(
+                _qualify_deck_candidates(),
+                timeout=_GAME_NUGGETS_DECK_BUDGET_SECONDS,
+            )
+        except (asyncio.TimeoutError, OperationalError, DBAPIError):
+            deck_truncated = True
+        except Exception as exc:
+            if "statement timeout" in str(exc).lower() or "querycanceled" in str(exc).lower():
+                deck_truncated = True
+            else:
+                raise
+
+        picked = _select_best_covered_qualified(partial_qualified, limit=limit)
+        built_at = now.isoformat()
+        deck_games_raw = [
+            {
+                "event_id": row["event_id"],
+                "home_team": row["home_team"],
+                "away_team": row["away_team"],
+                "sport": row["sport"],
+                "sport_name": row["sport_name"],
+                "status": row["status"],
+                "commence_time": row["commence_time"],
+                "nugget_count": row["nugget_count"],
+                "kind_count": row["kind_count"],
+            }
+            for row in picked
+        ]
+        if use_redis and not deck_truncated:
+            try:
+                from app.tasks.redis_state import get_redis_client
+
+                get_redis_client(fast_fail=True).set(
+                    cache_key,
+                    json.dumps({"built_at": built_at, "games": deck_games_raw}),
+                    ex=_GAME_NUGGETS_DECK_CACHE_TTL_S,
+                )
+            except Exception:
+                pass
 
     grade_rows = (
         await db.execute(
@@ -1987,16 +2375,11 @@ async def get_game_nuggets_deck(
                 graded_keys_by_event.setdefault(int(parts[1]), set()).add(ikey)
 
     games: list[dict[str, Any]] = []
-    for ev in chosen_candidates:
-        eid = int(ev.id)
+    for row in deck_games_raw:
+        eid = int(row["event_id"])
         games.append(
             {
-                "event_id": eid,
-                "home_team": ev.home_team_name,
-                "away_team": ev.away_team_name,
-                "sport": ev.sport.key if getattr(ev, "sport", None) is not None else None,
-                "status": ev.status,
-                "commence_time": ev.commence_time.isoformat() if ev.commence_time else None,
+                **row,
                 "graded_count": len(graded_keys_by_event.get(eid, ())),
             }
         )
@@ -2004,6 +2387,9 @@ async def get_game_nuggets_deck(
     return {
         "slate_id": slate_id,
         "surface": SURFACE_GAME_NUGGETS,
+        "built_at": built_at or now.isoformat(),
+        "requested_limit": limit,
+        "deck_truncated": deck_truncated,
         "games_count": len(games),
         "games": games,
         "summary": {k: v for k, v in summary.items() if k != "grades"},

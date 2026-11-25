@@ -272,7 +272,7 @@ class TestAFittingEchoIsStillAnEcho:
             now=datetime(2026, 9, 8, 21, 7, tzinfo=timezone.utc),
         )
         assert reason == (
-            "Yes side is up 37.5 points since Jan 4 in "
+            "Yes side is up 38 points since Jan 4 in "
             "China x Philippines military clash before 2027?"
         )
         # The served defect, verbatim.
