@@ -4736,7 +4736,7 @@ def _leg_side_label(side: str, question: str) -> str:
 async def _withheld_price_outcome_ids(
     db: AsyncSession, market: FuturesMarket
 ) -> set[int]:
-    """Every outcome of this market whose served price is refused, all six arms.
+    """Every outcome of this market whose served probability is refused.
 
     #6993. THE ARMS WERE ALREADY COMPOSED — in the body of
     :func:`get_futures_market`, where only that route could reach them. The group
@@ -4763,7 +4763,8 @@ async def _withheld_price_outcome_ids(
     ids |= await _refuted_midpoint_outcome_ids(db, market)
     ids |= _book_refuted_outcome_ids(market)
     ids |= _empty_book_outcome_ids(market)
-    # Last, and reading the four above rather than the stored rows: its gate is a
+    ids |= futures_price_screen.zero_bid_outcome_ids(market)
+    # Read the remaining outcomes rather than the stored rows: the gate is a
     # fact about the column a reader is actually shown. See the arm's docstring.
     ids |= _unlocated_in_broken_field_outcome_ids(market, ids)
     # #8265, after every other arm for the same reason: its ceiling is read from
@@ -10149,7 +10150,6 @@ def _format_market_detail(
         drop_unbacked_legs,
         encode_one_cent_kalshi_bounds,
         mark_kalshi_ask_ceilings,
-        restore_legacy_kalshi_ask_labels,
     )
 
     # Q480: one condition, one outcome. Dropped here, on the ORM rows, because the
@@ -11125,7 +11125,6 @@ def _format_market_detail(
             input_probability=source_outcomes[row["id"]].current_probability,
             displayed_probability=row["probability"],
         )
-    restore_legacy_kalshi_ask_labels(outcomes, withheld)
     if normalize_numbers:
         encode_one_cent_kalshi_bounds(market, outcomes, source_outcomes)
 

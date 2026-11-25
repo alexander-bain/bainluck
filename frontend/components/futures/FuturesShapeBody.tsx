@@ -282,6 +282,7 @@ function MovementRail({
 
 export interface FuturesShapeBodyProps {
   outcomes: FuturesOutcome[];
+  totalOutcomeCount?: number;
   sortedOutcomes: FuturesOutcome[];
   pricedOutcomes: FuturesOutcome[];
   renderedById: Map<number, RenderedPair>;
@@ -300,6 +301,7 @@ export interface FuturesShapeBodyProps {
 
 export default function FuturesShapeBody({
   outcomes,
+  totalOutcomeCount = outcomes.length,
   sortedOutcomes,
   pricedOutcomes,
   renderedById,
@@ -317,7 +319,7 @@ export default function FuturesShapeBody({
 }: FuturesShapeBodyProps) {
   const bodyKind = resolveAtlasBodyKind({
     marketShape,
-    outcomeCount: outcomes.length,
+    outcomeCount: totalOutcomeCount,
     mutuallyExclusive,
     hasThresholdGroups,
   });

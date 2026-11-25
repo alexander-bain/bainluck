@@ -142,11 +142,10 @@ final class DiscoverStreamingPriceTests: XCTestCase {
         )
         .environmentObject(PinManager())
         .environment(\.colorScheme, .light)
-        .environment(\.dynamicTypeSize, .large)
         .padding(16)
         .frame(width: 390)
         .background(Color(.systemGroupedBackground))
-        let renderer = ImageRenderer(content: card)
+        let renderer = rendererForMeasurement(card, at: .large)
         renderer.scale = 3
         let image = try XCTUnwrap(renderer.uiImage)
         let attachment = XCTAttachment(image: image)

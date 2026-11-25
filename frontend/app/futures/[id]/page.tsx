@@ -23,6 +23,7 @@ import {
 } from "@/lib/api";
 import AwardCategoryPairedCard from "@/components/discover/forms/AwardCategoryPairedCard";
 import type { FuturesOutcome } from "@/lib/types";
+import { NoRecentProbabilityOutcomes } from "@/components/futures/NoRecentProbabilityOutcomes";
 import {
   marketEventKey,
   eventPath,
@@ -701,6 +702,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         // #698: a settled row whose result is unknown is listed too — it keeps
         // its name and "Result unknown" in the table, never a closed fold.
         (outcome) =>
+          outcome.is_out === true ||
           outcomeRowVerdict(outcome, market?.status === "resolved") !== null ||
           isResultUnknown(outcome, market?.status === "resolved"),
       ),
@@ -721,6 +723,15 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         : null,
     [market, marketShape, thresholdEntries.length],
   );
+  const atlasOwnsOutcomes = atlasEnabled && (
+    atlasBodyKind === "one-leg" || atlasBodyKind === "duel" ||
+    atlasBodyKind === "field" || atlasBodyKind === "qualifier"
+  );
+
+  const foldedOutcomes = unpricedOutcomes.map((outcome) => ({
+    key: outcome.id,
+    name: outcome.name,
+  }));
 
   const atlasActiveSubjectOutcome = useMemo(() => {
     if (!market?.outcomes) return null;
@@ -1215,8 +1226,9 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   // furniture is making claims about numbers that are not on screen. ONE call
   // decides all three suppressions and the sentence, so a future edit cannot
   // teach the chips and the caption two different answers to the same question.
-  // The rows themselves stay, folded, in `More outcomes (N)`.
+  // The disclosure also serves as the empty state when it holds the whole field.
   const noPricesNote = noPricedOutcomesNote(pricedOutcomes.length);
+  const atlasListedOutcomes = atlasOwnsOutcomes && !isResolved ? pricedOutcomes : market.outcomes;
 
   // L2-65 Item 1b / B7 L2-91: link UP to the richer event-concept surface. Prefer
   // the server-derived key (covers UFC/boxing/F1/golf-majors/tennis/awards and never
@@ -1745,9 +1757,11 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           cards is the words their siblings do NOT share — see
           `thresholdLadderTitles`. Each card is still decided on its own first. */}
       {atlasEnabled && (
+        <>
         <FuturesShapeBody
-          outcomes={market.outcomes}
-          sortedOutcomes={sortedOutcomes}
+          outcomes={atlasListedOutcomes}
+          totalOutcomeCount={market.outcomes.length}
+          sortedOutcomes={atlasOwnsOutcomes && !isResolved ? pricedOutcomes : sortedOutcomes}
           pricedOutcomes={pricedOutcomes}
           renderedById={renderedById}
           marketName={market.name}
@@ -1768,6 +1782,14 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           }}
           onOpenDetails={() => setDetailsSheetOpen(true)}
         />
+        {atlasOwnsOutcomes && !isResolved && (
+          <NoRecentProbabilityOutcomes
+            outcomes={foldedOutcomes}
+            testId="futures-more-outcomes"
+            className="px-6"
+          />
+        )}
+        </>
       )}
 
       {thresholdEntries.map(([stem, outcomes], i) => (
@@ -1842,26 +1864,12 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               }
             />
           )}
-          {numberlessRungs.length > 0 && (
-            <details data-testid="futures-more-rungs" className="px-6">
-              <summary className="cursor-pointer select-none py-1 text-[11px] text-text-muted">
-                More outcomes ({numberlessRungs.length})
-              </summary>
-              {/* Titleless: the disclosure's own summary is the heading. */}
-              <QuantityGroup
-                rungs={numberlessRungs}
-                wideLabels={ladderNeedsWideLabels(numberlessRungs)}
-                missingPriceLabel={
-                  !isResolved
-                    ? atlasEnabled
-                      ? ATLAS_STATE_COPY.noRecentPrice
-                      : "No current price"
-                    : undefined
-                }
-                atlas={atlasEnabled}
-              />
-            </details>
-          )}
+          <NoRecentProbabilityOutcomes
+            outcomes={numberlessRungs.map((rung) => ({ key: rung.key, name: rung.label }))}
+            testId="futures-more-rungs"
+            className="px-6"
+            resolved={isResolved}
+          />
         </>
       )}
 
@@ -1921,14 +1929,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           rendered these same outcomes, and under ?atlas=1 when FuturesShapeBody
           (two-sided dial or named-leaders block + "N more" sheet) owns the body
           slot (#883 Step F5, Decide 47: E). */}
-      {!hasOwnLadder &&
-        !(
-          atlasEnabled &&
-          (atlasBodyKind === "one-leg" ||
-            atlasBodyKind === "duel" ||
-            atlasBodyKind === "field" ||
-            atlasBodyKind === "qualifier")
-        ) && (
+      {!hasOwnLadder && !atlasOwnsOutcomes && (
       <div
         data-testid={
           atlasEnabled && marketShape === SHAPE_QUANTITY && market?.ladder_treatment_refused
@@ -1997,7 +1998,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
             "No outcomes" is not what this says and not what is true: the rows
             exist and are one tap away below; it is their PRICES that are not
             here. */}
-        {noPricesNote && (
+        {noPricesNote && foldedOutcomes.length === 0 && (
           <p
             data-testid="futures-no-priced-outcomes"
             className="text-sm text-text-secondary"
@@ -2077,43 +2078,12 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           </button>
         )}
 
-        {/* D102 / #4568 — the numberless rows, collapsed but never dropped
-            (gotcha #43). The markup is `ScriptFold`'s from the props twin
-            deliberately: notice 35 says a second problem of the same shape does
-            not get a second component, and this is the same disclosure with the
-            same neutral D111 label. Closed it costs one row of height and names
-            its own count; open it shows every folded outcome in the normal row
-            presentation, keeping its served `rank` so the numbering a reader saw
-            never restarts at 1. */}
-        {unpricedOutcomes.length > 0 && (
-          <details data-testid="futures-more-outcomes" className="mt-4">
-            <summary className="cursor-pointer select-none py-1 text-[11px] text-text-muted">
-              More outcomes ({unpricedOutcomes.length})
-            </summary>
-            <div className="mt-1 space-y-2">
-              {unpricedOutcomes.map((outcome, index) => (
-                <OutcomeRow
-                  key={outcome.id}
-                  outcome={outcome}
-                  rank={outcome.rank ?? pricedOutcomes.length + index + 1}
-                  isLeader={false}
-                  isSelected={selectedOutcomes.has(outcome.id)}
-                  onToggleSelect={() => toggleOutcomeSelection(outcome.id)}
-                  hasHistory={historyOutcomes.some(
-                    (h) => h.outcome_id === outcome.id
-                  )}
-                  marketCategory={market?.llm_sport_category}
-                  marketName={market?.name}
-                  isResolved={isResolved}
-                  rendered={renderedById.get(outcome.id)?.current ?? null}
-                  renderedOpening={renderedById.get(outcome.id)?.opening ?? null}
-                  showLastMove={showLastMove}
-                  showEntityImage={showEntityImage}
-                />
-              ))}
-            </div>
-          </details>
-        )}
+        <NoRecentProbabilityOutcomes
+          outcomes={foldedOutcomes}
+          testId="futures-more-outcomes"
+          className="mt-4"
+          resolved={isResolved}
+        />
       </div>
       )}
 

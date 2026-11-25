@@ -112,20 +112,6 @@ def mark_kalshi_ask_ceilings(
             row["ask_ceiling"] = float(ask) if ask is not None and 0 < ask <= 1 else None
 
 
-def restore_legacy_kalshi_ask_labels(rows: list[dict], withheld: set[int]) -> None:
-    """Keep the previous reader number during the pending display ruling."""
-    for row in rows:
-        ask = row.get("ask_ceiling")
-        if (
-            row.get("kalshi_no_bid")
-            and row["id"] not in withheld
-            and row.get("probability") is None
-            and ask is not None
-            and ask <= 0.50
-        ):
-            row["probability"] = ask
-
-
 def encode_one_cent_kalshi_bounds(
     market: Any, outcomes: list[dict], source_outcomes: Mapping[int, Any]
 ) -> None:

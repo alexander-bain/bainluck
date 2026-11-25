@@ -196,7 +196,7 @@ describe("#10453 all prices withheld: the chart draws no automatic lines", () =>
     expect(chartDrawn()).toBe(true);
     expect(legendNames()).toEqual(["Jakub Mensik"]);
     expect(byTestId("futures-trend-unpriced-line").map((n) => n.textContent)).toEqual([
-      "No current price for Jakub Mensik. Its line shows past prices.",
+      "No recent probability for Jakub Mensik. Its line shows earlier readings.",
     ]);
     expect(byTestId("futures-trend-no-current-prices")).toHaveLength(0);
     // The served history is never edited.
