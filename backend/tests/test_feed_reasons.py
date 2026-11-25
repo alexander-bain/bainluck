@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from decimal import Decimal
 
 from app.utils.feed_reasons import (
     RESOLVING_WITHIN_MONTH_HEADLINE,
@@ -818,6 +819,11 @@ def test_13602_half_point_rounding_is_half_up_after_float_noise_cleanup():
         (0.005, 1),
         (0.0449, 4),
         (0.004, 0),
+        (Decimal("0.085"), 9),
+        (Decimal("0.045"), 5),
+        (Decimal("-0.025"), 3),
+        (Decimal("0.005"), 1),
+        (Decimal("0.004"), 0),
     ]
     for delta, expected in cases:
         assert _point_change(delta) == expected, (delta, expected)

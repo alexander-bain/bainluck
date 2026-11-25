@@ -604,7 +604,7 @@ def humanize_outcome_names_for_feed(
 
 def _point_change(value: float) -> int:
     """Convert a probability delta to whole percentage points, half-up (#13602)."""
-    scaled = round(abs(value) * 100, 6)  # 8.499999999999998 -> 8.5
+    scaled = round(abs(float(value)) * 100, 6)  # 8.499999999999998 -> 8.5
     return int(math.floor(scaled + 0.5))  # 8.5 -> 9, 4.49 -> 4, 0.49 -> 0
 
 
