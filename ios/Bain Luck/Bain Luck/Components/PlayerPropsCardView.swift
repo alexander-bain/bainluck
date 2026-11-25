@@ -381,6 +381,7 @@ struct PlayerPropsCardView: View {
         let isActive = teamFilter == value
         return Button {
             withAnimation(.easeInOut(duration: 0.15)) { teamFilter = value }
+            AnalyticsService.trackGamePageAction(actionKind: "filter", section: "props", sport: sportKey)
         } label: {
             Text(label)
                 .font(.subheadline.weight(isActive ? .semibold : .medium))
@@ -767,6 +768,7 @@ struct PlayerPropsCardView: View {
             }
             if hiddenCount > 0 {
                 Button {
+                    let willExpand = !isOpen
                     withAnimation(.easeInOut(duration: 0.15)) {
                         if isOpen {
                             expandedFields.remove(field.id)
@@ -774,6 +776,11 @@ struct PlayerPropsCardView: View {
                             expandedFields.insert(field.id)
                         }
                     }
+                    AnalyticsService.trackGamePageAction(
+                        actionKind: willExpand ? "expand" : "collapse",
+                        section: "props",
+                        sport: sportKey
+                    )
                 } label: {
                     Text(isOpen ? "Show less" : "+\(hiddenCount) more")
                         .font(.footnote.weight(.semibold))
