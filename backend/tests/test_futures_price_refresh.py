@@ -232,6 +232,37 @@ class TestSelectionPredicate:
         for name, sql in askers.items():
             assert shared in _normalise(sql), f"{name} does not compose LIVE_MARKET_SQL"
 
+    def test_split_liveness_askers_compose_the_one_shared_split_form(self):
+        """#13742: CTE-split selectors must interpolate the split form from
+        `futures_liveness`, not rebuild any liveness arm by hand."""
+        import inspect
+
+        from app.tasks import venue_poll_30s as v
+        from app.utils.futures_liveness import (
+            EXACTLY_ONE_WINNER_SQL,
+            LIVE_MARKET_WITHOUT_WINNER_PROBE_SQL,
+            settled_one_winner_markets_sql,
+        )
+
+        split_src = inspect.getsource(v)
+        assert split_src.count("{LIVE_MARKET_WITHOUT_WINNER_PROBE_SQL}") == 2
+        assert split_src.count("{settled_one_winner_markets_sql()}") == 2
+        for name, builder in (
+            ("venue_poll_30s.kalshi_population_sql", v.kalshi_population_sql),
+            ("venue_poll_30s.polymarket_population_sql", v.polymarket_population_sql),
+        ):
+            for arm in (False, True):
+                sql = _normalise(builder(open_arm=arm))
+                assert _normalise(LIVE_MARKET_WITHOUT_WINNER_PROBE_SQL) in sql, (
+                    f"{name}({arm}) does not compose LIVE_MARKET_WITHOUT_WINNER_PROBE_SQL"
+                )
+                assert _normalise(EXACTLY_ONE_WINNER_SQL) in sql, (
+                    f"{name}({arm}) does not compose EXACTLY_ONE_WINNER_SQL"
+                )
+                assert _normalise(settled_one_winner_markets_sql()) in sql, (
+                    f"{name}({arm}) does not compose settled_one_winner_markets_sql()"
+                )
+
     def test_the_census_cannot_be_satisfied_by_a_short_list(self):
         """CERT-452's structural finding, not just its instance.
 

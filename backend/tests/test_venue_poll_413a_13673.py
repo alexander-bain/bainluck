@@ -13,8 +13,10 @@ def _norm(sql: str) -> str:
 
 def test_pm_props_sql_bounds_suspended_events_before_jsonb_refusal(monkeypatch):
     monkeypatch.setenv("PM_WS_PROPS_TO_POLL", "1")
+    from app.tasks import ws_slate
     from app.tasks.polymarket_ws import _slate_event_window
 
+    assert v.SLATE_SUPERSET_PAST_HOURS >= ws_slate.SUSPENDED_SLATE_MAX_AGE_HOURS
     sql = v.polymarket_population_sql(open_arm=False)
     norm = _norm(sql)
 

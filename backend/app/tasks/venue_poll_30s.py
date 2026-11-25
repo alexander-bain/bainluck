@@ -333,31 +333,14 @@ _PM_TOKEN_KEYS_SQL = (
 )
 
 
-def _live_market_liveness_sql() -> str:
-    """Liveness bounds on `fm` excluding the correlated `SubPlan 5` winner probe.
-
-    The winner exclusion (`expected_winners = '1'` AND `EXISTS is_winner`) is
-    evaluated in one pass over `pool_outcomes` via `settled_winners`, keeping
-    exact parity with `futures_liveness.LIVE_MARKET_SQL` without probing
-    `ix_futures_outcomes_market_id` per market before the main leg scan.
-    """
-    from app.utils.futures_liveness import (
-        BASE_LIVENESS_SQL,
-        VENUE_SETTLED_KEY,
-        _VENUE_SETTLED_CUTOFF_SQL,
-    )
-
-    return (
-        f"{BASE_LIVENESS_SQL}\n"
-        f"       AND (fm.market_metadata->>'{VENUE_SETTLED_KEY}' IS NULL\n"
-        f"            OR fm.market_metadata->>'{VENUE_SETTLED_KEY}' > {_VENUE_SETTLED_CUTOFF_SQL})"
-    )
-
-
 def kalshi_population_sql(open_arm: bool) -> str:
     from app.tasks.kalshi_ws import _kalshi_slate_event_window
     from app.tasks.ws_open_contracts import kalshi_open_contract_stmt
-    from app.utils.futures_liveness import EXACTLY_ONE_WINNER_SQL
+    from app.utils.futures_liveness import (
+        EXACTLY_ONE_WINNER_SQL,
+        LIVE_MARKET_WITHOUT_WINNER_PROBE_SQL,
+        settled_one_winner_markets_sql,
+    )
 
     window = _render(_kalshi_slate_event_window())
     open_leg_expr = (
@@ -381,7 +364,7 @@ def kalshi_population_sql(open_arm: bool) -> str:
             SELECT fm.id AS fm_id,
                    fm.is_one_winner
               FROM pool_markets fm
-             WHERE {_live_market_liveness_sql()}
+             WHERE {LIVE_MARKET_WITHOUT_WINNER_PROBE_SQL}
         ),
         pool_outcomes AS MATERIALIZED (
             SELECT lm.fm_id,
@@ -396,10 +379,7 @@ def kalshi_population_sql(open_arm: bool) -> str:
               JOIN futures_outcomes fo ON fo.market_id = lm.fm_id
         ),
         settled_winners AS MATERIALIZED (
-            SELECT DISTINCT fm_id
-              FROM pool_outcomes
-             WHERE is_one_winner
-               AND fo_is_winner IS TRUE
+            {settled_one_winner_markets_sql()}
         )
         SELECT po.fm_id, po.fo_id, po.fo_external_id
           FROM pool_outcomes po
@@ -418,7 +398,11 @@ def kalshi_population_sql(open_arm: bool) -> str:
 def polymarket_population_sql(open_arm: bool) -> str:
     from app.tasks.polymarket_open_contracts import OUTCOME_TOKEN_METADATA_KEY
     from app.tasks.polymarket_ws import _slate_event_window
-    from app.utils.futures_liveness import EXACTLY_ONE_WINNER_SQL
+    from app.utils.futures_liveness import (
+        EXACTLY_ONE_WINNER_SQL,
+        LIVE_MARKET_WITHOUT_WINNER_PROBE_SQL,
+        settled_one_winner_markets_sql,
+    )
     from app.utils.polymarket_settlement_scan import GAMMA_EVENT_ID_EXPR
 
     window = _render(_slate_event_window())
@@ -445,7 +429,7 @@ def polymarket_population_sql(open_arm: bool) -> str:
                    fm.gamma_event_id,
                    fm.is_one_winner
               FROM pool_markets fm
-             WHERE {_live_market_liveness_sql()}
+             WHERE {LIVE_MARKET_WITHOUT_WINNER_PROBE_SQL}
                {open_market}
         ),
         pool_outcomes AS MATERIALIZED (
@@ -460,10 +444,7 @@ def polymarket_population_sql(open_arm: bool) -> str:
               JOIN futures_outcomes fo ON fo.market_id = lm.fm_id
         ),
         settled_winners AS MATERIALIZED (
-            SELECT DISTINCT fm_id
-              FROM pool_outcomes
-             WHERE is_one_winner
-               AND fo_is_winner IS TRUE
+            {settled_one_winner_markets_sql()}
         )
         SELECT po.fm_id, po.gamma_event_id, po.fo_id, po.fo_external_id
           FROM pool_outcomes po
