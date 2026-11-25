@@ -142,7 +142,7 @@ def test_a_trusted_ceiling_below_the_leader_keeps_the_kalshi_field(ceiling, stal
             row.current_yes_ask = ask
             if not stale or row.name != "Carmen":
                 data.update(
-                    kalshi_no_bid=True, ask_ceiling=ask, probability=ask,
+                    kalshi_no_bid=True, ask_ceiling=ask, probability=None,
                     source_mark={"state": "none"},
                 )
         open_rows.append(data)

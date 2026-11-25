@@ -214,6 +214,34 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         return nil
     }
 
+    nonisolated static func notificationOpenDescriptor(
+        actionIdentifier: String,
+        userInfo: [AnyHashable: Any]
+    ) -> (payloadId: String?, surface: String, destinationType: String)? {
+        let payloadId = userInfo["payload_id"] as? String
+        let destination = notificationDestination(actionIdentifier: actionIdentifier, userInfo: userInfo)
+        let destinationType: String
+        switch destination {
+        case .labeling:
+            destinationType = "discover_labeling"
+        case .event:
+            destinationType = "event"
+        case .market:
+            destinationType = "futures"
+        case .url(let url):
+            var components = url.pathComponents.filter { $0 != "/" }
+            if url.scheme?.lowercased() == "bainluck", let host = url.host, !host.isEmpty {
+                components.insert(host, at: 0)
+            }
+            destinationType = WidgetAndAlertTelemetry13261.destinationType(for: components)
+        case .none:
+            guard payloadId != nil else { return nil }
+            destinationType = "other"
+        }
+        let surface = (payloadId != nil) ? "digest" : "game_alert"
+        return (payloadId: payloadId, surface: surface, destinationType: destinationType)
+    }
+
     /// Registering the category is what makes the "Label today" button exist.
     ///
     /// ** REGISTERED UNCONDITIONALLY, SURFACED CONDITIONALLY. ** Categories are a
@@ -275,13 +303,15 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     ) {
         let userInfo = response.notification.request.content.userInfo
 
-        // Digest funnel step 2 (Queue 311 A4 / #1159): emitted BEFORE the
-        // deep-link dispatch, so an open is recorded even if navigation fails
-        // or the target no longer resolves. `payload_id` is what joins this to
-        // the server's `push_sent`; an open without one is not attributable to
-        // a send, so it is not reported as one.
-        if let payloadId = userInfo["payload_id"] as? String {
-            AnalyticsService.trackPushOpened(payloadId: payloadId)
+        if let open = Self.notificationOpenDescriptor(
+            actionIdentifier: response.actionIdentifier,
+            userInfo: userInfo
+        ) {
+            AnalyticsService.trackPushOpened(
+                payloadId: open.payloadId,
+                surface: open.surface,
+                destinationType: open.destinationType
+            )
         }
 
         // The decision is `notificationDestination`, which is pure and tested.
@@ -527,6 +557,7 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         do {
             let granted = try await center.requestAuthorization(options: [.alert, .badge, .sound])
             isPermissionGranted = granted
+            AnalyticsService.trackPushPermissionResult(granted: granted, surface: "system_prompt")
             logger.info("Notification permission \(granted ? "granted" : "denied")")
             if granted {
                 registerForRemoteNotifications()

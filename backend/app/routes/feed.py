@@ -96,6 +96,10 @@ from app.models.models import (
 from app.services import get_db, get_db_rw
 from app.utils.discover_final_seating import seat_marquee_finals
 from app.utils.live_first_page import hoist_live_events_into_first_page
+from app.utils.surface_rank import (
+    resolve_surface_profile,
+    score_candidate_for_surface,
+)
 from app.utils.sports_first_page_rails import (
     CLIENT_MARQUEE_FINAL_MAX_AGE_HOURS,
     FINISHED_STATUSES,
@@ -2571,13 +2575,29 @@ def apply_discover_display_chain(
     # the caller's ordering, and nothing else.
     items = list(items)
 
+    surface_profile = resolve_surface_profile(
+        sports_mode=sports_mode,
+        my_teams_only=my_teams_only,
+    )
+
     # #4818 — before anything ranks, caps or bundles: a golf winner market that
     # a tournament card in this pool already blends is the same question twice.
     items = _drop_futures_blended_into_tournaments(items)
 
     # === RANK ===
-    # Sort by score descending, then by recency as tiebreaker
-    items.sort(key=_rank_key, reverse=True)
+    # Sort by surface-shared score descending, then by recency as tiebreaker.
+    # Discover uses `_rank_key` unmodified so Stage 1 frozen weights cannot drift.
+    if surface_profile.surface == "discover":
+        items.sort(key=_rank_key, reverse=True)
+    else:
+        items.sort(
+            key=lambda item: (
+                score_candidate_for_surface(item, surface_profile, now=now)[0],
+                item.get("_sort_time", 0),
+                _AscendingTieBreak(_canonical_item_key(item)),
+            ),
+            reverse=True,
+        )
 
     # === DIVERSITY GUARANTEE ===
     # Ensure the feed has a mix of events and futures.
@@ -2948,7 +2968,7 @@ def apply_discover_display_chain(
     # spelled the same way everywhere else in this function, so it is spelled
     # that way here too rather than resting on the caller never combining them.
     finished_rail_cap_meta = None
-    if sports_mode and not my_teams_only:
+    if sports_mode and not my_teams_only and surface_profile.surface == "sports":
         items, finished_rail_cap_meta = cap_repeated_finished_rails(
             items, first_page_size=DISCOVER_COMPOSITION_WINDOW
         )
@@ -2994,7 +3014,7 @@ def apply_discover_display_chain(
     # TRUE for My Stuff, and My Stuff's contract is to show everything matching
     # and skip this work entirely.
     client_deletion_swap_meta = None
-    if sports_mode and not my_teams_only:
+    if sports_mode and not my_teams_only and surface_profile.surface == "sports":
         items, client_deletion_swap_meta = (
             swap_client_deleted_finished_off_first_page(
                 items, first_page_size=DISCOVER_COMPOSITION_WINDOW
@@ -3047,7 +3067,7 @@ def apply_discover_display_chain(
     # BEFORE the hoist, like everything else in this chain — that pass is Alex's
     # P1 criterion and keeps the last word on first-page membership.
     futures_cap_meta = None
-    if sports_mode and not my_teams_only:
+    if sports_mode and not my_teams_only and surface_profile.surface == "sports":
         items, futures_cap_meta = cap_futures_on_games_led_first_page(
             items, first_page_size=DISCOVER_COMPOSITION_WINDOW
         )
@@ -3075,7 +3095,7 @@ def apply_discover_display_chain(
     # no score changes and no other card moves. BEFORE #9489's pass, which keeps
     # served order inside its two groups, so a series it touches stays in order.
     series_order_meta = None
-    if sports_mode and not my_teams_only:
+    if sports_mode and not my_teams_only and surface_profile.surface == "sports":
         items, series_order_meta = order_series_games_by_kickoff(items)
     _tick("series_kickoff_order")
 
@@ -3095,7 +3115,7 @@ def apply_discover_display_chain(
     # which vacates the WORST window slots, i.e. the later-starting games this
     # pass has just moved behind tonight's.
     imminent_marquee_meta = None
-    if sports_mode and not my_teams_only:
+    if sports_mode and not my_teams_only and surface_profile.surface == "sports":
         items, imminent_marquee_meta = lead_upcoming_with_imminent_marquee_games(
             items, now=now
         )
@@ -3156,6 +3176,7 @@ def apply_discover_display_chain(
     )
 
     return items, {
+        "surface": surface_profile.surface,
         "reviewed_filtered_count": reviewed_filtered_count,
         "ladder_refused": ladder_refused_count,
         # None = the pass never ran (a non-Discover surface); a zero `seated`
@@ -3317,6 +3338,35 @@ def _drop_dismissed_keyed_items(
         return True
 
     return [item for item in items if _keeps(item)]
+
+
+def _filter_dismissed_bundle_items(
+    items: list[dict],
+    ctx: PersonalizationContext,
+    *,
+    my_teams_only: bool = False,
+) -> list[dict]:
+    """Drop bundled/grouped cards that this viewer dismissed (#13644)."""
+    if my_teams_only or not ctx.recent_dismissed_keys:
+        return items
+    from app.utils.roundup_containers import _roundup_card_candidate_keys
+
+    dismissed = {
+        str(k).strip()
+        for k in ctx.recent_dismissed_keys
+        if isinstance(k, str) and str(k).strip()
+    }
+    if not dismissed:
+        return items
+
+    kept: list[dict] = []
+    for item in items:
+        if item.get("type") == "bundle" and (
+            _roundup_card_candidate_keys(item) & dismissed
+        ):
+            continue
+        kept.append(item)
+    return kept
 
 
 def _keyed_item_sport_identity(item: dict) -> tuple[str | None, str | None]:
@@ -6734,6 +6784,9 @@ async def get_feed(
             _previous_at = _record_feed_timing(
                 _timings, _started_at, _previous_at, "roundups"
             )
+        feed_items = _filter_dismissed_bundle_items(
+            feed_items, ctx, my_teams_only=my_teams_only
+        )
 
         # T4-B2 / #5102: the pin, on the BUILD path. Applied to ``feed_items``
         # before the slice below, which is the only placement that works —
@@ -11786,8 +11839,8 @@ async def _load_personalization_context(
                     continue
             last_seen_dt = _utc(last_seen)
             if action in _DISCOVER_NEGATIVE_ACTIONS:
-                if item_id is None:
-                    recent_dismissed_keys.add(item_id_raw)
+                if item_id is None or item_type == "bundle":
+                    recent_dismissed_keys.add(str(item_id_raw).strip())
                 elif item_type == "event":
                     recent_dismissed_event_ids.add(item_id)
                 elif item_type == "futures":

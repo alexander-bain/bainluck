@@ -731,6 +731,12 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
   const foldedOutcomes = unpricedOutcomes.map((outcome) => ({
     key: outcome.id,
     name: outcome.name,
+    history: !atlasOwnsOutcomes && historyOutcomes.some((entry) => entry.outcome_id === outcome.id)
+      ? {
+          selected: selectedOutcomes.has(outcome.id),
+          toggle: () => toggleOutcomeSelection(outcome.id),
+        }
+      : undefined,
   }));
 
   const atlasActiveSubjectOutcome = useMemo(() => {
@@ -1014,7 +1020,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
     && (heldRangeNote != null || (!historyLoading && !historyError));
   // #8135 / #10074: the Probability Trend card's ONE cadence sentence. Printed by the
   // range controls on a sparse board; the chart's empty state is told it is already
-  // on screen so "Final — prices no longer update" does not appear twice.
+  // on screen so "Final — probabilities no longer update" does not appear twice.
   const trendCadenceNote = historyData?.sparse
     ? priceCadenceNote(isResolved, {
         dormant: isCadenceDormant(boardLastObservationMs),
@@ -1526,7 +1532,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
             <svg className="w-5 h-5 text-text-muted" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
             </svg>
-            <span>Limited price history available</span>
+            <span>Limited probability history available</span>
             <span className="text-xs text-text-muted">
               {priceCadenceNote(isResolved, { long: true })}
             </span>
@@ -1619,7 +1625,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
           ) : chartHistory.length === 0 ? (
             // #10453 — an open market with no current price and nothing checked.
             // The chart would fall back to five withheld lines; it draws none,
-            // and the reader can still check any row below to see its past.
+            // and the reader can open the disclosure to choose a historical line.
             <p
               data-testid="futures-trend-no-current-prices"
               className="py-6 text-center text-[13px] text-text-secondary"

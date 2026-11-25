@@ -333,7 +333,8 @@ def test_common_setup_services_and_intentional_scope_skip():
     worker = jobs["database-integration"]
     assert worker["needs"] == "change-scope"
     # #10708: skipped on a pure-ios/ PR too; native-backend-readers covers it.
-    assert worker["if"] == "needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true'"
+    # #412: D: skipped on draft PRs too (runs on ready_for_review and after).
+    assert worker["if"] == "needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft)"
     assert worker["strategy"]["fail-fast"] is False
     assert worker["strategy"]["matrix"]["group"] == ["shared", "shared-middle", "shared-middle-2", "shared-tail", "isolated", "shared-suffix", "shared-tail-2"]
     assert worker["services"]["postgres"]["image"] == "postgres:15"
@@ -444,7 +445,7 @@ def test_required_aggregate_runs_after_failure_and_deploy_still_depends_on_it():
     aggregate = jobs["search-recall"]
     assert "strategy" not in aggregate and "name" not in aggregate
     assert aggregate["needs"] == ["change-scope", "database-integration", "backend-tests"]
-    assert aggregate["if"] == "${{ !cancelled() && !contains(github.event.pull_request.labels.*.name, 'eval-candidate') && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' }}"
+    assert aggregate["if"] == "${{ !cancelled() && !contains(github.event.pull_request.labels.*.name, 'eval-candidate') && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}"
     # Fable, Wed Nov 18: deploy depends on every integration group directly (a matrix
     # need is met only when all groups succeed) and no longer waits on search-recall's runner.
     assert "database-integration" in jobs["deploy"]["needs"]

@@ -238,7 +238,7 @@ final class TheWidestChartAsksForTheWholeRecoveredHistory683Tests: XCTestCase {
             EvolutionChartView.coverageNote(
                 coverageHours: 720, observationTimes: 2, requestedHours: 4320,
                 historyRange: block("archive_first_interval", "incomplete")),
-            "Only 2 prices seen so far", "the count sentence is about what is drawn, and stays")
+            "Only 2 readings seen so far", "the count sentence is about what is drawn, and stays")
     }
 
     // MARK: - A partial read says so
@@ -323,7 +323,7 @@ final class TheWidestChartAsksForTheWholeRecoveredHistory683Tests: XCTestCase {
     }
 
     /// CERT-4158: an EMPTY Full read the server served `partial` fell to the sparse
-    /// branch, which never read the block, and printed "No price history yet" over
+    /// branch, which never read the block, and printed "No probability history yet" over
     /// prices the server withheld. Real client, real decode, the body's own rule.
     func testAnEmptyPartialFullReadSaysPricesAreWithheldNotThatThereAreNone() async throws {
         Origin.reset(bodies: ["/api/futures/68306/probability-timeline": sparse("[]", block: partialBlock)])
@@ -335,7 +335,7 @@ final class TheWidestChartAsksForTheWholeRecoveredHistory683Tests: XCTestCase {
             .sparse(.init(note: "Some older prices aren't shown", hint: nil)))
     }
 
-    /// One served price: still too few to draw, and "Only one price seen so far" is
+    /// One served price: still too few to draw, and "Only one reading seen so far" is
     /// untrue when the server withheld older ones.
     func testAOneValuePartialFullReadSaysPricesAreWithheld() async throws {
         Origin.reset(bodies: ["/api/futures/68306/probability-timeline": sparse(
@@ -368,8 +368,8 @@ final class TheWidestChartAsksForTheWholeRecoveredHistory683Tests: XCTestCase {
             EvolutionChartView.sparseCopy(
                 windowInstants: window, totalInstants: total, windowWord: word, historyRange: range)
         }
-        let none = EvolutionChartView.SparseCopy(note: "No price history yet", hint: nil)
-        let one = EvolutionChartView.SparseCopy(note: "Only one price seen so far", hint: nil)
+        let none = EvolutionChartView.SparseCopy(note: "No probability history yet", hint: nil)
+        let one = EvolutionChartView.SparseCopy(note: "Only one reading seen so far", hint: nil)
         for range in [
             FuturesHistoryRange(requested: "full", servedHistory: "complete"),
             FuturesHistoryRange(requested: "full"),                               // older server
@@ -381,12 +381,12 @@ final class TheWidestChartAsksForTheWholeRecoveredHistory683Tests: XCTestCase {
             XCTAssertEqual(copy(range, window: 1, total: 1), one, "\(String(describing: range))")
         }
 
-        // A window with earlier prices outside it keeps its own sentence and its way
+        // A window with earlier readings outside it keeps its own sentence and its way
         // out: the sentence is about the window, and the widest chip says the rest.
         let partial = FuturesHistoryRange(requested: "full", servedHistory: "partial")
         XCTAssertEqual(
             copy(partial, window: 0, total: 3, word: "in the last 7 days"),
-            .init(note: "No prices in the last 7 days — 3 earlier prices", hint: "Try a longer range"))
+            .init(note: "No readings in the last 7 days — 3 earlier readings", hint: "Try a longer range"))
         // Two points still plot — the partial caption there is `coverageNote`'s.
         XCTAssertEqual(
             EvolutionChartView.cardBody(

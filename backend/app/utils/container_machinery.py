@@ -5718,9 +5718,9 @@ async def produce_container_machinery(
     if hide_row_art and card_visual_rows:
         card_visual_rows = _strip_visual_row_art(card_visual_rows)
 
-    # All-or-nothing row art parity with iOS (`GroupingMachineryViews12288`):
-    # a Discover card or set-page section gets row pictures only when every row
-    # it renders has a real verified picture (never letters beside photos).
+    # Decision 387: A (#13605): show the verified pictures we have on each row
+    # and leave rows without one as monogram/initials circles (never hide
+    # held pictures because a sibling row is missing one).
     if (
         not hide_row_art
         and card_visual_rows
@@ -5741,12 +5741,10 @@ async def produce_container_machinery(
                 if isinstance(r, Mapping) and not has_art
             ]
             logger.warning(
-                "Public sports card %s dropped row pictures; missing art for subjects=%s",
+                "Public sports card %s missing art for subjects=%s (387:A keeps sibling pictures)",
                 slug,
                 missing_subjects,
             )
-        if any(row_has_url) and not all(row_has_url):
-            card_visual_rows = _strip_visual_row_art(card_visual_rows)
 
     has_card_art = any(_has_verified_art(r) for r in card_visual_rows if isinstance(r, Mapping))
     if vb_form == "paired_stage_bars" and lead_paired_set:
@@ -6053,12 +6051,15 @@ def _enforce_section_all_or_nothing_art(
     *,
     hide_row_art: bool,
 ) -> None:
-    """Enforce per-section all-or-nothing row art on set-page sections (#12288 Item 4).
+    """Apply explicit ``rule.hide_row_art`` stripping on set-page sections (#13605 / 387: A).
 
-    Called AFTER ``card_visual_rows`` is built so a set-page section with some
-    unpictured rows strips its section row art cleanly without disturbing a
-    3/3 pictured Discover card from the same section.
+    Under Decision 387: A, partial picture coverage no longer strips sibling
+    pictures — rows with verified art keep it, and rows without art keep their
+    initials fallback. Only explicit ``hide_row_art=True`` strips row art.
     """
+    if not hide_row_art:
+        return
+
     for sec in built_sections:
         sec_vb = sec.get("visual_block")
         if not isinstance(sec_vb, dict):
@@ -6068,37 +6069,13 @@ def _enforce_section_all_or_nothing_art(
         if not isinstance(items, list) or not items:
             continue
 
-        should_strip = False
-        if hide_row_art and s_form in {
+        if s_form not in {
             "benchmark_strip",
             "sibling_fields_grid",
             "leader_bars",
             "contender_spotlight",
             "duel_bar",
         }:
-            should_strip = True
-        elif s_form == "benchmark_strip":
-            has_urls = [
-                bool((it.get("outcomes") or ()) and _has_verified_art(it["outcomes"][0]))
-                for it in items
-                if isinstance(it, Mapping)
-            ]
-            should_strip = any(has_urls) and not all(has_urls)
-        elif s_form in {"sibling_fields_grid", "leader_bars", "contender_spotlight", "duel_bar"}:
-            has_urls = [
-                _has_verified_art(o)
-                for it in items
-                if isinstance(it, Mapping) and not it.get("scale_ordered")
-                for o in (it.get("outcomes") or ())
-                if isinstance(o, Mapping)
-                and not (
-                    s_form == "duel_bar"
-                    and str(o.get("name") or "").strip().lower() in _DUEL_DRAW_OUTCOME_NAMES
-                )
-            ]
-            should_strip = any(has_urls) and not all(has_urls)
-
-        if not should_strip:
             continue
 
         stripped_items: list[dict[str, Any]] = []
@@ -6106,12 +6083,11 @@ def _enforce_section_all_or_nothing_art(
             if not isinstance(it, Mapping):
                 continue
             it_copy = dict(it)
-            if hide_row_art or not it_copy.get("scale_ordered"):
-                outs = it_copy.get("outcomes")
-                if isinstance(outs, Sequence) and not isinstance(outs, (str, bytes)):
-                    it_copy["outcomes"] = _strip_visual_row_art(
-                        [o for o in outs if isinstance(o, Mapping)]
-                    )
+            outs = it_copy.get("outcomes")
+            if isinstance(outs, Sequence) and not isinstance(outs, (str, bytes)):
+                it_copy["outcomes"] = _strip_visual_row_art(
+                    [o for o in outs if isinstance(o, Mapping)]
+                )
             stripped_items.append(it_copy)
         sec_vb["items"] = stripped_items
 

@@ -186,11 +186,11 @@ final class AFuturesChartSaysWhatItObserved7077Tests: XCTestCase {
         XCTAssertEqual(
             EvolutionChartView.coverageNote(
                 coverageHours: 75.25, observationTimes: 2, requestedHours: 168),
-            "Only 2 prices seen so far")
+            "Only 2 readings seen so far")
         XCTAssertEqual(
             EvolutionChartView.coverageNote(
                 coverageHours: 0.0, observationTimes: 1, requestedHours: 168),
-            "Only one price seen so far")
+            "Only one reading seen so far")
     }
 
     /// ⚠️ THE SECOND CONTROL. A note that always fires is a note nobody reads, and

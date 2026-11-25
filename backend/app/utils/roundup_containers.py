@@ -3188,16 +3188,33 @@ def _roundup_card_candidate_keys(card: Mapping[str, Any]) -> set[str]:
     if not isinstance(data, Mapping):
         return set()
     keys: set[str] = set()
+    raw_candidates: list[str] = []
     r_id = str(data.get("id") or "").strip()
     if r_id:
-        keys.add(r_id)
-        keys.add(f"bundle:{r_id}")
+        raw_candidates.append(r_id)
+    story_key = str(data.get("story_key") or "").strip()
+    if story_key:
+        raw_candidates.append(story_key)
+    set_id = str(data.get("set_id") or "").strip()
+    if set_id:
+        raw_candidates.append(set_id)
     cref = data.get("collection_ref")
     slug = str(cref.get("slug") or "").strip() if isinstance(cref, Mapping) else ""
     if slug:
-        keys.add(slug)
-        keys.add(f"roundup:{slug}")
-        keys.add(f"bundle:roundup:{slug}")
+        raw_candidates.append(slug)
+    roundup_contract = data.get("roundup")
+    if isinstance(roundup_contract, Mapping):
+        machinery = roundup_contract.get("machinery_card")
+        if isinstance(machinery, Mapping):
+            mslug = str(machinery.get("slug") or "").strip()
+            if mslug:
+                raw_candidates.append(mslug)
+    for val in raw_candidates:
+        keys.add(val)
+        keys.add(f"bundle:{val}")
+        keys.add(f"bundle-{val}")
+        keys.add(f"roundup:{val}")
+        keys.add(f"bundle:roundup:{val}")
     return keys
 
 
@@ -5694,6 +5711,10 @@ _KIND_TO_MODULE_BUILDER: dict[str, tuple[str, str]] = {
     "container_machinery": (
         "app.utils.container_machinery",
         "build_container_machinery_producer",
+    ),
+    "fun_scout_set": (
+        "app.utils.discover_fun_scout",
+        "build_fun_scout_set_producer",
     ),
 }
 

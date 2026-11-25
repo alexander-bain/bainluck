@@ -37,7 +37,7 @@ final class AHeldSteadyChartSaysUnchanged10141Tests: XCTestCase {
     }
 
     func testTooFewPricesIsNotEvidenceOfHoldingSteady() {
-        // Three instants is the "Only 3 prices seen so far" sentence's territory.
+        // Three instants is the "Only 3 readings seen so far" sentence's territory.
         XCTAssertNil(EvolutionChartView.heldSteadyNote(
             series: ["Yes": [6.5, 6.5, 6.5]], windowInstants: 3, windowWord: week))
         // A line whose own window holds one price is a dot, not a held line.

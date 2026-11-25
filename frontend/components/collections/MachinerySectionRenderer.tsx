@@ -110,11 +110,25 @@ export function resolveDistinctChartSeries(
   });
 }
 
+function initialsForSubject(label: string, provided?: string | null): string {
+  const cleanProvided = (provided ?? "").trim();
+  if (cleanProvided) return cleanProvided.slice(0, 3).toUpperCase();
+  const tokens = label
+    .replace(/[^A-Za-z0-9\s]+/g, " ")
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean);
+  const nonYear = tokens.filter((t) => !/^(19|20)\d{2}$/.test(t));
+  const picked = nonYear.length > 0 ? nonYear : tokens;
+  if (picked.length === 0) return "?";
+  if (picked.length === 1) return picked[0].slice(0, 2).toUpperCase();
+  return `${picked[0][0] ?? ""}${picked[1][0] ?? ""}`.toUpperCase();
+}
+
 function SubjectAvatar({
   art,
   label,
   sizeClass = "h-9 w-9",
-  widthClass,
   poster = false,
   reserveSlotWhenMissing = false,
 }: {
@@ -128,12 +142,15 @@ function SubjectAvatar({
   const url = art?.url;
   if (!url) {
     if (!reserveSlotWhenMissing) return null;
+    const initials = initialsForSubject(label, art?.initials);
     return (
       <span
         aria-hidden="true"
-        data-testid="machinery-avatar-spacer"
-        className={`inline-block shrink-0 ${widthClass ?? sizeClass}`}
-      />
+        data-testid="machinery-avatar-initials"
+        className={`inline-flex shrink-0 items-center justify-center rounded-full border border-surface-border bg-surface-elevated text-[10px] font-bold uppercase leading-none tracking-tight text-text-secondary select-none ${sizeClass}`}
+      >
+        {initials}
+      </span>
     );
   }
   const kind = art?.kind ?? "person";
@@ -353,6 +370,7 @@ function DuelBarVisual({
   const leftPct = draw
     ? Math.max(6, Math.min(92 - drawPct, left.rendered_percent))
     : Math.max(6, Math.min(94, left.rendered_percent));
+  const anyDuelArt = Boolean(left.art?.url || right.art?.url);
   const avatarSize = compact ? "h-8 w-8" : "h-10 w-10";
   const pctClass = compact ? "text-base font-extrabold tabular-nums text-text-primary" : "text-xl font-extrabold tabular-nums text-text-primary";
 
@@ -360,12 +378,17 @@ function DuelBarVisual({
     <>
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2.5">
-          {left.art?.url ? (
-            <SubjectAvatar art={left.art} label={left.name} sizeClass={avatarSize} />
+          {anyDuelArt ? (
+            <SubjectAvatar
+              art={left.art}
+              label={left.name}
+              sizeClass={avatarSize}
+              reserveSlotWhenMissing
+            />
           ) : null}
           <div className="min-w-0">
             <div className="flex items-center gap-1.5 text-sm font-semibold text-text-primary">
-              {!left.art?.url && (
+              {!anyDuelArt && (
                 <span
                   className="inline-block h-2.5 w-2.5 shrink-0 rounded-full bg-accent-brand"
                   style={{ backgroundColor: left.art?.accent_color || undefined }}
@@ -380,7 +403,7 @@ function DuelBarVisual({
           <div className="min-w-0">
             <div className="flex items-center justify-end gap-1.5 text-sm font-semibold text-text-primary">
               <span>{right.name}</span>
-              {!right.art?.url && (
+              {!anyDuelArt && (
                 <span
                   className="inline-block h-2.5 w-2.5 shrink-0 rounded-full bg-slate-400"
                   style={{ backgroundColor: right.art?.accent_color || undefined }}
@@ -389,8 +412,13 @@ function DuelBarVisual({
             </div>
             <div className={pctClass}>{formatGroupedProbability(right)}</div>
           </div>
-          {right.art?.url ? (
-            <SubjectAvatar art={right.art} label={right.name} sizeClass={avatarSize} />
+          {anyDuelArt ? (
+            <SubjectAvatar
+              art={right.art}
+              label={right.name}
+              sizeClass={avatarSize}
+              reserveSlotWhenMissing
+            />
           ) : null}
         </div>
       </div>
@@ -1112,13 +1140,13 @@ export function MachineryDiscoverCard({ card }: { card: MachineryCardContract })
                       <SubjectAvatar
                         art={art}
                         label={name}
-                        sizeClass={podiumAnyPoster ? "h-12 w-8" : "h-10 w-10"}
+                        sizeClass={isPoster ? "h-12 w-8" : "h-10 w-10"}
                         widthClass={podiumAnyPoster ? "w-8 h-12" : "w-10 h-10"}
                         poster={isPoster}
                         reserveSlotWhenMissing
                       />
                     )}
-                    <div className="mt-1.5 line-clamp-2 break-words text-[11px] font-semibold leading-tight text-text-primary">
+                    <div className="mt-1.5 break-words text-[11px] font-semibold leading-tight text-text-primary">
                       {name}
                     </div>
                     <div className="mt-1.5 h-1.5 w-full overflow-hidden rounded-full bg-surface-elevated">

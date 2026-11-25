@@ -293,8 +293,11 @@ async def test_public_sports_card_logs_missing_subject_when_row_pictures_dropped
         )
     assert hasattr(res, "machinery_card")
     rows = res.machinery_card["rows"]
-    # All-or-nothing strips partial art across rows on the card...
-    assert all(not r.get("art", {}).get("url") for r in rows)
+    # Decision 387:A (#13605) keeps verified sibling pictures + uses monogram for the missing row...
+    assert bool((rows[0].get("art") or {}).get("url"))
+    assert bool((rows[1].get("art") or {}).get("url"))
+    assert not (rows[2].get("art") or {}).get("url")
+    assert (rows[2].get("art") or {}).get("kind") == "monogram"
     # ...and logs the exact missing subject on public sports cards.
     warn_msgs = [rec.message for rec in caplog.records if rec.levelno == logging.WARNING]
     assert any(
@@ -346,7 +349,10 @@ async def test_culture_card_never_uses_teams_table_and_does_not_emit_sports_warn
     assert hasattr(res, "machinery_card")
     rows = res.machinery_card["rows"]
     assert all(not r.get("art", {}).get("url") for r in rows)
-    assert not any("dropped row pictures" in rec.message for rec in caplog.records)
+    assert not any(
+        "missing art for subjects=" in rec.message or "dropped row pictures" in rec.message
+        for rec in caplog.records
+    )
 
 
 @pytest.mark.asyncio
@@ -555,7 +561,11 @@ async def test_championship_missing_art_warning_names_outcome_subject_not_champi
             now=NOW,
         )
     assert hasattr(res, "machinery_card")
-    assert all(not r.get("art", {}).get("url") for r in res.machinery_card["rows"])
+    rows = res.machinery_card["rows"]
+    assert bool((rows[0].get("art") or {}).get("url"))
+    assert bool((rows[1].get("art") or {}).get("url"))
+    assert not (rows[2].get("art") or {}).get("url")
+    assert (rows[2].get("art") or {}).get("kind") == "monogram"
     warn_msgs = [rec.message for rec in caplog.records if rec.levelno == logging.WARNING]
     assert any(
         "machinery-big-championships-2027" in m
@@ -627,7 +637,10 @@ async def test_three_culture_cards_keep_card_image_and_verified_people_row_pictu
             assert all(r.get("art", {}).get("url") for r in card_rows), (filename, card_rows)
             assert all(r.get("art", {}).get("kind") != "team_logo" for r in card_rows), (filename, card_rows)
 
-    assert not any("dropped row pictures" in rec.message for rec in caplog.records)
+    assert not any(
+        "missing art for subjects=" in rec.message or "dropped row pictures" in rec.message
+        for rec in caplog.records
+    )
 
 
 def test_ambiguous_city_or_nickname_never_falls_back_to_other_sport_static_crest() -> None:
@@ -746,7 +759,7 @@ async def test_long_shots_with_extra_sports_category_does_not_emit_dropped_row_p
     assert len(res.machinery_card["rows"]) == 3
     assert all(not (r.get("art") or {}).get("url") for r in res.machinery_card["rows"])
     assert not any(
-        "dropped row pictures" in rec.message or "missing row pictures" in rec.message
+        "missing art for subjects=" in rec.message or "dropped row pictures" in rec.message
         for rec in caplog.records
     )
 
@@ -786,7 +799,10 @@ async def test_public_sports_card_with_hide_row_art_does_not_emit_dropped_row_pi
             now=NOW,
         )
     assert hasattr(res, "machinery_card")
-    assert not any("dropped row pictures" in rec.message for rec in caplog.records)
+    assert not any(
+        "missing art for subjects=" in rec.message or "dropped row pictures" in rec.message
+        for rec in caplog.records
+    )
 
 
 @pytest.mark.asyncio
@@ -822,7 +838,8 @@ async def test_public_sports_card_still_warns_when_row_pictures_are_expected(
         )
     assert hasattr(res, "machinery_card")
     assert any(
-        "Public sports card machinery-big-championships-2027 dropped row pictures; missing art for subjects="
+        "Public sports card machinery-big-championships-2027 missing art for subjects="
         in rec.message
+        and "(387:A keeps sibling pictures)" in rec.message
         for rec in caplog.records
     )

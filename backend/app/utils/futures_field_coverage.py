@@ -121,10 +121,6 @@ def grouped_field_leader_is_unsupported(
         else:
             probability = row["probability"]
             no_bid = detail["source"] == "kalshi" and row.get("kalshi_no_bid")
-            # The legacy reader label is applied after forming the source
-            # mark. Only a source-backed trade contributes as a quoted price.
-            if no_bid and source_state == "none":
-                probability = None
             if probability is None or not isfinite(probability) or not 0 <= probability <= 1:
                 missing_asks.append(row.get("ask_ceiling") if no_bid else None)
             open_prices.append(probability)

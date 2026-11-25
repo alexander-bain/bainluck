@@ -1402,6 +1402,65 @@ async def test_grouping_rechecks_its_minimum_after_withdrawing_a_field(pg_machin
         assert ("container_machinery", "too_few_markets:award_fields") in group.reasons
 
 
+async def test_grouping_rechecks_its_minimum_after_withdrawing_a_field(pg_machinery):
+    from app.utils.roundup_containers import RoundupMembers, RoundupRefusal
+
+    now = pg_machinery["now_dt"]
+    definition = {
+        "slug": "test-review-awards",
+        "name": "Review awards",
+        "category": "entertainment",
+        "rule": {"sections": [{
+            "key": "award_fields",
+            "title": "Award winners",
+            "atom_query": {
+                "kind": "markets",
+                "title_all_tokens": ["review", "award"],
+                "min_items": 2,
+            },
+        }]},
+    }
+    async with pg_machinery["maker"]() as db:
+        market_ids = []
+        for index, label in enumerate(("film", "song", "book")):
+            market = FuturesMarket(
+                source="kalshi", external_id=f"KXREVIEW-{label}",
+                name=f"Review Award: {label} winner", category="entertainment",
+                llm_sport_category="entertainment", market_type="field",
+                status="open", mutually_exclusive=True, volume=10_000,
+                resolution_date=now + timedelta(days=30),
+            )
+            db.add(market)
+            await db.flush()
+            market_ids.append(market.id)
+            probabilities = (0.20, 0.10, 0.08, 0.04) if index == 0 else (0.40, 0.30, 0.20, 0.10)
+            for outcome_index, (name, price) in enumerate(
+                zip(("Alice", "Beatrice", "Carmen", "Diana"), probabilities, strict=True)
+            ):
+                db.add(FuturesOutcome(
+                    market_id=market.id, external_id=f"KXREVIEW-{label}-{outcome_index}",
+                    name=name, current_probability=price, last_updated=now,
+                ))
+        await db.commit()
+
+    async with pg_machinery["maker"]() as db:
+        group = await cm.produce_container_machinery(db, definition, now=now)
+        assert isinstance(group, RoundupMembers)
+        assert {item["id"] for item in group.members} == set(market_ids[1:])
+
+    async with pg_machinery["maker"]() as db:
+        await db.execute(
+            update(FuturesOutcome).where(FuturesOutcome.market_id == market_ids[1])
+            .values(current_probability=0.10)
+        )
+        await db.commit()
+
+    async with pg_machinery["maker"]() as db:
+        group = await cm.produce_container_machinery(db, definition, now=now)
+        assert isinstance(group, RoundupRefusal)
+        assert ("container_machinery", "too_few_markets:award_fields") in group.reasons
+
+
 async def test_evaluate_machinery_candidates_preview_returns_all_ok_with_zero_error_logs(
     pg_machinery, monkeypatch, caplog
 ):

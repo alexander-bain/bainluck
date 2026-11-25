@@ -3,7 +3,7 @@
 // The futures page's "no trend to draw" card (#7545).
 //
 // WHY THIS IS ITS OWN FILE AND ITS OWN DECISION. Before the range chips there
-// was one emptiness and one sentence for it — "Not enough price history yet" —
+// was one emptiness and one sentence for it — "Not enough probability history yet" —
 // and that sentence was true, because the window was derived and the reader had
 // no say in it. Once the window is the reader's, the same empty payload has two
 // completely different meanings:
@@ -69,14 +69,14 @@ export default function FuturesTrendEmptyState({
       <div className="h-24 flex flex-col items-center justify-center gap-1.5 text-sm text-text-secondary">
         {marketIsEmpty ? (
           <>
-            <span>Not enough price history yet</span>
+            <span>Not enough probability history yet</span>
             <span className="text-xs text-text-muted">
-              The trend line appears once this market has a few price points.
+              The trend line appears once this market has a few readings.
             </span>
           </>
         ) : (
           <>
-            <span>No prices in {futuresRangeSpanWords(emptyRange, createdAt)}</span>
+            <span>No readings in {futuresRangeSpanWords(emptyRange, createdAt)}</span>
             <span className="text-xs text-text-muted">Try a longer range.</span>
           </>
         )}

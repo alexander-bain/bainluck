@@ -77,7 +77,9 @@ export default function DiscoverCard({ groupedItem, onDismiss, positionIndex, sh
           title={groupedItem.groupTitle || ""}
           kind={groupedItem.groupKind}
           theme={groupedItem.groupTheme}
+          setId={groupedItem.groupTitle ? `group:${groupedItem.groupTitle}` : undefined}
           positionIndex={positionIndex}
+          onDismiss={onDismiss}
         />
       </div>
     );
@@ -212,6 +214,7 @@ function SingleCard({ item, onDismiss, positionIndex, showProbabilityHint, pinFo
             bundleId={(item.data as FeedBundleData).id}
             storyKey={(item.data as FeedBundleData).story_key}
             positionIndex={positionIndex}
+            onDismiss={onDismiss}
           />
         ) : item.type === "bundle" && (item.data as FeedBundleData).kind === "theme" ? (
           <ThemeBundleCard
@@ -227,6 +230,8 @@ function SingleCard({ item, onDismiss, positionIndex, showProbabilityHint, pinFo
             imagePresentation={(item.data as FeedBundleData).image_presentation}
             nowIso={nowIso}
             timeZone={timeZone}
+            setId={(item.data as FeedBundleData).id}
+            onDismiss={onDismiss}
           />
         ) : item.type === "bundle" ? (
           // Every non-theme bundle — today that is `kind:"comparison"` — draws
@@ -239,7 +244,9 @@ function SingleCard({ item, onDismiss, positionIndex, showProbabilityHint, pinFo
             sharedQuestion={(item.data as FeedBundleData).shared_question}
             imageUrl={(item.data as FeedBundleData).image_url}
             imagePresentation={(item.data as FeedBundleData).image_presentation}
+            setId={(item.data as FeedBundleData).id}
             positionIndex={positionIndex}
+            onDismiss={onDismiss}
           />
         ) : null}
       </div>

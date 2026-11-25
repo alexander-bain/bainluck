@@ -18,8 +18,10 @@ on:
   # after `opened` no longer cancels that first run (#12235's skip still holds
   # for every later event; the Tier-B policy still blocks the merge).
   # Guarded by backend/tests/test_ci_triggers_12252.py.
+  # #412: D adds `ready_for_review` so heavy CI jobs skipped on draft PRs run the
+  # moment a PR is marked ready, plus on every subsequent synchronize push.
   pull_request:
-    types: [opened, synchronize, reopened]
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [master, 'integrator/compose-**']
 
@@ -244,7 +246,7 @@ jobs:
     env:
       # #12252 item 2: open `Flaky:` issues; their failures warn, not fail (conftest).
       CI_QUARANTINE: ${{ needs.change-scope.outputs.quarantine }}
-    timeout-minutes: 2
+    timeout-minutes: 5
     steps:
       - name: Require this run's change-scope attempt
         if: needs.change-scope.outputs.live == 'true'
@@ -263,12 +265,15 @@ jobs:
         run: echo "Full CI validates this candidate; no live-path gate is selected."
 
       - uses: actions/checkout@v6
+        with:
+          # test_mutation_guard and deploy-base guards diff git history.
+          fetch-depth: 0
+          filter: blob:none
       - name: Check call keywords across backend/app (#13281)
         run: python3 .github/scripts/check_call_keywords.py backend/app
       - name: Post-deploy smoke rollback stand-in 500 dry-run (#13283)
         run: python3 .github/scripts/post_deploy_smoke_rollback.py --self-test-500
       - uses: actions/setup-python@v7
-        if: needs.change-scope.outputs.live == 'true'
         with:
           python-version: "3.11"
           cache: pip
@@ -283,8 +288,9 @@ jobs:
         run: python3 tools/release/verify_fast.py
 
       - name: Install dependencies
-        if: needs.change-scope.outputs.live == 'true'
         run: pip install -r backend/requirements.txt
+      - name: "Run housekeeping guard tests (412: D)"
+        run: python3 .github/scripts/run_fast_gate_housekeeping.py
       - name: Python 3.11 syntax, smoke test and change-scope selected tests
         if: needs.change-scope.outputs.live == 'true'
         env:
@@ -312,7 +318,7 @@ jobs:
     # itself needs change-scope). It never reads the scope, so the matrix always
     # expands and the per-leg contexts always exist.
     needs: [change-scope, fast-gate, native-backend-readers]
-    if: ${{ !cancelled() && needs.fast-gate.result == 'success' }}
+    if: ${{ !cancelled() && needs.fast-gate.result == 'success' && !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
     runs-on: ubuntu-latest
     env:
       # #12252 item 2: open `Flaky:` issues; their failures warn, not fail (conftest).
@@ -451,7 +457,7 @@ jobs:
     # Return to full: change `native)` in change-scope's decide step to set
     # SCOPE=full (or revert this PR) — every other job then runs as before.
     needs: [change-scope, fast-gate]
-    if: needs.change-scope.outputs.scope == 'native' && needs.change-scope.outputs.live != 'true'
+    if: needs.change-scope.outputs.scope == 'native' && needs.change-scope.outputs.live != 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft)
     runs-on: ubuntu-latest
     env:
       # #12252 item 2: open `Flaky:` issues; their failures warn, not fail (conftest).
@@ -510,7 +516,7 @@ jobs:
     # #5007 — this proves the SHARD PARTITION is complete, so it is meaningful
     # only when the shards run. Skipped with them, never independently.
     needs: change-scope
-    if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true'
+    if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -613,7 +619,7 @@ jobs:
     # #5007 — the recall rail exercises backend search. A candidate confined to
     # `frontend/` and touching no cross-tier path cannot change what it measures.
     needs: change-scope
-    if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true'
+    if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft)
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -765,8 +771,8 @@ jobs:
             exit 1
           }
           cat /tmp/onboarding13338.txt
-          grep -qE "[^0-9]17 passed([,[:space:]]|$)" /tmp/onboarding13338.txt || {
-            echo "::error::#13338 onboarding gate did not run all seventeen cases"
+          grep -qE "[^0-9]18 passed([,[:space:]]|$)" /tmp/onboarding13338.txt || {
+            echo "::error::#13338 onboarding gate did not run all eighteen cases"
             exit 1
           }
       - name: "#12519 team-merge dedup keeps distinct names (real Postgres)"
@@ -5081,7 +5087,7 @@ jobs:
   # or turns a run red. Skipped when nothing is quarantined.
   flaky-canary:
     needs: change-scope
-    if: ${{ !cancelled() && needs.change-scope.result == 'success' && needs.change-scope.outputs.quarantine != '[]' && needs.change-scope.outputs.quarantine != '' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.live != 'true' }}
+    if: ${{ !cancelled() && needs.change-scope.result == 'success' && needs.change-scope.outputs.quarantine != '[]' && needs.change-scope.outputs.quarantine != '' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.live != 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
     continue-on-error: true
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -5128,7 +5134,7 @@ jobs:
         run: bash ../.github/scripts/flaky-canary.sh
   search-recall:
     needs: [change-scope, database-integration, backend-tests]
-    if: ${{ !cancelled() && !contains(github.event.pull_request.labels.*.name, 'eval-candidate') && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' }}
+    if: ${{ !cancelled() && !contains(github.event.pull_request.labels.*.name, 'eval-candidate') && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' && !(github.event_name == 'pull_request' && github.event.pull_request.draft) }}
     runs-on: ubuntu-latest
     steps:
       - name: Every database integration group passed
@@ -5155,7 +5161,7 @@ jobs:
   frontend-build:
     needs: [change-scope, fast-gate]
     # #10708: a pure-ios/ candidate cannot reach the frontend build.
-    if: needs.change-scope.outputs.live != 'true' && needs.change-scope.outputs.scope != 'native'
+    if: needs.change-scope.outputs.live != 'true' && needs.change-scope.outputs.scope != 'native' && !(github.event_name == 'pull_request' && github.event.pull_request.draft)
     runs-on: ubuntu-latest
     defaults:
       run:

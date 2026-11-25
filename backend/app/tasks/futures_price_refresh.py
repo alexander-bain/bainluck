@@ -1537,6 +1537,18 @@ def _mark_label_attempted(market_ids: list[int]) -> None:
 
 # --- writing -----------------------------------------------------------------
 
+SNAPSHOT_INSERT_BATCH_SIZE = 100
+
+
+def _snapshot_row_batches(
+    rows: list[dict],
+    *,
+    batch_size: int = SNAPSHOT_INSERT_BATCH_SIZE,
+):
+    """Yield ``FuturesOddsSnapshot`` row chunks bounded by ``batch_size`` (#13673)."""
+    for idx in range(0, len(rows), batch_size):
+        yield rows[idx : idx + batch_size]
+
 
 async def _write_prices(
     session,
@@ -1712,6 +1724,7 @@ async def _write_prices(
 
     now = datetime.now(timezone.utc)
     written = 0
+    snapshot_rows: list[dict] = []
     # #7582. Partitioned rather than handled in place, because the clear below
     # is conditional on `written` and therefore cannot run until every quote on
     # this board has been written. Held as items (not ids) so `_legs` resolves
@@ -1998,19 +2011,36 @@ async def _write_prices(
                 poll.moved.append((outcome_id, side))
                 written += 1
                 continue
-            await session.execute(
-                pg_insert(FuturesOddsSnapshot).values(
-                    outcome_id=outcome_id,
-                    bookmaker=bookmaker,
-                    probability=side_prob,
-                    american_odds=american,
-                    yes_bid=side.get("yes_bid"),
-                    yes_ask=side.get("yes_ask"),
-                    last_price=side.get("last_price"),
-                    captured_at=now,
-                )
+            snapshot_rows.append(
+                {
+                    "outcome_id": outcome_id,
+                    "bookmaker": bookmaker,
+                    "probability": side_prob,
+                    "american_odds": american,
+                    "yes_bid": side.get("yes_bid"),
+                    "yes_ask": side.get("yes_ask"),
+                    "last_price": side.get("last_price"),
+                    "captured_at": now,
+                }
             )
             written += 1
+
+    for chunk in _snapshot_row_batches(snapshot_rows):
+        if len(chunk) == 1:
+            row = chunk[0]
+            stmt = pg_insert(FuturesOddsSnapshot).values(
+                outcome_id=row["outcome_id"],
+                bookmaker=row["bookmaker"],
+                probability=row["probability"],
+                american_odds=row["american_odds"],
+                yes_bid=row["yes_bid"],
+                yes_ask=row["yes_ask"],
+                last_price=row["last_price"],
+                captured_at=row["captured_at"],
+            )
+        else:
+            stmt = pg_insert(FuturesOddsSnapshot).values(chunk)
+        await session.execute(stmt)
 
     # ── #7582: stop publishing a price the venue stopped quoting ─────────────
     #
