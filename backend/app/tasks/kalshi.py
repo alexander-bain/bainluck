@@ -571,6 +571,7 @@ async def record_kalshi_ask_ceilings(
             FuturesOutcome.is_winner.is_not(True),
             FuturesOutcome.resolution_source.is_(None),
             FuturesOutcome.calibration_probability.is_(None),
+            FuturesOutcome.last_updated <= observed_at,
         )
         .values(current_yes_bid=0, current_yes_ask=ask)
     )
@@ -579,7 +580,6 @@ async def record_kalshi_ask_ceilings(
         statement = statement.where(book_changed)
     else:
         statement = statement.where(
-            FuturesOutcome.last_updated <= observed_at,
             or_(
                 book_changed,
                 FuturesOutcome.current_probability.is_not(None),
