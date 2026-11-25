@@ -85,6 +85,13 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     /// re-registers instead of being mistaken for one already sent.
     private var registeredTokenByKind: [TokenKind: String] = [:]
 
+    typealias RegisterTokenHandler = @Sendable (String, String, Int?, String) async throws -> NotificationRegisterResponse
+    typealias UnregisterTokenHandler = @Sendable (String, String, String, String) async throws -> NotificationRegisterResponse
+
+    private let registerHandler: RegisterTokenHandler
+    private let unregisterHandler: UnregisterTokenHandler
+    private var pendingSignOutDetachTask: Task<Void, Never>?
+
     /// Reference to the nav coordinator for deep linking from notifications.
     weak var navCoordinator: NavigationCoordinator?
 
@@ -97,7 +104,33 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
 
     #endif
 
-    private override init() {
+    private convenience override init() {
+        self.init(
+            registerHandler: { token, platform, userId, tokenKind in
+                try await APIClient.shared.registerDeviceToken(
+                    deviceToken: token,
+                    platform: platform,
+                    userId: userId,
+                    tokenKind: tokenKind
+                )
+            },
+            unregisterHandler: { token, platform, tokenKind, authToken in
+                try await APIClient.shared.unregisterDeviceToken(
+                    deviceToken: token,
+                    platform: platform,
+                    tokenKind: tokenKind,
+                    authToken: authToken
+                )
+            }
+        )
+    }
+
+    init(
+        registerHandler: @escaping RegisterTokenHandler,
+        unregisterHandler: @escaping UnregisterTokenHandler
+    ) {
+        self.registerHandler = registerHandler
+        self.unregisterHandler = unregisterHandler
         super.init()
         UNUserNotificationCenter.current().delegate = self
         registerNotificationCategories()
@@ -512,6 +545,64 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         #endif
     }
 
+    private static var currentPlatform: String {
+        #if os(iOS)
+        return "ios"
+        #elseif os(macOS)
+        return "macos"
+        #else
+        return "unknown"
+        #endif
+    }
+
+    func setTokensForTesting(apns: String?, fcm: String?) {
+        self.deviceToken = apns
+        self.fcmToken = fcm
+        self.registeredTokenByKind.removeAll()
+    }
+
+    /// Detach all held push tokens on the server while the session JWT is
+    /// still valid, BEFORE `clearStoredAuth()` wipes Keychain (#12569 app half).
+    @discardableResult
+    func detachAllTokensForSignOut(authToken: String?) -> Task<Void, Never>? {
+        guard let authToken, !authToken.isEmpty else { return nil }
+        var tokens: [(token: String, kind: TokenKind)] = []
+        if let deviceToken, !deviceToken.isEmpty {
+            tokens.append((deviceToken, .apns))
+        }
+        if let fcmToken, !fcmToken.isEmpty {
+            tokens.append((fcmToken, .fcm))
+        }
+        registeredTokenByKind.removeAll()
+        guard !tokens.isEmpty else { return nil }
+
+        let previousDetach = pendingSignOutDetachTask
+        let unregister = unregisterHandler
+        let platform = Self.currentPlatform
+        let task = Task {
+            if let previousDetach {
+                await previousDetach.value
+            }
+            for entry in tokens {
+                do {
+                    let _: NotificationRegisterResponse = try await unregister(
+                        entry.token,
+                        platform,
+                        entry.kind.rawValue,
+                        authToken
+                    )
+                    logger.info("Device token detached on sign-out (kind=\(entry.kind.rawValue))")
+                } catch {
+                    logger.warning(
+                        "Failed to detach \(entry.kind.rawValue) device token on sign-out: \(error.localizedDescription)"
+                    )
+                }
+            }
+        }
+        pendingSignOutDetachTask = task
+        return task
+    }
+
     /// Register every token we currently hold, one call per kind.
     ///
     /// Additive by design: the APNS registration is kept exactly as it was.
@@ -519,6 +610,9 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     /// a partial rollout observable — if the FCM half silently never works,
     /// the backend still shows an `apns` row rather than nothing at all.
     private func registerAllTokens() async {
+        if let detach = pendingSignOutDetachTask {
+            await detach.value
+        }
         if let deviceToken {
             await register(token: deviceToken, kind: .apns)
         }
@@ -530,20 +624,14 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     private func register(token: String, kind: TokenKind) async {
         guard registeredTokenByKind[kind] != token else { return }
 
-        #if os(iOS)
-        let platform = "ios"
-        #elseif os(macOS)
-        let platform = "macos"
-        #else
-        let platform = "unknown"
-        #endif
+        let platform = Self.currentPlatform
 
         do {
-            let _: NotificationRegisterResponse = try await APIClient.shared.registerDeviceToken(
-                deviceToken: token,
-                platform: platform,
-                userId: userId,
-                tokenKind: kind.rawValue
+            let _: NotificationRegisterResponse = try await registerHandler(
+                token,
+                platform,
+                userId,
+                kind.rawValue
             )
             registeredTokenByKind[kind] = token
             logger.info("Device token registered with backend (kind=\(kind.rawValue))")
