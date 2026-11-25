@@ -150,7 +150,7 @@ class TestDownrankFamilyRules13645:
         for title in (
             "Bank of Canada Decision in December?",
             "Reserve Bank of New Zealand decision in December?",
-            "ECB interest rate cut in December?",
+            "ECB policy decision in December?",
             "Brazil GDP Growth in Q3 2026 (QoQ)?",
         ):
             q = classify_market_quality(title, sport_category="economics")
@@ -164,7 +164,7 @@ class TestDownrankFamilyRules13645:
             for title in (
                 "Bank of Canada Decision in December?",
                 "Reserve Bank of New Zealand decision in December?",
-                "ECB interest rate cut in December?",
+                "ECB policy decision in December?",
                 "Brazil GDP Growth in Q3 2026 (QoQ)?",
             ):
                 q = classify_market_quality(title, sport_category="economics")
