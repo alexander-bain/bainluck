@@ -12,6 +12,7 @@ Builder C (`comment-7122170383`, `KitCardEnvelope366B.swift`) and Fable's 9:40 P
 
 from __future__ import annotations
 
+from datetime import datetime
 import json
 import re
 from datetime import datetime
@@ -34,6 +35,62 @@ ALLOWED_LAYOUTS: frozenset[str] = frozenset({"stack", "grid", "calendar", "axis"
 ALLOWED_MARKS: frozenset[str] = frozenset(
     {"picture", "word", "number", "bar", "tile", "ring", "dot", "line"}
 )
+ALLOWED_BAR_STYLES: frozenset[str] = frozenset({"single", "split", "range"})
+ALLOWED_ROW_LAYOUTS: frozenset[str] = frozenset({"matrix", "stacked_cells"})
+ALLOWED_SCALE_KINDS: frozenset[str] = frozenset({"percent", "numeric", "time"})
+ALLOWED_NUMBER_UNITS: frozenset[str] = frozenset({"%", "days", "one_in_n"})
+
+# Canonical cross-platform contract agreed on #13551 (Fable, Atlas, Builder C):
+# - Cosmetic fields: unknown/invalid values render the client default styling token; never trigger fallback.
+# - Meaning-carrying fields: unknown/invalid values fail closed to today's standard card.
+COSMETIC_KIT_FIELDS: tuple[str, ...] = (
+    "variant",
+    "word.style",
+    "word.tone",
+    "word.align",
+    "word.width",
+    "picture.size",
+    "picture.contain",
+    "picture.subject_kind",
+    "number.tone",
+    "number.prominence",
+    "number.align",
+    "number.width",
+    "bar.width",
+    "tile.highlight_role",
+    "ring.tone",
+    "body.header_layout",
+)
+
+MEANING_CARRYING_KIT_FIELDS: tuple[str, ...] = (
+    "kit_version",
+    "layout",
+    "mark",
+    "bar.bar_style",
+    "scale.scale_kind",
+    "body.row_layout",
+    "number.unit",
+    "adaptive_color",
+    "picture.url",
+    "body",
+    "refusal_reason",
+    "fallback_today",
+)
+
+KIT_V1_FIELD_BEHAVIOR_TABLE: dict[str, dict[str, Any]] = {
+    "cosmetic": {
+        "fields": COSMETIC_KIT_FIELDS,
+        "unknown_value_behavior": "render_default",
+    },
+    "meaning_carrying": {
+        "fields": MEANING_CARRYING_KIT_FIELDS,
+        "unknown_value_behavior": "fail_closed_fallback_today",
+    },
+    "unknown_top_level_keys": {
+        "fields": ("<any unknown top-level key>",),
+        "unknown_value_behavior": "ignore_and_render_known",
+    },
+}
 
 TEXT_ONLY_FORBIDDEN_VARIANTS: frozenset[str] = frozenset(
     {
@@ -44,8 +101,8 @@ TEXT_ONLY_FORBIDDEN_VARIANTS: frozenset[str] = frozenset(
 )
 
 CALENDAR_STRIP_RULE_NOTE = (
-    "The percent in a day is the chance it arrives that day: "
-    "one rung of the ladder minus the rung before it."
+    "Each day shows the chance it is out on that day; "
+    "3% falls before Nov 27 and Dec 4 or later holds 10%."
 )
 
 ALLOWED_KIT_IMAGE_HOSTS: frozenset[str] = frozenset(
@@ -437,16 +494,17 @@ def build_calendar_strip_367a(
     ladder_footer: str,
     route_slug: str | None = "how-2026-gets-summed-up",
     variant: str | None = "calendar_strip",
+    tail_label: str | None = None,
 ) -> dict[str, Any]:
     """Build Ruling 367: A generic calendar body from one non-dipping cumulative ladder."""
     if len(rungs) < 2:
-        raise ValueError("Calendar strip requires at least two cumulative rungs")
+        raise ValueError("Calendar strip requires at least two cumulative curves")
 
     cum_values = [int(r["cum_pct"]) for r in rungs]
     for prev_v, next_v in zip(cum_values, cum_values[1:]):
         if next_v < prev_v - 1:
             raise ValueError(
-                f"Calendar strip refused: cumulative ladder dipped ({prev_v}% -> {next_v}%)"
+                f"Calendar strip refused: cumulative series dipped ({prev_v}% -> {next_v}%)"
             )
 
     raw_days: list[dict[str, Any]] = []
@@ -459,13 +517,29 @@ def build_calendar_strip_367a(
                 "month_abbr": str(cur["month_abbr"]),
                 "daily_pct": daily,
                 "is_peak": False,
+                "is_tail": False,
             }
         )
 
-    peak_val = max((d["daily_pct"] for d in raw_days), default=0)
+    last_cum = int(rungs[-1]["cum_pct"])
+    tail_pct = max(0, 100 - last_cum)
+    if tail_label and tail_pct > 0:
+        last_entry = rungs[-1]
+        raw_days.append(
+            {
+                "dow": str(last_entry["dow"]),
+                "day_num": f"{last_entry['day_num']}+",
+                "month_abbr": tail_label,
+                "daily_pct": tail_pct,
+                "is_peak": False,
+                "is_tail": True,
+            }
+        )
+
+    peak_val = max((d["daily_pct"] for d in raw_days if not d["is_tail"]), default=0)
     if peak_val > 0:
         for d in raw_days:
-            if d["daily_pct"] == peak_val:
+            if not d["is_tail"] and d["daily_pct"] == peak_val:
                 d["is_peak"] = True
                 break
 
@@ -480,10 +554,10 @@ def build_calendar_strip_367a(
                 "marks": [
                     _mark_word(d["dow"], style="meta", tone="muted", align="center"),
                     _mark_tile(
-                        shade=1.0 if d["is_peak"] else daily / max_pct,
+                        shade=1.0 if d["is_peak"] else min(0.9, daily / max_pct),
                         center_label=d["day_num"],
-                        bottom_label="·" if daily <= 0 else f"{daily}%",
-                        muted=daily <= 0,
+                        bottom_label="<1%" if daily <= 0 else f"{daily}%",
+                        muted=(daily <= 0),
                         highlight_role="day_peak" if d["is_peak"] else None,
                     ),
                     _mark_word(d["month_abbr"], style="meta", tone="muted", align="center"),
@@ -491,8 +565,9 @@ def build_calendar_strip_367a(
             }
         )
 
-    first, last = raw_days[0], raw_days[-1]
-    span = f"{first['month_abbr']} {first['day_num']} – {last['month_abbr']} {last['day_num']}"
+    first = raw_days[0]
+    last_date_entry = rungs[-1]
+    span = f"{first['month_abbr']} {first['day_num']} – {last_date_entry['month_abbr']} {last_date_entry['day_num']}+"
     return _make_kit_card(
         card_id=card_id,
         layout="calendar",
@@ -565,8 +640,12 @@ def _walk_and_validate_marks(
             stats["picture_count"] += 1
             if node.get("subject_kind") == "person":
                 stats["saw_person_picture"] = True
-        elif mark_val == "number" and node.get("unit") == "%":
-            _check_pct(node.get("value"), "number mark", errors)
+        elif mark_val == "number":
+            unit_val = node.get("unit")
+            if unit_val is not None and unit_val not in ALLOWED_NUMBER_UNITS:
+                errors.append(f"Unsupported number.unit {unit_val!r}")
+            if unit_val == "%":
+                _check_pct(node.get("value"), "number mark", errors)
         if node.get("deadline_iso") is not None:
             raw_dl = node.get("deadline_iso")
             if not isinstance(raw_dl, str) or not raw_dl.strip():
@@ -577,6 +656,9 @@ def _walk_and_validate_marks(
                 except ValueError:
                     errors.append(f"Invalid deadline_iso {raw_dl!r} on {mark_val or 'mark'}")
         if mark_val == "bar":
+            bar_style = node.get("bar_style")
+            if bar_style not in ALLOWED_BAR_STYLES:
+                errors.append(f"Unsupported bar_style {bar_style!r}")
             if node.get("fill_color") is not None:
                 _validate_adaptive_color(node.get("fill_color"), "bar.fill_color", errors)
             for idx_seg, seg in enumerate(node.get("segments") or []):
@@ -686,7 +768,7 @@ def _validate_grid_body(body: dict[str, Any], *, variant: str | None, errors: li
         errors.append("grid body requires at least 2 valid columns (fallback if < 2)")
 
     row_layout = body.get("row_layout")
-    if row_layout not in {"matrix", "stacked_cells"}:
+    if row_layout not in ALLOWED_ROW_LAYOUTS:
         errors.append("grid body row_layout must be 'matrix' or 'stacked_cells'")
 
     for idx, row in enumerate(rows, 1):
@@ -759,7 +841,7 @@ def _validate_axis_body(body: dict[str, Any], errors: list[str]) -> None:
     units = body.get("scale_units")
     if isinstance(units, list) and len({str(u) for u in units}) > 1:
         errors.append("Rule 3: shared scale refuses mixed units")
-    if scale.get("scale_kind") not in {"percent", "numeric", "time"}:
+    if scale.get("scale_kind") not in ALLOWED_SCALE_KINDS:
         errors.append("Rule 3: axis scale requires valid scale_kind")
     if not str(scale.get("unit") or "").strip() or not (scale.get("ticks") or []):
         errors.append("Rule 3: axis scale requires unit and explicit ticks")
@@ -884,7 +966,7 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
             source_count=2,
             route_slug="college-football-national-championship",
             footnote="Shaded cells show served chances across both title races.",
-            disclosure="2 other markets in this set are not drawn here.",
+            disclosure="2 more in this set",
             body={
                 "leading_label": "Contender",
                 "show_column_headers": True,
@@ -907,7 +989,7 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
         {"key": "2027-06-30", "label": "Jun 30 '27"},
     ]
     me_specs = [
-        ("ceasefire", "US x Iran Effective Ceasefire begins", us_url, us_kind, [66, 81, None]),
+        ("ceasefire", "US–Iran effective ceasefire begins", us_url, us_kind, [66, 81]),
         ("iran-leadership", "Iran leadership change", ir_url, ir_kind, [1, 7, 24]),
     ]
     me_rows = []
@@ -924,10 +1006,10 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
                         "column_key": col["key"],
                         "marks": [
                             _mark_tile(
-                                shade=0.0 if val is None else val / 100.0,
+                                shade=val / 100.0,
                                 top_label=f"by {col['label']}",
-                                center_label="—" if val is None else f"{val}%",
-                                muted=(val is None),
+                                center_label=f"{val}%",
+                                muted=False,
                             )
                         ],
                     }
@@ -942,10 +1024,10 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
             variant="dated_tiles",
             kicker="GEOPOLITICS · MIDDLE EAST",
             common_headline="Middle East ceasefire and leadership timelines",
-            stat_caption="US x Iran effective ceasefire reaches 81% by December 31, while Iran leadership change climbs to 24% by June 30",
+            stat_caption="US–Iran ceasefire is 81% by December 31; Iran leadership change is 24% by June 30",
             source_count=2,
             route_slug="middle-east-deadlines",
-            disclosure="4 other markets in this set are not drawn here.",
+            disclosure="4 more in this set",
             body={
                 "show_column_headers": False,
                 "row_layout": "stacked_cells",
@@ -963,12 +1045,12 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
     ph_url, ph_kind = _art_entry("pete-hegseth")
     em_url, em_kind = _art_entry("elon-musk")
     countdown_specs = [
-        ("opus", "Next Claude Opus (5.6+) released?", 85, ai_url, ai_kind),
-        ("arena", "Will any AI model reach a Chatbot Arena score of at least 1550?", 42, dc_url, dc_kind),
-        ("france", "Will France pass a national budget?", 42, fr_url, fr_kind),
-        ("banksy", "Will Banksy create a new mural or street artwork?", 31, pop_url, pop_kind),
-        ("hegseth", "Pete Hegseth out as Secretary of Defense?", 11, ph_url, ph_kind),
-        ("x-ban", "X banned in any European country?", 8, em_url, em_kind),
+        ("opus", "Next Claude Opus (5.6+) released", 85, ai_url, ai_kind),
+        ("arena", "AI model reaches 1550 Chatbot Arena score", 42, dc_url, dc_kind),
+        ("france", "France passes a national budget", 42, fr_url, fr_kind),
+        ("banksy", "Banksy creates a new mural or street artwork", 31, pop_url, pop_kind),
+        ("hegseth", "Pete Hegseth out as Secretary of Defense", 11, ph_url, ph_kind),
+        ("x-ban", "X banned in any European country", 8, em_url, em_kind),
     ]
     cards.append(
         _make_kit_card(
@@ -983,7 +1065,16 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
             body={
                 "header_layout": "banner",
                 "header_marks": [
-                    _mark_number(38, "38", unit="days", tone="accent", prominence="hero", align="left", width="auto"),
+                    _mark_number(
+                        38,
+                        "38",
+                        unit="days",
+                        tone="accent",
+                        prominence="hero",
+                        align="left",
+                        width="auto",
+                        deadline_iso="2026-12-31T23:59:59-08:00",
+                    ),
                     _mark_word(
                         "days left",
                         secondary_text="all of these end on Dec 31",
@@ -991,6 +1082,7 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
                         tone="primary",
                         bold=True,
                         width="flex",
+                        deadline_iso="2026-12-31T23:59:59-08:00",
                     ),
                 ],
                 "items": [
@@ -1110,7 +1202,7 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
         logo_url, _ = _team_logo(team_name)
         if in_doubt:
             for idx_lane, last_p in enumerate(lanes_x):
-                if p_val - last_p >= 6:
+                if p_val - last_p >= 9:
                     lane = idx_lane
                     lanes_x[idx_lane] = float(p_val)
                     break
@@ -1173,12 +1265,12 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
     space_url, space_kind = _art_entry("batch3-elon-musk-side-quests")
     sofi_url, sofi_kind = _art_entry("sofi-stadium-super-bowl")
     side_quests = [
-        ("mars", "Will Elon Musk visit Mars in his lifetime?", 12, space_url, space_kind),
-        ("ryanair", "Will Elon purchase Ryanair?", 5, em_url, em_kind),
-        ("superman", "Next Superman film: Will Elon Musk be cast?", 5, em_url, em_kind),
-        ("tesla-ceo", "Elon Musk out as Tesla CEO before 2027?", 3, em_url, em_kind),
-        ("optimus", "Tesla Optimus released this year?", 2, dc_url, dc_kind),
-        ("sports-team", "Will Elon Musk buy a major sports team before 2027?", 1, sofi_url, sofi_kind),
+        ("mars", "Elon Musk visits Mars in his lifetime", 12, space_url, space_kind),
+        ("ryanair", "Elon Musk purchases Ryanair", 5, em_url, em_kind),
+        ("superman", "Elon Musk cast in next Superman film", 5, em_url, em_kind),
+        ("tesla-ceo", "Elon Musk out as Tesla CEO before 2027", 3, em_url, em_kind),
+        ("optimus", "Tesla Optimus released this year", 2, dc_url, dc_kind),
+        ("sports-team", "Elon Musk buys a major sports team before 2027", 1, sofi_url, sofi_kind),
     ]
     cards.append(
         _make_kit_card(
@@ -1235,7 +1327,7 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
     nba_items = []
     for away_name, away_abbr, away_c, away_p, home_name, home_abbr, home_c, home_p, day, clock, status, score in [
         ("Memphis Grizzlies", "MEM", "#5d76a9", 49, "Charlotte Hornets", "CHA", "#008ca8", 51, "Mon Nov 23", "4:00 PM PT", "live", [28, 32]),
-        ("Portland Trail Blazers", "PTB", "#e03a3e", 47, "Philadelphia 76ers", "PHI", "#1d428a", 53, "Mon Nov 23", "4:00 PM PT", "live", [27, 28]),
+        ("Portland Trail Blazers", "POR", "#e03a3e", 47, "Philadelphia 76ers", "PHI", "#1d428a", 53, "Mon Nov 23", "4:00 PM PT", "live", [27, 28]),
         ("Oklahoma City Thunder", "OKC", "#007ac1", 63, "Indiana Pacers", "IND", "#0c2340", 37, "Mon Nov 23", "4:30 PM PT", "scheduled", [None, None]),
         ("Milwaukee Bucks", "MIL", "#00471b", 21, "Toronto Raptors", "TOR", "#d91244", 79, "Mon Nov 23", "4:30 PM PT", "scheduled", [None, None]),
         ("Brooklyn Nets", "BKN", "#000000", 19, "Minnesota Timberwolves", "MIN", "#266092", 81, "Mon Nov 23", "4:30 PM PT", "scheduled", [None, None]),
@@ -1279,11 +1371,11 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
             layout="stack",
             variant="single_sport_slate",
             kicker="NBA · THIS SLATE",
-            common_headline="Tonight's NBA Slate",
+            common_headline="NBA: the next seven games",
             stat_caption="Pistons at Magic (54%–46%) headlines seven NBA matchups",
             source_count=4,
             route_slug="nba-slate",
-            disclosure="6 other markets in this set are not drawn here.",
+            disclosure="6 more in this set",
             body={
                 "single_sport_key": "basketball_nba",
                 "header_layout": "split",
@@ -1306,18 +1398,25 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
         {"dow": "Wed", "day_num": "2", "month_abbr": "Dec", "cum_pct": 18},
         {"dow": "Thu", "day_num": "3", "month_abbr": "Dec", "cum_pct": 85},
         {"dow": "Fri", "day_num": "4", "month_abbr": "Dec", "cum_pct": 90},
-        {"dow": "Sat", "day_num": "5", "month_abbr": "Dec", "cum_pct": 90},
     ]
     cards.append(
         build_calendar_strip_367a(
             card_id="kit-spotify-wrapped-2026",
             kicker="CULTURE · 2026",
-            common_headline="When will Spotify release 2026 Wrapped?",
+            common_headline="Spotify Wrapped 2026: release day",
             stat_caption="Spotify Wrapped is most likely to arrive on Wednesday, December 2 (67%)",
             rungs=wrapped_rungs,
-            ladder_footer="Served ladder: 12% before Dec 1 · 18% before Dec 2 · 85% before Dec 3 · 90% before Dec 4",
+            tail_label="Dec+",
+            ladder_footer=(
+                "Chance it is out before each day: "
+                "3% before Nov 27 · 12% before Dec 1 · 18% before Dec 2 · "
+                "85% before Dec 3 · 90% before Dec 4 · Dec 4 or later, 10%"
+            ),
         )
     )
+
+    # 9–17. Batch 1 Forms Lab looks rebuilt directly in Kit v1 JSON (#13551)
+    cards.extend(_build_batch1_forms_lab_examples(nhl_raw))
 
     for card in cards:
         ok, errs = validate_kit_v1_card(card)
@@ -1351,6 +1450,497 @@ def build_kit_v1_worked_examples() -> dict[str, Any]:
         "items": cards,
         "refusals": refusals,
     }
+
+
+def _build_batch1_forms_lab_examples(
+    nhl_raw: list[tuple[str, str, int, str]],
+) -> list[dict[str, Any]]:
+    """Build all 5 Batch 1 Forms Lab looks as valid Kit v1 JSON with Fable's #13551 fixes."""
+    out: list[dict[str, Any]] = []
+
+    org_urls = {
+        "Apple": "https://thumb.wikimedia.org/wikipedia/commons/thumb/f/fa/Apple_logo_black.svg/330px-Apple_logo_black.svg.png",
+        "NVIDIA": "https://thumb.wikimedia.org/wikipedia/commons/thumb/2/21/Nvidia_logo.svg/330px-Nvidia_logo.svg.png",
+        "Microsoft": "https://thumb.wikimedia.org/wikipedia/commons/thumb/9/96/Microsoft_logo_%282012%29.svg/330px-Microsoft_logo_%282012%29.svg.png",
+        "Alphabet": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c1/Google_%22G%22_logo.svg/330px-Google_%22G%22_logo.svg.png",
+        "Google": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/c1/Google_%22G%22_logo.svg/330px-Google_%22G%22_logo.svg.png",
+        "Anthropic": "https://thumb.wikimedia.org/wikipedia/commons/thumb/b/b0/Claude_AI_symbol.svg/330px-Claude_AI_symbol.svg.png",
+        "OpenAI": "https://thumb.wikimedia.org/wikipedia/commons/thumb/6/66/OpenAI_logo_2025_%28symbol%29.svg/330px-OpenAI_logo_2025_%28symbol%29.svg.png",
+    }
+
+    # Batch 1 Item 3a: Grid — Largest company places (1st, 2nd, 3rd)
+    places_specs = [
+        ("Apple", [86, 2, 2]),
+        ("NVIDIA", [11, 79, 13]),
+        ("Microsoft", [1, 16, 64]),
+        ("Alphabet", [1, 3, 18]),
+    ]
+    places_rows = []
+    for idx, (comp, vals) in enumerate(places_specs, 1):
+        best_v = max(vals)
+        places_rows.append(
+            {
+                "id": f"places-{comp.lower()}",
+                "leading": [
+                    _mark_word(str(idx), style="rank", tone="muted", width="xs"),
+                    _mark_picture(url=org_urls[comp], alt=comp, subject_kind="organization", size="sm", contain=True),
+                    _mark_word(comp, style="row", tone="primary", bold=True, width="flex"),
+                ],
+                "cells": [
+                    {
+                        "column_key": col_k,
+                        "marks": [
+                            _mark_tile(
+                                shade=v / 100.0,
+                                center_label=f"{v}%",
+                                highlight_role="row_peak" if v == best_v else None,
+                            )
+                        ],
+                    }
+                    for col_k, v in zip(["1st", "2nd", "3rd"], vals)
+                ],
+            }
+        )
+    out.append(
+        _make_kit_card(
+            card_id="kit-batch1-places-grid",
+            layout="grid",
+            variant="scoreboard_grid",
+            kicker="TECH & ECONOMICS",
+            common_headline="Largest company at the end of 2026",
+            stat_caption="Apple leads for 1st at 86%, NVIDIA leads for 2nd at 79%, and Microsoft leads for 3rd at 64% on Dec 31",
+            source_count=1,
+            route_slug="largest-company-2026",
+            footnote="Outlined cell marks each company's highest-probability place.",
+            body={
+                "leading_label": "Company",
+                "show_column_headers": True,
+                "row_layout": "matrix",
+                "columns": [
+                    {"key": "1st", "label": "1st"},
+                    {"key": "2nd", "label": "2nd"},
+                    {"key": "3rd", "label": "3rd"},
+                ],
+                "rows": places_rows,
+            },
+        )
+    )
+
+    # Batch 1 Item 3b: Grid — AI model leaderboard
+    ai_cols = [("overall", "Overall"), ("coding", "Coding"), ("t2v", "Video")]
+    ai_matrix = {
+        "Google": [81, 29, 52],
+        "Anthropic": [13, 51, 0],
+        "OpenAI": [4, 16, 7],
+    }
+    col_peaks = [max(ai_matrix[lab][i] for lab in ai_matrix) for i in range(3)]
+    ai_rows = []
+    for idx, (lab, vals) in enumerate(ai_matrix.items(), 1):
+        ai_rows.append(
+            {
+                "id": f"ai-grid-{lab.lower()}",
+                "leading": [
+                    _mark_word(str(idx), style="rank", tone="muted", width="xs"),
+                    _mark_picture(url=org_urls[lab], alt=lab, subject_kind="organization", size="sm", contain=True),
+                    _mark_word(lab, style="row", tone="primary", bold=True, width="flex"),
+                ],
+                "cells": [
+                    {
+                        "column_key": c_key,
+                        "marks": [
+                            _mark_tile(
+                                shade=v / 100.0,
+                                center_label="<1%" if v <= 0 else f"{v}%",
+                                muted=(v <= 0),
+                                highlight_role="column_peak" if v > 0 and v == col_peaks[c_idx] else None,
+                            )
+                        ],
+                    }
+                    for c_idx, ((c_key, _), v) in enumerate(zip(ai_cols, vals))
+                ],
+            }
+        )
+    out.append(
+        _make_kit_card(
+            card_id="kit-batch1-ai-leaderboard",
+            layout="grid",
+            variant="scoreboard_grid",
+            kicker="TECH & AI",
+            common_headline="AI model leaderboard at year-end",
+            stat_caption="Google leads Overall at 81% and Video at 52%; Anthropic leads Coding at 51%",
+            source_count=1,
+            route_slug="ai-model-leaderboard-2026",
+            footnote="Outlined cell marks the column leader across December 31 markets.",
+            body={
+                "leading_label": "Lab",
+                "show_column_headers": True,
+                "row_layout": "matrix",
+                "columns": [{"key": k, "label": lbl} for k, lbl in ai_cols],
+                "rows": ai_rows,
+            },
+        )
+    )
+
+    # Batch 1 Item 3c: Grid — NBA 2026–27 awards with full first & last names
+    nba_award_cols = [("mvp", "MVP"), ("dpoy", "DPOY"), ("clutch", "Clutch")]
+    nba_award_specs = [
+        ("Victor Wembanyama", "https://a.espncdn.com/i/headshots/nba/players/full/5104157.png", [51, 59, 11]),
+        ("Luka Dončić", "https://a.espncdn.com/i/headshots/nba/players/full/3945274.png", [29, 0, 19]),
+        ("Shai Gilgeous-Alexander", "https://a.espncdn.com/i/headshots/nba/players/full/4278073.png", [4, 1, 26]),
+        ("Nikola Jokic", "https://a.espncdn.com/i/headshots/nba/players/full/3112335.png", [5, 0, 15]),
+        ("Giannis Antetokounmpo", "https://a.espncdn.com/i/headshots/nba/players/full/3032977.png", [3, 4, 7]),
+        ("Evan Mobley", "https://a.espncdn.com/i/headshots/nba/players/full/4432158.png", [0, 17, 0]),
+    ]
+    nba_peaks = [max(row[2][i] for row in nba_award_specs) for i in range(3)]
+    nba_award_rows = []
+    for idx, (player, img_url, vals) in enumerate(nba_award_specs, 1):
+        nba_award_rows.append(
+            {
+                "id": f"nba-award-{idx}",
+                "leading": [
+                    _mark_word(str(idx), style="rank", tone="muted", width="xs"),
+                    _mark_picture(url=img_url, alt=player, subject_kind="person", size="sm", contain=False),
+                    _mark_word(player, style="row", tone="primary", bold=True, width="flex"),
+                ],
+                "cells": [
+                    {
+                        "column_key": c_key,
+                        "marks": [
+                            _mark_tile(
+                                shade=v / 100.0,
+                                center_label="<1%" if v <= 0 else f"{v}%",
+                                muted=(v <= 0),
+                                highlight_role="column_peak" if v > 0 and v == nba_peaks[c_idx] else None,
+                            )
+                        ],
+                    }
+                    for c_idx, ((c_key, _), v) in enumerate(zip(nba_award_cols, vals))
+                ],
+            }
+        )
+    out.append(
+        _make_kit_card(
+            card_id="kit-batch1-nba-awards",
+            layout="grid",
+            variant="scoreboard_grid",
+            kicker="SPORTS · BASKETBALL",
+            common_headline="NBA 2026–27 major player awards",
+            stat_caption="Victor Wembanyama leads MVP (51%) and DPOY (59%); Shai Gilgeous-Alexander leads Clutch (26%)",
+            source_count=2,
+            route_slug="nba-awards-2027",
+            footnote="Outlined cell leads each award field.",
+            body={
+                "leading_label": "Player",
+                "show_column_headers": True,
+                "row_layout": "matrix",
+                "columns": [{"key": k, "label": lbl} for k, lbl in nba_award_cols],
+                "rows": nba_award_rows,
+            },
+        )
+    )
+
+    # Batch 1 Item 4a: Axis / Shared scale — Opening weekend box office ($M)
+    avengers_url, avengers_kind = _art_entry("avengers-doomsday")
+    dune_url, dune_kind = _art_entry("dune-part-three")
+    out.append(
+        _make_kit_card(
+            card_id="kit-batch1-box-office-scale",
+            layout="axis",
+            variant="shared_scale",
+            kicker="ENTERTAINMENT · BOX OFFICE",
+            common_headline="Opening weekend box office",
+            stat_caption="Avengers: Doomsday peaks at $400M+ (75%), while Dune: Part Three centers on $110M–$130M (40%)",
+            source_count=2,
+            route_slug="box-office-2026",
+            body={
+                "scale": {
+                    "scale_kind": "numeric",
+                    "unit": "$M",
+                    "min": 0,
+                    "max": 460,
+                    "ticks": [
+                        {"x": 0, "label": "$0M"},
+                        {"x": 115, "label": "$115M"},
+                        {"x": 230, "label": "$230M"},
+                        {"x": 345, "label": "$345M"},
+                        {"x": 460, "label": "$460M"},
+                    ],
+                },
+                "marks": [],
+                "series": [
+                    {
+                        "id": "bo-avengers",
+                        "leading": [
+                            _mark_picture(url=avengers_url, alt="Avengers: Doomsday", subject_kind=avengers_kind, size="sm", contain=False),
+                            _mark_word("Avengers: Doomsday", style="row", tone="primary", bold=True, width="flex"),
+                        ],
+                        "marks": [
+                            {"mark": "bar", "bar_style": "range", "lo": round(400 / 460, 4), "hi": 1.0, "width": "flex"},
+                            _mark_word("$400M+", style="meta", tone="secondary"),
+                            _mark_number(75, "75%", unit="%", tone="primary", prominence="primary", align="right", width="sm"),
+                        ],
+                    },
+                    {
+                        "id": "bo-dune",
+                        "leading": [
+                            _mark_picture(url=dune_url, alt="Dune: Part Three", subject_kind=dune_kind, size="sm", contain=False),
+                            _mark_word("Dune: Part Three", style="row", tone="primary", bold=True, width="flex"),
+                        ],
+                        "marks": [
+                            {"mark": "bar", "bar_style": "range", "lo": round(110 / 460, 4), "hi": round(130 / 460, 4), "width": "flex"},
+                            _mark_word("$110M–$130M", style="meta", tone="secondary"),
+                            _mark_number(40, "40%", unit="%", tone="primary", prominence="primary", align="right", width="sm"),
+                        ],
+                    },
+                ],
+            },
+        )
+    )
+
+    # Batch 1 Item 4b: Grid / Dated tiles — AGI achievement timeline (dated tiles avoid false linear gaps)
+    agi_rungs = [
+        ("jan27", "Jan '27", 5),
+        ("apr27", "Apr '27", 11),
+        ("jul27", "Jul '27", 21),
+        ("oct27", "Oct '27", 34),
+        ("jan28", "Jan '28", 49),
+        ("jan29", "Jan '29", 70),
+        ("jan31", "Jan '31", 76),
+    ]
+    out.append(
+        _make_kit_card(
+            card_id="kit-batch1-agi-dated-tiles",
+            layout="grid",
+            variant="dated_tiles",
+            kicker="TECH · MILESTONES",
+            common_headline="When any company achieves AGI",
+            stat_caption="Cumulative chance crosses 49% by Jan '28 and reaches 76% by Jan '31",
+            source_count=1,
+            route_slug="when-agi-achieved",
+            body={
+                "show_column_headers": False,
+                "row_layout": "stacked_cells",
+                "columns": [{"key": k, "label": lbl} for k, lbl, _ in agi_rungs[:4]],
+                "rows": [
+                    {
+                        "id": "agi-near",
+                        "leading": [
+                            _mark_word("Through Jan '28", style="row", tone="primary", bold=True, width="flex"),
+                        ],
+                        "cells": [
+                            {
+                                "column_key": k,
+                                "marks": [_mark_tile(shade=v / 100.0, top_label=f"by {lbl}", center_label=f"{v}%")],
+                            }
+                            for k, lbl, v in agi_rungs[:4]
+                        ],
+                    },
+                    {
+                        "id": "agi-later",
+                        "leading": [
+                            _mark_word("2028 to 2031", style="row", tone="primary", bold=True, width="flex"),
+                        ],
+                        "cells": [
+                            {
+                                "column_key": k,
+                                "marks": [_mark_tile(shade=v / 100.0, top_label=f"by {lbl}", center_label=f"{v}%")],
+                            }
+                            for k, lbl, v in agi_rungs[4:]
+                        ],
+                    },
+                ],
+            },
+        )
+    )
+
+    # Batch 1 Item 4c: Axis — Flagship AI release deadline race
+    out.append(
+        _make_kit_card(
+            card_id="kit-batch1-deadline-race",
+            layout="axis",
+            variant="deadline_race",
+            kicker="TECH · AI RELEASES",
+            common_headline="Next flagship AI release race by Dec 31",
+            stat_caption="Claude Opus is at 65% vs Gemini Krypton 47% by Dec 15, and 85% vs 57% by Dec 31",
+            source_count=1,
+            route_slug="flagship-ai-release-race",
+            body={
+                "scale": {
+                    "scale_kind": "percent",
+                    "unit": "%",
+                    "min": 0,
+                    "max": 100,
+                    "ticks": [
+                        {"x": 0, "label": "0%"},
+                        {"x": 25, "label": "25%"},
+                        {"x": 50, "label": "50%"},
+                        {"x": 75, "label": "75%"},
+                        {"x": 100, "label": "100%"},
+                    ],
+                },
+                "marks": [],
+                "series": [
+                    {
+                        "id": "dr-opus-climb",
+                        "leading": [
+                            _mark_picture(url=org_urls["Anthropic"], alt="Claude Opus", subject_kind="organization", size="xs", contain=True),
+                            _mark_word("Claude Opus · Nov 30 → Dec 15 (65%) → Dec 31", style="row", tone="primary", bold=True, width="flex"),
+                        ],
+                        "marks": [
+                            {"mark": "bar", "bar_style": "range", "lo": 0.14, "hi": 0.85, "pct_label": "14% → 85%", "width": "flex"},
+                            _mark_number(85, "85%", unit="%", tone="accent", prominence="primary", align="right", width="sm"),
+                        ],
+                    },
+                    {
+                        "id": "dr-krypton-climb",
+                        "leading": [
+                            _mark_picture(url=org_urls["Google"], alt="Gemini Krypton", subject_kind="organization", size="xs", contain=True),
+                            _mark_word("Gemini Krypton · Nov 30 → Dec 15 (47%) → Dec 31", style="row", tone="primary", bold=True, width="flex"),
+                        ],
+                        "marks": [
+                            {"mark": "bar", "bar_style": "range", "lo": 0.10, "hi": 0.57, "pct_label": "10% → 57%", "width": "flex"},
+                            _mark_number(57, "57%", unit="%", tone="primary", prominence="primary", align="right", width="sm"),
+                        ],
+                    },
+                ],
+            },
+        )
+    )
+
+    # Batch 1 Item 6a: Stack / casting_sheet — Next James Bond (two rows with separate faces for tied co-favorites)
+    boyd_url, boyd_kind = _art_entry("boyd-holbrook")
+    mackie_url, mackie_kind = _art_entry("anthony-mackie")
+    bond_roles = [
+        ("Theme Song", "Raye", "person", "https://image.tmdb.org/t/p/w185/zA5WXnyg8iH8DPpuXvsmJpPT2n1.jpg", 42, "42%"),
+        ("Bond Girl", "Margaret Qualley", "person", "https://image.tmdb.org/t/p/w185/r5WeMrU4YLJqRRE3joeOrBVicAH.jpg", 31, "31%"),
+        ("M", "Olivia Colman", "person", "https://image.tmdb.org/t/p/w185/lawJUdbLb1YW0niaYjiVGR9IBG8.jpg", 29, "29%"),
+        ("Q", "Ben Whishaw", "person", "https://image.tmdb.org/t/p/w185/e74Cz65ifeNb9zHfUTvF5rTix0d.jpg", 25, "25%"),
+        ("Villain", "Cillian Murphy", "person", "https://image.tmdb.org/t/p/w185/2lKs67r7FI4bPu0AXxMUJZxmUXn.jpg", 17, "17%"),
+        ("Moneypenny", "Naomie Harris", "person", "https://image.tmdb.org/t/p/w185/41TVAcYqKKF7PGf3x7QfaLvkLSW.jpg", 12, "12%"),
+        ("Felix Leiter", "Boyd Holbrook", boyd_kind, boyd_url, 11, "11%"),
+        ("Felix Leiter", "Anthony Mackie", mackie_kind, mackie_url, 11, "11%"),
+    ]
+    out.append(
+        _make_kit_card(
+            card_id="kit-batch1-next-james-bond",
+            layout="stack",
+            variant="casting_sheet",
+            kicker="ENTERTAINMENT · FILM",
+            common_headline="Next James Bond",
+            stat_caption="Raye leads Theme Song at 42%; Boyd Holbrook and Anthony Mackie share the lead for Felix Leiter at 11% each",
+            source_count=2,
+            route_slug="next-james-bond",
+            body={
+                "header_layout": "none",
+                "header_marks": [],
+                "items": [
+                    {
+                        "id": f"bond-{idx}",
+                        "marks": [
+                            _mark_picture(url=img_u, alt=leader, subject_kind=s_kind, size="sm", contain=False),
+                            _mark_word(leader, secondary_text=role_name, style="hero_label", tone="primary", width="flex"),
+                            _mark_bar_single(p / 100.0, width="sm"),
+                            _mark_number(p, disp, unit="%", tone="primary", prominence="primary", align="right", width="auto"),
+                        ],
+                    }
+                    for idx, (role_name, leader, s_kind, img_u, p, disp) in enumerate(bond_roles, 1)
+                ],
+            },
+        )
+    )
+
+    # Batch 1 Item 6b: Stack / casting_sheet — Oscars 2027 (verified portraits & posters, no lab notes)
+    oscar_roles = [
+        ("Best Picture", "The Odyssey", "film", "https://image.tmdb.org/t/p/w342/krVa7rKCQb4OBfsr2LTJv4rTz5q.jpg", 45, True),
+        ("Best Actor", "John Malkovich", "person", "https://image.tmdb.org/t/p/w185/7GoOdGNc4ra1L0F5nJTkmIB37iu.jpg", 49, False),
+        ("Best Actress", "Julianne Moore", "person", "https://image.tmdb.org/t/p/w185/3YF19rWusxWfEI59ZM33dFhasRq.jpg", 85, False),
+        ("Best Director", "Christopher Nolan", "person", "https://image.tmdb.org/t/p/w185/xuAIuYSmsUzKlUMBFGVZaWsY3DZ.jpg", 62, False),
+        ("Supp. Actor", "Paul Giamatti", "person", "https://thumb.wikimedia.org/wikipedia/commons/thumb/3/3e/Paul_Giamatti_at_the_2026_New_York_Film_Festival-032.jpg/500px-Paul_Giamatti_at_the_2026_New_York_Film_Festival-032.jpg", 40, False),
+        ("Supp. Actress", "Anne Hathaway", "person", "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/a5/AnneHathaway-byPhilipRomano-Crop.jpg/500px-AnneHathaway-byPhilipRomano-Crop.jpg", 64, False),
+        ("Orig. Screenplay", "Wild Horse Nine", "film", "https://image.tmdb.org/t/p/w342/dNJFRtVg3xLQ7dbNIQ55cmmIniD.jpg", 54, True),
+    ]
+    out.append(
+        _make_kit_card(
+            card_id="kit-batch1-oscars-casting",
+            layout="stack",
+            variant="casting_sheet",
+            kicker="ENTERTAINMENT · AWARDS",
+            common_headline="Oscars 2027 lead races",
+            stat_caption="Julianne Moore leads Best Actress at 85% and Anne Hathaway leads Supporting Actress at 64%",
+            source_count=1,
+            route_slug="oscars-2027-lead-races",
+            body={
+                "header_layout": "none",
+                "header_marks": [],
+                "items": [
+                    {
+                        "id": f"oscar-{idx}",
+                        "marks": [
+                            _mark_picture(url=img_u, alt=leader, subject_kind=s_kind, size="sm", contain=is_contain),
+                            _mark_word(leader, secondary_text=role_name, style="hero_label", tone="primary", width="flex"),
+                            _mark_bar_single(p / 100.0, width="sm"),
+                            _mark_number(p, f"{p}%", unit="%", tone="primary", prominence="primary", align="right", width="sm"),
+                        ],
+                    }
+                    for idx, (role_name, leader, s_kind, img_u, p, is_contain) in enumerate(oscar_roles, 1)
+                ],
+            },
+        )
+    )
+
+    # Batch 1 Item 7b: Stack / the_cut — NHL Playoffs cut by conference (uniform crest sizes + arrow `→`)
+    east_names = {
+        "Carolina Hurricanes", "Tampa Bay Lightning", "New Jersey Devils", "Montreal Canadiens",
+        "Florida Panthers", "Ottawa Senators", "Boston Bruins", "Washington Capitals",
+        "New York Rangers", "New York Islanders", "Buffalo Sabres", "Philadelphia Flyers",
+        "Columbus Blue Jackets", "Toronto Maple Leafs", "Detroit Red Wings",
+    }
+    east_teams = [x for x in nhl_raw if x[0] in east_names][:10]
+    west_teams = [x for x in nhl_raw if x[0] not in east_names][:10]
+    cut_items: list[dict[str, Any]] = []
+    for conf_label, conf_slice in (("East", east_teams), ("West", west_teams)):
+        for rank_idx, (team_name, abbr, p_val, color) in enumerate(conf_slice, 1):
+            logo_url, _ = _team_logo(team_name)
+            pct_disp = "38% each" if (conf_label == "West" and p_val == 38) else f"{p_val}%"
+            item_entry: dict[str, Any] = {
+                "id": f"cut-{conf_label.lower()}-{abbr.lower()}",
+                "sport_key": "icehockey_nhl",
+                "marks": [
+                    _mark_word(f"{conf_label[0]}{rank_idx}", style="rank", tone="muted", width="xs"),
+                    _mark_picture(url=logo_url, alt=abbr, subject_kind="team", size="sm", contain=True),
+                    _mark_word(team_name, style="row", tone="primary", bold=(rank_idx <= 8), width="flex"),
+                    _mark_bar_single(p_val / 100.0, width="sm", fill_color=_adaptive_team_color(color)),
+                    _mark_number(p_val, pct_disp, unit="%", tone="primary", prominence="primary", align="right", width="auto"),
+                ],
+            }
+            if conf_label == "East" and rank_idx == 8:
+                item_entry["divider_after"] = {"label": "Top 8 in Eastern Conference advance →"}
+            elif conf_label == "West" and rank_idx == 9:
+                item_entry["divider_after"] = {"label": "Ducks & Blues tied 38% each at Western #8 cut →"}
+            cut_items.append(item_entry)
+
+    out.append(
+        _make_kit_card(
+            card_id="kit-batch1-nhl-conference-cut",
+            layout="stack",
+            variant="the_cut",
+            kicker="HOCKEY · NHL PLAYOFFS",
+            common_headline="2026–27 NHL Playoffs: Eastern vs Western cut",
+            stat_caption="Top 8 per conference advance → Ducks and Blues tied 38% each for the Western final spot",
+            source_count=2,
+            route_slug="nhl-playoffs-conference-cut",
+            body={
+                "single_sport_key": "icehockey_nhl",
+                "header_layout": "split",
+                "header_marks": [
+                    _mark_word("BY CONFERENCE", style="kicker", tone="muted", bold=True),
+                    _mark_word("16 → 8 PLACES", style="kicker", tone="muted", bold=True, align="right"),
+                ],
+                "items": cut_items,
+            },
+        )
+    )
+    return out
 
 
 def write_golden_examples_json(dest: Path = GOLDEN_EXAMPLES_PATH) -> Path:

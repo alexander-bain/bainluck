@@ -8,6 +8,9 @@
 import Combine
 import FirebaseMessaging
 import Foundation
+#if canImport(GoogleSignIn)
+import GoogleSignIn
+#endif
 import os
 import UserNotifications
 #if canImport(UIKit)
@@ -82,6 +85,13 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     /// re-registers instead of being mistaken for one already sent.
     private var registeredTokenByKind: [TokenKind: String] = [:]
 
+    typealias RegisterTokenHandler = @Sendable (String, String, Int?, String) async throws -> NotificationRegisterResponse
+    typealias UnregisterTokenHandler = @Sendable (String, String, String, String) async throws -> NotificationRegisterResponse
+
+    private let registerHandler: RegisterTokenHandler
+    private let unregisterHandler: UnregisterTokenHandler
+    private var pendingSignOutDetachTask: Task<Void, Never>?
+
     /// Reference to the nav coordinator for deep linking from notifications.
     weak var navCoordinator: NavigationCoordinator?
 
@@ -94,7 +104,33 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
 
     #endif
 
-    private override init() {
+    private convenience override init() {
+        self.init(
+            registerHandler: { token, platform, userId, tokenKind in
+                try await APIClient.shared.registerDeviceToken(
+                    deviceToken: token,
+                    platform: platform,
+                    userId: userId,
+                    tokenKind: tokenKind
+                )
+            },
+            unregisterHandler: { token, platform, tokenKind, authToken in
+                try await APIClient.shared.unregisterDeviceToken(
+                    deviceToken: token,
+                    platform: platform,
+                    tokenKind: tokenKind,
+                    authToken: authToken
+                )
+            }
+        )
+    }
+
+    init(
+        registerHandler: @escaping RegisterTokenHandler,
+        unregisterHandler: @escaping UnregisterTokenHandler
+    ) {
+        self.registerHandler = registerHandler
+        self.unregisterHandler = unregisterHandler
         super.init()
         UNUserNotificationCenter.current().delegate = self
         registerNotificationCategories()
@@ -153,15 +189,29 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
            let url = URL(string: urlString) {
             return .url(url)
         }
-        if let eventIdString = userInfo["event_id"] as? String,
-           let eventId = Int(eventIdString) {
+        if let eventId = Self.positiveInt(from: userInfo["event_id"]) {
             return .event(id: eventId)
         }
-        if let marketIdString = userInfo["market_id"] as? String,
-           let marketId = Int(marketIdString) {
+        if let marketId = Self.positiveInt(from: userInfo["market_id"]) {
             return .market(id: marketId)
         }
         return .none
+    }
+
+    /// Accepts either JSON integer (`Int` / `NSNumber`, rejecting `Bool`) or numeric `String`
+    /// so APNs payloads from `GameAlertPush` (#13088, integer `event_id`) and legacy string
+    /// payloads both route directly to the event or market page (#13082 / #13083).
+    nonisolated private static func positiveInt(from raw: Any?) -> Int? {
+        if let number = raw as? NSNumber {
+            // `CFGetTypeID(number) == CFBooleanGetTypeID()` rejects JSON booleans that bridge to NSNumber.
+            if CFGetTypeID(number) == CFBooleanGetTypeID() { return nil }
+            let intValue = number.intValue
+            return intValue > 0 && number.doubleValue == Double(intValue) ? intValue : nil
+        }
+        if let text = raw as? String, let intValue = Int(text), intValue > 0 {
+            return intValue
+        }
+        return nil
     }
 
     /// Registering the category is what makes the "Label today" button exist.
@@ -246,33 +296,75 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
             MacNotificationDelivery10878.shared.receive(destination)
         }
         #else
-        switch Self.notificationDestination(
+        let destination = Self.notificationDestination(
             actionIdentifier: response.actionIdentifier,
             userInfo: userInfo
-        ) {
-        case .labeling:
-            Task { @MainActor in
-                navCoordinator?.navigate(to: .discoverLabeling, tab: .feed)
-            }
-        case .url(let url):
-            Task { @MainActor in
-                _ = navCoordinator?.handleURL(url)
-            }
-        case .event(let eventId):
-            Task { @MainActor in
-                navCoordinator?.navigate(to: .eventDetail(id: eventId), tab: .feed)
-            }
-        case .market(let marketId):
-            Task { @MainActor in
-                navCoordinator?.navigate(to: .futuresDetail(id: marketId), tab: .feed)
-            }
-        case .none:
-            break
+        )
+        Task { @MainActor in
+            Self.routeDestinationOnIOS(destination, navCoordinator: self.navCoordinator)
         }
 
         #endif
         completionHandler()
     }
+
+    #if os(iOS)
+    /// Routes a tapped push notification on iOS, dismissing any open sheet or full-screen modal
+    /// first (`IntentRouteCloser10873` / `IntentRouteHandoff10873`) and surviving cold launch
+    /// before `navCoordinator` mounts (#13082, #12482).
+    @MainActor
+    static func routeDestinationOnIOS(
+        _ destination: NotificationDestination,
+        navCoordinator: NavigationCoordinator?,
+        closePresentations: ((@escaping @MainActor () -> Void) -> Void)? = nil,
+        handoff: ((URL) -> Bool)? = nil
+    ) {
+        let performClose: (@escaping @MainActor () -> Void) -> Void = { route in
+            if let closePresentations {
+                closePresentations(route)
+            } else {
+                IntentRouteCloser10873.closePresentations(
+                    over: IntentRouteCloser10873.foregroundRoots(),
+                    then: route
+                )
+            }
+        }
+        let performHandoff: (URL) -> Bool = { url in
+            if let handoff {
+                return handoff(url)
+            }
+            return IntentRouteHandoff10873.shared.post(url)
+        }
+
+        switch destination {
+        case .labeling:
+            performClose {
+                navCoordinator?.navigate(to: .discoverLabeling, tab: .feed)
+            }
+        case .url(let url):
+            if performHandoff(url) { return }
+            performClose {
+                _ = navCoordinator?.handleURL(url)
+            }
+        case .event(let eventId):
+            if let url = IntentLinks10873.event(id: eventId), performHandoff(url) {
+                return
+            }
+            performClose {
+                navCoordinator?.navigate(to: .eventDetail(id: eventId), tab: .feed)
+            }
+        case .market(let marketId):
+            if let url = IntentLinks10873.market(id: marketId), performHandoff(url) {
+                return
+            }
+            performClose {
+                navCoordinator?.navigate(to: .futuresDetail(id: marketId), tab: .feed)
+            }
+        case .none:
+            break
+        }
+    }
+    #endif
 
     // MARK: - Public API
 
@@ -299,8 +391,44 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         !defaults.bool(forKey: suppressPromptKey)
     }
 
-    /// Request notification permission after a short delay so the prompt
-    /// doesn't fire immediately on first launch — better UX.
+    /// #13083 / Ruling 212: A — replaces the retired cold-launch permission ask:
+    /// checks current system authorization without ever presenting a dialog, and
+    /// registers for remote notifications only if the reader already granted access.
+    @MainActor
+    func registerIfAlreadyAuthorized() async {
+        let status = await notificationAuthorizationStatus()
+        #if os(iOS)
+        let granted = status == .authorized || status == .provisional || status == .ephemeral
+        #else
+        let granted = status == .authorized || status == .provisional
+        #endif
+        isPermissionGranted = granted
+        if granted {
+            registerForRemoteNotifications()
+        }
+    }
+
+    /// Reads the current system notification authorization status without prompting.
+    @MainActor
+    func notificationAuthorizationStatus() async -> UNAuthorizationStatus {
+        await UNUserNotificationCenter.current().notificationSettings().authorizationStatus
+    }
+
+    /// #13083 / Ruling 261: A — requests standard notification authorization (respects Focus,
+    /// never Time Sensitive) when the reader opts in via Settings or the contextual pin ask.
+    @MainActor
+    func requestStandardPermissionForGameAlerts() async -> UNAuthorizationStatus {
+        guard Self.shouldRequestPermission() else {
+            logger.info("Notification permission prompt suppressed by launch argument")
+            return await notificationAuthorizationStatus()
+        }
+        await requestPermission()
+        return await notificationAuthorizationStatus()
+    }
+
+    /// Retired cold-launch prompt (#13083 / Ruling 212: A). Kept only for compatibility;
+    /// `Bain_LuckApp` calls `registerIfAlreadyAuthorized()` instead.
+    @available(*, deprecated, message: "Cold-launch notification prompt retired by #13083 (Ruling 212: A); ask in context instead.")
     func requestPermissionAfterDelay(seconds: TimeInterval = 5) {
         guard Self.shouldRequestPermission() else {
             logger.info("Notification permission prompt suppressed by launch argument")
@@ -338,6 +466,11 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         // token. Without this the SDK has no APNS token to pair and the fetch
         // in `startMessaging` can hang unresolved.
         Messaging.messaging().apnsToken = data
+        #if os(iOS) && canImport(ActivityKit)
+        Task { @MainActor in
+            await LiveActivityPushStartCoordinator254A.shared.receiveNotificationToken(data)
+        }
+        #endif
         Task { await registerAllTokens() }
     }
 
@@ -412,6 +545,66 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         #endif
     }
 
+    private static var currentPlatform: String {
+        #if os(iOS)
+        return "ios"
+        #elseif os(macOS)
+        return "macos"
+        #else
+        return "unknown"
+        #endif
+    }
+
+    #if DEBUG
+    func setTokensForTesting(apns: String?, fcm: String?) {
+        self.deviceToken = apns
+        self.fcmToken = fcm
+        self.registeredTokenByKind.removeAll()
+    }
+    #endif
+
+    /// Detach all held push tokens on the server while the session JWT is
+    /// still valid, BEFORE `clearStoredAuth()` wipes Keychain (#12569 app half).
+    @discardableResult
+    func detachAllTokensForSignOut(authToken: String?) -> Task<Void, Never>? {
+        guard let authToken, !authToken.isEmpty else { return nil }
+        var tokens: [(token: String, kind: TokenKind)] = []
+        if let deviceToken, !deviceToken.isEmpty {
+            tokens.append((deviceToken, .apns))
+        }
+        if let fcmToken, !fcmToken.isEmpty {
+            tokens.append((fcmToken, .fcm))
+        }
+        registeredTokenByKind.removeAll()
+        guard !tokens.isEmpty else { return nil }
+
+        let previousDetach = pendingSignOutDetachTask
+        let unregister = unregisterHandler
+        let platform = Self.currentPlatform
+        let task = Task {
+            if let previousDetach {
+                await previousDetach.value
+            }
+            for entry in tokens {
+                do {
+                    let _: NotificationRegisterResponse = try await unregister(
+                        entry.token,
+                        platform,
+                        entry.kind.rawValue,
+                        authToken
+                    )
+                    logger.info("Device token detached on sign-out (kind=\(entry.kind.rawValue))")
+                } catch {
+                    logger.warning(
+                        "Failed to detach \(entry.kind.rawValue) device token on sign-out: \(error.localizedDescription)"
+                    )
+                }
+            }
+        }
+        pendingSignOutDetachTask = task
+        return task
+    }
+
     /// Register every token we currently hold, one call per kind.
     ///
     /// Additive by design: the APNS registration is kept exactly as it was.
@@ -419,6 +612,9 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     /// a partial rollout observable — if the FCM half silently never works,
     /// the backend still shows an `apns` row rather than nothing at all.
     private func registerAllTokens() async {
+        if let detach = pendingSignOutDetachTask {
+            await detach.value
+        }
         if let deviceToken {
             await register(token: deviceToken, kind: .apns)
         }
@@ -430,20 +626,14 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
     private func register(token: String, kind: TokenKind) async {
         guard registeredTokenByKind[kind] != token else { return }
 
-        #if os(iOS)
-        let platform = "ios"
-        #elseif os(macOS)
-        let platform = "macos"
-        #else
-        let platform = "unknown"
-        #endif
+        let platform = Self.currentPlatform
 
         do {
-            let _: NotificationRegisterResponse = try await APIClient.shared.registerDeviceToken(
-                deviceToken: token,
-                platform: platform,
-                userId: userId,
-                tokenKind: kind.rawValue
+            let _: NotificationRegisterResponse = try await registerHandler(
+                token,
+                platform,
+                userId,
+                kind.rawValue
             )
             registeredTokenByKind[kind] = token
             logger.info("Device token registered with backend (kind=\(kind.rawValue))")
@@ -478,6 +668,18 @@ class BainLuckAppDelegate: NSObject, UIApplicationDelegate {
         didFailToRegisterForRemoteNotificationsWithError error: Error
     ) {
         NotificationManager.shared.didFailToRegisterForRemoteNotifications(error: error)
+    }
+
+    func application(
+        _ app: UIApplication,
+        open url: URL,
+        options: [UIApplication.OpenURLOptionsKey: Any] = [:]
+    ) -> Bool {
+        #if canImport(GoogleSignIn)
+        return GIDSignIn.sharedInstance.handle(url)
+        #else
+        return false
+        #endif
     }
 }
 #elseif os(macOS)

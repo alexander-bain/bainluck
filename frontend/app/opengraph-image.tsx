@@ -32,7 +32,9 @@
  * stranger sees of the brand and two different brands would be worse than one
  * plain one.
  */
+/* eslint-disable @next/next/no-img-element */
 import { ImageResponse } from "next/og";
+import { BRAND_DRAWING_DATA_URI } from "@/lib/og/brandDrawingDataUri";
 
 export const runtime = "edge";
 export const alt =
@@ -57,7 +59,13 @@ export default function Image() {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-          <div style={{ fontSize: 44 }}>🍀</div>
+          <img
+            src={BRAND_DRAWING_DATA_URI}
+            alt=""
+            width={44}
+            height={44}
+            style={{ borderRadius: 10 }}
+          />
           <div style={{ fontSize: 34, fontWeight: 800 }}>Bain Luck</div>
         </div>
 
@@ -80,8 +88,7 @@ export default function Image() {
               maxWidth: 900,
             }}
           >
-            Sports, politics, economics and culture — every question as one
-            clean probability.
+            Sports, politics, economics and culture, as one clear percentage.
           </div>
         </div>
 

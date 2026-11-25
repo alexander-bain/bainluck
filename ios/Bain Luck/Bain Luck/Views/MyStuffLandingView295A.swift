@@ -17,6 +17,11 @@ struct MyStuffLandingView295A: View {
     let onManagePins: () -> Void
     let onRefresh: () async -> Void
     var onRetryTeamFutures: (() async -> Void)? = nil
+    var showsEarnedSignIn212A: Bool = false
+    var onAppleSignIn212A: () -> Void = {}
+    var onGoogleSignIn212A: () -> Void = {}
+    var showsChecklistBanner364A: Bool = false
+    var onOpenChecklistRow364A: (FirstRunChecklistRowID364A) -> Void = { _ in }
 
     @Environment(\.followManager295A) private var followManager
     @EnvironmentObject private var pinManager: PinManager
@@ -31,7 +36,12 @@ struct MyStuffLandingView295A: View {
             onOpenDiscover: onOpenDiscover,
             onManagePins: onManagePins,
             onRefresh: onRefresh,
-            onRetryTeamFutures: onRetryTeamFutures
+            onRetryTeamFutures: onRetryTeamFutures,
+            showsEarnedSignIn212A: showsEarnedSignIn212A,
+            onAppleSignIn212A: onAppleSignIn212A,
+            onGoogleSignIn212A: onGoogleSignIn212A,
+            showsChecklistBanner364A: showsChecklistBanner364A,
+            onOpenChecklistRow364A: onOpenChecklistRow364A
         )
     }
 }
@@ -45,7 +55,14 @@ private struct MyStuffLandingBody295A: View {
     let onManagePins: () -> Void
     let onRefresh: () async -> Void
     let onRetryTeamFutures: (() async -> Void)?
+    var showsEarnedSignIn212A: Bool = false
+    var onAppleSignIn212A: () -> Void = {}
+    var onGoogleSignIn212A: () -> Void = {}
+    var showsChecklistBanner364A: Bool = false
+    var onOpenChecklistRow364A: (FirstRunChecklistRowID364A) -> Void = { _ in }
 
+    @AppStorage(FirstRunStorageKeys212A.earnedSignInDismissedKey) private var earnedSignInDismissed = false
+    @Environment(\.firstRunChecklistStore364A) private var checklistStore
     @Environment(\.colorScheme) private var colorScheme
 
     private var cardSurface: Color {
@@ -62,8 +79,20 @@ private struct MyStuffLandingBody295A: View {
     }
 
     var body: some View {
+        let checklistBinding = Binding<FirstRunChecklistState364A>(
+            get: { checklistStore.state },
+            set: { checklistStore.state = $0 }
+        )
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 20) {
+                SiriProbabilityTip12315(horizontalPadding: 0)
+                if showsChecklistBanner364A && checklistStore.state.showsInMyStuff {
+                    MyStuffChecklistBanner364A(
+                        state: checklistBinding,
+                        onOpenRow: onOpenChecklistRow364A,
+                        onDismiss: { checklistStore.dismissFromMyStuff() }
+                    )
+                }
                 followingAndPinsStrip
 
                 if landingVM.loading
@@ -121,6 +150,7 @@ private struct MyStuffLandingBody295A: View {
                             .stroke(cardBorder, lineWidth: 1)
                     )
                     .accessibilityIdentifier("myStuff295A.loadErrorBanner")
+                    .noteReviewPromptTrouble12304()
                 }
 
                 if !landingVM.loadFailed && landingVM.teamFuturesFailed && !landingVM.loading {
@@ -133,7 +163,7 @@ private struct MyStuffLandingBody295A: View {
                                 .font(.subheadline.weight(.semibold))
                                 .foregroundStyle(.primary)
                                 .fixedSize(horizontal: false, vertical: true)
-                            Text("Your followed teams are still saved — this read didn't finish.")
+                            Text("Your teams are still saved. This part didn't load.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                                 .fixedSize(horizontal: false, vertical: true)
@@ -163,6 +193,7 @@ private struct MyStuffLandingBody295A: View {
                         .disabled(landingVM.teamFuturesRetrying)
                         .accessibilityIdentifier("myStuff295A.retryTeamFutures")
                     }
+                    .noteReviewPromptTrouble12304()
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
                     .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(cardSurface))
@@ -277,6 +308,14 @@ private struct MyStuffLandingBody295A: View {
                     .accessibilityIdentifier("myStuff295A.openAllDiscover")
                 }
 
+                if showsEarnedSignIn212A && !earnedSignInDismissed && (!followManager.subjects.isEmpty || !pinManager.savedPins.isEmpty) {
+                    EarnedSignInCard212A(
+                        onAppleSignIn: onAppleSignIn212A,
+                        onGoogleSignIn: onGoogleSignIn212A,
+                        onDismissLocalOnly: { earnedSignInDismissed = true }
+                    )
+                }
+
                 NavigationLink(value: Route.about) {
                     HStack {
                         Label("About Bain Luck", systemImage: "info.circle")
@@ -325,6 +364,16 @@ private struct MyStuffLandingBody295A: View {
                                         color: Color(hex: MyStuffTeamTextColour.logoTintHex(subject.primaryColor)),
                                         size: 18,
                                         sportKey: subject.sportKey
+                                    )
+                                } else if subject.kind == .subject {
+                                    ChecklistThumbnail364A(
+                                        urlString: subject.logoUrl,
+                                        sfSymbol: FirstRunCard212A.sfSymbol(
+                                            forCategory: subject.affinityCategory ?? subject.slug,
+                                            isSports: false
+                                        ),
+                                        accentHex: subject.primaryColor ?? "#005CC2",
+                                        size: 18
                                     )
                                 } else {
                                     Image(systemName: subject.kind == .league ? "trophy.fill" : "square.stack.3d.up.fill")

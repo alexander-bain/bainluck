@@ -52,9 +52,11 @@ struct Bain_LuckApp: App {
         initialBinding: PinAccountBinding(userID: APIClient.persistedLastKnownUserId(), authenticated: false)
     )
     #endif
-    /// Whether the consent ask is showing. Seeded from the authority: `true`
-    /// only when no choice has ever been recorded.
+    /// Whether the consent ask is showing. Deferred past the `212-A` first-run
+    /// onboarding so a friend's first launch never meets an up-front telemetry modal
+    /// before seeing value (off by default per ruling 007; togglable anytime in Preferences).
     @State private var showTelemetryConsent = TelemetryConsent.shared.needsChoice
+        && UserDefaults.standard.bool(forKey: FirstRunStorageKeys212A.onboardedKey)
 
 
     init() {
@@ -78,6 +80,9 @@ struct Bain_LuckApp: App {
         }
         FirebaseConfiguration.shared.setLoggerLevel(.min)
         FirebaseApp.configure()
+        // Pre-configure Google Sign-In and purge any leftover keychain state once
+        // on clean install after `_keychainStore` is initialized (#13516).
+        AuthManager.prepareGoogleSignIn()
         // Resolve consent BEFORE the first telemetry call below (Queue 311 A3 /
         // ruling 007, #1632). Collection is off by default in the plist, so
         // this either leaves it off (no choice yet, or a refusal) or restores a
@@ -240,6 +245,10 @@ struct Bain_LuckApp: App {
             .environmentObject(pinManager)
             // #10875 — the saved items (and their account) the Home/Lock Screen widget may show.
             .savedItemWidgets10875(pins: pinManager)
+            #if os(iOS) && canImport(ActivityKit)
+            // #13052 / 254: A — push-to-start Live Activity token & pin sync (no account required).
+            .liveActivityPushStart254A(pins: pinManager)
+            #endif
             .overlay {
                 PinFeedbackToast()
                     .environmentObject(pinManager)
@@ -295,7 +304,9 @@ struct Bain_LuckApp: App {
                 #else
                 NotificationManager.shared.navCoordinator = navCoordinator
                 #endif
-                NotificationManager.shared.requestPermissionAfterDelay()
+                // #13083 / Ruling 212: A — retire cold-launch permission ask; only register
+                // for APNs silently if the reader already granted notification access.
+                await NotificationManager.shared.registerIfAlreadyAuthorized()
                 if let userId = authManager.user?.id {
                     NotificationManager.shared.setUser(id: userId)
                     AnalyticsService.setCrashReportingUserId(String(userId))
@@ -358,6 +369,8 @@ struct Bain_LuckApp: App {
             }
             // #10874 — saved/recent Spotlight index + opening a tapped result.
             .spotlight10874(userID: authManager.activeFeedUserId, pins: pinManager, navigation: navCoordinator)
+            // #12304 — an App Store rating, asked once at a calm moment.
+            .reviewPrompt12304(navigation: navCoordinator)
     }
 
     #if os(macOS)

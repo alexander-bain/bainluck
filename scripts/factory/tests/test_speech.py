@@ -142,7 +142,12 @@ class WorkshopSpeech(unittest.TestCase):
 
     def test_notes_and_speech_share_a_daily_and_monthly_budget(self):
         meter = read_meter("", self.now)
-        meter.update(calls=199, notes_calls=119, last_at=iso(self.now), last_facts="1" * 64)
+        # The 199 calls include the three picture draws. The last speech call
+        # still reaches the shared ceiling of 200.
+        meter.update(
+            calls=199, notes_calls=119, last_at=iso(self.now), last_facts="1" * 64,
+            picture_day=meter["day"], picture_draws=3, picture_retry=False,
+        )
         self.budget.body = meter_body("", meter)
         _, stats = make_speech(self.floor, {}, self.budget, "test", request=self.request)
         self.assertEqual(stats["day_calls"], 200)
@@ -154,7 +159,7 @@ class WorkshopSpeech(unittest.TestCase):
         self.assertGreater(next_day["month_micros"], 0)
 
         cap = deepcopy(read_meter(self.budget.body, self.now))
-        cap.update(calls=1, notes_calls=0, month_micros=MONTHLY_COST_MICROS)
+        cap.update(calls=3, notes_calls=0, month_micros=MONTHLY_COST_MICROS)
         self.budget.body = meter_body("", cap)
         make_speech(self.floor, {}, self.budget, "test", request=self.request)
         self.request.assert_called_once()

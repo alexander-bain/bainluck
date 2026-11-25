@@ -229,6 +229,33 @@ class DailyPictureTests(unittest.TestCase):
         self.assertEqual(receipt["status"], "outside-daily-turn")
         self.assertEqual(self.request.call_count, 3)
 
+    def test_picture_slots_stay_available_after_notes_and_speech_reach_197(self):
+        meter = self.budget.state()
+        meter.update(calls=195, picture_day="2026-11-20", picture_draws=3, picture_retry=False)
+        budget = ModelBudget(meter_body("", meter), self.save, now=self.now)
+        self.assertIsNotNone(budget.reserve(1, notes_hash="a" * 64))
+        self.assertIsNotNone(budget.reserve(1))
+        self.assertEqual(budget.state()["calls"], 197)
+        for attempt in range(1, 4):
+            self.assertIsNone(budget.reserve(1, notes_hash="b" * 64))
+            self.assertIsNone(budget.reserve(1))
+            _, receipt = metered_picture(
+                self.snapshot, budget, "fake", request=self.request,
+                prepare=lambda: True, check=lambda image: False,
+            )
+            self.assertEqual((receipt["attempt"], receipt["status"]), (attempt, "lettering-found"))
+        self.assertEqual(budget.state()["calls"], 200)
+        self.assertEqual(self.request.call_count, 3)
+
+    def test_picture_slots_count_separately_from_the_197_other_calls(self):
+        meter = self.budget.state()
+        meter.update(calls=197, picture_day=meter["day"], picture_draws=1, picture_retry=False)
+        budget = ModelBudget(meter_body("", meter), self.save, now=self.now)
+        self.assertIsNotNone(budget.reserve(1))
+        self.assertEqual(budget.state()["calls"], 198)
+        self.assertIsNone(budget.reserve(1, notes_hash="a" * 64))
+        self.assertIsNone(budget.reserve(1))
+
     def test_november_23_legacy_rejection_counts_as_draw_one_and_successful_retry_closes_the_day(self):
         now = datetime(2026, 11, 24, 3, tzinfo=timezone.utc)
         meter = ModelBudget("", self.save, now=now).state()

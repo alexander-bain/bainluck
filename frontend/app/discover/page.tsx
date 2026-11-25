@@ -60,7 +60,14 @@ import { deriveGroupDisplayTitle } from "@/lib/discover/groupTitle";
 import { futuresGroupKey } from "@/lib/discover/groupKey";
 import { decideFeedPage } from "@/lib/discover/feedAvailability";
 import { isStale } from "@/lib/discover/feedFreshness";
-import { applyLocalPersonalization, recordEditionScores, runManualRefresh } from "@/lib/discover/editionOrder";
+import {
+  applyLocalPersonalization,
+  appendUnseenCards,
+  hasNewerDeckCards,
+  reconcileHeldBodies,
+  recordEditionScores,
+  runManualRefresh,
+} from "@/lib/discover/editionOrder";
 import { spaceBySport } from "@/lib/discover/spacedOrder";
 import { feedItemHasRenderableContent, collectSuppressedEnvelopes, feedItemCanBeGuessed } from "@/components/discover/utils";
 import FirstRunOrientation from "@/components/discover/FirstRunOrientation";
@@ -567,6 +574,8 @@ export default function DiscoverPage() {
   const [showSwipeHint, setShowSwipeHint] = useState(false);
   const [dailyGuesses, setDailyGuesses] = useState(0);
   const [allItems, setAllItems] = useState<FeedItem[]>([]);
+  const allItemsRef = useRef<FeedItem[]>(allItems);
+  allItemsRef.current = allItems;
   const [loadingMore, setLoadingMore] = useState(false);
   const [hasMore, setHasMore] = useState(true);
   // L2-238: the last page-1 payload the availability decision ACCEPTED. SWR's
@@ -574,6 +583,8 @@ export default function DiscoverPage() {
   // rendering off `data.items` directly is what let an unavailable revalidation
   // blank a populated feed and then show "all caught up".
   const [page1Items, setPage1Items] = useState<FeedItem[]>([]);
+  const page1ItemsRef = useRef<FeedItem[]>(page1Items);
+  page1ItemsRef.current = page1Items;
   const [savedDeckPreview, setSavedDeckPreview] = useState(false);
   const previewOwnerRef = useRef<string | null>(null);
   const replacePreviewRef = useRef(false);
@@ -583,6 +594,20 @@ export default function DiscoverPage() {
   // A transient no-data terminal, not an empty feed — surfaces this page's own
   // retry state and freezes auto-pagination until the reader retries.
   const [feedUnavailable, setFeedUnavailable] = useState(false);
+  // #13643: background ticks and retired pagination never replace seated cards;
+  // instead they surface the top "New cards available" pill and continue paging
+  // from the newer edition strictly below held seats. Cards whose fresh body is
+  // old/empty keep their prior body and appear in `agedHeldIds`.
+  const [newerCardsAvailable, setNewerCardsAvailable] = useState(false);
+  const [agedHeldIds, setAgedHeldIds] = useState<Set<string>>(() => new Set());
+  const retiredTailRef = useRef<{
+    generation: number;
+    edition: string | null;
+    nextOffset: number;
+    buffered: FeedItem[];
+    hasMore: boolean;
+  } | null>(null);
+  const lastFailureKindRef = useRef<"page-zero" | "retired-tail">("page-zero");
   const [interactionProfile, setInteractionProfile] = useState<DiscoverProfile | null>(null);
   // #2603 — the ORDER of the edition is decided once: the profile as it stood
   // when the edition opened, and each card's score when it first arrived. The
@@ -623,6 +648,7 @@ export default function DiscoverPage() {
     replacingRef: editionReplacingRef,
     adopt: adoptEdition,
     extend: extendEdition,
+    appendRetiredCards,
     clear: clearEdition,
     restore: restoreEdition,
     restoreLegacy: restoreLegacyEdition,
@@ -834,6 +860,10 @@ export default function DiscoverPage() {
       editionScoresRef.current = new Map();
       setVisibleCount(PAGE_SIZE);
       setInitialVisibleCount(PAGE_SIZE);
+      setNewerCardsAvailable(false);
+      retiredTailRef.current = null;
+      setAgedHeldIds(new Set());
+      lastFailureKindRef.current = "page-zero";
       // #5105 — another reader's edition is not this one's.
       if (editionEnabled) clearEdition();
     }
@@ -859,7 +889,7 @@ export default function DiscoverPage() {
         ...(openingRequest ? { openingRequest } : {}),
       } as typeof payload & { firstDeckPrincipal?: string | null } & OpeningEditionTagged));
     },
-    { refreshInterval: 120000, revalidateOnFocus: false, keepPreviousData: false }
+    { refreshInterval: 120000, revalidateOnFocus: false, revalidateOnReconnect: false, keepPreviousData: false }
   );
 
   // #6445 — a null key is SWR's "do not fetch". The banner is hidden for the
@@ -910,6 +940,10 @@ export default function DiscoverPage() {
     setInitialVisibleCount(PAGE_SIZE);
     setHasMore(next.hasMore);
     setFeedUnavailable(false);
+    setNewerCardsAvailable(false);
+    retiredTailRef.current = null;
+    setAgedHeldIds(new Set());
+    lastFailureKindRef.current = "page-zero";
     restorePendingRef.current = false;
     setPendingScrollY(null);
     clearFeedRestore();
@@ -964,28 +998,148 @@ export default function DiscoverPage() {
    * overlapping or repeated window must not leave old prices on screen while
    * `deck.bodies` holds the new ones.
    */
-  const applyEditionReply = useCallback(async (request: OwnedEditionRequest, payload: unknown, source: "page-zero" | "page") => {
+  const canRefreshBody = useCallback(
+    (item: FeedItem) => feedItemHasRenderableContent(item) && !isStale(item),
+    [],
+  );
+
+  const applyHeldBodyReconcile = useCallback(
+    (incoming: readonly FeedItem[]) => {
+      if (incoming.length === 0) return;
+      const r1 = reconcileHeldBodies(page1ItemsRef.current, incoming, getItemId, canRefreshBody);
+      const r2 = reconcileHeldBodies(allItemsRef.current, incoming, getItemId, canRefreshBody);
+      setPage1Items((prev) => reconcileHeldBodies(prev, incoming, getItemId, canRefreshBody).items);
+      setAllItems((prev) => reconcileHeldBodies(prev, incoming, getItemId, canRefreshBody).items);
+      const rejected = [...r1.rejectedIds, ...r2.rejectedIds];
+      const refreshed = [...r1.refreshedIds, ...r2.refreshedIds];
+      if (rejected.length > 0 || refreshed.length > 0) {
+        setAgedHeldIds((prev) => {
+          const next = new Set(prev);
+          let changed = false;
+          for (const id of refreshed) {
+            if (next.delete(id)) changed = true;
+          }
+          for (const id of rejected) {
+            if (!next.has(id)) {
+              next.add(id);
+              changed = true;
+            }
+          }
+          return changed ? next : prev;
+        });
+      }
+    },
+    [canRefreshBody],
+  );
+
+  const appendCardsBelowHeld = useCallback(
+    (incoming: readonly FeedItem[]): FeedItem[] => {
+      if (incoming.length === 0) return [];
+      const heldIds = new Set([...page1ItemsRef.current, ...allItemsRef.current].map(getItemId));
+      const unseen = incoming.filter((item) => !heldIds.has(getItemId(item)));
+      if (unseen.length > 0) {
+        appendRetiredCards(unseen);
+        setAllItems((prev) => {
+          const p1Ids = new Set(page1ItemsRef.current.map(getItemId));
+          return appendUnseenCards(prev, unseen, getItemId, p1Ids).next;
+        });
+      }
+      return unseen;
+    },
+    [appendRetiredCards],
+  );
+
+  const applyEditionReply = useCallback(async (
+    request: OwnedEditionRequest,
+    payload: unknown,
+    source: "background-page-zero" | "retry" | "page",
+  ) => {
+    const hadAcceptedDeck = editionDeckRef.current !== null;
     const transition: OwnedEditionTransition<FeedItem> = decideEdition(request, payload, renderedCountRef.current > 0);
     if (transition.kind === "preserve") {
       if (transition.reason === "stale_request") return;
-      // A page that cannot extend the edition must not be re-asked in a loop:
-      // paging stops on the existing retry state. Page zero keeps today's rule
-      // over a deck or cards already on screen — except that a refused page
-      // zero with NOTHING accepted and nothing shown is not an empty edition:
-      // left quiet, it paints "caught up" over a reply that had cards. It takes
-      // the same retry state instead (one controlled page zero, no loop). A
-      // saved first-deck preview is not an accepted edition either: its cards
-      // stay, and the refusal ends "Updating saved cards…" on that retry.
       const nothingAccepted = editionDeckRef.current === null &&
         (renderedCountRef.current === 0 || replacePreviewRef.current);
-      setFeedUnavailable(source === "page" || nothingAccepted ? true : transition.showUnavailable);
+      const nextUnavailable = source === "page" || nothingAccepted ? true : transition.showUnavailable;
+      if (nextUnavailable) lastFailureKindRef.current = "page-zero";
+      setFeedUnavailable(nextUnavailable);
       return;
     }
     if (transition.kind === "restart") {
+      if (source === "page") {
+        // #13643: paging into a retired edition never stops the feed — keep
+        // held seats fixed, append unseen newer-edition cards strictly below,
+        // offer the fresh edition via the top pill, and continue tail paging.
+        const heldDeck = editionDeckRef.current;
+        const reply = (payload ?? {}) as {
+          items?: FeedItem[];
+          offset?: number;
+          edition?: string | null;
+        };
+        const replyItems = Array.isArray(reply.items) ? reply.items : [];
+        applyHeldBodyReconcile(replyItems);
+        appendCardsBelowHeld(replyItems);
+        setNewerCardsAvailable(true);
+        const pageDecision = decideFeedPage({
+          payload,
+          previousHasMore: hasMoreRef.current,
+          hasRenderedItems: renderedCountRef.current > 0,
+        });
+        const replyOffset = typeof reply.offset === "number" ? reply.offset : request.offset;
+        const nextOffset = replyOffset + replyItems.length;
+        const tailHasMore = pageDecision.hasMore && replyItems.length > 0 && nextOffset > request.offset;
+        const nextEdition =
+          typeof reply.edition === "string" && reply.edition.length > 0 ? reply.edition : null;
+        if (heldDeck) {
+          retiredTailRef.current = {
+            generation: heldDeck.generation,
+            edition: nextEdition,
+            nextOffset,
+            buffered: [],
+            hasMore: tailHasMore,
+          };
+        }
+        setHasMore(tailHasMore);
+        setFeedUnavailable(false);
+        return;
+      }
+      if (source === "background-page-zero" && hadAcceptedDeck) {
+        setNewerCardsAvailable(true);
+        return;
+      }
       await requestEditionReplacement(transition.request);
       return;
     }
     if (transition.kind === "replace") {
+      if (source === "background-page-zero" && hadAcceptedDeck) {
+        applyHeldBodyReconcile(transition.items);
+        const heldDeck = editionDeckRef.current;
+        if (
+          transition.items.length > 0 &&
+          (hasNewerDeckCards(page1ItemsRef.current, transition.items, getItemId) ||
+            transition.deck.sections.boundary !== heldDeck?.sections.boundary ||
+            transition.deck.edition !== heldDeck?.edition)
+        ) {
+          setNewerCardsAvailable(true);
+        }
+        if (
+          heldDeck &&
+          (retiredTailRef.current === null ||
+            retiredTailRef.current.generation !== heldDeck.generation ||
+            retiredTailRef.current.edition !== transition.deck.edition)
+        ) {
+          const heldIds = new Set([...page1ItemsRef.current, ...allItemsRef.current].map(getItemId));
+          const buffered = transition.items.filter((item) => !heldIds.has(getItemId(item)));
+          retiredTailRef.current = {
+            generation: heldDeck.generation,
+            edition: transition.deck.edition,
+            nextOffset: transition.deck.nextOffset,
+            buffered,
+            hasMore: transition.deck.hasMore,
+          };
+        }
+        return;
+      }
       replaceEdition(transition.deck, transition.items);
       return;
     }
@@ -993,34 +1147,30 @@ export default function DiscoverPage() {
     const prior = editionDeckRef.current?.sections.membership ?? new Map<string, unknown>();
     extendEdition(transition.deck, request.offset, transition.items);
     const items = [...transition.items];
-    const bodies = new Map(items.map((item) => [getItemId(item), item] as const));
-    const refresh = (prev: FeedItem[]) => {
-      let changed = false;
-      const next = prev.map((item) => {
-        const body = bodies.get(getItemId(item));
-        if (body === undefined || body === item) return item;
-        changed = true;
-        return body;
-      });
-      return changed ? next : prev;
-    };
     if (request.offset === 0) {
-      setPage1Items((prev) => reconcilePage1(prev, items, getItemId));
-      setAllItems(refresh);
-      writeFirstDeck({ items, hasMore: transition.deck.hasMore }, firstDeckOwner(user?.uid, false));
+      if (source === "background-page-zero" && hadAcceptedDeck) {
+        if (page1ItemsRef.current.length === 0) {
+          setPage1Items((prev) => reconcilePage1(prev, items, getItemId));
+        }
+        applyHeldBodyReconcile(items);
+      } else {
+        setPage1Items((prev) => reconcilePage1(prev, items, getItemId));
+        setAllItems((prev) => reconcileHeldBodies(prev, items, getItemId, canRefreshBody).items);
+        writeFirstDeck({ items, hasMore: transition.deck.hasMore }, firstDeckOwner(user?.uid, false));
+      }
     } else {
       const fresh = items.filter((item) => !prior.has(getItemId(item)));
-      setPage1Items(refresh);
-      setAllItems((prev) => {
-        const held = refresh(prev);
-        if (fresh.length === 0) return held;
-        const prevIds = new Set(held.map(getItemId));
-        return [...held, ...fresh.filter((item) => !prevIds.has(getItemId(item)))];
-      });
+      applyHeldBodyReconcile(items);
+      if (fresh.length > 0) {
+        setAllItems((prev) => {
+          const p1Ids = new Set(page1ItemsRef.current.map(getItemId));
+          return appendUnseenCards(prev, fresh, getItemId, p1Ids).next;
+        });
+      }
     }
     setFeedUnavailable(false);
     setHasMore(transition.deck.hasMore);
-  }, [decideEdition, editionDeckRef, extendEdition, replaceEdition, requestEditionReplacement, user?.uid]);
+  }, [appendCardsBelowHeld, applyHeldBodyReconcile, canRefreshBody, decideEdition, editionDeckRef, extendEdition, replaceEdition, requestEditionReplacement, user?.uid]);
   // Read through a ref by the data effect so its dependency list — and so its
   // runs — stay exactly today's.
   const applyEditionReplyRef = useRef(applyEditionReply);
@@ -1039,7 +1189,7 @@ export default function DiscoverPage() {
     // a token-less snapshot) keeps today's handling below.
     if (editionEnabled && !editionLegacySessionRef.current) {
       if (data.openingRequest?.owner === editionOwner) {
-        void applyEditionReplyRef.current(data.openingRequest, data, "page-zero");
+        void applyEditionReplyRef.current(data.openingRequest, data, "background-page-zero");
         return;
       }
       // Another mount's reply (or an untagged one) is never this mount's. SWR
@@ -1096,10 +1246,77 @@ export default function DiscoverPage() {
     if (editionEnabled && editionPagerHoldRef.current > 0) return;
     setLoadingMore(true);
     // #5105 — ON: the next page belongs to the held edition, at its RAW server
-    // cursor (never a count of held cards), with its token. A retired reply
-    // keeps every card on screen while one unpinned page zero is asked for. A
+    // cursor (never a count of held cards), with its token. Once retired, paging
+    // continues along the newer edition's cursor below already-held cards. A
     // failure of a page whose deck has since been replaced is inert.
     if (editionEnabled && !editionLegacySessionRef.current) {
+      const tail = retiredTailRef.current;
+      const heldDeck = editionDeckRef.current;
+      if (tail && heldDeck && tail.generation === heldDeck.generation) {
+        const tailGeneration = tail.generation;
+        if (tail.buffered.length > 0) {
+          const buffered = tail.buffered;
+          tail.buffered = [];
+          const flushed = appendCardsBelowHeld(buffered);
+          if (flushed.length > 0) {
+            setFeedUnavailable(false);
+            setHasMore(tail.hasMore);
+            setLoadingMore(false);
+            return;
+          }
+        }
+        if (!tail.hasMore) {
+          setHasMore(false);
+          setLoadingMore(false);
+          return;
+        }
+        try {
+          const resp = await fetchFeed({
+            limit: FEED_PAGE_LIMIT,
+            offset: tail.nextOffset,
+            event_pct: FEED_EVENT_PCT,
+            ...(tail.edition ? { edition: tail.edition } : {}),
+          });
+          if (editionDeckRef.current?.generation !== tailGeneration) {
+            setLoadingMore(false);
+            return;
+          }
+          const decision = decideFeedPage({
+            payload: resp,
+            previousHasMore: tail.hasMore,
+            hasRenderedItems: renderedCountRef.current > 0,
+          });
+          if (!decision.acceptItems) {
+            lastFailureKindRef.current = "retired-tail";
+            setFeedUnavailable(true);
+            setLoadingMore(false);
+            return;
+          }
+          const respItems = Array.isArray(resp.items) ? resp.items : [];
+          applyHeldBodyReconcile(respItems);
+          appendCardsBelowHeld(respItems);
+          const nextRespEdition =
+            typeof resp.edition === "string" && resp.edition.length > 0 ? resp.edition : null;
+          if (nextRespEdition && nextRespEdition !== tail.edition) {
+            tail.edition = nextRespEdition;
+            setNewerCardsAvailable(true);
+          }
+          const respOffset = typeof resp.offset === "number" ? resp.offset : tail.nextOffset;
+          const nextOffset = respOffset + respItems.length;
+          const nextHasMore = decision.hasMore && respItems.length > 0 && nextOffset > tail.nextOffset;
+          tail.nextOffset = nextOffset;
+          tail.hasMore = nextHasMore;
+          setHasMore(nextHasMore);
+          setFeedUnavailable(false);
+        } catch {
+          if (editionDeckRef.current?.generation === tailGeneration) {
+            lastFailureKindRef.current = "retired-tail";
+            setFeedUnavailable(true);
+          }
+        }
+        setLoadingMore(false);
+        return;
+      }
       const request = issueEditionNextPage();
       try {
         if (request === null) setHasMore(false);
@@ -1113,7 +1330,10 @@ export default function DiscoverPage() {
           await applyEditionReplyRef.current(request, resp, "page");
         }
       } catch {
-        if (request === null || ownsEditionRequest(request)) setFeedUnavailable(true);
+        if (request === null || ownsEditionRequest(request)) {
+          lastFailureKindRef.current = "page-zero";
+          setFeedUnavailable(true);
+        }
       }
       setLoadingMore(false);
       return;
@@ -1164,7 +1384,7 @@ export default function DiscoverPage() {
     setLoadingMore(false);
     // `editionPagerHold` is read through its ref; it is listed so that releasing
     // the hold gives the auto-pager effect a new callback and it runs again.
-  }, [allItems, page1Items, loadingMore, hasMore, feedUnavailable, editionEnabled, editionLegacySessionRef, issueEditionNextPage, ownsEditionRequest, editionPagerHold]);
+  }, [allItems, page1Items, loadingMore, hasMore, feedUnavailable, editionEnabled, editionLegacySessionRef, issueEditionNextPage, ownsEditionRequest, editionPagerHold, appendCardsBelowHeld, applyHeldBodyReconcile, editionDeckRef]);
 
   // L2-238: the reader's way out of an unavailable feed. Clears the state and
   // revalidates page 1 — already-rendered cards stay exactly where they are.
@@ -1184,7 +1404,7 @@ export default function DiscoverPage() {
         { limit, offset, event_pct: FEED_EVENT_PCT, ...(request.edition ? { edition: request.edition } : {}) },
         { sharedAnonEligible: sharedAnonEligibleRef.current, authenticated: !!user },
       );
-      await applyEditionReplyRef.current(request, payload, "page-zero");
+      await applyEditionReplyRef.current(request, payload, "retry");
     } catch {
       if (ownsEditionRequest(request)) setFeedUnavailable(true);
     } finally {
@@ -1193,12 +1413,19 @@ export default function DiscoverPage() {
   }, [holdEditionPager, issueEditionPageZero, ownsEditionRequest, releaseEditionPager, user]);
   const handleRetryUnavailable = useCallback(() => {
     if (editionEnabled && !editionLegacySessionRef.current) {
+      if (
+        lastFailureKindRef.current === "retired-tail" &&
+        retiredTailRef.current?.generation === editionDeckRef.current?.generation
+      ) {
+        setFeedUnavailable(false);
+        return;
+      }
       void retryEditionPageZero();
       return;
     }
     setFeedUnavailable(false);
     mutateFeed();
-  }, [mutateFeed, editionEnabled, editionLegacySessionRef, retryEditionPageZero]);
+  }, [mutateFeed, editionEnabled, editionLegacySessionRef, editionDeckRef, retryEditionPageZero]);
 
   /**
    * UX-P087 (#1909) — retry a FAILED load without reloading the document.
@@ -1239,6 +1466,7 @@ export default function DiscoverPage() {
   // raises the retry notice. See `runManualRefresh`.
   const handleRefreshFeed = useCallback(async () => {
     trackEvent("feed_refresh", { trigger: "manual", new_items_count: 0 });
+    lastFailureKindRef.current = "page-zero";
     setFeedUnavailable(false);
     if (typeof window !== "undefined") {
       window.scrollTo({ top: 0, behavior: "smooth" });
@@ -1272,7 +1500,14 @@ export default function DiscoverPage() {
           decided.transition = transition;
           return transition.kind === "replace"
             ? { acceptItems: true, hasMore: transition.deck.hasMore, showUnavailable: false }
-            : { acceptItems: false, hasMore: hasMoreRef.current, showUnavailable: transition.kind === "preserve" && transition.showUnavailable };
+            : {
+                acceptItems: false,
+                hasMore: hasMoreRef.current,
+                showUnavailable:
+                  transition.kind === "preserve" &&
+                  transition.reason !== "stale_request" &&
+                  transition.reason !== "degraded_empty",
+              };
         },
         getId: getItemId,
       });
@@ -1288,6 +1523,9 @@ export default function DiscoverPage() {
       replacePreviewRef.current = false;
       previewOwnerRef.current = null;
       setSavedDeckPreview(false);
+      setNewerCardsAvailable(false);
+      retiredTailRef.current = null;
+      setAgedHeldIds(new Set());
       writeFirstDeck({ items: outcome.page1, hasMore: outcome.hasMore }, firstDeckOwner(user?.uid, false));
       editionScoresRef.current = outcome.scores;
       setOrderingProfile(readDiscoverInteractionProfile());
@@ -1950,6 +2188,8 @@ export default function DiscoverPage() {
     // (swipe-hint cohort) and Queue 309's hero label (first-run cohort).
     const isFirstPosition = idx === 0;
     const isFirstCard = isFirstPosition && showSwipeHint;
+    const cellItems = gi.type === "single" ? (gi.item ? [gi.item] : []) : gi.items ?? [];
+    const isAgedHeld = agedHeldIds.size > 0 && cellItems.some((item) => agedHeldIds.has(getItemId(item)));
 
     return (
       // `data-testid="discover-card"` is the browser-audit rail's
@@ -1979,6 +2219,15 @@ export default function DiscoverPage() {
             />
           )}
         </FeedItemShell>
+        {isAgedHeld && (
+          <p
+            role="status"
+            data-testid="discover-card-aged-mark"
+            className="mt-1.5 rounded-lg border border-surface-border bg-surface-elevated/70 px-3 py-1 text-[11px] font-medium text-text-muted"
+          >
+            From earlier · no longer updating
+          </p>
+        )}
       </MasonryCell>
     );
   };
@@ -2006,9 +2255,19 @@ export default function DiscoverPage() {
             Sharing the shell's token fixes both with one number — and it binds only above ~1328px,
             so 390px and iPad-portrait geometry are byte-identical to before (measured). */}
         <div className="max-w-content mx-auto px-4 py-3">
-          <div className="flex items-center justify-between mb-2">
-            <h1 className="text-lg font-black tracking-tight">Discover</h1>
-            <div className="flex items-center gap-3">
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <h1 className="shrink-0 text-lg font-black tracking-tight">Discover</h1>
+            <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+              {newerCardsAvailable && (
+                <button
+                  type="button"
+                  data-testid="discover-new-cards-button"
+                  onClick={() => void handleRefreshFeed()}
+                  className="inline-flex shrink-0 whitespace-nowrap items-center gap-1.5 rounded-full border border-accent-brand/25 bg-accent-brand/10 px-3 py-1 text-xs font-semibold text-accent-brand hover:bg-accent-brand/15 transition-colors"
+                >
+                  New cards available
+                </button>
+              )}
               {/* L2-119: killed the "{N} markets" count — on an infinite feed it
                   was the loaded-so-far tally, which reads as a (wrong) total and
                   ticks up as you scroll.

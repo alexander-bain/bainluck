@@ -4,7 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useAnalyticsContext } from "@/components/Analytics";
 import { isSharedSetLandingPath } from "@/lib/analytics/consentBanner";
-import { APP_STORE_URL, BRAND_TAGLINE } from "@/lib/brandCopy";
+import { APP_STORE_CAMPAIGNS, appStoreCampaignUrl, BRAND_TAGLINE } from "@/lib/brandCopy";
+import BainLuckMark from "@/components/BainLuckMark";
 
 const FOOTER_LINKS: { heading: string; links: { label: string; href: string }[] }[] = [
   {
@@ -72,7 +73,7 @@ export default function Footer() {
           >
             <span className="text-text-secondary">Bain Luck for iPhone</span>
             <a
-              href={APP_STORE_URL}
+              href={appStoreCampaignUrl(APP_STORE_CAMPAIGNS.footerGetTheApp)}
               target="_blank"
               rel="noopener noreferrer"
               onClick={() => onClick("/app-store")}
@@ -88,7 +89,7 @@ export default function Footer() {
           {/* Brand + one-liner */}
           <div className="space-y-3 md:col-span-1">
             <Link href="/about" onClick={() => onClick("/about")} className="flex items-center gap-2">
-              <span className="text-xl">🍀</span>
+              <BainLuckMark size={22} />
               <span className="text-body-strong text-text-primary">Bain Luck</span>
             </Link>
             {/* Queue 309: shared with the Discover first-run orientation line so
@@ -99,7 +100,7 @@ export default function Footer() {
             {!hideDuplicateAppCta && (
               <div className="pt-1">
                 <a
-                  href={APP_STORE_URL}
+                  href={appStoreCampaignUrl(APP_STORE_CAMPAIGNS.footerBadge)}
                   target="_blank"
                   rel="noopener noreferrer"
                   onClick={() => onClick("/app-store")}

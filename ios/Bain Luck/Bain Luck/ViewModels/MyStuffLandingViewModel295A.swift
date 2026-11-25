@@ -167,6 +167,7 @@ final class MyStuffLandingViewModel295A: ObservableObject {
     private let customBatchHydrator: SubjectHydrator?
     private let singleSubjectHydrator: SingleSubjectHydrator
     private let discoverFetcher: DiscoverFetcher
+    private let nowProvider: @Sendable () -> Date
     private var hasRotatedSession = false
 
     init(
@@ -174,7 +175,8 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         preloaded: PreloadedSnapshot? = nil,
         subjectHydrator: SubjectHydrator? = nil,
         singleSubjectHydrator: SingleSubjectHydrator? = nil,
-        discoverFetcher: DiscoverFetcher? = nil
+        discoverFetcher: DiscoverFetcher? = nil,
+        nowProvider: @escaping @Sendable () -> Date = Date.init
     ) {
         self.defaults = defaults
         self.customBatchHydrator = subjectHydrator
@@ -184,13 +186,10 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         self.discoverFetcher = discoverFetcher ?? {
             try await APIClient.shared.fetchFeed(limit: 12, mode: "discover")
         }
+        self.nowProvider = nowProvider
         if let preloaded {
             self.isPreloaded = true
-            self.liveEvents = preloaded.liveEvents
-            self.nextEvents = preloaded.nextEvents
-            self.nextMarkets = preloaded.nextMarkets
-            self.movedEntries = preloaded.movedEntries
-            self.discoverItems = Self.stripModelWrittenText(preloaded.discoverItems, limit: 3)
+            applyPreloadedSnapshot(preloaded)
             self.loading = false
             self.loadFailed = preloaded.loadFailed
             self.hydratingRemainingCount = preloaded.hydratingRemainingCount
@@ -203,10 +202,46 @@ final class MyStuffLandingViewModel295A: ObservableObject {
 
     /// Seeds sections for unit tests exercising refresh failure preservation.
     func seedSectionsForTesting(_ snapshot: PreloadedSnapshot) {
-        self.liveEvents = snapshot.liveEvents
-        self.nextEvents = snapshot.nextEvents
+        applyPreloadedSnapshot(snapshot)
+    }
+
+    /// Applies preloaded snapshots while enforcing the section contract: finished games
+    /// belong in `"Moved since your last visit"`, never `"Next for you"`.
+    private func applyPreloadedSnapshot(_ snapshot: PreloadedSnapshot) {
+        var live = snapshot.liveEvents
+        var liveIds = Set(live.map(\.event.id))
+        var upcoming: [(event: FeedEventData, awayVerified: Bool)] = []
+        var moved = snapshot.movedEntries
+        var seenMovedIds = Set(moved.map(\.id))
+
+        for pair in snapshot.nextEvents {
+            switch EventState.section(of: pair.event) {
+            case .live:
+                if liveIds.insert(pair.event.id).inserted {
+                    live.append(pair)
+                }
+            case .upcoming:
+                upcoming.append(pair)
+            case .finished:
+                let movedId = "moved-final-\(pair.event.id)"
+                if seenMovedIds.insert(movedId).inserted {
+                    moved.append(
+                        MyStuffMovedEntry295A(
+                            id: movedId,
+                            movementSummary: "Finished",
+                            magnitudePoints: 0,
+                            isFinishedResult: true,
+                            payload: .event(pair.event, awayVerified: pair.awayVerified)
+                        )
+                    )
+                }
+            }
+        }
+
+        self.liveEvents = live
+        self.nextEvents = upcoming
         self.nextMarkets = snapshot.nextMarkets
-        self.movedEntries = snapshot.movedEntries
+        self.movedEntries = moved
         self.discoverItems = Self.stripModelWrittenText(snapshot.discoverItems, limit: 3)
         self.loadFailed = snapshot.loadFailed
         self.hydratingRemainingCount = snapshot.hydratingRemainingCount
@@ -523,14 +558,20 @@ final class MyStuffLandingViewModel295A: ObservableObject {
 
     private static func buildPartitionedSections(
         from acc: RefreshAccumulator295A,
-        discoverFeed: FeedResponse?
+        discoverFeed: FeedResponse?,
+        now: Date = Date()
     ) -> PartitionedSections295A {
         // 1. Live now
-        let live = acc.collectedEvents.filter { pair in EventState.section(of: pair.event) == .live }
+        let live = acc.collectedEvents.filter { pair in EventState.section(of: pair.event, now: now) == .live }
 
-        // 2. Next for you (upcoming games chronologically ascending + top active followed markets)
+        // 2. Next for you (upcoming games chronologically ascending + top active followed markets;
+        // exclude overdue `scheduled` games beyond the app's #10094 grace window while keeping
+        // games that just started and have not yet flipped to `live`).
         let upcomingSorted = acc.collectedEvents
-            .filter { pair in EventState.section(of: pair.event) == .upcoming }
+            .filter { pair in
+                EventState.section(of: pair.event, now: now) == .upcoming
+                    && !FeedLifecycle.scheduledKickoffHasLapsed(pair.event, now: now)
+            }
             .sorted { lhs, rhs in
                 switch (lhs.event.commenceTime?.asDate, rhs.event.commenceTime?.asDate) {
                 case let (l?, r?): return l < r
@@ -709,7 +750,8 @@ final class MyStuffLandingViewModel295A: ObservableObject {
             signedInItems: signedInItems,
             signedInTeamFutures: signedInTeamFutures
         )
-        let baselinePartition = Self.buildPartitionedSections(from: baselineAcc, discoverFeed: nil)
+        let now = nowProvider
+        let baselinePartition = Self.buildPartitionedSections(from: baselineAcc, discoverFeed: nil, now: now())
         if baselinePartition.hasFollowedContent {
             applyStreamingPartition(
                 baselinePartition,
@@ -792,7 +834,7 @@ final class MyStuffLandingViewModel295A: ObservableObject {
                             stepAcc.mergePack(pack)
                         }
                     }
-                    let stepPartition = Self.buildPartitionedSections(from: stepAcc, discoverFeed: discoverFeed)
+                    let stepPartition = Self.buildPartitionedSections(from: stepAcc, discoverFeed: discoverFeed, now: now())
                     if stepPartition.hasAnyContent {
                         applyStreamingPartition(
                             stepPartition,
@@ -817,7 +859,7 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         }
 
         MyStuffVisitLedger295A.recordObservedReadings(finalAcc.newReadings, defaults: defaults)
-        let finalPartition = Self.buildPartitionedSections(from: finalAcc, discoverFeed: discoverFeed)
+        let finalPartition = Self.buildPartitionedSections(from: finalAcc, discoverFeed: discoverFeed, now: now())
         let newFollowedSectionsEmpty = !finalPartition.hasFollowedContent
         let teamFuturesDidFail = signedInTeamFuturesFailed && signedInTeamFutures == nil
         teamFuturesFailed = teamFuturesDidFail
@@ -1116,6 +1158,66 @@ final class MyStuffLandingViewModel295A: ObservableObject {
                 )
             case .tournament, .concept:
                 break
+            }
+
+        case .subject:
+            if let mid = subject.marketId, mid > 0 {
+                do {
+                    let detail = try await APIClient.shared.fetchFuturesDetail(id: mid)
+                    let activeOutcomes = detail.outcomes.filter { ($0.probability ?? 0) > 0 && $0.isOut != true }
+                    let lead = detail.leadOutcomeId.flatMap { leadId in activeOutcomes.first(where: { $0.id == leadId }) } ?? activeOutcomes.first
+                    if let lead, let prob = lead.probability {
+                        let move = lead.probabilityChange24h.flatMap {
+                            MyStuffVisitLedger295A.formatPointMove(deltaProbability: $0, timeframe: .last24Hours)
+                        }
+                        pack.markets.append(
+                            MyStuffMarketItem295A(
+                                id: "\(detail.id):\(lead.name.lowercased())",
+                                marketId: detail.id,
+                                marketTitle: cleanMarketTitle(detail.name),
+                                outcomeLabel: lead.name,
+                                subjectName: subject.name,
+                                logoUrl: subject.logoUrl ?? detail.imageUrl,
+                                primaryColor: subject.primaryColor,
+                                probability: prob,
+                                changePoints: move?.points,
+                                movementNote: move?.text,
+                                sourceMark: nil
+                            )
+                        )
+                    }
+                    return pack
+                } catch {
+                    pack.didFail = true
+                }
+            }
+            let query = (subject.searchQuery?.isEmpty == false ? subject.searchQuery : nil) ?? subject.name
+            guard !query.isEmpty else { return pack }
+            do {
+                let response = try await APIClient.shared.fetchSearch(query: query)
+                pack.didFail = false
+                for market in response.futures.prefix(3) {
+                    guard market.status != "resolved",
+                          let top = market.topOutcomes?.first,
+                          let prob = top.probability, prob > 0 else { continue }
+                    pack.markets.append(
+                        MyStuffMarketItem295A(
+                            id: "\(market.id):\(top.name.lowercased())",
+                            marketId: market.id,
+                            marketTitle: cleanMarketTitle(market.name),
+                            outcomeLabel: top.name,
+                            subjectName: subject.name,
+                            logoUrl: subject.logoUrl,
+                            primaryColor: subject.primaryColor,
+                            probability: prob,
+                            changePoints: nil,
+                            movementNote: nil,
+                            sourceMark: nil
+                        )
+                    )
+                }
+            } catch {
+                pack.didFail = true
             }
         }
         return pack

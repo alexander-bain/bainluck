@@ -4,86 +4,19 @@ import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import AdminAuthProvider, { useAdminAuth } from "@/components/admin/AdminAuthProvider";
+import GameNuggetsDeckView from "@/components/admin/GameNuggetsDeckView";
 import { adminFetch, adminFetchJSON } from "@/lib/adminFetch";
 import { saveWithOneRetry } from "@/lib/ranking/gradeSession";
 import { handleGradeDeckReadError } from "@/lib/ranking/groupingGradeSession";
+import {
+  formatDeckCountLine,
+  type GameNuggetItem,
+  type GameNuggetsDeckResponse,
+  type GameNuggetsGame,
+  type NuggetGrade,
+  type SingleGameNuggetsResponse,
+} from "@/lib/ranking/gameNuggetsSession";
 import { useRetryNotice } from "@/lib/ranking/useRetryNotice";
-
-type NuggetGrade = "yes" | "no";
-
-interface NuggetSubject {
-  name: string;
-  image_url?: string | null;
-  image_kind?: "headshot" | "logo" | null;
-}
-
-interface GameNuggetItem {
-  id: string;
-  item_key?: string;
-  position: number;
-  kind: string;
-  kind_label: string;
-  subject: NuggetSubject;
-  claim: string;
-  probability: number;
-  percent: number;
-  change_points: number | null;
-  change_since: string | null;
-  pregame_percent: number | null;
-  pregame_mark_source?: "kickoff_pin" | "opening" | null;
-  form: string;
-  rank_reason: string;
-  saved_grade?: NuggetGrade;
-  saved_note?: string | null;
-}
-
-interface KindCountEntry {
-  kind: string;
-  label: string;
-  count: number;
-  target_section: string;
-}
-
-interface GameNuggetsDeckSummaryGame {
-  event_id: number;
-  home_team: string;
-  away_team: string;
-  sport: string | null;
-  status: string | null;
-  commence_time: string | null;
-  graded_count?: number;
-}
-
-interface GameNuggetsGame extends GameNuggetsDeckSummaryGame {
-  nuggets: GameNuggetItem[];
-  first_eight_kinds: number;
-  everything_map: KindCountEntry[];
-}
-
-interface NuggetGradeSummary {
-  graded_count: number;
-  yes_count: number;
-  no_count: number;
-  repeat_rate: number | null;
-  target_rate: number;
-  meets_target: boolean;
-}
-
-interface GameNuggetsDeckResponse {
-  slate_id: string;
-  surface: string;
-  games_count: number;
-  games: GameNuggetsDeckSummaryGame[];
-  summary: NuggetGradeSummary;
-}
-
-interface SingleGameNuggetsResponse {
-  slate_id: string;
-  surface: string;
-  event_id: number;
-  game: GameNuggetsGame;
-  summary: NuggetGradeSummary;
-}
 
 const GRADER_STORAGE_KEY = "bainluck_game_nuggets_grader";
 
@@ -136,7 +69,7 @@ function GameNuggetsGradeSession() {
         setDeck(data);
         setGamesById({});
       } catch (e: unknown) {
-        handleGradeDeckReadError(e, "Could not load 20-game nuggets slate", {
+        handleGradeDeckReadError(e, "Could not load game-nuggets deck", {
           clearSecret,
           setError,
         });
@@ -292,7 +225,7 @@ function GameNuggetsGradeSession() {
   if (!deck) {
     return (
       <main className="mx-auto max-w-4xl px-4 py-6">
-        <p className="text-sm text-text-muted animate-pulse">Loading 20-game slate…</p>
+        <p className="text-sm text-text-muted animate-pulse">Loading game-nuggets deck…</p>
       </main>
     );
   }
@@ -309,8 +242,8 @@ function GameNuggetsGradeSession() {
           Game Page Nuggets Grading (#13511)
         </h1>
         <p className="mt-2 text-sm text-text-secondary">
-          {deck.games_count} games queued (loaded one game at a time). Grade each nugget on one
-          question: &ldquo;Would a fan repeat this?&rdquo; Target: 3 in 4 (75%).
+          {formatDeckCountLine(deck)} Grade each nugget on one question: &ldquo;Would a fan repeat
+          this?&rdquo; Target: 3 in 4 (75%).
         </p>
         <div className="mt-4 flex flex-col gap-3 sm:flex-row">
           <input
@@ -331,195 +264,23 @@ function GameNuggetsGradeSession() {
     );
   }
 
-  const currentGame = activeEventId !== null ? gamesById[activeEventId] : undefined;
-  const pct =
-    deck.summary.repeat_rate !== null ? Math.round(deck.summary.repeat_rate * 100) : null;
-
   return (
-    <main className="mx-auto max-w-5xl px-4 py-6">
-      <div className="mb-4 flex flex-wrap items-center justify-between gap-2 text-xs text-text-muted">
-        <div className="flex items-center gap-3">
-          <Link href="/grade/groupings" className="hover:underline">
-            ← Groupings
-          </Link>
-          <span>Slate: {deck.slate_id}</span>
-          <span>Grader: {grader}</span>
-        </div>
-        <span className="font-medium text-text-secondary">
-          Repeat rate: {pct !== null ? `${pct}%` : "—"} ({deck.summary.yes_count} yes /{" "}
-          {deck.summary.no_count} no · target 75%)
-        </span>
-      </div>
-
-      {notice && (
-        <p className="mb-3 text-sm text-text-muted" role="status">
-          {notice}
-        </p>
-      )}
-      {error && <p className="mb-3 text-sm text-text-secondary">{error}</p>}
-
-      <div className="mb-5 flex gap-2 overflow-x-auto pb-2">
-        {deck.games.map((g, idx) => {
-          const loaded = gamesById[g.event_id];
-          const gDone = loaded
-            ? loaded.nuggets.filter((n) => n.saved_grade).length
-            : (g.graded_count ?? 0);
-          const gTotal = loaded ? loaded.nuggets.length : 8;
-          const active = idx === selectedGameIdx;
-          return (
-            <button
-              key={g.event_id}
-              onClick={() => setSelectedGameIdx(idx)}
-              className={`shrink-0 rounded-lg border px-3 py-2 text-left text-xs ${
-                active
-                  ? "border-accent-primary bg-surface-elevated font-semibold text-text-primary"
-                  : "border-surface-border bg-surface-card text-text-secondary"
-              }`}
-            >
-              <div className="text-[11px] uppercase text-text-muted">{g.sport || "game"}</div>
-              <div className="truncate max-w-[160px]">
-                {g.away_team} at {g.home_team}
-              </div>
-              <div className="text-[11px] text-text-muted">
-                {gDone}/{gTotal} graded
-              </div>
-            </button>
-          );
-        })}
-      </div>
-
-      {activeEventId !== null && loadingEventId === activeEventId && !currentGame && (
-        <p className="text-sm text-text-muted animate-pulse">
-          Loading {activeSummaryGame?.away_team} at {activeSummaryGame?.home_team}…
-        </p>
-      )}
-      {gameError && !currentGame && (
-        <p className="mb-3 text-sm text-text-secondary">{gameError}</p>
-      )}
-
-      {currentGame && (
-        <section>
-          <header className="mb-4 rounded-xl border border-surface-border bg-surface-card p-4">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <p className="text-xs uppercase text-text-muted">
-                  {currentGame.sport || "sport"} · {currentGame.status || "scheduled"}
-                </p>
-                <h1 className="text-lg font-semibold text-text-primary">
-                  {currentGame.away_team} at {currentGame.home_team}
-                </h1>
-              </div>
-              <div className="text-xs text-text-secondary">
-                {currentGame.first_eight_kinds} kinds represented in top {currentGame.nuggets.length}
-              </div>
-            </div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {currentGame.everything_map.map((entry) => (
-                <span
-                  key={entry.kind}
-                  className="rounded-full border border-surface-border bg-surface-elevated px-2.5 py-0.5 text-xs text-text-secondary"
-                >
-                  {entry.label}: {entry.count}
-                </span>
-              ))}
-            </div>
-          </header>
-
-          <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-            {currentGame.nuggets.map((nugget) => {
-              const itemKey = nugget.item_key || `event:${currentGame.event_id}:${nugget.id}`;
-              const absMove = nugget.change_points !== null ? Math.abs(nugget.change_points) : 0;
-              const moveText =
-                nugget.change_points !== null && nugget.change_points !== 0
-                  ? `${nugget.change_points > 0 ? "+" : ""}${nugget.change_points} ${
-                      absMove === 1 ? "point" : "points"
-                    } ${nugget.change_since === "pregame" ? "since pregame" : "in 24h"}`
-                  : null;
-              const markSourceText =
-                nugget.pregame_mark_source === "kickoff_pin"
-                  ? "mark: kickoff pin"
-                  : nugget.pregame_mark_source === "opening"
-                    ? "mark: first reading"
-                    : null;
-              return (
-                <article
-                  key={itemKey}
-                  className="flex flex-col justify-between rounded-xl border border-surface-border bg-surface-card p-4"
-                >
-                  <div>
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="rounded-full bg-surface-elevated px-2 py-0.5 text-xs font-medium text-text-secondary">
-                        #{nugget.position} · {nugget.kind_label}
-                      </span>
-                      <span className="text-xs text-text-muted">
-                        {markSourceText ? `${markSourceText} · ${nugget.form}` : nugget.form}
-                      </span>
-                    </div>
-
-                    <div className="mt-3 flex items-start gap-3">
-                      {nugget.subject.image_url && (
-                        <img
-                          src={nugget.subject.image_url}
-                          alt={nugget.subject.name}
-                          className="h-10 w-10 shrink-0 rounded-full border border-surface-border object-cover"
-                        />
-                      )}
-                      <div className="min-w-0 flex-1">
-                        <p className="text-sm font-medium text-text-primary">{nugget.claim}</p>
-                        <div className="mt-1 flex items-baseline gap-2">
-                          <span className="text-xl font-bold text-text-primary">
-                            {nugget.percent}%
-                          </span>
-                          {moveText && (
-                            <span className="text-xs text-text-secondary">{moveText}</span>
-                          )}
-                        </div>
-                        <p className="mt-1 text-xs text-text-muted">{nugget.rank_reason}</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-3 border-t border-surface-border pt-3">
-                    <input
-                      className="mb-2 w-full rounded border border-surface-border bg-surface-elevated px-2.5 py-1.5 text-xs text-text-primary"
-                      placeholder="Optional note"
-                      maxLength={300}
-                      value={notesByKey[itemKey] ?? nugget.saved_note ?? ""}
-                      onChange={(e) =>
-                        setNotesByKey((prev) => ({ ...prev, [itemKey]: e.target.value }))
-                      }
-                    />
-                    <div className="flex gap-2">
-                      <button
-                        disabled={savingKey === itemKey}
-                        onClick={() => void submitGrade(currentGame, nugget, "yes")}
-                        className={`flex-1 rounded-lg border px-3 py-1.5 text-xs font-semibold ${
-                          nugget.saved_grade === "yes"
-                            ? "border-accent-primary bg-accent-primary text-surface-primary"
-                            : "border-surface-border bg-surface-elevated text-text-primary"
-                        }`}
-                      >
-                        Yes — would repeat
-                      </button>
-                      <button
-                        disabled={savingKey === itemKey}
-                        onClick={() => void submitGrade(currentGame, nugget, "no")}
-                        className={`flex-1 rounded-lg border px-3 py-1.5 text-xs font-semibold ${
-                          nugget.saved_grade === "no"
-                            ? "border-accent-primary bg-surface-elevated text-text-primary underline"
-                            : "border-surface-border bg-surface-elevated text-text-secondary"
-                        }`}
-                      >
-                        No
-                      </button>
-                    </div>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        </section>
-      )}
-    </main>
+    <GameNuggetsDeckView
+      deck={deck}
+      grader={grader}
+      gamesById={gamesById}
+      selectedGameIdx={selectedGameIdx}
+      loadingEventId={loadingEventId}
+      notice={notice}
+      error={error}
+      gameError={gameError}
+      notesByKey={notesByKey}
+      savingKey={savingKey}
+      onSelectGame={setSelectedGameIdx}
+      onChangeNote={(itemKey, value) =>
+        setNotesByKey((prev) => ({ ...prev, [itemKey]: value }))
+      }
+      onSubmitGrade={(game, nugget, grade) => void submitGrade(game, nugget, grade)}
+    />
   );
 }

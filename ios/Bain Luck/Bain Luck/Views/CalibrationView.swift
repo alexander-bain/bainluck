@@ -85,6 +85,7 @@ struct CalibrationSurfaceView: View {
                     Button("Retry") { Task { await viewModel.load() } }.buttonStyle(.borderedProminent)
                 }
                 .padding(.horizontal, 24)
+                .noteReviewPromptTrouble12304()
             } else if let unavailable = viewModel.unavailableMessage {
                 // L2-231 Item 1: a payload that decoded but carries no curve. Every
                 // metric here divides by a bucket count, so rendering it anyway
@@ -99,6 +100,7 @@ struct CalibrationSurfaceView: View {
                     Button("Retry") { Task { await viewModel.load() } }.buttonStyle(.borderedProminent)
                 }
                 .padding(.horizontal, 24)
+                .noteReviewPromptTrouble12304()
             } else if viewModel.isIncompatible {
                 // L2-231 Item 2: a payload built under a population contract this
                 // build does not know cannot be rendered under this build's labels
@@ -113,6 +115,7 @@ struct CalibrationSurfaceView: View {
                     Button("Retry") { Task { await viewModel.load() } }.buttonStyle(.borderedProminent)
                 }
                 .padding(.horizontal, 24)
+                .noteReviewPromptTrouble12304()
             } else { scrollContent }
         }
         .navigationTitle(CalibrationView.readerTitle)

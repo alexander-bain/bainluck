@@ -38,7 +38,7 @@ from app.utils.container_presentation import (
 )
 from app.utils.draw_priced_winner import printable_away
 from app.utils.event_taxonomy import compute_event_tags
-from app.utils.graded_card import rendered_card_percents, rendered_duel_percents
+from app.utils.graded_card import rendered_card_percents, rendered_duel_percents, rendered_percent
 from app.utils.team_short_name import is_college_sport, school_label
 
 
@@ -1475,9 +1475,14 @@ def _is_event_toss_up(item: Mapping[str, Any]) -> bool:
     return max(ap, hp) <= (TOSS_UP_MAX_SIDE_PROB + 1e-9)
 
 
+_DUEL_DRAW_OUTCOME_NAMES: frozenset[str] = frozenset({"tie", "draw"})
+
+
 def choose_section_form(
     atoms_kind: str,
     selected_items: Sequence[Mapping[str, Any]],
+    *,
+    allow_three_way_duel: bool = False,
 ) -> str:
     """Choose a section's visual form strictly from the shape of its atoms (zero topic checks)."""
     if atoms_kind == "paired_stage":
@@ -1503,6 +1508,18 @@ def choose_section_form(
         if len(selected_items) == 1:
             outcomes = selected_items[0].get("outcomes") or ()
             if len(outcomes) == 2:
+                return "duel_bar"
+            if (
+                allow_three_way_duel
+                and len(outcomes) == 3
+                and sum(
+                    1
+                    for o in outcomes
+                    if isinstance(o, Mapping)
+                    and str(o.get("name") or "").strip().lower() in _DUEL_DRAW_OUTCOME_NAMES
+                )
+                == 1
+            ):
                 return "duel_bar"
             if len(outcomes) >= 3:
                 return "contender_spotlight"
@@ -2012,6 +2029,11 @@ def _market_matches_query(
     return True
 
 
+def _legacy_grouped_percent(probability: float, allocated: int) -> int:
+    """Keep the integer printed directly by existing iPhone builds."""
+    return max(1, min(99, allocated)) if 0.0 < probability < 1.0 else allocated
+
+
 def _canonical_market_outcome_map(
     raw_outcomes: Sequence[Mapping[str, Any]],
     *,
@@ -2070,7 +2092,11 @@ def _canonical_market_outcome_map(
             rp = int(card_pcts[idx])
         if rp is None:
             rp = _half_up_pct(float(r["probability"]))
-        pct_int = max(1, min(99, int(rp))) if 0.0 < float(r["probability"]) < 1.0 else int(rp)
+        unfloored = r.get("unfloored_percent")
+        if not isinstance(unfloored, int) or isinstance(unfloored, bool):
+            unfloored = int(rp)
+        pct_int = _legacy_grouped_percent(float(r["probability"]), int(rp))
+        r["unfloored_percent"] = unfloored
         r["rendered_percent"] = pct_int
         by_oid[int(r["id"])] = pct_int
         nk = _norm_key(_clean_outcome_label(str(r["name"])))
@@ -2296,6 +2322,7 @@ def _hydrate_market_visual_item(
                 "name": "Yes",
                 "probability": p,
                 "rendered_percent": yes_pct,
+                "unfloored_percent": yes_row.get("unfloored_percent"),
                 "art": {"url": None, "kind": "monogram", "detail": ""},
             }
         ]
@@ -2375,7 +2402,8 @@ def _hydrate_market_visual_item(
             canon_subj = art.get("canonical_name")
             if canon_subj and _ascii_fold_key(canon_subj) == _ascii_fold_key(o_name):
                 o_name = str(canon_subj)
-            pct_val = int(o.get("rendered_percent") or _half_up_pct(p))
+            rendered = o.get("rendered_percent")
+            pct_val = int(rendered) if rendered is not None else _half_up_pct(p)
             for fk_alias in (_norm_key(o_name), _ascii_fold_key(o_name)):
                 if fk_alias and fk_alias not in canon_by_key:
                     canon_by_key[fk_alias] = pct_val
@@ -2385,6 +2413,7 @@ def _hydrate_market_visual_item(
                     "name": o_name,
                     "probability": p,
                     "rendered_percent": pct_val,
+                    "unfloored_percent": o.get("unfloored_percent"),
                     "opening_probability": (
                         o.get("opening_probability") if openings_ok else None
                     ),
@@ -2607,6 +2636,7 @@ def _hydrate_market_visual_item(
     return {
         "market_id": mid,
         "title": display_title,
+        "_short_label_base": base_title,
         "headline_phrase": headline_phrase,
         "headline_with_phrase": headline_with_phrase,
         "raw_title": clean_raw_name,
@@ -3000,6 +3030,8 @@ _CATEGORY_LLM_POOL: dict[str, tuple[str, ...]] = {
     "football": ("football", "nfl", "americanfootball_nfl", "other"),
     "basketball": ("basketball", "nba", "basketball_nba", "basketball_ncaab", "other"),
     "hockey": ("hockey", "nhl", "icehockey_nhl", "other"),
+    "golf": ("golf", "pga", "other"),
+    "mma": ("mma", "ufc", "boxing", "other"),
     "soccer": ("soccer", "sports", "other"),
     "tech": ("tech", "technology", "ai", "science", "other"),
 }
@@ -3644,7 +3676,7 @@ async def _load_snapshot_from_db(
                 card_pcts = rendered_card_percents([row.get("probability") for row in d_outs])
                 by_oid: dict[int, int] = {}
                 by_key: dict[str, int] = {}
-                by_fold: dict[str, tuple[float, int]] = {}
+                by_fold: dict[str, tuple[float, int, int]] = {}
                 formatted_outs: list[dict[str, Any]] = []
                 img_by_oid = {o.id: getattr(o, "image_url", None) for o in (fm.outcomes or ())}
                 upd_by_oid = {o.id: getattr(o, "last_updated", None) for o in (fm.outcomes or ())}
@@ -3657,11 +3689,11 @@ async def _load_snapshot_from_db(
                     oid = int(row["id"])
                     rp = row.get("rendered_percent")
                     if rp is not None:
-                        pct_int = int(rp)
+                        unfloored = pct_int = int(rp)
                     else:
                         card_pct = card_pcts[idx] if idx < len(card_pcts) else None
-                        rp = card_pct if card_pct is not None else _half_up_pct(p_f)
-                        pct_int = max(1, min(99, int(rp))) if 0.0 < p_f < 1.0 else int(rp)
+                        unfloored = card_pct if card_pct is not None else _half_up_pct(p_f)
+                        pct_int = _legacy_grouped_percent(p_f, unfloored)
                     by_oid[oid] = pct_int
                     r_name = str(row.get("name") or "")
                     for nk in (
@@ -3674,7 +3706,7 @@ async def _load_snapshot_from_db(
                             by_key[nk] = pct_int
                     fk = fold_outcome_key(r_name)
                     if fk and fk not in by_fold:
-                        by_fold[fk] = (p_f, pct_int)
+                        by_fold[fk] = (p_f, pct_int, unfloored)
                     o_upd_dt = _parse_iso_dt_utc(upd_by_oid.get(oid))
                     if o_upd_dt is not None and (newest_live_upd is None or o_upd_dt > newest_live_upd):
                         newest_live_upd = o_upd_dt
@@ -3684,6 +3716,7 @@ async def _load_snapshot_from_db(
                             "name": r_name,
                             "probability": p_f,
                             "rendered_percent": pct_int,
+                            "unfloored_percent": unfloored,
                             "opening_probability": row.get("opening_probability"),
                             "image_url": img_by_oid.get(oid),
                             "last_updated": o_upd_dt.isoformat() if o_upd_dt is not None else None,
@@ -3698,7 +3731,12 @@ async def _load_snapshot_from_db(
                 detail_by_mid[fm.id] = {
                     "top_outcomes": formatted_outs,
                     "newest_outcome_updated_at": newest_live_upd.isoformat() if newest_live_upd is not None else None,
-                    "by_oid_prob_pct": {int(o["id"]): (float(o["probability"]), int(o["rendered_percent"])) for o in formatted_outs},
+                    "by_oid_prob_pct": {
+                        int(o["id"]): (
+                            o["probability"], o["rendered_percent"], o["unfloored_percent"],
+                        )
+                        for o in formatted_outs
+                    },
                     "by_fold_prob_pct": by_fold,
                 }
 
@@ -3740,12 +3778,13 @@ async def _load_snapshot_from_db(
                         else s1_det["by_fold_prob_pct"].get(fk)
                     )
                     if match_s1 is not None:
-                        p_s1, pct_s1 = match_s1
+                        p_s1, pct_s1, unfloored_s1 = match_s1
                         # Ensure client renderedPercent(stage_1_probability) equals pct_s1 exactly
                         entry["stage_1_probability"] = (
                             p_s1 if _half_up_pct(p_s1) == pct_s1 else round(pct_s1 / 100.0, 4)
                         )
                         entry["stage_1_rendered_percent"] = pct_s1
+                        entry["stage_1_unfloored_percent"] = unfloored_s1
             # Re-sort entries by stage_2_probability desc, stage_1_probability desc, subject asc
             pset["entries"] = sorted(
                 [e for e in (pset.get("entries") or ()) if isinstance(e, dict)],
@@ -4122,6 +4161,12 @@ _EXACT_CASE_TOKENS: dict[str, str] = {
     "millennium": "Millennium",
     "sec": "SEC",
     "pac-12": "Pac-12",
+    "ryder": "Ryder",
+    "cup": "Cup",
+    "conor": "Conor",
+    "mcgregor": "McGregor",
+    "mcgregor's": "McGregor's",
+    "mcgregor’s": "McGregor’s",
 }
 
 
@@ -4201,7 +4246,7 @@ def _prose_market_phrase(title: str, *, capitalize_first: bool = False) -> str:
                 words.append(w.lower())
         joined = " ".join(words)
         joined = re.sub(r"\bbig\s+ten\b", "Big Ten", joined, flags=re.IGNORECASE)
-        has_leading_possessive = bool(words and ("'" in words[0] or "’" in words[0]))
+        has_leading_possessive = any("'" in tok or "’" in tok for tok in words[:2])
         out = (
             joined
             if joined.lower().startswith(("the ", "a ", "an ")) or has_leading_possessive
@@ -4468,17 +4513,24 @@ def _build_dynamic_title_from_set(
         return max(outs, key=lambda o: float(o.get("probability") or 0.0))
 
     if spotlight_item is None and duel_item is not None and lead_sec_form == "duel_bar":
-        d_outs = sorted(
+        d_outs_all = sorted(
             [o for o in (duel_item.get("outcomes") or ()) if isinstance(o, Mapping)],
             key=lambda o: -float(o.get("probability") or 0.0),
         )
+        d_non_draw = [
+            o
+            for o in d_outs_all
+            if str(o.get("name") or "").strip().lower() not in _DUEL_DRAW_OUTCOME_NAMES
+        ]
+        d_outs = d_non_draw if len(d_non_draw) >= 2 else d_outs_all
         if len(d_outs) >= 2:
             lead_name = _prose_outcome_name(str(d_outs[0]["name"]))
             trail_name = _prose_outcome_name(str(d_outs[1]["name"]))
             lead_p = int(d_outs[0]["rendered_percent"])
             trail_p = int(d_outs[1]["rendered_percent"])
             du_phrase = _prose_market_phrase(str(duel_item["title"]))
-            return f"{lead_name} leads {trail_name} {lead_p}%–{trail_p}% in {du_phrase}"
+            sep = " to " if len(d_outs_all) >= 3 else "–"
+            return f"{lead_name} leads {trail_name} {lead_p}%{sep}{trail_p}% in {du_phrase}"
 
     if history_items and (
         lead_sec_form == "probability_history_chart"
@@ -4566,6 +4618,45 @@ def _build_dynamic_title_from_set(
         if sp_fav:
             sp_phrase = _prose_market_phrase(str(spotlight_item["title"]))
             return f"{_prose_rate_outcome(str(sp_fav['name']), capitalize_first=True)} leads {sp_phrase} at {sp_fav['rendered_percent']}%"
+
+    def _sibling_headline() -> Optional[str]:
+        if not sibling_items:
+            return None
+        lead_sib = sibling_items[0]
+        lead_o = _fav_outcome(lead_sib)
+        if lead_o is None:
+            return None
+        lead_name = _prose_outcome_name(str(lead_o["name"]))
+        lead_title = str(lead_sib.get("title") or "").strip()
+        lead_p = int(lead_o["rendered_percent"])
+        _CASTING_ROLES = {
+            "james bond",
+            "m",
+            "q",
+            "moneypenny",
+            "bond girl",
+            "villain",
+            "main villain",
+        }
+        if len(sibling_items) >= 2:
+            sec_sib = sibling_items[1]
+            sec_o = _fav_outcome(sec_sib)
+            if sec_o is not None:
+                sec_name = _prose_outcome_name(str(sec_o["name"]))
+                sec_title = str(sec_sib.get("title") or "").strip()
+                sec_p = int(sec_o["rendered_percent"])
+                sec_verb = (
+                    "to play"
+                    if sec_title.lower() in _CASTING_ROLES
+                    else "leading"
+                )
+                return f"{lead_name} leads {lead_title} at {lead_p}%, with {sec_name} {sec_verb} {sec_title} at {sec_p}%"
+        return f"{lead_name} leads {lead_title} at {lead_p}%"
+
+    if sibling_items and lead_sec_form == "sibling_fields_grid":
+        sib_hl = _sibling_headline()
+        if sib_hl:
+            return sib_hl
 
     if benchmark_items:
         rule_dict = definition.get("rule") if isinstance(definition.get("rule"), Mapping) else {}
@@ -4655,35 +4746,9 @@ def _build_dynamic_title_from_set(
             return lead_clause
 
     if sibling_items:
-        lead_sib = sibling_items[0]
-        lead_o = _fav_outcome(lead_sib)
-        if lead_o is not None:
-            lead_name = _prose_outcome_name(str(lead_o["name"]))
-            lead_title = str(lead_sib.get("title") or "").strip()
-            lead_p = int(lead_o["rendered_percent"])
-            _CASTING_ROLES = {
-                "james bond",
-                "m",
-                "q",
-                "moneypenny",
-                "bond girl",
-                "villain",
-                "main villain",
-            }
-            if len(sibling_items) >= 2:
-                sec_sib = sibling_items[1]
-                sec_o = _fav_outcome(sec_sib)
-                if sec_o is not None:
-                    sec_name = _prose_outcome_name(str(sec_o["name"]))
-                    sec_title = str(sec_sib.get("title") or "").strip()
-                    sec_p = int(sec_o["rendered_percent"])
-                    sec_verb = (
-                        "to play"
-                        if sec_title.lower() in _CASTING_ROLES
-                        else "leading"
-                    )
-                    return f"{lead_name} leads {lead_title} at {lead_p}%, with {sec_name} {sec_verb} {sec_title} at {sec_p}%"
-            return f"{lead_name} leads {lead_title} at {lead_p}%"
+        sib_hl = _sibling_headline()
+        if sib_hl:
+            return sib_hl
 
     return str(definition.get("name") or definition.get("slug") or "Round-Up")
 
@@ -5187,7 +5252,12 @@ async def produce_container_machinery(
                     fm_it["content_kind"] = "futures"
                     if isinstance(fm_it.get("card"), dict):
                         fm_it["card"]["content_kind"] = "futures"
-                form_id = choose_section_form("markets", fallback_matched)
+                sec_allow_3way_duel = bool(sec_cfg.get("allow_three_way_duel"))
+                form_id = choose_section_form(
+                    "markets",
+                    fallback_matched,
+                    allow_three_way_duel=sec_allow_3way_duel,
+                )
                 if form_id in {"sibling_fields_grid", "contender_spotlight"}:
                     tile_cap = 3 if form_id == "contender_spotlight" else 1
                     all_tiles_pictured = all(
@@ -5301,8 +5371,37 @@ async def produce_container_machinery(
         matched = matched[:max_items]
         if len(matched) < min_items:
             return RoundupRefusal((("container_machinery", f"too_few_markets:{sec_key}"),))
+        if bool(aq.get("omit_shared_date_suffix_on_rows")) and matched:
+            shared_date_answers = {
+                _norm_key(str((it.get("outcomes") or [{}])[0].get("name") or ""))
+                for it in matched
+                if it.get("is_date_timing_row") and (it.get("outcomes") or ())
+            }
+            if len(shared_date_answers) == 1 and all(it.get("is_date_timing_row") for it in matched):
+                for it in matched:
+                    plain_lbl = str(it.get("_short_label_base") or "").strip()
+                    if plain_lbl:
+                        it["title"] = plain_lbl
 
-        form_id = choose_section_form("markets", matched)
+        sec_allow_3way_duel = bool(sec_cfg.get("allow_three_way_duel"))
+        form_id = choose_section_form(
+            "markets",
+            matched,
+            allow_three_way_duel=sec_allow_3way_duel,
+        )
+        if form_id == "duel_bar" and sec_allow_3way_duel:
+            for it in matched:
+                for out_item in it.get("outcomes") or ():
+                    if (
+                        isinstance(out_item, dict)
+                        and str(out_item.get("name") or "").strip().lower()
+                        in _DUEL_DRAW_OUTCOME_NAMES
+                    ):
+                        art = dict(out_item.get("art") or {})
+                        art["url"] = None
+                        art["kind"] = "monogram"
+                        art["accent_color"] = "#94A3B8"
+                        out_item["art"] = art
         eff_title, eff_note = _resolve_section_heading(
             sec_cfg,
             aq_kind="markets",
@@ -5333,7 +5432,7 @@ async def produce_container_machinery(
                 {
                     k: v
                     for k, v in it.items()
-                    if k not in ("card", "_twin_market_ids", "_volume")
+                    if k not in ("card", "_twin_market_ids", "_volume", "_short_label_base")
                 }
                 for it in matched
             ],
@@ -5369,6 +5468,15 @@ async def produce_container_machinery(
         (s for s in built_sections if s["class"] == preferred_card_key),
         built_sections[0],
     )
+    card_sec_cfg = next(
+        (
+            s
+            for s in ((rule.get("sections") or ()) if isinstance(rule, Mapping) else ())
+            if isinstance(s, Mapping) and str(s.get("key") or "").strip() == str(card_sec.get("class") or "")
+        ),
+        {},
+    )
+    card_allow_3way_duel = bool(card_sec_cfg.get("allow_three_way_duel"))
     vb = card_sec["visual_block"]
     vb_form = vb["form_id"]
     card_scale_ordered = False
@@ -5390,11 +5498,17 @@ async def produce_container_machinery(
                 "label": str(e.get("subject") or ""),
                 "probability": win_p,
                 "rendered_percent": win_pct,
+                "unfloored_percent": int(allocated) if allocated is not None else rendered_percent(win_p),
             }
             if isinstance(nom_p, (int, float)):
                 row_d["secondary_probability"] = float(nom_p)
-                row_d["secondary_rendered_percent"] = int(
-                    e.get("stage_1_rendered_percent") or _half_up_pct(float(nom_p))
+                nomination_percent = e.get("stage_1_rendered_percent")
+                row_d["secondary_rendered_percent"] = int(nomination_percent or _half_up_pct(float(nom_p)))
+                unfloored = e.get("stage_1_unfloored_percent")
+                if unfloored is None:
+                    unfloored = nomination_percent
+                row_d["secondary_unfloored_percent"] = (
+                    int(unfloored) if unfloored is not None else rendered_percent(nom_p)
                 )
             rows_out.append(row_d)
     elif vb_form in {"coin_flip_matchups", "matchup_slate"}:
@@ -5428,6 +5542,7 @@ async def produce_container_machinery(
                     "label": bm_title,
                     "probability": float(yes["probability"]),
                     "rendered_percent": int(yes["rendered_percent"]),
+                    "unfloored_percent": yes.get("unfloored_percent"),
                 }
             )
             card_visual_rows.append(
@@ -5453,6 +5568,7 @@ async def produce_container_machinery(
                     "label": sib_label,
                     "probability": float(lead["probability"]),
                     "rendered_percent": int(lead["rendered_percent"]),
+                    "unfloored_percent": lead.get("unfloored_percent"),
                 }
             )
             card_visual_rows.append(
@@ -5519,6 +5635,19 @@ async def produce_container_machinery(
             s_idx = numerical_scale_order_indices(sliced)
             chosen_outs = [sliced[i] for i in s_idx] if s_idx is not None else sliced
             card_scale_ordered = s_idx is not None
+        elif vb_form == "duel_bar" and card_allow_3way_duel:
+            non_draw_outs = [
+                o
+                for o in all_lead_outs
+                if str(o.get("name") or "").strip().lower() not in _DUEL_DRAW_OUTCOME_NAMES
+            ]
+            draw_outs = [
+                o
+                for o in all_lead_outs
+                if str(o.get("name") or "").strip().lower() in _DUEL_DRAW_OUTCOME_NAMES
+            ]
+            chosen_outs = (non_draw_outs + draw_outs)[:card_rows_limit]
+            card_scale_ordered = False
         else:
             chosen_outs = all_lead_outs[:card_rows_limit]
             card_scale_ordered = bool(lead_market.get("scale_ordered"))
@@ -5530,6 +5659,7 @@ async def produce_container_machinery(
                     "label": str(o["name"]),
                     "probability": float(o["probability"]),
                     "rendered_percent": int(o["rendered_percent"]),
+                    "unfloored_percent": o.get("unfloored_percent"),
                 }
             )
             card_visual_rows.append(
@@ -5938,6 +6068,10 @@ def _enforce_section_all_or_nothing_art(
                 if isinstance(it, Mapping) and not it.get("scale_ordered")
                 for o in (it.get("outcomes") or ())
                 if isinstance(o, Mapping)
+                and not (
+                    s_form == "duel_bar"
+                    and str(o.get("name") or "").strip().lower() in _DUEL_DRAW_OUTCOME_NAMES
+                )
             ]
             should_strip = any(has_urls) and not all(has_urls)
 
