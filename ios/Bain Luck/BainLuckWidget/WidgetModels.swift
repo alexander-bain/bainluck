@@ -8,6 +8,14 @@ struct BainLuckWidgetEntry: TimelineEntry {
     let date: Date
     let liveGames: [WidgetGame]
     let discoverItems: [WidgetDiscoverItem]
+    var isPlaceholder: Bool = false
+
+    /// #12316 / 254: A — elevate the live-games widget in the iPhone Smart Stack
+    /// when live games are underway (below a reader's own pinned-game widget), never for placeholders.
+    var relevance: TimelineEntryRelevance? {
+        let spec = WidgetRelevanceRule254A.liveGamesWidget(liveCount: liveGames.count, isPlaceholder: isPlaceholder)
+        return TimelineEntryRelevance(score: spec.score, duration: spec.duration)
+    }
 
     static var placeholder: BainLuckWidgetEntry {
         BainLuckWidgetEntry(
@@ -86,7 +94,8 @@ struct BainLuckWidgetEntry: TimelineEntry {
                     hookDescription: nil,
                     headline: nil
                 ),
-            ]
+            ],
+            isPlaceholder: true
         )
     }
 }

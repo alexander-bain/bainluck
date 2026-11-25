@@ -1,29 +1,14 @@
 import SwiftUI
 import WidgetKit
 
-// Direction 217 (Alex, Nov 16): "Why are we wasting half the screen with this
-// watch complication? … Can we have big numbers, logos, etc. and make this fun
-// and easy to consume?" The big rectangular slot takes the Matchup look Alex
-// chose on Nov 12 (#12641): both crests, the score, and ONE big number in its
-// team's colour.
-//
-//   before: crests + names, the favourite's chance, the kickoff
-//   during: crests + score, the leader's chance Now, the clock
-//   after:  crests + final score (tick before the winner's score), the winner's pregame chance
-//           (direction 209); 3 hours after the final the slot gives way to the
-//           launcher until the app publishes the next game
-//
-// Fable, 5:16 AM Nov 17 (v2 accepted): the small line says whose number it is in words,
-// because a tinted face has no colour and two teams can share one:
-// "LAC · Sun 5:20 PM", "BAL · Q3 4:12", "DET pregame · Final".
-//
-// It never prints "Saved" or "Stale", and never anything older than the game
-// it describes: a reading that can't be shown honestly falls back to the
-// launcher, not to an old number.
+// Direction 217 (Alex, Nov 16) + #13432 iPhone Lock Screen double-wide parity:
+// Both crests, live/final score, and ONE big number in its team's colour (or
+// Home / Draw / Away on 3-way soccer when all three prices are served),
+// paired with the small context line naming whose number it is and the clock/age.
 
 /// Ruling 222 (Alex: "Need this to be readable."): crests and names as large as
 /// the slot allows, with the big number still the largest thing in the tile.
-/// Every size is a share of the slot's height, so each watch size gets its own.
+/// Every size is a share of the slot's height, so each Watch or Lock Screen size gets its own.
 nonisolated struct WatchMatchupMetrics217: Equatable, Sendable {
     let crest: CGFloat
     let name: CGFloat
@@ -42,7 +27,8 @@ nonisolated struct WatchMatchupMetrics217: Equatable, Sendable {
     }
 }
 
-/// The Matchup look in the big rectangular slot (`accessoryRectangular`).
+/// The Matchup look in the big rectangular slot (`accessoryRectangular`) shared by
+/// Apple Watch and iPhone Lock Screen (#13432).
 struct WatchMatchupComplication217: View {
     let reading: WatchMatchupReading217
     @Environment(\.widgetRenderingMode) private var mode
@@ -53,36 +39,71 @@ struct WatchMatchupComplication217: View {
         (reading.away.score ?? 0) >= 100 || (reading.home.score ?? 0) >= 100
     }
 
+    private var hasWinnerCheckmark: Bool {
+        reading.stage == .after && (reading.away.isWinner || reading.home.isWinner)
+    }
+
     var body: some View {
         GeometryReader { geo in
             let m = WatchMatchupMetrics217(slotHeight: geo.size.height)
             HStack(alignment: .center, spacing: 3) {
-                Grid(alignment: .leading, horizontalSpacing: reading.stage == .after ? 2.5 : 4, verticalSpacing: m.rowGap) {
+                Grid(alignment: .leading, horizontalSpacing: hasWinnerCheckmark ? 2.5 : 4, verticalSpacing: m.rowGap) {
                     sideRow(reading.away, m)
                     sideRow(reading.home, m)
                 }
                 .layoutPriority(1)
-                VStack(alignment: .trailing, spacing: 0) {
-                    Text(reading.bigText)
-                        .font(.system(size: m.big, weight: .black, design: .rounded).monospacedDigit())
-                        .foregroundStyle(fullColor ? Self.color(reading.bigInkHex) : .primary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.7)
-                        .widgetAccentable()
-                    Text(reading.smallLine)
-                        .font(.system(size: m.small, weight: .semibold, design: .rounded))
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.55)
-                        .allowsTightening(true)
-                }
-                .frame(maxWidth: .infinity, alignment: .trailing)
+                rightColumn(m)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
             }
             .frame(width: geo.size.width, height: geo.size.height, alignment: .center)
         }
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(reading.accessibilityText)
         .accessibilityIdentifier("watch.complication.matchup.\(reading.stage.rawValue)")
+    }
+
+    @ViewBuilder
+    private func rightColumn(_ m: WatchMatchupMetrics217) -> some View {
+        VStack(alignment: .trailing, spacing: reading.threeWay == nil ? 0 : 2) {
+            if let threeWay = reading.threeWay {
+                HStack(alignment: .lastTextBaseline, spacing: 4) {
+                    threeWayColumn(label: threeWay.homeLabel, value: threeWay.homeText, m: m)
+                    threeWayColumn(label: "Draw", value: threeWay.drawText, m: m)
+                    threeWayColumn(label: threeWay.awayLabel, value: threeWay.awayText, m: m)
+                }
+                .widgetAccentable()
+            } else {
+                Text(reading.bigText)
+                    .font(.system(size: m.big, weight: .black, design: .rounded).monospacedDigit())
+                    .foregroundStyle(fullColor ? Self.color(reading.bigInkHex) : .primary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.65)
+                    .widgetAccentable()
+            }
+            Text(reading.smallLine)
+                .font(.system(size: m.small, weight: .semibold, design: .rounded))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.55)
+                .allowsTightening(true)
+        }
+    }
+
+    private func threeWayColumn(label: String, value: String, m: WatchMatchupMetrics217) -> some View {
+        VStack(alignment: .center, spacing: 0) {
+            Text(label)
+                .font(.system(size: max(8.5, (m.small * 0.88).rounded()), weight: .semibold, design: .rounded))
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.65)
+                .allowsTightening(true)
+            Text(value)
+                .font(.system(size: max(12, (m.name * 0.88).rounded()), weight: .heavy, design: .rounded).monospacedDigit())
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+                .allowsTightening(true)
+        }
     }
 
     /// Alex, Nov 17 (via Fable, 9:54 AM): after the final the tick comes BEFORE the
@@ -93,7 +114,7 @@ struct WatchMatchupComplication217: View {
     private func sideRow(_ side: WatchMatchupReading217.Side, _ m: WatchMatchupMetrics217) -> some View {
         GridRow {
             crestDisc(side, size: m.crest)
-            if reading.stage == .after {
+            if hasWinnerCheckmark {
                 Image(systemName: "checkmark")
                     .font(.system(size: m.name * 0.5, weight: .heavy))
                     .foregroundStyle(fullColor ? Color.green : .primary)
@@ -113,11 +134,10 @@ struct WatchMatchupComplication217: View {
 
     @ViewBuilder private func crestDisc(_ side: WatchMatchupReading217.Side, size: CGFloat) -> some View {
         ZStack {
-            if let png = side.crestPNG, let image = WatchMatchupCrests217.complicationImage(from: png) {
+            if let png = side.crestPNG, let cgImage = WatchMatchupCrests217.complicationCGImage(from: png) {
                 Circle().fill(fullColor ? Color.white : Color.white.opacity(0.22))
-                Image(uiImage: image).resizable().interpolation(.high).scaledToFit()
+                crestImage(cgImage)
                     .padding(size * 0.14)
-                    .saturation(fullColor ? 1 : 0)
             } else {
                 Circle().fill(fullColor ? Self.color(side.inkHex) : Color.white.opacity(0.22))
                 Text(side.abbreviation)
@@ -128,6 +148,17 @@ struct WatchMatchupComplication217: View {
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
+    }
+
+    @ViewBuilder private func crestImage(_ cgImage: CGImage) -> some View {
+        let image = Image(decorative: cgImage, scale: 2.0)
+        if #available(iOS 18.0, watchOS 11.0, macOS 15.0, *) {
+            image.resizable().interpolation(.high).widgetAccentedRenderingMode(.desaturated).scaledToFit()
+                .saturation(fullColor ? 1 : 0)
+        } else {
+            image.resizable().interpolation(.high).scaledToFit()
+                .saturation(fullColor ? 1 : 0)
+        }
     }
 
     static func color(_ hex: String) -> Color {

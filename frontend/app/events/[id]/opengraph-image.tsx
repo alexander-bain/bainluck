@@ -1,4 +1,6 @@
+/* eslint-disable @next/next/no-img-element */
 import { ImageResponse } from "next/og";
+import { BRAND_DRAWING_DATA_URI } from "@/lib/og/brandDrawingDataUri";
 import type { EventDetailResponse } from "@/lib/types";
 import { UnfurlCard } from "@/components/og/UnfurlCard";
 import { servedDuelPercents } from "@/lib/servedDuelPercents";
@@ -473,7 +475,13 @@ export default async function Image({ params }: { params: { id: string } }) {
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <div style={{ fontSize: 38 }}>🍀</div>
+            <img
+              src={BRAND_DRAWING_DATA_URI}
+              alt=""
+              width={38}
+              height={38}
+              style={{ borderRadius: 9 }}
+            />
             <div style={{ fontSize: 30, fontWeight: 800 }}>Bain Luck</div>
           </div>
           <div

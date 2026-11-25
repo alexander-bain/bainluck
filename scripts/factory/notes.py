@@ -344,6 +344,12 @@ class ModelBudget:
             or meter["month_micros"] + cost > limit
         ):
             return None
+        picture_draws_today = meter["picture_draws"] if meter.get("picture_day") == day else 0
+        if (
+            picture != "daily"
+            and meter["calls"] - picture_draws_today >= COLLECTOR_DAILY_CALLS - PICTURE_DRAWS_PER_DAY
+        ):
+            return None
         reserved = {
             **meter,
             "calls": meter["calls"] + 1,

@@ -228,14 +228,13 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         "M-LEGACYPOOLED",
         ROUTE,
         "pool the legacy arm too — the oracle stops being an oracle",
-        """        query = (
-            select(FuturesOutcome)
-            .join(FuturesMarket)
-            .where(
-                FuturesMarket.status.in_(_SUGGESTION_MOVERS_STATUSES),
-                *market_conditions,
-                *conditions,
-            )
+        """        query = select(FuturesOutcome).join(FuturesMarket)
+        for target, onclause in market_outerjoins:
+            query = query.outerjoin(target, onclause)
+        query = query.where(
+            FuturesMarket.status.in_(_SUGGESTION_MOVERS_STATUSES),
+            *market_conditions,
+            *conditions,
         )""",
         """        query = select(FuturesOutcome).where(
             *conditions,
@@ -244,6 +243,7 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
                     pool_size=_SUGGESTION_MOVERS_POOL,
                     statuses=_SUGGESTION_MOVERS_STATUSES,
                     conditions=market_conditions,
+                    outerjoins=market_outerjoins,
                 )
             ),
         )""",
@@ -303,11 +303,7 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         "drop the tier gate — the ITF M25 match is back on US Open final day",
         """        or_(
             FuturesMarket.event_id.is_(None),
-            FuturesMarket.event_id.in_(
-                select(Event.id)
-                .join(Sport, Sport.id == Event.sport_id)
-                .where(Sport.key.in_(tier_12_sport_keys()))
-            ),
+            Sport.key.in_(tier_12_sport_keys()),
         ),
 """,
         "",
@@ -318,28 +314,18 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         "require every mover to be a game — deletes the section's whole output",
         """        or_(
             FuturesMarket.event_id.is_(None),
-            FuturesMarket.event_id.in_(
-                select(Event.id)
-                .join(Sport, Sport.id == Event.sport_id)
-                .where(Sport.key.in_(tier_12_sport_keys()))
-            ),
+            Sport.key.in_(tier_12_sport_keys()),
         ),""",
-        """        FuturesMarket.event_id.in_(
-            select(Event.id)
-            .join(Sport, Sport.id == Event.sport_id)
-            .where(Sport.key.in_(tier_12_sport_keys()))
-        ),""",
+        """        Sport.key.in_(tier_12_sport_keys()),""",
     ),
     (
         "M-TIER-TABLE-SPELLINGS",
         ROUTE,
         "inline the tier table's own spellings — every Grand Slam match excluded",
-        "                .where(Sport.key.in_(tier_12_sport_keys()))",
-        """                .where(
-                    Sport.key.in_(
-                        ("baseball_mlb", "americanfootball_nfl", "tennis_us_open")
-                    )
-                )""",
+        "            Sport.key.in_(tier_12_sport_keys()),",
+        """            Sport.key.in_(
+                ("baseball_mlb", "americanfootball_nfl", "tennis_us_open")
+            ),""",
     ),
     (
         "M-POOL-CONDITIONS-OUTSIDE",
@@ -353,10 +339,14 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
                     pool_size=_SUGGESTION_MOVERS_POOL,
                     statuses=_SUGGESTION_MOVERS_STATUSES,
                     conditions=market_conditions,
+                    outerjoins=market_outerjoins,
                 )
             ),
         )""",
-        """        query = select(FuturesOutcome).join(FuturesMarket).where(
+        """        query = select(FuturesOutcome).join(FuturesMarket)
+        for target, onclause in market_outerjoins:
+            query = query.outerjoin(target, onclause)
+        query = query.where(
             *conditions,
             *market_conditions,
             FuturesOutcome.market_id.in_(
@@ -512,8 +502,8 @@ MUTANTS: list[tuple[str, pathlib.Path, str, str, str]] = [
         "M-POOL-WRONG-COLUMN",
         POOL,
         "select the movement instead of the id — `market_id IN (floats)`",
-        "        select(FuturesMarket.id)",
-        "        select(FuturesMarket.max_movement_24h)",
+        "    stmt = select(FuturesMarket.id)",
+        "    stmt = select(FuturesMarket.max_movement_24h)",
     ),
 ]
 
