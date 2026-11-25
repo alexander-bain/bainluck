@@ -117,9 +117,18 @@ struct EventModelsView: View {
         do {
             async let eventReq = APIClient.shared.fetchEvent(id: eventId)
             async let historyReq = APIClient.shared.fetchEventHistory(id: eventId, hours: 24, range: "since_start")
-            let (e, h) = try await (eventReq, historyReq)
+            let (e, initialHistory) = try await (eventReq, historyReq)
+            var resolvedHistory = initialHistory
+            if OddsChartView.needsFullHistoryUpgrade(
+                status: e.status,
+                commenceTime: e.commenceTime?.asDate,
+                history: initialHistory,
+                selectedRange: .sinceStart
+            ), let fullHistory = try? await APIClient.shared.fetchEventHistory(id: eventId, hours: 24, range: "all") {
+                resolvedHistory = fullHistory
+            }
             event = e
-            history = h
+            history = resolvedHistory
         } catch {
             self.error = error.localizedDescription
         }

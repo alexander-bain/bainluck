@@ -552,7 +552,14 @@ final class EventDetailViewModel: ObservableObject {
     @MainActor
     private func fetchOptional(_ section: OptionalSection) async -> OptionalPayload? {
         let client = self.client
-        let requestedRange = self.requestedHistoryRange
+        let requestedRange: String = {
+            guard section == .history else { return self.requestedHistoryRange }
+            if self.requestedHistoryRange == "all" { return "all" }
+            if let ev = self.event, !Self.sinceStartPickerOffered(for: ev, history: self.history) {
+                return "all"
+            }
+            return self.requestedHistoryRange
+        }()
         do {
             switch section {
             case .history: return .history(try await client.fetchEventHistory(id: eventId, hours: 168, range: requestedRange))
@@ -573,9 +580,39 @@ final class EventDetailViewModel: ObservableObject {
         }
     }
 
+    private static func sinceStartPickerOffered(for event: EventDetail, history: EventHistoryResponse?) -> Bool {
+        let started = OddsChartView.gameHasStarted(
+            status: event.status,
+            commenceTime: event.commenceTime?.asDate,
+            commenceTimeIsKickoff: history?.commenceTimeIsKickoff,
+            history: history
+        )
+        let kickoff = OddsChartView.sinceStartCut(
+            commenceTime: event.commenceTime?.asDate,
+            commenceTimeIsKickoff: history?.commenceTimeIsKickoff
+        )
+        return OddsChartView.offersSinceStart(isGameStarted: started, kickoff: kickoff)
+    }
+
+    /// Automatically upgrade a `pre_window_omitted: true` chart to `"all"` whenever
+    /// `"Since Start"` is not offered on the page (e.g. a delayed-tip scheduled
+    /// game past `commence_time` whose `OddsChartView` hides its range picker, #13683).
+    @MainActor
+    private func upgradeDelayedUnstartedHistoryIfNeeded() async {
+        guard let ev = event,
+              OddsChartView.needsFullHistoryUpgrade(
+                  status: ev.status,
+                  commenceTime: ev.commenceTime?.asDate,
+                  history: history,
+                  selectedRange: .sinceStart
+              ) else { return }
+        await loadFullHistoryIfNeeded()
+    }
+
     /// Upgrade lazily from `range=since_start` to `range=all` only when the
     /// served payload omitted pre-window points (`pre_window_omitted == true`)
-    /// and the reader switched the chart picker to `"All"` (#13606 Part 2).
+    /// and the reader switched the chart picker to `"All"` (or `"Since Start"`
+    /// is hidden, #13606 / #13683).
     @MainActor
     func loadFullHistoryIfNeeded() async {
         guard requestedHistoryRange != "all" || history?.preWindowOmitted == true else { return }
@@ -703,11 +740,13 @@ final class EventDetailViewModel: ObservableObject {
         guard awaitingOptionalSections else {
             Task { @MainActor [weak self] in
                 for read in optional { await read.value }
+                await self?.upgradeDelayedUnstartedHistoryIfNeeded()
                 self?.lastLoadedAt = Date()
             }
             return
         }
         for read in optional { await read.value }
+        await upgradeDelayedUnstartedHistoryIfNeeded()
         lastLoadedAt = Date()
     }
 
@@ -1085,6 +1124,7 @@ final class EventDetailViewModel: ObservableObject {
             let served = LiveEventPriceReconciliation.pairedFoldRevision(in: fetched)
             adopt(fetched, recordsPriceActivity: recordsActivity)
             history = h
+            await upgradeDelayedUnstartedHistoryIfNeeded()
             priceReadAnswered = max(priceReadAnswered, answersAsks)
             // #10090 — an ordinary history read issued before this pair landed
             // is refused after it (`applyOptional`). On a live page it is a build

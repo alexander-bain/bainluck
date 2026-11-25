@@ -1133,9 +1133,15 @@ struct OddsChartView: View {
             guard let preloadedHistory else { return }
             vm.adopt(preloadedHistory)
         }
-        .onChange(of: selectedRange) { _, newRange in
-            guard newRange == .all, preloadedHistoryGeneration == nil else { return }
-            Task { await vm.loadFullHistoryIfNeeded() }
+        .task(id: "\(vm.history?.preWindowOmitted == true)-\(status ?? "")-\(selectedRange.rawValue)-\(preloadedHistoryGeneration ?? -1)") {
+            guard preloadedHistoryGeneration == nil,
+                  Self.needsFullHistoryUpgrade(
+                      status: status,
+                      commenceTime: commenceTime?.asDate,
+                      history: vm.history,
+                      selectedRange: selectedRange
+                  ) else { return }
+            await vm.loadFullHistoryIfNeeded()
         }
         #if os(iOS)
         .fullScreenCover(isPresented: $isFullscreen) {
@@ -1797,6 +1803,36 @@ struct OddsChartView: View {
     static func offersSinceStart(isGameStarted: Bool, kickoff: Date?, now: Date = Date()) -> Bool {
         guard isGameStarted, let kickoff else { return false }
         return kickoff <= now
+    }
+
+    /// True whenever the held history response omitted pre-window points
+    /// (`pre_window_omitted == true`) AND the displayed chart needs `"all"` —
+    /// either because the reader selected `"All"`, or because `"Since Start"` is not
+    /// offered (e.g. a delayed-tip `status == "scheduled"` game past `commence_time`,
+    /// where `showPicker == false` forces `drawnRange == .all`, #13683).
+    static func needsFullHistoryUpgrade(
+        status: String?,
+        commenceTime: Date?,
+        history: EventHistoryResponse?,
+        selectedRange: OddsTimeRange,
+        now: Date = Date()
+    ) -> Bool {
+        guard history?.preWindowOmitted == true else { return false }
+        let started = gameHasStarted(
+            status: status,
+            commenceTime: commenceTime,
+            commenceTimeIsKickoff: history?.commenceTimeIsKickoff,
+            history: history,
+            now: now
+        )
+        let kickoff = sinceStartCut(
+            commenceTime: commenceTime,
+            commenceTimeIsKickoff: history?.commenceTimeIsKickoff
+        )
+        if !offersSinceStart(isGameStarted: started, kickoff: kickoff, now: now) {
+            return true
+        }
+        return selectedRange == .all
     }
 
     /// The Since Start window over already-clipped points.

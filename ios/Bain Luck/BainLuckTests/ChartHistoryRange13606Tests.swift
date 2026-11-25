@@ -263,6 +263,242 @@ final class ChartHistoryRange13606Tests: XCTestCase {
         )
     }
 
+    func testDelayedTipScheduledGameUpgradesAutomaticallyToFullHistory() async throws {
+        let pastKickoff = Date().addingTimeInterval(-300) // 5 min past scheduled start, still status="scheduled"
+        let iso = ISO8601DateFormatter()
+        let pastStamp = iso.string(from: pastKickoff)
+        let pregameEarly = iso.string(from: pastKickoff.addingTimeInterval(-3600))
+        let pregameMid = iso.string(from: pastKickoff.addingTimeInterval(-1800))
+        let postTip = iso.string(from: pastKickoff.addingTimeInterval(60))
+
+        let d = Self.decoder()
+        let delayedEvent = try d.decode(EventDetail.self, from: Data("""
+        {
+          "id": 15353109,
+          "home_team": "Louisville Cardinals",
+          "away_team": "Texas Tech Red Raiders",
+          "status": "scheduled",
+          "sport": "basketball_ncaab",
+          "commence_time": "\(pastStamp)",
+          "current_odds": {"home_probability": 0.62, "away_probability": 0.38}
+        }
+        """.utf8))
+
+        let liveEvent = try d.decode(EventDetail.self, from: Data("""
+        {
+          "id": 15354014,
+          "home_team": "UCF Knights",
+          "away_team": "Jacksonville Dolphins",
+          "status": "live",
+          "sport": "basketball_ncaab",
+          "commence_time": "\(pastStamp)",
+          "current_odds": {"home_probability": 0.85, "away_probability": 0.15}
+        }
+        """.utf8))
+
+        let stub = try d.decode(EventHistoryResponse.self, from: Data("""
+        {
+          "event_id": 15353109,
+          "home_team": "Louisville Cardinals",
+          "away_team": "Texas Tech Red Raiders",
+          "status": "scheduled",
+          "commence_time": "\(pastStamp)",
+          "commence_time_is_kickoff": true,
+          "pre_window_omitted": true,
+          "history": [
+            {"timestamp": "\(pastStamp)", "home_probability": 0.62, "away_probability": 0.38},
+            {"timestamp": "\(postTip)", "home_probability": 0.62, "away_probability": 0.38}
+          ]
+        }
+        """.utf8))
+
+        let full = try d.decode(EventHistoryResponse.self, from: Data("""
+        {
+          "event_id": 15353109,
+          "home_team": "Louisville Cardinals",
+          "away_team": "Texas Tech Red Raiders",
+          "status": "scheduled",
+          "commence_time": "\(pastStamp)",
+          "commence_time_is_kickoff": true,
+          "pre_window_omitted": false,
+          "history": [
+            {"timestamp": "\(pregameEarly)", "home_probability": 0.55, "away_probability": 0.45},
+            {"timestamp": "\(pregameMid)", "home_probability": 0.59, "away_probability": 0.41},
+            {"timestamp": "\(pastStamp)", "home_probability": 0.62, "away_probability": 0.38},
+            {"timestamp": "\(postTip)", "home_probability": 0.62, "away_probability": 0.38}
+          ]
+        }
+        """.utf8))
+
+        // 1. Pure helper matrix (#13683): scheduled delayed tip & un-offered Since Start must upgrade even at default .sinceStart.
+        XCTAssertTrue(
+            OddsChartView.needsFullHistoryUpgrade(
+                status: "scheduled",
+                commenceTime: pastKickoff,
+                history: stub,
+                selectedRange: .sinceStart
+            )
+        )
+        XCTAssertFalse(
+            OddsChartView.needsFullHistoryUpgrade(
+                status: "live",
+                commenceTime: pastKickoff,
+                history: stub,
+                selectedRange: .sinceStart
+            )
+        )
+        XCTAssertTrue(
+            OddsChartView.needsFullHistoryUpgrade(
+                status: "live",
+                commenceTime: pastKickoff,
+                history: stub,
+                selectedRange: .all
+            )
+        )
+
+        // 2. EventDetailViewModel automatically upgrades delayed scheduled games, leaving live games on since_start.
+        let delayedProvider = RecordingEventDetailProvider(detail: delayedEvent, sinceStartPayload: stub, allPayload: full)
+        let delayedVM = EventDetailViewModel(eventId: 15353109, client: delayedProvider)
+        await delayedVM.load()
+        XCTAssertEqual(delayedProvider.requests.map(\.range), ["since_start", "all"])
+        XCTAssertEqual(delayedVM.history?.preWindowOmitted, false)
+        XCTAssertEqual(delayedVM.history?.history.count, 4)
+
+        let liveProvider = RecordingEventDetailProvider(detail: liveEvent, sinceStartPayload: stub, allPayload: full)
+        let liveVM = EventDetailViewModel(eventId: 15354014, client: liveProvider)
+        await liveVM.load()
+        XCTAssertEqual(liveProvider.requests.map(\.range), ["since_start"])
+        XCTAssertEqual(liveVM.history?.preWindowOmitted, true)
+        XCTAssertEqual(liveVM.history?.history.count, 2)
+
+        // 3. Standalone OddsChartView (without preloadedHistory) also auto-upgrades on delayed tip.
+        var standaloneRanges: [String?] = []
+        let chartVM = OddsChartViewModel(eventId: 15353109) { _, range in
+            standaloneRanges.append(range)
+            return range == "all" ? full : stub
+        }
+        let chartHostView = OddsChartView(
+            eventId: 15353109,
+            commenceTime: pastStamp,
+            status: "scheduled",
+            homeTeamName: "Louisville Cardinals",
+            awayTeamName: "Texas Tech Red Raiders",
+            sportKey: "basketball_ncaab",
+            selectedRange: .constant(.sinceStart),
+            model: chartVM
+        )
+        .frame(width: 390, height: 470)
+        let standaloneHost = UIHostingController(rootView: chartHostView)
+        let standaloneScene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        let standaloneWindow: UIWindow = standaloneScene.map { UIWindow(windowScene: $0) } ?? UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 470))
+        standaloneWindow.frame = CGRect(x: 0, y: 0, width: 390, height: 470)
+        standaloneWindow.rootViewController = standaloneHost
+        standaloneWindow.isHidden = false
+        let waitDeadline = Date().addingTimeInterval(2.0)
+        while standaloneRanges.count < 2 && Date() < waitDeadline {
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+        }
+        standaloneWindow.isHidden = true
+        standaloneWindow.rootViewController = nil
+        XCTAssertEqual(standaloneRanges, ["since_start", "all"])
+        XCTAssertEqual(chartVM.history?.preWindowOmitted, false)
+        XCTAssertEqual(chartVM.history?.history.count, 4)
+    }
+
+    func testDelayedTip15353109ProofBeforeVsAfterRender390pt() async throws {
+        let proofDir = "\(Self.scratchDir)/13683-proof"
+        let eventURL = URL(fileURLWithPath: "\(proofDir)/15353109-delayed-event.json")
+        let ssURL = URL(fileURLWithPath: "\(proofDir)/15353109-delayed-ss.json")
+        let allURL = URL(fileURLWithPath: "\(proofDir)/15353109-delayed-all.json")
+
+        let d = Self.decoder()
+        let event: EventDetail
+        let ssHistory: EventHistoryResponse
+        let allHistory: EventHistoryResponse
+
+        if FileManager.default.fileExists(atPath: eventURL.path),
+           FileManager.default.fileExists(atPath: ssURL.path),
+           FileManager.default.fileExists(atPath: allURL.path) {
+            event = try d.decode(EventDetail.self, from: Data(contentsOf: eventURL))
+            ssHistory = try d.decode(EventHistoryResponse.self, from: Data(contentsOf: ssURL))
+            allHistory = try d.decode(EventHistoryResponse.self, from: Data(contentsOf: allURL))
+        } else {
+            let pastStamp = "2026-11-24T01:30:00Z"
+            event = try d.decode(EventDetail.self, from: Data("""
+            {
+              "id": 15353109,
+              "home_team": "Louisville Cardinals",
+              "away_team": "Texas Tech Red Raiders",
+              "status": "scheduled",
+              "sport": "basketball_ncaab",
+              "commence_time": "\(pastStamp)",
+              "current_odds": {"home_probability": 0.62, "away_probability": 0.38}
+            }
+            """.utf8))
+            ssHistory = try makeHistory(preWindowOmitted: true, timestamps: [pastStamp, "2026-11-24T01:35:00Z"])
+            allHistory = try makeHistory(preWindowOmitted: false, timestamps: [
+                "2026-11-23T12:00:00Z", "2026-11-23T18:00:00Z", pastStamp, "2026-11-24T01:35:00Z",
+            ])
+        }
+
+        let provider = RecordingEventDetailProvider(detail: event, sinceStartPayload: ssHistory, allPayload: allHistory)
+        let vm = EventDetailViewModel(eventId: event.id, client: provider)
+        await vm.load()
+
+        XCTAssertEqual(provider.requests.map(\.range), ["since_start", "all"])
+        let upgraded = try XCTUnwrap(vm.history)
+        XCTAssertEqual(upgraded.preWindowOmitted, false)
+        XCTAssertGreaterThan(upgraded.aggregateLine?.count ?? upgraded.history.count, ssHistory.aggregateLine?.count ?? ssHistory.history.count)
+
+        let colors = TeamTextContrast.cardColors(
+            awayHex: event.awayTeamData?.primaryColor,
+            homeHex: event.homeTeamData?.primaryColor,
+            awaySecondaryHex: event.awayTeamData?.secondaryColor,
+            checkHueFamily: true
+        )
+
+        func panel(_ history: EventHistoryResponse, scheme: ColorScheme) -> UIImage {
+            renderSlice(width: 390, height: 470, scheme: scheme) {
+                OddsChartView(
+                    eventId: event.id,
+                    teamColors: colors,
+                    commenceTime: event.commenceTime,
+                    status: event.status,
+                    homeTeamName: event.homeTeam,
+                    awayTeamName: event.awayTeam,
+                    homeTeamAbbrev: event.homeTeamData?.abbreviation,
+                    awayTeamAbbrev: event.awayTeamData?.abbreviation,
+                    sportKey: event.sport,
+                    servedHomeProbability: event.currentOdds?.homeProbability,
+                    servedAwayProbability: event.currentOdds?.awayProbability,
+                    selectedRange: .constant(.sinceStart),
+                    preloadedHistory: history
+                )
+                .padding(12)
+                .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 16))
+                .padding(12)
+                .frame(width: 390, height: 470, alignment: .topLeading)
+                .background(Color(.systemGroupedBackground))
+            }
+        }
+
+        let beforeLight = panel(ssHistory, scheme: .light)
+        let afterLight = panel(upgraded, scheme: .light)
+        let beforeDark = panel(ssHistory, scheme: .dark)
+        let afterDark = panel(upgraded, scheme: .dark)
+
+        XCTAssertEqual(beforeLight.size.width, 390, accuracy: 0.5)
+        XCTAssertEqual(afterLight.size.width, 390, accuracy: 0.5)
+
+        if let outDir = ProcessInfo.processInfo.environment["BUILDER_C_RENDER_13683_DIR"], !outDir.isEmpty {
+            try FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
+            try savePNG(beforeLight, to: "\(outDir)/before-delayed-light-390.png")
+            try savePNG(afterLight, to: "\(outDir)/after-delayed-light-390.png")
+            try savePNG(beforeDark, to: "\(outDir)/before-delayed-dark-390.png")
+            try savePNG(afterDark, to: "\(outDir)/after-delayed-dark-390.png")
+        }
+    }
+
     func testFinishedNFL14639207ChartRangeProofRender390pt() throws {
         let eventPath = "\(Self.scratchDir)/13606-event-14639207.json"
         let sinceStartPath = "\(Self.scratchDir)/13606-history-since-start.json"
