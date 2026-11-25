@@ -19,6 +19,8 @@ struct SiriProbabilityTip12315: View {
     @AppStorage(SiriProbabilityTipRule12315.dismissedKey) private var dismissed = false
     @AppStorage(SiriProbabilityTipRule12315.usedKey) private var used = false
     @State private var showingTipsSheet = false
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .subheadline) private var iconSlotWidth: CGFloat = 20
 
     init(horizontalPadding: CGFloat? = nil) {
         self.horizontalPadding = horizontalPadding
@@ -30,67 +32,12 @@ struct SiriProbabilityTip12315: View {
         #if os(iOS)
         if SiriProbabilityTipRule12315.shows(dismissed: dismissed, used: used,
                                              option: SiriProbabilityTipRule12315.launchOption) {
-            HStack(spacing: 4) {
-                HStack(spacing: 12) {
-                    Image(systemName: "waveform")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(Color.accentColor)
-                        .frame(width: 20)
-                        .accessibilityHidden(true)
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(Self.headlineText)
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.primary)
-                        Text(Self.examplePhraseText)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .accessibilityIdentifier(Self.hintAccessibilityID)
-                    }
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
-
-                    Spacer(minLength: 4)
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    accessibilityCard
+                } else {
+                    standardCard
                 }
-                .padding(.leading, 16)
-                .padding(.vertical, 12)
-                .contentShape(Rectangle())
-                .onTapGesture {
-                    showingTipsSheet = true
-                }
-
-                Button {
-                    showingTipsSheet = true
-                } label: {
-                    HStack(spacing: 4) {
-                        Text("Tips")
-                            .font(.caption.weight(.medium))
-                            .foregroundStyle(.secondary)
-                        Image(systemName: "chevron.right")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.tertiary)
-                    }
-                    .padding(.horizontal, 6)
-                    .frame(minHeight: 44)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Open Tips")
-                .accessibilityIdentifier(Self.openTipsAccessibilityID)
-
-                Button {
-                    dismissed = true
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .frame(width: 44, height: 44)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .padding(.trailing, 4)
-                .accessibilityLabel("Dismiss Siri tip")
-                .accessibilityIdentifier(Self.hintAccessibilityID)
             }
             .background(Color.cardBackgroundDark)
             .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -106,6 +53,115 @@ struct SiriProbabilityTip12315: View {
         }
         #endif
     }
+
+    #if os(iOS)
+    private var standardCard: some View {
+        HStack(spacing: 4) {
+            HStack(spacing: 12) {
+                waveformIcon
+                VStack(alignment: .leading, spacing: 2) {
+                    headlineLabel
+                    examplePhraseLabel
+                }
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 4)
+            }
+            .padding(.leading, 16)
+            .padding(.vertical, 12)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                showingTipsSheet = true
+            }
+
+            openTipsButton
+            dismissButton
+                .padding(.trailing, 4)
+        }
+    }
+
+    private var accessibilityCard: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 8) {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    waveformIcon
+                    headlineLabel
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                dismissButton
+            }
+            examplePhraseLabel
+                .multilineTextAlignment(.leading)
+                .fixedSize(horizontal: false, vertical: true)
+            openTipsButton
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            showingTipsSheet = true
+        }
+    }
+
+    private var waveformIcon: some View {
+        Image(systemName: "waveform")
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(Color.accentColor)
+            .frame(width: iconSlotWidth)
+            .accessibilityHidden(true)
+    }
+
+    private var headlineLabel: some View {
+        Text(Self.headlineText)
+            .font(.subheadline.weight(.medium))
+            .foregroundStyle(.primary)
+    }
+
+    private var examplePhraseLabel: some View {
+        Text(Self.examplePhraseText)
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .accessibilityIdentifier(Self.hintAccessibilityID)
+    }
+
+    private var openTipsButton: some View {
+        Button {
+            showingTipsSheet = true
+        } label: {
+            HStack(spacing: 4) {
+                Text("Tips")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.horizontal, 6)
+            .frame(minHeight: 44)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Open Tips")
+        .accessibilityIdentifier(Self.openTipsAccessibilityID)
+    }
+
+    private var dismissButton: some View {
+        Button {
+            dismissed = true
+        } label: {
+            Image(systemName: "xmark")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .frame(width: 44, height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Dismiss Siri tip")
+        .accessibilityIdentifier(Self.hintAccessibilityID)
+    }
+    #endif
 }
 
 #if os(iOS)
@@ -127,13 +183,15 @@ struct MyStuffSiriTipsSheet12315: View {
                     tipCard(
                         icon: "waveform",
                         title: "Ask Siri about games & teams",
-                        detail: "Ask hands-free for a live score or win probability using natural phrases:"
+                        detail: "Ask hands-free for win probability using natural phrases:"
                     ) {
                         VStack(alignment: .leading, spacing: 8) {
                             ForEach(Self.siriPhrases, id: \.self) { phrase in
                                 Text("\"\(phrase)\"")
                                     .font(.subheadline.weight(.medium))
                                     .foregroundStyle(.primary)
+                                    .multilineTextAlignment(.leading)
+                                    .fixedSize(horizontal: false, vertical: true)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                     .padding(.horizontal, 12)
                                     .padding(.vertical, 8)

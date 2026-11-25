@@ -65,6 +65,12 @@ final class SiriTip12315Tests: XCTestCase {
                        "The Siri hint copy must never expose template syntax")
         XCTAssertTrue(tipSource.contains("MyStuffSiriTipsSheet12315"),
                       "Tapping the Siri hint must present the short Tips sheet")
+        XCTAssertTrue(tipSource.contains("Ask hands-free for win probability"),
+                      "Tips sheet copy must stay accurate to live-game win probability responses")
+        XCTAssertFalse(tipSource.contains("a live score or"),
+                       "Live games speak win probability only per ProbabilityAnswer10873.gameBothSides")
+        XCTAssertTrue(tipSource.contains("dynamicTypeSize.isAccessibilitySize"),
+                      "Siri tip card must switch to stacked layout for largest Dynamic Type sizes")
         XCTAssertFalse(tipSource.contains("Get a probability from Bain Luck"),
                        "The removed phrase must not appear in the Siri hint source")
 
