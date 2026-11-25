@@ -35,6 +35,7 @@ from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 from app.utils.discover_image_policy import _lookup_team_or_nation_logo
+from app.utils.sport_keys import SPORT_LEAGUE_MAP
 from app.utils.kit_v1_spec import (
     _adaptive_team_color,
     _has_first_and_last_name,
@@ -312,6 +313,34 @@ def _lead_verb(subject: str, subject_kind: str = "topic") -> str:
     return "leads"
 
 
+def _ranked_fallback_caption(
+    rows: list[tuple[str, int]],
+    *,
+    suffix: str = "",
+    one_in_n: bool = False,
+    subject_kinds: dict[str, str] | None = None,
+) -> str:
+    """Rank ``rows`` by descending whole percent and handle exact top ties (#13584)."""
+    ranked = [r for r in rows if r[0]]
+    ranked.sort(key=lambda r: -int(r[1]))
+    top_nm, top_pct = ranked[0]
+    ctx = f" {suffix.strip()}" if suffix.strip() else ""
+    if len(ranked) >= 2:
+        sec_nm, sec_pct = ranked[1]
+        if int(top_pct) == int(sec_pct):
+            if one_in_n:
+                return f"{top_nm} and {sec_nm} share the top at {top_pct}% (1 in {compute_one_in_n(top_pct)})."
+            return f"{top_nm} and {sec_nm} are tied{ctx} at {top_pct}%."
+        kind = (subject_kinds or {}).get(top_nm, "topic")
+        if one_in_n:
+            return f"{top_nm} {_lead_verb(top_nm, kind)} at {top_pct}% (1 in {compute_one_in_n(top_pct)})."
+        return f"{top_nm} {_lead_verb(top_nm, kind)}{ctx} at {top_pct}%, ahead of {sec_nm} ({sec_pct}%)."
+    kind = (subject_kinds or {}).get(top_nm, "topic")
+    if one_in_n:
+        return f"{top_nm} {_lead_verb(top_nm, kind)} at {top_pct}% (1 in {compute_one_in_n(top_pct)})."
+    return f"{top_nm} {_lead_verb(top_nm, kind)}{ctx} at {top_pct}%."
+
+
 def _present_tense_restatement(phrase: str) -> str:
     """Fix bare subjunctive verbs left after stripping leading 'Will '/'When will '."""
     s = (phrase or "").strip()
@@ -554,6 +583,9 @@ def _entity_key_for_row(row_name: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", txt.lower()).strip()
 
 
+_AS_ROLE_RE = re.compile(r"^(.+?)\s+as\s+.+$", re.IGNORECASE)
+
+
 def _extract_entity_candidate(text: str) -> str:
     cleaned = text.strip().rstrip("?").strip()
     if " · " in cleaned:
@@ -563,6 +595,15 @@ def _extract_entity_candidate(text: str) -> str:
         if r.strip():
             cleaned = r.strip()
     return cleaned
+
+
+def _append_actor_role_candidates(candidates: list[str], phrase: str) -> None:
+    """For `<Film>: <Actor> as <Role>`, add `<Actor>` alongside `<Actor> as <Role>`."""
+    m = _AS_ROLE_RE.match((phrase or "").strip())
+    if m:
+        actor = m.group(1).strip()
+        if actor and actor not in candidates:
+            candidates.append(actor)
 
 
 def _row_requires_picture(
@@ -580,6 +621,7 @@ def _row_requires_picture(
         cand = _extract_entity_candidate(row_label)
         probe_candidates = [cleaned_full] if (":" in cleaned_full and cleaned_full != cand) else []
         probe_candidates.append(cand)
+        _append_actor_role_candidates(probe_candidates, cand)
         for query in probe_candidates:
             probe = resolver.resolve(query)
             pk = _subject_kind_from_art(probe, row_label)
@@ -663,8 +705,10 @@ def _resolve_row_picture(
         for q in (cleaned_full, tail, cand):
             if q and q not in probe_candidates:
                 probe_candidates.append(q)
+        _append_actor_role_candidates(probe_candidates, tail)
     else:
         probe_candidates.append(cand or cleaned_full)
+        _append_actor_role_candidates(probe_candidates, cand or cleaned_full)
 
     if resolver is not None:
         for query in probe_candidates:
@@ -770,6 +814,150 @@ def _is_boilerplate_stat(low: str) -> bool:
     )
 
 
+def _infer_category_kicker(
+    bundle: dict[str, Any] | None,
+    container: dict[str, Any] | None,
+    *,
+    slug: str,
+    common: str,
+) -> str:
+    """Resolve an honest uppercase category kicker; never emit ``DISCOVER``."""
+    d = (bundle or {}).get("data") or {}
+    ru = d.get("roundup") or {}
+    mc = ru.get("machinery_card") or {}
+    cref = d.get("collection_ref") or {}
+    c_meta = (container or {}).get("container") or {}
+
+    for raw in (mc.get("kicker"), ru.get("kicker"), c_meta.get("kicker"), cref.get("name")):
+        txt = str(raw or "").strip()
+        if txt and txt.upper() != "DISCOVER":
+            return txt.upper()
+
+    def _norm_cat(raw_val: str | None) -> str | None:
+        v = str(raw_val or "").strip()
+        if not v:
+            return None
+        mapped = SPORT_LEAGUE_MAP.get(v.lower())
+        if mapped:
+            sport_part, league_part = (
+                mapped if isinstance(mapped, tuple) else (str(mapped), str(mapped))
+            )
+            if league_part in {
+                "nfl",
+                "nba",
+                "nhl",
+                "mlb",
+                "wnba",
+                "ufc",
+                "pga",
+                "lpga",
+                "atp",
+                "wta",
+                "cfl",
+                "ufl",
+                "pll",
+            }:
+                return league_part.upper()
+            if "soccer" in sport_part or league_part.startswith(
+                ("eng.", "usa.", "uefa.", "esp.", "ger.", "ita.", "fra.", "mex.")
+            ):
+                return "SOCCER"
+            if league_part == "college-football":
+                return "NCAAF"
+            if league_part in {"mens-college-basketball", "womens-college-basketball"}:
+                return "NCAAB"
+            return sport_part.upper()
+        low = v.lower()
+        if low == "entertainment":
+            return "ENTERTAINMENT"
+        if low in {"economics", "economy", "macro"}:
+            return "ECONOMICS"
+        if low in {"tech", "technology"}:
+            return "TECH"
+        if low == "weather":
+            return "WEATHER"
+        if low in {"geopolitics", "world"}:
+            return "WORLD"
+        if low in {"politics", "sports", "culture"}:
+            return low.upper()
+        return None
+
+    for raw_c in (
+        c_meta.get("category"),
+        d.get("category"),
+        c_meta.get("league"),
+        c_meta.get("sport"),
+    ):
+        cat = _norm_cat(raw_c)
+        if cat:
+            return cat
+
+    member_cards: list[dict[str, Any]] = []
+    for it in d.get("items") or ():
+        if isinstance(it, dict) and isinstance(it.get("data"), dict):
+            member_cards.append(it["data"])
+    for sec in (container or {}).get("sections") or ():
+        if isinstance(sec, dict):
+            for m in sec.get("members") or ():
+                if isinstance(m, dict) and isinstance(m.get("card"), dict):
+                    member_cards.append(m["card"])
+
+    text_blob = f"{slug} {common} " + " ".join(
+        str(m.get("name") or "") for m in member_cards[:6]
+    )
+    low_blob = text_blob.lower()
+
+    for m in member_cards:
+        for field in ("sport_name", "league", "sport"):
+            cat = _norm_cat(m.get(field))
+            if cat and cat != "SPORTS":
+                return cat
+        llm_cat = _norm_cat(m.get("llm_sport_category"))
+        if llm_cat:
+            if llm_cat == "POLITICS" and any(
+                w in low_blob for w in ("middle-east", "middle east", "iran", "israel", "russia", "ukraine", "ceasefire", "china", "taiwan")
+            ):
+                return "WORLD"
+            return llm_cat
+
+    if any(w in low_blob for w in ("middle-east", "middle east", "russia-ukraine", "russia–ukraine", "ukraine", "iran", "israel", "putin", "ceasefire", "taiwan")):
+        return "WORLD"
+    for kw, lbl in (
+        ("nfl", "NFL"),
+        ("nba", "NBA"),
+        ("nhl", "NHL"),
+        ("mlb", "MLB"),
+        ("ufc", "UFC"),
+        ("wnba", "WNBA"),
+        ("golf", "GOLF"),
+        ("tennis", "TENNIS"),
+        ("soccer", "SOCCER"),
+        ("fed", "ECONOMICS"),
+        ("rate", "ECONOMICS"),
+        ("recession", "ECONOMICS"),
+        ("inflation", "ECONOMICS"),
+        ("oscar", "ENTERTAINMENT"),
+        ("grammy", "ENTERTAINMENT"),
+        ("emmy", "ENTERTAINMENT"),
+        ("golden globe", "ENTERTAINMENT"),
+        ("box office", "ENTERTAINMENT"),
+        ("bond", "ENTERTAINMENT"),
+        ("openai", "TECH"),
+        ("anthropic", "TECH"),
+        ("ai ", "TECH"),
+        ("spacex", "TECH"),
+        ("snow", "WEATHER"),
+        ("weather", "WEATHER"),
+        ("temperature", "WEATHER"),
+        ("president", "POLITICS"),
+        ("senate", "POLITICS"),
+        ("election", "POLITICS"),
+    ):
+        if kw in low_blob:
+            return lbl
+    return "MARKETS"
+
+
 def _derive_slug_and_copy(
     bundle: dict[str, Any] | None,
     container: dict[str, Any] | None,
@@ -789,14 +977,6 @@ def _derive_slug_and_copy(
         raw_name = str(d.get("title") or (bundle or {}).get("headline") or "set").lower()
         slug = re.sub(r"[^a-z0-9]+", "-", raw_name).strip("-") or "theme-set"
 
-    kicker = (
-        str(mc.get("kicker") or ru.get("kicker") or cref.get("name") or c_meta.get("category") or "Discover")
-        .strip()
-        .upper()
-    )
-    if not kicker:
-        kicker = "DISCOVER"
-
     common = str(cref.get("name") or "").strip()
     c_name = str(c_meta.get("name") or "").strip()
     if not common:
@@ -804,6 +984,8 @@ def _derive_slug_and_copy(
             common = c_name
         else:
             common = str(d.get("title") or (bundle or {}).get("headline") or slug).strip()
+
+    kicker = _infer_category_kicker(bundle, container, slug=slug, common=common)
 
     stat = ""
     for cand in (
@@ -1355,7 +1537,11 @@ def _try_build_bubble_line(
         else f" across {len(entries)} teams."
     )
     if not stat or _is_boilerplate_stat(stat.lower()) or stat.lower() == common.lower():
-        stat = f"{leader[0]} {_lead_verb(leader[0], 'team')} at {leader[2]}%{bubble_note}"
+        top_entries = [e for e in entries if e[2] == leader[2]]
+        if len(top_entries) >= 2:
+            stat = f"{top_entries[0][0]} and {top_entries[1][0]} are tied at {leader[2]}%{bubble_note}"
+        else:
+            stat = f"{leader[0]} {_lead_verb(leader[0], 'team')} at {leader[2]}%{bubble_note}"
 
     card = _make_kit_card(
         card_id=f"kit-{slug}",
@@ -1943,7 +2129,10 @@ def _try_build_countdown(
         or stat.lower() == common.lower()
         or _caption_has_unshown_numbers(stat, cd_body, len(items))
     ):
-        stat = f"{shown[0][0]} leads {date_short} deadlines at {shown[0][1]}%, ahead of {shown[1][0]} ({shown[1][1]}%)."
+        stat = _ranked_fallback_caption(
+            [(r[0], r[1]) for r in shown],
+            suffix=f"{date_short} deadlines",
+        )
 
     card = _make_kit_card(
         card_id=f"kit-{slug}",
@@ -2238,7 +2427,7 @@ def _try_build_one_in_n(
 
     oin_body = {"header_layout": "none", "header_marks": [], "items": items}
     if not stat or _is_boilerplate_stat(stat.lower()) or _caption_has_unshown_numbers(stat, oin_body, len(items)):
-        stat = f"{rows_data[0][0]} leads at {rows_data[0][1]}% (1 in {compute_one_in_n(rows_data[0][1])})."
+        stat = _ranked_fallback_caption([(r[0], r[1]) for r in rows_data], one_in_n=True)
 
     card = _make_kit_card(
         card_id=f"kit-{slug}",
@@ -2570,9 +2759,12 @@ def _try_build_scoreboard_grid(
         "rows": rows,
     }
     if not stat or _is_boilerplate_stat(stat.lower()) or _caption_has_unshown_numbers(stat, grid_body, len(rows)):
-        top_nm, top_p0 = c0[2][shown_keys[0]]
-        sec_nm, sec_p0 = c0[2][shown_keys[1]]
-        stat = f"{top_nm} {_lead_verb(top_nm, top_row_kind)} {common} at {top_p0}%, ahead of {sec_nm} ({sec_p0}%)."
+        top_pair_rows = [c0[2][k] for k in shown_keys if k in c0[2]]
+        stat = _ranked_fallback_caption(
+            top_pair_rows,
+            suffix=common,
+            subject_kinds={top_pair_rows[0][0]: top_row_kind} if top_pair_rows else None,
+        )
 
     card = _make_kit_card(
         card_id=f"kit-{slug}",
@@ -2720,9 +2912,9 @@ def _try_build_casting_sheet(
         or stat.lower() == common.lower()
         or _caption_has_unshown_numbers(stat, cs_body, len(items))
     ):
-        stat = (
-            f"{candidate_rows[0][0]} {_lead_verb(candidate_rows[0][0], candidate_rows[0][3])} at {candidate_rows[0][1]}%, "
-            f"with {candidate_rows[1][0]} at {candidate_rows[1][1]}%."
+        stat = _ranked_fallback_caption(
+            [(r[0], r[1]) for r in candidate_rows],
+            subject_kinds={r[0]: r[3] for r in candidate_rows},
         )
 
     card = _make_kit_card(
@@ -2814,7 +3006,7 @@ def _try_build_plain_bar_stack(
         or stat.lower() == common.lower()
         or _caption_has_unshown_numbers(stat, body, len(items))
     ):
-        stat = f"{rows_out[0][0]} leads at {rows_out[0][1]}%, ahead of {rows_out[1][0]} ({rows_out[1][1]}%)."
+        stat = _ranked_fallback_caption(rows_out)
 
     card = _make_kit_card(
         card_id=f"kit-{slug}",
@@ -3154,7 +3346,7 @@ def _build_plain_bar_stack_example(
     ]
     body = {"header_layout": "none", "header_marks": [], "items": items}
     if not stat or _is_boilerplate_stat(stat.lower()) or stat.lower() == common.lower() or _caption_has_unshown_numbers(stat, body, len(items)):
-        stat = f"{rows_out[0][0]} leads at {rows_out[0][1]}%, ahead of {rows_out[1][0]} ({rows_out[1][1]}%)."
+        stat = _ranked_fallback_caption(rows_out)
 
     card = _make_kit_card(
         card_id=f"kit-{slug}-question",

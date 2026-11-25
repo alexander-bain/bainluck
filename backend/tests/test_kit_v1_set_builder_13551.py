@@ -117,7 +117,7 @@ def test_real_sets_fable_followups_and_shape_priority() -> None:
     assert len(nhl_dots) == 32
     elevated_crests = [d for d in nhl_dots if d.get("picture") and isinstance(d.get("y_lane"), int)]
     assert len(elevated_crests) >= 10
-    assert "Edmonton Oilers lead at 98%" in nhl["stat_caption"]
+    assert "Edmonton Oilers and Minnesota Wild are tied at 98%" in nhl["stat_caption"]
 
     # 4. Casting sheets: uniform bar color for non-teams or mixed rows; team color kept for all-team sets
     odd = by_slug["machinery-pop-culture-oddities"]
@@ -240,7 +240,9 @@ def test_preview_endpoint_route_exists_before_catchall() -> None:
 
     paths = [r.path for r in router.routes]
     assert "/preview/kit-v1-real-sets" in paths
+    assert "/preview/kit-v1-real-sets/refresh" in paths
     assert paths.index("/preview/kit-v1-real-sets") < paths.index("/{slug}")
+    assert paths.index("/preview/kit-v1-real-sets/refresh") < paths.index("/{slug}")
 
 
 @pytest.mark.asyncio
@@ -936,3 +938,255 @@ def test_v7_387a_388a_389c_live_caption_and_split_bar_parity() -> None:
     assert "61%" not in res_live["stat_caption"] and "39%" not in res_live["stat_caption"]
     split_bar = next(m for m in res_live["kit_card"]["body"]["items"][0]["marks"] if m["mark"] == "bar")
     assert split_bar["segments"][0]["color"] != split_bar["segments"][1]["color"]
+
+
+def test_fable_point1_captions_rank_by_highest_prob_and_handle_ties() -> None:
+    # Set 35 Fed scale-ordered rows (cut 2%, hold 45%, hike 53%) must caption the 53% leader.
+    fed_bundle = {
+        "data": {
+            "kind": "roundup",
+            "collection_ref": {
+                "id": 9501,
+                "slug": "machinery-fed-and-macro",
+                "name": "Fed rate decision",
+            },
+            "roundup": {
+                "kicker": "ECONOMICS · FEDERAL RESERVE",
+                "machinery_card": {
+                    "form_id": "contender_spotlight",
+                    "rows": [
+                        {"name": "Quarter-point cut", "probability": 0.02, "rendered_percent": 2},
+                        {"name": "No change", "probability": 0.45, "rendered_percent": 45},
+                        {"name": "Quarter-point increase", "probability": 0.53, "rendered_percent": 53},
+                    ],
+                },
+            },
+        },
+    }
+    fed_res = build_kit_card_for_real_set(
+        fed_bundle, None, now=FIXED_NOW, resolver=_default_art_resolver()
+    )
+    assert fed_res["fits"] is True
+    assert fed_res["variant"] == "plain_bar_stack"
+    assert fed_res["stat_caption"].startswith("Quarter-point increase leads at 53%")
+    assert "leads at 2%" not in fed_res["stat_caption"]
+
+    # Equal rounded top percents must never arbitrarily pick row 0 as the leader.
+    tied_bundle = {
+        "data": {
+            "kind": "roundup",
+            "collection_ref": {"id": 9502, "slug": "tied-plain-bars", "name": "Fed rate decision"},
+            "roundup": {
+                "kicker": "ECONOMICS · FEDERAL RESERVE",
+                "machinery_card": {
+                    "form_id": "benchmark_strip",
+                    "rows": [
+                        {"name": "Quarter-point cut", "probability": 0.454, "rendered_percent": 45},
+                        {"name": "No change", "probability": 0.448, "rendered_percent": 45},
+                        {"name": "Half-point increase", "probability": 0.10, "rendered_percent": 10},
+                    ],
+                },
+            },
+        },
+    }
+    tied_res = build_kit_card_for_real_set(
+        tied_bundle, None, now=FIXED_NOW, resolver=_default_art_resolver()
+    )
+    assert tied_res["fits"] is True
+    assert tied_res["stat_caption"].startswith("Quarter-point cut and No change are tied at 45%")
+
+
+def test_fable_point2_no_discover_kickers_across_fixture_cards() -> None:
+    report = load_real_sets_audit_report(now=FIXED_NOW, resolver=_default_art_resolver())
+    entries = report["top_10"] + report["fitting_beyond_top_10"]
+    assert all(
+        entry["kit_card"]["kicker"] != "DISCOVER"
+        for entry in entries
+        if entry["fits"] and entry.get("kit_card")
+    )
+    by_slug = {entry["slug"]: entry for entry in entries if entry["fits"]}
+    assert by_slug["middle-east"]["kit_card"]["kicker"] == "WORLD"
+    assert by_slug["russia-ukraine"]["kit_card"]["kicker"] == "WORLD"
+    assert by_slug["nfl-2026-week-12"]["kit_card"]["kicker"] == "NFL"
+
+
+def test_fable_point3_actor_as_role_portrait_lookup_and_mismatch_refusal() -> None:
+    snap = _load_fixture()
+    cast_bundle = next(
+        b for b in snap["bundles"]
+        if (b["data"].get("collection_ref") or {}).get("slug") == "machinery-cast-delayed-cancelled"
+    )
+    cast_container = snap["containers"]["machinery-cast-delayed-cancelled"]
+
+    def _hugh_pic(res: dict) -> dict:
+        return next(
+            m
+            for item in res["kit_card"]["body"]["items"]
+            for m in item["marks"]
+            if m["mark"] == "picture" and "Hugh Jackman" in (m.get("alt") or "")
+        )
+
+    # Under default resolver (only Benedict's mismatched URL is present), Hugh must fall back to HJ.
+    default_res = build_kit_card_for_real_set(
+        cast_bundle, cast_container, now=FIXED_NOW, resolver=_default_art_resolver()
+    )
+    assert default_res["fits"] is True
+    hugh_default = _hugh_pic(default_res)
+    assert hugh_default.get("url") is None
+    assert hugh_default.get("initials") == "HJ"
+
+    # Once Hugh Jackman has a verified portrait in the resolver, "<Actor> as <Role>" resolves it.
+    base_resolver = _default_art_resolver()
+
+    class _ResolverWithHugh:
+        def resolve(self, name: str):
+            if name.strip().lower() == "hugh jackman":
+                return {
+                    "kind": "person",
+                    "url": "https://image.tmdb.org/t/p/w185/verified-hugh-jackman.jpg",
+                    "initials": "HJ",
+                    "detail": "Hugh Jackman TMDB portrait",
+                }
+            return base_resolver.resolve(name)
+
+    resolved_res = build_kit_card_for_real_set(
+        cast_bundle, cast_container, now=FIXED_NOW, resolver=_ResolverWithHugh()
+    )
+    hugh_resolved = _hugh_pic(resolved_res)
+    assert hugh_resolved.get("url") == "https://image.tmdb.org/t/p/w185/verified-hugh-jackman.jpg"
+
+
+@pytest.mark.asyncio
+async def test_fable_point4_preview_route_reads_redis_only_and_enqueues_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace
+    import app.routes.admin_utils as admin_utils
+    import app.routes.containers as containers_route
+    import app.tasks as tasks_pkg
+
+    async def allow_admin(*args, **kwargs) -> bool:
+        return True
+
+    async def fail_inline(*args, **kwargs):
+        raise AssertionError("GET /preview/kit-v1-real-sets must never compute inline on web")
+
+    monkeypatch.setattr(admin_utils, "_check_admin_auth", allow_admin)
+    monkeypatch.setattr(containers_route, "_build_live_real_sets_audit_report", fail_inline)
+
+    store: dict[str, bytes] = {}
+
+    class FakeAsyncRedis:
+        async def get(self, key: str):
+            return store.get(key)
+
+    async def fake_shared_async_redis():
+        return FakeAsyncRedis()
+
+    monkeypatch.setattr(
+        "app.utils.request_cache.get_shared_async_redis",
+        fake_shared_async_redis,
+    )
+
+    fake_req = SimpleNamespace(headers={})
+
+    # Miss -> immediate honest status without calling _build_live_real_sets_audit_report
+    miss = await containers_route.get_kit_v1_real_sets_preview(fake_req, db=None)
+    assert miss["status"] == "not_built_yet"
+    assert miss["served_from"] == "none"
+
+    # Cached snapshot in Redis -> served cleanly without calling _build_live_real_sets_audit_report
+    store[containers_route.KIT_V1_REAL_SETS_PREVIEW_REDIS_KEY] = json.dumps(
+        {
+            "kit_version": 1,
+            "status": "ready",
+            "served_from": "worker_redis",
+            "generated_at": "2026-11-25T11:30:00+00:00",
+            "snapshot_captured_at": "2026-11-25T11:29:00+00:00",
+            "build_elapsed_s": 12.34,
+            "total_sets": 76,
+            "fitting_count": 40,
+            "kept_today_count": 36,
+            "top_10": [],
+            "fitting_beyond_top_10": [],
+            "alex_question_examples": [],
+            "kept_today": [],
+        }
+    ).encode("utf-8")
+
+    hit = await containers_route.get_kit_v1_real_sets_preview(fake_req, db=None)
+    assert hit["status"] == "ready"
+    assert hit["served_from"] == "worker_redis"
+    assert hit["total_sets"] == 76
+    assert hit["build_elapsed_s"] == 12.34
+
+    # POST /preview/kit-v1-real-sets/refresh enqueues Celery background task
+    enqueued: list[str] = []
+    monkeypatch.setattr(
+        tasks_pkg.refresh_kit_v1_real_sets_preview,
+        "delay",
+        lambda: (enqueued.append("called") or SimpleNamespace(id="celery-task-13584")),
+    )
+    queued = await containers_route.refresh_kit_v1_real_sets_preview_endpoint(fake_req, db=None)
+    assert enqueued == ["called"]
+    assert queued["status"] == "queued"
+    assert queued["queue"] == "background"
+    assert queued["task_id"] == "celery-task-13584"
+
+
+def test_fable_point4_worker_task_builds_and_writes_redis(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import asyncio
+    import app.routes.containers as containers_route
+    import app.tasks as tasks_pkg
+    import app.tasks.base as tasks_base
+    import app.tasks.redis_state as redis_state
+
+    store: dict[str, bytes] = {}
+
+    class FakeSyncRedis:
+        def set(self, key: str, value: str, ex: int | None = None):
+            store[key] = value.encode("utf-8")
+            return True
+
+    sample = {
+        "kit_version": 1,
+        "generated_at": "2026-11-25T11:30:00+00:00",
+        "snapshot_captured_at": "2026-11-25T11:29:00+00:00",
+        "total_sets": 76,
+        "fitting_count": 40,
+        "kept_today_count": 36,
+        "top_10": [],
+        "fitting_beyond_top_10": [],
+        "alex_question_examples": [],
+        "kept_today": [],
+    }
+
+    async def fake_worker_build(db, request=None):
+        assert request is None
+        return dict(sample)
+
+    class _FakeSessionCtx:
+        async def __aenter__(self):
+            return "fake-worker-db"
+
+        async def __aexit__(self, *exc):
+            return False
+
+    monkeypatch.setattr(containers_route, "_build_live_real_sets_audit_report", fake_worker_build)
+    monkeypatch.setattr(tasks_base, "get_task_session", lambda: _FakeSessionCtx())
+    monkeypatch.setattr(tasks_pkg, "_tracked_run", lambda _name, coro: asyncio.run(coro))
+    monkeypatch.setattr(redis_state, "get_redis_client", lambda **kw: FakeSyncRedis())
+
+    task_result = tasks_pkg.refresh_kit_v1_real_sets_preview()
+    assert task_result["status"] == "ready"
+    assert task_result["saved"] is True
+    assert task_result["total_sets"] == 76
+    saved_payload = json.loads(
+        store[containers_route.KIT_V1_REAL_SETS_PREVIEW_REDIS_KEY].decode("utf-8")
+    )
+    assert saved_payload["status"] == "ready"
+    assert saved_payload["served_from"] == "worker_redis"
+    assert saved_payload["total_sets"] == 76
+    assert saved_payload["build_elapsed_s"] is not None
