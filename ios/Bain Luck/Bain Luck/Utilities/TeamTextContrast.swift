@@ -367,30 +367,33 @@ enum TeamTextContrast {
             ? raw.home
             : (lightenedForDarkSurface(raw.home, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio) ?? raw.home)
 
-        // If lightening both sides pushed two dark neutrals (e.g. #000000 and #111827)
-        // or fallback rungs into near-identical grey tones, step away onto a distinct
-        // dark-readable rung so the two sides always read apart and clear `minimumRatio`.
-        let hueClash = checkHueFamily && ProbabilityBarPalette.sameHueFamily(safeAway, safeHome)
-        if !ProbabilityBarPalette.distinguishable(safeAway, safeHome) || hueClash {
-            if let distinct = darkSeparationLadder.first(where: { rung in
-                let candidate = readableOnSurface(rung, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio)
-                    ? rung
-                    : (lightenedForDarkSurface(rung, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio) ?? rung)
-                let noHueClash = !checkHueFamily || !ProbabilityBarPalette.sameHueFamily(candidate, safeHome)
-                return noHueClash && ProbabilityBarPalette.distinguishable(candidate, safeHome)
-            }) {
-                safeAway = readableOnSurface(distinct, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio)
-                    ? distinct
-                    : (lightenedForDarkSurface(distinct, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio) ?? distinct)
-            } else if let distinctAnyHue = darkSeparationLadder.first(where: { rung in
-                let candidate = readableOnSurface(rung, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio)
-                    ? rung
-                    : (lightenedForDarkSurface(rung, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio) ?? rung)
-                return ProbabilityBarPalette.distinguishable(candidate, safeHome)
-            }) {
-                safeAway = readableOnSurface(distinctAnyHue, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio)
-                    ? distinctAnyHue
-                    : (lightenedForDarkSurface(distinctAnyHue, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio) ?? distinctAnyHue)
+        // When a caller asks above the default 3.0 floor (e.g. dark game chart text
+        // at 4.5:1), lightening both sides can push dark neutrals or fallback rungs
+        // into the same hue/luminance band; step away onto a distinct dark-readable
+        // rung there, while keeping default 3.0 callers bit-identical to master.
+        if minimumRatio > Self.minimumRatio {
+            let hueClash = checkHueFamily && ProbabilityBarPalette.sameHueFamily(safeAway, safeHome)
+            if !ProbabilityBarPalette.distinguishable(safeAway, safeHome) || hueClash {
+                if let distinct = darkSeparationLadder.first(where: { rung in
+                    let candidate = readableOnSurface(rung, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio)
+                        ? rung
+                        : (lightenedForDarkSurface(rung, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio) ?? rung)
+                    let noHueClash = !checkHueFamily || !ProbabilityBarPalette.sameHueFamily(candidate, safeHome)
+                    return noHueClash && ProbabilityBarPalette.distinguishable(candidate, safeHome)
+                }) {
+                    safeAway = readableOnSurface(distinct, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio)
+                        ? distinct
+                        : (lightenedForDarkSurface(distinct, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio) ?? distinct)
+                } else if let distinctAnyHue = darkSeparationLadder.first(where: { rung in
+                    let candidate = readableOnSurface(rung, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio)
+                        ? rung
+                        : (lightenedForDarkSurface(rung, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio) ?? rung)
+                    return ProbabilityBarPalette.distinguishable(candidate, safeHome)
+                }) {
+                    safeAway = readableOnSurface(distinctAnyHue, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio)
+                        ? distinctAnyHue
+                        : (lightenedForDarkSurface(distinctAnyHue, surfaceLuminance: surfaceLuminance, minimumRatio: minimumRatio) ?? distinctAnyHue)
+                }
             }
         }
         return (safeAway, safeHome)

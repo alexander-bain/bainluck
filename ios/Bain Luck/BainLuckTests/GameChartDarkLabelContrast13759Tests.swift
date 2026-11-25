@@ -175,6 +175,28 @@ final class GameChartDarkLabelContrast13759Tests: XCTestCase {
         }
     }
 
+    func testDefaultDarkSurfaceRatioMatchesMasterBehaviorForOtherCallers() {
+        // NBA: Detroit Pistons @ Memphis Grizzlies changed at 3.0 when separation wasn't scoped to >3.0
+        let pistonsGrizzlies = TeamTextContrast.darkSurfaceColorHexes(
+            awayHex: "#1d428a",
+            homeHex: "#5d76a9",
+            awaySecondaryHex: "#c8102e",
+            homeSecondaryHex: "#12173f"
+        )
+        XCTAssertEqual(pistonsGrizzlies.away, "#2563EB")
+        XCTAssertEqual(pistonsGrizzlies.home, "#5D76A9")
+
+        // NCAAB: Columbia Lions @ absent home changed at 3.0 when separation wasn't scoped to >3.0
+        let columbiaAbsent = TeamTextContrast.darkSurfaceColorHexes(
+            awayHex: "#7ba4db",
+            homeHex: nil,
+            awaySecondaryHex: "#183863",
+            homeSecondaryHex: nil
+        )
+        XCTAssertEqual(columbiaAbsent.away, "#7BA4DB")
+        XCTAssertEqual(columbiaAbsent.home, "#2563EB")
+    }
+
     func testRenderDarkChartSideLabelsSweepSheet390() throws {
         let sampleHistory = try Self.decoder().decode(EventHistoryResponse.self, from: Data("""
         {
