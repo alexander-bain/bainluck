@@ -2431,6 +2431,7 @@ async def _prewarm_machinery_roundups(
         evaluate_roundup_producer,
         store_roundup_cache_sync,
         store_roundup_clean_empty_sync,
+        store_roundup_settled_retired_sync,
         verify_roundup_cache_sync,
     )
 
@@ -2528,6 +2529,17 @@ async def _prewarm_machinery_roundups(
                         if redis_written:
                             redis_read_back, redis_ttl_s = verify_roundup_cache_sync(
                                 sync_rc, prod.slug
+                            )
+                    elif not ok and cp is not None and eval_meta.get("settled_retired") is True:
+                        outcome_label = "settled_retired"
+                        if sync_rc is not None:
+                            redis_written = store_roundup_settled_retired_sync(
+                                sync_rc,
+                                prod.slug,
+                                _time.time(),
+                                cp,
+                                reason=eval_meta.get("reason") or "all_members_settled",
+                                fixed_members=bool(eval_meta.get("fixed_members")),
                             )
                     elif not ok and eval_meta.get("clean_empty") is True:
                         # #13183: strictly opt-in clean-empty marker. Only recorded
@@ -3160,6 +3172,27 @@ async def _prewarm_live_machinery_roundups(
     }
 
 
+def _active_standing_retired_slugs(rc: Any, now_ts: float) -> set[str]:
+    """Return fixed-member standing slugs whose settled-retired marker is still active (#13718)."""
+    from app.utils.roundup_containers import (
+        STANDING_RETIRED_SLUGS_KEY,
+        STANDING_RETIRED_SLUGS_TTL_S,
+    )
+
+    if rc is None or not hasattr(rc, "hgetall"):
+        return set()
+    try:
+        raw_retired = rc.hgetall(STANDING_RETIRED_SLUGS_KEY) or {}
+    except Exception:
+        return set()
+    retired_decoded = _decode_redis_key_hash(raw_retired)
+    active: set[str] = set()
+    for slug, ts_val in retired_decoded.items():
+        if ts_val is None or 0.0 <= (now_ts - float(ts_val)) < STANDING_RETIRED_SLUGS_TTL_S:
+            active.add(slug)
+    return active
+
+
 async def _prewarm_standing_roundups(
     deadline_s: float = 15.0,
     *,
@@ -3188,6 +3221,7 @@ async def _prewarm_standing_roundups(
         evaluate_roundup_producer,
         store_roundup_cache_sync,
         store_roundup_nothing_to_show_sync,
+        store_roundup_settled_retired_sync,
         verify_roundup_cache_sync,
     )
 
@@ -3205,6 +3239,7 @@ async def _prewarm_standing_roundups(
 
     slug_filter = set(slugs) if slugs is not None else None
     now_ts = _time.time()
+    retired_slugs = _active_standing_retired_slugs(sync_rc, now_ts) if slug_filter is None else set()
 
     def _is_cacheable_standing(prod) -> bool:
         if _is_machinery_producer_slug(prod.slug):
@@ -3220,9 +3255,23 @@ async def _prewarm_standing_roundups(
             return False
         return slug_filter is None or prod.slug in slug_filter
 
-    producers = [p for p in ROUNDUP_PRODUCERS.values() if _is_cacheable_standing(p)]
+    all_standing = [p for p in ROUNDUP_PRODUCERS.values() if _is_cacheable_standing(p)]
+    skipped_retired = [p for p in all_standing if p.slug in retired_slugs]
+    producers = [p for p in all_standing if p.slug not in retired_slugs]
+    retired_results = {
+        p.slug: {
+            "outcome": "settled_retired",
+            "reason": "all_members_settled",
+            "elapsed_ms": 0.0,
+            "live": False,
+            "redis_written": False,
+            "redis_read_back": False,
+            "redis_ttl_s": None,
+        }
+        for p in skipped_retired
+    }
     if not producers:
-        return {"outcome": "empty", "warmed": 0, "slugs": {}}
+        return {"outcome": "empty", "warmed": 0, "slugs": retired_results}
 
     wall_started = _time.monotonic()
     db_sem = asyncio.Semaphore(3)
@@ -3277,6 +3326,17 @@ async def _prewarm_standing_roundups(
                                     )
                             except Exception:
                                 pass
+                elif not ok and cp is not None and eval_meta.get("settled_retired") is True:
+                    outcome_label = "settled_retired"
+                    if sync_rc is not None:
+                        redis_written = store_roundup_settled_retired_sync(
+                            sync_rc,
+                            prod.slug,
+                            _time.time(),
+                            cp,
+                            reason=eval_meta.get("reason") or "all_members_settled",
+                            fixed_members=bool(eval_meta.get("fixed_members")),
+                        )
                 elif not ok and eval_meta.get("clean_empty") is True:
                     outcome_label = "nothing_to_show"
                     if sync_rc is not None:
@@ -3335,7 +3395,7 @@ async def _prewarm_standing_roundups(
             }
 
     pairs = await asyncio.gather(*(_warm_one(p) for p in producers))
-    results = dict(pairs)
+    results = {**retired_results, **dict(pairs)}
     wall_ms = round((_time.monotonic() - wall_started) * 1000.0, 1)
     total_db_ms = round(sum(float(v.get("elapsed_ms") or 0.0) for v in results.values()), 1)
     warmed = sum(1 for v in results.values() if v.get("outcome") == "ok")
@@ -3381,10 +3441,12 @@ async def _prewarm_live_standing_roundups(rc, *, deadline_s: float = 15.0) -> di
         return {"outcome": "idle", "warmed": 0}
 
     now_ts = _time.time()
+    retired_slugs = _active_standing_retired_slugs(rc, now_ts)
     registered_set = {
         p.slug
         for p in ROUNDUP_PRODUCERS.values()
         if not _is_machinery_producer_slug(p.slug)
+        and p.slug not in retired_slugs
         and (p.enabled is None or p.enabled())
         and (p.valid_from is None or now_ts >= p.valid_from)
         and (p.valid_until is None or now_ts < p.valid_until)
