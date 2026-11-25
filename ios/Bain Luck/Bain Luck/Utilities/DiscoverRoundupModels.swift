@@ -169,6 +169,7 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
     let rows: [FeedRoundupRow]
     let machineryCard: MachineryCardContract?
     let kitCard: KitCardEnvelope366B?
+    let kitCardSpec: KitV1CardSpec?
     let hasUnknownLookFallback: Bool
     let pairedMetricSet: PairedMetricSet?
 
@@ -202,6 +203,7 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
         rows: [FeedRoundupRow],
         machineryCard: MachineryCardContract? = nil,
         kitCard: KitCardEnvelope366B? = nil,
+        kitCardSpec: KitV1CardSpec? = nil,
         hasUnknownLookFallback: Bool = false,
         pairedMetricSet: PairedMetricSet? = nil
     ) {
@@ -216,6 +218,7 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
         self.rows = rows
         self.machineryCard = machineryCard
         self.kitCard = kitCard
+        self.kitCardSpec = kitCardSpec
         self.hasUnknownLookFallback = hasUnknownLookFallback
         self.pairedMetricSet = pairedMetricSet
     }
@@ -248,6 +251,14 @@ nonisolated struct FeedRoundupContract: Decodable, Equatable, Sendable {
             ?? (try? c.decodeIfPresent(KitCardEnvelope366B.self, forKey: .kitCardSnake))
             ?? (try? c.decodeIfPresent(KitCardEnvelope366B.self, forKey: .kitSpec))
             ?? (try? c.decodeIfPresent(KitCardEnvelope366B.self, forKey: .kitSpecSnake))
+        if KitCardStandInSwitch366B.isEnabled {
+            kitCardSpec = (try? c.decodeIfPresent(KitV1CardSpec.self, forKey: .kitCard))
+                ?? (try? c.decodeIfPresent(KitV1CardSpec.self, forKey: .kitCardSnake))
+                ?? (try? c.decodeIfPresent(KitV1CardSpec.self, forKey: .kitSpec))
+                ?? (try? c.decodeIfPresent(KitV1CardSpec.self, forKey: .kitSpecSnake))
+        } else {
+            kitCardSpec = nil
+        }
         hasUnknownLookFallback = ((machineryCard == nil) && hasMachineryPayload) || ((kitCard == nil) && hasKitPayload)
         pairedMetricSet = (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSet))
             ?? (try? c.decodeIfPresent(PairedMetricSet.self, forKey: .pairedMetricSetSnake))

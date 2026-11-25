@@ -87,4 +87,10 @@ describe("#13633 — Website brand mark (382: B / 390: A)", () => {
       expect(src).not.toContain("\u{1F340}");
     }
   });
+
+  it("uses 'as one clear percentage' and avoids calling a market a 'question' on the root OG share image", () => {
+    const src = readFileSync(join(ROOT, "app/opengraph-image.tsx"), "utf8");
+    expect(src).toContain("Sports, politics, economics and culture, as one clear percentage.");
+    expect(src.toLowerCase()).not.toContain("question");
+  });
 });

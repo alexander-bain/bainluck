@@ -14,7 +14,10 @@ from fastapi.testclient import TestClient
 from app.routes import admin_utils, containers
 from app.utils.kit_v1_spec import (
     ALLOWED_LAYOUTS,
+    COSMETIC_KIT_FIELDS,
     GOLDEN_EXAMPLES_PATH,
+    KIT_V1_FIELD_BEHAVIOR_TABLE,
+    MEANING_CARRYING_KIT_FIELDS,
     build_calendar_strip_367a,
     build_fallback_today,
     build_kit_v1_worked_examples,
@@ -44,9 +47,9 @@ def _walk_marks_dicts(node: Any, *, inside_marks: bool = False):
 def test_all_eight_worked_examples_validate_and_match_golden_json() -> None:
     payload = build_kit_v1_worked_examples()
     assert payload["kit_version"] == 1
-    assert payload["count"] == 8
+    assert payload["count"] == 17
     pairs = [(c["layout"], c["variant"]) for c in payload["items"]]
-    assert pairs == [
+    assert pairs[:8] == [
         ("grid", "scoreboard_grid"),
         ("grid", "dated_tiles"),
         ("stack", "countdown"),
@@ -56,6 +59,17 @@ def test_all_eight_worked_examples_validate_and_match_golden_json() -> None:
         ("stack", "single_sport_slate"),
         ("calendar", "calendar_strip"),
     ]
+    assert pairs[8:] == [
+        ("grid", "scoreboard_grid"),
+        ("grid", "scoreboard_grid"),
+        ("grid", "scoreboard_grid"),
+        ("axis", "shared_scale"),
+        ("grid", "dated_tiles"),
+        ("axis", "deadline_race"),
+        ("stack", "casting_sheet"),
+        ("stack", "casting_sheet"),
+        ("stack", "the_cut"),
+    ]
     for card in payload["items"]:
         assert "data" not in card
         assert isinstance(card["body"], dict) and card["body"]
@@ -64,6 +78,32 @@ def test_all_eight_worked_examples_validate_and_match_golden_json() -> None:
         assert ok, f"{card['id']} validation failed: {errs}"
         assert card["source_mark"]["label"]
         assert card["route"]["kind"] in {"collection", "event", "market", "team"}
+        blob = json.dumps(card)
+        assert not card["common_headline"].endswith("?"), card["id"]
+        assert "PTB" not in blob, card["id"]
+        assert "US x Iran" not in blob, card["id"]
+        assert "Served ladder" not in blob, card["id"]
+        assert "rung" not in blob.lower(), card["id"]
+        assert "other markets in this set are not drawn here" not in blob, card["id"]
+        assert "Toss-up" not in blob, card["id"]
+        assert "11%–11%" not in blob, card["id"]
+        assert "->" not in blob, card["id"]
+
+    bond_card = json.dumps(payload["items"][14])
+    assert "Boyd Holbrook" in bond_card and "Anthony Mackie" in bond_card
+    assert "Boyd Holbrook & Anthony Mackie" not in bond_card
+    assert "38% each" in json.dumps(payload["items"][16])
+    assert "Shai Gilgeous-Alexander" in json.dumps(payload["items"][10])
+    assert "Luka Dončić" in json.dumps(payload["items"][10], ensure_ascii=False)
+    assert "Giannis Antetokounmpo" in json.dumps(payload["items"][10])
+    # Open markets never print "0%" on tiles/rows (#13599 Fable look)
+    assert '"center_label": "0%"' not in json.dumps(payload["items"][9])
+    assert '"center_label": "0%"' not in json.dumps(payload["items"][10])
+    # AGI timeline lanes carry no org logos (#13599 Fable look)
+    assert '"mark": "picture"' not in json.dumps(payload["items"][12]["body"])
+    # Countdown carries deadline_iso for client PT computation
+    countdown_header = json.dumps(payload["items"][2]["body"]["header_marks"])
+    assert "2026-12-31" in countdown_header
 
     assert GOLDEN_EXAMPLES_PATH.exists(), "Golden JSON must be committed for Swift Codable parity"
     golden = json.loads(GOLDEN_EXAMPLES_PATH.read_text(encoding="utf-8"))
@@ -271,12 +311,26 @@ def test_ruling_367a_calendar_strip_math_and_dip_refusal() -> None:
     cal = payload["items"][7]
     assert cal["layout"] == "calendar"
     assert cal["variant"] == "calendar_strip"
-    assert "Served ladder:" in cal["footnote"]
+    assert cal["footnote"].startswith("Chance it is out before each day:")
+    assert "3% before Nov 27" in cal["footnote"]
+    assert "Dec 4 or later, 10%" in cal["footnote"]
+    assert "Served ladder" not in cal["footnote"]
+
+    nov30 = next(d for d in cal["body"]["days"] if d["date_key"] == "Nov-30")
+    assert nov30["daily_pct"] == 0
+    nov30_tile = next(m for m in nov30["marks"] if m["mark"] == "tile")
+    assert nov30_tile["bottom_label"] == "<1%"
+
     wed = next(d for d in cal["body"]["days"] if d["date_key"] == "Dec-2")
     assert wed["daily_pct"] == 67
     tile = next(m for m in wed["marks"] if m["mark"] == "tile")
     assert tile["bottom_label"] == "67%"
     assert tile["highlight_role"] == "day_peak"
+
+    tail = cal["body"]["days"][-1]
+    assert tail["daily_pct"] == 10
+    tail_tile = next(m for m in tail["marks"] if m["mark"] == "tile")
+    assert tail_tile["bottom_label"] == "10%"
 
     with pytest.raises(ValueError, match="dipped"):
         build_calendar_strip_367a(
@@ -330,11 +384,68 @@ def test_kit_v1_preview_endpoint_requires_admin_auth(monkeypatch) -> None:
     assert r_ok.status_code == 200
     body = r_ok.json()
     assert body["kit_version"] == 1
-    assert body["count"] == 8
+    assert body["count"] == 17
     assert len(body["refusals"]) == 3
     for item in body["items"]:
         assert "data" not in item
         assert isinstance(item["body"], dict)
+
+
+def test_cosmetic_vs_meaning_carrying_field_table() -> None:
+    """Agreed #13551 table: unknown cosmetic & top-level fields pass; unknown meaning-carrying fail closed."""
+    assert set(KIT_V1_FIELD_BEHAVIOR_TABLE.keys()) == {
+        "cosmetic",
+        "meaning_carrying",
+        "unknown_top_level_keys",
+    }
+    assert "picture.subject_kind" in COSMETIC_KIT_FIELDS
+    assert "bar.bar_style" in MEANING_CARRYING_KIT_FIELDS
+    assert "number.unit" in MEANING_CARRYING_KIT_FIELDS
+
+    payload = build_kit_v1_worked_examples()
+    stack_card = copy.deepcopy(payload["items"][2])
+    stack_card["some_future_field"] = {"experimental": True}
+    stack_card["variant"] = "unknown_cosmetic_variant"
+    stack_card["body"]["header_layout"] = "ticker"
+    stack_card["body"]["items"][0]["marks"][0]["size"] = "xxl"
+    stack_card["body"]["items"][0]["marks"][0]["contain"] = "auto"
+    stack_card["body"]["items"][0]["marks"][0]["subject_kind"] = "future_entity_kind"
+    stack_card["body"]["items"][0]["marks"][1]["style"] = "future_word_style"
+    stack_card["body"]["items"][0]["marks"][1]["tone"] = "neon"
+    stack_card["body"]["items"][0]["marks"][1]["align"] = "justify"
+    stack_card["body"]["items"][0]["marks"][1]["width"] = "giant"
+    stack_card["body"]["items"][0]["marks"][2]["width"] = "ultra_wide"
+    stack_card["body"]["items"][0]["marks"][3]["tone"] = "neon"
+    stack_card["body"]["items"][0]["marks"][3]["prominence"] = "giant"
+    stack_card["body"]["items"][0]["marks"][3]["align"] = "justify"
+    stack_card["body"]["items"][0]["marks"][3]["width"] = "giant"
+    ok_cosmetic, errs_cosmetic = validate_kit_v1_card(stack_card)
+    assert ok_cosmetic, f"Unknown cosmetic fields should validate: {errs_cosmetic}"
+
+    cal_card = copy.deepcopy(payload["items"][7])
+    cal_card["body"]["days"][0]["marks"][1]["highlight_role"] = "future_tile_highlight"
+    assert validate_kit_v1_card(cal_card)[0]
+
+    # Meaning-carrying fields fail closed on unknown values
+    bad_bar_style = copy.deepcopy(payload["items"][2])
+    bad_bar_style["body"]["items"][0]["marks"][2]["bar_style"] = "stacked3"
+    ok_bs, errs_bs = validate_kit_v1_card(bad_bar_style)
+    assert not ok_bs and any("bar_style" in e for e in errs_bs)
+
+    bad_unit = copy.deepcopy(payload["items"][2])
+    bad_unit["body"]["items"][0]["marks"][3]["unit"] = "points"
+    ok_un, errs_un = validate_kit_v1_card(bad_unit)
+    assert not ok_un and any("number.unit" in e for e in errs_un)
+
+    bad_row_layout = copy.deepcopy(payload["items"][0])
+    bad_row_layout["body"]["row_layout"] = "carousel_grid"
+    ok_rl, errs_rl = validate_kit_v1_card(bad_row_layout)
+    assert not ok_rl and any("row_layout" in e for e in errs_rl)
+
+    bad_scale_kind = copy.deepcopy(payload["items"][4])
+    bad_scale_kind["body"]["scale"]["scale_kind"] = "logarithmic"
+    ok_sk, errs_sk = validate_kit_v1_card(bad_scale_kind)
+    assert not ok_sk and any("scale_kind" in e for e in errs_sk)
 
 
 def _async_return(value: bool):
