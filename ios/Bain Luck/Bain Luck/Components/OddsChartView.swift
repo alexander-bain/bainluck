@@ -426,14 +426,28 @@ final class OddsChartViewModel: ObservableObject {
     let eventId: Int
     /// The chart's own history read, when the page has not handed it one yet.
     /// A seam so a test can hold the read open; the app always uses the default.
-    private let fetchHistory: @Sendable (Int) async throws -> EventHistoryResponse
+    private let fetchHistory: @Sendable (Int, String?) async throws -> EventHistoryResponse
 
     init(eventId: Int, preloaded: EventHistoryResponse? = nil,
-         fetchHistory: @escaping @Sendable (Int) async throws -> EventHistoryResponse = {
-             try await APIClient.shared.fetchEventHistory(id: $0, hours: 168)
-         }) {
+         fetchHistory: (@Sendable (Int) async throws -> EventHistoryResponse)? = nil) {
         self.eventId = eventId
-        self.fetchHistory = fetchHistory
+        if let fetchHistory {
+            self.fetchHistory = { id, _ in try await fetchHistory(id) }
+        } else {
+            self.fetchHistory = { id, range in
+                try await APIClient.shared.fetchEventHistory(id: id, hours: 168, range: range)
+            }
+        }
+        if let preloaded {
+            self.history = preloaded
+            self.loading = false
+        }
+    }
+
+    init(eventId: Int, preloaded: EventHistoryResponse? = nil,
+         fetchHistoryWithRange: @escaping @Sendable (Int, String?) async throws -> EventHistoryResponse) {
+        self.eventId = eventId
+        self.fetchHistory = fetchHistoryWithRange
         if let preloaded {
             self.history = preloaded
             self.loading = false
@@ -471,7 +485,7 @@ final class OddsChartViewModel: ObservableObject {
         guard history == nil else { return }  // Skip if preloaded
         loading = true
         do {
-            history = try await fetchHistory(eventId)
+            history = try await fetchHistory(eventId, "since_start")
             error = nil
             loading = false
         } catch {
@@ -484,6 +498,17 @@ final class OddsChartViewModel: ObservableObject {
             // chart that already has data.
             guard history == nil else { return }
             self.error = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    func loadFullHistoryIfNeeded() async {
+        guard history?.preWindowOmitted == true else { return }
+        do {
+            let full = try await fetchHistory(eventId, "all")
+            adopt(full)
+        } catch {
+            logger.error("Failed to load full history for event \(self.eventId): \(error)")
         }
     }
 }
@@ -1107,6 +1132,10 @@ struct OddsChartView: View {
         .onChange(of: historyOffer) { _, _ in
             guard let preloadedHistory else { return }
             vm.adopt(preloadedHistory)
+        }
+        .onChange(of: selectedRange) { _, newRange in
+            guard newRange == .all, preloadedHistoryGeneration == nil else { return }
+            Task { await vm.loadFullHistoryIfNeeded() }
         }
         #if os(iOS)
         .fullScreenCover(isPresented: $isFullscreen) {

@@ -450,6 +450,10 @@ struct EventDetailView: View {
                     showProbabilityDetails = false
                     showUpdateStream = false
                 }
+                .onChange(of: chartRange) { _, newRange in
+                    guard newRange == .all else { return }
+                    Task { await vm.loadFullHistoryIfNeeded() }
+                }
                 #if os(iOS)
                 .background(
                     PageDetailsCloser(

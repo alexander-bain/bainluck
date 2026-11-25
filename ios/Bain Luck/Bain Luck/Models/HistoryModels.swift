@@ -63,6 +63,10 @@ nonisolated struct EventHistoryResponse: Decodable, Sendable, Equatable {
     /// `PMSpreadData`. Optional and never-throwing: additive, and a malformed
     /// block must not blank the chart.
     let pmSpreadData: PMSpreadData?
+    /// `true` when the server truncated pre-kickoff / pre-window history under
+    /// `range=since_start` (#13606 Part 2), telling the phone to upgrade lazily
+    /// to `range=all` if the reader taps "All".
+    var preWindowOmitted: Bool? = nil
     let points: Int?
     let bookmakerCount: Int?
     let snapshotCount: Int?

@@ -1086,13 +1086,29 @@ actor APIClient {
 
     /// Fetches win-probability history for an event over the requested trailing window.
     func fetchEventHistory(id: Int, hours: Int = 24) async throws -> EventHistoryResponse {
-        return try await fetch("/api/events/\(id)/history", query: ["hours": "\(hours)"], cacheTTL: 60,
+        try await fetchEventHistory(id: id, hours: hours, range: nil)
+    }
+
+    func fetchEventHistory(id: Int, hours: Int, range: String?) async throws -> EventHistoryResponse {
+        var query: [String: String] = ["hours": "\(hours)"]
+        if let range, !range.isEmpty {
+            query["range"] = range
+        }
+        return try await fetch("/api/events/\(id)/history", query: query, cacheTTL: 60,
                                sharesPendingRead: true)
     }
 
     func fetchFreshEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse {
-        try await fetch("/api/events/\(id)/history", query: ["hours": "\(hours)"],
-                        cacheTTL: 60, requiresNetwork: true, revalidationQuery: ["fresh": "true"])
+        try await fetchFreshEventHistory(id: id, hours: hours, range: nil)
+    }
+
+    func fetchFreshEventHistory(id: Int, hours: Int, range: String?) async throws -> EventHistoryResponse {
+        var query: [String: String] = ["hours": "\(hours)"]
+        if let range, !range.isEmpty {
+            query["range"] = range
+        }
+        return try await fetch("/api/events/\(id)/history", query: query,
+                               cacheTTL: 60, requiresNetwork: true, revalidationQuery: ["fresh": "true"])
     }
 
     /// #4974 — a finished game's recorded probability checkpoints. Transport only:

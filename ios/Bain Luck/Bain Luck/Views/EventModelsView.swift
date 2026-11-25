@@ -116,7 +116,7 @@ struct EventModelsView: View {
     private func load() async {
         do {
             async let eventReq = APIClient.shared.fetchEvent(id: eventId)
-            async let historyReq = APIClient.shared.fetchEventHistory(id: eventId)
+            async let historyReq = APIClient.shared.fetchEventHistory(id: eventId, hours: 24, range: "since_start")
             let (e, h) = try await (eventReq, historyReq)
             event = e
             history = h

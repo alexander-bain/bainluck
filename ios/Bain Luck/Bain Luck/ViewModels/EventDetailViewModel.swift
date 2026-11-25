@@ -14,8 +14,10 @@ private let logger = Logger(subsystem: "com.bainluck", category: "eventDetail")
 protocol EventDetailProviding: Sendable {
     func fetchEvent(id: Int) async throws -> EventDetail
     func fetchEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse
+    func fetchEventHistory(id: Int, hours: Int, range: String?) async throws -> EventHistoryResponse
     func fetchFreshEvent(id: Int) async throws -> EventDetail
     func fetchFreshEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse
+    func fetchFreshEventHistory(id: Int, hours: Int, range: String?) async throws -> EventHistoryResponse
     func fetchRelatedFutures(eventId: Int) async throws -> RelatedFuturesResponse
     func fetchTeamProgression(eventId: Int) async throws -> TeamProgressionResponse
     func fetchGameMarkets(eventId: Int) async throws -> GameMarketsResponse
@@ -44,6 +46,12 @@ extension EventDetailProviding {
     func fetchFreshEvent(id: Int) async throws -> EventDetail { try await fetchEvent(id: id) }
     func fetchFreshEventHistory(id: Int, hours: Int) async throws -> EventHistoryResponse {
         try await fetchEventHistory(id: id, hours: hours)
+    }
+    func fetchEventHistory(id: Int, hours: Int, range: String?) async throws -> EventHistoryResponse {
+        try await fetchEventHistory(id: id, hours: hours)
+    }
+    func fetchFreshEventHistory(id: Int, hours: Int, range: String?) async throws -> EventHistoryResponse {
+        try await fetchFreshEventHistory(id: id, hours: hours)
     }
 }
 
@@ -404,6 +412,7 @@ final class EventDetailViewModel: ObservableObject {
     var currentRefreshPlan: EventRefreshPlan? { installedPlan }
 
     private let client: EventDetailProviding
+    private var requestedHistoryRange: String = "since_start"
 
     /// Injected so a test can run the poll loop without waiting for it. Returns
     /// the interval it was asked to wait, which is what makes the CADENCE — not
@@ -543,9 +552,10 @@ final class EventDetailViewModel: ObservableObject {
     @MainActor
     private func fetchOptional(_ section: OptionalSection) async -> OptionalPayload? {
         let client = self.client
+        let requestedRange = self.requestedHistoryRange
         do {
             switch section {
-            case .history: return .history(try await client.fetchEventHistory(id: eventId, hours: 168))
+            case .history: return .history(try await client.fetchEventHistory(id: eventId, hours: 168, range: requestedRange))
             case .relatedFutures: return .relatedFutures(try await client.fetchRelatedFutures(eventId: eventId))
             case .progression: return .progression(try await client.fetchTeamProgression(eventId: eventId))
             case .gameMarkets: await marketDelivery.load(); return nil
@@ -560,6 +570,26 @@ final class EventDetailViewModel: ObservableObject {
             case .lineMovement: logger.error("Line movement failed for \(self.eventId): \(error)")
             }
             return nil
+        }
+    }
+
+    /// Upgrade lazily from `range=since_start` to `range=all` only when the
+    /// served payload omitted pre-window points (`pre_window_omitted == true`)
+    /// and the reader switched the chart picker to `"All"` (#13606 Part 2).
+    @MainActor
+    func loadFullHistoryIfNeeded() async {
+        guard requestedHistoryRange != "all" || history?.preWindowOmitted == true else { return }
+        requestedHistoryRange = "all"
+        guard history?.preWindowOmitted == true else { return }
+        optionalReadGeneration += 1
+        let generation = optionalReadGeneration
+        do {
+            let full = try await client.fetchEventHistory(id: eventId, hours: 168, range: "all")
+            guard generation > appliedOptionalGeneration[.history, default: 0] else { return }
+            history = full
+            appliedOptionalGeneration[.history] = generation
+        } catch {
+            logger.error("Full history upgrade failed for \(self.eventId): \(error)")
         }
     }
 
@@ -1037,8 +1067,9 @@ final class EventDetailViewModel: ObservableObject {
         let requestedGeneration = resyncGeneration ?? streamRefetchGeneration
         let pushesAtRequest = acceptedPushCount
         let answersAsks = priceReadAsks
+        let requestedRange = self.requestedHistoryRange
         async let detailRead = client.fetchFreshEvent(id: id)
-        async let historyRead = client.fetchFreshEventHistory(id: id, hours: 168)
+        async let historyRead = client.fetchFreshEventHistory(id: id, hours: 168, range: requestedRange)
         do {
             // A failed half cannot publish its sibling alone or earn a receipt.
             // Keep the held pair until both reads finish, then use the existing
