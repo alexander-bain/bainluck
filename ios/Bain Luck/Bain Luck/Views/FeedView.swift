@@ -17,6 +17,7 @@ struct FeedView: View {
     // `onChange(of:)`, and both the elapsed time and the item count reported come
     // from the frozen token, never a live `vm.items.count`.
     @State private var lastEmittedRenderGenerationId: Int?
+    @State private var pinnedSnapshot: SportsPinnedSnapshot13669?
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @EnvironmentObject private var pinManager: PinManager
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -79,7 +80,14 @@ struct FeedView: View {
             .navigationDestination(for: Route.self) { RouteDestination(route: $0) }
         }
         .onAppear {
+            syncPinnedSnapshot()
             AnalyticsService.trackScreen(name: "feed", type: "feed")
+        }
+        .onChange(of: selectedCategory) { _, _ in
+            syncPinnedSnapshot()
+        }
+        .onChange(of: pinManager.identityGeneration) { _, _ in
+            syncPinnedSnapshot()
         }
         .task {
             // Route every load through the single owned rail (L2-211 Item 1 / C73):
@@ -154,15 +162,19 @@ struct FeedView: View {
 
     private var pinnedItems: [FeedItem] { pinnedItems(for: selectedCategory) }
 
+    private func syncPinnedSnapshot() {
+        pinnedSnapshot = SportsPinnedSnapshot13669(
+            eventIDs: pinManager.pinnedEventIDs,
+            futuresIDs: pinManager.pinnedFuturesIDs
+        )
+    }
+
     private func pinnedItems(for categoryID: String) -> [FeedItem] {
-        vm.filteredItems(for: categoryID).filter { item in
-            if item.type == "event", let event = item.event {
-                return pinManager.pinnedEventIDs.contains(event.id)
-            } else if item.type == "futures", let futures = item.futures {
-                return pinManager.pinnedFuturesIDs.contains(futures.id)
-            }
-            return false
-        }
+        let activeSnapshot = pinnedSnapshot ?? SportsPinnedSnapshot13669(
+            eventIDs: pinManager.pinnedEventIDs,
+            futuresIDs: pinManager.pinnedFuturesIDs
+        )
+        return activeSnapshot.pinnedItems(in: vm.filteredItems(for: categoryID))
     }
 
     /// #11288 — see `FeedViewModel.tabState`.
@@ -300,6 +312,7 @@ struct FeedView: View {
         #endif
         .refreshable {
             await vm.startLoad()
+            syncPinnedSnapshot()
             #if os(iOS)
             UIImpactFeedbackGenerator(style: .light).impactOccurred()
             #endif

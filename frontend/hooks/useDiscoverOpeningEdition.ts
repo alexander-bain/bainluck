@@ -132,6 +132,60 @@ export function useDiscoverOpeningEdition<T>(getId: (item: T) => string) {
     [getId, hold],
   );
 
+  /**
+   * #13643 — record unseen cards from a newer/retired edition strictly at the
+   * tail of the currently held deck (same generation & edition), so section
+   * partitioning and Back-restore metadata keep classifying them as continuation
+   * without touching any already-seated opening or continuation card.
+   */
+  const appendRetiredCards = useCallback((items: readonly T[]) => {
+    const held = deckRef.current;
+    if (!held || items.length === 0) return held;
+    const membership = new Map(held.sections.membership);
+    const positions = new Map(held.sections.positions);
+    const bodies = new Map(held.bodies);
+    const opening = [...held.sections.opening];
+    const continuation = [...held.sections.continuation];
+    let nextPos = held.nextOffset;
+    if (held.sections.boundary !== null && nextPos < held.sections.boundary) {
+      nextPos = held.sections.boundary;
+    }
+    for (const pos of positions.values()) {
+      if (pos + 1 > nextPos) nextPos = pos + 1;
+    }
+    let added = false;
+    for (const item of items) {
+      const id = getId(item);
+      if (membership.has(id)) continue;
+      added = true;
+      if (held.sections.boundary !== null) {
+        membership.set(id, "continuation");
+        continuation.push(item);
+        positions.set(id, nextPos);
+      } else {
+        membership.set(id, "opening");
+        opening.push(item);
+        if (held.edition !== null) positions.set(id, nextPos);
+      }
+      bodies.set(id, item);
+      nextPos += 1;
+    }
+    if (!added) return held;
+    return hold({
+      ...held,
+      sections: {
+        ...held.sections,
+        total: Math.max(held.sections.total, nextPos),
+        opening,
+        continuation,
+        membership,
+        positions,
+      },
+      bodies,
+      nextOffset: Math.max(held.nextOffset, nextPos),
+    });
+  }, [getId, hold]);
+
   const clear = useCallback(() => {
     legacySessionRef.current = false;
     replacingRef.current = null;
@@ -202,6 +256,7 @@ export function useDiscoverOpeningEdition<T>(getId: (item: T) => string) {
     replacingRef,
     adopt,
     extend,
+    appendRetiredCards,
     clear,
     restore,
     restoreLegacy,
