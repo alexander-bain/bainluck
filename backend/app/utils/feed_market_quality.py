@@ -1442,15 +1442,32 @@ _DATED_DIRECTION_TAIL_RE = re.compile(
     rf"\b(?:today|tomorrow|on|{_MONTH_RE}|\d{{1,2}}/\d{{1,2}})\b",
     re.IGNORECASE,
 )
+_PARENTHESIZED_TICKER_RE = re.compile(r"\([A-Z0-9][A-Z0-9./&^-]{0,9}\)")
+_INTRADAY_EXTRA_ASSET_RE = re.compile(
+    r"\b("
+    r"natural gas|gasoline|"
+    r"bnb|binance coin|hyperliquid|hype|litecoin|ltc|sui|toncoin|ton|"
+    r"avalanche|avax|chainlink|link|polkadot|dot|uniswap|uni|"
+    r"usd/jpy|eur/usd|gbp/usd|usd/brl|usd/cad|aud/usd|usd/chf|"
+    r"dax|ftse|nikkei|hang seng|palladium|platinum|aluminum"
+    r")\b",
+    re.IGNORECASE,
+)
 
 
 def is_intraday_asset_direction(name: "str | None") -> bool:
-    """True if ``name`` is an intraday up-or-down price contract on any asset (#13645)."""
-    if not name:
+    """True if ``name`` is an intraday up-or-down price contract on an asset (#13645)."""
+    if not name or _MACRO_EVENT_RE.search(name):
         return False
-    return bool(
+    if not (
         _UP_OR_DOWN_PHRASE_RE.search(name)
         and _INTRADAY_CLOCK_WINDOW_RE.search(name)
+    ):
+        return False
+    return bool(
+        _ASSET_CONTEXT_RE.search(name)
+        or _INTRADAY_EXTRA_ASSET_RE.search(name)
+        or _PARENTHESIZED_TICKER_RE.search(name)
     )
 
 

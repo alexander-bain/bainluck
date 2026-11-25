@@ -9634,10 +9634,7 @@ def _printed_outcome_name(
         is_opposing_binary_pair,
     )
 
-    if (
-        (len(top_outcomes_data) == 2 and top_pct == 50 and runner_up_pct == 50)
-        or (len(tied_names) == 2 and is_opposing_binary_pair(tied_names))
-    ):
+    if len(tied_names) == 2 and is_opposing_binary_pair(tied_names):
         return single
 
     if any(
@@ -9656,7 +9653,7 @@ def _is_even_two_way_board(
     printed_runner_up: Optional[int],
     field_is_a_race: Optional[bool],
 ) -> bool:
-    """True when a 2-outcome exclusive board ties evenly (e.g. Down 50% / Up 50%) (#13645)."""
+    """True when a 2-outcome exclusive board ties evenly on opposing generic labels (e.g. Down 50% / Up 50%) (#13645)."""
     if (
         len(outcomes_data) != 2
         or printed_leader is None
@@ -9665,8 +9662,6 @@ def _is_even_two_way_board(
         or field_is_a_race is False
     ):
         return False
-    if int(printed_leader) == 50 and int(printed_runner_up) == 50:
-        return True
     from app.utils.feed_reasons import is_opposing_binary_pair
 
     names = [str(o.get("name") or "").strip() for o in outcomes_data]

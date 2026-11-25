@@ -26,6 +26,7 @@ class TestIntradayUpOrDownOffDiscover:
             "Ethereum Up or Down - Nov 25, 2PM-3PM ET",
             "Gold Up or Down - 15m",
             "S&P 500 (SPX) Up or Down - 15 minutes",
+            "Natural Gas Up or Down - November 20, 1:00PM-2:00PM ET",
         ]
         for title in intraday_titles:
             assert is_intraday_asset_direction(title) is True, title
@@ -98,6 +99,8 @@ class TestIntradayUpOrDownOffDiscover:
         assert "daily_equity_direction" not in q_turnout.reasons
 
         safe_titles = (
+            ("Fed decision: rates up or down, Dec 10, 2:00 PM ET", "economics"),
+            ("ECB decision: rates up or down, Dec 10, 2:00 PM ET", "economics"),
             ("Canada's population Up or Down this year?", "world"),
             ("Charizard ex Up or Down: July", "culture"),
             ("Will the Fed cut interest rates at its 2:00 PM meeting?", "economics"),
@@ -203,12 +206,46 @@ class TestEvenTwoWayTiesNeverPrintBothSides:
         )
 
     def test_even_two_way_board_predicate_bounds(self):
-        assert _is_even_two_way_board(
+        # Opposing generic binary label pairs at 50/50 are suppressed
+        for pair in (["Down", "Up"], ["Yes", "No"], ["Over", "Under"]):
+            assert _is_even_two_way_board(
+                [{"name": pair[0]}, {"name": pair[1]}], 50, 50, True
+            )
+
+        # Named two-way 50/50 dead heats keep today's tied-leader copy intact
+        named = [{"name": "Alice"}, {"name": "Bob"}]
+        assert not _is_even_two_way_board(named, 50, 50, True)
+        assert not _is_even_two_way_board(
             [{"name": "Team A"}, {"name": "Team B"}], 50, 50, True
         )
         assert not _is_even_two_way_board(
-            [{"name": "Team A"}, {"name": "Team B"}], 51, 49, True
+            [{"name": "Alice"}, {"name": "Bob"}], 51, 49, True
         )
         assert not _is_even_two_way_board(
             [{"name": "Team A"}, {"name": "Team B"}, {"name": "Team C"}], 34, 34, True
         )
+
+        # _printed_outcome_name and generate_futures_headline preserve named 50/50 ties
+        named_board = [
+            {"name": "Alice", "probability": 0.50, "rendered_percent": 50},
+            {"name": "Bob", "probability": 0.50, "rendered_percent": 50},
+        ]
+        assert (
+            _printed_outcome_name(
+                "Alice", {}, "Next Chair of the Board?", named_board
+            )
+            == "Alice and Bob"
+        )
+        named_headline = fr.generate_futures_headline(
+            highlight_reasons=["featured_market"],
+            leader_name="Alice and Bob",
+            leader_probability=0.50,
+            rendered_leader_percent=50,
+            rendered_runner_up_percent=50,
+            tied_leader_names=["Alice", "Bob"],
+            card_field_is_a_race=True,
+            market_name="Next Chair of the Board?",
+            even_two_way_tie=False,
+        )
+        assert "Alice and Bob" in named_headline
+        assert "50%" in named_headline

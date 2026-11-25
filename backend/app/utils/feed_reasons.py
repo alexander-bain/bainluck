@@ -2270,18 +2270,12 @@ def _is_even_two_way_tie(
     rendered_runner_up_percent: Optional[int],
     card_field_is_a_race: Optional[bool],
 ) -> bool:
-    """True when a tied board is a vacuous two-way even split like Down and Up at 50% (#13645)."""
+    """True when a tied board is a vacuous opposing-pair split like Down and Up at 50% (#13645)."""
     if even_two_way_tie:
         return True
     if lead_visible or not tied_leader_names or len(tied_leader_names) != 2:
         return False
-    if is_opposing_binary_pair(tied_leader_names):
-        return True
-    return (
-        rendered_leader_percent == 50
-        and rendered_runner_up_percent == 50
-        and card_field_is_a_race is not False
-    )
+    return is_opposing_binary_pair(tied_leader_names)
 
 
 def format_tied_leaders(names: Sequence[str]) -> str:
@@ -2719,14 +2713,6 @@ def generate_futures_headline(
     _lead_visible = lead_is_printable(
         rendered_leader_percent, rendered_runner_up_percent
     ) and (card_field_is_a_race is not False)
-    _even_two_way = _is_even_two_way_tie(
-        even_two_way_tie=even_two_way_tie,
-        lead_visible=_lead_visible,
-        tied_leader_names=tied_leader_names,
-        rendered_leader_percent=rendered_leader_percent,
-        rendered_runner_up_percent=rendered_runner_up_percent,
-        card_field_is_a_race=card_field_is_a_race,
-    )
     _even_two_way = _is_even_two_way_tie(
         even_two_way_tie=even_two_way_tie,
         lead_visible=_lead_visible,
