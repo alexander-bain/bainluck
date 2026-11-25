@@ -27,3 +27,58 @@ export function buildAppleItunesMetaContent(
   }
   return parts.join(", ");
 }
+
+// #12311: campaign tags, so App Store Connect's analytics can say which way into
+// the App Store brought an install. The provider token (`pt`) is the number in
+// any campaign link made under Analytics → Acquisition → Campaigns in App Store
+// Connect. It names the developer account and is the same for every campaign.
+export const APP_STORE_PROVIDER_TOKEN: string | null = "128590604";
+
+/** One campaign token per way in, as App Store Connect will list them. */
+export const APP_STORE_CAMPAIGNS = {
+  /** Safari's banner on every page but an event's own. */
+  banner: "web-banner",
+  /** Safari's banner on an event's page, where shared links land. */
+  bannerEventPage: "web-banner-event-page",
+  /** The footer's "Download on the App Store" badge. */
+  footerBadge: "web-footer-badge",
+  /** The footer's "Get the app" line on phone widths. */
+  footerGetTheApp: "web-footer-get-the-app",
+} as const;
+
+export type AppStoreCampaign = (typeof APP_STORE_CAMPAIGNS)[keyof typeof APP_STORE_CAMPAIGNS];
+
+/** Apple's provider tokens are digits; anything else would tag nothing. */
+function usableProviderToken(token: string | null): string | null {
+  return token !== null && /^\d+$/.test(token) ? token : null;
+}
+
+/** The App Store listing, tagged with `campaign` once the provider token is in. */
+export function appStoreCampaignUrl(
+  campaign: AppStoreCampaign,
+  providerToken: string | null = APP_STORE_PROVIDER_TOKEN,
+): string {
+  const pt = usableProviderToken(providerToken);
+  if (pt === null) return APP_STORE_URL;
+  return `${APP_STORE_URL}?${new URLSearchParams({ pt, ct: campaign, mt: "8" })}`;
+}
+
+/**
+ * The `apple-itunes-app` meta content for Safari's banner. Next's `itunes`
+ * metadata has no slot for `affiliate-data`, where the banner carries the same
+ * two tokens, so the layouts write the tag through `other`. With no provider
+ * token this matches `buildAppleItunesMetaContent`.
+ */
+export function smartAppBannerContent(
+  campaign: AppStoreCampaign,
+  appArgument?: string,
+  providerToken: string | null = APP_STORE_PROVIDER_TOKEN,
+  appClipBundleId: string | null = APP_CLIP_BUNDLE_ID,
+): string {
+  const pt = usableProviderToken(providerToken);
+  const parts = [`app-id=${APP_STORE_APP_ID}`];
+  if (appClipBundleId) parts.push(`app-clip-bundle-id=${appClipBundleId}`);
+  if (pt !== null) parts.push(`affiliate-data=pt=${pt}&ct=${campaign}`);
+  if (appArgument) parts.push(`app-argument=${appArgument}`);
+  return parts.join(", ");
+}
