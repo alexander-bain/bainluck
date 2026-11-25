@@ -60,6 +60,62 @@ def test_kalshi_ask_only_ceiling_is_never_a_price_input():
 
 
 @pytest.mark.parametrize(
+    "book, divisor",
+    [
+        ("ceiling", 1.10),
+        ("withheld ceiling", 1.10),
+        ("unknown residual", 1),
+        ("stale ceiling", 1),
+    ],
+)
+def test_detail_set_and_card_distinguish_zero_bid_from_unknown_mass(book, divisor):
+    from datetime import datetime, timedelta, timezone
+
+    from app.routes.feed import _feed_display_scale, _field_has_withheld_legs
+    from app.routes.futures import _apply_verified_title_to_detail, _format_market_detail
+    from app.utils.container_machinery import _canonical_market_outcome_map
+    from app.utils.futures_verified_title import Refusal
+    from tests.test_midterms_complete_outcome_prices_11948 import _detail_field
+
+    market = _detail_field()
+    market.outcomes = market.outcomes[:3]
+    observed_at = datetime(2026, 11, 24, tzinfo=timezone.utc)
+    for outcome, (price, bid, ask) in zip(
+        market.outcomes, [(0.68, 0.65, 0.71), (0.42, 0.40, 0.44), (None, 0, 0.05)]
+    ):
+        outcome.current_probability = price
+        outcome.current_yes_bid = bid
+        outcome.current_yes_ask = ask
+        outcome.last_updated = observed_at
+
+    ceiling = market.outcomes[-1]
+    withheld = {ceiling.id} if book == "withheld ceiling" else set()
+    if book == "unknown residual":
+        ceiling.current_yes_bid = ceiling.current_yes_ask = None
+    elif book == "stale ceiling":
+        ceiling.last_updated -= timedelta(days=40)
+
+    detail = _format_market_detail(market, unsupported_price_outcome_ids=withheld)
+    set_detail = _format_market_detail(
+        market, unsupported_price_outcome_ids=withheld, normalize_numbers=False
+    )
+    _apply_verified_title_to_detail(
+        set_detail, Refusal("no_corroborating_venue"), market
+    )
+    set_rows, *_ = _canonical_market_outcome_map(set_detail["outcomes"])
+    card_outcomes = [outcome for outcome in market.outcomes if outcome.id not in withheld]
+    card_divisor = _feed_display_scale(
+        card_outcomes, market=market, mutually_exclusive=True,
+        field_complete=not _field_has_withheld_legs(market, market.outcomes, withheld),
+    )
+    assert card_divisor == pytest.approx(divisor)
+    for surface in (detail["outcomes"], set_rows):
+        by_id = {row["id"]: row["probability"] for row in surface}
+        for outcome in market.outcomes[:2]:
+            assert by_id[outcome.id] == pytest.approx(outcome.current_probability / divisor)
+
+
+@pytest.mark.parametrize(
     "prices",
     [[0.40, 0.39], [0.52, 0.51], [0.5, 0.4, 0.3], [0.5, 0.4, 0.004]],
 )

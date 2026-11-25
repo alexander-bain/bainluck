@@ -16,8 +16,9 @@ Rules:
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 from math import nextafter
-from typing import Any, Callable, Mapping, Sequence, TypeVar
+from typing import Any, Callable, Collection, Mapping, Sequence, TypeVar
 
 from app.utils.graded_card import rendered_percent
 from app.utils.ladder_monotonicity import DEC, cumulative_outcome_ladder
@@ -81,24 +82,31 @@ def is_venue_floor_price(p) -> bool:
     return p is not None and abs(float(p) - _VENUE_FLOOR_PRICE) < 1e-9
 
 
-def mark_kalshi_ask_ceilings(
-    market: Any, rows: list[dict], source_outcomes: Mapping[int, Any]
-) -> None:
-    """Attach source-book evidence before allocating a complete field."""
+def open_kalshi_yes_bid(market: Any, outcome: Any) -> Decimal | float | None:
+    """Return the recorded bid for an ungraded outcome in an open Kalshi book."""
     if (
         getattr(market, "source", None) != "kalshi"
         or getattr(market, "status", None) not in {"open", "active"}
+        or getattr(outcome, "resolution_source", None)
+        or getattr(outcome, "is_winner", None) is True
     ):
+        return None
+    return getattr(outcome, "current_yes_bid", None)
+
+
+def mark_kalshi_ask_ceilings(
+    market: Any, rows: list[dict], source_outcomes: Mapping[int, Any], *,
+    stale_outcome_ids: Collection[int] = (),
+) -> None:
+    """Attach source-book evidence before allocating a complete field."""
+    if getattr(market, "source", None) != "kalshi":
         return
     for row in rows:
         source = source_outcomes.get(row["id"])
-        if (
-            getattr(source, "current_yes_bid", None) is None
-            or getattr(source, "resolution_source", None)
-            or getattr(source, "is_winner", None) is True
-        ):
+        bid = open_kalshi_yes_bid(market, source)
+        if bid is None or row["id"] in stale_outcome_ids:
             continue
-        row["kalshi_no_bid"] = source.current_yes_bid == 0
+        row["kalshi_no_bid"] = bid == 0
         if row["kalshi_no_bid"]:
             ask = getattr(source, "current_yes_ask", None)
             row["ask_ceiling"] = float(ask) if ask is not None and 0 < ask <= 1 else None

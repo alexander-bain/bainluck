@@ -5391,6 +5391,13 @@ def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
     )
 
     _stamp_representation(detail, verdict)
+    field_complete = not detail.get("prices_withheld") or (
+        any(row.get("kalshi_no_bid") for row in detail["outcomes"])
+        and all(
+            row.get("probability") is not None or row.get("kalshi_no_bid")
+            for row in detail["outcomes"]
+        )
+    )
     changed = False
     if isinstance(verdict, Composition):
         game_at = verdict.canonical_card_fields.get("resolution_date")
@@ -5405,7 +5412,11 @@ def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
                     row["probability"],
                     overlay.aggregation_rule if overlay is not None else "unsupported",
                 )
-            if overlay is not None and overlay.probability is not None:
+            if (
+                overlay is not None
+                and overlay.probability is not None
+                and any(source != "kalshi" for source in overlay.contributing_sources)
+            ):
                 row.pop("kalshi_no_bid", None)
                 row.pop("ask_ceiling", None)
     # A source-only/refused composition can retain complete references. A
@@ -5415,7 +5426,7 @@ def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
         normalized_field_comparisons(
             market,
             detail["outcomes"],
-            field_complete=not detail.get("prices_withheld"),
+            field_complete=field_complete,
         )
         if not changed
         else None
@@ -5427,7 +5438,7 @@ def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
     if scaled is None:
         scaled = normalize_display_probs(
             detail["outcomes"], mutually_exclusive=detail.get("mutually_exclusive", True),
-            field_complete=not detail.get("prices_withheld"), question=detail.get("name"),
+            field_complete=field_complete, question=detail.get("name"),
         )
     if comparisons is not None:
         had_openings = any(
@@ -10625,10 +10636,12 @@ def _format_market_detail(
     _board_status = getattr(market, "status", None)
     _board_verdict = _board_has_a_verdict(sorted_outcomes)
 
+    stale_outcome_ids: set[int] = set()
     if _board_status == "open":
-        withheld = withheld | stale_observation_keys(
+        stale_outcome_ids = stale_observation_keys(
             (o.id, o.last_updated) for o in sorted_outcomes
         )
+        withheld = withheld | stale_outcome_ids
 
         # 🔴 #8011 — AND THE RULE ABOVE HAS A BLIND SPOT THAT IS EXACTLY ITS OWN
         # DESIGN, WHICH IS WHY IT NEEDS A SECOND REFERENCE RATHER THAN A TWEAK.
@@ -10916,7 +10929,9 @@ def _format_market_detail(
     )
     raw_dominant_dropped = raw_outcome_count - len(outcomes)
     source_outcomes = {o.id: o for o in sorted_outcomes}
-    mark_kalshi_ask_ceilings(market, outcomes, source_outcomes)
+    mark_kalshi_ask_ceilings(
+        market, outcomes, source_outcomes, stale_outcome_ids=stale_outcome_ids
+    )
     field_complete = not any(o["id"] in withheld and not o.get("kalshi_no_bid") for o in outcomes)
     # Ruling21-A: each end uses its own complete, recorded field. A raw
     # historical delta or today's divisor cannot stand in for that comparison.

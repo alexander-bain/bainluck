@@ -344,6 +344,7 @@ from app.utils.outcome_display import (
     drop_dominant_field_outcomes,
     drop_incoherent_ladder_outcomes,
     ladder_treatment_collapsed,
+    open_kalshi_yes_bid,
 )
 from app.utils.not_trading import market_not_trading
 from app.utils.discover_game_reason import (
@@ -9236,7 +9237,10 @@ def _field_has_withheld_legs(
     withheld = _resolve_withheld_ids(market, withheld_ids)
     if withheld:
         withheld_ids = set(withheld)
-        if any(getattr(o, "id", None) in withheld_ids for o in outcomes):
+        if any(
+            getattr(o, "id", None) in withheld_ids and open_kalshi_yes_bid(market, o) != 0
+            for o in outcomes
+        ):
             return True
     # The page's second union term. Reached even when the arms named nothing,
     # which is the whole of the residual: on all five specimens above the arms
