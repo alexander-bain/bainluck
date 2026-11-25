@@ -1,9 +1,9 @@
 import SwiftUI
 import WidgetKit
 
-/// Large rectangular (`accessoryRectangular`) selected-game reading for #4933,
-/// with honest launcher fallback when no valid shared snapshot exists.
-/// Circular and corner families remain explicit launchers.
+/// Selected-game and saved-market complication views (`#4933`, `#13430`):
+/// circular and corner slots follow the iPhone small Lock Screen rules (`LockScreenSmallSlotFit13430`),
+/// falling back to the bookmark launcher only when no fresh reading exists.
 struct WatchSavedComplicationContent: View {
     let snapshot: WatchComplicationSnapshot?
     var now: Date = Date()
@@ -120,21 +120,17 @@ struct WatchSavedCircularComplicationContent: View {
     var body: some View {
         if let model = snapshot?.smallSlotModel(now: now) {
             Group {
-                if let share = model.gaugeShare {
+                if let share = model.gaugeShare, model.isGame {
                     Gauge(value: min(max(share, 0), 1)) {
-                        Text(model.isGame ? model.subjectLabel : "")
+                        Text(model.subjectLabel)
                             .lineLimit(1)
                             .minimumScaleFactor(0.55)
                     } currentValueLabel: {
                         Text(model.value)
-                            .font(
-                                model.isGame
-                                    ? .system(size: 14, weight: .bold).monospacedDigit()
-                                    : .system(size: 12.5, weight: .bold, design: .rounded).monospacedDigit()
-                            )
+                            .font(.system(size: 14, weight: .bold).monospacedDigit())
                             .lineLimit(1)
                             .minimumScaleFactor(0.5)
-                            .padding(.horizontal, model.isGame ? 1 : 4)
+                            .padding(.horizontal, 1)
                     }
                     .gaugeStyle(.accessoryCircular)
                     .widgetAccentable()

@@ -423,3 +423,48 @@ async def test_feed_endpoint_machinery_caps_visual_forms_at_two_e2e(
         it for it in served[10:] if card_visual_form_id(it) == "benchmark_strip"
     ]
     assert len(displaced_benchmarks) == 4
+
+
+def test_sports_single_plus_grouped_never_exceeds_two_via_sparse_fallback() -> None:
+    """#13542 / 329: A: a chosen sports single counts toward TOPIC_SPORTS <= 2, and
+    when 353: A form caps leave <8 grouped seats after Pass 2, sparse fallback must
+    not admit a 3rd sports card (`matchup_strip` / schedule) over non-sports groups."""
+    deck = [
+        # Three odd cards all using benchmark_strip -> 3rd blocks in Pass 1b/2 until form cap relaxes
+        _roundup("machinery-elon-musk-side-quests", "Musk side quests", category="Science", kicker="ODD", member_id=101, form_id="benchmark_strip", score=99.0),
+        _roundup("machinery-long-shots", "Long shots", category="Entertainment", kicker="ODD · LONG SHOTS", member_id=102, form_id="benchmark_strip", score=98.0),
+        _roundup("machinery-white-christmas", "White Christmas forecast", category="Weather", kicker="WEATHER · CHRISTMAS", member_id=103, form_id="benchmark_strip", score=94.0),
+        # Sports single chosen by chosen_singles -> sports=1
+        _single(68948432, "Milwaukee Brewers NL West", category="Baseball", score=97.0),
+        # Two entertainment cards (different forms)
+        _roundup("machinery-next-james-bond", "Next James Bond", category="Entertainment", kicker="CULTURE", member_id=104, form_id="sibling_fields_grid", score=96.0),
+        _roundup("machinery-oscars-best-picture", "Oscars Best Picture", category="Entertainment", kicker="CULTURE", member_id=105, form_id="paired_stage_bars", score=95.0),
+        # First sports grouped card -> sports=2 (now at TOPIC_MAX_TOTAL[TOPIC_SPORTS] == 2)
+        _roundup("machinery-grand-slam-tennis", "Grand Slam Tennis", category="Tennis", kicker="SPORTS", member_id=106, form_id="theme_compact_rows", score=93.0),
+        # Second sports grouped card (distinct form matchup_strip) — MUST NOT push sports to 3!
+        _roundup("celtics-next-3-games", "Boston Celtics: next 3 games", category="Basketball", kicker="SPORTS", member_id=107, form_id="matchup_strip", score=92.0),
+        _roundup("lakers-next-3-games", "Los Angeles Lakers: next 3 games", category="Basketball", kicker="SPORTS", member_id=108, form_id="matchup_strip", score=91.0),
+        # Tech & PWM groups (same theme_compact_rows form -> blocked until form cap relaxes)
+        _roundup("machinery-tech-movers", "Tech movers", category="Tech", kicker="TECH", member_id=109, form_id="probability_history_chart", score=90.0),
+        _roundup("story-ai-bundle", "AI leaders", category="Tech", kicker="TECH", member_id=110, form_id="theme_compact_rows", score=89.0),
+        _roundup("story-middle-east", "Middle East conflict", category="Politics", kicker="WORLD", member_id=111, form_id="theme_compact_rows", score=88.0),
+    ]
+    mixed = apply_discover_opening_mix(deck, now=NOW)
+    top10 = mixed[:10]
+    sports_items = [it for it in top10 if classify_discover_opening_topic(it) == TOPIC_SPORTS]
+    assert len(sports_items) == 2
+    assert any((it.get("data") or {}).get("id") == 68948432 for it in sports_items)
+
+
+def test_truly_empty_non_sports_deck_still_fills_ten_without_dropping_sports() -> None:
+    """Only when no non-sports grouped cards exist at all may the final fallback admit a 3rd sports card."""
+    deck = [
+        _single(701, "Brewers NL West", category="Baseball", score=99.0),
+        *[
+            _roundup(f"sports-strip-{i}", f"Team Next 3 Games {i}", category="Basketball", kicker="SPORTS", member_id=710 + i, form_id="matchup_strip", score=95.0 - i)
+            for i in range(9)
+        ],
+        _roundup("world-politics", "Middle East conflict", category="Politics", kicker="WORLD", member_id=730, form_id="theme_compact_rows", score=85.0),
+    ]
+    mixed = apply_discover_opening_mix(deck, now=NOW)
+    assert len(mixed[:10]) == 10

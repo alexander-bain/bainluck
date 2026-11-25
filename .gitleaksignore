@@ -172,3 +172,5 @@ d6ebef9997e3cb2aec9d2c5947855748b67b5d09:evals/ranking/grades/2026-11-10-groupin
 # https://github.com/alexander-bain/bainluck/pull/13595#issuecomment-7149178317).
 e1d079143a23579401f015df6a24da6a0356d286:ios/Bain Luck/BainLuckTests/AuthSignInFailed13516TelemetryTests.swift:generic-api-key:130
 e1d079143a23579401f015df6a24da6a0356d286:ios/Bain Luck/BainLuckTests/AuthSignInFailed13516TelemetryTests.swift:generic-api-key:142
+998be6c45d912dc041d74d840f3e80eb8ba929de:ios/Bain Luck/Bain Luck/Utilities/FirstRunModels212A.swift:generic-api-key:28
+998be6c45d912dc041d74d840f3e80eb8ba929de:ios/Bain Luck/Bain Luck/Utilities/FirstRunModels212A.swift:generic-api-key:1112

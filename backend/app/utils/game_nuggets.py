@@ -15,6 +15,8 @@ import math
 import re
 from typing import Any, Mapping, Optional
 
+from app.utils.sport_keys import sport_display_name
+
 NUGGET_KINDS: tuple[str, ...] = (
     "game_flow",
     "players",
@@ -60,6 +62,73 @@ NUGGET_LIVE_MAX_OBSERVED_AGE_HOURS = 6.0
 LADDER_MIDDLE_PROB_MIN = 0.30
 LADDER_MIDDLE_PROB_MAX = 0.70
 LADDER_MOVE_MIN_POINTS = 3
+
+_READER_LEAGUE_NAMES: dict[str, str] = {
+    "americanfootball_nfl": "NFL",
+    "americanfootball_ncaaf": "College Football",
+    "americanfootball_cfl": "CFL",
+    "americanfootball_ufl": "UFL",
+    "basketball_nba": "NBA",
+    "basketball_wnba": "WNBA",
+    "basketball_ncaab": "Men's College Basketball",
+    "basketball_wncaab": "Women's College Basketball",
+    "basketball_euroleague": "EuroLeague",
+    "icehockey_nhl": "NHL",
+    "icehockey_ncaa": "College Hockey",
+    "baseball_mlb": "MLB",
+    "baseball_ncaa": "College Baseball",
+    "soccer_epl": "Premier League",
+    "soccer_usa_mls": "MLS",
+    "soccer_uefa_champs_league": "Champions League",
+    "soccer_uefa_europa_league": "Europa League",
+    "soccer_uefa_nations_league": "UEFA Nations League",
+    "soccer_spain_la_liga": "La Liga",
+    "soccer_germany_bundesliga": "Bundesliga",
+    "soccer_italy_serie_a": "Serie A",
+    "soccer_italy_serie_b": "Serie B",
+    "soccer_france_ligue_one": "Ligue 1",
+    "soccer_efl_champ": "Championship",
+    "soccer_england_league1": "League One",
+    "soccer_england_league2": "League Two",
+    "soccer_mexico_ligamx": "Liga MX",
+    "tennis_atp": "ATP",
+    "tennis_wta": "WTA",
+    "tennis_other": "Tennis",
+    "golf_pga": "PGA Tour",
+    "golf_lpga": "LPGA",
+    "mma_ufc": "UFC",
+    "mma_mixed_martial_arts": "MMA",
+    "esports": "Esports",
+    "esports_other": "Esports",
+}
+
+
+def reader_league_name(sport: Any) -> Optional[str]:
+    """Return a plain reader-facing league name from a Sport ORM row or key string."""
+    if sport is None:
+        return None
+    if isinstance(sport, str):
+        key = sport.strip()
+        stored_name = None
+    else:
+        key = str(getattr(sport, "key", None) or "").strip()
+        stored_name = getattr(sport, "name", None)
+    if key in _READER_LEAGUE_NAMES:
+        return _READER_LEAGUE_NAMES[key]
+    raw_name = str(stored_name or "").strip()
+    if raw_name and key and raw_name.lower() != key.replace("_", " ").lower():
+        resolved = sport_display_name(key, raw_name)
+        if resolved and resolved != key:
+            return resolved
+    if key:
+        fallback = sport_display_name(key, key)
+        if fallback and "_" not in fallback:
+            return fallback
+        parts = [p for p in key.split("_") if p and p != "other"]
+        if len(parts) > 1:
+            return " ".join(parts[1:]).title()
+        return key.replace("_", " ").title()
+    return raw_name or None
 
 _VENUE_RE = re.compile(
     r"\b(?:kalshi|polymarket|draftkings|fanduel|betmgm|caesars|betrivers|espn\s*bet|fanatics|bet365|pinnacle|bovada)\b",
@@ -2332,6 +2401,7 @@ def rank_game_nuggets(
         "home_team": event_info.get("home_team"),
         "away_team": event_info.get("away_team"),
         "sport": event_info.get("sport"),
+        "sport_name": event_info.get("sport_name") or reader_league_name(event_info.get("sport")),
         "status": event_info.get("status"),
         "commence_time": event_info.get("commence_time"),
         "nuggets": selected,

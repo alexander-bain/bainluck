@@ -330,6 +330,7 @@ struct ContainerHubView: View {
                 }
                 if vm.pageError != nil {
                     Text("Couldn’t load more markets. Try again.").font(.subheadline).foregroundStyle(hubTextSecondary)
+                        .noteReviewPromptTrouble12304()
                 }
                 if presentation.response.state == .published, presentation.response.page?.nextCursor != nil {
                     Button {
@@ -500,6 +501,7 @@ struct ContainerHubView: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .noteReviewPromptTrouble12304(when: retry)
     }
 }
 

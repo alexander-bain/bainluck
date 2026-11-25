@@ -497,10 +497,11 @@ struct SearchView: View {
                         .padding(.vertical, 4)
                 }
 
-                // Tournaments with a hub screen. These navigate straight to the
-                // hub rather than seeding a text query, because the query is the
-                // thing that does not work: "US Open" matches no event text.
-                if !featuredTournaments.isEmpty {
+                // Tournaments currently being played, with a hub screen (#13671: omit
+                // finished tournaments from Browse/empty-state discovery while typed search
+                // below can still surface their archive hub when queried directly).
+                let activeTournaments = featuredTournaments.filter { $0.isBeingPlayed() }
+                if !activeTournaments.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("Tournaments")
                             .font(.subheadline)
@@ -509,7 +510,7 @@ struct SearchView: View {
                             .padding(.horizontal, 4)
 
                         FlowLayout(spacing: 8) {
-                            ForEach(featuredTournaments) { hub in
+                            ForEach(activeTournaments) { hub in
                                 quickSearchChip(icon: hub.icon, label: hub.title) {
                                     path.append(Route.tournamentHub(slug: hub.slug, name: hub.title))
                                 }
@@ -1205,6 +1206,7 @@ struct SearchView: View {
                     .buttonStyle(.borderedProminent)
                 }
                 .listRowBackground(Color.clear)
+                .noteReviewPromptTrouble12304()
 
             case .empty:
                 ContentUnavailableView(

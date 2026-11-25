@@ -202,6 +202,7 @@ struct FuturesDetailView: View {
                     systemImage: "exclamationmark.triangle",
                     description: Text(error)
                 )
+                .noteReviewPromptTrouble12304()
             } else if let market = viewModel.market {
                 ScrollView {
                     Group {

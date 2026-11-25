@@ -1,0 +1,78 @@
+{
+  "slug": "machinery-the-big-one-and-cosmic-risks",
+  "stage": "preview",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "movement",
+    "same_window",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "ODD · SPACE ROCKS",
+  "name": "Meteor Strikes & Impact Odds",
+  "category": "odd",
+  "tag": "ODD",
+  "section_title": "Meteor Impact Odds Over 7 Days",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "extra_llm_categories": [
+      "weather",
+      "tech"
+    ],
+    "card_rows": 3,
+    "card_section_key": "cosmic_risk_moves",
+    "hide_row_art": true,
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/a/ae/Milky_Way_Streaky_Bay_%28Unsplash%29.jpg/960px-Milky_Way_Streaky_Bay_%28Unsplash%29.jpg",
+    "card_image_alt": "Milky Way stars arcing across a clear dark night sky",
+    "card_image_credit": "Thom Schneider (CC0 1.0 Public Domain, Wikimedia Commons)",
+    "card_image_author": "Thom Schneider",
+    "card_image_license": "CC0 1.0 Public Domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Milky_Way_Streaky_Bay_(Unsplash).jpg",
+    "sections": [
+      {
+        "key": "cosmic_risk_moves",
+        "title": "Meteor Impact Odds Over 7 Days",
+        "fallback_title": "Near-Earth Meteor Strike Risks",
+        "item_noun": "charts",
+        "preserve_note": true,
+        "note": "This chart tracks how markets price a 5-kiloton meteor strike in 2026 over the past week.",
+        "atom_query": {
+          "kind": "market_history",
+          "fun_sub_tag": "batch9-cosmic-history",
+          "shape": "any",
+          "order_by": "movement_desc",
+          "min_items": 1,
+          "max_items": 1,
+          "max_outcomes": 3,
+          "initial_visible_limit": 1,
+          "hours": 168,
+          "min_swing_pp": 10,
+          "min_lifetime_volume": 1
+        }
+      },
+      {
+        "key": "cosmic_risks_slate",
+        "title": "Near-Earth Meteor Strike Risks",
+        "item_noun": "markets",
+        "note": "Binary Earth meteor-strike scenarios tracked from 2026 through 2030.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch9-cosmic-slate",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 4,
+          "max_outcomes": 1,
+          "initial_visible_limit": 4,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}

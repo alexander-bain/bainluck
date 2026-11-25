@@ -394,17 +394,29 @@ function FormsPileSortSession() {
           </div>
           {selectedCard && (
             <div className="mt-2 flex flex-wrap gap-1.5">
-              {piles.map((pile, idx) => (
-                <button
-                  key={`quick-${pile.pile_id}`}
-                  type="button"
-                  data-testid={`quick-place-${pile.pile_id}`}
-                  onClick={() => placeCardIntoPile(selectedCard.item_id, pile.pile_id)}
-                  className="rounded-lg border border-surface-border bg-surface-elevated px-2.5 py-1.5 text-xs font-semibold text-text-primary hover:border-accent-brand"
-                >
-                  Put in Pile {idx + 1} ({pile.item_ids.length})
-                </button>
-              ))}
+              {piles.map((pile, idx) => {
+                const firstCard = pile.item_ids[0] ? byId[pile.item_ids[0]] : null;
+                return (
+                  <button
+                    key={`quick-${pile.pile_id}`}
+                    type="button"
+                    data-testid={`quick-place-${pile.pile_id}`}
+                    onClick={() => placeCardIntoPile(selectedCard.item_id, pile.pile_id)}
+                    className="inline-flex items-center gap-2 rounded-lg border border-surface-border bg-surface-elevated px-2.5 py-1.5 text-xs font-semibold text-text-primary hover:border-accent-brand"
+                  >
+                    {firstCard && (
+                      <img
+                        src={firstCard.image_url}
+                        alt=""
+                        draggable={false}
+                        data-testid={`quick-place-thumb-${pile.pile_id}`}
+                        className="h-8 w-11 shrink-0 rounded border border-surface-border bg-surface-base object-cover object-top"
+                      />
+                    )}
+                    <span>Put in Pile {idx + 1} ({pile.item_ids.length})</span>
+                  </button>
+                );
+              })}
               <button
                 type="button"
                 data-testid="quick-place-new-pile"

@@ -1152,11 +1152,16 @@ actor APIClient {
         return try await fetch("/api/events/search/trending", cacheTTL: 300)
     }
 
+    /// Fetches live search suggestions (live/upcoming games and major championship subjects).
+    func fetchSearchSuggestions() async throws -> SearchSuggestionsResponse212A {
+        return try await fetch("/api/events/search-suggestions", cacheTTL: 120)
+    }
+
     // MARK: - Team Page
 
     /// Fetches the team page summary, events, and market context by team slug.
-    func fetchTeamPage(slug: String) async throws -> TeamPageResponse {
-        return try await fetch("/api/teams/\(slug)")
+    func fetchTeamPage(slug: String, requiresNetwork: Bool = false) async throws -> TeamPageResponse {
+        return try await fetch("/api/teams/\(slug)", requiresNetwork: requiresNetwork)
     }
 
     /// Fresh projections of already-painted cards. No editorial feed-cache read.

@@ -1,6 +1,7 @@
 """Admin endpoints for Celery worker health, inspection, and task metrics."""
 
 
+import asyncio
 import logging
 import time
 from datetime import datetime, timezone
@@ -470,13 +471,20 @@ async def get_task_metrics_endpoint(
 #: outage. 5s is chosen to be shorter than any plausible human refresh and longer
 #: than the tightest sane poll.
 _INSPECT_TTL_S = 5.0
-_INSPECT_CACHE: dict = {"at": 0.0, "data": None}
+_INSPECT_PER_CALL_TIMEOUT_S = 3.5
+_INSPECT_TOTAL_TIMEOUT_S = 5.0
+_INSPECT_CACHE: dict = {"at": 0.0, "data": None, "meta": {}}
 _INSPECT_LOCK = None
 
 
-async def _inspect_snapshot(timeout=5, fresh=False):
+async def _inspect_snapshot(
+    timeout: float | None = None,
+    fresh: bool = False,
+    *,
+    total_timeout: float | None = None,
+):
     """One celery `inspect` broadcast set, OFF the event loop, memoised and
-    single-flighted.
+    single-flighted, bounded to ``<= 5s`` total wall time.
 
     Three protections, and each one is load-bearing for a different failure:
 
@@ -492,6 +500,15 @@ async def _inspect_snapshot(timeout=5, fresh=False):
     * **memoised** — a poller faster than `_INSPECT_TTL_S` gets the cached
       snapshot. This is the protection that would actually have prevented the
       LAT-P071 outage, because the load there was cadence, not concurrency.
+    * **bounded parallel budget** — `control.inspect(timeout=timeout)` waits out
+      silent workers on every broadcast, so five sequential `timeout=5` calls
+      held web worker threads for ~25s per heavy-sync poll. Dispatching the
+      five broadcasts concurrently in the threadpool keeps at least a 3.5s reply
+      window for `active` while enforcing a hard 5.0s deadline across all five.
+    * **partial-reply disclosure** — if a worker answers another broadcast
+      (such as `ping`) within the window but misses `active`, `_cache` sets
+      `"partial": True` and lists `"missing_active_workers"` so callers do not
+      read an unanswered worker's missing tasks as idle.
 
     The cache state is DISCLOSED in the payload. A debug endpoint that silently
     serves a stale snapshot is worse than a slow one — it invites conclusions
@@ -511,7 +528,6 @@ async def _inspect_snapshot(timeout=5, fresh=False):
     memo READ, never the protections), and a raising call writes nothing to the
     cache — an error is not a snapshot.
     """
-    import asyncio
     import time as _time
 
     from starlette.concurrency import run_in_threadpool
@@ -523,31 +539,70 @@ async def _inspect_snapshot(timeout=5, fresh=False):
     now = _time.time()
     cached = _INSPECT_CACHE.get("data")
     if not fresh and cached is not None and (now - _INSPECT_CACHE["at"]) < _INSPECT_TTL_S:
-        return cached, {"cached": True, "age_s": round(now - _INSPECT_CACHE["at"], 2)}
+        return cached, {
+            "cached": True,
+            "age_s": round(now - _INSPECT_CACHE["at"], 2),
+            **(_INSPECT_CACHE.get("meta") or {}),
+        }
 
     async with _INSPECT_LOCK:
         # Re-check inside the lock: whoever we queued behind has just refreshed it.
         now = _time.time()
         cached = _INSPECT_CACHE.get("data")
         if not fresh and cached is not None and (now - _INSPECT_CACHE["at"]) < _INSPECT_TTL_S:
-            return cached, {"cached": True,
-                            "age_s": round(now - _INSPECT_CACHE["at"], 2)}
-
-        def _blocking():
-            from app.tasks import celery_app
-            i = celery_app.control.inspect(timeout=timeout)
-            return {
-                "ping": i.ping() or {},
-                "active": i.active() or {},
-                "reserved": i.reserved() or {},
-                "registered": i.registered() or {},
-                "stats": i.stats() or {},
+            return cached, {
+                "cached": True,
+                "age_s": round(now - _INSPECT_CACHE["at"], 2),
+                **(_INSPECT_CACHE.get("meta") or {}),
             }
 
-        data = await run_in_threadpool(_blocking)
+        budget = max(
+            0.05,
+            float(_INSPECT_TOTAL_TIMEOUT_S if total_timeout is None else total_timeout),
+        )
+        per_call = min(
+            float(_INSPECT_PER_CALL_TIMEOUT_S if timeout is None else timeout),
+            budget,
+        )
+
+        keys = ("active", "reserved", "registered", "ping", "stats")
+
+        def _call(key: str):
+            from app.tasks import celery_app
+
+            i = celery_app.control.inspect(timeout=per_call)
+            return getattr(i, key)() or {}
+
+        try:
+            values = await asyncio.wait_for(
+                asyncio.gather(*[run_in_threadpool(_call, key) for key in keys]),
+                timeout=budget,
+            )
+        except asyncio.TimeoutError as exc:
+            raise TimeoutError(f"celery inspect timed out after {budget:.1f}s") from exc
+
+        data = dict(zip(keys, values))
+
+        def _worker_keys(val):
+            return set(val.keys()) if isinstance(val, dict) else set()
+
+        observed = (
+            _worker_keys(data["ping"])
+            | _worker_keys(data["registered"])
+            | _worker_keys(data["reserved"])
+            | _worker_keys(data["stats"])
+        )
+        missing_active = sorted(observed - _worker_keys(data["active"]))
+        meta = (
+            {"partial": True, "missing_active_workers": missing_active}
+            if missing_active
+            else {}
+        )
+
         _INSPECT_CACHE["data"] = data
         _INSPECT_CACHE["at"] = _time.time()
-        return data, {"cached": False, "age_s": 0.0}
+        _INSPECT_CACHE["meta"] = meta
+        return data, {"cached": False, "age_s": 0.0, **meta}
 
 
 @router.get("/celery/inspect")
@@ -559,7 +614,13 @@ async def celery_inspect(
     """Inspect Celery worker: registered tasks, active tasks, reserved queue."""
     _check_admin_secret(secret, request=request)
 
-    snap, cache_state = await _inspect_snapshot(fresh=fresh)
+    try:
+        snap, cache_state = await _inspect_snapshot(fresh=fresh)
+    except (TimeoutError, asyncio.TimeoutError) as exc:
+        raise HTTPException(
+            status_code=504,
+            detail="Celery inspect timed out after 5s",
+        ) from exc
     registered = snap["registered"]
     active = snap["active"]
     reserved = snap["reserved"]
