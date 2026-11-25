@@ -45,8 +45,8 @@ function evaluate(expr, github, needs = {}, parentsPassed = true) {
 }
 function shape(action, labels = ['tier-b']) {
   return action === 'push'
-    ? {event_name: 'push', ref: 'refs/heads/master', run_id: 42, event: {pull_request: {labels: []}}}
-    : {event_name: 'pull_request', ref: 'refs/pull/777/merge', run_id: 42,
+    ? {event_name: 'push', ref: 'refs/heads/master', sha: 'abc1234', run_id: 42, event: {pull_request: {labels: []}}}
+    : {event_name: 'pull_request', ref: 'refs/pull/777/merge', sha: 'abc1234', run_id: 42,
        event: {action, pull_request: {number: 777, labels: labels.map(name => ({name}))}}};
 }
 function queued(github) {
@@ -115,4 +115,4 @@ def test_an_eval_candidate_pr_still_queues_nothing_on_its_next_commit():
 def test_master_pushes_keep_their_release_path_and_group():
     out = _run()
     assert "deploy" in out["push"]["selected"] or "deploy-after-full" in out["push"]["selected"]
-    assert out["push"]["slot"] == ["ci-push-refs/heads/master", False]
+    assert out["push"]["slot"] == ["ci-push-master-abc1234", False]

@@ -58,7 +58,13 @@ def _workflow() -> dict:
     return yaml.safe_load(CI.read_text())
 
 
-def _evaluate(expr, github: dict):
+def _evaluate(
+    expr,
+    github: dict,
+    *,
+    matrix: dict | None = None,
+    needs: dict | None = None,
+):
     """GitHub expression subset -> value. `&&`/`||` return operands, as Python's do."""
     if isinstance(expr, bool):
         return expr
@@ -66,13 +72,20 @@ def _evaluate(expr, github: dict):
     assert m, f"expected a ${{{{ }}}} expression or a bool, got {expr!r}"
     src = m.group(1).replace("&&", " and ").replace("||", " or ")
 
+    roots = {
+        "github": github,
+        "matrix": matrix or {},
+        "needs": needs or {},
+    }
+
     def ctx(match):
-        node = github
-        for part in match.group(0).split(".")[1:]:
+        parts = match.group(0).split(".")
+        node = roots.get(parts[0])
+        for part in parts[1:]:
             node = node.get(part) if isinstance(node, dict) else None
         return repr(node)
 
-    src = re.sub(r"\bgithub(?:\.[A-Za-z_]+)+", ctx, src)
+    src = re.sub(r"\b(?:github|matrix|needs)(?:\.[A-Za-z0-9_-]+)+", ctx, src)
     fmt = lambda s, *a: re.sub(
         r"\{(\d+)\}", lambda k: str(a[int(k.group(1))]), s
     )  # noqa: E731
@@ -88,6 +101,21 @@ def _slot(github: dict):
     ), "ci.yml has no workflow-level concurrency: every superseded PR sha runs to completion"
     return _evaluate(conc["group"], github), bool(
         _evaluate(conc["cancel-in-progress"], github)
+    )
+
+
+def _job_slot(
+    job_name: str,
+    github: dict,
+    *,
+    matrix: dict | None = None,
+    needs: dict | None = None,
+):
+    conc = _workflow()["jobs"][job_name].get("concurrency")
+    assert conc, f"{job_name} has no job-level concurrency"
+    return (
+        _evaluate(conc["group"], github, matrix=matrix, needs=needs),
+        bool(_evaluate(conc["cancel-in-progress"], github, matrix=matrix, needs=needs)),
     )
 
 
@@ -124,30 +152,73 @@ def test_two_different_prs_never_touch_each_other():
 
 
 def test_master_pushes_share_one_group_and_an_in_progress_run_is_never_cancelled():
-    """Decide 76 (Alex, Nov 6; restored per #13352 revert trigger): one group per pushed ref, cancel-in-progress OFF.
-
-    A group holds ONE pending run: a newer master push displaces an older run
-    still waiting for a runner, which is the point — the newest master head
-    contains every earlier merge, and `ci-deploy-base.sh` widens its range back to
-    the last deployed commit. An IN-PROGRESS master run is never cancelled.
-    (Under `ci-push-master-<run_id>` on Nov 22, concurrent master runs saturated
-    the ~20-runner pool and pushed release v6556 over 60 minutes.)
+    """Ruling 394 Change 3: workflow-level master push runs use one group per SHA so
+    merges 2-4 release immediately without queuing behind merge 1's full suite, while
+    integrator/compose-* keeps one non-cancellable group per ref.
+    Heavy beside-release full-suite jobs supersede older master runs at the job level.
     """
     a, b = _slot(_push("95bd398", 10)), _slot(_push("1074051", 11))
-    assert a[0] == b[0] == "ci-push-refs/heads/master", (a, b)
-    assert a[1] is False and b[1] is False, "a master run became cancellable in progress"
+    assert a[0] == "ci-push-master-95bd398" and b[0] == "ci-push-master-1074051", (a, b)
+    assert a[1] is False and b[1] is False, "a master workflow run became cancellable in progress"
+
+    compose = {
+        "event_name": "push",
+        "sha": "abc1234",
+        "run_id": 12,
+        "ref": "refs/heads/integrator/compose-1",
+        "event": {},
+    }
+    assert _slot(compose) == ("ci-push-refs/heads/integrator/compose-1", False)
 
 
 def test_a_rerun_of_a_master_run_rejoins_the_master_group__known_and_operational():
-    """The hazard 76 accepts, pinned: re-running an OLDER master run re-queues it
-    into the master group, where it displaces the newest pending master run. The
-    rule is operational and stated in ci.yml: re-run the NEWEST master run."""
+    """Ruling 394 Change 3: two runs on the same master SHA share one group without cancellation,
+    while heavy full-suite jobs supersede older master SHAs and leave PR & compose runs untouched.
+    """
     first, rerun, other = (
         _slot(_push("95bd398", 10)),
         _slot(_push("95bd398", 10)),
         _slot(_push("1074051", 11)),
     )
-    assert first == rerun and rerun[0] == other[0] and rerun[1] is False
+    assert first == rerun and rerun[0] != other[0] and rerun[1] is False
+
+    pr_ctx = _pr(6744, "d9359dc", 20)
+    master_ctx = _push("1074051", 21)
+    compose_ctx = {
+        "event_name": "push",
+        "sha": "abc1234",
+        "run_id": 22,
+        "ref": "refs/heads/integrator/compose-1",
+        "event": {},
+    }
+    full_needs = {"change-scope": {"outputs": {"scope": "full", "live": "false"}}}
+    fe_needs = {"change-scope": {"outputs": {"scope": "frontend", "live": "false"}}}
+
+    assert _job_slot("backend-tests", master_ctx, matrix={"shard": 3}, needs=full_needs) == (
+        "ci-master-full-backend-tests-3",
+        True,
+    )
+    assert _job_slot("backend-tests", master_ctx, matrix={"shard": 3}, needs=fe_needs) == (
+        "ci-run-21-backend-tests-3",
+        False,
+    )
+    assert _job_slot("backend-tests", pr_ctx, matrix={"shard": 3}, needs=full_needs) == (
+        "ci-run-20-backend-tests-3",
+        False,
+    )
+    assert _job_slot("backend-tests", compose_ctx, matrix={"shard": 3}, needs=full_needs) == (
+        "ci-run-22-backend-tests-3",
+        False,
+    )
+    assert _job_slot("database-integration", master_ctx, matrix={"group": "shared"}) == (
+        "ci-master-full-db-shared",
+        True,
+    )
+    assert _job_slot("frontend-build", master_ctx) == (
+        "ci-master-full-frontend-build",
+        True,
+    )
+    assert _job_slot("frontend-build", pr_ctx) == ("ci-run-20-frontend-build", False)
 
 
 def test_deploy_keeps_never_backwards_guard():
@@ -224,8 +295,18 @@ def test_triggers_jobs_and_release_serialization_are_untouched():
         "group": "heroku-deploy",
         "cancel-in-progress": False,
     }
+    allowed_concurrency_jobs = {
+        "deploy",
+        "deploy-after-full",
+        "backend-tests",
+        "shard-completeness",
+        "database-integration",
+        "flaky-canary",
+        "search-recall",
+        "frontend-build",
+    }
     assert not any(
-        "concurrency" in job for name, job in wf["jobs"].items() if name not in ("deploy", "deploy-after-full")
+        "concurrency" in job for name, job in wf["jobs"].items() if name not in allowed_concurrency_jobs
     )
 
 

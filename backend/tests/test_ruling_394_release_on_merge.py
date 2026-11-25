@@ -46,6 +46,7 @@ const jobs = input.wf.jobs;
 const scopeOutputs = input.scopeOutputs || { scope: 'full', live: 'false', reuse: 'false' };
 const releaseOutputs = input.releaseOutputs || { required: 'true', wait_full: 'false' };
 const failJobs = new Set(input.failJobs || []);
+const cancelJobs = new Set(input.cancelJobs || []);
 
 function evalExpr(expr, github, needs, parentsPassed) {
   let e = String(expr ?? 'true').replace(/^\$\{\{\s*|\s*\}\}$/g, '')
@@ -88,7 +89,7 @@ for (const [name, job] of Object.entries(jobs)) {
   const explicit = /\b(?:always|cancelled|success|failure)\(/.test(String(job.if ?? ''));
   const enabled = (explicit || parentsPassed) && evalExpr(job.if, github, needs, parentsPassed);
   if (enabled) {
-    states[name] = failJobs.has(name) ? 'failure' : 'success';
+    states[name] = cancelJobs.has(name) ? 'cancelled' : (failJobs.has(name) ? 'failure' : 'success');
     ran.push(name);
   } else {
     states[name] = 'skipped';
@@ -102,7 +103,7 @@ def _workflow() -> dict:
     return yaml.safe_load(CI_YML.read_text(encoding="utf-8"))
 
 
-def _simulate_master_push(*, scope="full", required="true", wait_full="false", fail_jobs=()):
+def _simulate_master_push(*, scope="full", required="true", wait_full="false", fail_jobs=(), cancel_jobs=()):
     res = subprocess.run(
         ["node", "-e", EVAL_CI_GRAPH_JS],
         input=json.dumps({
@@ -110,6 +111,7 @@ def _simulate_master_push(*, scope="full", required="true", wait_full="false", f
             "scopeOutputs": {"scope": scope, "live": "false", "reuse": "false"},
             "releaseOutputs": {"required": required, "wait_full": wait_full},
             "failJobs": list(fail_jobs),
+            "cancelJobs": list(cancel_jobs),
         }),
         capture_output=True,
         text=True,
@@ -314,3 +316,63 @@ def test_394d_master_red_alarm_holds_merges_and_names_run_and_release(monkeypatc
     assert "HOLD (no further merges until Fable posts a line)" in first_line
     assert "[run 777](https://github.com/o/r/actions/runs/777)" in first_line
     assert "No further merge happens until Fable posts a line" in msg
+
+
+def test_394_change1_fast_gate_boots_backend_before_release_on_merge():
+    fast_gate = _workflow()["jobs"]["fast-gate"]
+    boot_step = next(
+        s for s in fast_gate["steps"] if "Boot check for release" in s.get("name", "")
+    )
+    assert boot_step["working-directory"] == "backend"
+    assert "python -m compileall -q app" in boot_step["run"]
+    assert "python -m pytest tests/test_startup.py -q" in boot_step["run"]
+    cond = boot_step["if"]
+    assert "needs.change-scope.outputs.live != 'true'" in cond
+    assert "github.event_name == 'push'" in cond
+    assert "github.ref == 'refs/heads/master'" in cond
+    assert "needs.change-scope.outputs.scope != 'native'" in cond
+
+    setup_step = next(
+        s for s in fast_gate["steps"] if s.get("uses", "").startswith("actions/setup-python")
+    )
+    install_step = next(
+        s for s in fast_gate["steps"] if s.get("name") == "Install dependencies"
+    )
+    for step in (setup_step, install_step):
+        assert "github.ref == 'refs/heads/master'" in step["if"]
+        assert "needs.change-scope.outputs.scope != 'native'" in step["if"]
+
+
+def test_394_change3_concurrent_master_merges_unblocked_and_superseded_search_recall_skips():
+    wf = _workflow()
+    # Workflow-level master push concurrency is per-SHA so merges 2-4 never queue behind merge 1.
+    wf_group = wf["concurrency"]["group"]
+    assert "refs/heads/master" in wf_group and "github.sha" in wf_group
+    for job_name in ("deploy", "deploy-after-full"):
+        assert wf["jobs"][job_name]["concurrency"] == {
+            "group": "heroku-deploy",
+            "cancel-in-progress": False,
+        }
+    for full_job in (
+        "backend-tests",
+        "shard-completeness",
+        "database-integration",
+        "flaky-canary",
+        "search-recall",
+        "frontend-build",
+    ):
+        assert "concurrency" in wf["jobs"][full_job], full_job
+
+    # If a newer master merge supersedes an older run's shards/db, `search-recall` skips cleanly
+    # instead of failing and triggering a false `master-red-alarm`.
+    sim_cancelled_shards = _simulate_master_push(
+        scope="full", required="true", wait_full="false", cancel_jobs=("backend-tests",)
+    )
+    assert sim_cancelled_shards["states"]["search-recall"] == "skipped"
+    assert "search-recall" not in sim_cancelled_shards["ran"]
+
+    sim_cancelled_db = _simulate_master_push(
+        scope="full", required="true", wait_full="false", cancel_jobs=("database-integration",)
+    )
+    assert sim_cancelled_db["states"]["search-recall"] == "skipped"
+    assert "search-recall" not in sim_cancelled_db["ran"]

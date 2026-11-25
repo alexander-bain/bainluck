@@ -82,6 +82,15 @@ class EndpointResult:
 
 
 @dataclass(frozen=True)
+class HealthWaitResult:
+    """Outcome of polling /api/health for the newly deployed commit."""
+
+    commit: str | None
+    last_status: int | None
+    last_error: str | None = None
+
+
+@dataclass(frozen=True)
 class SmokeReport:
     """Full decision record for a dry-run or live smoke check."""
 
@@ -299,6 +308,61 @@ def default_post_github_alert(
         return bool(issue_url)
 
 
+def wait_for_health_commit_detailed(
+    *,
+    base_url: str,
+    expected_sha: str,
+    timeout_seconds: float,
+    health_wait_seconds: float,
+    poll_interval_seconds: float,
+    http_get: Callable[[str, float], tuple[int, str]] = default_http_get,
+    sleep_fn: Callable[[float], None] = time.sleep,
+    monotonic_fn: Callable[[], float] = time.monotonic,
+) -> HealthWaitResult:
+    """Poll /api/health until expected_sha appears or health_wait_seconds expires."""
+    url = f"{base_url.rstrip('/')}/api/health"
+    deadline = monotonic_fn() + max(0.0, health_wait_seconds)
+    last_commit: str | None = None
+    last_status: int | None = None
+    last_error: str | None = None
+    while True:
+        try:
+            status, body = http_get(url, min(timeout_seconds, 15.0))
+            last_status = int(status)
+            if status == 200:
+                payload = json.loads(body)
+                if isinstance(payload, dict):
+                    commit = payload.get("commit")
+                    if isinstance(commit, str) and commit.strip():
+                        last_commit = commit.strip()
+                        last_error = None
+                        if not expected_sha or _sha_matches(last_commit, expected_sha):
+                            return HealthWaitResult(commit=last_commit, last_status=200)
+                    else:
+                        last_commit = None
+                        last_error = "HTTP 200 missing commit in /api/health"
+                else:
+                    last_commit = None
+                    last_error = "HTTP 200 non-dict /api/health payload"
+            else:
+                last_commit = None
+                last_error = f"HTTP {status}"
+        except (OSError, ValueError, TimeoutError) as exc:
+            # Clear stale prior old-commit state if a later poll sees connection drop/non-JSON.
+            last_status = None
+            last_commit = None
+            last_error = f"{type(exc).__name__}: {exc}"
+        if monotonic_fn() >= deadline or poll_interval_seconds <= 0:
+            if last_commit is None and last_error is not None:
+                print(f"health poll finished without commit ({last_error})", file=sys.stderr)
+            return HealthWaitResult(
+                commit=last_commit,
+                last_status=last_status,
+                last_error=last_error,
+            )
+        sleep_fn(min(poll_interval_seconds, max(0.0, deadline - monotonic_fn())))
+
+
 def wait_for_health_commit(
     *,
     base_url: str,
@@ -311,29 +375,16 @@ def wait_for_health_commit(
     monotonic_fn: Callable[[], float] = time.monotonic,
 ) -> str | None:
     """Poll /api/health until expected_sha appears or health_wait_seconds expires."""
-    url = f"{base_url.rstrip('/')}/api/health"
-    deadline = monotonic_fn() + max(0.0, health_wait_seconds)
-    last_commit: str | None = None
-    last_error: str | None = None
-    while True:
-        try:
-            status, body = http_get(url, min(timeout_seconds, 15.0))
-            if status == 200:
-                payload = json.loads(body)
-                if isinstance(payload, dict):
-                    commit = payload.get("commit")
-                    if isinstance(commit, str) and commit.strip():
-                        last_commit = commit.strip()
-                        if not expected_sha or _sha_matches(last_commit, expected_sha):
-                            return last_commit
-        except (OSError, ValueError, TimeoutError) as exc:
-            # Dyno boot transiently drops or returns non-JSON while /api/health comes up; retry until deadline.
-            last_error = f"{type(exc).__name__}: {exc}"
-        if monotonic_fn() >= deadline or poll_interval_seconds <= 0:
-            if last_commit is None and last_error is not None:
-                print(f"health poll finished without commit ({last_error})", file=sys.stderr)
-            return last_commit
-        sleep_fn(min(poll_interval_seconds, max(0.0, deadline - monotonic_fn())))
+    return wait_for_health_commit_detailed(
+        base_url=base_url,
+        expected_sha=expected_sha,
+        timeout_seconds=timeout_seconds,
+        health_wait_seconds=health_wait_seconds,
+        poll_interval_seconds=poll_interval_seconds,
+        http_get=http_get,
+        sleep_fn=sleep_fn,
+        monotonic_fn=monotonic_fn,
+    ).commit
 
 
 def probe_endpoint_once(
@@ -564,9 +615,10 @@ def run_smoke_check(
         )
 
     health_commit: str | None = None
+    health_boot_results: tuple[EndpointResult, ...] | None = None
     commit_ctx = _commit_context(health_commit, expected_sha)
     if expected_sha and not skip_health_wait:
-        health_commit = wait_for_health_commit(
+        wait_res = wait_for_health_commit_detailed(
             base_url=base_url,
             expected_sha=expected_sha,
             timeout_seconds=timeout_seconds,
@@ -576,90 +628,120 @@ def run_smoke_check(
             sleep_fn=sleep_fn,
             monotonic_fn=monotonic_fn,
         )
+        health_commit = wait_res.commit
         commit_ctx = _commit_context(health_commit, expected_sha)
         if not _sha_matches(health_commit, expected_sha):
-            short_sha = _short_sha(expected_sha or (health_commit or ""))
-            summary = (
-                f"FAIL: /api/health did not serve expected commit within "
-                f"{int(health_wait_seconds)}s ({commit_ctx}; {mode_tag}; no rollback)."
-            )
-            posted = False
-            if not dry_run:
-                run_note = f" ([run]({run_url}))" if run_url else ""
-                posted = _emit_execute_alert(
-                    gh_post_fn=gh_post_fn,
-                    repo=repo,
-                    now_issue=now_issue,
-                    title=f"URGENT: release `{short_sha}` failed health commit check (no rollback)",
-                    body=f"{summary}\n{run_note}".strip(),
-                    now_line=(
-                        f"URGENT: release `{short_sha}` failed post-deploy `/api/health` commit check "
-                        f"({commit_ctx}; not auto-rolled back){run_note}; HOLD (no further merges until Fable posts a line)"
-                    ),
+            # Health answering 200 with the old commit means the release did not take:
+            # alert without rolling back. If health stops answering or returns 5xx past the
+            # wait, fall through into the Ruling 311: A automatic rollback guards.
+            if wait_res.last_status == 200 and health_commit:
+                short_sha = _short_sha(expected_sha or (health_commit or ""))
+                summary = (
+                    f"FAIL: /api/health did not serve expected commit within "
+                    f"{int(health_wait_seconds)}s ({commit_ctx}; {mode_tag}; no rollback)."
                 )
+                posted = False
+                if not dry_run:
+                    run_note = f" ([run]({run_url}))" if run_url else ""
+                    posted = _emit_execute_alert(
+                        gh_post_fn=gh_post_fn,
+                        repo=repo,
+                        now_issue=now_issue,
+                        title=f"URGENT: release `{short_sha}` failed health commit check (no rollback)",
+                        body=f"{summary}\n{run_note}".strip(),
+                        now_line=(
+                            f"URGENT: release `{short_sha}` failed post-deploy `/api/health` commit check "
+                            f"({commit_ctx}; not auto-rolled back){run_note}; HOLD (no further merges until Fable posts a line)"
+                        ),
+                    )
+                return SmokeReport(
+                    verdict="failed",
+                    endpoints=(),
+                    changed_migrations=changed_migrations,
+                    prior_release_state=resolved_prior_state,
+                    expected_sha=expected_sha,
+                    prev_sha=prev_sha,
+                    health_commit=health_commit,
+                    summary=summary,
+                    alert_posted=posted,
+                )
+
+            err_kind = "http_error" if wait_res.last_status is not None else "network_error"
+            detail = wait_res.last_error or (
+                f"HTTP {wait_res.last_status}" if wait_res.last_status is not None else "no response"
+            )
+            health_boot_results = (
+                EndpointResult(
+                    spec=EndpointSpec(label="Health", path="/api/health", list_key="commit"),
+                    outcome="failed",
+                    attempts=(
+                        ProbeAttempt(
+                            attempt=1,
+                            status=wait_res.last_status,
+                            kind=err_kind,
+                            detail=detail,
+                        ),
+                    ),
+                ),
+            )
+
+    if health_boot_results is not None:
+        results = health_boot_results
+        failed = results
+        empties = ()
+        detail_block = "\n".join(_failing_summary_lines(results))
+    else:
+        if initial_delay_seconds > 0:
+            sleep_fn(initial_delay_seconds)
+
+        results = tuple(
+            probe_endpoint_with_retries(
+                base_url,
+                spec,
+                retries=retries,
+                retry_delay_seconds=retry_delay_seconds,
+                timeout_seconds=timeout_seconds,
+                http_get=http_get,
+                sleep_fn=sleep_fn,
+            )
+            for spec in endpoints
+        )
+
+        failed = tuple(r for r in results if r.outcome == "failed")
+        empties = tuple(r for r in results if r.outcome == "empty_list")
+        detail_block = "\n".join(_failing_summary_lines(results))
+
+        if not failed and not empties:
             return SmokeReport(
-                verdict="failed",
-                endpoints=(),
+                verdict="passed",
+                endpoints=results,
                 changed_migrations=changed_migrations,
                 prior_release_state=resolved_prior_state,
                 expected_sha=expected_sha,
                 prev_sha=prev_sha,
                 health_commit=health_commit,
-                summary=summary,
-                alert_posted=posted,
+                summary=(
+                    f"PASS: post-deploy public read checks succeeded ({commit_ctx}; {mode_tag}; no rollback needed).\n"
+                    f"{detail_block}"
+                ),
             )
 
-    if initial_delay_seconds > 0:
-        sleep_fn(initial_delay_seconds)
-
-    results = tuple(
-        probe_endpoint_with_retries(
-            base_url,
-            spec,
-            retries=retries,
-            retry_delay_seconds=retry_delay_seconds,
-            timeout_seconds=timeout_seconds,
-            http_get=http_get,
-            sleep_fn=sleep_fn,
-        )
-        for spec in endpoints
-    )
-
-    failed = tuple(r for r in results if r.outcome == "failed")
-    empties = tuple(r for r in results if r.outcome == "empty_list")
-    detail_block = "\n".join(_failing_summary_lines(results))
-
-    if not failed and not empties:
-        return SmokeReport(
-            verdict="passed",
-            endpoints=results,
-            changed_migrations=changed_migrations,
-            prior_release_state=resolved_prior_state,
-            expected_sha=expected_sha,
-            prev_sha=prev_sha,
-            health_commit=health_commit,
-            summary=(
-                f"PASS: post-deploy public read checks succeeded ({commit_ctx}; {mode_tag}; no rollback needed).\n"
-                f"{detail_block}"
-            ),
-        )
-
-    if not failed and empties:
-        dry_suffix = " (dry-run)" if dry_run else ""
-        return SmokeReport(
-            verdict="empty_list_report",
-            endpoints=results,
-            changed_migrations=changed_migrations,
-            prior_release_state=resolved_prior_state,
-            expected_sha=expected_sha,
-            prev_sha=prev_sha,
-            health_commit=health_commit,
-            summary=(
-                f"REPORT ONLY: endpoint answered HTTP 200 with an empty list ({commit_ctx}); "
-                f"errors and empty lists are different things — no rollback{dry_suffix}.\n"
-                f"{detail_block}"
-            ),
-        )
+        if not failed and empties:
+            dry_suffix = " (dry-run)" if dry_run else ""
+            return SmokeReport(
+                verdict="empty_list_report",
+                endpoints=results,
+                changed_migrations=changed_migrations,
+                prior_release_state=resolved_prior_state,
+                expected_sha=expected_sha,
+                prev_sha=prev_sha,
+                health_commit=health_commit,
+                summary=(
+                    f"REPORT ONLY: endpoint answered HTTP 200 with an empty list ({commit_ctx}); "
+                    f"errors and empty lists are different things — no rollback{dry_suffix}.\n"
+                    f"{detail_block}"
+                ),
+            )
 
     short_sha = _short_sha(expected_sha or (health_commit or ""))
     planned_issue_title = f"URGENT: release `{short_sha}` rolled back"

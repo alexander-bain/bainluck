@@ -23,19 +23,17 @@ on:
   push:
     branches: [master, 'integrator/compose-**']
 
-# Decide 76 (Alex, Nov 6; restored per #13352 revert trigger after v6556 hit >60m):
-# a push shares ONE group per ref, so a newer master push displaces an older run
-# still waiting for a runner (a group holds one pending run). The newest master
-# head contains every earlier merge, and `ci-deploy-base.sh` widens its range back
-# to the last deployed commit, so nothing a superseded run would have tested goes
-# untested. An IN-PROGRESS push run is never cancelled (`cancel-in-progress` is
-# false for pushes). Re-run the NEWEST master run, never an older one: an old run
-# re-queued into the group displaces the newest pending run. 16 backend shards and
-# the `shared-middle-2` split remain enabled; `deploy` stays serialized under
-# `heroku-deploy` with the never-backwards guard. Guarded by
-# backend/tests/test_ci_supersede_concurrency.py.
+# Ruling 394 Change 3 + Decide 76:
+# - PRs share one cancellable group per PR (`ci-pr-<number>`).
+# - Compose pushes share one serial non-cancelling group per ref.
+# - Master pushes use per-commit workflow groups (`ci-push-master-<sha>`) so
+#   rapid batch merges do NOT queue their fast `deploy` behind a prior run's
+#   22-minute full suite (`heroku-deploy` serializes the actual Heroku push, and
+#   beside-release full-suite jobs supersede in-flight mid-batch runs via their
+#   own `ci-master-full-*` job concurrency groups so the full suite runs once,
+#   never four times).
 concurrency:
-  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || format('ci-push-{0}', github.ref) }}
+  group: ${{ github.event_name == 'pull_request' && format('ci-pr-{0}', github.event.pull_request.number) || (github.ref == 'refs/heads/master' && format('ci-push-master-{0}', github.sha) || format('ci-push-{0}', github.ref)) }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
@@ -244,7 +242,7 @@ jobs:
     env:
       # #12252 item 2: open `Flaky:` issues; their failures warn, not fail (conftest).
       CI_QUARANTINE: ${{ needs.change-scope.outputs.quarantine }}
-    timeout-minutes: 2
+    timeout-minutes: 5
     steps:
       - name: Require this run's change-scope attempt
         if: needs.change-scope.outputs.live == 'true'
@@ -259,7 +257,7 @@ jobs:
           fi
 
       - name: Ordinary candidate uses the full CI gates
-        if: needs.change-scope.outputs.live != 'true'
+        if: needs.change-scope.outputs.live != 'true' && !(github.event_name == 'push' && github.ref == 'refs/heads/master' && needs.change-scope.outputs.scope != 'native')
         run: echo "Full CI validates this candidate; no live-path gate is selected."
 
       - uses: actions/checkout@v6
@@ -268,7 +266,7 @@ jobs:
       - name: Post-deploy smoke rollback stand-in 500 dry-run (#13283)
         run: python3 .github/scripts/post_deploy_smoke_rollback.py --self-test-500
       - uses: actions/setup-python@v7
-        if: needs.change-scope.outputs.live == 'true'
+        if: needs.change-scope.outputs.live == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/master' && needs.change-scope.outputs.scope != 'native')
         with:
           python-version: "3.11"
           cache: pip
@@ -283,8 +281,14 @@ jobs:
         run: python3 tools/release/verify_fast.py
 
       - name: Install dependencies
-        if: needs.change-scope.outputs.live == 'true'
+        if: needs.change-scope.outputs.live == 'true' || (github.event_name == 'push' && github.ref == 'refs/heads/master' && needs.change-scope.outputs.scope != 'native')
         run: pip install -r backend/requirements.txt
+      - name: Boot check for release (compile backend and run startup test, Ruling 394 Change 1)
+        if: needs.change-scope.outputs.live != 'true' && github.event_name == 'push' && github.ref == 'refs/heads/master' && needs.change-scope.outputs.scope != 'native'
+        run: |
+          python -m compileall -q app
+          python -m pytest tests/test_startup.py -q
+        working-directory: backend
       - name: Python 3.11 syntax, smoke test and change-scope selected tests
         if: needs.change-scope.outputs.live == 'true'
         env:
@@ -314,6 +318,9 @@ jobs:
     needs: [change-scope, fast-gate, native-backend-readers]
     if: ${{ !cancelled() && needs.fast-gate.result == 'success' }}
     runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' && format('ci-master-full-backend-tests-{0}', matrix.shard) || format('ci-run-{0}-backend-tests-{1}', github.run_id, matrix.shard) }}
+      cancel-in-progress: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' }}
     env:
       # #12252 item 2: open `Flaky:` issues; their failures warn, not fail (conftest).
       CI_QUARANTINE: ${{ needs.change-scope.outputs.quarantine }}
@@ -512,6 +519,9 @@ jobs:
     needs: change-scope
     if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true'
     runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && 'ci-master-full-shard-completeness' || format('ci-run-{0}-shard-completeness', github.run_id) }}
+      cancel-in-progress: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
     defaults:
       run:
         working-directory: backend
@@ -615,6 +625,9 @@ jobs:
     needs: change-scope
     if: needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true'
     runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && format('ci-master-full-db-{0}', matrix.group) || format('ci-run-{0}-db-{1}', github.run_id, matrix.group) }}
+      cancel-in-progress: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
     defaults:
       run:
         working-directory: backend
@@ -5076,6 +5089,9 @@ jobs:
     if: ${{ !cancelled() && needs.change-scope.result == 'success' && needs.change-scope.outputs.quarantine != '[]' && needs.change-scope.outputs.quarantine != '' && needs.change-scope.outputs.reuse != 'true' && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.live != 'true' }}
     continue-on-error: true
     runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && 'ci-master-full-flaky-canary' || format('ci-run-{0}-flaky-canary', github.run_id) }}
+      cancel-in-progress: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
     timeout-minutes: 20
     defaults:
       run:
@@ -5120,8 +5136,11 @@ jobs:
         run: bash ../.github/scripts/flaky-canary.sh
   search-recall:
     needs: [change-scope, database-integration, backend-tests]
-    if: ${{ !cancelled() && !contains(github.event.pull_request.labels.*.name, 'eval-candidate') && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' }}
+    if: ${{ !cancelled() && !contains(github.event.pull_request.labels.*.name, 'eval-candidate') && needs.change-scope.outputs.scope != 'frontend' && needs.change-scope.outputs.scope != 'native' && needs.change-scope.outputs.live != 'true' && !(github.event_name == 'push' && github.ref == 'refs/heads/master' && (needs.backend-tests.result == 'cancelled' || needs.database-integration.result == 'cancelled')) }}
     runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && 'ci-master-full-search-recall' || format('ci-run-{0}-search-recall', github.run_id) }}
+      cancel-in-progress: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
     steps:
       - name: Every database integration group passed
         env:
@@ -5149,6 +5168,9 @@ jobs:
     # #10708: a pure-ios/ candidate cannot reach the frontend build.
     if: needs.change-scope.outputs.live != 'true' && needs.change-scope.outputs.scope != 'native'
     runs-on: ubuntu-latest
+    concurrency:
+      group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' && 'ci-master-full-frontend-build' || format('ci-run-{0}-frontend-build', github.run_id) }}
+      cancel-in-progress: ${{ github.event_name == 'push' && github.ref == 'refs/heads/master' }}
     defaults:
       run:
         working-directory: frontend

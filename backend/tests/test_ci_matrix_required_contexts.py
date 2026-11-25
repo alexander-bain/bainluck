@@ -46,7 +46,9 @@ LIVE = "needs.change-scope.outputs.live != 'true'"
 SEARCH_RECALL = (
     "${{ !cancelled() && "
     "!contains(github.event.pull_request.labels.*.name, 'eval-candidate') && "
-    f"{SCOPE_RUNS} && {LIVE} }}}}"
+    f"{SCOPE_RUNS} && {LIVE} && "
+    "!(github.event_name == 'push' && github.ref == 'refs/heads/master' && "
+    "(needs.backend-tests.result == 'cancelled' || needs.database-integration.result == 'cancelled')) }}"
 )
 RUNS = f"{SCOPE_RUNS} && {REUSE} && {LIVE}"
 REUSED = "needs.change-scope.outputs.reuse == 'true'"
