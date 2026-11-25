@@ -15,14 +15,16 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import text, update
 from sqlalchemy.dialects import postgresql
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-from app.models.models import FuturesMarket, FuturesOutcome, OpenFuturesOutcome, Sport, Team
+from app.models.models import Event, FuturesMarket, FuturesOutcome, OpenFuturesOutcome, Sport, Team
+from app.routes.teams import get_team
 from app.routes.user import _query_team_futures
 from app.services.database import Base
 from app.utils import open_futures_outcomes as ofo_mod
+from app.utils import team_page_cache
 
 DB_URL = os.environ.get("SEARCH_TEST_DATABASE_URL")
 
@@ -142,3 +144,134 @@ async def test_q1_pg_preserves_semantics_and_handles_tail_and_entertainment_fk(q
         ):
             res_mtl = await _query_team_futures([568, 3706], db, limit=30)
         assert [it["market_id"] for it in res_mtl["items"]] == [6]
+
+
+async def test_get_team_pg_cache_miss_hit_and_expiry(q1_pg_session, monkeypatch):
+    """Real PG exercise of `get_team` cache miss -> warm hit -> debug bypass -> 60s/15s expiry."""
+    now = datetime.now(timezone.utc)
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    team_page_cache.clear_team_page_l1_cache()
+    clock = [1000.0]
+    monkeypatch.setattr(team_page_cache.time, "monotonic", lambda: clock[0])
+
+    async with q1_pg_session() as db:
+        s_nba = Sport(id=1, key="basketball_nba", name="NBA", group="Basketball", active=True)
+        t_lak = Team(
+            id=49,
+            sport_id=1,
+            name="Los Angeles Lakers",
+            slug="los-angeles-lakers",
+            abbreviation="LAL",
+            espn_id="13",
+        )
+        m_champ = FuturesMarket(
+            id=1,
+            source="kalshi",
+            external_id="k1",
+            sport_id=1,
+            name="2027 Pro Basketball Champion",
+            llm_sport_category="basketball",
+            market_tier=1,
+            status="open",
+            resolution_date=now + timedelta(days=90),
+            volume_24h=15000.0,
+            updated_at=now,
+        )
+        o_lak = FuturesOutcome(
+            id=10,
+            market_id=1,
+            external_id="o10",
+            name="Los Angeles Lakers",
+            team_id=49,
+            current_probability=0.40,
+            current_yes_bid=0.39,
+            current_yes_ask=0.41,
+            volume_24h=100,
+            volume_24h_at=now,
+            last_updated=now,
+        )
+        db.add_all([s_nba, t_lak, m_champ, o_lak])
+        await db.commit()
+
+        sql_count = 0
+        orig_exec = db.execute
+
+        async def spy_exec(stmt, *a, **kw):
+            nonlocal sql_count
+            sql_count += 1
+            return await orig_exec(stmt, *a, **kw)
+
+        db.execute = spy_exec  # type: ignore[method-assign]
+
+        try:
+            # 1) Cold miss (t = 1000s, default 60s TTL)
+            resp1 = await get_team("los-angeles-lakers", debug_timing=False, db=db)
+            assert sql_count > 0
+            assert resp1["team"]["slug"] == "los-angeles-lakers"
+            assert len(resp1["championship_path"]) == 1
+            assert resp1["championship_path"][0]["probability"] == pytest.approx(0.40, abs=0.01)
+
+            # 2) Warm hit inside 60s TTL (t = 1030s -> 0 SQLs)
+            clock[0] = 1030.0
+            sql_count = 0
+            resp2 = await get_team("los-angeles-lakers", debug_timing=False, db=db)
+            assert sql_count == 0
+            assert resp2 == resp1
+
+            # 3) debug_timing=True bypasses cache even while entry is hot
+            clock[0] = 1031.0
+            sql_count = 0
+            resp_dbg = await get_team("los-angeles-lakers", debug_timing=True, db=db)
+            assert sql_count > 0
+            assert "_timings_ms" in resp_dbg
+
+            # 4) Expiry after 60s TTL (t = 1061s -> rebuilds and sees updated Postgres row)
+            await orig_exec(
+                update(FuturesOutcome)
+                .where(FuturesOutcome.id == 10)
+                .values(current_probability=0.55, current_yes_bid=0.54, current_yes_ask=0.56)
+            )
+            await db.commit()
+
+            clock[0] = 1061.0
+            sql_count = 0
+            resp3 = await get_team("los-angeles-lakers", debug_timing=False, db=db)
+            assert sql_count > 0
+            assert resp3["championship_path"][0]["probability"] == pytest.approx(0.55, abs=0.01)
+
+            # 5) Live game narrows TTL to 15s (hit at +10s -> 0 SQLs, expired at +16s -> rebuilds)
+            team_page_cache.clear_team_page_l1_cache()
+            db.add(
+                Event(
+                    id=5001,
+                    sport_id=1,
+                    external_id="ev-live-5001",
+                    home_team_id=49,
+                    away_team_id=None,
+                    home_team_name="Los Angeles Lakers",
+                    away_team_name="Boston Celtics",
+                    commence_time=now - timedelta(minutes=20),
+                    status="live",
+                )
+            )
+            await db.commit()
+
+            clock[0] = 2000.0
+            sql_count = 0
+            resp_live1 = await get_team("los-angeles-lakers", debug_timing=False, db=db)
+            assert sql_count > 0
+            assert any(ev.get("status") == "live" for ev in resp_live1["upcoming_events"])
+
+            clock[0] = 2010.0
+            sql_count = 0
+            resp_live2 = await get_team("los-angeles-lakers", debug_timing=False, db=db)
+            assert sql_count == 0
+            assert resp_live2 == resp_live1
+
+            clock[0] = 2016.0
+            sql_count = 0
+            resp_live3 = await get_team("los-angeles-lakers", debug_timing=False, db=db)
+            assert sql_count > 0
+            assert resp_live3["championship_path"][0]["probability"] == pytest.approx(0.55, abs=0.01)
+        finally:
+            team_page_cache.clear_team_page_l1_cache()
