@@ -40,6 +40,8 @@ final class MyStuffViewModel: ObservableObject {
     @Published private(set) var teamFuturesLoading = false
     @Published private(set) var loading = true
     @Published private(set) var error: String?
+    /// True when the most recent refresh failed after cards were already on screen (#13634).
+    @Published private(set) var lastRefreshFailed = false
 
     /// Immutable snapshot of the required-feed generation that FIRST became
     /// renderable this load (L2-217 Item 2 / C88). Stamped once at data-ready and
@@ -191,7 +193,12 @@ final class MyStuffViewModel: ObservableObject {
     /// True while a live-game auto-refresh timer is armed. Observable so a test can
     /// prove refresh is armed right after the required publish, even while the
     /// optional futures request is still hung.
-    private(set) var refreshArmed = false
+    @Published private(set) var refreshArmed = false
+
+    /// True only while live auto-refresh is actively running and healthy (#13634).
+    var liveOddsRefreshRunning: Bool {
+        refreshArmed && error == nil && !lastRefreshFailed
+    }
 
     // MARK: - Owned load rail
 
@@ -254,6 +261,7 @@ final class MyStuffViewModel: ObservableObject {
         teamFuturesFailed = false
         teamFuturesLoading = false
         error = nil
+        lastRefreshFailed = false
         firstRenderGeneration = nil
         loading = true
     }
@@ -313,6 +321,7 @@ final class MyStuffViewModel: ObservableObject {
 
                 items = feed.items
                 error = nil
+                lastRefreshFailed = false
                 // The first card is on screen the moment the REQUIRED data lands —
                 // it is never held behind the optional futures request below.
                 loading = false
@@ -363,6 +372,7 @@ final class MyStuffViewModel: ObservableObject {
                     continue
                 }
                 loading = false
+                lastRefreshFailed = true
                 // Cold load with nothing on screen → the honest error state. A
                 // refresh failure keeps existing cards rather than blanking them.
                 if isInitial { self.error = error.localizedDescription }

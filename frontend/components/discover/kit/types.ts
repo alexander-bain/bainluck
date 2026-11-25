@@ -57,6 +57,7 @@ export interface KitV1WordMark {
   mark: "word";
   text: string;
   secondary_text?: string;
+  deadline_iso?: string;
   style?: "row" | "sub" | "kicker" | "pill" | "meta" | "rank" | "hero_label";
   tone?: "primary" | "secondary" | "muted" | "accent";
   align?: "left" | "center" | "right";
@@ -69,6 +70,7 @@ export interface KitV1NumberMark {
   value: number;
   display: string;
   unit?: "%" | "days" | "one_in_n";
+  deadline_iso?: string;
   tone?: "primary" | "secondary" | "muted" | "accent";
   prominence?: "hero" | "primary" | "cell" | "secondary";
   align?: "left" | "center" | "right";

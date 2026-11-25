@@ -35,6 +35,7 @@ struct EventCardView: View {
     /// `FinishedCardAccessibility11325`.
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.liveOddsRefreshActive) private var liveOddsRefreshActive
 
     /// Unified onto `HeadlineStyleTable199` (`.card`) so team names, scores, and chances
     /// share one size and weight family across every surface.
@@ -471,7 +472,8 @@ struct EventCardView: View {
         canStillBeGraded: Bool,
         currentAwayIsWithheld: Bool,
         prematch: PrematchReading?,
-        prematchAwayIsWithheld: Bool
+        prematchAwayIsWithheld: Bool,
+        showsLiveTenths: Bool = false
     ) -> CardSourceMarkPresentation? {
         var event = rawEvent
         event.currentOdds = CompactGameCard12616.currentOddsForCard(rawEvent)
@@ -508,7 +510,7 @@ struct EventCardView: View {
                 return hasAwayCandidate
             }()
 
-            if event.status == "live" {
+            if event.status == "live" && showsLiveTenths {
                 let liveTenths = CompactGameCard12616.liveTenthsStrings(
                     away: event.currentOdds?.awayProbability,
                     home: event.currentOdds?.homeProbability,
@@ -573,7 +575,8 @@ struct EventCardView: View {
             canStillBeGraded: canStillBeGraded,
             currentAwayIsWithheld: currentAwayIsWithheld,
             prematch: prematch,
-            prematchAwayIsWithheld: prematchAwayIsWithheld
+            prematchAwayIsWithheld: prematchAwayIsWithheld,
+            showsLiveTenths: liveOddsRefreshActive
         ),
         let button = SourceMarkButton(
             resolved.mark,
@@ -740,7 +743,8 @@ struct EventCardView: View {
                 isScheduled: isScheduled,
                 isLive: isLive,
                 isFinished: isFinished,
-                isSuspended: isSuspended
+                isSuspended: isSuspended,
+                showsLiveTenths: liveOddsRefreshActive
             )
 
         return VStack(spacing: 6) {
@@ -1844,7 +1848,7 @@ struct EventCardView: View {
         let color = side == .home ? homeColor : awayColor
 
         if let prob {
-            if isLive, let tenths = (side == .home ? liveTenthsPair12616.home : liveTenthsPair12616.away) {
+            if isLive && liveOddsRefreshActive, let tenths = (side == .home ? liveTenthsPair12616.home : liveTenthsPair12616.away) {
                 Text(tenths)
                     .font(HeadlineStyleTable199.now(.card, scaledSize: min(compactLargeSize, 24)))
                     .foregroundStyle(color)

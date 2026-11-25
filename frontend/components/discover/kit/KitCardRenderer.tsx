@@ -33,6 +33,44 @@ import {
 
 const MARK_SET = new Set<string>(ALLOWED_KIT_V1_MARKS);
 const LAYOUT_SET = new Set<string>(ALLOWED_KIT_V1_LAYOUTS);
+const BAR_STYLE_SET = new Set<string>(["single", "split", "range"]);
+const ROW_LAYOUT_SET = new Set<string>(["matrix", "stacked_cells"]);
+const SCALE_KIND_SET = new Set<string>(["percent", "numeric", "time"]);
+const NUMBER_UNIT_SET = new Set<string>(["%", "days", "one_in_n"]);
+
+export const COSMETIC_KIT_V1_FIELDS: readonly string[] = [
+  "variant",
+  "word.style",
+  "word.tone",
+  "word.align",
+  "word.width",
+  "picture.size",
+  "picture.contain",
+  "picture.subject_kind",
+  "number.tone",
+  "number.prominence",
+  "number.align",
+  "number.width",
+  "bar.width",
+  "tile.highlight_role",
+  "ring.tone",
+  "body.header_layout",
+];
+
+export const MEANING_CARRYING_KIT_V1_FIELDS: readonly string[] = [
+  "kit_version",
+  "layout",
+  "mark",
+  "bar.bar_style",
+  "scale.scale_kind",
+  "body.row_layout",
+  "number.unit",
+  "adaptive_color",
+  "picture.url",
+  "body",
+  "refusal_reason",
+  "fallback_today",
+];
 const MARKS_ARRAY_KEYS = new Set([
   "marks",
   "header_marks",
@@ -83,7 +121,15 @@ function validateMarksRecursive(node: unknown, insideMarksArray: boolean): boole
         return false;
       }
     }
+    if (obj.mark === "number") {
+      if (obj.unit !== undefined && obj.unit !== null && (typeof obj.unit !== "string" || !NUMBER_UNIT_SET.has(obj.unit))) {
+        return false;
+      }
+    }
     if (obj.mark === "bar") {
+      if (typeof obj.bar_style !== "string" || !BAR_STYLE_SET.has(obj.bar_style)) {
+        return false;
+      }
       if (obj.fill_color !== undefined && obj.fill_color !== null && !isAdaptiveColor(obj.fill_color)) {
         return false;
       }
@@ -119,6 +165,8 @@ function hasRenderableContent(layout: KitV1Layout, body: Record<string, unknown>
   }
   if (layout === "grid") {
     return (
+      typeof body.row_layout === "string" &&
+      ROW_LAYOUT_SET.has(body.row_layout) &&
       Array.isArray(body.columns) &&
       body.columns.length > 0 &&
       Array.isArray(body.rows) &&
@@ -132,6 +180,8 @@ function hasRenderableContent(layout: KitV1Layout, body: Record<string, unknown>
     const scale = body.scale as Record<string, unknown> | undefined;
     const hasScale =
       Boolean(scale) &&
+      typeof scale?.scale_kind === "string" &&
+      SCALE_KIND_SET.has(scale.scale_kind) &&
       typeof scale?.min === "number" &&
       typeof scale?.max === "number" &&
       scale.min < scale.max &&
@@ -204,10 +254,35 @@ function alignClass(align?: string): string {
 }
 
 function wordWidthClass(width?: string): string {
-  if (width === "flex") return "min-w-0 flex-1";
+  if (width === "flex") return "min-w-0 flex-1 break-words";
   if (width === "xs") return "w-8 shrink-0";
   if (width === "sm") return "w-16 shrink-0";
   return "shrink-0";
+}
+
+export function computeCountdownDaysLeft(
+  deadlineIso: string,
+  now: Date = new Date(),
+): number | null {
+  const target = new Date(deadlineIso);
+  if (Number.isNaN(target.getTime())) return null;
+  const toPtMidnightUtcMs = (d: Date): number | null => {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/Los_Angeles",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(d);
+    const y = Number(parts.find((p) => p.type === "year")?.value);
+    const m = Number(parts.find((p) => p.type === "month")?.value);
+    const day = Number(parts.find((p) => p.type === "day")?.value);
+    if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(day)) return null;
+    return Date.UTC(y, m - 1, day);
+  };
+  const targetDayMs = toPtMidnightUtcMs(target);
+  const nowDayMs = toPtMidnightUtcMs(now);
+  if (targetDayMs === null || nowDayMs === null) return null;
+  return Math.round((targetDayMs - nowDayMs) / 86_400_000);
 }
 
 function WordMarkView({ mark }: { mark: KitV1WordMark }) {
@@ -219,9 +294,18 @@ function WordMarkView({ mark }: { mark: KitV1WordMark }) {
     );
   }
   if (mark.style === "hero_label") {
+    const liveDays = mark.deadline_iso ? computeCountdownDaysLeft(mark.deadline_iso) : null;
+    const heroText =
+      liveDays === null
+        ? mark.text
+        : liveDays <= 0
+        ? "ends today"
+        : liveDays === 1
+        ? "day left"
+        : "days left";
     return (
       <div className="min-w-0 flex-1">
-        <div className="text-xs font-bold text-text-primary">{mark.text}</div>
+        <div className="text-xs font-bold text-text-primary">{heroText}</div>
         {mark.secondary_text && (
           <div className="text-[11px] text-text-muted">{mark.secondary_text}</div>
         )}
@@ -266,14 +350,18 @@ function WordMarkView({ mark }: { mark: KitV1WordMark }) {
   }
   if (mark.style === "rank") {
     return (
-      <span className="text-[11px] font-bold tabular-nums text-text-muted">
+      <span
+        className={`text-[11px] font-bold tabular-nums text-text-muted ${
+          mark.width === "xs" ? "inline-block w-6 shrink-0" : ""
+        }`}
+      >
         {mark.text}
       </span>
     );
   }
   return (
     <span
-      className={`text-xs leading-snug ${mark.bold ? "font-semibold" : ""} ${toneClass(
+      className={`text-xs leading-tight ${mark.bold ? "font-semibold" : ""} ${toneClass(
         mark.tone,
       )} ${alignClass(mark.align)} ${wordWidthClass(mark.width)}`}
     >
@@ -283,10 +371,16 @@ function WordMarkView({ mark }: { mark: KitV1WordMark }) {
 }
 
 function NumberMarkView({ mark }: { mark: KitV1NumberMark }) {
+  const liveDays =
+    mark.unit === "days" && mark.deadline_iso
+      ? computeCountdownDaysLeft(mark.deadline_iso)
+      : null;
+  const shownDisplay =
+    liveDays === null ? mark.display : liveDays <= 0 ? "Today" : String(liveDays);
   if (mark.prominence === "hero") {
     return (
       <span className={`text-2xl font-extrabold tabular-nums ${toneClass(mark.tone)}`}>
-        {mark.display}
+        {shownDisplay}
       </span>
     );
   }
@@ -308,7 +402,7 @@ function NumberMarkView({ mark }: { mark: KitV1NumberMark }) {
         mark.align,
       )} ${widthCls}`}
     >
-      {mark.display}
+      {shownDisplay}
     </span>
   );
 }
@@ -367,19 +461,22 @@ function BarMarkView({ mark }: { mark: KitV1BarMark }) {
 }
 
 function tileToneClass(mark: KitV1TileMark): string {
+  const isOutlinePeak =
+    mark.highlight_role === "row_peak" || mark.highlight_role === "column_peak";
+  const ringCls = isOutlinePeak ? " ring-2 ring-accent-brand ring-offset-1" : "";
   if (mark.muted) {
-    return "border-surface-border/60 bg-surface-elevated/60 text-text-muted";
+    return `border-surface-border/60 bg-surface-elevated/60 text-text-muted${ringCls}`;
   }
   if (mark.highlight_role === "day_peak" || mark.shade >= 0.6) {
-    return "border-accent-brand bg-accent-brand text-text-inverse";
+    return `border-accent-brand bg-accent-brand text-text-inverse${ringCls}`;
   }
   if (mark.shade >= 0.3) {
-    return "border-accent-brand/40 bg-accent-brand/25 text-text-primary";
+    return `border-accent-brand/40 bg-accent-brand/25 text-text-primary${ringCls}`;
   }
   if (mark.shade >= 0.12) {
-    return "border-accent-brand/30 bg-accent-brand/15 text-text-primary";
+    return `border-accent-brand/30 bg-accent-brand/15 text-text-primary${ringCls}`;
   }
-  return "border-surface-border/60 bg-surface-elevated text-text-secondary";
+  return `border-surface-border/60 bg-surface-elevated text-text-secondary${ringCls}`;
 }
 
 function TileMarkView({ mark }: { mark: KitV1TileMark }) {
@@ -397,7 +494,7 @@ function TileMarkView({ mark }: { mark: KitV1TileMark }) {
   }
   const hasBottom = mark.bottom_label !== undefined && mark.bottom_label !== null;
   return (
-    <div className={`rounded-lg border px-1.5 py-1.5 text-center ${tileToneClass(mark)}`}>
+    <div className={`rounded-lg border px-0.5 py-1.5 text-center ${tileToneClass(mark)}`}>
       {mark.top_label && (
         <div className="text-[10px] font-medium opacity-85">{mark.top_label}</div>
       )}
@@ -408,7 +505,7 @@ function TileMarkView({ mark }: { mark: KitV1TileMark }) {
       </div>
       {hasBottom && (
         <div
-          className={`mt-0.5 text-[10px] font-bold tabular-nums ${
+          className={`mt-0.5 text-[9px] font-bold leading-tight tabular-nums ${
             mark.highlight_role === "day_peak"
               ? "text-text-inverse"
               : mark.muted
@@ -460,17 +557,17 @@ function StackLayout({ body }: { body: KitV1StackBody }) {
   const footerMarks = body.footer_marks ?? [];
   return (
     <div className="space-y-2.5">
-      {headerMarks.length > 0 && body.header_layout === "banner" && (
-        <div className="flex items-center gap-2.5 rounded-lg border border-surface-border bg-surface-elevated px-3 py-2">
-          {headerMarks.map((m, idx) => (
-            <KitMarkView key={`sh-${idx}`} mark={m} />
-          ))}
-        </div>
-      )}
       {headerMarks.length > 0 && body.header_layout === "split" && (
         <div className="flex items-center justify-between gap-2">
           {headerMarks.map((m, idx) => (
             <KitMarkView key={`shs-${idx}`} mark={m} />
+          ))}
+        </div>
+      )}
+      {headerMarks.length > 0 && body.header_layout !== "none" && body.header_layout !== "split" && (
+        <div className="flex items-center gap-2.5 rounded-lg border border-surface-border bg-surface-elevated px-3 py-2">
+          {headerMarks.map((m, idx) => (
+            <KitMarkView key={`sh-${idx}`} mark={m} />
           ))}
         </div>
       )}
@@ -517,9 +614,11 @@ function GridLayout({ body }: { body: KitV1GridBody }) {
       firstLeading.length > 0 &&
       firstLeading[0]?.mark === "word" &&
       firstLeading[0]?.style === "rank";
+    const isDenseMatrix = body.columns.length >= 3;
+    const colWidthPx = isDenseMatrix ? "40px" : "66px";
     const gridCols = hasRank
-      ? `16px minmax(0,1fr) repeat(${body.columns.length}, 66px)`
-      : `minmax(0,1fr) repeat(${body.columns.length}, 66px)`;
+      ? `18px minmax(0,1fr) repeat(${body.columns.length}, ${colWidthPx})`
+      : `minmax(0,1fr) repeat(${body.columns.length}, ${colWidthPx})`;
 
     return (
       <div className="space-y-1.5">
@@ -548,7 +647,11 @@ function GridLayout({ body }: { body: KitV1GridBody }) {
               style={{ gridTemplateColumns: gridCols }}
             >
               {rankMark && <KitMarkView mark={rankMark} />}
-              <div className="flex min-w-0 items-center gap-1.5">
+              <div
+                className={`flex min-w-0 items-center gap-1.5 overflow-hidden ${
+                  isDenseMatrix ? "[&>span]:text-[11px]" : ""
+                }`}
+              >
                 {entityMarks.map((lm, lIdx) => (
                   <KitMarkView key={`${row.id}-l-${lIdx}`} mark={lm} />
                 ))}
@@ -653,7 +756,7 @@ function AxisLayout({ body }: { body: KitV1AxisBody }) {
   const elevatedDots = dots.filter((d) => d.picture && typeof d.y_lane === "number");
   const baseDots = dots.filter((d) => !(d.picture && typeof d.y_lane === "number"));
   const maxLane = elevatedDots.reduce((m, d) => Math.max(m, d.y_lane ?? 0), 0);
-  const trackHeight = (maxLane + 1) * 26 + 52;
+  const trackHeight = (maxLane + 1) * 38 + 56;
 
   return (
     <div className="space-y-2.5">
@@ -698,7 +801,7 @@ function AxisLayout({ body }: { body: KitV1AxisBody }) {
               className="absolute flex -translate-x-1/2 flex-col items-center"
               style={{
                 left: `${toAxisPercent(pt.x, scale.min, scale.max)}%`,
-                bottom: `${28 + (pt.y_lane ?? 0) * 24}px`,
+                bottom: `${26 + (pt.y_lane ?? 0) * 36}px`,
               }}
             >
               {pt.picture && (
@@ -707,6 +810,11 @@ function AxisLayout({ body }: { body: KitV1AxisBody }) {
                   alt={pt.picture.alt}
                   className="h-5 w-5 rounded-full border border-surface-border bg-surface-card object-contain p-0.5 shadow-sm"
                 />
+              )}
+              {pt.picture?.alt && pt.picture.alt.length <= 5 && (
+                <span className="mt-0.5 rounded bg-surface-card/90 px-0.5 text-[9px] font-bold leading-none text-text-secondary">
+                  {pt.picture.alt}
+                </span>
               )}
             </div>
           ))}
@@ -747,6 +855,13 @@ function AxisLayout({ body }: { body: KitV1AxisBody }) {
               </div>
             </div>
           ))}
+          {dots.length === 0 && lines.length === 0 && scale.ticks.length > 0 && (
+            <div className="flex justify-between border-t border-surface-border pt-1 text-[10px] tabular-nums text-text-muted">
+              {scale.ticks.map((t) => (
+                <span key={`st-${t.x}-${t.label}`}>{t.label}</span>
+              ))}
+            </div>
+          )}
         </div>
       )}
 

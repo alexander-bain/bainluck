@@ -235,7 +235,8 @@ final class LiveCardColumns204CTests: XCTestCase {
         let discoverModel = DiscoverSingleGameCard190C.build(
             event: liveNFL,
             prematch: prematch,
-            usesPictureLayout: true
+            usesPictureLayout: true,
+            showsLiveTenths: true
         )
         XCTAssertEqual(discoverModel.headers, .init(score: "Score", pregame: "Proj.", primary: "Now"))
         XCTAssertNil(discoverModel.scheduledProjectedLine)

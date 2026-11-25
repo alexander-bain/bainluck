@@ -63,7 +63,13 @@ from typing import Sequence
 from sqlalchemy import select
 
 
-def market_pool_subquery(*, pool_size: int, statuses: Sequence[str], conditions: Sequence = ()):
+def market_pool_subquery(
+    *,
+    pool_size: int,
+    statuses: Sequence[str],
+    conditions: Sequence = (),
+    outerjoins: Sequence[tuple] = (),
+):
     """The top-`pool_size` market ids by `max_movement_24h`, as a scalar subquery.
 
     Intended for `FuturesOutcome.market_id.in_(...)`. Because the pool is already
@@ -89,18 +95,23 @@ def market_pool_subquery(*, pool_size: int, statuses: Sequence[str], conditions:
     ~97% of that gate's population without changing a single test.
 
     ⚠️ THEREFORE EVERY CONDITION HERE MUST BE A PREDICATE ON `futures_markets`
-    ITSELF. An outcome-level predicate cannot go in the pool at all: the pool
-    ranks markets, one market carries many outcomes, and cutting the top N of
-    markets whose *some* outcome qualifies is not a bound on the outcomes that
-    do. Pass those to the outer query, where they belong.
+    ITSELF (or a 1-to-0..1 PK-keyed `outerjoin` declared in `outerjoins` so
+    `LIMIT pool_size` stays over distinct `futures_markets.id` rows, #13610). An
+    outcome-level predicate cannot go in the pool at all: the pool ranks
+    markets, one market carries many outcomes, and cutting the top N of markets
+    whose *some* outcome qualifies is not a bound on the outcomes that do. Pass
+    those to the outer query, where they belong.
     """
     # Imported inside the function: `app.models.models` imports a large part of
     # the ORM, and this module is imported from route modules at request time.
     from app.models.models import FuturesMarket
 
+    stmt = select(FuturesMarket.id)
+    for target, onclause in outerjoins:
+        stmt = stmt.outerjoin(target, onclause)
+
     return (
-        select(FuturesMarket.id)
-        .where(
+        stmt.where(
             FuturesMarket.status.in_(tuple(statuses)),
             FuturesMarket.max_movement_24h.isnot(None),
             *conditions,

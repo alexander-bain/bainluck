@@ -88,8 +88,7 @@ export default function Image() {
               maxWidth: 900,
             }}
           >
-            Sports, politics, economics and culture — every question as one
-            clean probability.
+            Sports, politics, economics and culture, as one clear percentage.
           </div>
         </div>
 
