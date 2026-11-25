@@ -210,6 +210,7 @@ final class AppIcon12314Tests: XCTestCase {
             encoding: .utf8
         )
         XCTAssertEqual(share.components(separatedBy: "BainLuckMarkView(").count - 1, 2)
+        XCTAssertEqual(share.components(separatedBy: "BainLuckMarkView(size: 20)").count - 1, 2)
         let footerLines = share.components(separatedBy: "\n").filter { $0.contains("bainluck.com") || $0.contains("🍀") }
         XCTAssertEqual(footerLines.filter { $0.contains("🍀") && !$0.contains("default:") }.count, 0)
 

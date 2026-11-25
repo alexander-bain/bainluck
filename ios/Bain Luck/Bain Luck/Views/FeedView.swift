@@ -286,6 +286,7 @@ struct FeedView: View {
         }
         #if os(iOS)
         .listStyle(.insetGrouped)
+        .contentMargins(.top, 4, for: .scrollContent)
         #endif
         .refreshable {
             await vm.startLoad()
