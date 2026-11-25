@@ -557,6 +557,34 @@ nonisolated enum FirstRunChecklistExtractor364A {
         return f
     }()
 
+    /// Finished-game exclusion shared across Step 5 heads-up, Row 5 sub-line, and row game picks:
+    /// rejects terminal statuses, server-settled flags (`endedAt`, `heroProbabilitySource == "settled"`,
+    /// `venueClosedNoWinner`, `discoverMarqueeFinal`), and past-due non-live fixtures (>3h past start).
+    static func isUnfinishedActiveGame(_ ev: FeedEventData, now: Date) -> Bool {
+        let statusLower = (ev.status ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if EventState.isFinished(ev.status)
+            || FeedLifecycle.terminalScheduleStatuses.contains(statusLower)
+            || statusLower == "ended" {
+            return false
+        }
+        if ev.heroProbabilitySource?.lowercased() == "settled" {
+            return false
+        }
+        if let endedAt = ev.endedAt?.trimmingCharacters(in: .whitespacesAndNewlines), !endedAt.isEmpty {
+            return false
+        }
+        if ev.venueClosedNoWinner == true || ev.discoverMarqueeFinal != nil {
+            return false
+        }
+        if statusLower != "live" && statusLower != "in_progress" {
+            guard let start = parseDate(ev.commenceTime) else { return false }
+            if start < now.addingTimeInterval(-3 * 3600) {
+                return false
+            }
+        }
+        return true
+    }
+
     private static func rankedGamesWithin24h(
         from feedItems: [FeedItem],
         previousSnapshot: [String: Double],
@@ -568,8 +596,8 @@ nonisolated enum FirstRunChecklistExtractor364A {
         var list: [RankedGameEntry] = []
 
         for (idx, ev) in flattenedEvents(from: feedItems).enumerated() {
+            guard isUnfinishedActiveGame(ev, now: now) else { continue }
             let statusLower = (ev.status ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            guard !FeedLifecycle.terminalScheduleStatuses.contains(statusLower) else { continue }
             guard let prio = FirstRunPair212A.leaguePriority(for: ev.sport) else { continue }
             guard let start = parseDate(ev.commenceTime), start >= earliest, start <= latest else { continue }
             let curHomeProb = ev.currentOdds?.homeProbability ?? ev.prematchOdds?.homeProbability
@@ -674,16 +702,29 @@ nonisolated enum FirstRunChecklistExtractor364A {
 
         var previews: [FirstRunChecklistRowID364A: FirstRunChecklistRowPreview364A] = [:]
 
+        // Draw Row 1 & Row 2 examples strictly from major-leagues-first `rankedGames` without repetition.
         var usedGameEventIds: Set<Int> = []
-        if let biggest = rankedGames.first {
-            usedGameEventIds.insert(biggest.event.id)
-        }
-        if let chipGame = rankedGames.dropFirst().first ?? rankedGames.first {
-            usedGameEventIds.insert(chipGame.event.id)
+        if let firstGame = rankedGames.first {
+            usedGameEventIds.insert(firstGame.event.id)
+            previews[.lookUp] = FirstRunChecklistRowPreview364A(
+                subtitle: "No account needed \u{00B7} \(firstGame.favoredTeam) tonight \(firstGame.pct)%",
+                percentText: nil,
+                imageUrl: firstGame.favoredLogoUrl,
+                sfSymbol: FirstRunCard212A.sfSymbol(forCategory: DiscoverCategory.token(forSport: firstGame.event.sport), isSports: true),
+                accentHex: "#005CC2"
+            )
+        } else {
+            let leadChip = lookupExamples.first
+            previews[.lookUp] = FirstRunChecklistRowPreview364A(
+                subtitle: "No account needed \u{00B7} games, awards & elections",
+                percentText: nil,
+                imageUrl: nil,
+                sfSymbol: leadChip?.sfSymbol ?? "magnifyingglass",
+                accentHex: "#005CC2"
+            )
         }
 
-        let secondGame = rankedGames.dropFirst(2).first ?? rankedGames.dropFirst().first ?? rankedGames.first
-        if let secondGame {
+        if let secondGame = rankedGames.first(where: { !usedGameEventIds.contains($0.event.id) }) ?? rankedGames.first {
             usedGameEventIds.insert(secondGame.event.id)
             previews[.follow] = FirstRunChecklistRowPreview364A(
                 subtitle: "\(secondGame.favoredTeam) tonight \(secondGame.pct)% \u{00B7} teams & topics",
@@ -722,7 +763,9 @@ nonisolated enum FirstRunChecklistExtractor364A {
             accentHex: "#005CC2"
         )
 
-        if let mover = tonight.first(where: { $0.slotLabel == "Biggest mover" }) {
+        if let mover = tonight.first(where: {
+            $0.slotLabel == "Biggest mover" && abs($0.deltaPoints ?? 0) >= FirstRunAlertsStepView364A.bigMoveThresholdPoints
+        }) {
             let subj = mover.subjectLabel.isEmpty ? "" : "\(mover.subjectLabel) "
             previews[.alerts] = FirstRunChecklistRowPreview364A(
                 subtitle: "\(subj)\(mover.percent)% now \u{00B7} game alerts",
@@ -731,34 +774,16 @@ nonisolated enum FirstRunChecklistExtractor364A {
                 sfSymbol: "bell.badge.fill",
                 accentHex: "#D97706"
             )
-        } else if let fourthGame = rankedGames.dropFirst(3).first ?? rankedGames.dropFirst().last ?? rankedGames.first {
-            usedGameEventIds.insert(fourthGame.event.id)
+        } else if let thirdGame = rankedGames.first(where: { !usedGameEventIds.contains($0.event.id) })
+            ?? rankedGames.dropFirst().last
+            ?? rankedGames.first {
+            usedGameEventIds.insert(thirdGame.event.id)
             previews[.alerts] = FirstRunChecklistRowPreview364A(
-                subtitle: "\(fourthGame.favoredTeam) tonight \(fourthGame.pct)% \u{00B7} alerts",
+                subtitle: "\(thirdGame.favoredTeam) tonight \(thirdGame.pct)% \u{00B7} alerts",
                 percentText: nil,
-                imageUrl: fourthGame.favoredLogoUrl,
+                imageUrl: thirdGame.favoredLogoUrl,
                 sfSymbol: "bell.badge.fill",
                 accentHex: "#D97706"
-            )
-        }
-
-        // Row 1 subtitle must not repeat Row 1's own first chip (`lookupExamples` game) or any other row's game.
-        if let distinctGame = rankedGames.first(where: { !usedGameEventIds.contains($0.event.id) }) {
-            previews[.lookUp] = FirstRunChecklistRowPreview364A(
-                subtitle: "No account \u{00B7} \(distinctGame.favoredTeam) tonight \(distinctGame.pct)%",
-                percentText: nil,
-                imageUrl: distinctGame.favoredLogoUrl,
-                sfSymbol: FirstRunCard212A.sfSymbol(forCategory: DiscoverCategory.token(forSport: distinctGame.event.sport), isSports: true),
-                accentHex: "#005CC2"
-            )
-        } else {
-            let leadChip = lookupExamples.first
-            previews[.lookUp] = FirstRunChecklistRowPreview364A(
-                subtitle: "No account \u{00B7} games, awards & elections",
-                percentText: nil,
-                imageUrl: nil,
-                sfSymbol: leadChip?.sfSymbol ?? "magnifyingglass",
-                accentHex: "#005CC2"
             )
         }
 
@@ -898,8 +923,8 @@ nonisolated enum FirstRunChecklistExtractor364A {
     ) -> [FirstRunLookupExample364A] {
         var out: [FirstRunLookupExample364A] = []
 
-        // 1. Tonight's game — prefer index 1 so rankedGames[0] stays unique to "Start with tonight"
-        if let g = rankedGames.dropFirst().first ?? rankedGames.first {
+        // 1. Tonight's game (Step 1 example; landing screen has no chips under 398: A)
+        if let g = rankedGames.first {
             out.append(FirstRunLookupExample364A(
                 id: "lookup-game-\(g.event.id)",
                 kind: .game,
@@ -1087,11 +1112,10 @@ nonisolated enum FirstRunChecklistExtractor364A {
             ))
         }
 
-        // 2. Biggest mover (largest |delta| against recorded last-visit reading or pregame mark ONLY)
+        // 2. Biggest mover (largest |delta| on an unfinished active game against recorded last-visit reading or pregame mark ONLY)
         var moverCandidates: [(absDelta: Int, card: FirstRunTonightCard364A)] = []
         for ev in flattenedEvents(from: feedItems) where !usedEventIds.contains(ev.id) {
-            let statusLower = (ev.status ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            guard !FeedLifecycle.terminalScheduleStatuses.contains(statusLower) else { continue }
+            guard isUnfinishedActiveGame(ev, now: now) else { continue }
             guard let curProb = ev.currentOdds?.homeProbability,
                   let baseline = resolvedEventBaseline(event: ev, previousSnapshot: previousSnapshot),
                   curProb.isFinite, baseline.prob.isFinite else { continue }
@@ -1126,89 +1150,7 @@ nonisolated enum FirstRunChecklistExtractor364A {
             cards.append(bestMover.card)
         }
 
-        // 3. One odd one (top Discover ODD / curiosity item in 5...95%, non-grim, Yes-side, no unwindowed delta)
-        for item in feedItems {
-            guard let bundle = item.bundle else { continue }
-            let tagUpper = (bundle.roundupContract?.tag ?? bundle.roundupContract?.kicker ?? "").uppercased()
-            let isOdd = tagUpper.contains("ODD") || bundle.title.lowercased().contains("mars") || bundle.title.lowercased().contains("chess")
-            guard isOdd else { continue }
-            for child in bundle.items {
-                guard let fut = child.futures else { continue }
-                guard !FeedLifecycle.futuresIsSettled(fut, now: now) else { continue }
-                guard !FirstRunPair212A.isGrimOrSensitiveTopic(title: fut.name) else { continue }
-                guard let resolved = FirstRunPair212A.resolvePrimaryOutcome(for: fut),
-                      (5...95).contains(resolved.percent) else { continue }
-                let outcomeRaw = (resolved.outcomeName ?? "Yes").trimmingCharacters(in: .whitespacesAndNewlines)
-                let outcomeLower = outcomeRaw.lowercased()
-                let isYesNoBinary = (outcomeLower == "yes" || outcomeLower == "no")
-                let statement = Self.declarativeOddStatement(from: fut.name)
-                let img = FirstRunSubjectArt364A.cleanHTTPS(fut.imageUrl ?? bundle.roundupContract?.machineryCard?.imageUrl ?? bundle.imageUrl)
-                    ?? subjectArt[FirstRunPair212A.classifyFuturesCategory(fut).categoryKey]
-                cards.append(FirstRunTonightCard364A(
-                    id: "tonight-odd-\(fut.id)",
-                    slotLabel: "Odd one",
-                    title: statement,
-                    subtitle: "",
-                    subjectLabel: isYesNoBinary ? "" : outcomeRaw,
-                    percent: resolved.percent,
-                    deltaText: nil,
-                    imageUrl: img,
-                    sfSymbol: "sparkles",
-                    accentHex: "#7C3AED",
-                    route: .futuresDetail(id: fut.id)
-                ))
-                return cards
-            }
-        }
-
         return cards
-    }
-
-    /// Converts an interrogative Yes/No market headline (`"Will Elon Musk visit Mars in his lifetime?"`)
-    /// into a plain declarative statement (`"Elon Musk visits Mars in his lifetime"`) per Point 5.
-    static func declarativeOddStatement(from raw: String) -> String {
-        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-        while text.hasSuffix("?") || text.hasSuffix(".") {
-            text.removeLast()
-            text = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        }
-        let words = text.split(whereSeparator: { $0.isWhitespace }).map(String.init)
-        guard words.count >= 4, words[0].lowercased() == "will" else {
-            return text
-        }
-        let body = Array(words.dropFirst())
-        // Locate the first lowercase main verb after the subject phrase (e.g. "Elon Musk" + "visit").
-        if let verbIndex = body.firstIndex(where: { word in
-            guard let first = word.first else { return false }
-            return first.isLowercase
-        }), verbIndex > 0 {
-            var rewritten = body
-            rewritten[verbIndex] = thirdPersonSingularVerb(body[verbIndex])
-            return rewritten.joined(separator: " ")
-        }
-        return body.joined(separator: " ")
-    }
-
-    private static func thirdPersonSingularVerb(_ verb: String) -> String {
-        let lower = verb.lowercased()
-        switch lower {
-        case "be": return "is"
-        case "have": return "has"
-        case "do": return "does"
-        case "go": return "goes"
-        default:
-            if lower.hasSuffix("s") || lower.hasSuffix("sh") || lower.hasSuffix("ch")
-                || lower.hasSuffix("x") || lower.hasSuffix("z") || lower.hasSuffix("o") {
-                return verb + "es"
-            }
-            if lower.hasSuffix("y"), lower.count >= 2 {
-                let prev = lower[lower.index(lower.endIndex, offsetBy: -2)]
-                if !"aeiou".contains(prev) {
-                    return String(verb.dropLast()) + "ies"
-                }
-            }
-            return verb + "s"
-        }
     }
 
     /// Maps `/api/events/search` responses into real live Row 1 lookup cards (Fable fix c & d).

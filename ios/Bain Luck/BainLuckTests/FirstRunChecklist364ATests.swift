@@ -388,7 +388,7 @@ final class FirstRunChecklist364ATests: XCTestCase {
         XCTAssertEqual(content.lookupExamples.count, 3)
         XCTAssertEqual(content.lookupExamples.map(\.kind), [.game, .award, .election])
         let gameExample = try XCTUnwrap(content.lookupExamples.first { $0.kind == .game })
-        XCTAssertEqual(gameExample.title, "San Francisco tonight", "Point 3: Row 1 chip skips rankedGames[0] reserved for Biggest game")
+        XCTAssertEqual(gameExample.title, "76ers tonight", "Point 3 (398:A): Step 1 leads with rankedGames[0] major-league game")
         let awardExample = try XCTUnwrap(content.lookupExamples.first { $0.kind == .award })
         XCTAssertEqual(awardExample.id, "lookup-award-6173044", "Non-sports award (Oscars) preferred and concisely titled")
         XCTAssertEqual(awardExample.title, "The Odyssey \u{00B7} Best Picture", "Fix a: award chip names specific award with top outcome")
@@ -406,23 +406,15 @@ final class FirstRunChecklist364ATests: XCTestCase {
             }
         }
 
-        XCTAssertEqual(content.startWithTonight.count, 3)
-        XCTAssertEqual(content.startWithTonight.map(\.slotLabel), ["Biggest game", "Biggest mover", "Odd one"])
+        XCTAssertEqual(content.startWithTonight.count, 2)
+        XCTAssertEqual(content.startWithTonight.map(\.slotLabel), ["Biggest game", "Biggest mover"])
         let biggestGame = try XCTUnwrap(content.startWithTonight.first { $0.slotLabel == "Biggest game" })
         XCTAssertEqual(biggestGame.subtitle, "NBA", "Point 6: middle line shows league only, without repeating team")
         let row1Sub = content.lookupRowPreview?.subtitle ?? ""
-        XCTAssertFalse(row1Sub.contains(gameExample.title), "Point 7: Row 1 subtitle must not duplicate chip 1 (\(row1Sub))")
-        let oddCard = try XCTUnwrap(content.startWithTonight.first { $0.slotLabel == "Odd one" })
-        XCTAssertEqual(oddCard.percent, 12, "Yes/No odd card must show Yes side (12%), never No (88%)")
-        XCTAssertEqual(oddCard.title, "Elon Musk visits Mars in his lifetime", "Point 5: declarative odd-one statement")
-        XCTAssertFalse(oddCard.title.contains("?"), "Point 5: no question mark on odd-one statement")
-        XCTAssertTrue(oddCard.subtitle.isEmpty, "Point 5: no stray Yes subtitle under odd-one")
-        XCTAssertTrue(oddCard.subjectLabel.isEmpty, "Point 5: no duplicate Yes label on odd-one card")
+        XCTAssertTrue(row1Sub.hasPrefix("No account needed \u{00B7} 76ers tonight 58%"), "398:A Point 3/5: Row 1 shows major-league game with 'No account needed' (\(row1Sub))")
         for card in content.startWithTonight {
             XCTAssertTrue((5...95).contains(card.percent))
-            if card.slotLabel != "Odd one" {
-                XCTAssertFalse(card.subjectLabel.isEmpty)
-            }
+            XCTAssertFalse(card.subjectLabel.isEmpty)
             if let delta = card.deltaText {
                 XCTAssertFalse(delta.contains("pts"))
                 XCTAssertTrue(
@@ -677,7 +669,7 @@ final class FirstRunChecklist364ATests: XCTestCase {
     func testStartWithTonightShowsAllThreeCardsWhenPregameMoverExists() throws {
         let items = try makeSampleFeedItems()
         let content = FirstRunChecklistExtractor364A.buildContent(from: items, now: Self.fixtureNow)
-        XCTAssertEqual(content.startWithTonight.map(\.slotLabel), ["Biggest game", "Biggest mover", "Odd one"])
+        XCTAssertEqual(content.startWithTonight.map(\.slotLabel), ["Biggest game", "Biggest mover"])
         XCTAssertEqual(content.startWithTonight.first(where: { $0.slotLabel == "Biggest mover" })?.deltaText, "▲ up 33 points since pregame")
     }
 
@@ -773,18 +765,17 @@ final class FirstRunChecklist364ATests: XCTestCase {
         XCTAssertEqual(biggest.imageUrl, "https://example.com/bal.png")
 
         let gameChip = try XCTUnwrap(content.lookupExamples.first { $0.kind == .game })
-        XCTAssertEqual(gameChip.title, "Celtics tonight")
-        XCTAssertEqual(gameChip.imageUrl, "https://example.com/bos.png")
+        XCTAssertEqual(gameChip.title, "Ravens tonight")
+        XCTAssertEqual(gameChip.imageUrl, "https://example.com/bal.png")
 
-        XCTAssertEqual(content.followRowPreview?.subtitle.hasPrefix("Bucks tonight 59%"), true)
-        XCTAssertEqual(content.followRowPreview?.imageUrl, "https://example.com/mil.png")
+        XCTAssertEqual(content.lookupRowPreview?.subtitle, "No account needed \u{00B7} Ravens tonight 66%")
+        XCTAssertEqual(content.lookupRowPreview?.imageUrl, "https://example.com/bal.png")
 
-        XCTAssertEqual(content.alertsRowPreview?.subtitle.hasPrefix("Bruins tonight 62%"), true)
-        XCTAssertEqual(content.alertsRowPreview?.imageUrl, "https://example.com/bruins.png")
+        XCTAssertEqual(content.followRowPreview?.subtitle.hasPrefix("Celtics tonight 72%"), true)
+        XCTAssertEqual(content.followRowPreview?.imageUrl, "https://example.com/bos.png")
 
-        XCTAssertEqual(content.lookupRowPreview?.subtitle, "No account \u{00B7} Pittsburgh tonight 56%")
-        XCTAssertEqual(content.lookupRowPreview?.imageUrl, "https://example.com/pitt.png")
-        XCTAssertFalse((content.lookupRowPreview?.subtitle ?? "").contains(gameChip.title))
+        XCTAssertEqual(content.alertsRowPreview?.subtitle.hasPrefix("Bucks tonight 59%"), true)
+        XCTAssertEqual(content.alertsRowPreview?.imageUrl, "https://example.com/mil.png")
 
         let searchResp = try makeDecoder().decode(SearchResponse.self, from: Data("""
         {
@@ -1004,8 +995,7 @@ final class FirstRunChecklist364ATests: XCTestCase {
                 let ocr01 = try await renderAndOCR(
                     view: FirstRunChecklistView364A(
                         content: content,
-                        state: .constant(.untouched),
-                        inlineSearchQuery: .constant("")
+                        state: .constant(.untouched)
                     ),
                     filename: "364a-01-untouched-\(sTag)-\(wTag).png",
                     exportDir: exportDir,
@@ -1029,8 +1019,7 @@ final class FirstRunChecklist364ATests: XCTestCase {
                 _ = try await renderAndOCR(
                     view: FirstRunChecklistView364A(
                         content: content,
-                        state: .constant(oneDone),
-                        inlineSearchQuery: .constant("")
+                        state: .constant(oneDone)
                     ),
                     filename: "364a-02-one-done-\(sTag)-\(wTag).png",
                     exportDir: exportDir,
@@ -1044,8 +1033,7 @@ final class FirstRunChecklist364ATests: XCTestCase {
                 let ocr03 = try await renderAndOCR(
                     view: FirstRunChecklistView364A(
                         content: content,
-                        state: .constant(.allDone),
-                        inlineSearchQuery: .constant("")
+                        state: .constant(.allDone)
                     ),
                     filename: "364a-03-all-five-done-\(sTag)-\(wTag).png",
                     exportDir: exportDir,
@@ -1266,8 +1254,7 @@ final class FirstRunChecklist364ATests: XCTestCase {
                 let ocrAX01 = try await renderAndOCR(
                     view: FirstRunChecklistView364A(
                         content: content,
-                        state: .constant(.untouched),
-                        inlineSearchQuery: .constant("")
+                        state: .constant(.untouched)
                     ),
                     filename: "364a-11-ax3-untouched-\(sTag)-390.png",
                     exportDir: exportDir,
@@ -1285,8 +1272,7 @@ final class FirstRunChecklist364ATests: XCTestCase {
                 let ocrAX4 = try await renderAndOCR(
                     view: FirstRunChecklistView364A(
                         content: content,
-                        state: .constant(.untouched),
-                        inlineSearchQuery: .constant("")
+                        state: .constant(.untouched)
                     ),
                     filename: "364a-11b-ax4-untouched-\(sTag)-390.png",
                     exportDir: exportDir,
@@ -1302,8 +1288,7 @@ final class FirstRunChecklist364ATests: XCTestCase {
                 let ocrAX12 = try await renderAndOCR(
                     view: FirstRunChecklistView364A(
                         content: content,
-                        state: .constant(.allDone),
-                        inlineSearchQuery: .constant("")
+                        state: .constant(.allDone)
                     ),
                     filename: "364a-12-ax3-all-done-\(sTag)-390.png",
                     exportDir: exportDir,
@@ -1316,7 +1301,6 @@ final class FirstRunChecklist364ATests: XCTestCase {
                 )
                 let joinedAX12 = ocrAX12.joined(separator: " ")
                 XCTAssertFalse(joinedAX12.contains("Bain Lu..."), "AX3 All-Done must not truncate Bain Luck wordmark: \(joinedAX12)")
-                XCTAssertFalse(joinedAX12.contains("or..."), "AX3 search field placeholder must not truncate: \(joinedAX12)")
                 XCTAssertTrue(joinedAX12.contains("Bain Luck"))
                 XCTAssertTrue(joinedAX12.contains("5 of 5 done"))
 
@@ -1324,8 +1308,7 @@ final class FirstRunChecklist364ATests: XCTestCase {
                 let ocrAX16 = try await renderAndOCR(
                     view: FirstRunChecklistView364A(
                         content: content,
-                        state: .constant(.untouched),
-                        inlineSearchQuery: .constant("")
+                        state: .constant(.untouched)
                     ),
                     filename: "364a-16-ax5-untouched-\(sTag)-390.png",
                     exportDir: exportDir,
@@ -1346,8 +1329,7 @@ final class FirstRunChecklist364ATests: XCTestCase {
                 let ocrAX17 = try await renderAndOCR(
                     view: FirstRunChecklistView364A(
                         content: content,
-                        state: .constant(.allDone),
-                        inlineSearchQuery: .constant("")
+                        state: .constant(.allDone)
                     ),
                     filename: "364a-17-ax5-all-done-\(sTag)-390.png",
                     exportDir: exportDir,
@@ -1369,8 +1351,7 @@ final class FirstRunChecklist364ATests: XCTestCase {
                 _ = try await renderAndOCR(
                     view: FirstRunChecklistView364A(
                         content: content,
-                        state: .constant(.untouched),
-                        inlineSearchQuery: .constant("")
+                        state: .constant(.untouched)
                     ),
                     filename: "364a-13-ipad-untouched-\(sTag)-820.png",
                     exportDir: exportDir,
@@ -1385,8 +1366,7 @@ final class FirstRunChecklist364ATests: XCTestCase {
                 _ = try await renderAndOCR(
                     view: FirstRunChecklistView364A(
                         content: content,
-                        state: .constant(.allDone),
-                        inlineSearchQuery: .constant("")
+                        state: .constant(.allDone)
                     ),
                     filename: "364a-14-ipad-all-done-\(sTag)-820.png",
                     exportDir: exportDir,
@@ -1630,11 +1610,10 @@ final class FirstRunChecklist364ATests: XCTestCase {
             subjectArtByCategory: [:]
         )
 
-        let chipLines = try await renderAndOCR(
+        let checklistLines = try await renderAndOCR(
             view: FirstRunChecklistView364A(
                 content: content,
-                state: .constant(.untouched),
-                inlineSearchQuery: .constant("")
+                state: .constant(.untouched)
             ),
             filename: "",
             exportDir: "",
@@ -1643,8 +1622,8 @@ final class FirstRunChecklist364ATests: XCTestCase {
             height: 844,
             colorScheme: .light
         ).joined(separator: " ")
-        XCTAssertTrue(chipLines.contains("The Odyssey"), "Unpriced chip must still print its subject: \(chipLines)")
-        XCTAssertFalse(chipLines.contains("%"), "Unpriced chip must print no percent when subject has no reading: \(chipLines)")
+        XCTAssertFalse(checklistLines.contains("Start with tonight"), "398:A removes Start with tonight from the first screen: \(checklistLines)")
+        XCTAssertFalse(checklistLines.contains("Search any team"), "398:A removes inline search bar from Row 1 on the first screen: \(checklistLines)")
 
         let stepLines = try await renderAndOCR(
             view: FirstRunLookupStepView364A(
@@ -1860,6 +1839,168 @@ final class FirstRunChecklist364ATests: XCTestCase {
         let biggest = try XCTUnwrap(content.startWithTonight.first { $0.slotLabel == "Biggest game" })
         XCTAssertEqual(biggest.subtitle, "NBA")
         XCTAssertEqual(biggest.title, "Pistons at Magic")
+    }
+
+    func testFinishedOrSettledGameNeverPrintsAsMoverOrAlertsExample() async throws {
+        let json = """
+        {
+          "items": [
+            {
+              "type": "event",
+              "score": 99,
+              "data": {
+                "id": 9951,
+                "sport": "soccer_efl_champ",
+                "home_team": "Cardiff City",
+                "away_team": "Preston North End",
+                "status": "completed",
+                "ended_at": "2026-11-23T22:12:00Z",
+                "hero_probability_source": "settled",
+                "commence_time": "2026-11-23T19:45:00Z",
+                "prematch_odds": {"home_probability": 0.65, "away_probability": 0.35},
+                "current_odds": {"home_probability": 0.15, "away_probability": 0.85, "home_rendered_percent": 15, "away_rendered_percent": 85}
+              }
+            },
+            {
+              "type": "event",
+              "score": 98,
+              "data": {
+                "id": 9952,
+                "sport": "basketball_nba",
+                "home_team": "Boston Celtics",
+                "away_team": "Detroit Pistons",
+                "status": "live",
+                "ended_at": "2026-11-23T22:15:00Z",
+                "commence_time": "2026-11-23T20:00:00Z",
+                "prematch_odds": {"home_probability": 0.70, "away_probability": 0.30},
+                "current_odds": {"home_probability": 0.92, "away_probability": 0.08, "home_rendered_percent": 92, "away_rendered_percent": 8}
+              }
+            },
+            {
+              "type": "event",
+              "score": 95,
+              "data": {
+                "id": 9953,
+                "sport": "basketball_nba",
+                "home_team": "Orlando Magic",
+                "away_team": "Indiana Pacers",
+                "status": "scheduled",
+                "commence_time": "2026-11-24T00:00:00Z",
+                "prematch_odds": {"home_probability": 0.56, "away_probability": 0.44},
+                "current_odds": {"home_probability": 0.58, "away_probability": 0.42, "home_rendered_percent": 58, "away_rendered_percent": 42}
+              }
+            }
+          ],
+          "total": 3, "limit": 10, "offset": 0, "has_more": false
+        }
+        """
+        let items = try makeDecoder().decode(FeedResponse.self, from: Data(json.utf8)).items
+        let content = FirstRunChecklistExtractor364A.buildContent(from: items, now: Self.fixtureNow)
+
+        XCTAssertFalse(content.startWithTonight.contains(where: { $0.id.contains("9951") || $0.id.contains("9952") }))
+        XCTAssertFalse((content.alertsRowPreview?.subtitle ?? "").contains("Cardiff"))
+        XCTAssertFalse((content.alertsRowPreview?.subtitle ?? "").contains("now"))
+        XCTAssertEqual(content.alertsRowPreview?.subtitle, "Magic tonight 58% \u{00B7} alerts")
+
+        let step5OCR = try await renderAndOCR(
+            view: FirstRunAlertsStepView364A(
+                previewMover: content.startWithTonight.first(where: { $0.slotLabel == "Biggest mover" }),
+                previewUpcomingGame: content.startWithTonight.first(where: { $0.slotLabel == "Biggest game" })
+            ),
+            filename: "",
+            exportDir: "",
+            preloaded: [:],
+            width: 390,
+            height: 844,
+            colorScheme: .light
+        ).joined(separator: " ")
+        XCTAssertFalse(step5OCR.contains("Cardiff"), "Finished game must never print on Step 5: \(step5OCR)")
+        XCTAssertTrue(step5OCR.contains("Magic"), "Step 5 must fall back to upcoming unfinished game: \(step5OCR)")
+        XCTAssertTrue(step5OCR.contains("Tipoff"), "Step 5 fallback must show game-start timing: \(step5OCR)")
+    }
+
+    func testMajorLeaguesLeadRow1AndRow2AheadOfWoffordCollegeGame() throws {
+        let json = """
+        {
+          "items": [
+            {
+              "type": "event",
+              "score": 99,
+              "data": {
+                "id": 9961,
+                "sport": "basketball_ncaab",
+                "home_team": "Wofford Terriers",
+                "away_team": "Furman Paladins",
+                "status": "scheduled",
+                "commence_time": "2026-11-24T00:00:00Z",
+                "current_odds": {"home_probability": 0.50, "away_probability": 0.50, "home_rendered_percent": 50, "away_rendered_percent": 50}
+              }
+            },
+            {
+              "type": "event",
+              "score": 90,
+              "data": {
+                "id": 9962,
+                "sport": "basketball_nba",
+                "home_team": "Boston Celtics",
+                "away_team": "Miami Heat",
+                "status": "scheduled",
+                "commence_time": "2026-11-24T01:00:00Z",
+                "current_odds": {"home_probability": 0.68, "away_probability": 0.32, "home_rendered_percent": 68, "away_rendered_percent": 32}
+              }
+            },
+            {
+              "type": "event",
+              "score": 88,
+              "data": {
+                "id": 9963,
+                "sport": "icehockey_nhl",
+                "home_team": "Boston Bruins",
+                "away_team": "Toronto Maple Leafs",
+                "status": "scheduled",
+                "commence_time": "2026-11-24T01:30:00Z",
+                "current_odds": {"home_probability": 0.59, "away_probability": 0.41, "home_rendered_percent": 59, "away_rendered_percent": 41}
+              }
+            }
+          ],
+          "total": 3, "limit": 10, "offset": 0, "has_more": false
+        }
+        """
+        let items = try makeDecoder().decode(FeedResponse.self, from: Data(json.utf8)).items
+        let content = FirstRunChecklistExtractor364A.buildContent(from: items, now: Self.fixtureNow)
+        let row1Sub = content.lookupRowPreview?.subtitle ?? ""
+        let row2Sub = content.followRowPreview?.subtitle ?? ""
+        XCTAssertTrue(row1Sub.hasPrefix("No account needed \u{00B7} Celtics tonight 68%"), "Row 1 must lead with NBA/NFL ahead of Wofford and say 'No account needed': \(row1Sub)")
+        XCTAssertFalse(row1Sub.contains("Wofford"), "Wofford NCAAB must not take Row 1 ahead of NBA/NHL: \(row1Sub)")
+        XCTAssertTrue(row2Sub.hasPrefix("Bruins tonight 59%"), "Row 2 must take NHL next distinct major league: \(row2Sub)")
+    }
+
+    func testThinnedFirstScreenMatchesRuling398AWithNoTonightCardsOrSearchBar() async throws {
+        let items = try makeSampleFeedItems()
+        let content = FirstRunChecklistExtractor364A.buildContent(from: items, now: Self.fixtureNow)
+        for scheme in [ColorScheme.light, .dark] {
+            let ocr = try await renderAndOCR(
+                view: FirstRunChecklistView364A(
+                    content: content,
+                    state: .constant(.untouched)
+                ),
+                filename: "",
+                exportDir: "",
+                preloaded: [:],
+                width: 390,
+                height: 844,
+                colorScheme: scheme
+            ).joined(separator: " ")
+            XCTAssertTrue(ocr.contains("Bain Luck"), "Missing title: \(ocr)")
+            XCTAssertTrue(ocr.contains("Skip"), "Missing Skip button: \(ocr)")
+            XCTAssertTrue(ocr.contains("Start anywhere"), "Missing Start anywhere: \(ocr)")
+            XCTAssertTrue(ocr.contains("No account needed"), "Missing 'No account needed' in Row 1: \(ocr)")
+            XCTAssertFalse(ocr.contains("Start with tonight"), "398:A must remove Start with tonight: \(ocr)")
+            XCTAssertFalse(ocr.contains("BIGGEST GAME"), "398:A must remove Biggest game card: \(ocr)")
+            XCTAssertFalse(ocr.contains("BIGGEST MOVER"), "398:A must remove Biggest mover card: \(ocr)")
+            XCTAssertFalse(ocr.contains("ODD ONE"), "398:A must remove Odd one card: \(ocr)")
+            XCTAssertFalse(ocr.contains("Search any team"), "398:A must move search box off first screen: \(ocr)")
+        }
     }
     #endif
 }

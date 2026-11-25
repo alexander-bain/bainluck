@@ -63,17 +63,13 @@ struct ChecklistThumbnail364A: View {
     }
 }
 
-/// Main first screen under Decision 364: A — five optional rows on one screen (any order)
-/// plus `"Start with tonight"` under the rows and one `"Skip"` exit.
+/// Main first screen under Decision 364: A & 398: A — five optional rows on one screen (any order)
+/// and one `"Skip"` exit.
 struct FirstRunChecklistView364A: View {
     let content: FirstRunChecklistContent364A
     @Binding var state: FirstRunChecklistState364A
-    @Binding var inlineSearchQuery: String
     var onSkipOrFinish: () -> Void = {}
-    var onSubmitInlineSearch: () -> Void = {}
-    var onTapLookupExample: (FirstRunLookupExample364A) -> Void = { _ in }
     var onOpenRow: (FirstRunChecklistRowID364A) -> Void = { _ in }
-    var onSelectTonightCard: (FirstRunTonightCard364A) -> Void = { _ in }
 
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
@@ -124,9 +120,6 @@ struct FirstRunChecklistView364A: View {
                     headerBlock
                 }
                 rowsCard
-                if !content.startWithTonight.isEmpty {
-                    startWithTonightBlock
-                }
             }
             .padding(.horizontal, 16)
             .padding(.top, 2)
@@ -249,7 +242,13 @@ struct FirstRunChecklistView364A: View {
             accentHex: "#005CC2"
         )
         return VStack(spacing: 0) {
-            lookUpRow
+            standardRow(
+                row: .lookUp,
+                preview: content.lookupRowPreview,
+                lit: true,
+                mutedNote: nil,
+                badgePillText: nil
+            )
             Divider().padding(.leading, 14)
             standardRow(
                 row: .follow,
@@ -288,112 +287,6 @@ struct FirstRunChecklistView364A: View {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .stroke(DS.border, lineWidth: 1)
         )
-    }
-
-    private var lookUpRow: some View {
-        let isDone = state.completedRows.contains(.lookUp)
-        let preview = content.lookupRowPreview
-        return VStack(alignment: .leading, spacing: 7) {
-            Button {
-                onOpenRow(.lookUp)
-            } label: {
-                HStack(spacing: 10) {
-                    ChecklistThumbnail364A(
-                        urlString: preview?.imageUrl,
-                        sfSymbol: preview?.sfSymbol ?? "magnifyingglass",
-                        accentHex: preview?.accentHex ?? "#005CC2",
-                        size: 34
-                    )
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(FirstRunChecklistRowID364A.lookUp.title)
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(DS.textPrimary)
-                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-                            .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1.0 : 0.84)
-                            .fixedSize(horizontal: false, vertical: dynamicTypeSize.isAccessibilitySize)
-                            .layoutPriority(1)
-                        Text(preview?.subtitle ?? "No account needed")
-                            .font(.caption)
-                            .foregroundStyle(DS.textSecondaryReadable)
-                            .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 1)
-                            .minimumScaleFactor(dynamicTypeSize.isAccessibilitySize ? 1.0 : 0.84)
-                            .fixedSize(horizontal: false, vertical: dynamicTypeSize.isAccessibilitySize)
-                    }
-                    Spacer(minLength: 6)
-                    rowStatusIcon(isDone: isDone)
-                }
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .accessibilityIdentifier(FirstRunChecklistRowID364A.lookUp.accessibilityIdentifier)
-
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .font(.caption)
-                    .foregroundStyle(DS.textSecondaryReadable)
-                TextField(
-                    dynamicTypeSize.isAccessibilitySize ? "Search anything" : "Search any team, game, or market",
-                    text: $inlineSearchQuery
-                )
-                    .textFieldStyle(.plain)
-                    .font(.subheadline)
-                    .submitLabel(.search)
-                    .frame(minWidth: 0, maxWidth: .infinity)
-                    .onSubmit {
-                        onSubmitInlineSearch()
-                    }
-                    .accessibilityIdentifier("checklist364A.inlineSearchField")
-                Spacer(minLength: 4)
-                Button(action: onSubmitInlineSearch) {
-                    Text("Go")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(DS.blueReadable)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("checklist364A.inlineSearchGo")
-            }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(DS.surface, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-            .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).stroke(DS.border, lineWidth: 1))
-
-            if !content.lookupExamples.isEmpty {
-                FirstRunPickedChipFlow212A(spacing: 5) {
-                    ForEach(content.lookupExamples.prefix(3)) { ex in
-                        Button {
-                            onTapLookupExample(ex)
-                        } label: {
-                            Group {
-                                if let pct = ex.percent {
-                                    Text(ex.title)
-                                        .font(.caption.weight(.medium))
-                                        .foregroundStyle(DS.textPrimary)
-                                    + Text(" \(pct)%")
-                                        .font(.caption.weight(.bold).monospacedDigit())
-                                        .foregroundStyle(DS.blueReadable)
-                                } else {
-                                    Text(ex.title)
-                                        .font(.caption.weight(.medium))
-                                        .foregroundStyle(DS.textPrimary)
-                                }
-                            }
-                            .multilineTextAlignment(.leading)
-                            .fixedSize(horizontal: false, vertical: true)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(DS.trackBg, in: Capsule())
-                            .overlay(Capsule().stroke(DS.border, lineWidth: 1))
-                        }
-                        .buttonStyle(.plain)
-                        .accessibilityIdentifier("checklist364A.example.\(ex.kind.rawValue)")
-                    }
-                }
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 10)
     }
 
     private func standardRow(
@@ -470,97 +363,6 @@ struct FirstRunChecklistView364A: View {
             Image(systemName: "chevron.right")
                 .font(.footnote.weight(.semibold))
                 .foregroundStyle(enabled ? DS.textSecondaryReadable : DS.textMuted)
-        }
-    }
-
-    private var startWithTonightBlock: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Start with tonight")
-                .font(.subheadline.weight(.bold))
-                .foregroundStyle(DS.textPrimary)
-
-            VStack(spacing: 6) {
-                ForEach(content.startWithTonight) { card in
-                    Button {
-                        onSelectTonightCard(card)
-                    } label: {
-                        HStack(spacing: 10) {
-                            ChecklistThumbnail364A(
-                                urlString: card.imageUrl,
-                                sfSymbol: card.sfSymbol,
-                                accentHex: card.accentHex,
-                                size: 36
-                            )
-
-                            VStack(alignment: .leading, spacing: 1) {
-                                HStack(spacing: 6) {
-                                    Text(card.slotLabel.uppercased())
-                                        .font(.caption2.weight(.bold))
-                                        .tracking(0.5)
-                                        .foregroundStyle(Color(hex: MyStuffTeamTextColour.probabilityHex(card.accentHex, colorScheme: colorScheme)))
-                                    if let delta = card.deltaText {
-                                        Text(delta)
-                                            .font(.caption2.weight(.semibold))
-                                            .foregroundStyle(DS.greenReadable)
-                                    }
-                                }
-                                if card.slotLabel == "Odd one" && card.subjectLabel.isEmpty {
-                                    (
-                                        Text(card.title)
-                                            .font(.subheadline.weight(.semibold))
-                                            .foregroundStyle(DS.textPrimary)
-                                        + Text(", \(card.percent)%")
-                                            .font(.subheadline.weight(.bold).monospacedDigit())
-                                            .foregroundStyle(DS.textPrimary)
-                                    )
-                                    .multilineTextAlignment(.leading)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                } else {
-                                    Text(card.title)
-                                        .font(.subheadline.weight(.semibold))
-                                        .foregroundStyle(DS.textPrimary)
-                                        .multilineTextAlignment(.leading)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                                if !card.subtitle.isEmpty {
-                                    Text(card.subtitle)
-                                        .font(.caption)
-                                        .foregroundStyle(DS.textSecondaryReadable)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                            }
-
-                            Spacer(minLength: 8)
-
-                            if card.slotLabel != "Odd one" || !card.subjectLabel.isEmpty {
-                                HStack(spacing: 4) {
-                                    if !card.subjectLabel.isEmpty {
-                                        Text(card.subjectLabel)
-                                            .font(.caption.weight(.semibold))
-                                            .foregroundStyle(DS.textSecondaryReadable)
-                                            .lineLimit(1)
-                                    }
-                                    Text("\(card.percent)%")
-                                        .font(.headline.weight(.heavy).monospacedDigit())
-                                        .foregroundStyle(DS.textPrimary)
-                                }
-                                .fixedSize(horizontal: true, vertical: false)
-                            }
-                        }
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 8)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(DS.cardBg, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .stroke(DS.border, lineWidth: 1)
-                        )
-                        .contentShape(Rectangle())
-                    }
-                    .buttonStyle(.plain)
-                    .accessibilityIdentifier("checklist364A.tonight.\(card.id)")
-                }
-            }
         }
     }
 
@@ -1262,7 +1064,31 @@ struct FirstRunExploreSetsStepView364A: View {
                     } else {
                         ForEach(sets) { choice in
                             let selected = selectedSlugs.contains(choice.slug)
-                            ZStack(alignment: .topTrailing) {
+                            VStack(spacing: 6) {
+                                Button {
+                                    toggle(choice.slug)
+                                } label: {
+                                    HStack(spacing: 8) {
+                                        Text(selected ? "Picked" : "Tap to pick")
+                                            .font(.caption.weight(.semibold))
+                                            .foregroundStyle(selected ? DS.blueReadable : DS.textSecondaryReadable)
+                                        Spacer()
+                                        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                                            .font(.title3.weight(.semibold))
+                                            .foregroundStyle(selected ? DS.blueReadable : DS.textMuted)
+                                            .accessibilityHidden(true)
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .background(selected ? DS.blueReadable.opacity(0.08) : DS.cardBg, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .stroke(selected ? DS.blueReadable : DS.border, lineWidth: selected ? 1.5 : 1)
+                                    )
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+
                                 MachineryDiscoverEntryCardView(
                                     card: choice.machineryCard,
                                     pairedMetricSet: choice.pairedMetricSet,
@@ -1273,12 +1099,6 @@ struct FirstRunExploreSetsStepView364A: View {
                                     RoundedRectangle(cornerRadius: 12, style: .continuous)
                                         .stroke(selected ? DS.blueReadable : Color.clear, lineWidth: 2.5)
                                 )
-
-                                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                                    .font(.title3.weight(.semibold))
-                                    .foregroundStyle(selected ? DS.blueReadable : DS.textMuted)
-                                    .padding(10)
-                                    .accessibilityHidden(true)
                             }
                             .accessibilityIdentifier("checklist364A.set.\(choice.slug)")
                         }
@@ -1416,7 +1236,7 @@ struct FirstRunAlertsStepView364A: View {
     }
 
     private var displayedExampleCard: FirstRunTonightCard364A? {
-        qualifyingBigMover ?? previewUpcomingGame ?? previewMover
+        qualifyingBigMover ?? previewUpcomingGame
     }
 
     private var exampleTitle: String {
@@ -1429,7 +1249,7 @@ struct FirstRunAlertsStepView364A: View {
             let capitalizedShift = shift.prefix(1).uppercased() + shift.dropFirst()
             return "\(capitalizedShift) \u{00B7} \(subject) now \(mover.percent)%"
         }
-        if let game = previewUpcomingGame ?? previewMover {
+        if let game = previewUpcomingGame {
             let subject = game.subjectLabel.isEmpty ? game.title : game.subjectLabel
             let timing = game.startTimeText.map { "Tipoff \($0)" } ?? "Starting soon"
             return "\(timing) \u{00B7} \(subject) \(game.percent)%"

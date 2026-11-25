@@ -194,7 +194,6 @@ struct FirstRunChecklistRootView364A: View {
     @StateObject private var followVM: FirstRunViewModel212A
 
     @State private var path: [ChecklistSheetRoute364A] = []
-    @State private var inlineSearchQuery: String = ""
     @State private var draftSetSlugs: Set<String> = []
     @State private var isRequestingAlerts = false
     @State private var didApplyInitialStep = false
@@ -225,37 +224,8 @@ struct FirstRunChecklistRootView364A: View {
             FirstRunChecklistView364A(
                 content: coordinatorVM.content,
                 state: storeBinding,
-                inlineSearchQuery: $inlineSearchQuery,
                 onSkipOrFinish: finishAndDismiss,
-                onSubmitInlineSearch: {
-                    let trimmed = inlineSearchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-                    guard !trimmed.isEmpty else {
-                        openStep(.lookUp)
-                        return
-                    }
-                    lookupVM.runImmediateSearch(
-                        query: trimmed,
-                        subjectArt: coordinatorVM.content.subjectArtByCategory
-                    )
-                    openStep(.lookUp)
-                },
-                onTapLookupExample: { example in
-                    inlineSearchQuery = example.query
-                    lookupVM.runImmediateSearch(
-                        query: example.query,
-                        subjectArt: coordinatorVM.content.subjectArtByCategory
-                    )
-                    openStep(.lookUp)
-                },
-                onOpenRow: openStep(_:),
-                onSelectTonightCard: { card in
-                    checklistStore.markCompleted(.lookUp)
-                    if let route = card.route {
-                        path.append(.appRoute(route))
-                    } else {
-                        openStep(.lookUp)
-                    }
-                }
+                onOpenRow: openStep(_:)
             )
             .navigationDestination(for: ChecklistSheetRoute364A.self) { dest in
                 switch dest {
@@ -273,7 +243,6 @@ struct FirstRunChecklistRootView364A: View {
             syncStoreExternalSignals()
             draftSetSlugs = checklistStore.state.selectedSetSlugs
             if let initialLookupQuery, !initialLookupQuery.isEmpty {
-                inlineSearchQuery = initialLookupQuery
                 lookupVM.runImmediateSearch(
                     query: initialLookupQuery,
                     subjectArt: coordinatorVM.content.subjectArtByCategory
