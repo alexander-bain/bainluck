@@ -89,10 +89,11 @@ def test_a_one_point_move_is_singular():
     assert "1 points" not in label, label
 
 
-def test_a_real_decimal_survives():
-    """The fix must route through the formatter, not round to a whole number."""
+def test_a_fractional_delta_rounds_to_whole_points():
+    """#13602: shared house formatter prints whole points."""
     label = _label(0.235)
-    assert "23.5 points" in label, label
+    assert "24 points" in label, label
+    assert "23.5" not in label, label
 
 
 def test_no_chip_on_any_magnitude_calls_a_delta_a_percent():

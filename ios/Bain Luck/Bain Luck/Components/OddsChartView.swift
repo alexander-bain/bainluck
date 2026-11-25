@@ -2327,7 +2327,9 @@ struct OddsChartView: View {
         // labels drawn in the overlay (#8481), so the two cannot disagree.
         // #4974 — drawn checkpoints widen the natural domain; a forced one wins.
         let extraDomainDates = soccerThreeLine?.points.map(\.date) ?? (checkpoints?.drawn.map(\.date) ?? [])
+        let drawnDates = dataPoints.map(\.date) + extraDomainDates
         let domain = xAxisDomain(for: dataPoints, checkpointDates: extraDomainDates)
+        let drawnDateRange = Self.dataDateRange(of: drawnDates)
         let plan = Self.xAxisPlan(
             for: domain,
             plotWidth: Self.axisPlanWidth(
@@ -2340,7 +2342,8 @@ struct OddsChartView: View {
             plotWidth: Self.axisPlanWidth(own: plotWidth.wrappedValue,
                 pageNarrowest: sharesPageAxis ? pageAxisPlotWidth : 0),
             labelScale: axisFontSize / 9,
-            calendar: chartCalendar)
+            calendar: chartCalendar,
+            dataRange: drawnDateRange)
         // #4974 — neither runs under a checkpoint mount. The balance ink would
         // draw the blend a second time, uncut, and color a crossing of 50% that
         // nothing recorded; the live split is a live page's, and a mount is a
@@ -2407,7 +2410,8 @@ struct OddsChartView: View {
                                 key: index, label: marker.label, rawX: Double($0))
                         }
                     },
-                    plotWidth: plotFrame.width
+                    plotWidth: plotFrame.width,
+                    clearTrailingBoundary: true
                 )
                 // The x-axis needs the same width the chips do (#3269).
                 Color.clear
@@ -2415,18 +2419,6 @@ struct OddsChartView: View {
                     .preference(key: PageAxisPlotWidthPreferenceKey.self,
                                 value: sharesPageAxis ? plotFrame.width : 0)
                 ChartTimeAxisLabels(ticks: ticks, plan: plan, proxy: proxy, plotFrame: plotFrame)
-                // Small floating period chips near the top of the chart
-                ForEach(placements, id: \.key) { placement in
-                    let marker = visibleMarkers[placement.key]
-                    Text(marker.label)
-                        .font(.system(size: 10, weight: .bold))
-                        .foregroundStyle(DS.textSecondaryReadable)
-                        .padding(.horizontal, 4)
-                        .padding(.vertical, 2)
-                        .background(.ultraThinMaterial)
-                        .clipShape(RoundedRectangle(cornerRadius: 4))
-                        .position(x: plotFrame.minX + placement.centerX, y: 10)
-                }
                 let atlasSettledResult: EventAtlasSettledResult11666? = (soccerThreeLine == nil && ReleaseSurfaces.isEventPageAtlasEnabled())
                     ? EventAtlasChartMarks11666.settledResult(
                         dataPoints: dataPoints,
@@ -2537,6 +2529,21 @@ struct OddsChartView: View {
                                               sportKey: sportKey, floatingCard: floatingCard)
                         .readingPhases(readoutContext(dataPoints: dataPoints, checkpoints: checkpoints,
                                                       pageGaveCard: pageGaveCard))
+                }
+                // Small floating period chips near the top of the chart (drawn after
+                // overlays/dots so right-edge vertical series never clip "Final").
+                ForEach(placements, id: \.key) { placement in
+                    let marker = visibleMarkers[placement.key]
+                    Text(marker.label)
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(DS.textSecondaryReadable)
+                        .fixedSize()
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                        .background(.ultraThinMaterial)
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .position(x: plotFrame.minX + placement.centerX, y: 10)
+                        .allowsHitTesting(false)
                 }
                 #if os(iOS)
                 if scrubSurfaces {
@@ -4340,6 +4347,13 @@ struct OddsChartView: View {
         return minDate.addingTimeInterval(-padding)...maxDate.addingTimeInterval(padding)
     }
 
+    /// The exact closed date span covered by the drawn data (`min...max`),
+    /// without axis padding; nil for no dates.
+    static func dataDateRange(of dates: [Date]) -> ClosedRange<Date>? {
+        guard let minDate = dates.min(), let maxDate = dates.max() else { return nil }
+        return minDate...maxDate
+    }
+
     // MARK: - X-Axis Ticks
 
     /// How to tick and label the time axis for one chart domain.
@@ -4649,31 +4663,45 @@ struct OddsChartView: View {
     /// Multi-day ranges retain their opening and closing dates. Thin interior
     /// labels against the same measured widths and edge clamps as the renderer;
     /// do not move data, the domain, or short-game clock ticks.
+    ///
+    /// When `dataRange` is given, closing and generated ticks are bounded to
+    /// `dataRange` so padding beyond the last drawn point (e.g. +2% on an
+    /// "All" range) never labels a future/post-game date that was never drawn.
     static func xAxisContextTicks(
         for domain: ClosedRange<Date>, plan: XAxisPlan, plotWidth: CGFloat,
-        labelScale: CGFloat, calendar: Calendar = .current
+        labelScale: CGFloat, calendar: Calendar = .current,
+        dataRange: ClosedRange<Date>? = nil
     ) -> [Date] {
         let regular = xAxisTicks(for: domain, plan: plan, calendar: calendar)
+        let openBound = dataRange.map { max(domain.lowerBound, $0.lowerBound) } ?? domain.lowerBound
+        let closeBound = dataRange.map { min(domain.upperBound, $0.upperBound) } ?? domain.upperBound
+        let clampedBoundsValid = closeBound >= openBound
+        let boundedRegular = (dataRange != nil && clampedBoundsValid)
+            ? regular.filter { $0 >= openBound && $0 <= closeBound }
+            : regular
         guard plan.labelStyle == .calendarDay || plan.labelStyle == .monthAndYear,
-              domain.upperBound > domain.lowerBound else { return regular }
+              domain.upperBound > domain.lowerBound else { return boundedRegular }
+        let effectiveOpen = clampedBoundsValid ? openBound : domain.lowerBound
+        let effectiveClose = clampedBoundsValid ? closeBound : domain.upperBound
+        guard effectiveClose > effectiveOpen else { return [effectiveOpen] }
         let width = xAxisLabelWidth(for: plan.labelStyle) * max(labelScale, 1)
-        guard plotWidth >= 2 * width + xAxisLabelMinGap else { return regular }
+        guard plotWidth >= 2 * width + xAxisLabelMinGap else { return boundedRegular }
         let duration = domain.upperBound.timeIntervalSince(domain.lowerBound)
         func center(_ date: Date) -> CGFloat {
             let position = CGFloat(date.timeIntervalSince(domain.lowerBound) / duration) * plotWidth
             return xAxisLabelCenters(tickPositions: [position], plotWidth: plotWidth, labelWidth: width)[0]
         }
-        let closing = center(domain.upperBound)
-        var result = [domain.lowerBound]
-        var previous = center(domain.lowerBound)
-        for tick in regular where tick > domain.lowerBound && tick < domain.upperBound {
+        let closing = center(effectiveClose)
+        var result = [effectiveOpen]
+        var previous = center(effectiveOpen)
+        for tick in boundedRegular where tick > effectiveOpen && tick < effectiveClose {
             let x = center(tick)
             if x - previous >= width + xAxisLabelMinGap && closing - x >= width + xAxisLabelMinGap {
                 result.append(tick)
                 previous = x
             }
         }
-        result.append(domain.upperBound)
+        result.append(effectiveClose)
         return result
     }
 

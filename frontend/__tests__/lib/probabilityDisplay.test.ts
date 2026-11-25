@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import {
   formatProbabilityPercent,
+  formatGroupedProbability,
   probabilityParts,
   BELOW_ONE_PERCENT,
   ABOVE_NINETY_NINE_PERCENT,
@@ -208,4 +209,13 @@ describe("anti-drift: one home for the percentage boundary", () => {
     expect(probabilityParts(0.004)).toEqual({ marker: "<", digits: "1" });
     expect(probabilityParts(0.62)).toEqual({ marker: null, digits: "62" });
   });
+});
+
+
+test("grouped text uses the unfloored allocation and keeps the legacy fallback", () => {
+  expect(formatGroupedProbability({ probability: 0.007, rendered_percent: 1, unfloored_percent: 0 })).toBe("<1%");
+  expect(formatGroupedProbability({ probability: 0.997, rendered_percent: 99, unfloored_percent: 100 })).toBe(">99%");
+  expect(formatGroupedProbability({ probability: 0.007, rendered_percent: 1 })).toBe("1%");
+  expect(formatGroupedProbability({ probability: null, rendered_percent: 17 })).toBe("17%");
+  expect(formatGroupedProbability({ probability: null, rendered_percent: null })).toBe("—");
 });

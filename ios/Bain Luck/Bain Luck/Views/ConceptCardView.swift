@@ -242,5 +242,6 @@ struct ConceptCardView: View {
         }
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .noteReviewPromptTrouble12304()
     }
 }

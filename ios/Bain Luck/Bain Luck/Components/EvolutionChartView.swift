@@ -563,6 +563,7 @@ struct EvolutionChartView: View {
                     .frame(height: height)
             } else if let error {
                 emptyState(error, retryable: errorIsRetryable)
+                    .noteReviewPromptTrouble12304()
             } else if data != nil {
                 switch Self.cardBody(
                     windowPoints: chartEntries.count,

@@ -49,6 +49,19 @@ final class GroupingMachinery12288Tests: XCTestCase {
         super.tearDown()
     }
 
+    func testUnflooredPercentProvidesBoundsWithoutReplacingLegacyInteger() throws {
+        let json = """
+        [
+          {"outcome_id":1,"name":"Low","probability":0.007,"rendered_percent":1,"unfloored_percent":0},
+          {"outcome_id":2,"name":"High","probability":0.997,"rendered_percent":99,"unfloored_percent":100},
+          {"outcome_id":3,"name":"Cached integer","rendered_percent":17}
+        ]
+        """
+        let rows = try JSONDecoder().decode([MachineryOutcomeVisual].self, from: Data(json.utf8))
+        XCTAssertEqual(rows.map(\.renderedPercent), [1, 99, 17])
+        XCTAssertEqual(rows.map(\.probabilityLabel), ["<1%", ">99%", "17%"])
+    }
+
     // MARK: - 1. Double Gate & Zero-Request Proof
 
     func testDoubleGatePreventsPublicAndSwitchedOffAccountsFromSeeingSwitchOrIssuingRequests() async throws {

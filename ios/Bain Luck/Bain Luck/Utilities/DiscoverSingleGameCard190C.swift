@@ -184,7 +184,8 @@ enum DiscoverSingleGameCard190C {
         event rawEvent: FeedEventData,
         prematch: PrematchReading?,
         showsInlinePregame: Bool = true,
-        usesPictureLayout: Bool = false
+        usesPictureLayout: Bool = false,
+        showsLiveTenths: Bool = false
     ) -> Model {
         let event = sanitizedEventForCurrentChance(rawEvent)
         let isLive = event.status == "live"
@@ -238,7 +239,7 @@ enum DiscoverSingleGameCard190C {
 
         let currentStrings: (away: String?, draw: String?, home: String?) = {
             guard canStillBeGraded else { return (nil, nil, nil) }
-            if isLive {
+            if isLive && showsLiveTenths {
                 let tenths = CompactGameCard12616.liveTenthsStrings(
                     away: explicitThreeWayCurrent ? event.currentOdds?.awayProbability : printableCurrent?.away,
                     home: event.currentOdds?.homeProbability,
