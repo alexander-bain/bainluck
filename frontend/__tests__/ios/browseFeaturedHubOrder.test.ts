@@ -94,38 +94,25 @@ describe("#6444 — the grid orders the hubs on the clock", () => {
     expect(body.match(/Date\(\)/g) ?? []).toHaveLength(1);
   });
 
-  it("draws BOTH arms", () => {
-    // The positive half. Every "is not at the top" assertion below is also
-    // satisfied by a hub that is nowhere at all — and "nowhere" is a worse
-    // answer than the defect, because the hub keeps results and title odds all
-    // year. This asserts the surface is still a surface.
-    const body = featuredGridBody();
-    expect(body).toMatch(/ForEach\(hubs\.leading\)/);
-    expect(body).toMatch(/ForEach\(hubs\.trailing\)/);
-  });
-
-  it("puts the evergreen destinations BETWEEN the two arms", () => {
-    // The mutant this kills: both `ForEach`es adjacent at the head of the grid,
-    // which computes the partition, ignores it, and restores 16 September.
+  it("omits finished hubs.trailing and places only active hubs.leading above evergreen destinations (#13671)", () => {
+    // Supersedes #6444's finished-hub retention on Browse (#13662 item 8 / #13671):
+    // Browse removes links to finished tournaments (US Open after its edition ends)
+    // while active hubs still lead above the evergreen destinations.
     const body = featuredGridBody();
     const leading = body.indexOf("ForEach(hubs.leading)");
-    const trailing = body.indexOf("ForEach(hubs.trailing)");
     const evergreen = body.indexOf('title: "Futures Markets"');
 
+    expect(body).toMatch(/ForEach\(hubs\.leading\)/);
+    expect(body).not.toMatch(/ForEach\(hubs\.trailing\)/);
     expect(leading).toBeGreaterThanOrEqual(0);
     expect(evergreen).toBeGreaterThan(leading);
-    expect(trailing).toBeGreaterThan(evergreen);
   });
 });
 
-describe("#6444 — the two placements draw the same card", () => {
-  it("both arms render through one card builder", () => {
-    // A reader who finds the US Open lower down gets the tile they would have
-    // got at the top; the clock moves it, it does not restyle it. Two inlined
-    // `BrowseFeatureCard` literals would drift apart the first time either is
-    // touched.
+describe("#6444 — active featured placements use the shared card builder", () => {
+  it("renders hubs through featuredHubCard and the shared clock subtitle", () => {
     const body = featuredGridBody();
-    expect(body.match(/featuredHubCard\(/g) ?? []).toHaveLength(2);
+    expect(body.match(/featuredHubCard\(/g) ?? []).toHaveLength(1);
 
     const source = stripComments(readFileSync(LEAGUES_VIEW, "utf8"));
     expect(source).toMatch(/private func featuredHubCard\(/);
