@@ -663,7 +663,7 @@ final class FollowAndMyStuff295ATests: XCTestCase {
         let mlbGiants = FollowedSubject295A.team(slug: "san-francisco-giants", teamId: 26, name: "Giants", sportKey: "baseball_mlb")
         let idlessUnknownSport = FollowedSubject295A.team(slug: "999", teamId: nil, name: "Giants", sportKey: nil)
         XCTAssertFalse(nflGiants.matches(mlbGiants), "Different teamIds must never match even when names match")
-        XCTAssertFalse(nflGiants.matches(idlessUnknownSport), "Subject with a teamId must not name-match an id-less subject")
+        XCTAssertFalse(nflGiants.matches(idlessUnknownSport), "Subject with a teamId must not name-match an id-less subject lacking a sportKey")
 
         // 2. Failed network fetch surfaces `loadFailed == true` and preserves previously loaded sections
         struct SimulatedOfflineError: Error {}
@@ -1286,5 +1286,113 @@ final class FollowAndMyStuff295ATests: XCTestCase {
           "futures": []
         }
         """)
+    }
+
+    // MARK: - #13657 — Followed team shows "Following" under a game that carries no team_id
+
+    func testFollowedTeamWithNumericIdShowsFollowingUnderGamesWithAndWithoutTeamId() async throws {
+        let defaults = makeIsolatedDefaults()
+        let manager = FollowManager295A(defaults: defaults)
+        let alertsPrompt = GameAlertsPromptController295A(defaults: defaults, requestPermissionHandler: {})
+
+        let followedWithId = FollowedSubject295A.team(
+            slug: "4201",
+            teamId: 4201,
+            name: "Olimpia Milano",
+            sportKey: "basketball_euroleague"
+        )
+        _ = manager.toggle(followedWithId)
+
+        let gameWithId = try decodeEvent("""
+        {
+          "id": 9136571,
+          "sport": "basketball_euroleague",
+          "sport_name": "Euroleague",
+          "away_team": "Olimpia Milano",
+          "home_team": "Real Madrid",
+          "status": "scheduled",
+          "commence_time": "2026-11-24T20:00:00Z",
+          "away_team_data": {"team_id": 4201, "slug": "olimpia-milano", "abbreviation": "EA7", "primary_color": "#D40026"},
+          "home_team_data": {"team_id": 4202, "slug": "real-madrid", "abbreviation": "RMB", "primary_color": "#00529F"}
+        }
+        """)
+        let gameWithoutId = try decodeEvent("""
+        {
+          "id": 9136572,
+          "sport": "basketball_euroleague",
+          "sport_name": "Euroleague",
+          "away_team": "Olimpia Milano",
+          "home_team": "ASVEL Lyon-Villeurbanne",
+          "status": "live",
+          "away_score": 52,
+          "home_score": 49,
+          "commence_time": "2026-11-24T18:30:00Z"
+        }
+        """)
+
+        let withIdSubject = try XCTUnwrap(FollowedSubject295A.teamFromEventSide(event: gameWithId, isHome: false))
+        let withoutIdSubject = try XCTUnwrap(FollowedSubject295A.teamFromEventSide(event: gameWithoutId, isHome: false))
+        XCTAssertEqual(withIdSubject.teamId, 4201)
+        XCTAssertNil(withoutIdSubject.teamId)
+        XCTAssertTrue(manager.isFollowing(withIdSubject), "Game carrying team_id must show Following")
+        XCTAssertTrue(manager.isFollowing(withoutIdSubject), "Game omitting team_id must still match by name + sport family")
+        XCTAssertFalse(
+            manager.isFollowing(try XCTUnwrap(FollowedSubject295A.teamFromEventSide(event: gameWithoutId, isHome: true))),
+            "Unfollowed opponent omitting team_id must remain + Follow"
+        )
+
+        // Verify distinct sport families with the same team name still never cross-match when team_id is absent.
+        let nflGiantsWithId = FollowedSubject295A.team(slug: "19", teamId: 19, name: "Giants", sportKey: "americanfootball_nfl")
+        let mlbGameWithoutId = try decodeEvent("""
+        {
+          "id": 9136573,
+          "sport": "baseball_mlb",
+          "sport_name": "MLB",
+          "away_team": "Giants",
+          "home_team": "Dodgers",
+          "status": "scheduled"
+        }
+        """)
+        let mlbGiantsWithoutId = try XCTUnwrap(FollowedSubject295A.teamFromEventSide(event: mlbGameWithoutId, isHome: false))
+        XCTAssertFalse(nflGiantsWithId.matches(mlbGiantsWithoutId), "NFL Giants (id 19) must never match id-less MLB Giants")
+
+        let rendered = renderInWindow(width: 390, height: 320, scheme: .light) {
+            VStack(spacing: 12) {
+                GameCardTeamFollowBar295A(event: gameWithId)
+                GameCardTeamFollowBar295A(event: gameWithoutId)
+            }
+            .padding(16)
+            .frame(width: 390, alignment: .leading)
+            .background(Color.white)
+            .environment(\.followManager295A, manager)
+            .environment(\.gameAlertsPrompt295A, alertsPrompt)
+        }
+        let combined = recognizeText(in: rendered)
+        XCTAssertTrue(combined.contains("Olimpia Milano"), "Expected team name on rendered chips: \(combined)")
+        XCTAssertTrue(combined.contains("Real Madrid"), "Expected opponent on rendered chips: \(combined)")
+        XCTAssertTrue(combined.contains("ASVEL"), "Expected opponent on rendered chips: \(combined)")
+        let followingMatches = combined.components(separatedBy: "Following").count - 1
+        XCTAssertGreaterThanOrEqual(
+            followingMatches, 2,
+            "Both the game with team_id and the game without team_id must render 'Following': \(combined)"
+        )
+
+        // Reverse direction: follow from an id-less game card, then verify match on an id-bearing game and backfill via mergeServerFavorites.
+        let idlessDefaults = makeIsolatedDefaults()
+        let idlessManager = FollowManager295A(defaults: idlessDefaults)
+        XCTAssertTrue(idlessManager.toggle(withoutIdSubject))
+        XCTAssertTrue(idlessManager.isFollowing(withIdSubject))
+        idlessManager.mergeServerFavorites([
+            FavoriteItem(
+                teamId: 4201,
+                teamName: "Olimpia Milano",
+                relationType: "follow",
+                sportKey: "basketball_euroleague",
+                logoUrl: "https://example.com/ea7.png",
+                source: nil
+            )
+        ])
+        XCTAssertEqual(idlessManager.subjects.count, 1, "mergeServerFavorites must backfill teamId without duplicating id-less follow")
+        XCTAssertEqual(idlessManager.subjects.first?.teamId, 4201)
     }
 }
