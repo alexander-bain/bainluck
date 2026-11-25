@@ -18,6 +18,7 @@ import SourceComparisonRow from "@/components/SourceComparisonRow";
 // markup fact, so it is mountable rather than inline.
 import CalibrationBucketTable from "@/components/CalibrationBucketTable";
 import { CalibrationCardNote } from "@/components/CalibrationCardNote";
+import BlendVsSourcesCalibration from "@/components/BlendVsSourcesCalibration";
 import {
   buildSourcePanels,
   COHORT_NOUNS,
@@ -2135,6 +2136,8 @@ export default function CalibrationPage() {
             the reasoning and the production probe are in the component's header. */}
         <CalibrationBucketTable buckets={cohortBuckets} />
       </section>
+
+      <BlendVsSourcesCalibration />
 
       {/* By Source — one panel per PROVIDER, matching Source Comparison above.
           UX-P078, Alex ruling 2026-08-14(b) item 3. CAL-P050 deliberately kept

@@ -2495,7 +2495,7 @@ jobs:
       if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}
       env:
         CALIBRATION_TEST_DATABASE_URL: postgresql+asyncpg://postgres:postgres@localhost:5432/bl_cal12612
-      run: bash ../.github/scripts/run-12612-pg-gates.sh cal tests/test_calibration_examples_canonical_262.py tests/test_calibration_canonical_pg.py tests/test_calibration_horizon_honest_263.py tests/test_time_horizon_bounded_chunks.py
+      run: bash ../.github/scripts/run-12612-pg-gates.sh cal tests/test_calibration_examples_canonical_262.py tests/test_calibration_canonical_pg.py tests/test_calibration_horizon_honest_263.py tests/test_time_horizon_bounded_chunks.py tests/test_blend_vs_sources_calibration_356a.py
     - name: "#13606 history since_start SQL pushdown plans and oracle equivalence (real Postgres)"
       id: db_13606_history_since_start_pushdown
       if: ${{ !cancelled() && (matrix.group == 'isolated' && needs.change-scope.outputs.reuse != 'true') }}

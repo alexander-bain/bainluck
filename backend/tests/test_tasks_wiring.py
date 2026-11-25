@@ -577,6 +577,8 @@ class TestBeatScheduleCompleteness:
         # #13241 — periodic ESPN standings record refresh for college basketball
         # teams (existing rows by verified espn_id only, never creates teams).
         "sync-espn-standings-records",
+        # #356a — nightly Blend vs Contributing Sources matched-game calibration.
+        "precompute-blend-vs-sources-calibration",
     }
 
     def test_no_missing_entries(self):

@@ -922,6 +922,7 @@ HEAVY_TASKS = {
     "app.tasks.compute_calibration_prices",        # cal_price (#183)
     "app.tasks.compute_time_horizon_calibration",  # time_horizon (r228: prior fix didn't take)
     "app.tasks.compute_fair_fight_comparison",
+    "app.tasks.precompute_blend_vs_sources_calibration",  # #356a: nightly 12:00 UTC blend-vs-sources chart
     "app.tasks.precompute_source_intelligence",
     "app.tasks.snapshot_coverage_metrics",
     "app.tasks.precompute_backfill_winners_status",
@@ -7263,6 +7264,13 @@ def compute_fair_fight_comparison(self):
     return _tracked_run("compute_fair_fight_comparison", _compute_fair_fight_comparison())
 
 
+@celery_app.task(bind=True, soft_time_limit=300, time_limit=360, name="app.tasks.precompute_blend_vs_sources_calibration")
+def precompute_blend_vs_sources_calibration(self):
+    """Precompute Blend vs Contributing Sources calibration and cache in Redis (#356a, nightly)."""
+    from app.tasks.precompute_blend_vs_sources import _precompute_blend_vs_sources_calibration
+    return _tracked_run("precompute_blend_vs_sources_calibration", _precompute_blend_vs_sources_calibration())
+
+
 @celery_app.task(bind=True, soft_time_limit=600, time_limit=660, name="app.tasks.precompute_source_intelligence")
 def precompute_source_intelligence(self):
     """Precompute the Source-Intelligence ("Measure") snapshot into Redis (every 6h).
@@ -10611,6 +10619,11 @@ celery_app.conf.beat_schedule = {
     "compute-fair-fight-comparison": {
         "task": "app.tasks.compute_fair_fight_comparison",
         "schedule": crontab(minute=15, hour="1,7,13,19"),  # Every 6 hours, offset 15min
+        "options": {"queue": "heavy"},
+    },
+    "precompute-blend-vs-sources-calibration": {
+        "task": "app.tasks.precompute_blend_vs_sources_calibration",
+        "schedule": crontab(minute=0, hour=12),  # Daily 12:00 UTC (4:00 AM PT)
         "options": {"queue": "heavy"},
     },
     "precompute-source-intelligence": {
