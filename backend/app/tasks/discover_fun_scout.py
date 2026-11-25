@@ -34,7 +34,10 @@ from app.models.models import FuturesMarket
 from app.services.database import async_session_maker
 from app.utils.discover_fun_scout import (
     LICENCE_AWAITING_LOOK,
+    SCOUT_AUTO_PROMOTE_TO_PUBLIC,
     SCOUT_LICENCE_STATE_PATH,
+    SCOUT_MAX_NEW_SETS_PER_DAY,
+    SCOUT_PUBLIC_PROMOTION_GATE,
     SCOUT_RETIRED_SETS_PATH,
     SCOUT_STAGED_SETS_DIR,
     ScoutLicenceState,
@@ -257,14 +260,16 @@ def build_scout_nightly_artifact(
     run_now: datetime,
     monthly_ledger_recorded: bool = True,
     monthly_ledger_error: Optional[str] = None,
+    max_new_per_day: int = SCOUT_MAX_NEW_SETS_PER_DAY,
 ) -> dict[str, Any]:
     """Build the complete, durable JSON artifact for one Nightly Fun Scout run."""
     licence_dict = result.get("licence_state") or {}
     licence_status = str(licence_dict.get("status") or LICENCE_AWAITING_LOOK)
     set_model = str(result.get("set_model") or "")
+    cap = max(0, int(max_new_per_day))
 
     staged_sets: list[dict[str, Any]] = []
-    for vset in result.get("validated_sets") or []:
+    for vset in (result.get("validated_sets") or [])[:cap]:
         rule_def = build_scout_rule_file_definition(
             vset,
             model_used=set_model,
@@ -302,6 +307,9 @@ def build_scout_nightly_artifact(
         "actual_total_cost_usd": float(result.get("actual_total_cost_usd") or 0.0),
         "set_model": set_model,
         "tagged_count": int(result.get("tagged_count") or 0),
+        "max_new_sets_per_day": cap,
+        "auto_promote_to_public": SCOUT_AUTO_PROMOTE_TO_PUBLIC,
+        "public_promotion_gate": SCOUT_PUBLIC_PROMOTION_GATE,
         "licence_state": licence_dict,
         "monthly_ledger_recorded": bool(monthly_ledger_recorded),
         "monthly_ledger_error": monthly_ledger_error,
@@ -633,6 +641,7 @@ async def _run_discover_fun_scout(
         retired_sets=retired,
         licence_state=licence,
         prior_monthly_spend_usd=prior_spend,
+        max_new_per_day=SCOUT_MAX_NEW_SETS_PER_DAY,
         now=run_now,
     )
     monthly_ledger_recorded, monthly_ledger_error = _record_monthly_spend_usd(
@@ -643,6 +652,7 @@ async def _run_discover_fun_scout(
         run_now=run_now,
         monthly_ledger_recorded=monthly_ledger_recorded,
         monthly_ledger_error=monthly_ledger_error,
+        max_new_per_day=SCOUT_MAX_NEW_SETS_PER_DAY,
     )
     redis_saved, redis_error = _persist_run_artifact_redis(artifact)
     github_url: Optional[str] = None

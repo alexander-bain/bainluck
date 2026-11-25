@@ -284,6 +284,9 @@ final class AuthManager: ObservableObject {
 
     /// Clears local session state, provider state, and analytics identity.
     func signOut() {
+        let signOutToken = KeychainHelper.load(key: keychainTokenKey)
+            .flatMap { String(data: $0, encoding: .utf8) }
+        NotificationManager.shared.detachAllTokensForSignOut(authToken: signOutToken)
         clearStoredAuth()
         GIDSignIn.sharedInstance.signOut()
         user = nil

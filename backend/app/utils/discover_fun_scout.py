@@ -57,25 +57,33 @@ from app.utils.discover_fun_tags import (
     check_fun_taste_guard,
     load_fun_markets_registry,
 )
-from app.utils.roundup_containers import validate_roundup_definition
+from app.utils.roundup_containers import (
+    CONTAINERS_DATA_DIR,
+    validate_roundup_definition,
+)
 
 logger = logging.getLogger(__name__)
 
 #: Dedicated Anthropic key for the scout on Heroku app ``bainluck`` (#13102).
 #: Read from this variable and nothing else (never ``ANTHROPIC_API_KEY``).
 SCOUT_ANTHROPIC_API_KEY_ENV = "ANTHROPIC_API_KEY_SCOUT"
-#: Feature gate for the scheduled nightly task (OFF until Wed Nov 25).
+#: Feature gate for the scheduled nightly task.
 SCOUT_ENABLED_ENV = "DISCOVER_FUN_SCOUT_ENABLED"
 
 #: Decide 61-A / Ruling 276: B hard caps.
 SCOUT_RUN_CAP_USD = 5.0
 SCOUT_MONTHLY_CAP_USD = 30.0
 
-#: Decide 32-C / Ruling 276: B ship cadence and minimum set size.
-SCOUT_MAX_NEW_SETS_PER_DAY = 2
+#: Ruling 385: A (#13102) daily staging cap and minimum set size.
+SCOUT_MAX_NEW_SETS_PER_DAY = 10
 SCOUT_MIN_LIVE_MEMBERS = 3
 
-#: Decide 61-A licence ramp: 7 clean days on Fable's look earn auto-ship.
+#: Ruling 385: A (#13102): staged scout sets NEVER auto-promote to public;
+#: promotion happens only after Alex grades "Keep".
+SCOUT_AUTO_PROMOTE_TO_PUBLIC = False
+SCOUT_PUBLIC_PROMOTION_GATE = "alex_keep"
+
+#: Clean-day counter retained for telemetry; auto-promotion is permanently off.
 SCOUT_CLEAN_DAYS_FOR_LICENCE = 7
 LICENCE_AWAITING_LOOK = "awaiting_fable_look"
 LICENCE_AUTO = "licensed_auto"
@@ -1224,6 +1232,7 @@ def build_scout_rule_file_definition(
 
     definition: dict[str, Any] = {
         "slug": validated_set.slug,
+        "stage": "preview",
         "membership": "computed-produced",
         "kind": "roundup",
         "relations": ["same_subject"],
@@ -1242,7 +1251,10 @@ def build_scout_rule_file_definition(
             "origin": "discover_fun_scout",
             "model": model_used,
             "licence_state": licence_state,
-            "requires_fable_look": licence_state != LICENCE_AUTO,
+            "requires_fable_look": True,
+            "auto_promote": SCOUT_AUTO_PROMOTE_TO_PUBLIC,
+            "requires_keep_to_publish": True,
+            "public_promotion_gate": SCOUT_PUBLIC_PROMOTION_GATE,
             "created_at": created_at.astimezone(timezone.utc).isoformat(),
             "verified_member_count": len(validated_set.members),
             "fun_tag": validated_set.slug,
@@ -1250,6 +1262,30 @@ def build_scout_rule_file_definition(
         "rule": rule,
     }
     return validate_roundup_definition(definition)
+
+
+def _assert_staged_output_is_non_public(output_dir: Path) -> None:
+    """Refuse writing staged scout sets into the public containers dir."""
+    resolved_out = output_dir.resolve()
+    containers_dir = CONTAINERS_DATA_DIR.resolve()
+    if resolved_out == containers_dir or containers_dir in resolved_out.parents:
+        raise ValueError(
+            f"Refusing to stage scout sets inside public containers dir {containers_dir}; "
+            "promotion requires explicit Alex Keep."
+        )
+
+
+def _assert_staged_definition(defn: Mapping[str, Any]) -> None:
+    """Enforce Ruling 385: A invariant: no staged set may self-publish."""
+    scout_meta = defn.get("scout") or {}
+    if (
+        defn.get("stage") != "preview"
+        or scout_meta.get("auto_promote") is not False
+        or scout_meta.get("requires_keep_to_publish") is not True
+    ):
+        raise ValueError(
+            f"Staged scout definition {defn.get('slug')!r} must stay preview with explicit Keep gate"
+        )
 
 
 def write_scout_rule_files(
@@ -1261,7 +1297,7 @@ def write_scout_rule_files(
     licence_state: ScoutLicenceState,
     max_new_per_day: int = SCOUT_MAX_NEW_SETS_PER_DAY,
 ) -> list[Path]:
-    """Write at most ``max_new_per_day`` rule files unless the scout is suspended."""
+    """Write at most ``max_new_per_day`` staged preview rule files."""
     if licence_state.status == LICENCE_SUSPENDED:
         logger.warning(
             "Fun scout is suspended (%s); writing 0 rule files",
@@ -1269,6 +1305,7 @@ def write_scout_rule_files(
         )
         return []
 
+    _assert_staged_output_is_non_public(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     written: list[Path] = []
     for vset in validated_sets[: max(0, int(max_new_per_day))]:
@@ -1278,6 +1315,7 @@ def write_scout_rule_files(
             created_at=created_at,
             licence_state=licence_state.status,
         )
+        _assert_staged_definition(defn)
         target = output_dir / f"{vset.slug}.json"
         target.write_text(json.dumps(defn, indent=2) + "\n", encoding="utf-8")
         written.append(target)
@@ -1292,15 +1330,13 @@ def write_scout_rule_files(
 def advance_scout_licence_clean_day(
     state: ScoutLicenceState, day_iso: str
 ) -> ScoutLicenceState:
-    """Record one clean day; seven clean days promote from Fable-look to auto."""
+    """Record one clean day without auto-promoting (Ruling 385: A requires Keep)."""
     if state.status == LICENCE_SUSPENDED:
         return state
     if state.last_clean_day == day_iso:
         return state
     state.clean_days += 1
     state.last_clean_day = day_iso
-    if state.clean_days >= SCOUT_CLEAN_DAYS_FOR_LICENCE:
-        state.status = LICENCE_AUTO
     return state
 
 

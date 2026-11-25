@@ -45,12 +45,18 @@ nonisolated struct ContainerDiscoveryRequest: Sendable {
         ["league": league.rawValue, "season": String(season), "limit": "20"]
     }
 
+    private static let finishedStatuses: Set<String> = [
+        "final", "completed", "closed", "resolved", "settled", "finished"
+    ]
+
     /// The producer remains the publication authority. These checks refuse a
-    /// mismatched/unsupported edition or dead destination instead of guessing.
+    /// mismatched/unsupported edition, finished collection (#13671), or dead destination instead of guessing.
     func entries(in response: ContainerDiscoveryResponse) -> [ContainerDiscoveryEntry] {
         var seen = Set<String>()
         return response.collections.compactMap { card in
+            let normalizedStatus = (card.status ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             guard card.canOpen, card.id > 0, card.revision >= 1,
+                  !Self.finishedStatuses.contains(normalizedStatus),
                   !card.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                   card.edition.league == league.rawValue, card.edition.season == season,
                   card.gameCount >= 0, card.questionCount >= 0,

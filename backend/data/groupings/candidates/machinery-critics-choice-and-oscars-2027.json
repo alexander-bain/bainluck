@@ -1,0 +1,68 @@
+{
+  "slug": "machinery-critics-choice-and-oscars-2027",
+  "stage": "preview",
+  "look": "faces",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_event",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "ENTERTAINMENT · AWARDS",
+  "name": "Critics Choice & Below-the-Line Oscars",
+  "category": "entertainment",
+  "tag": "ENTERTAINMENT",
+  "section_title": "Director & Supporting Contenders",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "card_rows": 2,
+    "card_section_key": "director_and_supporting",
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/e/ed/Empty_concert_hall_in_Katowice_%28Unsplash%29.jpg/960px-Empty_concert_hall_in_Katowice_%28Unsplash%29.jpg",
+    "card_image_alt": "Red velvet seats and wood-paneled acoustic balcony inside a concert hall",
+    "card_image_credit": "Radek Grzybowski (CC0 1.0 Public Domain, Wikimedia Commons)",
+    "card_image_author": "Radek Grzybowski",
+    "card_image_license": "CC0 1.0 Public Domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Empty_concert_hall_in_Katowice_(Unsplash).jpg",
+    "sections": [
+      {
+        "key": "director_and_supporting",
+        "title": "Director & Supporting Contenders",
+        "item_noun": "categories",
+        "note": "Leading directors and supporting actors across Critics Choice and Oscars 2027 voting.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch9-critics-oscars-people",
+          "shape": "field",
+          "order_by": "lead_prob_desc",
+          "min_items": 2,
+          "max_items": 2,
+          "max_outcomes": 2,
+          "initial_visible_limit": 2,
+          "min_lifetime_volume": 1
+        }
+      },
+      {
+        "key": "film_craft_races",
+        "title": "Screenplay, Score & Picture Races",
+        "item_noun": "categories",
+        "note": "Critics Choice Best Picture plus International Feature, Original Score, and Adapted Screenplay at the 2027 Oscars.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch9-critics-oscars-craft",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 5,
+          "max_outcomes": 1,
+          "initial_visible_limit": 4,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}

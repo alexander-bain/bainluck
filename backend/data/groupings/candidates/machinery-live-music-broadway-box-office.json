@@ -1,0 +1,52 @@
+{
+  "slug": "machinery-live-music-broadway-box-office",
+  "stage": "preview",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_event",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "ENTERTAINMENT · MUSIC",
+  "name": "Grammys 2027: Song & Genre Races",
+  "category": "entertainment",
+  "tag": "ENTERTAINMENT",
+  "section_title": "2027 Grammy Category Leaders",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "card_rows": 3,
+    "card_section_key": "music_box_office_slate",
+    "hide_row_art": true,
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/d6/Waiting_for_the_concert_to_start_%28Unsplash%29.jpg/960px-Waiting_for_the_concert_to_start_%28Unsplash%29.jpg",
+    "card_image_alt": "Concert venue stage illuminated in warm purple and blue lights before a show",
+    "card_image_credit": "Laura Wielo (CC0 1.0 Public Domain, Wikimedia Commons)",
+    "card_image_author": "Laura Wielo",
+    "card_image_license": "CC0 1.0 Public Domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Waiting_for_the_concert_to_start_(Unsplash).jpg",
+    "sections": [
+      {
+        "key": "music_box_office_slate",
+        "title": "2027 Grammy Category Leaders",
+        "item_noun": "categories",
+        "note": "Leading contenders across Song of the Year, Best R&B Solo Performance, Best Pop Vocal Album, and Best Rock Album.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch9-live-music-slate",
+          "shape": "any",
+          "order_by": "closeness_to_50",
+          "min_items": 3,
+          "max_items": 4,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}

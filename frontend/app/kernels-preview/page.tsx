@@ -15,6 +15,7 @@
  */
 
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+import BainLuckMark from "@/components/BainLuckMark";
 import {
   ClaimKernel,
   DuelKernel,
@@ -361,7 +362,7 @@ function MixedFeed() {
   return (
     <div className="flex w-[375px] flex-col gap-2.5 rounded-2xl border border-surface-border bg-surface-deep p-4">
       <div className="flex items-center gap-1.5 px-0.5 pb-1.5">
-        <span className="text-base">🍀</span>
+        <BainLuckMark size={18} />
         <span className="text-base font-bold tracking-[-0.01em] text-text-primary">Discover</span>
         <span className="ml-auto text-[11px] text-text-muted">42 events · Personalized</span>
       </div>
