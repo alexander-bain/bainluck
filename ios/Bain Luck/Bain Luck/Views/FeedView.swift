@@ -672,7 +672,8 @@ struct FeedView: View {
                     event: event,
                     reason: item.reason,
                     personalizationReasons: item.personalizationReasons,
-                    headline: item.headline
+                    headline: item.headline,
+                    showsTeamFollowBar: false
                 )
             }
             .contentShape(Rectangle())

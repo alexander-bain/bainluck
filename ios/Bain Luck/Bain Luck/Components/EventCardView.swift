@@ -12,6 +12,8 @@ struct EventCardView: View {
     /// True when `/api/teams/{slug}` already resolved a draw-priced sport's
     /// away probability via `_away_three_way_price` (#11541).
     var awayReadingIsServerVerified: Bool = false
+    /// #13013: Sports list hides the in-row team follow buttons for shorter, denser rows.
+    var showsTeamFollowBar: Bool = true
 
     init(
         event: FeedEventData,
@@ -19,7 +21,8 @@ struct EventCardView: View {
         personalizationReasons: [String]? = nil,
         headline: String? = nil,
         compactScheduleStyle: Bool = false,
-        awayReadingIsServerVerified: Bool = false
+        awayReadingIsServerVerified: Bool = false,
+        showsTeamFollowBar: Bool = true
     ) {
         var cardEvent = event
         cardEvent.currentOdds = CompactGameCard12616.currentOddsForCard(event)
@@ -29,6 +32,7 @@ struct EventCardView: View {
         self.headline = headline
         self.compactScheduleStyle = compactScheduleStyle
         self.awayReadingIsServerVerified = awayReadingIsServerVerified
+        self.showsTeamFollowBar = showsTeamFollowBar
     }
 
     /// #11325 — selects the finished card's accessibility arm; see
@@ -231,7 +235,9 @@ struct EventCardView: View {
             teamsAndOdds
             if !compactScheduleStyle {
                 footer
-                GameCardTeamFollowBar295A(event: event)
+                if showsTeamFollowBar {
+                    GameCardTeamFollowBar295A(event: event)
+                }
             }
         }
         .padding(.vertical, 6)
