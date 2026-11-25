@@ -40,6 +40,8 @@ export const APP_STORE_CAMPAIGNS = {
   banner: "web-banner",
   /** Safari's banner on an event's page, where shared links land. */
   bannerEventPage: "web-banner-event-page",
+  /** Safari's banner on a set / collection page, where shared links land. */
+  bannerCollectionPage: "web-banner-collection-page",
   /** The footer's "Download on the App Store" badge. */
   footerBadge: "web-footer-badge",
   /** The footer's "Get the app" line on phone widths. */
