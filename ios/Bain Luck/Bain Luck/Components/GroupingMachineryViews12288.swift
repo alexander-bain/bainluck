@@ -1040,7 +1040,7 @@ private struct MachineryDuelBarSectionView: View {
                                             .fixedSize(horizontal: false, vertical: true)
                                     }
                                     HStack(alignment: .firstTextBaseline, spacing: 3) {
-                                        Text("\(left.renderedPercent)%")
+                                        Text(left.probabilityLabel)
                                             .font(.system(size: min(pctSize, 28), weight: .heavy).monospacedDigit())
                                             .foregroundStyle(primaryInk)
                                         if let m = SourceMarkButton(leftMark, number: left.probability, subject: left.name, subtitle: lead.title, numberSize: min(nameSize, 20), compactRow: true) {
@@ -1064,7 +1064,7 @@ private struct MachineryDuelBarSectionView: View {
                                         }
                                     }
                                     HStack(alignment: .firstTextBaseline, spacing: 3) {
-                                        Text("\(right.renderedPercent)%")
+                                        Text(right.probabilityLabel)
                                             .font(.system(size: min(pctSize, 28), weight: .heavy).monospacedDigit())
                                             .foregroundStyle(primaryInk)
                                         if let m = SourceMarkButton(rightMark, number: right.probability, subject: right.name, subtitle: lead.title, numberSize: min(nameSize, 20), compactRow: true) {
@@ -1116,7 +1116,7 @@ private struct MachineryDuelBarSectionView: View {
                 .fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 6)
             HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text("\(outcome.renderedPercent)%")
+                Text(outcome.probabilityLabel)
                     .font(.system(size: min(pctSize, 28), weight: .heavy).monospacedDigit())
                     .foregroundStyle(primaryInk)
                 if let m = SourceMarkButton(mark, number: outcome.probability, subject: outcome.name, subtitle: marketTitle, numberSize: min(nameSize, 20), compactRow: true) {
@@ -1185,7 +1185,7 @@ private struct MachineryContenderSpotlightSectionView: View {
                                     .fixedSize(horizontal: false, vertical: true)
                                 Spacer(minLength: 6)
                                 HStack(alignment: .firstTextBaseline, spacing: 3) {
-                                    Text("\(o.renderedPercent)%")
+                                    Text(o.probabilityLabel)
                                         .font(.system(size: min(labelSize, 22), weight: isFav ? .heavy : .semibold).monospacedDigit())
                                         .foregroundStyle(isFav ? primaryInk : secondaryInk)
                                     if let m = SourceMarkButton(
@@ -1304,7 +1304,7 @@ private struct MachineryContenderSpotlightSectionView: View {
                                 }
                                 Spacer(minLength: 6)
                                 HStack(alignment: .firstTextBaseline, spacing: 3) {
-                                    Text("\(o.renderedPercent)%")
+                                    Text(o.probabilityLabel)
                                         .font(.system(size: min(labelSize, 22), weight: .bold).monospacedDigit())
                                         .foregroundStyle(primaryInk)
                                     if let m = SourceMarkButton(
@@ -1357,7 +1357,7 @@ private struct MachineryContenderSpotlightSectionView: View {
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(secondaryInk)
                 Spacer(minLength: 2)
-                Text("\(outcome.renderedPercent)%")
+                Text(outcome.probabilityLabel)
                     .font(.system(size: min(labelSize, 20), weight: .heavy).monospacedDigit())
                     .foregroundStyle(primaryInk)
                 if let m = SourceMarkButton(resolvedMark, number: outcome.probability, subject: outcome.name, subtitle: marketTitle, numberSize: 13, compactRow: true) {
@@ -1437,7 +1437,7 @@ private struct MachineryContenderSpotlightSectionView: View {
             }
             Spacer(minLength: 6)
             HStack(alignment: .firstTextBaseline, spacing: 3) {
-                Text("\(outcome.renderedPercent)%")
+                Text(outcome.probabilityLabel)
                     .font(.system(size: min(labelSize, 24), weight: .heavy).monospacedDigit())
                     .foregroundStyle(primaryInk)
                 if let m = SourceMarkButton(resolvedMark, number: outcome.probability, subject: outcome.name, subtitle: marketTitle, numberSize: min(labelSize, 20), compactRow: true) {
@@ -1536,7 +1536,7 @@ private struct MachinerySiblingFieldsSectionView: View {
                                                 .fixedSize(horizontal: false, vertical: true)
                                             Spacer(minLength: 6)
                                             HStack(alignment: .firstTextBaseline, spacing: 3) {
-                                                Text("\(o.renderedPercent)%")
+                                                Text(o.probabilityLabel)
                                                     .font(.system(size: min(rowSize, 20), weight: isFav ? .bold : .semibold).monospacedDigit())
                                                     .foregroundStyle(isFav ? primaryInk : secondaryInk)
                                                 if let m = SourceMarkButton(
@@ -1633,7 +1633,7 @@ private struct MachineryBenchmarkStripSectionView: View {
                                     .fixedSize(horizontal: false, vertical: true)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                                 HStack(alignment: .center, spacing: 3) {
-                                    Text("\(yes.renderedPercent)%")
+                                    Text(yes.probabilityLabel)
                                         .font(.system(size: min(rowSize, 21), weight: .bold).monospacedDigit())
                                         .foregroundStyle(primaryInk)
                                         .padding(.horizontal, 8)
@@ -1991,7 +1991,7 @@ struct MachineryDiscoverCardView: View {
                                 .fixedSize(horizontal: false, vertical: true)
                             Spacer(minLength: 6)
                             HStack(alignment: .firstTextBaseline, spacing: 3) {
-                                Text("\(o.renderedPercent)%")
+                                Text(o.probabilityLabel)
                                     .font(.system(size: min(rowSize, 22), weight: isFav ? .bold : .semibold).monospacedDigit())
                                     .foregroundStyle(isFav ? primaryInk : secondaryInk)
                                 if let m = SourceMarkButton(o.sourceMark, number: o.probability, subject: o.name, subtitle: card.title, numberSize: min(rowSize, 18), compactRow: true) {

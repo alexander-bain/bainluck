@@ -31,7 +31,8 @@ import Foundation
         defaults.set(defaults.integer(forKey: Key.goodMoments) + 1, forKey: Key.goodMoments)
     }
 
-    /// The reader saw something fail ("Update interrupted"); this run never asks.
+    /// The reader saw a failed read ("Update interrupted", "Couldn't load", etc.);
+    /// this run never asks.
     func noteTrouble() {
         sessionHadTrouble = true
     }

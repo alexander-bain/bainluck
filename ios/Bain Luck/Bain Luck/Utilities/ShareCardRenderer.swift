@@ -211,8 +211,7 @@ struct ShareableFuturesCardView: View {
                     Text("bainluck.com")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(Color(red: 0.55, green: 0.55, blue: 0.60))
-                    Text("🍀")
-                        .font(.system(size: 12))
+                    BainLuckMarkView(size: 20)
                 }
             }
             .padding(18)
@@ -641,8 +640,7 @@ struct ShareableEventCardView: View {
                     Text("bainluck.com")
                         .font(.system(size: 12, weight: .semibold))
                         .foregroundStyle(Color(red: 0.55, green: 0.55, blue: 0.60))
-                    Text("🍀")
-                        .font(.system(size: 12))
+                    BainLuckMarkView(size: 20)
                 }
             }
             .padding(22)
