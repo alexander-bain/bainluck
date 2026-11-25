@@ -289,6 +289,7 @@ struct DiscoverLabelingView: View {
         .font(.subheadline)
         .padding()
         .background(Color.red.opacity(0.06), in: RoundedRectangle(cornerRadius: 12))
+        .noteReviewPromptTrouble12304()
     }
 
     private func reviewCard(_ item: DiscoverLabelingDebugItem) -> some View {

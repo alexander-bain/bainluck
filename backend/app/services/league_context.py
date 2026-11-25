@@ -20,7 +20,7 @@ import json
 import logging
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Any, Mapping, Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -34,6 +34,7 @@ from app.utils.name_normalization import normalize_name
 logger = logging.getLogger(__name__)
 
 LEAGUE_CONTEXT_TTL = 300  # 5 minutes
+LEAGUE_CONTEXT_WARM_TTL = 3900  # 65 minutes (exceeds hourly precompute beat)
 
 
 @dataclass
@@ -89,6 +90,129 @@ class LeagueContext:
             teams[name] = TeamLeagueContext(**tdata)
         data["teams"] = teams
         return cls(**data)
+
+
+def build_league_context_from_grid(
+    league_slug: str,
+    grid_data: Optional[Mapping[str, Any]],
+) -> Optional[LeagueContext]:
+    """Convert an already-built playoff grid payload into ``LeagueContext`` (pure/no DB)."""
+    config = LEAGUE_CONFIGS.get(league_slug)
+    if not config or not grid_data:
+        return None
+
+    # Build column metadata
+    columns = [{"key": c.key, "label": c.label} for c in config.columns]
+    column_labels = {c.key: c.label for c in config.columns}
+
+    # Extract team data from grid response
+    # Grid response format varies: golf uses "teams" with "cells",
+    # team sports use "teams" with "stages"
+    teams_data = list(grid_data.get("teams") or [])
+    if not teams_data:
+        # Try grouped_teams (conference split)
+        grouped = grid_data.get("grouped_teams") or {}
+        if isinstance(grouped, dict):
+            for group_teams in grouped.values():
+                if group_teams:
+                    teams_data.extend(group_teams)
+
+    teams: dict[str, TeamLeagueContext] = {}
+    for team in teams_data:
+        if not isinstance(team, Mapping):
+            continue
+        name = team.get("name", "")
+        if not name:
+            continue
+
+        norm_name = normalize_name(name)
+        cells: dict[str, float] = {}
+        changes: dict[str, float] = {}
+        states: dict[str, str] = {}
+        sources: set[str] = set()
+
+        # Golf format: team["cells"] = {col_key: {merged_probability, sources, trend_24h}}
+        if "cells" in team and isinstance(team["cells"], Mapping):
+            for col_key, cell_data in team["cells"].items():
+                if isinstance(cell_data, Mapping):
+                    prob = cell_data.get("merged_probability")
+                    if prob is not None:
+                        cells[col_key] = prob
+                    trend = cell_data.get("trend_24h")
+                    if trend is not None:
+                        changes[col_key] = trend
+                    state = cell_data.get("state")
+                    if isinstance(state, str) and state:
+                        states[col_key] = state
+                    for s in cell_data.get("sources") or ():
+                        if isinstance(s, Mapping):
+                            sources.add(s.get("source", ""))
+
+        # Team sports format: team["stages"] = [{key, label, probability, trend_24h, sources}]
+        elif "stages" in team and isinstance(team["stages"], (list, tuple)):
+            for stage in team["stages"]:
+                if not isinstance(stage, Mapping):
+                    continue
+                col_key = stage.get("key", "")
+                prob = stage.get("probability")
+                if prob is not None:
+                    cells[col_key] = prob
+                trend = stage.get("trend_24h")
+                if trend is not None:
+                    changes[col_key] = trend
+                state = stage.get("state")
+                if isinstance(state, str) and state:
+                    states[col_key] = state
+                for s in stage.get("sources") or ():
+                    if isinstance(s, Mapping):
+                        sources.add(s.get("source", ""))
+
+        if not cells:
+            continue
+
+        teams[norm_name] = TeamLeagueContext(
+            team_name=name,
+            team_id=team.get("team_id"),
+            short_name=team.get("short_name"),
+            logo_url=team.get("logo_url"),
+            league_slug=league_slug,
+            conference=team.get("conference"),
+            record=team.get("record"),
+            cells=cells,
+            changes_24h=changes,
+            states=states,
+            column_labels=column_labels,
+            sources_available=sorted(s for s in sources if s),
+        )
+
+    sport_group = LEAGUE_TO_SPORT.get(league_slug, "")
+
+    return LeagueContext(
+        league_slug=league_slug,
+        league_name=config.name,
+        sport_group=sport_group,
+        teams=teams,
+        columns=columns,
+        last_computed=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+def write_league_context_from_grid_sync(
+    rc: Any,
+    league_slug: str,
+    grid_data: Optional[Mapping[str, Any]],
+    *,
+    ttl: int = LEAGUE_CONTEXT_WARM_TTL,
+) -> bool:
+    """Persist ``bainluck:league_context:{slug}`` in Redis from an already-built grid (#13650)."""
+    ctx = build_league_context_from_grid(league_slug, grid_data)
+    if ctx is None or rc is None or not hasattr(rc, "setex"):
+        return False
+    try:
+        rc.setex(f"bainluck:league_context:{league_slug}", int(ttl), ctx.to_json())
+        return True
+    except Exception:
+        return False
 
 
 async def _compute_league_context(
@@ -147,95 +271,7 @@ async def _compute_league_context(
         logger.warning("Failed to compute league context for %s: %s", league_slug, e)
         return None
 
-    if not grid_data:
-        return None
-
-    # Build column metadata
-    columns = [{"key": c.key, "label": c.label} for c in config.columns]
-    column_labels = {c.key: c.label for c in config.columns}
-
-    # Extract team data from grid response
-    # Grid response format varies: golf uses "teams" with "cells",
-    # team sports use "teams" with "stages"
-    teams_data = grid_data.get("teams", [])
-    if not teams_data:
-        # Try grouped_teams (conference split)
-        grouped = grid_data.get("grouped_teams", {})
-        for group_teams in grouped.values():
-            teams_data.extend(group_teams)
-
-    teams: dict[str, TeamLeagueContext] = {}
-    for team in teams_data:
-        name = team.get("name", "")
-        if not name:
-            continue
-
-        norm_name = normalize_name(name)
-        cells: dict[str, float] = {}
-        changes: dict[str, float] = {}
-        states: dict[str, str] = {}
-        sources: set[str] = set()
-
-        # Golf format: team["cells"] = {col_key: {merged_probability, sources, trend_24h}}
-        if "cells" in team:
-            for col_key, cell_data in team["cells"].items():
-                if isinstance(cell_data, dict):
-                    prob = cell_data.get("merged_probability")
-                    if prob is not None:
-                        cells[col_key] = prob
-                    trend = cell_data.get("trend_24h")
-                    if trend is not None:
-                        changes[col_key] = trend
-                    state = cell_data.get("state")
-                    if isinstance(state, str) and state:
-                        states[col_key] = state
-                    for s in cell_data.get("sources", []):
-                        sources.add(s.get("source", ""))
-
-        # Team sports format: team["stages"] = [{key, label, probability, trend_24h, sources}]
-        elif "stages" in team:
-            for stage in team["stages"]:
-                col_key = stage.get("key", "")
-                prob = stage.get("probability")
-                if prob is not None:
-                    cells[col_key] = prob
-                trend = stage.get("trend_24h")
-                if trend is not None:
-                    changes[col_key] = trend
-                state = stage.get("state")
-                if isinstance(state, str) and state:
-                    states[col_key] = state
-                for s in stage.get("sources", []):
-                    sources.add(s.get("source", ""))
-
-        if not cells:
-            continue
-
-        teams[norm_name] = TeamLeagueContext(
-            team_name=name,
-            team_id=team.get("team_id"),
-            short_name=team.get("short_name"),
-            logo_url=team.get("logo_url"),
-            league_slug=league_slug,
-            conference=team.get("conference"),
-            record=team.get("record"),
-            cells=cells,
-            changes_24h=changes,
-            states=states,
-            column_labels=column_labels,
-            sources_available=sorted(s for s in sources if s),
-        )
-
-    sport_group = LEAGUE_TO_SPORT.get(league_slug, "")
-
-    return LeagueContext(
-        league_slug=league_slug,
-        league_name=config.name,
-        sport_group=sport_group,
-        teams=teams,
-        columns=columns,
-        last_computed=datetime.now(timezone.utc).isoformat(),
-    )
+    return build_league_context_from_grid(league_slug, grid_data)
 
 
 async def get_league_context(
@@ -251,7 +287,8 @@ async def get_league_context(
         r = get_redis_client()
         cached = r.get(cache_key)
         if cached:
-            return LeagueContext.from_json(cached.decode())
+            raw = cached.decode() if isinstance(cached, bytes) else cached
+            return LeagueContext.from_json(raw)
     except Exception:
         pass  # Redis unavailable — compute fresh
 
@@ -297,39 +334,56 @@ async def get_team_context(
     return None
 
 
-async def enrich_event_with_context(
-    event,
-    db: AsyncSession,
-) -> Optional[dict]:
-    """Add league context to an event for the API response.
+def read_cached_league_context(league_slug: str) -> Optional[LeagueContext]:
+    """Read-only Redis lookup for ``LeagueContext`` (never triggers grid compute).
 
-    Returns a dict with league_context data for both teams,
-    or None if the event's sport doesn't have a league config.
+    If ``bainluck:league_context:{league_slug}`` is absent, derives context in
+    memory from Redis-cached ``bainluck:category:playoffs:{league_slug}`` (or
+    its ``:stale`` mirror) with zero DB queries and warms the context key.
     """
-    # Resolve event's sport to a league
-    sport_key = None
-    if event.sport_id:
-        from app.models import Sport
-        from sqlalchemy import select
-        sport_result = await db.execute(
-            select(Sport.key).where(Sport.id == event.sport_id)
-        )
-        sport_key = sport_result.scalar()
+    from app.tasks.redis_state import get_redis_client
 
-    if not sport_key:
+    cache_key = f"bainluck:league_context:{league_slug}"
+    grid_key = f"bainluck:category:playoffs:{league_slug}"
+    try:
+        r = get_redis_client(fast_fail=True)
+        cached = r.get(cache_key)
+        if cached:
+            raw = cached.decode() if isinstance(cached, bytes) else cached
+            return LeagueContext.from_json(raw)
+
+        for candidate_key in (grid_key, f"{grid_key}:stale"):
+            grid_raw = r.get(candidate_key)
+            if not grid_raw:
+                continue
+            grid_txt = grid_raw.decode() if isinstance(grid_raw, bytes) else str(grid_raw)
+            grid_payload = json.loads(grid_txt)
+            if (
+                isinstance(grid_payload, Mapping)
+                and not grid_payload.get("error")
+                and ("teams" in grid_payload or "grouped_teams" in grid_payload)
+            ):
+                ctx = build_league_context_from_grid(league_slug, grid_payload)
+                if ctx is not None:
+                    try:
+                        if hasattr(r, "setex"):
+                            r.setex(cache_key, LEAGUE_CONTEXT_TTL, ctx.to_json())
+                    except Exception:
+                        pass
+                    return ctx
+    except Exception:
         return None
+    return None
 
-    config = get_league_for_sport_key(sport_key)
-    if not config:
-        return None
 
-    ctx = await get_league_context(config.slug, db)
-    if not ctx:
-        return None
-
-    # Look up both teams
-    home_name = event.home_team_name or ""
-    away_name = event.away_team_name or ""
+def _format_event_league_context(
+    event,
+    config,
+    ctx: LeagueContext,
+) -> Optional[dict]:
+    """Match an event's home/away teams against a resolved ``LeagueContext``."""
+    home_name = getattr(event, "home_team_name", None) or ""
+    away_name = getattr(event, "away_team_name", None) or ""
 
     home_ctx = None
     away_ctx = None
@@ -352,16 +406,22 @@ async def enrich_event_with_context(
     away_norm = normalize_name(away_name)
 
     for cached_norm, team_ctx in ctx.teams.items():
-        if not home_ctx and (home_norm == cached_norm or home_norm in cached_norm or cached_norm in home_norm):
+        if not home_ctx and (
+            home_norm == cached_norm or home_norm in cached_norm or cached_norm in home_norm
+        ):
             home_ctx = team_ctx
-        if not away_ctx and (away_norm == cached_norm or away_norm in cached_norm or cached_norm in away_norm):
+        if not away_ctx and (
+            away_norm == cached_norm or away_norm in cached_norm or cached_norm in away_norm
+        ):
             away_ctx = team_ctx
 
     if not home_ctx and not away_ctx:
         return None
 
     sport_group = LEAGUE_TO_SPORT.get(config.slug, "")
-    league_page_url = f"/{sport_group}/{config.slug}" if sport_group else f"/playoffs/{config.slug}"
+    league_page_url = (
+        f"/{sport_group}/{config.slug}" if sport_group else f"/playoffs/{config.slug}"
+    )
 
     result = {
         "league_slug": config.slug,
@@ -411,3 +471,52 @@ async def enrich_event_with_context(
         }
 
     return result
+
+
+def enrich_event_with_cached_context(
+    event,
+    sport_key: Optional[str],
+) -> Optional[dict]:
+    """Return cached league context for an event with zero DB queries (#13650)."""
+    if not sport_key:
+        return None
+    config = get_league_for_sport_key(sport_key)
+    if not config:
+        return None
+    ctx = read_cached_league_context(config.slug)
+    if not ctx:
+        return None
+    return _format_event_league_context(event, config, ctx)
+
+
+async def enrich_event_with_context(
+    event,
+    db: AsyncSession,
+) -> Optional[dict]:
+    """Add league context to an event for the API response.
+
+    Returns a dict with league_context data for both teams,
+    or None if the event's sport doesn't have a league config.
+    """
+    # Resolve event's sport to a league
+    sport_key = None
+    if event.sport_id:
+        from app.models import Sport
+        from sqlalchemy import select
+        sport_result = await db.execute(
+            select(Sport.key).where(Sport.id == event.sport_id)
+        )
+        sport_key = sport_result.scalar()
+
+    if not sport_key:
+        return None
+
+    config = get_league_for_sport_key(sport_key)
+    if not config:
+        return None
+
+    ctx = await get_league_context(config.slug, db)
+    if not ctx:
+        return None
+
+    return _format_event_league_context(event, config, ctx)

@@ -105,10 +105,20 @@ nonisolated struct MachineryOutcomeVisual: Decodable, Equatable, Identifiable, S
     let name: String
     let probability: Double
     let renderedPercent: Int
+    let unflooredPercent: Int?
     let art: MachinerySubjectArt?
     let sourceMark: SourceMark?
 
     var id: String { "\(marketId ?? 0):\(outcomeId):\(name)" }
+
+    var probabilityLabel: String {
+        if probability == 0 && unflooredPercent == nil {
+            return "\(renderedPercent)%"
+        }
+        return DiscoverRoundupCardModel.probabilityText(
+            probability: probability, renderedPercent: unflooredPercent ?? renderedPercent
+        )
+    }
 
     init(
         outcomeId: Int,
@@ -116,6 +126,7 @@ nonisolated struct MachineryOutcomeVisual: Decodable, Equatable, Identifiable, S
         name: String,
         probability: Double,
         renderedPercent: Int,
+        unflooredPercent: Int? = nil,
         art: MachinerySubjectArt? = nil,
         sourceMark: SourceMark? = nil
     ) {
@@ -124,6 +135,7 @@ nonisolated struct MachineryOutcomeVisual: Decodable, Equatable, Identifiable, S
         self.name = name
         self.probability = probability
         self.renderedPercent = renderedPercent
+        self.unflooredPercent = unflooredPercent
         self.art = art
         self.sourceMark = sourceMark
     }
@@ -140,6 +152,7 @@ nonisolated struct MachineryOutcomeVisual: Decodable, Equatable, Identifiable, S
         } else {
             self.renderedPercent = Int((prob * 100.0).rounded())
         }
+        self.unflooredPercent = c.decodeFirst(Int.self, keys: ["unflooredPercent", "unfloored_percent"])
         self.art = c.decodeFirst(MachinerySubjectArt.self, keys: ["art"])
         self.sourceMark = c.decodeFirst(SourceMark.self, keys: ["sourceMark", "source_mark"])
     }

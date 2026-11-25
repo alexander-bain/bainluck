@@ -21,6 +21,7 @@ struct GolfCategoryView: View {
                     Button("Retry") { Task { await vm.load() } }
                 }
                 .padding()
+                .noteReviewPromptTrouble12304()
             case .loaded:
                 loadedView
             }

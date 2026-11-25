@@ -216,10 +216,13 @@ nonisolated struct WatchMatchupReading217: Equatable, Sendable {
     let home: Side
     /// "61%". The one big number.
     let bigText: String
+    /// Whose number it is ("LAC", "BAL", "DET", "Draw"), rendered beside `bigText`
+    /// on the primary line at matching weight (#13649).
+    let bigOwnerLabel: String
     /// Whose number it is, so it takes that team's colour.
     let bigIsHome: Bool
-    /// The one small line under it, naming whose number it is: "LAC · Sun 5:20 PM",
-    /// "BAL · Q3 4:12", "DET pregame · Final", or the clock alone when `threeWay` names all 3.
+    /// The one small context line under it ("Sun 5:20 PM", "Q3 4:12",
+    /// "Pregame · Final", or clock alone when `threeWay` names all 3).
     let smallLine: String
     let accessibilityText: String
     let threeWay: ThreeWay?
@@ -229,6 +232,7 @@ nonisolated struct WatchMatchupReading217: Equatable, Sendable {
         away: Side,
         home: Side,
         bigText: String,
+        bigOwnerLabel: String? = nil,
         bigIsHome: Bool,
         smallLine: String,
         accessibilityText: String,
@@ -238,6 +242,7 @@ nonisolated struct WatchMatchupReading217: Equatable, Sendable {
         self.away = away
         self.home = home
         self.bigText = bigText
+        self.bigOwnerLabel = bigOwnerLabel ?? (bigIsHome ? home.abbreviation : away.abbreviation)
         self.bigIsHome = bigIsHome
         self.smallLine = smallLine
         self.accessibilityText = accessibilityText
@@ -422,7 +427,7 @@ extension WatchMatchupReading217 {
                 drawPercent: facts.drawPercent,
                 awayPercent: facts.awayPercent
             )
-            let smallLine = out.threeWay == nil ? "\(out.ownerAbbr) · \(when)" : when
+            let smallLine = when
             let speech: String = {
                 if let tw = out.threeWay {
                     return "\(matchup). \(r.homeName) \(tw.homeText), Draw \(tw.drawText), \(r.awayName) \(tw.awayText). \(when). Open your game in Bain Luck."
@@ -433,7 +438,7 @@ extension WatchMatchupReading217 {
                 stage: .before,
                 away: side(awayID, facts.awayPrimary, facts.awaySecondary, score: nil, winner: false),
                 home: side(homeID, facts.homePrimary, facts.homeSecondary, score: nil, winner: false),
-                bigText: out.bigText, bigIsHome: out.bigIsHome, smallLine: smallLine,
+                bigText: out.bigText, bigOwnerLabel: out.ownerAbbr, bigIsHome: out.bigIsHome, smallLine: smallLine,
                 accessibilityText: speech, threeWay: out.threeWay)
         case .liveForecast:
             guard let homePct = r.homePercent, (0...100).contains(homePct) else { return nil }
@@ -455,7 +460,7 @@ extension WatchMatchupReading217 {
                 drawPercent: facts.drawPercent,
                 awayPercent: facts.awayPercent
             )
-            let smallLine = out.threeWay == nil ? "\(out.ownerAbbr) · \(when)" : when
+            let smallLine = when
             let score: String = {
                 guard let a = r.awayScore, let h = r.homeScore else { return "" }
                 return " \(r.awayName) \(a), \(r.homeName) \(h)."
@@ -470,7 +475,7 @@ extension WatchMatchupReading217 {
                 stage: .during,
                 away: side(awayID, facts.awayPrimary, facts.awaySecondary, score: r.awayScore, winner: false),
                 home: side(homeID, facts.homePrimary, facts.homeSecondary, score: r.homeScore, winner: false),
-                bigText: out.bigText, bigIsHome: out.bigIsHome, smallLine: smallLine,
+                bigText: out.bigText, bigOwnerLabel: out.ownerAbbr, bigIsHome: out.bigIsHome, smallLine: smallLine,
                 accessibilityText: speech, threeWay: out.threeWay)
         case .finalResult:
             guard let h = r.homeScore, let a = r.awayScore,
@@ -481,7 +486,7 @@ extension WatchMatchupReading217 {
                     stage: .after,
                     away: side(awayID, facts.awayPrimary, facts.awaySecondary, score: a, winner: false),
                     home: side(homeID, facts.homePrimary, facts.homeSecondary, score: h, winner: false),
-                    bigText: "\(drawPre)%", bigIsHome: true, smallLine: "Draw pregame · Final",
+                    bigText: "\(drawPre)%", bigOwnerLabel: "Draw", bigIsHome: true, smallLine: "Pregame · Final",
                     accessibilityText: "Final. \(r.awayName) \(a), \(r.homeName) \(h). Draw had \(drawPre)% before the game. Open your game in Bain Luck.")
             }
             let homeWon = h > a
@@ -494,7 +499,7 @@ extension WatchMatchupReading217 {
                 stage: .after,
                 away: side(awayID, facts.awayPrimary, facts.awaySecondary, score: a, winner: !homeWon),
                 home: side(homeID, facts.homePrimary, facts.homeSecondary, score: h, winner: homeWon),
-                bigText: "\(pct)%", bigIsHome: homeWon, smallLine: "\(abbr) pregame · Final",
+                bigText: "\(pct)%", bigOwnerLabel: abbr, bigIsHome: homeWon, smallLine: "Pregame · Final",
                 accessibilityText: "Final. \(name) \(max(h, a)), \(loser) \(min(h, a)). \(name) had \(pct)% before the game. Open your game in Bain Luck.")
         case .futureForecast:
             return nil
