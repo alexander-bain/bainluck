@@ -533,6 +533,13 @@ async def test_related_futures_strips_american_odds_from_fresh_and_cached_payloa
 async def test_http_nuggets_and_admin_grading_scorecard_e2e(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    class FixtureClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return NOW.astimezone(tz) if tz is not None else NOW.replace(tzinfo=None)
+
+    monkeypatch.setattr(events_route, "datetime", FixtureClock)
+    monkeypatch.setattr(eval_route, "datetime", FixtureClock)
     gm, rf, tp = _rich_payloads()
     fake_ev = SimpleNamespace(
         id=14780582,
