@@ -388,7 +388,7 @@ final class ChartHistoryRange13606Tests: XCTestCase {
             model: chartVM
         )
         .frame(width: 390, height: 470)
-        let standaloneHost = UIHostingController(rootView: chartHostView)
+        let standaloneHost = hostForMeasurement(chartHostView, at: .large)
         let standaloneScene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
         let standaloneWindow: UIWindow = standaloneScene.map { UIWindow(windowScene: $0) } ?? UIWindow(frame: CGRect(x: 0, y: 0, width: 390, height: 470))
         standaloneWindow.frame = CGRect(x: 0, y: 0, width: 390, height: 470)
@@ -603,10 +603,10 @@ final class ChartHistoryRange13606Tests: XCTestCase {
         width: CGFloat, height: CGFloat, scheme: ColorScheme,
         @ViewBuilder content: () -> Content
     ) -> UIImage {
-        let host = UIHostingController(
-            rootView: content()
-                .environment(\.colorScheme, scheme)
-                .environment(\.dynamicTypeSize, .large)
+        let host = hostForMeasurement(
+            content()
+                .environment(\.colorScheme, scheme),
+            at: .large
         )
         host.safeAreaRegions = []
         host.overrideUserInterfaceStyle = scheme == .dark ? .dark : .light
