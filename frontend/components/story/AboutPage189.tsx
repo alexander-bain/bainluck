@@ -200,6 +200,39 @@ export default function AboutPage189() {
         </EmbedAwareLink>
       </div>
 
+      {/* TMDB attribution (kept on /about and /picture-credits, never on cards or set pages — #13644) */}
+      <section
+        data-testid="tmdb-attribution-block"
+        className="rounded-xl border border-surface-border bg-surface-card px-4 py-3 flex flex-wrap items-center gap-3 text-caption text-text-secondary"
+      >
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/tmdb-blue-short.svg"
+          alt="TMDB"
+          className="h-3.5 w-auto shrink-0"
+        />
+        <p className="leading-snug">
+          Film posters and screen contender portraits are provided by{" "}
+          <a
+            href="https://www.themoviedb.org/"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-accent-brand hover:underline font-medium"
+          >
+            TMDB
+          </a>
+          . This product uses the TMDB API but is not endorsed or certified by
+          TMDB.{" "}
+          <EmbedAwareLink
+            href="/picture-credits"
+            className="text-accent-brand hover:underline font-medium"
+          >
+            See all picture credits
+          </EmbedAwareLink>
+          .
+        </p>
+      </section>
+
       {/* Final bottom row of the About page (Ruling 195-A + Fable #12735: last row in page flow, never a pinned bar) */}
       <div
         data-testid="about-bottom-links-row"

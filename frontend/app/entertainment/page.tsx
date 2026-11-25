@@ -1701,11 +1701,6 @@ export default function EntertainmentPage() {
               Picture credits
             </Link>
           </span>
-          <span style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/tmdb-blue-short.svg" alt="TMDB" style={{ height: 11, width: "auto" }} />
-            <span>This product uses the TMDB API but is not endorsed or certified by TMDB.</span>
-          </span>
           <span style={{ fontFamily: "var(--font-mono, monospace)" }}>
             {data.total_markets.toLocaleString()} entertainment ·{" "}
             {new Date().toLocaleDateString()}

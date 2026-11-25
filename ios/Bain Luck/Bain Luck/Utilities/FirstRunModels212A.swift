@@ -1115,14 +1115,40 @@ nonisolated enum FirstRunStorageKeys212A {
 /// Persisted first-run picks read immediately by `DiscoverView` on the next screen
 /// (Fable Point 3 & Alex Point 9).
 nonisolated struct FirstRunPreferences212A: Codable, Equatable, Sendable {
+    /// Ruling 405: A — first-run picks boost matching cards for one week, then stop.
+    static let boostDurationSeconds: TimeInterval = 7 * 24 * 60 * 60
+
     var boostedCategories: [String]
     var boostedTerms: [String]
     var boostedMarketIds: [Int]
+    var savedAtEpoch: TimeInterval?
 
-    static let empty = FirstRunPreferences212A(boostedCategories: [], boostedTerms: [], boostedMarketIds: [])
+    static let empty = FirstRunPreferences212A(
+        boostedCategories: [],
+        boostedTerms: [],
+        boostedMarketIds: [],
+        savedAtEpoch: nil
+    )
+
+    init(
+        boostedCategories: [String],
+        boostedTerms: [String],
+        boostedMarketIds: [Int],
+        savedAtEpoch: TimeInterval? = nil
+    ) {
+        self.boostedCategories = boostedCategories
+        self.boostedTerms = boostedTerms
+        self.boostedMarketIds = boostedMarketIds
+        self.savedAtEpoch = savedAtEpoch
+    }
 
     var isEmpty: Bool {
         boostedCategories.isEmpty && boostedTerms.isEmpty && boostedMarketIds.isEmpty
+    }
+
+    func isBoostActive(now: Date = Date()) -> Bool {
+        guard !isEmpty, let savedAtEpoch else { return false }
+        return now.timeIntervalSince1970 < savedAtEpoch + Self.boostDurationSeconds
     }
 
     static func load(defaults: UserDefaults = .standard) -> FirstRunPreferences212A {
@@ -1133,8 +1159,12 @@ nonisolated struct FirstRunPreferences212A: Codable, Equatable, Sendable {
         return decoded
     }
 
-    func save(defaults: UserDefaults = .standard) {
-        if let data = try? JSONEncoder().encode(self) {
+    func save(defaults: UserDefaults = .standard, now: Date = Date()) {
+        var payload = self
+        if !payload.isEmpty, payload.savedAtEpoch == nil {
+            payload.savedAtEpoch = now.timeIntervalSince1970
+        }
+        if let data = try? JSONEncoder().encode(payload) {
             defaults.set(data, forKey: FirstRunStorageKeys212A.localPreferencesKey)
         }
     }
@@ -1194,27 +1224,75 @@ nonisolated struct FirstRunPreferences212A: Codable, Equatable, Sendable {
     }
 }
 
-/// Promotes cards matching the reader's first-run picks to the top of Discover immediately
-/// without ever removing or inventing items (#11984 / Fable Point 3 / Alex Point 9).
+/// Promotes up to three cards per picked kind into the first ten Discover seats for
+/// one week from saving without ever removing or inventing items (#11984 / 405: A).
 nonisolated enum FirstRunDiscoverBoost212A {
+    static let openingWindowSize = 10
+    static let maxPromotedPerKind = 3
+
     static func promotePreferredItems<Item>(
         _ items: [Item],
         preferences: FirstRunPreferences212A,
+        now: Date = Date(),
+        windowSize: Int = FirstRunDiscoverBoost212A.openingWindowSize,
+        maxPerKind: Int = FirstRunDiscoverBoost212A.maxPromotedPerKind,
+        kindOf: (Item) -> String = { _ in "picked" },
         matches: (Item, FirstRunPreferences212A) -> Bool
     ) -> [Item] {
-        guard !preferences.isEmpty, items.count > 1 else { return items }
-        var preferred: [Item] = []
-        var others: [Item] = []
-        preferred.reserveCapacity(items.count)
-        others.reserveCapacity(items.count)
+        guard preferences.isBoostActive(now: now), items.count > 1, windowSize > 0, maxPerKind > 0 else {
+            return items
+        }
+
+        let windowLimit = min(windowSize, items.count)
+        var promoted: [Item] = []
+        var rest: [Item] = []
+        var promotedByKind: [String: Int] = [:]
+        promoted.reserveCapacity(windowLimit)
+        rest.reserveCapacity(items.count)
+
         for item in items {
             if matches(item, preferences) {
-                preferred.append(item)
+                let kind = kindOf(item)
+                if promoted.count < windowLimit, promotedByKind[kind, default: 0] < maxPerKind {
+                    promoted.append(item)
+                    promotedByKind[kind, default: 0] += 1
+                    continue
+                }
+            }
+            rest.append(item)
+        }
+
+        var firstWindow = promoted
+        var windowKindCounts = promotedByKind
+        var deferredMatches: [Item] = []
+        var tail: [Item] = []
+
+        for item in rest {
+            if firstWindow.count < windowLimit {
+                if matches(item, preferences) {
+                    let kind = kindOf(item)
+                    if windowKindCounts[kind, default: 0] >= maxPerKind {
+                        deferredMatches.append(item)
+                        continue
+                    }
+                    windowKindCounts[kind, default: 0] += 1
+                }
+                firstWindow.append(item)
             } else {
-                others.append(item)
+                tail.append(item)
             }
         }
-        return preferred + others
+
+        var deferredIndex = 0
+        while firstWindow.count < windowLimit, deferredIndex < deferredMatches.count {
+            firstWindow.append(deferredMatches[deferredIndex])
+            deferredIndex += 1
+        }
+
+        let remainingDeferred = deferredIndex < deferredMatches.count
+            ? Array(deferredMatches[deferredIndex...])
+            : []
+        return firstWindow + remainingDeferred + tail
     }
 
     static func itemMatches(
@@ -1247,7 +1325,7 @@ nonisolated enum FirstRunDiscoverBoost212A {
         return terms.contains { haystack.contains($0) }
     }
 
-    private static func categoryGroup(_ raw: String) -> String {
+    static func categoryGroup(_ raw: String) -> String {
         switch raw {
         case "nba", "basketball", "ncaab", "wncaab": return "basketball"
         case "nfl", "americanfootball", "ncaaf", "football": return "football"

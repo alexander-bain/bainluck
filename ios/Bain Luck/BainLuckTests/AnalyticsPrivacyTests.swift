@@ -1,14 +1,15 @@
+import Security
 import XCTest
 
 @testable import Bain_Luck
 
-/// L2-219 Item 2 (#1453) — the native analytics privacy boundary.
+/// L2-219 Item 2 (#1453, updated for 404: B) — the native analytics privacy boundary.
 ///
 /// `AnalyticsService.trackSearch` used to send the user's RAW search text to
 /// Firebase as `search_term`, and `trackSearchResultClick` sent it again as
 /// `query`. These tests pin the replacement contract: raw text never survives
-/// the boundary, the derived metadata is bounded and non-reversible, the hash
-/// stays joinable with the web rail, and unknown keys/events fail closed.
+/// the boundary, the derived metadata is bounded and keyed with an on-device
+/// HMAC-SHA-256 secret that never leaves the phone, and unknown keys/events fail closed.
 final class AnalyticsPrivacyTests: XCTestCase {
     // MARK: - Raw text never survives
 
@@ -27,7 +28,7 @@ final class AnalyticsPrivacyTests: XCTestCase {
         XCTAssertEqual(params["results_count"] as? Int, 12, "approved telemetry survives")
     }
 
-    func testResultClickCarriesNoRawQuery() {
+    func testResultClickCarriesNoRawQueryOrResultId() {
         let sanitized = AnalyticsPrivacy.sanitize(
             event: "search_result_click",
             parameters: [
@@ -40,9 +41,11 @@ final class AnalyticsPrivacyTests: XCTestCase {
         let params = try! XCTUnwrap(sanitized)
 
         XCTAssertNil(params["query"])
+        XCTAssertNil(params["result_id"])
         XCTAssertNotNil(params["query_hash"])
+        XCTAssertNotNil(params["query_length"])
+        XCTAssertNotNil(params["query_word_count"])
         XCTAssertEqual(params["result_type"] as? String, "futures")
-        XCTAssertEqual(params["result_id"] as? String, "1234")
         XCTAssertEqual(params["position"] as? Int, 2)
     }
 
@@ -161,24 +164,106 @@ final class AnalyticsPrivacyTests: XCTestCase {
         )
     }
 
-    func testHashIsNotReversibleToLength() {
+    func testHashIsNotReversibleToLengthAndIsLowercaseHex16() {
         // A hash is fixed-width regardless of input size — it carries no length.
         let short = AnalyticsPrivacy.hashQuery("a")
         let long = AnalyticsPrivacy.hashQuery(String(repeating: "a", count: 4_000))
-        XCTAssertLessThanOrEqual(short.count, 7)
-        XCTAssertLessThanOrEqual(long.count, 7)
+        let hexSet = CharacterSet(charactersIn: "0123456789abcdef")
+        XCTAssertEqual(short.count, 16)
+        XCTAssertEqual(long.count, 16)
+        XCTAssertTrue(short.unicodeScalars.allSatisfy { hexSet.contains($0) })
+        XCTAssertTrue(long.unicodeScalars.allSatisfy { hexSet.contains($0) })
     }
 
-    /// Pins the exact web values from `hashQuery` in `lib/analytics/sanitize.ts`
-    /// (FNV-1a over UTF-16 code units of the trimmed/lowercased text, base36).
-    /// If this fails, native and web hashes have diverged and the cross-surface
-    /// search funnel silently stops joining.
-    func testHashMatchesWebImplementation() {
-        // Computed with the web implementation; see the test's doc comment.
-        XCTAssertEqual(AnalyticsPrivacy.hashQuery(""), "ztntfp")
-        XCTAssertEqual(AnalyticsPrivacy.hashQuery("lakers"), "1ghlcvp")
-        XCTAssertEqual(AnalyticsPrivacy.hashQuery("Lakers vs Celtics"), "sn4x6t")
-        XCTAssertEqual(AnalyticsPrivacy.hashQuery("super bowl"), "4gxf0")
+    /// Pins known CryptoKit HMAC-SHA-256 outputs (64-bit truncated lowercase hex)
+    /// against independently computed RFC 2104 / FIPS 198 values (`404: B`), and
+    /// verifies that two distinct random secrets share no prefix.
+    func testHashUsesHMACSHA256AndTwoSecretsShareNoPrefix() {
+        let keyA = Data(0..<32)
+        let keyB = Data(1..<33)
+
+        XCTAssertEqual(AnalyticsPrivacy.hashQuery("", keyData: keyA), "d38b42096d80f45f")
+        XCTAssertEqual(AnalyticsPrivacy.hashQuery("abc", keyData: keyA), "f0133729c4163ded")
+        XCTAssertEqual(AnalyticsPrivacy.hashQuery("lakers", keyData: keyA), "7e6e02b5482ef907")
+        XCTAssertEqual(AnalyticsPrivacy.hashQuery("  Lakers vs Celtics ", keyData: keyA), "eeabfcfd619fe4fb")
+
+        let hashA = AnalyticsPrivacy.hashQuery("lakers", keyData: keyA)
+        let hashB = AnalyticsPrivacy.hashQuery("lakers", keyData: keyB)
+        XCTAssertEqual(hashB, "3b64fbec21b566df")
+        XCTAssertNotEqual(hashA.prefix(4), hashB.prefix(4))
+    }
+
+    func testKeychainStorageUsesThisDeviceOnlyAndNoSync() {
+        let attrs = SearchHashKeychainStorage.saveAttributes(for: Data(repeating: 0xAB, count: 32))
+        XCTAssertEqual(
+            attrs[kSecAttrAccessible as String] as? String,
+            kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly as String
+        )
+        XCTAssertNil(attrs[kSecAttrSynchronizable as String])
+    }
+
+    func testSearchHashSecretOnlyPersistsWithConsentAndResetsOnRevocation() {
+        final class InMemoryKeyStorage: SearchHashKeyStorage {
+            var storedKey: Data?
+            var loadCount = 0
+            var saveCount = 0
+            var deleteCount = 0
+
+            func load() -> Data? {
+                loadCount += 1
+                return storedKey
+            }
+
+            func save(_ key: Data) -> Bool {
+                saveCount += 1
+                storedKey = key
+                return true
+            }
+
+            func delete() {
+                deleteCount += 1
+                storedKey = nil
+            }
+        }
+
+        let storage = InMemoryKeyStorage()
+        var consented = false
+        let fixedKeys = [Data(repeating: 0x11, count: 32), Data(repeating: 0x22, count: 32), Data(repeating: 0x33, count: 32)]
+        var nextKeyIndex = 0
+        let store = SearchHashSecretStore(
+            storage: storage,
+            isConsentGranted: { consented },
+            randomKeyProvider: {
+                defer { nextKeyIndex += 1 }
+                return fixedKeys[nextKeyIndex]
+            }
+        )
+
+        // Unconsented: never reads or writes durable Keychain; holds ephemeral in memory only.
+        let deniedFirst = AnalyticsPrivacy.hashQuery("lakers", keyData: store.currentKey())
+        let deniedSecond = AnalyticsPrivacy.hashQuery("lakers", keyData: store.currentKey())
+        XCTAssertEqual(deniedFirst, deniedSecond)
+        XCTAssertEqual(storage.loadCount, 0)
+        XCTAssertEqual(storage.saveCount, 0)
+        XCTAssertNil(storage.storedKey)
+
+        // Consented: creates and persists 256-bit key in device-only storage.
+        consented = true
+        let grantedKey = store.currentKey()
+        XCTAssertEqual(grantedKey, Data(repeating: 0x22, count: 32))
+        XCTAssertEqual(storage.saveCount, 1)
+        XCTAssertEqual(storage.storedKey, grantedKey)
+        let grantedHash = AnalyticsPrivacy.hashQuery("lakers", keyData: grantedKey)
+        XCTAssertNotEqual(grantedHash, deniedFirst)
+
+        // Revocation deletes persisted secret and rotates subsequent hashes.
+        consented = false
+        store.reset()
+        XCTAssertEqual(storage.deleteCount, 1)
+        XCTAssertNil(storage.storedKey)
+        let afterResetHash = AnalyticsPrivacy.hashQuery("lakers", keyData: store.currentKey())
+        XCTAssertNotEqual(afterResetHash, grantedHash)
+        XCTAssertNotEqual(afterResetHash, deniedFirst)
     }
 
     func testResultClickJoinsBackToItsSearch() {

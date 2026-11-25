@@ -529,3 +529,29 @@ private struct BrowseLeagueTile: View {
         .buttonStyle(.plain)
     }
 }
+
+extension LeaguesView {
+    static func leagueTilesSampleForTest() -> AnyView {
+        let sampleSlugs = Set(["nba", "mlb", "nhl", "ncaa-women-basketball", "champions-league"])
+        let picks = allLeagues.filter { sampleSlugs.contains($0.slug) }
+        return AnyView(
+            NavigationStack {
+                VStack(alignment: .leading, spacing: 14) {
+                    Text("LEAGUES")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
+                    LazyVGrid(columns: [GridItem(.flexible())], spacing: 10) {
+                        ForEach(picks) { league in
+                            BrowseLeagueTile(
+                                league: league,
+                                color: DS.emerald
+                            )
+                        }
+                    }
+                }
+                .padding(.horizontal, 22)
+                .padding(.vertical, 16)
+            }
+        )
+    }
+}
