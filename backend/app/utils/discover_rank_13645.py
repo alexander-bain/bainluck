@@ -22,8 +22,7 @@ from app.utils.feed_market_quality import (
 )
 
 _OPENING_TEN = 10
-# Decision 408 proposal weights used for offline replay & pair p13645 while the
-# live scoring constants in `feed_market_quality` ship at 0 awaiting ruling.
+# Decision 408: A: replay shifts match live penalties (-20 / -20 / -15).
 _PROPOSED_REPLAY_DOWNRANK_SHIFTS = {
     "non_us_macro_downrank": 20,
     "minor_conf_title_berth": 20,

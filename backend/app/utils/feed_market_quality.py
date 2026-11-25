@@ -2825,11 +2825,10 @@ _HEADLINE_CEASEFIRE_RE = re.compile(
     re.IGNORECASE,
 )
 EQUITY_TICKER_STORY_PREFIX = "story:equity_ticker:"
-# Decision 408: proposed weights ship at 0 with reasons recorded; flip to
-# -20 / -20 / -15 with a one-line change upon Alex's ruling.
-NON_US_MACRO_PENALTY = 0
-MINOR_CONF_BERTH_PENALTY = 0
-REGIONAL_CONFLICT_TACTICAL_PENALTY = 0
+# Decision 408: A (Alex, 7:02 PM PT Tue Nov 24): all three weights ship on.
+NON_US_MACRO_PENALTY = -20
+MINOR_CONF_BERTH_PENALTY = -20
+REGIONAL_CONFLICT_TACTICAL_PENALTY = -15
 
 # #8742. `story:us_federal_power` is headed "Who holds power in Washington?", so
 # its membership rule has to be about Washington — #7494's lesson, second family.
