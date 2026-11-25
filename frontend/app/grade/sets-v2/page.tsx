@@ -190,7 +190,7 @@ function SetsV2DeckSession() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           surface: "grade_sets_v2_deck",
-          item_type: "fun_scout_blind_40_v2",
+          item_type: "sets_blind_40_v2",
           market_name: currentCard.card_id,
           label: grade,
           notes: trimmedNote || null,

@@ -639,6 +639,7 @@ final class HeadlineNeverTruncates12822Tests: XCTestCase {
         let navCoordinator = NavigationCoordinator()
         let q4FeedEvent = try decodeFeedEvent(q4JSON)
         let q4FeedCard = EventCardView(event: q4FeedEvent, reason: nil)
+            .environment(\.liveOddsRefreshActive, true)
             .padding(.horizontal, 14)
             .environmentObject(pinManager)
             .environmentObject(authManager)
@@ -653,6 +654,7 @@ final class HeadlineNeverTruncates12822Tests: XCTestCase {
         } footerRow: {
             EmptyView()
         }
+        .environment(\.liveOddsRefreshActive, true)
 
         for (outerW, wLabel) in [(358 as CGFloat, "390w"), (370 as CGFloat, "402w-iPhone19,3")] {
             for (dtSize, sLabel) in [(.large as DynamicTypeSize, "large"), (.xxLarge, "xxl"), (.xxxLarge, "xxxl")] {

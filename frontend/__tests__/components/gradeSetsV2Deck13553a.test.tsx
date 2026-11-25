@@ -69,4 +69,22 @@ describe("#13553 Part A — /grade/sets-v2 blind 40-set grading page", () => {
     expect(pageSrc).not.toMatch(/\.source\b/);
     expect(pageSrc).not.toMatch(/\["source"\]/);
   });
+
+  test("POST payload strings fit RankingJudgment VARCHAR column limits", () => {
+    const pageSrc = fs.readFileSync(
+      path.resolve(__dirname, "../../app/grade/sets-v2/page.tsx"),
+      "utf-8",
+    );
+    const surfaceMatch = pageSrc.match(/surface:\s*"([^"]+)"/);
+    const itemTypeMatch = pageSrc.match(/item_type:\s*"([^"]+)"/);
+    const reviewerMatch = pageSrc.match(/reviewer:\s*"([^"]+)"/);
+    expect(surfaceMatch?.[1]).toBe("grade_sets_v2_deck");
+    expect(surfaceMatch![1].length).toBeLessThanOrEqual(50);
+    expect(itemTypeMatch?.[1]).toBe("sets_blind_40_v2");
+    expect(itemTypeMatch![1].length).toBeLessThanOrEqual(20);
+    expect(reviewerMatch![1].length).toBeLessThanOrEqual(100);
+    for (const label of ["Keep", "Fix", "Drop"]) {
+      expect(label.length).toBeLessThanOrEqual(10);
+    }
+  });
 });

@@ -23,6 +23,7 @@ from app.utils.game_nuggets import (
     NUGGET_MAX_PER_KIND_FIRST_EIGHT,
     match_claim_template,
     rank_game_nuggets,
+    reader_league_name,
 )
 
 NOW = datetime(2026, 11, 23, 18, 0, tzinfo=timezone.utc)
@@ -562,6 +563,17 @@ async def test_http_nuggets_and_admin_grading_scorecard_e2e(
             return self._one
 
     saved_grades: list = []
+    e2e_linked_counts = [(14780582, 8)]
+    e2e_market_rows = [
+        (14780582, "Bengals at Commanders: Total Points O/U 48.5", "KXNFLTOTAL-1"),
+        (14780582, "Commanders vs Bengals: Spread -3.5", "KXNFLSPREAD-1"),
+        (14780582, "Jayden Daniels: Passing Yards O/U 245.5", "KXNFLPYDS-1"),
+        (14780582, "Ja'Marr Chase: Receiving Yards O/U 84.5", "KXNFLRYDS-1"),
+        (14780582, "Washington Commanders Team Total Over 24.5", "KXNFLTT-1"),
+        (14780582, "1st Quarter Total Points O/U 10.5", "KXNFL1QTOTAL-1"),
+        (14780582, "Two-Point Conversion Attempted?", "KXNFL2PT-1"),
+        (14780582, "Bengals at Commanders Moneyline", "KXNFLGAME-1"),
+    ]
 
     async def _fake_exec(stmt):
         sql = str(stmt)
@@ -572,6 +584,12 @@ async def test_http_nuggets_and_admin_grading_scorecard_e2e(
                 SimpleNamespace(id=10, logo_small="https://cdn.example/was.png", logo_url=None, logo_large=None),
                 SimpleNamespace(id=20, logo_small="https://cdn.example/cin.png", logo_url=None, logo_large=None),
             ])
+        if "FROM futures_markets" in sql:
+            if "count(" in sql.lower() and "group by" in sql.lower():
+                return _FakeScalarResult(many=e2e_linked_counts)
+            if "distinct" in sql.lower():
+                return _FakeScalarResult(many=["football"])
+            return _FakeScalarResult(many=e2e_market_rows)
         if "ORDER BY events" in sql:
             return _FakeScalarResult(many=[fake_ev])
         return _FakeScalarResult(one=fake_ev)
@@ -637,8 +655,14 @@ async def test_http_nuggets_and_admin_grading_scorecard_e2e(
             assert r_deck.status_code == 200, r_deck.text
             deck = r_deck.json()
             assert deck["games_count"] == 1
+            assert deck["requested_limit"] == 20
+            assert deck["deck_truncated"] is False
+            assert deck["games"][0]["sport_name"] == "NFL"
+            assert deck["games"][0]["nugget_count"] >= 6
+            assert deck["games"][0]["kind_count"] >= 3
             assert "nuggets" not in deck["games"][0]
-            # Deck must never walk games or trigger get_game_markets/_load_fast_nugget_stakes builds
+            # Deck qualifies candidates from grouped SQL counts and never walks games to trigger
+            # uncached get_game_markets/_load_fast_nugget_stakes builds.
             assert events_route.get_game_markets.await_count == 1
 
             # Opening a cached event hits game_nuggets_cache first; clear L1+Redis to test
@@ -1247,3 +1271,238 @@ def test_round_four_bengals_commanders_fixture_middle_of_ladder_and_named_templa
     assert all("Ben Sinnott" not in c for c in td_claims)
     assert td_res["excluded_counts"]["unreadable_claim"] >= 2
     assert all(match_claim_template(c) is not None for c in td_claims)
+
+
+def test_reader_league_name_uses_plain_labels() -> None:
+    assert reader_league_name(SimpleNamespace(key="basketball_nba", name="basketball_nba")) == "NBA"
+    assert reader_league_name(SimpleNamespace(key="americanfootball_nfl", name=None)) == "NFL"
+    assert reader_league_name(SimpleNamespace(key="basketball_wncaab", name="basketball_wncaab")) == "Women's College Basketball"
+    assert reader_league_name(SimpleNamespace(key="soccer_italy_serie_b", name="soccer_italy_serie_b")) == "Serie B"
+    assert reader_league_name(SimpleNamespace(key="tennis_other", name="tennis_other")) == "Tennis"
+    assert reader_league_name(SimpleNamespace(key="esports_other", name="esports_other")) == "Esports"
+    assert reader_league_name(SimpleNamespace(key="handball_germany_bundesliga", name=None)) == "Handball"
+
+
+async def test_game_nuggets_deck_deals_qualified_best_covered_first_with_league_cap_and_shorter_count(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _make_ev(eid: int, sport_key: str, sport_name: str, hours_ahead: int, away: str, home: str):
+        return SimpleNamespace(
+            id=eid,
+            home_team_id=eid * 10 + 1,
+            away_team_id=eid * 10 + 2,
+            home_team_name=home,
+            away_team_name=away,
+            sport=SimpleNamespace(key=sport_key, name=sport_name),
+            status="scheduled",
+            win_probability_sources={"betting": {"value": 0.55}},
+            commence_time=NOW + timedelta(hours=hours_ahead),
+        )
+
+    events = [
+        _make_ev(1001, "esports_other", "esports_other", 1, "PuckChamp", "Zero Tenacity"),
+        _make_ev(1002, "soccer_italy_serie_b", "soccer_italy_serie_b", 2, "US Catanzaro", "Juve Stabia"),
+        _make_ev(1003, "tennis_other", "tennis_other", 3, "Player A", "Player B"),
+        # 5 qualified NBA games (+1 unqualified 1-kind NBA game) -> only 4 may enter deck
+        _make_ev(2001, "basketball_nba", "NBA", 6, "Boston Celtics", "Washington Wizards"),
+        _make_ev(2002, "basketball_nba", "NBA", 7, "New York Knicks", "Brooklyn Nets"),
+        _make_ev(2003, "basketball_nba", "NBA", 8, "Denver Nuggets", "Phoenix Suns"),
+        _make_ev(2004, "basketball_nba", "NBA", 9, "Miami Heat", "Orlando Magic"),
+        _make_ev(2005, "basketball_nba", "NBA", 10, "Dallas Mavericks", "Houston Rockets"),
+        _make_ev(2006, "basketball_nba", "NBA", 72, "Los Angeles Lakers", "San Antonio Spurs"),
+        # Later Thursday/Sunday NFL games with rich coverage must still qualify & outrank sparser games
+        _make_ev(3001, "americanfootball_nfl", "NFL", 50, "Chicago Bears", "Detroit Lions"),
+        _make_ev(3002, "americanfootball_nfl", "NFL", 96, "Kansas City Chiefs", "Buffalo Bills"),
+    ]
+    linked_rows = [
+        (2001, 45), (2002, 30), (2003, 25), (2004, 20), (2005, 18), (2006, 8),
+        (3001, 60), (3002, 55), (1002, 4),
+    ]
+    market_rows = [
+        # 1002 (unqualified: 4 markets, <6 items & <3 kinds)
+        (1002, "Total Goals O/U 2.5", "KXSBOU-1"),
+        (1002, "Total Goals O/U 3.5", "KXSBOU-2"),
+        (1002, "Spread -0.5", "KXSBSP-1"),
+        (1002, "Moneyline Winner", "KXSBML-1"),
+        # 2001 (NBA #1: 5 kinds, 8 nuggets)
+        (2001, "Total Points O/U 224.5", "KXNBATOT-2001"),
+        (2001, "Spread -6.5", "KXNBASP-2001"),
+        (2001, "Jayson Tatum: Points O/U 27.5", "KXNBAPP-2001-1"),
+        (2001, "Jaylen Brown: Rebounds O/U 6.5", "KXNBAPP-2001-2"),
+        (2001, "Boston Celtics Team Total Over 116.5", "KXNBATT-2001-1"),
+        (2001, "Washington Wizards Team Total Over 108.5", "KXNBATT-2001-2"),
+        (2001, "1st Quarter Total O/U 56.5", "KXNBA1QTOT-2001"),
+        # 2002 (NBA #2: 4 kinds, 7 nuggets)
+        (2002, "Total Points O/U 218.5", "KXNBATOT-2002"),
+        (2002, "Spread -4.5", "KXNBASP-2002"),
+        (2002, "Jalen Brunson: Points O/U 26.5", "KXNBAPP-2002-1"),
+        (2002, "Karl-Anthony Towns: Rebounds O/U 11.5", "KXNBAPP-2002-2"),
+        (2002, "New York Knicks Team Total Over 111.5", "KXNBATT-2002-1"),
+        (2002, "Brooklyn Nets Team Total Over 105.5", "KXNBATT-2002-2"),
+        # 2003 (NBA #3: 4 kinds, 7 nuggets)
+        (2003, "Total Points O/U 229.5", "KXNBATOT-2003"),
+        (2003, "Spread -2.5", "KXNBASP-2003"),
+        (2003, "Nikola Jokic: Points O/U 28.5", "KXNBAPP-2003-1"),
+        (2003, "Devin Booker: Points O/U 26.5", "KXNBAPP-2003-2"),
+        (2003, "Denver Nuggets Team Total Over 115.5", "KXNBATT-2003-1"),
+        (2003, "1st Half Total O/U 114.5", "KXNBA1HTOT-2003"),
+        # 2004 (NBA #4: 4 kinds, 6 nuggets — qualifies cleanly before 2005)
+        (2004, "Total Points O/U 214.5", "KXNBATOT-2004"),
+        (2004, "Spread -3.5", "KXNBASP-2004"),
+        (2004, "Jimmy Butler: Points O/U 21.5", "KXNBAPP-2004-1"),
+        (2004, "Paolo Banchero: Points O/U 24.5", "KXNBAPP-2004-2"),
+        (2004, "Miami Heat Team Total Over 108.5", "KXNBATT-2004-1"),
+        # 2005 (NBA #5: qualifies too (4 kinds, 6 nuggets), but capped out by <=4/league)
+        (2005, "Total Points O/U 222.5", "KXNBATOT-2005"),
+        (2005, "Spread -1.5", "KXNBASP-2005"),
+        (2005, "Luka Doncic: Points O/U 30.5", "KXNBAPP-2005-1"),
+        (2005, "Alperen Sengun: Rebounds O/U 10.5", "KXNBAPP-2005-2"),
+        (2005, "Dallas Mavericks Team Total Over 112.5", "KXNBATT-2005-1"),
+        # 2006 (NBA #6: only game_flow + stakes => 2 kinds < 3 -> excluded)
+        (2006, "Total Points O/U 220.5", "KXNBATOT-2006-1"),
+        (2006, "Total Points O/U 221.5", "KXNBATOT-2006-2"),
+        (2006, "Spread -5.5", "KXNBASP-2006-1"),
+        (2006, "Spread -6.5", "KXNBASP-2006-2"),
+        # 3001 (NFL #1: 5 kinds, 8 nuggets)
+        (3001, "Total Points O/U 49.5", "KXNFLTOT-3001"),
+        (3001, "Spread -7.5", "KXNFLSP-3001"),
+        (3001, "Jared Goff: Passing Yards O/U 255.5", "KXNFLPP-3001-1"),
+        (3001, "Amon-Ra St. Brown: Receiving Yards O/U 79.5", "KXNFLPP-3001-2"),
+        (3001, "Detroit Lions Team Total Over 28.5", "KXNFLTT-3001-1"),
+        (3001, "Chicago Bears Team Total Over 20.5", "KXNFLTT-3001-2"),
+        (3001, "1st Quarter Total O/U 10.5", "KXNFL1QTOT-3001"),
+        # 3002 (NFL #2: 4 kinds, 7 nuggets)
+        (3002, "Total Points O/U 52.5", "KXNFLTOT-3002"),
+        (3002, "Spread -2.5", "KXNFLSP-3002"),
+        (3002, "Patrick Mahomes: Passing Yards O/U 272.5", "KXNFLPP-3002-1"),
+        (3002, "Josh Allen: Passing Yards O/U 262.5", "KXNFLPP-3002-2"),
+        (3002, "Kansas City Chiefs Team Total Over 27.5", "KXNFLTT-3002-1"),
+        (3002, "Buffalo Bills Team Total Over 24.5", "KXNFLTT-3002-2"),
+    ]
+
+    class _Res:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def scalars(self):
+            return self
+
+        def all(self):
+            return self._rows
+
+    async def _fake_exec(stmt):
+        sql = str(stmt)
+        if "FROM ranking_grades" in sql:
+            return _Res([])
+        if "FROM futures_markets" in sql:
+            if "count(" in sql.lower() and "group by" in sql.lower():
+                return _Res(linked_rows)
+            if "distinct" in sql.lower():
+                return _Res(["basketball", "football"])
+            return _Res(market_rows)
+        if "FROM events" in sql:
+            return _Res(events)
+        return _Res([])
+
+    fake_db = SimpleNamespace(execute=AsyncMock(side_effect=_fake_exec))
+    monkeypatch.setattr(
+        events_route,
+        "build_event_nuggets",
+        AsyncMock(side_effect=AssertionError("must not call build_event_nuggets inside /deck")),
+    )
+    monkeypatch.setattr(eval_route, "_check_admin_secret", lambda *_a, **_kw: None)
+
+    async def _db_override():
+        yield fake_db
+
+    prior = dict(app.dependency_overrides)
+    app.dependency_overrides[get_db] = _db_override
+    try:
+        async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            resp = await client.get("/api/admin/ranking/game-nuggets/deck?limit=20")
+            assert resp.status_code == 200, resp.text
+            data = resp.json()
+    finally:
+        app.dependency_overrides = prior
+
+    dealt_ids = [g["event_id"] for g in data["games"]]
+    assert data["requested_limit"] == 20
+    assert data["deck_truncated"] is False
+    # 6 games qualify after max-4 NBA cap: 4 NBA + 2 NFL (shorter deck)
+    assert data["games_count"] == 6
+    assert len(dealt_ids) == 6
+    # Excluded unqualified games (<6 items or <3 kinds or empty)
+    for bad_id in (1001, 1002, 1003, 2006):
+        assert bad_id not in dealt_ids
+    # Max 4 from one league + 5th NBA left out
+    nba_dealt = [g for g in data["games"] if g["sport"] == "basketball_nba"]
+    assert len(nba_dealt) == 4
+    assert 2005 not in dealt_ids
+    # Best-covered first: 5-kind NFL & NBA ahead of 4-kind (7-nugget) and 4-kind (6-nugget)
+    assert set(dealt_ids[:2]) == {2001, 3001}
+    assert set(dealt_ids[2:5]) == {2002, 2003, 3002}
+    assert dealt_ids[5] == 2004
+    # Plain league names
+    assert all(g["sport_name"] in {"NBA", "NFL"} for g in data["games"])
+
+
+async def test_game_nuggets_deck_timeout_ceiling_returns_short_deck_cleanly(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An ~8s ceiling stops slow /deck work and returns what qualified without caching (#13642)."""
+    import asyncio
+
+    ev = SimpleNamespace(
+        id=4001,
+        home_team_id=401,
+        away_team_id=402,
+        home_team_name="Kansas City Chiefs",
+        away_team_name="Buffalo Bills",
+        sport=SimpleNamespace(key="americanfootball_nfl", name="NFL"),
+        status="scheduled",
+        win_probability_sources={"betting": {"value": 0.52}},
+        commence_time=NOW + timedelta(hours=12),
+    )
+
+    class _Res:
+        def __init__(self, rows):
+            self._rows = rows
+
+        def scalars(self):
+            return self
+
+        def all(self):
+            return self._rows
+
+    async def _slow_exec(stmt):
+        sql = str(stmt)
+        if "FROM ranking_grades" in sql:
+            return _Res([])
+        if "FROM events" in sql:
+            return _Res([ev])
+        if "FROM futures_markets" in sql and "group by" in sql.lower():
+            await asyncio.sleep(0.25)
+            return _Res([(4001, 10)])
+        return _Res([])
+
+    fake_db = SimpleNamespace(execute=AsyncMock(side_effect=_slow_exec))
+    monkeypatch.setattr(eval_route, "_GAME_NUGGETS_DECK_BUDGET_SECONDS", 0.05)
+    monkeypatch.setattr(eval_route, "_check_admin_secret", lambda *_a, **_kw: None)
+
+    async def _db_override():
+        yield fake_db
+
+    prior = dict(app.dependency_overrides)
+    app.dependency_overrides[get_db] = _db_override
+    try:
+        async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver") as client:
+            resp = await client.get("/api/admin/ranking/game-nuggets/deck?limit=20")
+            assert resp.status_code == 200, resp.text
+            data = resp.json()
+    finally:
+        app.dependency_overrides = prior
+
+    assert data["deck_truncated"] is True
+    assert data["requested_limit"] == 20
+    assert data["games_count"] == 0
+    assert data["games"] == []

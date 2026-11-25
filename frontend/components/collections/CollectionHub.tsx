@@ -12,7 +12,7 @@ import MachinerySectionRenderer, {
   isMachinerySlice1Enabled,
 } from "./MachinerySectionRenderer";
 import { fetchPairedMetricsByCeremony } from "@/lib/api";
-import { APP_STORE_URL } from "@/lib/brandCopy";
+import { APP_STORE_CAMPAIGNS, appStoreCampaignUrl } from "@/lib/brandCopy";
 import { AsOfStamp } from "@/components/AsOfStamp";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import type { PairedMetricSet } from "@/lib/discover/visualForms";
@@ -581,7 +581,7 @@ export default function CollectionHub({ slug, initialHub = null }: { slug: strin
       <div className="flex flex-wrap items-center gap-2.5">
         {!isAndroid && (
           <a
-            href={APP_STORE_URL}
+            href={appStoreCampaignUrl(APP_STORE_CAMPAIGNS.footerGetTheApp)}
             target="_blank"
             rel="noopener noreferrer"
             data-collection-app-cta
