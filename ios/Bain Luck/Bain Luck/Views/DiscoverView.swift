@@ -2933,6 +2933,7 @@ struct DiscoverView: View {
         .overlay(alignment: .topLeading) { fixedFeedReceiptBadge }
         #endif
         }
+        .environment(\.discoverWithholdUnconfirmedPhotos13670, vm.isShowingCachedContent)
         }
         .navigationTitle("Discover")
         #if os(iOS)
