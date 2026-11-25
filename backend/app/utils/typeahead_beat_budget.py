@@ -2202,7 +2202,13 @@ def free_background_slots(
 #: existing-row `current_record` update, <0.5 s/fire, 12 fires/day). Census over
 #: assembled `beat_schedule` prints `explicit 113 implicit 38 total 151`.
 #: #13338 adds a daily onboarding membership refresh on background.
-BACKGROUND_BEAT_COUNT = 152
+#: 🔴 RE-DERIVED at atlas/12221-kit-container-pages (2026-11-25, #12221 / #13696):
+#: 152 → 153, explicit 114 → 115, fall-through UNMOVED at 38.
+#: `propose-uncovered-containers-nightly` (`crontab(minute=35, hour=9)`, daily
+#: 09:35 UTC = 1:35 AM PT) names `options={"queue": "background"}` (1 fire/day,
+#: bounded 2,500-market read into Redis-only preview deck). Census RUN over
+#: assembled `beat_schedule` printed `explicit 115 implicit 38 total 153`.
+BACKGROUND_BEAT_COUNT = 153
 #: 🔴 RE-DERIVED at lane1/282 (2026-09-13, #5896): 122 → **123**, explicit
 #: 79 → **80**, fall-through UNMOVED at 43. One beat added,
 #: `soccer-ghost-twin-sweep` (`crontab(minute="9,49")`) with an EXPLICIT

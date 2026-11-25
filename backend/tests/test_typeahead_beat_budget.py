@@ -1272,9 +1272,12 @@ def test_the_background_queue_carries_105_beats_and_45_are_fall_through():
     # (outside the :31-:44 settlement sweep window); census over assembled
     # `beat_schedule` printed explicit 113 implicit 38 total 151.
     # #13338 schedules a daily onboarding membership refresh on background.
-    assert explicit == 114, f"explicitly-routed background beats moved: {explicit}"
+    # #12221 / #13696: propose-uncovered-containers-nightly names background
+    # (`crontab(minute=35, hour=9)`, 1 fire/day). Census on assembled
+    # `beat_schedule` printed `explicit 115 implicit 38 total 153`.
+    assert explicit == 115, f"explicitly-routed background beats moved: {explicit}"
     assert implicit == 38, f"default-queue fall-through moved: {implicit}"
-    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 152
+    assert explicit + implicit == BACKGROUND_BEAT_COUNT == 153
 
     # ruling 110's two movers are OFF this queue and ON heavy — asserted here
     # too, so a silent revert cannot restore the count without being noticed.
