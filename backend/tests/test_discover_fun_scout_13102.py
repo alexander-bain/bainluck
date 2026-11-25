@@ -1470,8 +1470,7 @@ _RUN_3946_SETS_FIXTURES: tuple[tuple[str, ScoutProposedSet, str | None], ...] = 
             look="bars",
             member_ids=(59693617, 25924930, 109216, 109376, 70150728),
         ),
-        # #13544 Rule 3.6: 2 of 5 members specifically share Travis Scott while the other 3 do not.
-        "split_set:named_person_cluster:travis scott",
+        None,
     ),
     (
         "opus",

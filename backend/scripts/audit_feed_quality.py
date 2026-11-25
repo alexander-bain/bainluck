@@ -153,6 +153,8 @@ def main() -> int:
         f" {served['types']})"
     )
     print(f"variety [SERVED — #13551]: {served['variety_summary']['summary_line']}")
+    split_findings = served.get("split_set_audit_report") or []
+    print(f"split-sets [REPORT-ONLY — #13544]: {len(split_findings)} flagged")
     for row in served["boring"]:
         print(f"    OFFENDER ON THE SERVED PAGE: {row['name']}  {row['reasons']}")
     print()
