@@ -717,7 +717,12 @@ struct MachinerySectionBlockView: View {
         case .siblingFieldsGrid:
             MachinerySiblingFieldsSectionView(items: visualBlock.marketItems, members: members, limit: limit, columnCount: columnCount)
         case .benchmarkStrip:
-            MachineryBenchmarkStripSectionView(items: visualBlock.marketItems, members: members, limit: limit)
+            MachineryBenchmarkStripSectionView(
+                items: visualBlock.marketItems,
+                members: members,
+                limit: limit,
+                itemNoun: visualBlock.effectiveItemNoun
+            )
         }
     }
 }
@@ -1585,6 +1590,7 @@ private struct MachineryBenchmarkStripSectionView: View {
     let items: [MachineryMarketVisualItem]
     var members: [ContainerHubMember] = []
     let limit: Int
+    var itemNoun: String = "markets"
     @State private var expanded = false
     @Environment(\.colorScheme) private var colorScheme
     @ScaledMetric(relativeTo: .caption) private var rowSize: CGFloat = 13
@@ -1657,7 +1663,7 @@ private struct MachineryBenchmarkStripSectionView: View {
                 expanded: expanded,
                 totalCount: items.count,
                 visibleLimit: limit,
-                noun: "benchmarks",
+                noun: itemNoun,
                 onToggle: { withAnimation(.easeInOut(duration: 0.2)) { expanded.toggle() } }
             )
         }

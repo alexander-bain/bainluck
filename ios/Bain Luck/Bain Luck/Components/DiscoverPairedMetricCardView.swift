@@ -202,69 +202,7 @@ struct PairedArtThumbnailView: View {
     }
 }
 
-/// Official unmodified TMDB `blue_short` mark (`85 × 11 pt` in a bordered badge linking to `themoviedb.org`)
-/// paired with the required attribution sentence whenever any contender uses TMDB art.
-struct PairedTMDBAttributionFooter: View {
-    let metricSet: PairedMetricSet
-    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @Environment(\.colorScheme) private var colorScheme
-    @ScaledMetric(relativeTo: .caption2) private var attributionSize: CGFloat = 11
-
-    init(set: PairedMetricSet) {
-        self.metricSet = set
-    }
-
-    private var trackBgColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.08) : DS.trackBg
-    }
-
-    private var borderColor: Color {
-        colorScheme == .dark ? Color.white.opacity(0.14) : DS.border
-    }
-
-    private var secondaryInk: Color {
-        colorScheme == .dark ? Color(white: 0.68) : DS.textSecondaryReadable
-    }
-
-    private var attributionBadge: some View {
-        Link(destination: PairedMetricPresentation.tmdbAttributionURL) {
-            Image("TMDBLogoShort")
-                .resizable()
-                .scaledToFit()
-                .frame(width: 85, height: 11)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(trackBgColor)
-                .clipShape(RoundedRectangle(cornerRadius: 4))
-                .overlay(RoundedRectangle(cornerRadius: 4).stroke(borderColor, lineWidth: 1))
-        }
-        .buttonStyle(.plain)
-        .accessibilityLabel("The Movie Database (TMDB)")
-    }
-
-    private var attributionText: some View {
-        Text(PairedMetricPresentation.tmdbAttributionLine)
-            .font(.system(size: min(attributionSize, 17)))
-            .foregroundStyle(secondaryInk)
-            .fixedSize(horizontal: false, vertical: true)
-    }
-
-    var body: some View {
-        if metricSet.usesTMDBArt {
-            if dynamicTypeSize.isAccessibilitySize {
-                VStack(alignment: .leading, spacing: 4) {
-                    attributionBadge
-                    attributionText
-                }
-            } else {
-                HStack(alignment: .center, spacing: 6) {
-                    attributionBadge
-                    attributionText
-                }
-            }
-        }
-    }
-}
+// TMDB attribution footer removed from cards and set pages per #13644 (moved exclusively to AboutView + /picture-credits).
 
 /// Subtle proportional bar-chart fill behind a percentage number box (`94%` almost full,
 /// `36%` about a third full) across both winning grouped-card looks (`#12675` / `#12642`).
@@ -658,7 +596,6 @@ struct DiscoverPairedMetricCardView: View {
 
     private var footerBlock: some View {
         let showsOrderingFooter = !PairedMetricPresentation.subtitleStatesOrdering(cleanSubtitle)
-        let showsTMDBFooter = metricSet.usesTMDBArt
         let s2Id = metricSet.primaryStage2MarketId.flatMap { $0 != currentMarketId ? $0 : nil }
         let s1Id = metricSet.primaryStage1MarketId.flatMap { $0 != currentMarketId ? $0 : nil }
         let showsCollectionFooter = !isOscarsCollectionSurface
@@ -666,7 +603,7 @@ struct DiscoverPairedMetricCardView: View {
             && (onOpenCollection != nil || allowsRouteLinks)
         let showsLinks = hasInteractiveFooterLinks && (s2Id != nil || s1Id != nil || showsCollectionFooter)
         return Group {
-            if showsOrderingFooter || showsTMDBFooter || showsLinks {
+            if showsOrderingFooter || showsLinks {
                 VStack(alignment: .leading, spacing: 6) {
                     Rectangle()
                         .fill(borderColor)
@@ -686,8 +623,6 @@ struct DiscoverPairedMetricCardView: View {
                     }
 
                     traceableMarketLinksRow
-
-                    PairedTMDBAttributionFooter(set: metricSet)
                 }
                 .padding(.top, 12)
             }

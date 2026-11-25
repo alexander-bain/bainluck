@@ -288,11 +288,13 @@ final class MyStuffTeamFuturesFailure13552Tests: XCTestCase {
 
         let ocrNoGamesLight = recognizeText(in: imgNoGamesLight).replacingOccurrences(of: " | ", with: " ")
         XCTAssertTrue(ocrNoGamesLight.contains("Couldn't load your teams' futures"), "Missing failure headline: \(ocrNoGamesLight)")
+        XCTAssertTrue(ocrNoGamesLight.contains("Your teams are still saved. This part didn't load."), "Missing plain copy: \(ocrNoGamesLight)")
         XCTAssertTrue(ocrNoGamesLight.contains("Try again"), "Missing Try again control: \(ocrNoGamesLight)")
         XCTAssertFalse(ocrNoGamesLight.contains("No Games Right Now"), "Must never imply no follows: \(ocrNoGamesLight)")
 
         let ocrWithGameLight = recognizeText(in: imgWithGameLight).replacingOccurrences(of: " | ", with: " ")
         XCTAssertTrue(ocrWithGameLight.contains("Couldn't load your teams' futures"), "Missing failure headline alongside game: \(ocrWithGameLight)")
+        XCTAssertTrue(ocrWithGameLight.contains("Your teams are still saved. This part didn't load."), "Missing plain copy alongside game: \(ocrWithGameLight)")
         XCTAssertTrue(ocrWithGameLight.contains("Try again"), "Missing Try again beside game: \(ocrWithGameLight)")
         XCTAssertTrue(ocrWithGameLight.contains("Celtics") || ocrWithGameLight.contains("Next for you"), "Missing game card: \(ocrWithGameLight)")
 
@@ -312,6 +314,7 @@ final class MyStuffTeamFuturesFailure13552Tests: XCTestCase {
         let imgFallbackLight = await renderFallbackTeamFeed(vm: fallbackVM, scheme: .light)
         let ocrFallback = recognizeText(in: imgFallbackLight).replacingOccurrences(of: " | ", with: " ")
         XCTAssertTrue(ocrFallback.contains("Couldn't Load Your Teams' Futures") || ocrFallback.contains("Couldn’t Load Your Teams’ Futures"), "Fallback view missing futures failure copy: \(ocrFallback)")
+        XCTAssertTrue(ocrFallback.contains("Your teams are still saved. This part didn't load."), "Fallback view missing plain copy: \(ocrFallback)")
         XCTAssertTrue(ocrFallback.contains("Try again"), "Fallback view missing Try again button: \(ocrFallback)")
         XCTAssertFalse(ocrFallback.contains("No Games Right Now"), "Fallback view fell into No Games Right Now: \(ocrFallback)")
 

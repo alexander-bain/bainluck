@@ -71,15 +71,15 @@ def _copy(market_name, probability, change, opened_at, now=NOW):
 
 
 def test_the_stanley_cup_card_states_its_answer_before_a_february_move():
-    """Page one, position 1, exactly as served."""
+    """Page one, position 1, with whole-point formatting (#13602)."""
     copy = _copy(STANLEY_CUP, 0.42, -0.225, FEB_3)
-    assert copy.context_summary == "42% chance, down 22.5 points since Feb 3"
+    assert copy.context_summary == "42% chance, down 23 points since Feb 3"
 
 
 def test_the_taiwan_card_states_its_answer_before_a_february_move():
-    """Page one, position 2, exactly as served."""
+    """Page one, position 2, with whole-point formatting (#13602)."""
     copy = _copy(TAIWAN, 0.04, -0.077, FEB_19)
-    assert copy.context_summary == "4% chance, down 7.7 points since Feb 19"
+    assert copy.context_summary == "4% chance, down 8 points since Feb 19"
 
 
 def test_a_recent_baseline_still_leads_with_the_move():
@@ -97,7 +97,7 @@ def test_the_move_is_never_dropped_and_never_loses_its_date():
     """Demoted to context, not deleted. Both halves survive in both arms."""
     for opened_at in (FEB_3, SEP_10):
         copy = _copy(STANLEY_CUP, 0.42, -0.225, opened_at)
-        assert "22.5 points" in copy.context_summary
+        assert "23 points" in copy.context_summary
         assert "since " in copy.context_summary
         assert "42% chance" in copy.context_summary
 

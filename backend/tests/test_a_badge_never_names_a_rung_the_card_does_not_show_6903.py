@@ -84,9 +84,9 @@ def test_the_moderate_rungs_move_with_the_major_ones():
         leader_name=LEADER,
         leader_probability=0.5091,
     )
-    assert headline == "December 31, 2026 up 4.5 points today", headline
+    assert headline == "December 31, 2026 up 5 points today", headline
     assert reason.startswith(
-        "December 31, 2026 odds shifted up 4.5 points today in "
+        "December 31, 2026 odds shifted up 5 points today in "
     ), reason
 
 
