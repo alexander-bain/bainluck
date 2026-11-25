@@ -74,6 +74,7 @@ private struct QuickSearchItem: Identifiable {
 
 struct SearchView: View {
     @StateObject private var viewModel: SearchViewModel
+    @StateObject private var discoveryVM: ContainerDiscoveryViewModel
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @FocusState private var isSearchFocused: Bool
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -88,9 +89,13 @@ struct SearchView: View {
     /// behave exactly as before.
     @State private var keyboardSelection = MacKeyboardSelection10878<Route>()
 
-    init(macPlace: MacReadingPlace<SearchViewModel>? = nil) {
+    init(
+        macPlace: MacReadingPlace<SearchViewModel>? = nil,
+        discoveryService: any ContainerDiscoveryLoading = ContainerDiscoveryService()
+    ) {
         self.macPlace = macPlace
         _viewModel = StateObject(wrappedValue: macPlace?.models(orMake: { SearchViewModel() }) ?? SearchViewModel())
+        _discoveryVM = StateObject(wrappedValue: ContainerDiscoveryViewModel(service: discoveryService))
         _path = State(initialValue: macPlace?.path ?? NavigationPath())
     }
 
@@ -218,6 +223,7 @@ struct SearchView: View {
             consumePendingSearchQuery()
             consumeSearchFocusRequest()
             await viewModel.loadTrending()
+            await discoveryVM.load()
         }
         .onChange(of: navCoordinator.pendingSearchQuery) { _, _ in
             consumePendingSearchQuery()
@@ -526,6 +532,34 @@ struct SearchView: View {
                     }
                 }
 
+                // Live Sets matching Browse (402: A, never finished/archive hubs)
+                if !discoveryVM.entries.isEmpty {
+                    VStack(alignment: .leading, spacing: 10) {
+                        emptySectionHeader13672("Live Sets")
+
+                        FlowLayout(spacing: 8) {
+                            ForEach(discoveryVM.entries) { entry in
+                                quickSearchChip(icon: "square.stack.3d.up.fill", label: entry.collection.name) {
+                                    path.append(entry.route)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Categories (navigate to dedicated views, matching Browse 402: A order)
+                VStack(alignment: .leading, spacing: 10) {
+                    emptySectionHeader13672("Categories")
+
+                    FlowLayout(spacing: 8) {
+                        ForEach(categoryLinks) { item in
+                            quickSearchChip(icon: item.icon, label: item.label) {
+                                path.append(item.route)
+                            }
+                        }
+                    }
+                }
+
                 // Quick Search by Sport
                 VStack(alignment: .leading, spacing: 10) {
                     emptySectionHeader13672("Browse by Sport")
@@ -535,19 +569,6 @@ struct SearchView: View {
                             quickSearchChip(icon: item.icon, label: item.label) {
                                 viewModel.query = item.query
                                 Task { await viewModel.search() }
-                            }
-                        }
-                    }
-                }
-
-                // Categories (navigate to dedicated views)
-                VStack(alignment: .leading, spacing: 10) {
-                    emptySectionHeader13672("Categories")
-
-                    FlowLayout(spacing: 8) {
-                        ForEach(categoryLinks) { item in
-                            quickSearchChip(icon: item.icon, label: item.label) {
-                                path.append(item.route)
                             }
                         }
                     }

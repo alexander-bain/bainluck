@@ -127,17 +127,29 @@ private let categoryLinks: [CategoryLink] = [
 struct LeaguesView: View {
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var path = NavigationPath()
+    private let previewDiscoveryService: (any ContainerDiscoveryLoading)?
+
+    init(previewDiscoveryService: (any ContainerDiscoveryLoading)? = nil) {
+        self.previewDiscoveryService = previewDiscoveryService
+    }
 
     var body: some View {
         NavigationStack(path: $path) {
             ScrollView {
-                VStack(alignment: .leading, spacing: 26) {
+                VStack(alignment: .leading, spacing: 24) {
                     browseHeader
-                    featuredGrid
-                    BrowseCollectionsView()
-                    // topicSection — hidden for v1 (prediction market category pages not ready)
+                    if let previewDiscoveryService {
+                        BrowseCollectionsView(service: previewDiscoveryService)
+                    } else {
+                        BrowseCollectionsView()
+                    }
+                    topicSection
                     leagueSections
+                    BrowseSection(title: "Explore") {
+                        featuredGrid
+                    }
                 }
                 .padding(.horizontal, 22)
                 .padding(.vertical, 18)
@@ -166,7 +178,7 @@ struct LeaguesView: View {
     /// Subtitle only. The word "Browse" is already the navigation title, and
     /// printing it again here rendered the tab's name twice, one line apart.
     private var browseHeader: some View {
-        Text("Markets, sports, and tools")
+        Text("Sets, categories, and leagues")
             .font(.subheadline)
             .foregroundStyle(.secondary)
     }
@@ -246,12 +258,16 @@ struct LeaguesView: View {
         )
     }
 
-    /// Hidden for v1, so it is outside #5655 — which was measured off rasters of
-    /// what the page actually draws. Its spec stays exactly as it was rather
-    /// than inheriting a size-class rule nobody can photograph yet.
     private var topicSection: some View {
-        BrowseSection(title: "Prediction Markets") {
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 190, maximum: 320), spacing: 12)], spacing: 12) {
+        let columns: [GridItem] = if dynamicTypeSize.isAccessibilitySize {
+            [GridItem(.flexible())]
+        } else if isRegularWidth {
+            [GridItem(.adaptive(minimum: 190, maximum: 320), spacing: 12)]
+        } else {
+            [GridItem(.flexible(), spacing: 12), GridItem(.flexible(), spacing: 12)]
+        }
+        return BrowseSection(title: "Categories") {
+            LazyVGrid(columns: columns, spacing: 12) {
                 ForEach(categoryLinks) { cat in
                     BrowseTopicCard(category: cat)
                 }
@@ -288,7 +304,10 @@ struct LeaguesView: View {
     /// extra width on more columns and draws each tile NARROWER than the phone
     /// does. `BrowseGridMetrics` carries the numbers and the measurements.
     private func adaptiveColumns(_ grid: BrowseGridMetrics.Grid) -> [GridItem] {
-        [GridItem(
+        if dynamicTypeSize.isAccessibilitySize {
+            return [GridItem(.flexible())]
+        }
+        return [GridItem(
             .adaptive(
                 minimum: BrowseGridMetrics.minimumTileWidth(grid, regularWidth: isRegularWidth),
                 maximum: BrowseGridMetrics.maximumTileWidth
@@ -333,31 +352,65 @@ private struct BrowseFeatureCard: View {
     let icon: String
     let color: Color
     let route: Route
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         NavigationLink(value: route) {
-            HStack(spacing: 13) {
-                Image(systemName: icon)
-                    .font(.title3.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 44, height: 44)
-                    .background(color.gradient, in: RoundedRectangle(cornerRadius: 10))
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Image(systemName: icon)
+                                .font(.title3.weight(.semibold))
+                                .foregroundStyle(.white)
+                                .frame(width: 44, height: 44)
+                                .background(color.gradient, in: RoundedRectangle(cornerRadius: 10))
+                            Spacer()
+                            Image(systemName: "chevron.right")
+                                .font(.caption.weight(.bold))
+                                .foregroundStyle(.tertiary)
+                        }
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(title)
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(nil)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Text(subtitle)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(nil)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                } else {
+                    HStack(spacing: 13) {
+                        Image(systemName: icon)
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(.white)
+                            .frame(width: 44, height: 44)
+                            .background(color.gradient, in: RoundedRectangle(cornerRadius: 10))
 
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(.primary)
-                    Text(subtitle)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(title)
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(.primary)
+                            Text(subtitle)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+
+                        Spacer(minLength: 4)
+
+                        Image(systemName: "chevron.right")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.tertiary)
+                    }
                 }
-
-                Spacer(minLength: 4)
-
-                Image(systemName: "chevron.right")
-                    .font(.caption.weight(.bold))
-                    .foregroundStyle(.tertiary)
             }
             .padding(14)
             .frame(minHeight: 76)
@@ -370,37 +423,46 @@ private struct BrowseFeatureCard: View {
 
 private struct BrowseTopicCard: View {
     let category: CategoryLink
+    @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         NavigationLink(value: category.route) {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 12) {
                 HStack {
                     Image(systemName: category.icon)
                         .font(.title3.weight(.semibold))
                         .foregroundStyle(.white)
-                        .frame(width: 40, height: 40)
+                        .frame(width: 38, height: 38)
                         .background(category.color.gradient, in: RoundedRectangle(cornerRadius: 10))
                     Spacer()
                     Image(systemName: "arrow.up.right")
                         .font(.caption.weight(.bold))
-                        .foregroundStyle(category.color.opacity(0.75))
+                        .foregroundStyle(category.color.opacity(0.85))
                 }
 
                 VStack(alignment: .leading, spacing: 4) {
                     Text(category.label)
                         .font(.headline.weight(.bold))
                         .foregroundStyle(.primary)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                        .multilineTextAlignment(.leading)
+                        .fixedSize(horizontal: false, vertical: true)
                     Text(category.desc)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                        .multilineTextAlignment(.leading)
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .padding(15)
-            .frame(maxWidth: .infinity, minHeight: 128, alignment: .leading)
-            .background(category.color.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(category.color.opacity(0.18), lineWidth: 1))
+            .padding(14)
+            .frame(maxWidth: .infinity, minHeight: 118, maxHeight: .infinity, alignment: .leading)
+            .background(
+                colorScheme == .dark ? Color.cardBackground : DS.cardBg,
+                in: RoundedRectangle(cornerRadius: 14)
+            )
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(category.color.opacity(0.32), lineWidth: 1))
         }
         .buttonStyle(.plain)
     }
@@ -409,40 +471,57 @@ private struct BrowseTopicCard: View {
 private struct BrowseLeagueTile: View {
     let league: LeagueInfo
     let color: Color
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         NavigationLink(value: league.route ?? Route.leagueGrid(slug: league.slug)) {
-            HStack(spacing: 10) {
-                Image(systemName: league.icon)
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(color)
-                    .frame(width: 34, height: 34)
-                    .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 9))
+            Group {
+                if dynamicTypeSize.isAccessibilitySize {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 8) {
+                            Image(systemName: league.icon)
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(color)
+                            Text(league.label)
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(nil)
+                                .multilineTextAlignment(.leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 0)
+                        }
+                        Text(league.fullName)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(nil)
+                            .multilineTextAlignment(.leading)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } else {
+                    HStack(spacing: 10) {
+                        Image(systemName: league.icon)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(color)
+                            .frame(width: 34, height: 34)
+                            .background(color.opacity(0.12), in: RoundedRectangle(cornerRadius: 9))
 
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(league.label)
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(.primary)
-                        .lineLimit(1)
-                    // #5788 — two lines, not one. The strings above are short
-                    // enough to fit on one at the default text size; this is
-                    // the net under the larger accessibility sizes and under
-                    // the iPad, where `.adaptive` buys COLUMNS rather than
-                    // width and a tile can be NARROWER than the iPhone's.
-                    // Truncating here is the failure mode, not wrapping.
-                    Text(league.fullName)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(2)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(league.label)
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(.primary)
+                                .lineLimit(1)
+                            // #5788 — two lines, not one.
+                            Text(league.fullName)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
+                        }
+
+                        Spacer(minLength: 0)
+                    }
                 }
-
-                Spacer(minLength: 0)
             }
             .padding(11)
-            // `maxHeight: .infinity` (#5788) so the two tiles in a row are the
-            // same height when one of them wraps to a second line — without it
-            // WNCAAB's "Women's basketball" grew its own card and left NCAAB
-            // beside it visibly shorter.
             .frame(maxWidth: .infinity, minHeight: 58, maxHeight: .infinity, alignment: .leading)
             .background(Color.cardBackground, in: RoundedRectangle(cornerRadius: 12))
             .overlay(RoundedRectangle(cornerRadius: 12).stroke(Color.barTrack.opacity(0.25), lineWidth: 0.5))
