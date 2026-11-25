@@ -22,6 +22,7 @@ struct FriendChallengeView: View {
                         .buttonStyle(.borderedProminent)
                 }
                 .padding()
+                .noteReviewPromptTrouble12304()
             } else if let challenge = viewModel.challenge {
                 challengeContent(challenge)
             }

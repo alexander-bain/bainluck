@@ -522,13 +522,15 @@ def test_awards_price_screen_has_no_route_imports():
         assert not route_imports, f"{module.__name__} loads routes {route_imports}"
 
 
-@pytest.mark.parametrize("count", [7, 8, 9])
-async def test_grammy_nominee_board_requires_the_named_field(count):
+@pytest.mark.parametrize("count,replace_nominee", [(7, False), (8, False), (9, False), (8, True)])
+async def test_grammy_nominee_board_requires_the_named_field(count, replace_nominee):
     nominees = [
         "Berghain", "Choosin' Texas", "the cure", "hate that i made you love me",
         "I Knew It, I Knew You", "Man I Need", "Risk It All", "WHERE IS MY HUSBAND!",
         "An extra contender",
     ]
+    if replace_nominee:
+        nominees[4] = "The Fate of Ophelia"
     original = SimpleNamespace(id=58492243, source="polymarket", external_id="805158")
     candidate = SimpleNamespace(
         source="kalshi",
@@ -546,7 +548,7 @@ async def test_grammy_nominee_board_requires_the_named_field(count):
     )
     db = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(scalars=lambda: [candidate])))
     assert await grammy_nominee_fields(db, [original]) == (
-        {original.id: candidate} if count == 8 else {}
+        {original.id: candidate} if count == 8 and not replace_nominee else {}
     )
     assert set(db.execute.await_args.args[0].compile().params["external_id_1"]) == {
         "KXGRAMMY-SOTY69"

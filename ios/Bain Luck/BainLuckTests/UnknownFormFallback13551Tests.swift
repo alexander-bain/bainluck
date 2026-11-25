@@ -482,7 +482,171 @@ final class UnknownFormFallback13551Tests: XCTestCase {
         #endif
     }
 
+    func testStandardGameRowShowsTeamNamesBesidePercentsInLightAndDark() async throws {
+        let gameJSON = """
+        [
+          {
+            "type": "event",
+            "score": 92.0,
+            "data": {
+              "id": 1357901,
+              "sport": "basketball_nba",
+              "sport_name": "NBA",
+              "away_team": "Miami Heat",
+              "home_team": "Boston Celtics",
+              "away_team_data": {"team_id": 14, "slug": "miami-heat", "abbreviation": "MIA"},
+              "home_team_data": {"team_id": 2, "slug": "boston-celtics", "abbreviation": "BOS"},
+              "status": "scheduled",
+              "current_odds": {
+                "away_probability": 0.36,
+                "home_probability": 0.64,
+                "away_rendered_percent": 36,
+                "home_rendered_percent": 64
+              }
+            }
+          },
+          {
+            "type": "event",
+            "score": 90.0,
+            "data": {
+              "id": 1357902,
+              "sport": "basketball_ncaab",
+              "sport_name": "CBB",
+              "away_team": "SE Louisiana",
+              "home_team": "N Colorado",
+              "status": "live",
+              "away_score": 48,
+              "home_score": 45,
+              "current_odds": {
+                "away_probability": 0.391,
+                "home_probability": 0.609
+              }
+            }
+          },
+          {
+            "type": "event",
+            "score": 88.0,
+            "data": {
+              "id": 1357903,
+              "sport": "tennis_atp",
+              "sport_name": "ATP",
+              "away_team": "Krawietz / Puetz",
+              "home_team": "Granollers / Zeballos",
+              "status": "scheduled",
+              "current_odds": {
+                "away_probability": 0.54,
+                "home_probability": 0.46,
+                "away_rendered_percent": 54,
+                "home_rendered_percent": 46
+              }
+            }
+          }
+        ]
+        """
+        let gameItems = try decoder().decode([FeedItem].self, from: Data(gameJSON.utf8))
+        XCTAssertEqual(gameItems.count, 3)
+
+        #if canImport(UIKit)
+        let exportDir = ProcessInfo.processInfo.environment["EXPORT_13637_GAMEROW_DIR"]
+        for (sizeLabel, dynamicType) in [("default", DynamicTypeSize.large), ("largest", DynamicTypeSize.accessibility5)] {
+            for (scheme, suffix) in [(ColorScheme.light, "light"), (ColorScheme.dark, "dark")] {
+                let (img, measuredSize) = await renderIntrinsicInWindow(width: 390, scheme: scheme, dynamicType: dynamicType) {
+                    NativeGroupCard(
+                        title: "Matchups",
+                        items: gameItems,
+                        kind: "sports",
+                        navigationPath: .constant(NavigationPath())
+                    )
+                    .padding(16)
+                }
+                XCTAssertLessThanOrEqual(
+                    measuredSize.width,
+                    390.5,
+                    "Game row spilled past 390pt card bounds (\(sizeLabel), \(suffix)): \(measuredSize.width)"
+                )
+                let ocr = recognizeText(in: img).replacingOccurrences(of: " | ", with: " ")
+                var ocrNorm = ocr
+                    .replacingOccurrences(of: "/", with: " ")
+                    .replacingOccurrences(of: "\u{00A0}", with: " ")
+                while ocrNorm.contains("  ") {
+                    ocrNorm = ocrNorm.replacingOccurrences(of: "  ", with: " ")
+                }
+                for expected in [
+                    "MIA 36%", "BOS 64%",
+                    "SE", "Louisiana", "39%", "N", "Colorado", "61%",
+                    "Krawietz", "Puetz 54%", "Granollers", "Zeballos 46%"
+                ] {
+                    XCTAssertTrue(
+                        ocrNorm.localizedCaseInsensitiveContains(expected),
+                        "Game row missing '\(expected)' (\(sizeLabel), \(suffix)): \(ocr)"
+                    )
+                }
+                XCTAssertFalse(ocrNorm.contains("39.1%") || ocrNorm.contains("60.9%"), "Grouped game row must print whole percents per Direction 395 (\(sizeLabel), \(suffix)): \(ocr)")
+                XCTAssertFalse(ocr.contains(" at "), "Drop duplicate 'X at Y' title when odds are present (\(sizeLabel), \(suffix)): \(ocr)")
+                XCTAssertFalse(ocr.contains("…") || ocr.contains("..."), "Zero ellipsis on game row (\(sizeLabel), \(suffix)): \(ocr)")
+
+                if let exportDir, !exportDir.isEmpty {
+                    let dir = URL(fileURLWithPath: exportDir, isDirectory: true)
+                    try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+                    try img.pngData()?.write(to: dir.appendingPathComponent("gamerow-\(sizeLabel)-\(suffix)-390.png"))
+                }
+            }
+        }
+        #endif
+    }
+
     #if canImport(UIKit)
+    private func renderIntrinsicInWindow<V: View>(
+        width: CGFloat,
+        scheme: ColorScheme,
+        dynamicType: DynamicTypeSize,
+        @ViewBuilder content: () -> V
+    ) async -> (UIImage, CGSize) {
+        let style: UIUserInterfaceStyle = scheme == .dark ? .dark : .light
+        let bg = scheme == .dark ? Color.black : Color(UIColor.systemGroupedBackground)
+        let root = content()
+            .frame(width: width, alignment: .topLeading)
+            .background(bg)
+            .environment(\.colorScheme, scheme)
+            .environment(\.horizontalSizeClass, .compact)
+            .environmentObject(NavigationCoordinator())
+            .environmentObject(PinManager())
+            .environmentObject(AuthManager())
+
+        let host = hostForMeasurement(root, at: dynamicType)
+        host.overrideUserInterfaceStyle = style
+        let measured = host.sizeThatFits(in: CGSize(width: width, height: UIView.layoutFittingExpandedSize.height))
+        let height = max(240, ceil(measured.height))
+        let rect = CGRect(x: 0, y: 0, width: width, height: height)
+        host.view.frame = rect
+
+        let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        let window: UIWindow = scene.map { UIWindow(windowScene: $0) } ?? UIWindow(frame: rect)
+        window.frame = rect
+        window.overrideUserInterfaceStyle = style
+        window.rootViewController = host
+        window.isHidden = false
+        defer {
+            window.isHidden = true
+            window.rootViewController = nil
+        }
+
+        for _ in 0..<12 {
+            host.view.setNeedsLayout()
+            host.view.layoutIfNeeded()
+            try? await Task.sleep(nanoseconds: 35_000_000)
+        }
+
+        let fmt = UIGraphicsImageRendererFormat()
+        fmt.scale = 2.0
+        fmt.opaque = true
+        let img = UIGraphicsImageRenderer(bounds: host.view.bounds, format: fmt).image { ctx in
+            if !host.view.drawHierarchy(in: host.view.bounds, afterScreenUpdates: true) {
+                host.view.layer.render(in: ctx.cgContext)
+            }
+        }
+        return (img, measured)
+    }
     private func renderInWindow<V: View>(
         width: CGFloat,
         height: CGFloat,

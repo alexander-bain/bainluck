@@ -234,8 +234,8 @@ final class DiscoverThemeCollectionEntry9925Tests: XCTestCase {
     func testTheRowIsAButtonOnTheCardsOwnStack() throws {
         let text = try discoverViewSource()
         XCTAssertEqual(occurrences(of: "if let collectionRef { Divider() collectionRow(collectionRef) }", in: text), 1)
-        XCTAssertEqual(occurrences(of: "return Button { navigationPath.append(DiscoverGroupRows.collectionRoute(for: ref)) } label:", in: text), 1,
-                       "a Button, not a NavigationLink: a link turns a swipe into navigation (#7074)")
+        XCTAssertEqual(occurrences(of: ".onTapGesture { openContainer(ref) }", in: text), 1,
+                       "an onTapGesture gated by DiscoverSwipeTapGuard13668, not a Button or NavigationLink: buttons turn a swipe into navigation (#7074, #13668)")
         XCTAssertEqual(occurrences(of: ".accessibilityIdentifier(\"discover.group.collection\")", in: text), 1)
         XCTAssertEqual(occurrences(of: "let countOnOwnLine = dynamicTypeSize.isAccessibilitySize", in: text), 1,
                        "at accessibility sizes the count takes its own line so the name reads whole")

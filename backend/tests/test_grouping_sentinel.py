@@ -257,10 +257,15 @@ def test_the_post_is_counts_first_then_families_then_unknowns_under_sixty_lines(
     assert body.count("`" + gs.FILING_MARKER) == 0  # no declaration in a report
 
 
-def test_report_only_until_nov_26_then_filing_is_announced():
+def test_report_only_persists_past_nov_26_under_386a(monkeypatch):
     c = counts(series("KXSNOW", 5))
-    assert "Report-only until Thu Nov 26" in compose(c)
     after = datetime(2026, 11, 26, 16, tzinfo=timezone.utc)
+    for dt in (NOW, after):
+        body = compose(c, now=dt)
+        assert "Report-only (decision 386: A replaces 72-A)" in body
+        assert "Filing is on" not in body
+        assert "first to be filed" not in body
+    monkeypatch.setattr(gs, "FILING_ENABLED", True)
     assert "Filing is on" in compose(c, now=after, filing={"summary": "1 filed, 0 still open, 0 closed, 0 failed"})
 
 
@@ -438,29 +443,37 @@ async def test_a_run_before_nov_26_posts_the_week_and_files_nothing(run_env):
     assert stats["uncovered_families"] == 1
 
 
-async def test_a_run_from_nov_26_files(run_env):
-    await gs._run_grouping_sentinel(now=datetime(2026, 11, 26, 16, tzinfo=timezone.utc))
-    assert len(run_env["filed"]) == 1
+async def test_a_run_from_nov_26_stays_report_only_under_386a(run_env):
+    thu_8am_pt = datetime(2026, 11, 26, 16, tzinfo=timezone.utc)
+    stats_default = await gs._run_grouping_sentinel(now=thu_8am_pt)
+    stats_forced = await gs._run_grouping_sentinel(file_issues=True, now=thu_8am_pt)
+    assert run_env["filed"] == []
+    assert stats_default["filing"] is None and stats_default["terminal"] == "complete"
+    assert stats_forced["filing"] is None and stats_forced["terminal"] == "complete"
+    assert "Report-only (decision 386: A replaces 72-A)" in run_env["posts"][0]["body"]
 
 
-async def test_filing_can_be_paused_without_a_deploy(run_env):
+async def test_filing_can_be_paused_without_a_deploy(monkeypatch, run_env):
+    monkeypatch.setattr(gs, "FILING_ENABLED", True)
     run_env["redis"].kv[gs.FILING_PAUSE_KEY] = "1"
-    stats = await gs._run_grouping_sentinel(now=datetime(2026, 11, 26, 16, tzinfo=timezone.utc))
+    stats = await gs._run_grouping_sentinel(file_issues=True, now=datetime(2026, 11, 26, 16, tzinfo=timezone.utc))
     assert run_env["filed"] == []
     assert stats["filing"]["action"] == "paused"
 
 
-async def test_any_value_pauses_filing_even_zero(run_env):
+async def test_any_value_pauses_filing_even_zero(monkeypatch, run_env):
     # bool(b"0") is True: Alex resumes with DEL, never with SET 0.
+    monkeypatch.setattr(gs, "FILING_ENABLED", True)
     run_env["redis"].kv[gs.FILING_PAUSE_KEY] = "0"
-    stats = await gs._run_grouping_sentinel(now=datetime(2026, 11, 26, 16, tzinfo=timezone.utc))
+    stats = await gs._run_grouping_sentinel(file_issues=True, now=datetime(2026, 11, 26, 16, tzinfo=timezone.utc))
     assert run_env["filed"] == [] and stats["filing"]["action"] == "paused"
 
 
-async def test_an_unreadable_pause_switch_files_nothing(run_env):
+async def test_an_unreadable_pause_switch_files_nothing(monkeypatch, run_env):
     # A run that cannot rule out Alex's pause must not file over it.
+    monkeypatch.setattr(gs, "FILING_ENABLED", True)
     run_env["redis"].fail = True
-    stats = await gs._run_grouping_sentinel(now=datetime(2026, 11, 26, 16, tzinfo=timezone.utc))
+    stats = await gs._run_grouping_sentinel(file_issues=True, now=datetime(2026, 11, 26, 16, tzinfo=timezone.utc))
     assert run_env["filed"] == []
     assert stats["filing"]["action"] == "pause_unknown_no_op"
     assert stats["terminal"] == "partial"
@@ -469,11 +482,13 @@ async def test_an_unreadable_pause_switch_files_nothing(run_env):
 async def test_no_redis_at_all_files_nothing(monkeypatch, run_env):
     import app.tasks.redis_state as redis_state
 
+    monkeypatch.setattr(gs, "FILING_ENABLED", True)
+
     def no_client(*a, **k):
         raise RuntimeError("REDIS_URL unset")
 
     monkeypatch.setattr(redis_state, "get_redis_client", no_client)
-    stats = await gs._run_grouping_sentinel(now=datetime(2026, 11, 26, 16, tzinfo=timezone.utc))
+    stats = await gs._run_grouping_sentinel(file_issues=True, now=datetime(2026, 11, 26, 16, tzinfo=timezone.utc))
     assert run_env["filed"] == [] and stats["filing"]["action"] == "pause_unknown_no_op"
 
 
