@@ -1,0 +1,63 @@
+{
+  "slug": "machinery-golf-majors-and-ryder-cup",
+  "stage": "preview",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_event",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "SPORTS · GOLF",
+  "name": "Golf Majors & The Ryder Cup",
+  "category": "golf",
+  "tag": "GOLF",
+  "section_title": "2027 Ryder Cup Showdown",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "card_rows": 3,
+    "card_section_key": "ryder_cup_duel",
+    "suppress_card_photo": true,
+    "sections": [
+      {
+        "key": "ryder_cup_duel",
+        "title": "2027 Ryder Cup Showdown",
+        "item_noun": "sides",
+        "allow_three_way_duel": true,
+        "note": "Team Europe, Team USA, and a tie in the 2027 Ryder Cup.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch9-ryder-cup-duel",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 1,
+          "max_items": 1,
+          "max_outcomes": 3,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      },
+      {
+        "key": "golf_majors",
+        "title": "Majors, Tour & Career Milestones",
+        "item_noun": "markets",
+        "note": "2027 Masters favorites, Scottie Scheffler's Grand Slam quest, and the future of LIV Golf.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch9-golf-majors",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 5,
+          "max_outcomes": 1,
+          "initial_visible_limit": 4,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}
