@@ -167,6 +167,7 @@ final class MyStuffLandingViewModel295A: ObservableObject {
     private let customBatchHydrator: SubjectHydrator?
     private let singleSubjectHydrator: SingleSubjectHydrator
     private let discoverFetcher: DiscoverFetcher
+    private let nowProvider: @Sendable () -> Date
     private var hasRotatedSession = false
 
     init(
@@ -174,7 +175,8 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         preloaded: PreloadedSnapshot? = nil,
         subjectHydrator: SubjectHydrator? = nil,
         singleSubjectHydrator: SingleSubjectHydrator? = nil,
-        discoverFetcher: DiscoverFetcher? = nil
+        discoverFetcher: DiscoverFetcher? = nil,
+        nowProvider: @escaping @Sendable () -> Date = Date.init
     ) {
         self.defaults = defaults
         self.customBatchHydrator = subjectHydrator
@@ -184,6 +186,7 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         self.discoverFetcher = discoverFetcher ?? {
             try await APIClient.shared.fetchFeed(limit: 12, mode: "discover")
         }
+        self.nowProvider = nowProvider
         if let preloaded {
             self.isPreloaded = true
             applyPreloadedSnapshot(preloaded)
@@ -555,14 +558,20 @@ final class MyStuffLandingViewModel295A: ObservableObject {
 
     private static func buildPartitionedSections(
         from acc: RefreshAccumulator295A,
-        discoverFeed: FeedResponse?
+        discoverFeed: FeedResponse?,
+        now: Date = Date()
     ) -> PartitionedSections295A {
         // 1. Live now
-        let live = acc.collectedEvents.filter { pair in EventState.section(of: pair.event) == .live }
+        let live = acc.collectedEvents.filter { pair in EventState.section(of: pair.event, now: now) == .live }
 
-        // 2. Next for you (upcoming games chronologically ascending + top active followed markets)
+        // 2. Next for you (upcoming games chronologically ascending + top active followed markets;
+        // exclude overdue `scheduled` games beyond the app's #10094 grace window while keeping
+        // games that just started and have not yet flipped to `live`).
         let upcomingSorted = acc.collectedEvents
-            .filter { pair in EventState.section(of: pair.event) == .upcoming }
+            .filter { pair in
+                EventState.section(of: pair.event, now: now) == .upcoming
+                    && !FeedLifecycle.scheduledKickoffHasLapsed(pair.event, now: now)
+            }
             .sorted { lhs, rhs in
                 switch (lhs.event.commenceTime?.asDate, rhs.event.commenceTime?.asDate) {
                 case let (l?, r?): return l < r
@@ -741,7 +750,8 @@ final class MyStuffLandingViewModel295A: ObservableObject {
             signedInItems: signedInItems,
             signedInTeamFutures: signedInTeamFutures
         )
-        let baselinePartition = Self.buildPartitionedSections(from: baselineAcc, discoverFeed: nil)
+        let now = nowProvider
+        let baselinePartition = Self.buildPartitionedSections(from: baselineAcc, discoverFeed: nil, now: now())
         if baselinePartition.hasFollowedContent {
             applyStreamingPartition(
                 baselinePartition,
@@ -824,7 +834,7 @@ final class MyStuffLandingViewModel295A: ObservableObject {
                             stepAcc.mergePack(pack)
                         }
                     }
-                    let stepPartition = Self.buildPartitionedSections(from: stepAcc, discoverFeed: discoverFeed)
+                    let stepPartition = Self.buildPartitionedSections(from: stepAcc, discoverFeed: discoverFeed, now: now())
                     if stepPartition.hasAnyContent {
                         applyStreamingPartition(
                             stepPartition,
@@ -849,7 +859,7 @@ final class MyStuffLandingViewModel295A: ObservableObject {
         }
 
         MyStuffVisitLedger295A.recordObservedReadings(finalAcc.newReadings, defaults: defaults)
-        let finalPartition = Self.buildPartitionedSections(from: finalAcc, discoverFeed: discoverFeed)
+        let finalPartition = Self.buildPartitionedSections(from: finalAcc, discoverFeed: discoverFeed, now: now())
         let newFollowedSectionsEmpty = !finalPartition.hasFollowedContent
         let teamFuturesDidFail = signedInTeamFuturesFailed && signedInTeamFutures == nil
         teamFuturesFailed = teamFuturesDidFail

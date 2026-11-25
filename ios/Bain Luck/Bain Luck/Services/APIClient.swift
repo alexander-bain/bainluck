@@ -1160,8 +1160,8 @@ actor APIClient {
     // MARK: - Team Page
 
     /// Fetches the team page summary, events, and market context by team slug.
-    func fetchTeamPage(slug: String) async throws -> TeamPageResponse {
-        return try await fetch("/api/teams/\(slug)")
+    func fetchTeamPage(slug: String, requiresNetwork: Bool = false) async throws -> TeamPageResponse {
+        return try await fetch("/api/teams/\(slug)", requiresNetwork: requiresNetwork)
     }
 
     /// Fresh projections of already-painted cards. No editorial feed-cache read.

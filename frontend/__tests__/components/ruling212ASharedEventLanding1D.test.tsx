@@ -155,9 +155,9 @@ describe("Ruling 212-A (#11934 Step 1D) — Shared-link web landing", () => {
       "utf8",
     );
 
-    expect(rootLayout).toContain("itunes: { appId: APP_STORE_APP_ID }");
-    expect(eventLayout).toContain("itunes: { appId: APP_STORE_APP_ID, appArgument: url }");
-    expect(futuresLayout).toContain("itunes: { appId: APP_STORE_APP_ID, appArgument: url }");
+    expect(rootLayout).toContain('"apple-itunes-app": smartAppBannerContent(APP_STORE_CAMPAIGNS.banner)');
+    expect(eventLayout).toContain('"apple-itunes-app": smartAppBannerContent(APP_STORE_CAMPAIGNS.bannerEventPage, url)');
+    expect(futuresLayout).toContain('"apple-itunes-app": smartAppBannerContent(APP_STORE_CAMPAIGNS.banner, url)');
 
     expect(buildAppleItunesMetaContent("https://www.bainluck.com/events/14780579", null)).toBe(
       `app-id=${APP_STORE_APP_ID}, app-argument=https://www.bainluck.com/events/14780579`,

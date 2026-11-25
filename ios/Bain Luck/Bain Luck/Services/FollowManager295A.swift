@@ -263,9 +263,9 @@ nonisolated struct FollowedSubject295A: Codable, Identifiable, Hashable, Sendabl
             return true
         }
 
-        // Name fallback is restricted strictly to subjects where NEITHER side has a teamId
-        // and BOTH sides carry matching non-empty sport keys.
-        guard lhsValidId == nil && rhsValidId == nil else { return false }
+        // Name fallback applies when at most one side carries a numeric teamId (for example
+        // an id-backed follow matched against a game card whose feed omitted `team_id`),
+        // provided BOTH sides carry non-empty matching sport families.
         guard let s1 = sportKey?.lowercased(), let s2 = other.sportKey?.lowercased(), !s1.isEmpty, !s2.isEmpty else {
             return false
         }
@@ -356,7 +356,15 @@ final class FollowManager295A: ObservableObject {
                 sportKey: fav.sportKey,
                 logoUrl: fav.logoUrl
             )
-            if !isFollowing(candidate) {
+            if let existingIdx = subjects.firstIndex(where: { $0.matches(candidate) }) {
+                if (subjects[existingIdx].teamId ?? 0) <= 0 {
+                    subjects[existingIdx].teamId = fav.teamId
+                    if subjects[existingIdx].logoUrl == nil {
+                        subjects[existingIdx].logoUrl = fav.logoUrl
+                    }
+                    changed = true
+                }
+            } else {
                 subjects.append(candidate)
                 changed = true
             }
