@@ -1993,23 +1993,27 @@ struct DiscoverView: View {
                 spaceGrouped(personalizeGrouped(Array(floored[boundary...]), profile: profile)),
                 now: now
             )
-            if !firstRunPreferences.isEmpty {
-                let matchesFirstRun: (DiscoverGroupedItem) -> Bool = { grouped in
+            if firstRunPreferences.isBoostActive(now: now) {
+                let combined = openingItems + continuationItems
+                let boosted = FirstRunDiscoverBoost212A.promotePreferredItems(
+                    combined,
+                    preferences: firstRunPreferences,
+                    now: now,
+                    kindOf: { grouped in
+                        FirstRunDiscoverBoost212A.categoryGroup(groupedCategoryStatic(grouped).lowercased())
+                    }
+                ) { grouped, prefs in
                     guard let item = primaryFeedItem(grouped) else { return false }
                     return FirstRunDiscoverBoost212A.itemMatches(
                         item,
                         category: groupedCategoryStatic(grouped),
-                        preferences: firstRunPreferences
+                        preferences: prefs
                     )
                 }
-                let promotedFromOpening = openingItems.filter(matchesFirstRun)
-                let promotedFromCont = continuationItems.filter(matchesFirstRun)
-                let remainingOpening = openingItems.filter { !matchesFirstRun($0) }
-                let remainingCont = continuationItems.filter { !matchesFirstRun($0) }
-                let boostedOpening = promotedFromOpening + promotedFromCont + remainingOpening
+                let nextContinuationStart: Int? = openingItems.count < boosted.count ? openingItems.count : nil
                 return GroupedPresentation(
-                    items: boostedOpening + remainingCont,
-                    continuationStart: remainingCont.isEmpty ? nil : boostedOpening.count,
+                    items: boosted,
+                    continuationStart: nextContinuationStart,
                     admittedIds: admitted,
                     pullEpoch: pullEpoch,
                     dismissVersion: dismissVersion,
@@ -2040,10 +2044,17 @@ struct DiscoverView: View {
             now: now
         )
         let fullItems: [DiscoverGroupedItem]
-        if firstRunPreferences.isEmpty {
+        if !firstRunPreferences.isBoostActive(now: now) {
             fullItems = baseFullItems
         } else {
-            fullItems = FirstRunDiscoverBoost212A.promotePreferredItems(baseFullItems, preferences: firstRunPreferences) { grouped, prefs in
+            fullItems = FirstRunDiscoverBoost212A.promotePreferredItems(
+                baseFullItems,
+                preferences: firstRunPreferences,
+                now: now,
+                kindOf: { grouped in
+                    FirstRunDiscoverBoost212A.categoryGroup(groupedCategoryStatic(grouped).lowercased())
+                }
+            ) { grouped, prefs in
                 guard let item = primaryFeedItem(grouped) else { return false }
                 return FirstRunDiscoverBoost212A.itemMatches(
                     item,

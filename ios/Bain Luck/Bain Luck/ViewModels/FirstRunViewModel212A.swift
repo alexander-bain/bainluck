@@ -588,7 +588,8 @@ final class FirstRunViewModel212A: ObservableObject {
         let prefs = FirstRunPreferences212A(
             boostedCategories: Array(Set(categoryInterests.filter { $0.value > 0.5 }.keys)).sorted(),
             boostedTerms: boostedTerms,
-            boostedMarketIds: Array(pickedMarketIds).sorted()
+            boostedMarketIds: Array(pickedMarketIds).sorted(),
+            savedAtEpoch: Date().timeIntervalSince1970
         )
         prefs.save(defaults: defaults)
 
