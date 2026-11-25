@@ -30,10 +30,14 @@ def test_nightly_iphone_workflow_triggers_only_on_schedule_and_dispatch():
     job = wf["jobs"]["iphone-full-suite"]
     assert job["runs-on"] == "xcode-27"
     assert job["timeout-minutes"] <= 120
+    wf_text = WORKFLOW_PATH.read_text(encoding="utf-8")
+    assert "$0.00" in wf_text
+    assert "2:30 AM PT in winter, 3:30 AM in summer" in wf_text
     run_blobs = "\n".join(s.get("run", "") for s in job["steps"])
     assert "tools/nightly-iphone-tests.sh" in run_blobs
-    assert "Rig: Nightly iPhone test suite failed" in run_blobs
+    assert "Failed check: nightly iPhone test suite (" in run_blobs
     assert "Flaky:" not in run_blobs
+    assert "Rig:" not in run_blobs
     upload_step = next(
         s for s in job["steps"] if s.get("uses", "").startswith("actions/upload-artifact")
     )
@@ -55,3 +59,5 @@ def test_nightly_iphone_runner_script_runs_whole_scheme_with_cleanup():
     assert "xcrun simctl delete" in non_comment
     assert "trap cleanup EXIT" in non_comment
     assert "watch_iphone_receipt.py" in non_comment
+    assert "--min-tests 7800" in non_comment
+    assert "--min-tests 1\n" not in non_comment

@@ -35,29 +35,40 @@ SDK_VERSION="$(xcrun --sdk iphonesimulator --show-sdk-version)"
 
 python3 - "$OUT/simulators.json" "$SDK_VERSION" > "$OUT/destination-spec.txt" <<'PY'
 import json
+import re
 import sys
 from pathlib import Path
 
 info = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
 target_major_minor = sys.argv[2].split(".")[:2]
+# Match tools/watch-iphone-compatibility.sh on hosted CI (`iOS-27-2` exact SDK match),
+# while falling back to the newest same-major slab iOS runtime (e.g. local `iOS-27-0`)
+# when an exact minor runtime image is not downloaded locally.
 runtimes = sorted(
     (
         r
         for r in info.get("runtimes", [])
-        if r.get("isAvailable")
-        and ".iOS-" in r.get("identifier", "")
-        and r.get("version", "").split(".")[:2] == target_major_minor
+        if r.get("isAvailable") and ".iOS-" in r.get("identifier", "")
     ),
-    key=lambda r: tuple(int(v) for v in r["version"].split(".")),
+    key=lambda r: (
+        1 if r.get("version", "").split(".")[:2] == target_major_minor else 0,
+        1 if r.get("version", "").split(".")[:1] == target_major_minor[:1] else 0,
+        tuple(int(v) for v in r["version"].split(".") if v.isdigit()),
+        1 if re.fullmatch(r".*\.iOS-\d+-\d+", r["identifier"]) else 0,
+    ),
     reverse=True,
 )
+candidates = []
 for runtime in runtimes:
     for device in info.get("devices", {}).get(runtime["identifier"], []):
         kind = device.get("deviceTypeIdentifier", "")
         if device.get("isAvailable") and "iPhone" in kind:
-            print(kind)
-            print(runtime["identifier"])
-            raise SystemExit(0)
+            candidates.append((0 if "Duo" in kind else 1, kind, runtime["identifier"]))
+    if candidates:
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        print(candidates[0][1])
+        print(candidates[0][2])
+        raise SystemExit(0)
 raise SystemExit(f"No available iPhone simulator matching SDK {sys.argv[2]}")
 PY
 
@@ -105,4 +116,4 @@ python3 "$ROOT/tools/watch_iphone_receipt.py" \
   --sha "$SHA" \
   --output "$OUT/receipt.json" \
   --suite-name "All tests" \
-  --min-tests 1
+  --min-tests 7800

@@ -1,11 +1,13 @@
 name: Nightly iPhone Tests (Proposal)
 
-# Proposal PR: run the full iPhone test suite (`BainLuckTests`, no `-only-testing`
-# subset) once every night on `master` on a hosted `xcode-27` runner so full iPhone
-# regressions are caught overnight without queueing behind or blocking daytime PRs.
+# Run the full iPhone test suite (`BainLuckTests`, no `-only-testing` subset)
+# once every night on `master` on the standard hosted `xcode-27` runner
+# (`xcode-27-arm64`, runner group "GitHub Actions", not `-xlarge`). Because
+# `alexander-bain/bainluck` is a public repository, standard hosted macOS
+# minutes are $0.00 (free, uncapped; 90m/night x 30 = $0.00/mo).
 on:
   schedule:
-    # 02:30 AM PST (10:30 UTC) — quiet runner window after 01:00/01:15 AM scheduled jobs.
+    # 2:30 AM PT in winter, 3:30 AM in summer (10:30 UTC) — quiet runner window after 01:00/01:15 AM scheduled jobs.
     - cron: "30 10 * * *"
   workflow_dispatch: {}
 
@@ -62,7 +64,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: File or update single daily Rig issue on scheduled master failure
+      - name: File or update single daily failure issue on scheduled master failure
         if: github.event_name == 'schedule' && steps.run_tests.outputs.exit_code != '0'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -71,7 +73,8 @@ jobs:
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           SHA: ${{ github.sha }}
         run: |
-          TITLE="Rig: Nightly iPhone test suite failed (${RUN_DATE})"
+          PREFIX="Failed check: nightly iPhone test suite ("
+          TITLE="${PREFIX}${RUN_DATE})"
           BODY_FILE="$(mktemp)"
           {
             echo "Nightly full \`BainLuckTests\` run on \`${SHA}\` failed."
@@ -84,7 +87,7 @@ jobs:
               echo "(receipt.json not produced)"
             fi
           } > "$BODY_FILE"
-          EXISTING="$(gh issue list -R "$REPO" --state open --search "\"${TITLE}\" in:title" --json number,title --jq ".[] | select(.title == \"${TITLE}\") | .number" | head -n1)"
+          EXISTING="$(gh issue list -R "$REPO" --state open --search "Failed check: nightly iPhone test suite in:title" --json number,title --jq ".[] | select(.title | startswith(\"${PREFIX}\")) | .number" | head -n1)"
           if [ -n "$EXISTING" ]; then
             gh issue comment "$EXISTING" -R "$REPO" --body-file "$BODY_FILE"
           else
