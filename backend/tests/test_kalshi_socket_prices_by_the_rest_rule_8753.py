@@ -204,8 +204,6 @@ async def test_the_tick_writes_its_own_book_beside_the_price(monkeypatch):
         ("0.1000", "0.7000", "0.4000"),
         # Tight book, no trade: midpoint (rule 1).
         ("0.4000", "0.4400", None),
-        # Wide one-sided longshot, trade ABOVE the ask: refuted, ask cap (rule 3).
-        ("0.0000", "0.0900", "0.5200"),
     ],
 )
 async def test_the_socket_stores_exactly_what_the_rest_writer_would(
@@ -226,15 +224,15 @@ async def test_the_socket_stores_exactly_what_the_rest_writer_would(
 
 
 @pytest.mark.asyncio
-async def test_a_wide_book_with_a_refuted_trade_writes_nothing(monkeypatch):
-    # 0.02/0.80 is wide, the 0.96 trade sits above the ask, and the ask is not a
-    # longshot: the REST rule returns None — no price exists, so none is written
-    # (the old socket wrote 0.96).
-    assert _kalshi_yes_probability(0.02, 0.80, 0.96) is None
+@pytest.mark.parametrize("bid,ask,last", [("0.0200", "0.8000", "0.9600"),
+                                         ("0.0000", "0.0900", "0.5200")])
+async def test_a_book_with_only_an_ask_or_refuted_trade_writes_no_price(
+    monkeypatch, bid, ask, last
+):
+    assert _kalshi_yes_probability(float(bid), float(ask), float(last)) is None
     updates = await _price_updates(
         monkeypatch,
-        _tick(price_dollars="0.9600", yes_bid_dollars="0.0200",
-              yes_ask_dollars="0.8000"),
+        _tick(price_dollars=last, yes_bid_dollars=bid, yes_ask_dollars=ask),
     )
     assert updates == [], "a book with no price in it was written as one"
 

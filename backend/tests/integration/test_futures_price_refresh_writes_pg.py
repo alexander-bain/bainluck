@@ -148,6 +148,35 @@ def _stats():
 
 
 class TestTheWriterActuallyWrites:
+    async def test_a_zero_bid_updates_the_ceiling_without_a_price_snapshot(self, db):
+        from decimal import Decimal
+
+        from app.tasks.futures_price_refresh import _write_prices
+
+        market, outcome = await _seed_market(db, is_winner=False)
+        old_observation = datetime.now(timezone.utc) - timedelta(hours=1)
+        outcome.current_probability = Decimal("0.05")
+        outcome.current_yes_bid = Decimal("0.04")
+        outcome.current_yes_ask = Decimal("0.06")
+        outcome.last_updated = old_observation
+        await db.commit()
+
+        written = await _write_prices(db, market.id, _BOOKMAKER, [{
+            "external_id": outcome.external_id,
+            "probability": None,
+            "venue_quotes_no_price": True,
+            "yes_bid": 0,
+            "yes_ask": 0.05,
+        }], _stats())
+        await db.commit()
+        await db.refresh(outcome)
+
+        assert written == await _snapshot_count(db, outcome.id) == 0
+        assert outcome.current_probability is None
+        assert outcome.current_yes_bid == 0
+        assert outcome.current_yes_ask == Decimal("0.05")
+        assert outcome.last_updated > old_observation
+
     async def test_an_unsettled_outcome_gets_a_snapshot(self, db):
         """THE founding case. `is_winner=False` is what production stores.
 

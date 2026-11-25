@@ -3207,8 +3207,8 @@ async def _run_kalshi_ws_consumer(*, sessions, prices):
         # three exclusive legs of that card summed to 139%. The poll that wrote
         # the same row two minutes earlier would have stored the 0.77 midpoint;
         # the socket, being faster, won every time. One price policy per venue:
-        # tight book → midpoint, else a trade the book does not refute, else a
-        # longshot ask, else nothing (a wide book with no trade is not a price).
+        # tight book → midpoint, else a trade the book does not refute. An ask
+        # without that trade evidence supplies only a ceiling.
         prob = _kalshi_yes_probability(yes_bid, yes_ask, last_price)
         if (globals().get("KALSHI_WS_GAME_LAST_TRADE", False) and prob is not None
                 and ticker in ticker_to_ids and _is_team_game_ticker(ticker)

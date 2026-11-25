@@ -59,6 +59,32 @@ def test_kalshi_ask_only_ceiling_is_never_a_price_input():
     assert _kalshi_yes_probability(0.01, 0.03, 0.71) == pytest.approx(0.02)
 
 
+def test_a_partial_preview_does_not_round_supported_rows_up_to_100():
+    from app.utils.container_machinery import _canonical_market_outcome_map
+    from app.utils.outcome_display import mark_kalshi_ask_ceilings
+
+    market = SimpleNamespace(source="kalshi", status="open")
+    outcomes = [
+        SimpleNamespace(id=1, name="Alice", current_probability=0.61, current_yes_bid=0.60),
+        SimpleNamespace(id=2, name="Bob", current_probability=0.38, current_yes_bid=0.37),
+        SimpleNamespace(id=3, name="Carol", current_probability=None, current_yes_bid=0,
+                        current_yes_ask=0.05),
+    ]
+    page = [
+        {"id": outcome.id, "name": outcome.name, "probability": outcome.current_probability}
+        for outcome in outcomes
+    ]
+    preview = deepcopy(page[:2])
+    mark_kalshi_ask_ceilings(market, page, {outcome.id: outcome for outcome in outcomes})
+    assert normalize_display_probs(page) is False
+    _normalize_feed_probabilities(preview, outcomes, mutually_exclusive=True, market=market)
+    _apply_card_percents(preview)
+    set_rows, *_ = _canonical_market_outcome_map(page)
+    assert [row["probability"] for row in page[:2]] == [0.61, 0.38]
+    for surface in (preview, set_rows):
+        assert [row["rendered_percent"] for row in surface] == [61, 38]
+
+
 @pytest.mark.parametrize(
     "book, divisor",
     [

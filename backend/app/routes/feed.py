@@ -140,6 +140,7 @@ from app.utils.graded_card import (
     card_sum_reason,
     duel_percents_by_side,
     rendered_card_percents,
+    rendered_percent,
 )
 from app.utils.prematch_reading import (
     PREMATCH_PRIOR_SHARED_NAMESPACE,
@@ -9669,6 +9670,7 @@ def _normalize_feed_probabilities(
     full = _feed_display_rows(all_sorted_outcomes, market)
     normalize_display_probs(full, mutually_exclusive=mutually_exclusive,
                             field_complete=field_complete, question=question)
+    book_backed = mutually_exclusive is True and any("kalshi_no_bid" in row for row in full)
     by_id = {o["id"]: o for o in full if o["id"] is not None}
     by_name = {o["name"]: o for o in full}
     scale = _feed_display_scale(all_sorted_outcomes, question,
@@ -9686,6 +9688,10 @@ def _normalize_feed_probabilities(
             )
             if "rendered_percent" in row:
                 o["rendered_percent"] = row["rendered_percent"]
+            elif book_backed:
+                # Round the supported field's unscaled rows before the card's
+                # two-row preview can treat them as complementary sides.
+                o["rendered_percent"] = rendered_percent(row["probability"])
         elif mutually_exclusive is None:
             o["probability"] = _scale_display_probability(o.get("probability"), scale)
     return top_outcomes
