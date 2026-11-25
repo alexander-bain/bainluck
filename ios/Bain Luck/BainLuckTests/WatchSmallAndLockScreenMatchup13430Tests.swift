@@ -158,6 +158,40 @@ final class WatchSmallAndLockScreenMatchup13430Tests: XCTestCase {
         XCTAssertEqual(above99.smallSlotModel(now: now)?.value, ">99%")
     }
 
+    func testWatchCircularMarketNeverHidesSubjectBehindBareGauge13430() throws {
+        let obs = now.addingTimeInterval(-30)
+        let reading = WatchRectangularReading(
+            version: 1, eventID: 9303, kind: .futureForecast,
+            homeName: "2028 Democratic Nominee", awayName: "Newsom",
+            home: nil, away: nil,
+            homePercent: 23, homeScore: nil, awayScore: nil, commenceTime: nil,
+            stateLabel: "Market", observedAt: obs, scoreObservedAt: nil
+        )
+        let marketSnap = WatchComplicationSnapshot(
+            eventID: 9303, title: "2028 Democratic Nominee", detail: "Newsom 23%",
+            observedAt: obs, savedAt: now, circularReading: nil, rectangularReading: reading
+        )
+        let smallModel = try XCTUnwrap(marketSnap.smallSlotModel(now: now))
+        XCTAssertEqual(smallModel.subjectLabel, "Newsom")
+        XCTAssertEqual(smallModel.cornerLabel, "Newsom")
+        XCTAssertEqual(smallModel.value, "23%")
+        XCTAssertFalse(smallModel.isGame)
+
+        let watchContentSource = try String(
+            contentsOf: URL(fileURLWithPath: #filePath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("BainLuckWatch Watch App/WatchSavedComplicationContent.swift"),
+            encoding: .utf8
+        )
+        XCTAssertFalse(
+            watchContentSource.contains(#"model.isGame ? model.subjectLabel : """#),
+            "Circular slot must never render a bare Gauge percent without its subject"
+        )
+        XCTAssertFalse(watchContentSource.contains("Circular and corner families remain explicit launchers"))
+        XCTAssertTrue(watchContentSource.contains("if let share = model.gaugeShare, model.isGame"))
+    }
+
     func testSmallSlotModelAndLockScreenFitShareSingleRule() {
         XCTAssertEqual(SavedLockScreenFit10875.shortVerdicts, LockScreenSmallSlotFit13430.shortVerdicts)
         XCTAssertEqual(SavedLockScreenFit10875.ringLimit, LockScreenSmallSlotFit13430.ringLimit)
