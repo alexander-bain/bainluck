@@ -7,7 +7,7 @@ import { buildDiscoverShareUrl, buildLadderShareText, formatShareProbability } f
 import type { LadderKind } from "@/lib/share";
 import { marketEventKey, eventPath } from "@/lib/eventKey";
 import { printsAPercent } from "@/lib/discover/leaderOrder";
-import { boardRowRanks, futuresBoardRemainderLabel, futuresDistributionBoard } from "@/lib/discover/futuresBoard";
+import { boardRowRanks, futuresBoardRemainderLabel, futuresDistributionBoard, futuresDistributionDatesByLabel } from "@/lib/discover/futuresBoard";
 import { heroOutcome } from "@/lib/discover/heroOutcome";
 import type { HeroCandidate } from "@/lib/discover/heroOutcome";
 import { answerIsBareQuantity, answerIsNegative, captionIsAboutAnotherLeg, captionRepeatsAnswer, rowAnswerLabel } from "@/lib/discover/rowAnswerLabel";
@@ -1176,21 +1176,7 @@ function buildHeatmapRows(data: FeedFuturesData): HeatmapRow[] {
   const outcomesByName = new Map(
     data.top_outcomes.map((outcome) => [outcome.name.toLowerCase(), outcome])
   );
-  const distOutcomes =
-    (
-      data as {
-        discover_card?: {
-          distribution_outcomes?: { label?: string; date?: string | null }[] | null;
-        } | null;
-      }
-    ).discover_card?.distribution_outcomes ?? [];
-  const distDateByLabel = new Map<string, string>();
-  for (const dist of distOutcomes) {
-    const lbl = dist.label?.trim().toLowerCase();
-    if (lbl && dist.date && /^\d{4}-\d{2}-\d{2}$/.test(dist.date)) {
-      distDateByLabel.set(lbl, dist.date);
-    }
-  }
+  const distDateByLabel = futuresDistributionDatesByLabel(data);
   const now = new Date();
 
   for (const point of data.discover_card?.threshold_points ?? []) {
