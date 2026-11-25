@@ -15,6 +15,7 @@
  */
 
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
+import BainLuckMark from "@/components/BainLuckMark";
 import {
   ClaimKernel,
   DuelKernel,
@@ -51,7 +52,7 @@ function claimUpcoming() {
       deltaPoints={4.2}
       stateLabel="Resolves Sep 17"
       timestamp="5m ago"
-      angle={{ kind: "mover", label: "Moved 12 pts this week" }}
+      angle={{ kind: "mover", label: "Moved 12 points this week" }}
       categorySlug="politics"
       categoryLabel="Politics"
       categoryEmoji="🏛"
@@ -131,7 +132,7 @@ function duelLive() {
       homeProb={0.29}
       liveLabel="Bot 6"
       timestamp="Live"
-      angle={{ kind: "mover", label: "Flipped 20 pts" }}
+      angle={{ kind: "mover", label: "Flipped 20 points" }}
       gradientKey="baseball"
       categorySlug="baseball"
       categoryLabel="MLB"
@@ -200,7 +201,7 @@ function fieldLive() {
       stateLabel="R3"
       liveLabel="R3"
       timestamp="Live"
-      angle={{ kind: "mover", label: "Åberg up 6 pts in R3" }}
+      angle={{ kind: "mover", label: "Åberg up 6 points in R3" }}
       categorySlug="golf"
       categoryLabel="Golf"
       categoryEmoji="⛳"
@@ -262,7 +263,7 @@ function quantityDateBuckets() {
         { key: "mar", label: "Mar '27", probability: 0.91, value: 4 },
       ]}
       timestamp="1h ago"
-      angle={{ kind: "mover", label: "Sep jumped 9 pts" }}
+      angle={{ kind: "mover", label: "Sep jumped 9 points" }}
       categorySlug="politics"
       categoryLabel="Politics"
       categoryEmoji="🏛"
@@ -361,7 +362,7 @@ function MixedFeed() {
   return (
     <div className="flex w-[375px] flex-col gap-2.5 rounded-2xl border border-surface-border bg-surface-deep p-4">
       <div className="flex items-center gap-1.5 px-0.5 pb-1.5">
-        <span className="text-base">🍀</span>
+        <BainLuckMark size={18} />
         <span className="text-base font-bold tracking-[-0.01em] text-text-primary">Discover</span>
         <span className="ml-auto text-[11px] text-text-muted">42 events · Personalized</span>
       </div>

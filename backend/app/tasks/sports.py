@@ -200,6 +200,131 @@ async def _external_id_in_use(session, external_id: str) -> Optional[int]:
     return result.scalar_one_or_none()
 
 
+async def _link_upcoming_unlinked_events_pass(
+    session,
+    *,
+    now: Optional[datetime] = None,
+    sport_key_by_id: Optional[dict[int, str]] = None,
+) -> dict:
+    """Link upcoming unlinked event team IDs across ALL sports in one pass (#13144).
+
+    Runs outside the per-sport Odds API loop so leagues with zero sportsbook
+    games in that pass (e.g. Polymarket-only women's college basketball, or
+    catch-all sports like ``soccer_other`` / ``basketball_other``) still link
+    every upcoming game within the 7-day horizon using the exact same strict
+    same-sport matcher.
+    """
+    from app.utils.event_team_linking import link_unlinked_upcoming_events
+
+    ref_now = now or datetime.now(timezone.utc)
+    summary = await link_unlinked_upcoming_events(
+        session,
+        now=ref_now,
+        lookback_days=1,
+        horizon_days=7,
+        limit_per_sport=500,
+        dry_run=False,
+    )
+    key_map = dict(sport_key_by_id or {})
+    missing_ids = [
+        sid
+        for sid, st in summary["by_sport"].items()
+        if st.get("sides_linked") and sid not in key_map
+    ]
+    if missing_ids:
+        res = await session.execute(
+            select(Sport.id, Sport.key).where(Sport.id.in_(missing_ids))
+        )
+        for sid, skey in res.all():
+            key_map[int(sid)] = str(skey)
+    for sid, st in summary["by_sport"].items():
+        if st.get("sides_linked"):
+            logger.info(
+                "Linked %d team IDs on upcoming events for %s",
+                st["sides_linked"],
+                key_map.get(sid, f"sport_{sid}"),
+            )
+    return summary
+
+
+async def _auto_create_missing_teams(
+    session,
+    sport_id: int,
+    sport_key: str,
+    all_team_names,
+) -> int:
+    """Create missing ``Team`` rows for ``sport_id`` without recreating folded clubs (#13229).
+
+    Checks exact ``Team.name``, distinguishing-token-safe ``_canonical_names_match``,
+    ``retired_team_redirects``, ``team_identity_mapping``, ``Team.alternate_names``,
+    and unambiguous same-league short spellings before minting a new ``Team``.
+    """
+    from app.utils.team_redirects import (
+        distinguishing_tokens_agree,
+        find_existing_team_in_sport,
+    )
+
+    existing_result = await session.execute(
+        select(Team).where(Team.sport_id == sport_id)
+    )
+    existing_teams = list(existing_result.scalars().all())
+    existing_team_names = {t.name for t in existing_teams if t.name}
+
+    # Process longer canonical spellings before short ones so a batch carrying
+    # both "Tottenham Hotspur" and "Tottenham" mints only the canonical name.
+    ordered_candidates = sorted(
+        {name for name in all_team_names if isinstance(name, str) and name.strip()},
+        key=lambda n: (-len(n), n),
+    )
+
+    new_teams: list[Team] = []
+    for candidate in ordered_candidates:
+        if candidate in existing_team_names:
+            continue
+        if any(
+            distinguishing_tokens_agree(candidate, existing)
+            and _canonical_names_match(candidate, existing)
+            for existing in existing_team_names
+        ):
+            continue
+        existing_match = await find_existing_team_in_sport(
+            session,
+            candidate,
+            sport_id,
+            existing_teams=existing_teams,
+        )
+        if existing_match is not None:
+            continue
+
+        new_team = Team(
+            name=candidate,
+            sport_id=sport_id,
+        )
+        session.add(new_team)
+        existing_teams.append(new_team)
+        existing_team_names.add(candidate)
+        new_teams.append(new_team)
+
+    if not new_teams:
+        return 0
+
+    await session.flush()  # Assign IDs for identity registration
+
+    from app.services.team_identity import team_identity_service
+
+    for new_team_obj in new_teams:
+        if new_team_obj.id is not None:
+            await team_identity_service.register_team_identity(
+                session,
+                new_team_obj.id,
+                "odds_api",
+                sport_key,
+                source_name=new_team_obj.name,
+            )
+
+    return len(new_teams)
+
+
 async def _discover_events():
     """
     Async implementation of discover_events.
@@ -563,123 +688,19 @@ async def _discover_events():
                     # Auto-create Team records for any teams not yet in the DB.
                     # This ensures college teams (Harvard, Brown, Stanford, etc.)
                     # get Team records even without ESPN scoreboard matching.
-                    # Uses fuzzy matching to avoid creating "Stanford" when
-                    # "Stanford Cardinal" already exists (and vice versa).
+                    # Guarded against recreating folded/existing clubs via
+                    # retired_team_redirects, team_identity_mapping,
+                    # alternate_names, and unambiguous short spellings (#13229).
                     if all_team_names:
-                        existing_result = await session.execute(
-                            select(Team.name).where(
-                                Team.sport_id == sport_id,
-                            )
+                        created_count = await _auto_create_missing_teams(
+                            session, sport_id, sport_key, all_team_names
                         )
-                        existing_team_names = {
-                            row[0] for row in existing_result.all()
-                        }
-                        new_team_names = set()
-                        for candidate in all_team_names:
-                            # Exact match
-                            if candidate in existing_team_names:
-                                continue
-                            # Fuzzy match against existing teams
-                            if any(
-                                _canonical_names_match(candidate, existing)
-                                for existing in existing_team_names
-                            ):
-                                continue
-                            new_team_names.add(candidate)
-                        for team_name in new_team_names:
-                            new_team = Team(
-                                name=team_name,
-                                sport_id=sport_id,
-                            )
-                            session.add(new_team)
-                        if new_team_names:
-                            await session.flush()  # Get IDs for identity registration
-
-                            # Register Odds API identities for newly created teams
-                            from app.services.team_identity import team_identity_service
-                            for team_name in new_team_names:
-                                # Look up the team we just created
-                                team_result = await session.execute(
-                                    select(Team).where(
-                                        Team.name == team_name,
-                                        Team.sport_id == sport_id,
-                                    )
-                                )
-                                new_team_obj = team_result.scalar_one_or_none()
-                                if new_team_obj:
-                                    await team_identity_service.register_team_identity(
-                                        session, new_team_obj.id, "odds_api", sport_key,
-                                        source_name=team_name,
-                                    )
-
-                            total_new_teams += len(new_team_names)
+                        if created_count:
+                            total_new_teams += created_count
                             logger.info(
-                                f"Auto-created {len(new_team_names)} Team "
+                                f"Auto-created {created_count} Team "
                                 f"records for {sport_key}"
                             )
-
-                    # Link team_ids on events that don't have them yet.
-                    # This covers events created by both Odds API (this run)
-                    # and StatPal (earlier). Without this, My Stuff SQL team
-                    # ID filter misses events that only have team names.
-                    if all_team_names:
-                        team_map_result = await session.execute(
-                            select(Team.name, Team.id).where(
-                                Team.sport_id == sport_id,
-                                Team.name.in_(all_team_names),
-                            )
-                        )
-                        team_name_to_id = {
-                            name: tid for name, tid in team_map_result.all()
-                        }
-
-                        if team_name_to_id:
-                            from sqlalchemy import or_ as sql_or
-                            unlinked_result = await session.execute(
-                                select(Event).where(
-                                    Event.sport_id == sport_id,
-                                    sql_or(
-                                        Event.home_team_id.is_(None),
-                                        Event.away_team_id.is_(None),
-                                    ),
-                                    sql_or(
-                                        Event.home_team_name.in_(
-                                            team_name_to_id.keys()
-                                        ),
-                                        Event.away_team_name.in_(
-                                            team_name_to_id.keys()
-                                        ),
-                                    ),
-                                ).limit(200)
-                                # #10090: this sport's games were committed one
-                                # by one above, so a row in the identity map may
-                                # be older than the row in the table. Read the
-                                # table's team ids, not the cached ones.
-                                .execution_options(populate_existing=True)
-                            )
-                            linked_count = 0
-                            for evt in unlinked_result.scalars().all():
-                                if (
-                                    evt.home_team_id is None
-                                    and evt.home_team_name in team_name_to_id
-                                ):
-                                    evt.home_team_id = team_name_to_id[
-                                        evt.home_team_name
-                                    ]
-                                    linked_count += 1
-                                if (
-                                    evt.away_team_id is None
-                                    and evt.away_team_name in team_name_to_id
-                                ):
-                                    evt.away_team_id = team_name_to_id[
-                                        evt.away_team_name
-                                    ]
-                                    linked_count += 1
-                            if linked_count:
-                                logger.info(
-                                    f"Linked {linked_count} team IDs on "
-                                    f"events for {sport_key}"
-                                )
 
                     # ── Post-creation audit: check for duplicates ──
                     if espn_events_by_date:
@@ -717,6 +738,22 @@ async def _discover_events():
                     continue
 
             await session.commit()
+
+            # #13144 follow-up: link upcoming unlinked events across EVERY
+            # sport with unlinked rows (not only sports where The Odds API
+            # returned events in this pass), bounded to the 7-day horizon.
+            try:
+                await _link_upcoming_unlinked_events_pass(
+                    session,
+                    now=datetime.now(timezone.utc),
+                    sport_key_by_id=dict(sports),
+                )
+                await session.commit()
+            except Exception as link_err:
+                await _rollback_quietly(session)
+                logger.warning(
+                    "Upcoming event team-ID linking pass failed: %s", link_err
+                )
 
         return {
             "sports_polled": sports_polled,

@@ -243,7 +243,21 @@ export default function EventPageHeadline199({
   onOpenAtlasDetails,
   ekgControl = null,
 }: EventPageHeadline199Props) {
-  const colCount = model.columns.length;
+  // #12938 / #12994 parity: collapse suppressed empty columns (blank header and
+  // blank cells across every row) so a withheld live projection leaves zero
+  // empty middle gap between Score and Now, matching iOS colWidth == 0.
+  const visibleColumns = model.columns
+    .map((col, idx) => ({ col, idx }))
+    .filter(
+      ({ col, idx }) =>
+        col.header !== "" ||
+        model.rows.some(
+          (r) =>
+            (idx < r.cells.length && r.cells[idx] !== "") ||
+            (col.role === "finalResult" && r.won === true),
+        ),
+    );
+  const colCount = visibleColumns.length;
   const manyCols = colCount >= 5;
   const colGapPx = colCount >= 7 ? 3 : manyCols ? 4 : 8;
   const crestSize = manyCols ? 24 : model.rows.length >= 3 ? 28 : 30;
@@ -432,7 +446,7 @@ export default function EventPageHeadline199({
     );
 
   const wideFeaturedCompact =
-    colCount <= 4 && !model.columns.some((c) => c.role === "setScore");
+    colCount <= 4 && !visibleColumns.some(({ col }) => col.role === "setScore");
 
   return (
     <div
@@ -527,7 +541,7 @@ export default function EventPageHeadline199({
       {/* Unified Column-Header + Competitor-Rows Table */}
       {wrapHeroHook(
         <>
-        {model.hasAnyColumnValue && model.columns.length > 0 ? (
+        {model.hasAnyColumnValue && visibleColumns.length > 0 ? (
           <div
             aria-hidden="true"
             className={
@@ -548,7 +562,7 @@ export default function EventPageHeadline199({
               }
               style={{ gap: colGapPx }}
             >
-              {model.columns.map((col, idx) => {
+              {visibleColumns.map(({ col, idx }) => {
                 const isPrimaryCol = col.role === "now" || col.role === "chance";
                 const isSecondaryCol =
                   col.role === "score" || col.role === "projected" || col.role === "pregame";
@@ -669,13 +683,13 @@ export default function EventPageHeadline199({
                     </div>
                   </div>
 
-                  {model.columns.length > 0 ? (
+                  {visibleColumns.length > 0 ? (
                     <div
                       data-headline-nums=""
                       className="flex items-baseline shrink-0 max-[359px]:ml-auto"
                       style={{ gap: colGapPx }}
                     >
-                      {model.columns.map((col, colIdx) => {
+                      {visibleColumns.map(({ col, idx: colIdx }) => {
                         const text = colIdx < row.cells.length ? row.cells[colIdx] : "";
                         const minWidth = columnMinWidthCss199(col.role, model.phase, colCount);
                         const primaryFontPx = primaryHeadlineCellFontPx199(colCount);

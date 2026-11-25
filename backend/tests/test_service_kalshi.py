@@ -560,9 +560,12 @@ class TestFetchDeadlineAndSettledTrim:
         await client._fetch_all_events_unfiltered(deadline=None)
         assert statuses, "expected at least the main-scan page"
         assert "settled" not in [s for s, _ in statuses]
-        # #10719: the open derivative pass asks for `open`, and only it does.
+        # The targeted derivative and Grammy scans only need open events.
+        open_series = set(ka._OPEN_DERIVATIVE_SERIES_TICKERS) | set(
+            ka._OPEN_GRAMMY_SERIES_TICKERS
+        )
         assert all(
-            s is None or (s == "open" and st in ka._OPEN_DERIVATIVE_SERIES_TICKERS)
+            s is None or (s == "open" and st in open_series)
             for s, st in statuses
         ), statuses
         # deadline is threaded through to every get_events call so page-level
@@ -706,10 +709,23 @@ class TestSupplementaryRescueBudgetReservation:
         await client._fetch_all_events_unfiltered(deadline=full)
         main_dls = [kw.get("deadline") for kw in calls if kw.get("series_ticker") is None]
         supp_dls = [
-            kw.get("deadline") for kw in calls
-            if kw.get("series_ticker") is not None and kw.get("status") != "open"
+            kw["deadline"] for kw in calls
+            if kw.get("series_ticker") is not None
+            and (
+                kw.get("status") != "open"
+                or kw["series_ticker"] in ka._OPEN_GRAMMY_SERIES_TICKERS
+            )
         ]
-        open_dls = [kw.get("deadline") for kw in calls if kw.get("status") == "open"]
+        open_dls = [
+            kw["deadline"] for kw in calls
+            if kw.get("status") == "open"
+            and kw.get("series_ticker") in ka._OPEN_DERIVATIVE_SERIES_TICKERS
+        ]
+        assert {
+            kw["series_ticker"] for kw in calls
+            if kw.get("status") == "open"
+            and kw.get("series_ticker") in ka._OPEN_GRAMMY_SERIES_TICKERS
+        } == set(ka._OPEN_GRAMMY_SERIES_TICKERS)
         assert main_dls, "expected a main-scan page fetch"
         assert supp_dls, "expected supplementary series fetches"
         assert open_dls, "expected the open derivative pass (#10719)"

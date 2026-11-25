@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from model import instant, iso
 from notes import (
     DAILY_CALLS,
+    ModelBudget,
     caption_facts,
     fallback,
     make_notes,
@@ -106,10 +107,8 @@ class ForemanNotes(unittest.TestCase):
                 self.snapshot,
                 self.pulls,
                 previous or {},
-                self.body,
-                self.save,
+                ModelBudget(self.body, self.save, now=now or self.now),
                 key,
-                now=now or self.now,
                 request=self.request,
             )
 
@@ -239,6 +238,7 @@ class ForemanNotes(unittest.TestCase):
         meter = read_meter(self.body, self.now)
         meter.update(
             calls=DAILY_CALLS - 1,
+            notes_calls=DAILY_CALLS - 1,
             last_at=iso(self.now - timedelta(minutes=10)),
             last_facts="1" * 64,
         )
@@ -254,6 +254,25 @@ class ForemanNotes(unittest.TestCase):
         note, stats = self.run_notes(now=self.now + timedelta(minutes=10))
         self.assertEqual(note["source"], "model")
         self.assertEqual(stats["day_calls"], 1)
+
+    def test_monthly_cap_allows_the_last_reservation_and_survives_midnight(self):
+        meter = read_meter(self.body, self.now)
+        meter.update(calls=1, month_micros=19_999_000)
+        self.body = meter_body(self.body, meter)
+
+        with patch("notes.cost_upper_bound_usd", return_value=0.001):
+            note, _ = self.run_notes()
+            self.assertEqual(note["source"], "model")
+            reserved = read_meter(self.writes[0], self.now)
+            self.assertEqual(reserved["month_micros"], 20_000_000)
+
+            self.snapshot["changes"][0]["station"] = "Write"
+            note, stats = self.run_notes(now=self.now + timedelta(minutes=10))
+
+        self.assertEqual(note["source"], "counts")
+        self.assertEqual(stats["day_calls"], 0)
+        self.assertEqual(len(self.writes), 2)
+        self.request.assert_called_once()
 
     def test_cannot_call_if_the_reservation_cannot_be_saved(self):
         self.save = Mock(side_effect=OSError("release update failed"))

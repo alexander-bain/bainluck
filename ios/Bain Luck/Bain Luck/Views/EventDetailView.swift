@@ -285,7 +285,7 @@ struct EventDetailView: View {
             // fit, never a name cut in half ("RMA vs Dubai Bas…").
             ViewThatFits(in: .horizontal) {
                 Text(scorelessTitle).font(.headline).lineLimit(1)
-                Text(scorelessCompactTitle).font(.headline).lineLimit(1)
+                Text(scorelessCompactTitle).font(.headline).lineLimit(1).minimumScaleFactor(0.65)
             }
             .accessibilityElement(children: .ignore)
             .accessibilityLabel(dynamicTitle)
@@ -301,6 +301,7 @@ struct EventDetailView: View {
             Text(c.homeScore).layoutPriority(1)
         }
         .font(.headline)
+        .minimumScaleFactor(0.65)
     }
     #endif
 
@@ -369,9 +370,18 @@ struct EventDetailView: View {
                     ToolbarItem(placement: .confirmationAction) {
                         HStack(spacing: 4) {
                             ShareLink(item: shareURL) {
+                                // #11177 — Pin's 44 pt tap target (`#10880` / `5d3931e735`):
+                                // `.plain` escapes the toolbar's 36 pt cap so the control is
+                                // 44×44, and `.primary` keeps Share's toolbar ink instead of
+                                // accent blue.
                                 Image(systemName: "square.and.arrow.up")
                                     .font(.system(size: 14))
+                                    .foregroundStyle(.primary)
+                                    .frame(width: 44, height: 44)
+                                    .contentShape(Rectangle())
                             }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("Share")
                             .recordsShareOpened {
                                 ShareInstrumentation.recordShareOpened(
                                     itemType: "event",
@@ -963,16 +973,13 @@ struct EventDetailView: View {
                    !Self.gameMarketsHaveContent(gameMarkets) {
                     noGameMarketsNote(status: event.status)
                 }
-                // Series Probability (playoff series context)
-                if let tags = event.eventTags,
-                   (tags.contains("competitive_structure:series") || tags.contains("competitive_structure:best_of_7")),
-                   event.heroProbabilitySource != OpeningLineHero.openingSource,
-                   let homeProb = event.currentOdds?.homeProbability {
+                // Series Probability (playoff series context) — uses game result + pregame baseline once finished, never stale current_odds
+                if let seriesInputs = SeriesProbabilityView.resolvedMountInputs(for: event) {
                     SeriesProbabilityView(
-                        homeWinProb: homeProb,
-                        homeSeriesWins: event.espn?.seriesHomeWins ?? 0,
-                        awaySeriesWins: event.espn?.seriesAwayWins ?? 0,
-                        gamesToWin: tags.contains("competitive_structure:best_of_7") ? 4 : 4,
+                        homeWinProb: seriesInputs.homeWinProb,
+                        homeSeriesWins: seriesInputs.homeSeriesWins,
+                        awaySeriesWins: seriesInputs.awaySeriesWins,
+                        gamesToWin: seriesInputs.gamesToWin,
                         homeTeam: event.homeTeam,
                         awayTeam: event.awayTeam,
                         homeTeamColor: teamColors(event).home,

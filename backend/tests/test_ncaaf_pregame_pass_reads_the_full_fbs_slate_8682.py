@@ -80,10 +80,14 @@ class TestTheScoreboardUrl:
         url = await self._url_for(monkeypatch, date="20260926")
         assert url.endswith("/scoreboard?dates=20260926"), url
 
-    def test_ncaaf_is_the_fbs_group_and_nothing_else_is_widened(self):
+    def test_ncaaf_and_cbb_are_the_full_slate_groups_and_nothing_else_is_widened(self):
         from app.services.espn_api import ESPN_FULL_SLATE_GROUPS
 
-        assert ESPN_FULL_SLATE_GROUPS == {NCAAF: "80"}
+        assert ESPN_FULL_SLATE_GROUPS == {
+            NCAAF: "80",
+            "basketball_ncaab": "50",
+            "basketball_wncaab": "50",
+        }
 
 
 # ── 2. The board the pre-game pass is handed ────────────────────────────────

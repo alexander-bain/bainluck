@@ -1505,17 +1505,22 @@ _STATE_QUALIFIED_PAIRS: frozenset[tuple[str, str]] = _build_state_qualified_pair
 
 
 def _build_venue_spelling_pairs() -> frozenset[tuple[str, str]]:
-    """#8100 — a venue's whole-name spelling of a club, the same shape again.
+    """#8100 / #13238 — a venue's whole-name spelling of a club, the same shape again.
 
-    ``app.utils.venue_club_spellings`` holds the table because the twin fold
-    reads it too, and the two must not hold two lists. Polymarket's "South East
-    Melbourne Phoenix" is teams 2919 "S.E. Melbourne Phoenix"; no structural
-    rule below reaches ``s e`` from ``south east`` and none safely could.
+    ``app.utils.venue_club_spellings`` holds both ``VENUE_CLUB_SPELLINGS`` and
+    ``LEAGUE_CLUB_SPELLINGS`` because the twin fold and league placement read
+    them too, and the consumers must not drift apart.
     """
-    from app.utils.venue_club_spellings import VENUE_CLUB_SPELLINGS
+    from app.utils.venue_club_spellings import (
+        LEAGUE_CLUB_SPELLINGS,
+        VENUE_CLUB_SPELLINGS,
+    )
 
     pairs: set[tuple[str, str]] = set()
-    for venue, ours in VENUE_CLUB_SPELLINGS.items():
+    all_items: list[tuple[str, str]] = list(VENUE_CLUB_SPELLINGS.items())
+    for league_map in LEAGUE_CLUB_SPELLINGS.values():
+        all_items.extend(league_map.items())
+    for venue, ours in all_items:
         a = _normalize_for_matching(venue)
         b = _normalize_for_matching(ours)
         if a and b and a != b:
@@ -3747,11 +3752,68 @@ _KALSHI_NAME_ALIASES: dict[str, list[str]] = {
 }
 
 
+def _build_venue_partner_search_terms() -> dict[str, tuple[str, ...]]:
+    """Map lowercased whole club spellings to their alternate venue/league forms (#13238)."""
+    from app.utils.venue_club_spellings import (
+        LEAGUE_CLUB_SPELLINGS,
+        VENUE_CLUB_SPELLINGS,
+    )
+
+    display_by_lower: dict[str, str] = {}
+    adj: dict[str, set[str]] = {}
+    all_pairs: list[tuple[str, str]] = list(VENUE_CLUB_SPELLINGS.items())
+    for league_map in LEAGUE_CLUB_SPELLINGS.values():
+        all_pairs.extend(league_map.items())
+    for left, right in all_pairs:
+        l_low = left.strip().lower()
+        r_low = right.strip().lower()
+        if not l_low or not r_low or l_low == r_low:
+            continue
+        display_by_lower.setdefault(l_low, left.strip())
+        display_by_lower.setdefault(r_low, right.strip())
+        adj.setdefault(l_low, set()).add(r_low)
+        adj.setdefault(r_low, set()).add(l_low)
+
+    out: dict[str, tuple[str, ...]] = {}
+    for start in adj:
+        visited: set[str] = {start}
+        queue = [start]
+        while queue:
+            cur = queue.pop(0)
+            for nxt in adj.get(cur, ()):
+                if nxt not in visited:
+                    visited.add(nxt)
+                    queue.append(nxt)
+        partners = tuple(
+            sorted(
+                (
+                    display_by_lower[node]
+                    for node in visited
+                    if node != start
+                    and len(node) >= 4
+                    and node not in _INSTITUTIONAL_SUFFIXES
+                ),
+                key=str.lower,
+            )
+        )
+        if partners:
+            out[start] = partners
+    return out
+
+
+_VENUE_PARTNER_SEARCH_TERMS: dict[str, tuple[str, ...]] = (
+    _build_venue_partner_search_terms()
+)
+
+
 def _expand_team_search_terms(team: str) -> list[str]:
     """Generate multiple ILIKE-friendly search terms from a team name.
 
     Handles:
     - Kalshi name aliases ("A's" → "Athletics", "Chicago WS" → "White Sox")
+    - Exact venue/league whole-name partner spellings ("Olimpia Milano" →
+      "Pallacanestro Olimpia Milano", "Bayern Munich" → "FC Bayern München")
+    - Hyphen-to-space team spellings ("Maccabi Tel-Aviv" → "Maccabi Tel Aviv")
     - Abbreviated names ("WSH Capitals" → also search "Capitals")
     - City abbreviations ("MIN" → also search "Minnesota")
     - City-only names ("Pittsburgh" → already matches "Pittsburgh Pirates")
@@ -3765,6 +3827,17 @@ def _expand_team_search_terms(team: str) -> list[str]:
     alias_terms = _KALSHI_NAME_ALIASES.get(team.lower())
     if alias_terms:
         terms.extend(alias_terms)
+
+    partner_terms = _VENUE_PARTNER_SEARCH_TERMS.get(team.strip().lower())
+    if partner_terms:
+        for partner in partner_terms:
+            if partner not in terms:
+                terms.append(partner)
+
+    if "-" in team:
+        dehyphenated = " ".join(team.replace("-", " ").split())
+        if dehyphenated and dehyphenated not in terms:
+            terms.append(dehyphenated)
 
     words = team.split()
 
@@ -3792,8 +3865,19 @@ def _expand_team_search_terms(team: str) -> list[str]:
     # name, whose last word is "St." (under its 5-char floor), so the bare
     # "%State%" — which would drag in every state school — is never emitted.
     state_expanded = _expand_trailing_state_abbrev(team)
-    if state_expanded != team:
+    if state_expanded != team and state_expanded not in terms:
         terms.append(state_expanded)
+
+    # #13142: The Odds API writes US college "State" as "St" ("New Mexico St Aggies",
+    # "Oklahoma St Cowgirls") and "North Carolina State" as "NC State", while
+    # Polymarket writes the full spelling ("New Mexico State Aggies",
+    # "North Carolina State Wolfpack"). Emit the symmetric SQL retrieval variant
+    # in both directions so `_find_matching_event` retrieves the anchored Odds API
+    # row before falling through to minting an id-less duplicate.
+    _college_state_variants = _college_state_search_variants(team)
+    for variant in _college_state_variants:
+        if variant not in terms:
+            terms.append(variant)
 
     # A doubles pair in the other venue's spelling (#8722). Polymarket writes
     # "Alcaraz/Mensik", Kalshi "Alcaraz / Mensik", and "%Alcaraz/Mensik%" never
@@ -3809,6 +3893,65 @@ def _expand_team_search_terms(team: str) -> list[str]:
                 terms.append(spelling)
 
     return terms
+
+
+_COLLEGE_STATE_WORD_RE = re.compile(r"(?<=\S)\s+State(?=\s|$)", re.IGNORECASE)
+_COLLEGE_ST_MID_RE = re.compile(r"(?<=\S)\s+St\.?(?=\s+\S)", re.IGNORECASE)
+_COLLEGE_NC_STATE_RE = re.compile(r"^NC\s+St(?:ate|\.)?(?=\s|$)", re.IGNORECASE)
+_COLLEGE_NORTH_CAROLINA_STATE_RE = re.compile(
+    r"^North\s+Carolina\s+St(?:ate|\.)?(?=\s|$)", re.IGNORECASE
+)
+_WBB_COWBOYS_RE = re.compile(r"\bCowboys\b", re.IGNORECASE)
+_WBB_COWGIRLS_RE = re.compile(r"\bCowgirls\b", re.IGNORECASE)
+
+
+def wbb_mascot_variants(team: str) -> list[str]:
+    """Swap gendered ``Cowboys`` <-> ``Cowgirls`` mascots for WBB retrieval (#13142).
+
+    Consumed ONLY when the market is identified as women's college basketball so
+    men's ``basketball_ncaab`` Cowboys rows are never retrieved by a women's name.
+    """
+    if not team:
+        return []
+    variants: list[str] = []
+    if _WBB_COWBOYS_RE.search(team):
+        swapped = _WBB_COWBOYS_RE.sub("Cowgirls", team)
+        if swapped != team:
+            variants.append(swapped)
+    if _WBB_COWGIRLS_RE.search(team):
+        swapped = _WBB_COWGIRLS_RE.sub("Cowboys", team)
+        if swapped != team and swapped not in variants:
+            variants.append(swapped)
+    return variants
+
+
+def normalize_wbb_mascot(team: Optional[str]) -> str:
+    """Normalize ``Cowboys`` -> ``Cowgirls`` strictly inside WBB comparison (#13142)."""
+    if not team:
+        return ""
+    return _WBB_COWBOYS_RE.sub("Cowgirls", team)
+_COLLEGE_SAINT_PREFIX_RE = re.compile(
+    r"(?:^|\b(?:Mount|Mt\.?|of|the|College|University))\s+St\.?\b",
+    re.IGNORECASE,
+)
+
+
+def _college_state_search_variants(team: str) -> list[str]:
+    """Return symmetric college ``State``/``St`` and ``NC State`` retrieval variants (#13142)."""
+    variants: list[str] = []
+    if _COLLEGE_NORTH_CAROLINA_STATE_RE.search(team):
+        variants.append(_COLLEGE_NORTH_CAROLINA_STATE_RE.sub("NC State", team, count=1))
+    elif _COLLEGE_NC_STATE_RE.search(team):
+        variants.append(
+            _COLLEGE_NC_STATE_RE.sub("North Carolina State", team, count=1)
+        )
+
+    if _COLLEGE_STATE_WORD_RE.search(team):
+        variants.append(_COLLEGE_STATE_WORD_RE.sub(" St", team))
+    elif _COLLEGE_ST_MID_RE.search(team) and not _COLLEGE_SAINT_PREFIX_RE.search(team):
+        variants.append(_COLLEGE_ST_MID_RE.sub(" State", team))
+
+    return [v for v in variants if v and v != team]
 
 
 _PAIR_SLASH_SPELLING_RE = re.compile(r"\s*/\s*")

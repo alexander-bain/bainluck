@@ -390,11 +390,14 @@ def resolve_prematch_reading(
     reading = _select_prematch_reading(by_source, books_home, books_away, ladder, sport)
     if reading is None:
         return None
-    return {
+    out = {
         "home_probability": reading.home,
         "away_probability": reading.away,
         "source": reading.source,
     }
+    if reading.draw is not None:
+        out["draw_probability"] = reading.draw
+    return out
 
 
 class _SelectedPrematch(NamedTuple):
@@ -402,6 +405,7 @@ class _SelectedPrematch(NamedTuple):
     home: float
     away: float
     away_input: Any
+    draw: Optional[float] = None
 
 
 def _select_prematch_reading(
@@ -411,6 +415,8 @@ def _select_prematch_reading(
     ladder: Iterable[str],
     sport: Any,
 ) -> Optional[_SelectedPrematch]:
+    from app.utils.draw_priced_winner import resolve_three_way_probabilities
+
     readings = dict(by_source or {})
     for source in ladder:
         if source == BOOKS_SOURCE:
@@ -433,7 +439,25 @@ def _select_prematch_reading(
                 continue
         pair = _pair(home, away, draw, sport=sport)
         if pair is not None:
-            return _SelectedPrematch(source, pair[0], pair[1], away)
+            selected_draw: Optional[float] = None
+            if source == BOOKS_SOURCE:
+                if sport_prices_a_draw(sport):
+                    three_way = resolve_three_way_probabilities(
+                        pair[0],
+                        books_home=pair[0],
+                        books_away=pair[1],
+                        sport_key=sport,
+                    )
+                    if three_way is not None:
+                        selected_draw = three_way[2]
+            else:
+                draw_prob = _as_probability(draw)
+                if (
+                    draw_prob is not None
+                    and abs(pair[0] + pair[1] + draw_prob - 1.0) <= _PARTITION_TOLERANCE
+                ):
+                    selected_draw = draw_prob
+            return _SelectedPrematch(source, pair[0], pair[1], away, selected_draw)
     return None
 
 
@@ -463,7 +487,7 @@ def serialize_prematch_odds(
         if _as_probability(reading.away_input) == reading.away
         else no_source_mark("source_evidence_incomplete")
     )
-    return {
+    payload = {
         "home_probability": reading.home,
         "away_probability": reading.away,
         "home_rendered_percent": home_pct,
@@ -472,6 +496,9 @@ def serialize_prematch_odds(
         "source_mark": quote_source_mark([{"key": source_key, "probability": reading.home}]),
         "away_source_mark": away_mark,
     }
+    if reading.draw is not None:
+        payload["draw_probability"] = reading.draw
+    return payload
 
 
 # ── READING IT OUT OF THE SNAPSHOT TABLE (LAT-P222) ──────────────────────────

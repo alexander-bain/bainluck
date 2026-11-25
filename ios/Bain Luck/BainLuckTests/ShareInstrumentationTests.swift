@@ -50,6 +50,7 @@ final class ShareInstrumentationTests: XCTestCase {
         XCTAssertEqual(ShareSurface.discoverCard.rawValue, "card")
         XCTAssertEqual(ShareSurface.eventDetail.rawValue, "event_detail")
         XCTAssertEqual(ShareSurface.futuresDetail.rawValue, "futures_detail")
+        XCTAssertEqual(ShareSurface.collectionDetail.rawValue, "collection_detail")
     }
 
     // MARK: - The row

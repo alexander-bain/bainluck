@@ -1,0 +1,52 @@
+{
+  "slug": "machinery-space-race",
+  "stage": "public",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_subject",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "TECH · SPACE",
+  "name": "Space & Mars",
+  "category": "tech",
+  "tag": "TECH",
+  "section_title": "Moon & Mars Milestones",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "extra_llm_categories": ["culture", "space", "science"],
+    "card_rows": 3,
+    "card_section_key": "space_milestones",
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/5/57/NASA-Apollo8-Dec24-Earthrise-b.jpg/960px-NASA-Apollo8-Dec24-Earthrise-b.jpg",
+    "card_image_alt": "Earth rising above the cratered horizon of the Moon photographed from Apollo 8",
+    "card_image_credit": "NASA / Bill Anders (Public domain, Wikimedia Commons)",
+    "card_image_author": "NASA / Bill Anders",
+    "card_image_license": "Public domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:NASA-Apollo8-Dec24-Earthrise-b.jpg",
+    "headline_predicate": "leads the race to the Moon and Mars",
+    "sections": [
+      {
+        "key": "space_milestones",
+        "title": "Moon & Mars Milestones",
+        "item_noun": "milestones",
+        "note": "Moon landings, Mars missions, and commercial space milestones priced by the markets.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "space",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 12,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3
+        }
+      }
+    ]
+  }
+}

@@ -154,18 +154,26 @@ struct EventSportHeadlineCard12472: View {
 
     static func resolvedHeadlineSourceMark(
         model: EventSportHeadlines12472.Model
-    ) -> (mark: SourceMark, number: Double?, subject: String?, isPregame: Bool, showsTenths: Bool)? {
+    ) -> (mark: SourceMark, number: Double?, renderedPercent: Int?, subject: String?, isPregame: Bool, showsTenths: Bool)? {
         guard let mark = model.sourceMark, mark.draws else { return nil }
         let subject = model.home.shortName
         if mark.state == .settled {
-            return (mark, nil, subject, false, false)
+            return (mark, nil, nil, subject, false, false)
         }
         let homeRow = model.rows.first(where: { $0.role == .home })
         let homeProb = homeRow?.rawProbability
         let isAfter = model.kind.phase == .after || EventState.isFinished(model.eventStatus)
         if isAfter {
             guard let pregameProb = homeProb else { return nil }
-            return (mark, pregameProb, subject, true, false)
+            let printedPregame: String? = {
+                guard let homeRow,
+                      let colIndex = model.columns.firstIndex(where: { $0.role == .pregame }),
+                      colIndex < homeRow.cells.count else {
+                    return nil
+                }
+                return homeRow.cells[colIndex]
+            }()
+            return (mark, pregameProb, SourceMarkSheet.parsedWholePercent(from: printedPregame), subject, true, false)
         }
         let printedCell: String? = {
             guard let homeRow else { return model.home.winChanceText }
@@ -179,7 +187,8 @@ struct EventSportHeadlineCard12472: View {
         let alignedProb = showsTenths
             ? EventCardView.alignNumberToPrintedTenths(homeProb, printedText: printedCell)
             : homeProb
-        return (mark, alignedProb, subject, false, showsTenths)
+        let renderedPct = showsTenths ? nil : SourceMarkSheet.parsedWholePercent(from: printedCell)
+        return (mark, alignedProb, renderedPct, subject, false, showsTenths)
     }
 
     private var resolvedHeadlineSourceMark: SourceMarkButton? {
@@ -187,6 +196,7 @@ struct EventSportHeadlineCard12472: View {
         return SourceMarkButton(
             resolved.mark,
             number: resolved.number,
+            renderedPercent: resolved.renderedPercent,
             subject: resolved.subject,
             isPregame: resolved.isPregame,
             numberSize: 20,

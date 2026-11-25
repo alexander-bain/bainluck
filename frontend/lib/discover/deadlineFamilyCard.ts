@@ -758,7 +758,7 @@ function verifySingleMember(
       : null;
   const heroMovementChipText =
     showHeroMovementChip && ptsText
-      ? `${heroMovementUp ? "↑" : "↓"} ${ptsText} pts`
+      ? `${heroMovementUp ? "↑" : "↓"} ${ptsText} ${ptsText === "1" || ptsText === "1.0" ? "point" : "points"}`
       : null;
   const heroTimeframeText = showHeroMovementChip
     ? (timeframe?.chipTimeframe ?? null)

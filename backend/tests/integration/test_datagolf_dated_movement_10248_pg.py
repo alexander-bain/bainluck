@@ -353,6 +353,9 @@ def _served(monkeypatch, market_id) -> dict:
     from app.dependencies.auth import get_optional_user
     from app.main import app
     from app.services.database import get_db, get_db_rw
+    from app.utils import futures_page_cache as _fpc
+
+    _fpc._reset_for_tests()
 
     monkeypatch.setenv("BYPASS_RATE_LIMITS", "1")
 

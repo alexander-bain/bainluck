@@ -37,7 +37,32 @@ from app.utils.container_presentation import (
     market_destination,
 )
 from app.utils.draw_priced_winner import printable_away
+from app.utils.event_taxonomy import compute_event_tags
 from app.utils.graded_card import rendered_card_percents, rendered_duel_percents
+from app.utils.team_short_name import is_college_sport, school_label
+
+
+def _computed_event_tags(ev: Any, sport_key: str) -> list[str]:
+    """Return merged stored + deterministic ``event_tags`` for server-side ranking."""
+    stored = getattr(ev, "event_tags", None) or ()
+    tags: set[str] = {str(t) for t in stored if t} if isinstance(stored, (list, tuple, set)) else set()
+    commence = getattr(ev, "commence_time", None)
+    if commence is not None and sport_key:
+        raw_ei = getattr(ev, "raw_ei", None)
+        tags.update(
+            compute_event_tags(
+                sport_key=sport_key,
+                status=getattr(ev, "status", None) or "scheduled",
+                commence_time=commence,
+                llm_importance=getattr(ev, "llm_importance", None),
+                llm_gender=getattr(ev, "llm_gender", None),
+                llm_level=getattr(ev, "llm_level", None),
+                llm_league=getattr(ev, "llm_league", None),
+                raw_ei=float(raw_ei) if raw_ei else None,
+                broadcast_info=getattr(ev, "broadcast_info", None),
+            )
+        )
+    return sorted(tags)
 
 # Ruling 253: A (#12288): "toss-up" means neither side above 55% (45%–55%).
 TOSS_UP_MAX_SIDE_PROB = 0.55
@@ -128,6 +153,7 @@ _NON_NAME_TAIL_WORDS: frozenset[str] = frozenset(
         "of",
         "the",
         "in",
+        "on",
         "and",
         "to",
         "for",
@@ -263,37 +289,9 @@ _PLAIN_MAGNITUDE_BPS: dict[str, float] = {
 }
 
 
-def _plain_rate_move_label(val_bps: float, direction: int, is_open: bool) -> str:
-    """Ruling 244: A — format Fed/central-bank rate moves in plain English, never 'bps'."""
-    word = "cut" if direction < 0 else "increase"
-    rounded = round(val_bps, 4)
-    if abs(rounded - 25.0) < 1e-6:
-        mag = "Quarter-point"
-    elif abs(rounded - 50.0) < 1e-6:
-        mag = "Half-point"
-    elif abs(rounded - 75.0) < 1e-6:
-        mag = "Three-quarter-point"
-    elif abs(rounded - 100.0) < 1e-6:
-        mag = "Full-point"
-    else:
-        pts = val_bps / 100.0
-        mag = f"{pts:g}-point"
-    if is_open:
-        return f"{mag} or larger {word}"
-    return f"{mag} {word}"
-
-
-def _plain_bps_step_words(val_bps: float) -> str:
-    rounded = round(val_bps, 4)
-    if abs(rounded - 25.0) < 1e-6:
-        return "quarter point"
-    if abs(rounded - 50.0) < 1e-6:
-        return "half point"
-    if abs(rounded - 75.0) < 1e-6:
-        return "three-quarter point"
-    if abs(rounded - 100.0) < 1e-6:
-        return "full point"
-    return f"{val_bps / 100.0:g} points"
+from app.utils.plain_rate_outcome import (
+    plain_rate_outcome_label as _plain_rate_outcome_label,
+)
 
 
 def _prose_rate_outcome(label: str, *, capitalize_first: bool = False) -> str:
@@ -506,54 +504,14 @@ def _clean_outcome_label(label: str) -> str:
     if re.match(r"^exactly\s+[-+$€£\d]", trimmed, re.IGNORECASE):
         trimmed = re.sub(r"^exactly\s+", "", trimmed, flags=re.IGNORECASE).strip()
 
-    # Ruling 244: A — plain-English Fed/rate-move labels (never 'bps').
+    # Ruling 244: A / #13196 — plain-English Fed/rate-move labels (never 'bps'),
+    # shared with series_card_labels.reader_outcome_name via plain_rate_outcome.py.
     if _HOLD_MOVE_RE.match(trimmed):
         return "No change"
 
-    m_cnt = _COUNT_BPS_PAREN_RE.match(trimmed)
-    if m_cnt:
-        cnt = int(m_cnt.group(1))
-        cnt_plus = "+" if m_cnt.group(2) else ""
-        bps_v = _parse_float(m_cnt.group(3))
-        bps_plus = bool(m_cnt.group(4))
-        if math.isfinite(bps_v):
-            if cnt == 0 and not cnt_plus:
-                return "0 hikes"
-            noun = "hike" if (cnt == 1 and not cnt_plus) else "hikes"
-            step_txt = _plain_bps_step_words(bps_v)
-            if bps_plus:
-                step_txt = f"{step_txt} or more"
-            return f"{cnt}{cnt_plus} {noun} ({step_txt})"
-
-    m_pre = _SIGNED_PREFIX_MOVE_RE.match(trimmed)
-    if m_pre and re.search(r"bps|basis\s+points?", trimmed, re.IGNORECASE):
-        direction = -1 if m_pre.group(1).lower() in {"cut", "cuts", "decrease", "lower"} else 1
-        op_tok = (m_pre.group(2) or "").strip()
-        plus_tok = (m_pre.group(4) or "").strip()
-        val = _parse_float(m_pre.group(3))
-        if math.isfinite(val):
-            # Strict '>' on the FOMC 25-bps grid ('Hike >25bps', 'Cut >25bps') means 50+ bps.
-            if op_tok.startswith(">") and not op_tok.startswith(">=") and abs(val - 25.0) < 1e-6:
-                val = 50.0
-                is_open = True
-            else:
-                is_open = bool(op_tok or plus_tok)
-            return _plain_rate_move_label(val, direction, is_open)
-
-    m_suf = _SIGNED_SUFFIX_MOVE_RE.match(trimmed)
-    if m_suf and re.search(r"bps|basis\s+points?", trimmed, re.IGNORECASE):
-        direction = -1 if m_suf.group(4).lower() in {"cut", "cuts", "decrease"} else 1
-        op_tok = (m_suf.group(1) or "").strip()
-        plus_tok = (m_suf.group(3) or "").strip()
-        or_more = bool(re.search(r"\bor\s+(?:more|larger|greater)$", trimmed, re.IGNORECASE))
-        val = _parse_float(m_suf.group(2))
-        if math.isfinite(val):
-            if op_tok.startswith(">") and not op_tok.startswith(">=") and abs(val - 25.0) < 1e-6:
-                val = 50.0
-                is_open = True
-            else:
-                is_open = bool(op_tok or plus_tok or or_more)
-            return _plain_rate_move_label(val, direction, is_open)
+    plain_rate = _plain_rate_outcome_label(trimmed, default_count_noun="hike")
+    if plain_rate is not None:
+        return plain_rate
 
     return _proper_case_outcome_label(trimmed)
 
@@ -644,12 +602,16 @@ def _pick_preferred_subject_spelling(
 
 
 def _initials(label: str) -> str:
-    words = [w for w in re.split(r"\s+", label.strip()) if w]
-    if not words:
+    clean = str(label or "").strip()
+    if not clean:
         return "?"
-    if len(words) == 1:
-        return words[0][:2].upper()
-    return (words[0][0] + words[-1][0]).upper()
+    from app.utils.discover_image_policy import compute_initials
+
+    subj = clean
+    for sep in (": ", " · "):
+        if sep in subj:
+            subj = subj.rsplit(sep, 1)[-1].strip() or subj
+    return compute_initials(subj, ticker_ok=False)
 
 
 def _fallback_color(label: str) -> str:
@@ -662,12 +624,543 @@ def _fallback_color(label: str) -> str:
     return _PALETTE_FALLBACK[h % len(_PALETTE_FALLBACK)]
 
 
+_PLACEHOLDER_CREST_SUFFIX = "/default.png"
+_TEAM_CLUB_PREFIX_RE = re.compile(r"^(?:fc|cf|sc|ac|afc|sv|fk)\s+", re.IGNORECASE)
+_TEAM_CLUB_SUFFIX_RE = re.compile(r"\s+(?:fc|cf|sc|ac|afc)$", re.IGNORECASE)
+_TEAM_STATIC_LOGO_KINDS: frozenset[str] = frozenset({"team_logo", "espn_team_logo"})
+_PERSON_ART_KINDS: frozenset[str] = frozenset(
+    {"person", "headshot", "portrait", "tmdb_headshot", "tmdb_person"}
+)
+_CAST_AS_SPLIT_RE = re.compile(r"\s+as\s+", re.IGNORECASE)
+_PORTRAIT_DETAIL_SUFFIX_RE = re.compile(
+    r"\s+(?:tmdb\s+portrait|espn\s+headshot|wikimedia\s+commons\s+portrait|portrait|headshot)$",
+    re.IGNORECASE,
+)
+_NUMERIC_RANGE_OUTCOME_RE = re.compile(r"\d+(?:\s*(?:[-–]|to)\s*\d+)?%?")
+_NON_ENTITY_EXACT_LABELS: frozenset[str] = frozenset(
+    {
+        "yes",
+        "no",
+        "rock",
+        "pop",
+        "country",
+        "rap",
+        "hip-hop",
+        "hip hop",
+        "r&b",
+        "jazz",
+        "metal",
+        "electronic",
+        "indie",
+        "folk",
+        "latin",
+        "classical",
+        "alternative",
+    }
+)
+_NON_ENTITY_PREFIXES: tuple[str, ...] = ("before ", "after ", "by ", "in ", "rank ", "top ", "<", ">")
+# Intentional artist-work and stage-name pairs validated against public sets (#13587).
+_ARTIST_WORK_AND_STAGE_ALLOWLIST: tuple[tuple[str, str], ...] = (
+    ("all i want for christmas is you", "mariah carey"),
+    ("tame impala", "kevin parker"),
+    ("djo", "joe keery"),
+)
+
+
+def _split_cast_actor_prefix(text: str) -> Optional[str]:
+    """Return the actor name before ' as <Role>' when structured as a cast credit."""
+    parts = _CAST_AS_SPLIT_RE.split(str(text or "").strip(), maxsplit=1)
+    if len(parts) == 2 and parts[0].strip() and parts[1].strip():
+        return parts[0].strip()
+    return None
+
+
+def _portrait_name_from_detail(detail: str) -> Optional[str]:
+    """Extract the person name preceding a portrait/headshot suffix in ``art.detail``."""
+    cleaned = str(detail or "").strip()
+    m = _PORTRAIT_DETAIL_SUFFIX_RE.search(cleaned)
+    if not m:
+        return None
+    prefix = cleaned[: m.start()].strip()
+    return prefix or None
+
+
+def is_non_entity_outcome_label(label: str) -> bool:
+    """True when an outcome label is structural (Yes/No, date, rank, genre) rather than a named entity."""
+    cleaned = str(label or "").strip().lower()
+    if not cleaned or cleaned in _NON_ENTITY_EXACT_LABELS:
+        return True
+    if cleaned.startswith(_NON_ENTITY_PREFIXES):
+        return True
+    return bool(_NUMERIC_RANGE_OUTCOME_RE.fullmatch(cleaned))
+
+
+def _monogram_art(subject: str) -> dict[str, Any]:
+    """Return a clean no-picture monogram art dict for ``subject``."""
+    return {
+        "url": None,
+        "kind": "monogram",
+        "detail": "",
+        "accent_color": _fallback_color(subject),
+        "initials": _initials(subject),
+    }
+_ESPN_TEAMLOGO_LEAGUE_RE = re.compile(r"/teamlogos/([a-z0-9_-]+)/", re.IGNORECASE)
+_ESPN_LEAGUE_SPORT_PREFIXES: dict[str, tuple[str, ...]] = {
+    "nfl": ("americanfootball_nfl",),
+    "nba": ("basketball_nba",),
+    "wnba": ("basketball_wnba",),
+    "nhl": ("icehockey_nhl",),
+    "mlb": ("baseball_mlb",),
+    "soccer": ("soccer_",),
+    "ncaa": ("americanfootball_ncaaf", "basketball_ncaab", "basketball_wncaab", "baseball_ncaa", "lacrosse_ncaa"),
+}
+
+
+def _static_team_logo_matches_sport(
+    url: Optional[str],
+    sport_key: Optional[str],
+) -> bool:
+    if not url or not sport_key:
+        return True
+    m = _ESPN_TEAMLOGO_LEAGUE_RE.search(url)
+    if not m:
+        return True
+    espn_league = m.group(1).lower()
+    allowed = _ESPN_LEAGUE_SPORT_PREFIXES.get(espn_league)
+    if allowed is None:
+        return True
+    sk = sport_key.strip().lower()
+    return any(
+        sk.startswith(prefix) if prefix.endswith("_") else (sk == prefix or sk.startswith(f"{prefix}_"))
+        for prefix in allowed
+    )
+
+
+_TEAM_LOOKUP_INDEX_CACHE: Optional[
+    tuple[Any, dict[str, list[str]], dict[str, str]]
+] = None
+_SPORTS_CATEGORIES: frozenset[str] = frozenset(
+    {
+        "sports",
+        "basketball",
+        "football",
+        "hockey",
+        "baseball",
+        "soccer",
+        "tennis",
+        "golf",
+        "mma",
+        "boxing",
+    }
+)
+_SPORTS_TITLE_SPORT_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\b(?:uefa\s+)?champions\s+league\b|\bucl\b", re.IGNORECASE), "soccer_uefa_champs_league"),
+    (re.compile(r"\beuropa\s+league\b", re.IGNORECASE), "soccer_uefa_europa_league"),
+    (re.compile(r"\b(?:english\s+)?premier\s+league\b|\bepl\b", re.IGNORECASE), "soccer_epl"),
+    (re.compile(r"\blaliga\b|\bla\s+liga\b", re.IGNORECASE), "soccer_spain_la_liga"),
+    (re.compile(r"\bbundesliga\b", re.IGNORECASE), "soccer_germany_bundesliga"),
+    (re.compile(r"\bserie\s+a\b", re.IGNORECASE), "soccer_italy_serie_a"),
+    (re.compile(r"\bligue\s+1\b", re.IGNORECASE), "soccer_france_ligue_one"),
+    (re.compile(r"\bliga\s+mx\b", re.IGNORECASE), "soccer_mexico_ligamx"),
+    (re.compile(r"\bmls\b", re.IGNORECASE), "soccer_usa_mls"),
+    (re.compile(r"\bfifa\s+world\s+cup\b|\bworld\s+cup\b", re.IGNORECASE), "soccer_fifa_world_cup"),
+    (
+        re.compile(r"\bwomen'?s\s+(?:march\s+madness|ncaa\b.*\bbasketball|college\s+basketball)\b|\bwncaab\b", re.IGNORECASE),
+        "basketball_wncaab",
+    ),
+    (
+        re.compile(r"\bmarch\s+madness\b|\b(?:men'?s\s+)?(?:ncaa\b.*\bbasketball|college\s+basketball)\b|\bfinal\s+four\b", re.IGNORECASE),
+        "basketball_ncaab",
+    ),
+    (re.compile(r"\bwnba\b", re.IGNORECASE), "basketball_wnba"),
+    (re.compile(r"\bnba\b", re.IGNORECASE), "basketball_nba"),
+    (re.compile(r"\bstanley\s+cup\b|\bnhl\b", re.IGNORECASE), "icehockey_nhl"),
+    (
+        re.compile(
+            r"\bsuper\s+bowl\b(?!\s+(?:halftime|half-time|commercial|ads?|anthem|broadcast|viewership))|\bnfl\b|\bpro\s+football\b|\b(?:afc|nfc)\s+(?:north|south|east|west|champion|championship|#1\s+seed)\b",
+            re.IGNORECASE,
+        ),
+        "americanfootball_nfl",
+    ),
+    (re.compile(r"\bcollege\s+football\b|\bcfp\b|\bncaaf\b|\bheisman\b", re.IGNORECASE), "americanfootball_ncaaf"),
+    (re.compile(r"\bworld\s+series\b|\bmlb\b", re.IGNORECASE), "baseball_mlb"),
+)
+
+_LLM_LEAGUE_TO_SPORT_KEY: dict[str, str] = {
+    "nfl": "americanfootball_nfl",
+    "nba": "basketball_nba",
+    "nhl": "icehockey_nhl",
+    "mlb": "baseball_mlb",
+    "wnba": "basketball_wnba",
+    "epl": "soccer_epl",
+    "mls": "soccer_usa_mls",
+    "liga_mx": "soccer_mexico_ligamx",
+    "la_liga": "soccer_spain_la_liga",
+    "laliga": "soccer_spain_la_liga",
+    "europa": "soccer_uefa_europa_league",
+    "ucl": "soccer_uefa_champs_league",
+    "fifa_wc": "soccer_fifa_world_cup",
+    "ncaaf": "americanfootball_ncaaf",
+    "ncaab": "basketball_ncaab",
+    "wncaab": "basketball_wncaab",
+}
+
+
+def _strip_club_affixes(name: str) -> str:
+    cleaned = _TEAM_CLUB_PREFIX_RE.sub("", name.strip()).strip()
+    return _TEAM_CLUB_SUFFIX_RE.sub("", cleaned).strip()
+
+
+def _is_sports_definition(definition: Optional[Mapping[str, Any]]) -> bool:
+    if not isinstance(definition, Mapping):
+        return False
+    if str(definition.get("category") or "").strip().lower() in _SPORTS_CATEGORIES:
+        return True
+    rule = definition.get("rule") if isinstance(definition.get("rule"), Mapping) else {}
+    for sec in rule.get("sections") or ():
+        if isinstance(sec, Mapping) and isinstance(sec.get("atom_query"), Mapping):
+            aq = sec["atom_query"]
+            if aq.get("kind") == "events" or aq.get("sport_key"):
+                return True
+    return False
+
+
+def _infer_sports_key_for_market(
+    market: Mapping[str, Any],
+    definition: Optional[Mapping[str, Any]] = None,
+) -> Optional[str]:
+    for key_field in ("sport", "sport_key"):
+        raw = str(market.get(key_field) or "").strip().lower()
+        if raw and "_" in raw:
+            return raw
+    raw_league = str(market.get("llm_league") or "").strip().lower()
+    if raw_league in _LLM_LEAGUE_TO_SPORT_KEY:
+        return _LLM_LEAGUE_TO_SPORT_KEY[raw_league]
+    title = str(market.get("name") or market.get("raw_title") or "").strip()
+    if title:
+        for pat, sk in _SPORTS_TITLE_SPORT_PATTERNS:
+            if pat.search(title):
+                return sk
+    if isinstance(definition, Mapping):
+        rule = definition.get("rule") if isinstance(definition.get("rule"), Mapping) else {}
+        sec_sports = {
+            str(sec["atom_query"].get("sport_key") or "").strip().lower()
+            for sec in (rule.get("sections") or ())
+            if isinstance(sec, Mapping)
+            and isinstance(sec.get("atom_query"), Mapping)
+            and sec["atom_query"].get("sport_key")
+        }
+        if len(sec_sports) == 1:
+            return next(iter(sec_sports))
+        def_tag = str(definition.get("tag") or "").strip().lower()
+        def_cat = str(definition.get("category") or "").strip().lower()
+        if def_tag == "nfl" or (def_cat == "football" and "college" not in str(definition.get("name") or "").lower()):
+            return "americanfootball_nfl"
+    return None
+
+
+def _is_sports_context(
+    market: Mapping[str, Any],
+    definition: Optional[Mapping[str, Any]] = None,
+) -> bool:
+    llm_cat = str(
+        market.get("llm_sport_category") or market.get("category") or ""
+    ).strip().lower()
+    if llm_cat and llm_cat not in _SPORTS_CATEGORIES and not _is_sports_definition(definition):
+        return False
+    return (
+        llm_cat in _SPORTS_CATEGORIES
+        or _infer_sports_key_for_market(market, definition) is not None
+        or _is_sports_definition(definition)
+    )
+
+
+def _extract_team_crest_record(team_obj: Any) -> Optional[dict[str, Any]]:
+    """Build a verified ``team_logo`` art record from a TeamSnapshot/Team/dict, or None."""
+    if team_obj is None:
+        return None
+    if isinstance(team_obj, Mapping):
+        url_sm = str(team_obj.get("logo_url_small") or "").strip()
+        url_lg = str(team_obj.get("logo_url_large") or "").strip()
+        url_alt = str(team_obj.get("logo_url") or "").strip()
+        abbr = str(team_obj.get("abbreviation") or "").strip()
+        color = str(team_obj.get("primary_color") or "").strip()
+    else:
+        url_sm = str(getattr(team_obj, "logo_url_small", None) or "").strip()
+        url_lg = str(getattr(team_obj, "logo_url_large", None) or "").strip()
+        url_alt = str(getattr(team_obj, "logo_url", None) or "").strip()
+        abbr = str(getattr(team_obj, "abbreviation", None) or "").strip()
+        color = str(getattr(team_obj, "primary_color", None) or "").strip()
+    chosen_url = ""
+    for candidate in (url_sm, url_lg, url_alt):
+        if candidate and not candidate.endswith(_PLACEHOLDER_CREST_SUFFIX):
+            chosen_url = candidate
+            break
+    if not chosen_url:
+        return None
+    return {
+        "url": chosen_url,
+        "kind": "team_logo",
+        "detail": abbr.upper(),
+        "accent_color": color or "#1E293B",
+    }
+
+
+def _build_team_lookup_from_entries(raw_teams: Sequence[Any]) -> Any:
+    """Convert snapshot team dicts or objects into a ``TeamNameLookup``."""
+    from app.routes.events import TeamSnapshot, _dedupe_team_name_lookup
+
+    snaps: list[TeamSnapshot] = []
+    for item in raw_teams:
+        if isinstance(item, TeamSnapshot):
+            snaps.append(item)
+        elif isinstance(item, Mapping):
+            snaps.append(
+                TeamSnapshot(
+                    id=item.get("id"),
+                    sport_id=item.get("sport_id"),
+                    sport_key=item.get("sport_key") or item.get("sport"),
+                    name=item.get("name"),
+                    slug=item.get("slug"),
+                    abbreviation=item.get("abbreviation"),
+                    primary_color=item.get("primary_color"),
+                    secondary_color=item.get("secondary_color"),
+                    logo_url_small=item.get("logo_url_small") or item.get("logo_url"),
+                    logo_url_large=item.get("logo_url_large") or item.get("logo_url"),
+                    alternate_names=tuple(item.get("alternate_names") or ()),
+                    espn_id=item.get("espn_id"),
+                )
+            )
+        elif hasattr(item, "name"):
+            snaps.append(
+                TeamSnapshot(
+                    id=getattr(item, "id", None),
+                    sport_id=getattr(item, "sport_id", None),
+                    sport_key=getattr(item, "sport_key", None),
+                    name=getattr(item, "name", None),
+                    slug=getattr(item, "slug", None),
+                    abbreviation=getattr(item, "abbreviation", None),
+                    primary_color=getattr(item, "primary_color", None),
+                    secondary_color=getattr(item, "secondary_color", None),
+                    logo_url_small=getattr(item, "logo_url_small", None) or getattr(item, "logo_url", None),
+                    logo_url_large=getattr(item, "logo_url_large", None) or getattr(item, "logo_url", None),
+                    alternate_names=tuple(getattr(item, "alternate_names", None) or ()),
+                    espn_id=getattr(item, "espn_id", None),
+                )
+            )
+    return _dedupe_team_name_lookup(snaps)
+
+
 class SubjectArtResolver:
     """Unified verified-art resolver across teams, people, and films/series (#12659, #12850)."""
 
-    def __init__(self) -> None:
-        self._by_norm: dict[str, dict[str, Any]] = {}
-        self._load_catalogs()
+    def __init__(
+        self,
+        *,
+        team_lookup: Any = None,
+        _static_by_norm: Optional[dict[str, dict[str, Any]]] = None,
+    ) -> None:
+        self._team_lookup = team_lookup
+        self._team_keys_by_norm: dict[str, list[str]] = {}
+        self._team_prefix_unique: dict[str, str] = {}
+        self._person_names_by_url: dict[str, set[str]] = {}
+        if _static_by_norm is not None:
+            self._by_norm = _static_by_norm
+        else:
+            self._by_norm: dict[str, dict[str, Any]] = {}
+            self._load_catalogs()
+        if self._team_lookup is not None:
+            self._index_team_lookup()
+
+    def _index_team_lookup(self) -> None:
+        global _TEAM_LOOKUP_INDEX_CACHE
+        cached = _TEAM_LOOKUP_INDEX_CACHE
+        is_immutable_lookup = type(self._team_lookup).__name__ == "TeamNameLookup"
+        if is_immutable_lookup and cached is not None and cached[0] is self._team_lookup:
+            self._team_keys_by_norm = cached[1]
+            self._team_prefix_unique = cached[2]
+            return
+
+        seen_raw: set[str] = set()
+        raw_keys: list[str] = []
+        if isinstance(self._team_lookup, Mapping):
+            for k in self._team_lookup.keys():
+                if isinstance(k, str) and k and k not in seen_raw:
+                    seen_raw.add(k)
+                    raw_keys.append(k)
+        by_league = getattr(self._team_lookup, "by_league", None)
+        if isinstance(by_league, Mapping):
+            for k in by_league.keys():
+                if isinstance(k, str) and k and k not in seen_raw:
+                    seen_raw.add(k)
+                    raw_keys.append(k)
+
+        prefix_candidates: dict[str, set[str]] = {}
+        for k in raw_keys:
+            for nk in (_norm_key(k), _ascii_fold_key(k)):
+                if nk:
+                    bucket = self._team_keys_by_norm.setdefault(nk, [])
+                    if k not in bucket:
+                        bucket.append(k)
+            stripped = _strip_club_affixes(k)
+            if stripped and stripped != k:
+                for nk in (_norm_key(stripped), _ascii_fold_key(stripped)):
+                    if nk:
+                        prefix_candidates.setdefault(nk, set()).add(k)
+        for nk, matches in prefix_candidates.items():
+            if len(matches) == 1:
+                self._team_prefix_unique[nk] = next(iter(matches))
+
+        if is_immutable_lookup:
+            _TEAM_LOOKUP_INDEX_CACHE = (
+                self._team_lookup,
+                self._team_keys_by_norm,
+                self._team_prefix_unique,
+            )
+
+    _NFL_CITY_TO_CANONICAL_TEAM: dict[str, str] = {
+        "arizona": "Arizona Cardinals",
+        "atlanta": "Atlanta Falcons",
+        "baltimore": "Baltimore Ravens",
+        "buffalo": "Buffalo Bills",
+        "carolina": "Carolina Panthers",
+        "chicago": "Chicago Bears",
+        "cincinnati": "Cincinnati Bengals",
+        "cleveland": "Cleveland Browns",
+        "dallas": "Dallas Cowboys",
+        "denver": "Denver Broncos",
+        "detroit": "Detroit Lions",
+        "green bay": "Green Bay Packers",
+        "houston": "Houston Texans",
+        "indianapolis": "Indianapolis Colts",
+        "jacksonville": "Jacksonville Jaguars",
+        "kansas city": "Kansas City Chiefs",
+        "las vegas": "Las Vegas Raiders",
+        "los angeles c": "Los Angeles Chargers",
+        "la chargers": "Los Angeles Chargers",
+        "los angeles r": "Los Angeles Rams",
+        "la rams": "Los Angeles Rams",
+        "miami": "Miami Dolphins",
+        "minnesota": "Minnesota Vikings",
+        "new england": "New England Patriots",
+        "new orleans": "New Orleans Saints",
+        "new york g": "New York Giants",
+        "ny giants": "New York Giants",
+        "new york j": "New York Jets",
+        "ny jets": "New York Jets",
+        "philadelphia": "Philadelphia Eagles",
+        "pittsburgh": "Pittsburgh Steelers",
+        "san francisco": "San Francisco 49ers",
+        "seattle": "Seattle Seahawks",
+        "tampa bay": "Tampa Bay Buccaneers",
+        "tennessee": "Tennessee Titans",
+        "washington": "Washington Commanders",
+    }
+
+    def _resolve_from_team_lookup(
+        self,
+        subject: str,
+        *,
+        sport_key: Optional[str] = None,
+    ) -> Optional[dict[str, Any]]:
+        if self._team_lookup is None or not subject:
+            return None
+        from app.routes.events import (
+            _lookup_mens_college_basketball,
+            _team_for_event_by_name,
+        )
+
+        candidates: list[str] = []
+        subj_key = " ".join(subject.strip().lower().split())
+        if sport_key == "americanfootball_nfl" and subj_key in self._NFL_CITY_TO_CANONICAL_TEAM:
+            candidates.append(self._NFL_CITY_TO_CANONICAL_TEAM[subj_key])
+        if subject not in candidates:
+            candidates.append(subject)
+        stripped_subject = _strip_club_affixes(subject)
+        subject_forms = [subject]
+        if stripped_subject and stripped_subject != subject:
+            subject_forms.append(stripped_subject)
+        for form in subject_forms:
+            if form not in candidates:
+                candidates.append(form)
+            for nk in (_norm_key(form), _ascii_fold_key(form)):
+                if not nk:
+                    continue
+                for alias_key in self._team_keys_by_norm.get(nk, ()):
+                    if alias_key not in candidates:
+                        candidates.append(alias_key)
+                pref_key = self._team_prefix_unique.get(nk)
+                if pref_key and pref_key not in candidates:
+                    candidates.append(pref_key)
+
+        for cand in candidates:
+            team_row = _team_for_event_by_name(self._team_lookup, cand, sport_key)
+            rec = _extract_team_crest_record(team_row)
+            if rec is not None and (
+                not sport_key or _static_team_logo_matches_sport(rec.get("url"), sport_key)
+            ):
+                return rec
+
+        if sport_key and sport_key.startswith("soccer_"):
+            by_league = getattr(self._team_lookup, "by_league", None)
+            if isinstance(by_league, Mapping):
+                want_women = "women" in sport_key
+                for prefer_same_gender in (True, False):
+                    for cand in candidates:
+                        rows = by_league.get(cand)
+                        if not isinstance(rows, Mapping):
+                            continue
+                        for row in rows.values():
+                            rsk = str(getattr(row, "sport_key", None) or "").lower()
+                            if not rsk.startswith("soccer"):
+                                continue
+                            if prefer_same_gender and (("women" in rsk) != want_women):
+                                continue
+                            rec = _extract_team_crest_record(row)
+                            if rec is not None and _static_team_logo_matches_sport(
+                                rec.get("url"), sport_key
+                            ):
+                                return rec
+
+        if sport_key == "basketball_wncaab":
+            for cand in candidates:
+                mens_row = _lookup_mens_college_basketball(self._team_lookup, cand)
+                rec = _extract_team_crest_record(mens_row)
+                if rec is not None:
+                    return rec
+
+        return None
+
+    def _record_person_url_aliases(
+        self,
+        url: Optional[str],
+        names: Sequence[str],
+        *,
+        kind: Optional[str],
+        detail: Optional[str],
+    ) -> None:
+        if not url:
+            return
+        k_low = str(kind or "").strip().lower()
+        d_str = str(detail or "").strip()
+        det_name = _portrait_name_from_detail(d_str)
+        if not (k_low in _PERSON_ART_KINDS or det_name is not None or "/headshots/" in url.lower()):
+            return
+        bucket = self._person_names_by_url.setdefault(url, set())
+        candidates = list(names)
+        if det_name:
+            candidates.append(det_name)
+        elif "," in d_str and k_low in _PERSON_ART_KINDS:
+            candidates.append(d_str.split(",", 1)[0].strip())
+        for raw in candidates:
+            s = str(raw or "").strip()
+            if not s:
+                continue
+            actor_prefix = _split_cast_actor_prefix(s)
+            if actor_prefix:
+                s = actor_prefix
+            if s:
+                bucket.add(s)
 
     def _register(
         self,
@@ -677,6 +1170,12 @@ class SubjectArtResolver:
         display_aliases: Optional[Sequence[str]] = None,
     ) -> None:
         disp_list = [str(a) for a in (display_aliases if display_aliases is not None else aliases) if str(a).strip()]
+        self._record_person_url_aliases(
+            record.get("url"),
+            disp_list,
+            kind=record.get("kind"),
+            detail=record.get("detail"),
+        )
         primary_disp = disp_list[0] if disp_list else None
         by_fold: dict[str, list[str]] = {}
         for raw in disp_list:
@@ -803,16 +1302,52 @@ class SubjectArtResolver:
         *,
         explicit_url: Optional[str] = None,
         explicit_color: Optional[str] = None,
+        sport_key: Optional[str] = None,
+        allow_team_lookup: Optional[bool] = None,
     ) -> dict[str, Any]:
         clean_subj = _OUTCOME_PROP_SUFFIX_RE.sub("", subject.strip())
+        if allow_team_lookup is True and self._team_lookup is not None and not explicit_url:
+            team_hit = self._resolve_from_team_lookup(
+                clean_subj or subject, sport_key=sport_key
+            )
+            if team_hit is not None:
+                color = explicit_color or team_hit.get("accent_color") or _fallback_color(clean_subj or subject)
+                return {
+                    "url": team_hit["url"],
+                    "kind": team_hit["kind"],
+                    "detail": team_hit.get("detail") or "",
+                    "accent_color": color,
+                    "initials": _initials(clean_subj or subject),
+                }
         nk = _norm_key(clean_subj) or _norm_key(subject)
         fk = _ascii_fold_key(clean_subj) or _ascii_fold_key(subject)
         hit = self._by_norm.get(nk) or (self._by_norm.get(fk) if fk else None)
+        if hit is None:
+            actor_name = _split_cast_actor_prefix(clean_subj or subject)
+            if actor_name:
+                a_nk = _norm_key(actor_name)
+                a_fk = _ascii_fold_key(actor_name)
+                actor_hit = self._by_norm.get(a_nk) or (self._by_norm.get(a_fk) if a_fk else None)
+                if actor_hit and str(actor_hit.get("kind") or "").lower() in _PERSON_ART_KINDS:
+                    hit = actor_hit
+        if hit and hit.get("kind") in _TEAM_STATIC_LOGO_KINDS:
+            if allow_team_lookup is False or not _static_team_logo_matches_sport(
+                hit.get("url"), sport_key
+            ):
+                hit = None
         url = explicit_url or (hit["url"] if hit else None)
+        kind = hit.get("kind") if hit else ("explicit" if url else "monogram")
+        if not url:
+            from app.utils.nation_flags import flag_url as _nation_flag_url
+
+            country_flag = _nation_flag_url(clean_subj or subject) or _nation_flag_url(subject)
+            if country_flag:
+                url = country_flag
+                kind = "flag"
         color = explicit_color or (hit.get("accent_color") if hit else None) or _fallback_color(clean_subj or subject)
         out: dict[str, Any] = {
             "url": url,
-            "kind": (hit.get("kind") if hit else ("explicit" if url else "monogram")),
+            "kind": kind,
             "detail": (hit.get("detail") if hit else "") or "",
             "accent_color": color,
             "initials": _initials(clean_subj or subject),
@@ -820,6 +1355,103 @@ class SubjectArtResolver:
         if hit and hit.get("canonical_name"):
             out["canonical_name"] = str(hit["canonical_name"])
         return out
+
+
+def _extract_portrait_person_names(
+    art: Mapping[str, Any],
+    resolver: Optional[SubjectArtResolver] = None,
+) -> tuple[list[str], set[str]]:
+    """Return ``(display_names, folded_names)`` when ``art`` depicts a named person portrait."""
+    url = str(art.get("url") or "").strip()
+    if not url:
+        return [], set()
+    kind = str(art.get("kind") or "").strip().lower()
+    detail = str(art.get("detail") or "").strip()
+    det_name = _portrait_name_from_detail(detail)
+    is_portrait = (
+        kind in _PERSON_ART_KINDS
+        or det_name is not None
+        or "/headshots/" in url.lower()
+    )
+    if not is_portrait:
+        return [], set()
+
+    raw_names: list[str] = []
+    if det_name:
+        raw_names.append(det_name)
+        if "," in det_name:
+            raw_names.append(det_name.split(",", 1)[0].strip())
+    elif "," in detail and kind in _PERSON_ART_KINDS:
+        raw_names.append(detail.split(",", 1)[0].strip())
+    if resolver is not None:
+        for reg_name in sorted(resolver._person_names_by_url.get(url, ())):
+            raw_names.append(reg_name)
+
+    display_names: list[str] = []
+    folded_names: set[str] = set()
+    for nm in raw_names:
+        cleaned = str(nm or "").strip()
+        fk = _ascii_fold_key(cleaned)
+        if cleaned and fk and fk not in folded_names:
+            folded_names.add(fk)
+            display_names.append(cleaned)
+    return display_names, folded_names
+
+
+def art_subject_mismatch_reason(
+    subject_texts: Sequence[str],
+    art: Mapping[str, Any],
+    *,
+    resolver: Optional[SubjectArtResolver] = None,
+) -> Optional[str]:
+    """Return a mismatch reason when a person portrait depicts someone other than the subject."""
+    if not isinstance(art, Mapping) or not art.get("url"):
+        return None
+    display_names, portrait_folds = _extract_portrait_person_names(art, resolver=resolver)
+    if not portrait_folds:
+        return None
+    hay_parts = [_ascii_fold_key(t) for t in subject_texts if t]
+    hay = " ".join(part for part in hay_parts if part)
+    if not hay:
+        return None
+    padded_hay = f" {hay} "
+    hay_tokens = set(hay.split())
+
+    for work_or_stage, artist_fold in _ARTIST_WORK_AND_STAGE_ALLOWLIST:
+        if f" {work_or_stage} " in padded_hay and artist_fold in portrait_folds:
+            return None
+
+    for p_fold in portrait_folds:
+        if f" {p_fold} " in padded_hay:
+            return None
+        tokens = [t for t in p_fold.split() if len(t) >= 3]
+        if tokens and all(t in hay_tokens for t in tokens):
+            return None
+
+    primary_subj = next((str(t).strip() for t in subject_texts if str(t or "").strip()), "")
+    return f"Portrait depicts {', '.join(display_names)} rather than {primary_subj!r}"
+
+
+def _gate_outcome_art(
+    outcome_name: str,
+    context_texts: Sequence[str],
+    art: Mapping[str, Any],
+    *,
+    resolver: Optional[SubjectArtResolver] = None,
+    fallback_subject: Optional[str] = None,
+) -> dict[str, Any]:
+    """Strip any mismatched person portrait so a row serves no picture rather than a wrong face."""
+    clean_out = str(outcome_name or "").strip()
+    if not isinstance(art, Mapping):
+        return _monogram_art(str(fallback_subject or clean_out or "Subject"))
+    if not art.get("url"):
+        return dict(art)
+    check_texts: Sequence[str] = (
+        [clean_out, *context_texts] if is_non_entity_outcome_label(clean_out) else [clean_out]
+    )
+    if art_subject_mismatch_reason(check_texts, art, resolver=resolver) is None:
+        return dict(art)
+    return _monogram_art(str(fallback_subject or clean_out or "Subject"))
 
 
 @lru_cache(maxsize=1)
@@ -843,9 +1475,14 @@ def _is_event_toss_up(item: Mapping[str, Any]) -> bool:
     return max(ap, hp) <= (TOSS_UP_MAX_SIDE_PROB + 1e-9)
 
 
+_DUEL_DRAW_OUTCOME_NAMES: frozenset[str] = frozenset({"tie", "draw"})
+
+
 def choose_section_form(
     atoms_kind: str,
     selected_items: Sequence[Mapping[str, Any]],
+    *,
+    allow_three_way_duel: bool = False,
 ) -> str:
     """Choose a section's visual form strictly from the shape of its atoms (zero topic checks)."""
     if atoms_kind == "paired_stage":
@@ -871,6 +1508,18 @@ def choose_section_form(
         if len(selected_items) == 1:
             outcomes = selected_items[0].get("outcomes") or ()
             if len(outcomes) == 2:
+                return "duel_bar"
+            if (
+                allow_three_way_duel
+                and len(outcomes) == 3
+                and sum(
+                    1
+                    for o in outcomes
+                    if isinstance(o, Mapping)
+                    and str(o.get("name") or "").strip().lower() in _DUEL_DRAW_OUTCOME_NAMES
+                )
+                == 1
+            ):
                 return "duel_bar"
             if len(outcomes) >= 3:
                 return "contender_spotlight"
@@ -1056,6 +1705,34 @@ def _clean_section_market_label(name: str) -> str:
     if m:
         return f"{m.group(1).strip()} {m.group(2).capitalize()} Race"
 
+    # ── Seasonal / Entertainment / General binary & casting titles ───────
+    m = re.match(
+        r"^will\s+it\s+snow\s+in\s+(.+?)\s+on\s+christmas\??$",
+        cleaned,
+        re.IGNORECASE,
+    )
+    if m:
+        return m.group(1).strip()
+
+    m = re.match(r"^next\s+james\s+bond\s+film:\s*(.+)$", cleaned, re.IGNORECASE)
+    if m:
+        role = m.group(1).strip()
+        role = re.sub(r"^artist\s+performing\s+the\s+", "", role, flags=re.IGNORECASE)
+        role = re.sub(r"^(?:actor|actress)\s+cast\s+as\s+(?:the\s+)?", "", role, flags=re.IGNORECASE)
+        role = role.strip()
+        if role:
+            return role[0].upper() + role[1:]
+
+    m = re.match(
+        r"^(?:will\s+)?(.+?)(?:\s*:\s*|\s+(?:get\s+|be\s+)?)engaged(?:\s+(?:in\s+\d{4}|this\s+year|before\s+\d{4}|by\s+end\s+of\s+\d{4}))?\??$",
+        cleaned,
+        re.IGNORECASE,
+    )
+    if m and "hours" not in cleaned.lower():
+        couple = re.sub(r"\s+and\s+", " & ", m.group(1).strip(), flags=re.IGNORECASE)
+        if couple:
+            return couple
+
     # ── Sports / Awards / General cleanup ────────────────────────────────
     is_oscar_nom = bool(re.match(r"^oscar\s+nominees?:", cleaned, re.IGNORECASE))
     cleaned = re.sub(
@@ -1110,14 +1787,138 @@ _CUMULATIVE_OUTCOME_RE = re.compile(
     re.IGNORECASE,
 )
 
+#: Maximum age (days) for a market's newest live outcome observation before it is
+#: refused from computed groupings (#12288: prevents past-ceremony markets like #109566,
+#: last updated Mar 12 with all 16 prices withheld, from entering a grouping).
+_MAX_LIVE_OUTCOME_AGE_DAYS = 30
+_TITLE_FOUR_DIGIT_YEAR_RE = re.compile(r"\b(20\d{2})\b")
 
-def _market_matches_query(market: Mapping[str, Any], query: Mapping[str, Any]) -> bool:
+
+def _parse_iso_dt_utc(raw: Any) -> Optional[datetime]:
+    if raw is None:
+        return None
+    if isinstance(raw, datetime):
+        return raw if raw.tzinfo is not None else raw.replace(tzinfo=timezone.utc)
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def _finite_volume_number(raw: Any) -> Optional[float]:
+    if not isinstance(raw, (int, float)) or isinstance(raw, bool):
+        return None
+    val = float(raw)
+    return val if math.isfinite(val) else None
+
+
+def _effective_market_volume(
+    volume: Any,
+    *,
+    volume_24h: Any = None,
+    market_metadata: Any = None,
+) -> Optional[float]:
+    """Resolve effective market volume when lifetime ``volume`` is missing (#336-A, Item 4).
+
+    Uses lifetime ``volume`` when present (preserving an explicit ``0`` so a
+    measured zero-volume market still fails). When lifetime ``volume`` is missing,
+    tries the recorded lifetime figure (``market_metadata.volume_evidence.gamma_volume``
+    when ``verdict == "traded"``) BEFORE falling back to ``volume_24h``. A market
+    with neither returns ``None`` so ``missing_volume`` still fails it.
+    """
+    primary = _finite_volume_number(volume)
+    if primary is not None:
+        return primary
+    if isinstance(market_metadata, Mapping):
+        ve = market_metadata.get("volume_evidence")
+        if isinstance(ve, Mapping) and str(ve.get("verdict") or "").strip().lower() == "traded":
+            gv = _finite_volume_number(ve.get("gamma_volume"))
+            if gv is not None:
+                return gv
+    v24 = _finite_volume_number(volume_24h)
+    if v24 is not None:
+        return v24
+    return None
+
+
+def _market_matches_query(
+    market: Mapping[str, Any],
+    query: Mapping[str, Any],
+    *,
+    now_dt: Optional[datetime] = None,
+) -> bool:
     status = str(market.get("status") or "open").lower()
     if status not in {"open", "active"}:
+        return False
+    if market.get("is_settled") or market.get("settled_winner"):
         return False
     title_low = str(market.get("name") or "").lower()
     if not title_low:
         return False
+
+    if now_dt is not None:
+        for date_key in ("resolution_date", "event_date"):
+            dt_val = _parse_iso_dt_utc(market.get(date_key))
+            if dt_val is not None and dt_val < now_dt:
+                return False
+        max_horizon = query.get("max_horizon_years")
+        if isinstance(max_horizon, (int, float)) and not isinstance(max_horizon, bool):
+            max_year = now_dt.year + int(max_horizon)
+            res_dt = _parse_iso_dt_utc(market.get("resolution_date"))
+            if res_dt is not None and res_dt.year > max_year:
+                return False
+            title_years = [int(y) for y in _TITLE_FOUR_DIGIT_YEAR_RE.findall(title_low)]
+            if title_years and max(title_years) > max_year:
+                return False
+
+    fun_sub_tag = str(query.get("fun_sub_tag") or "").strip()
+    if fun_sub_tag:
+        from app.utils.discover_fun_tags import (
+            check_fun_real_trading,
+            check_fun_taste_guard,
+            fun_market_ids_for_sub_tag,
+        )
+
+        allowed_fun_ids = fun_market_ids_for_sub_tag(fun_sub_tag)
+        mid_val = market.get("id")
+        if not isinstance(mid_val, int) or mid_val not in allowed_fun_ids:
+            return False
+        taste_ok, _ = check_fun_taste_guard(
+            str(market.get("name") or market.get("title") or ""),
+            market.get("description"),
+        )
+        if not taste_ok:
+            return False
+        eff_vol = _effective_market_volume(
+            market.get("volume"),
+            volume_24h=market.get("volume_24h"),
+            market_metadata=market.get("market_metadata"),
+        )
+        raw_min_vol = query.get("min_lifetime_volume")
+        min_vol_override = (
+            int(raw_min_vol)
+            if isinstance(raw_min_vol, (int, float)) and not isinstance(raw_min_vol, bool)
+            else None
+        )
+        trading_ok, _ = check_fun_real_trading(
+            eff_vol, min_lifetime_volume=min_vol_override
+        )
+        if not trading_ok:
+            return False
+    else:
+        raw_min_vol = query.get("min_lifetime_volume")
+        if isinstance(raw_min_vol, (int, float)) and not isinstance(raw_min_vol, bool):
+            eff_vol = _effective_market_volume(
+                market.get("volume"),
+                volume_24h=market.get("volume_24h"),
+                market_metadata=market.get("market_metadata"),
+            )
+            if eff_vol is None or eff_vol < float(raw_min_vol):
+                return False
 
     req_tokens = [str(t).lower() for t in (query.get("title_all_tokens") or ()) if str(t).strip()]
     if any(tok not in title_low for tok in req_tokens):
@@ -1139,17 +1940,40 @@ def _market_matches_query(market: Mapping[str, Any], query: Mapping[str, Any]) -
     if any(tok in title_low for tok in excl_tokens):
         return False
 
-    raw_outcomes = market.get("top_outcomes") or market.get("outcomes") or ()
+    # Never fall back from an explicitly empty screened `top_outcomes` list to raw DB `outcomes`.
+    if "top_outcomes" in market and isinstance(market["top_outcomes"], (list, tuple)):
+        raw_outcomes = market["top_outcomes"]
+    else:
+        raw_outcomes = market.get("outcomes") or ()
     priced = [
         o
         for o in raw_outcomes
         if isinstance(o, Mapping)
+        and not o.get("price_withheld")
+        and not o.get("withheld_reason")
         and isinstance(o.get("probability"), (int, float))
+        and not isinstance(o.get("probability"), bool)
         and 0.0 < float(o["probability"]) < 1.0
         and not _PLACEHOLDER_OUTCOME_RE.match(str(o.get("name") or "").strip())
     ]
     if not priced:
         return False
+
+    if now_dt is not None:
+        obs_stamps = [
+            dt
+            for dt in (
+                _parse_iso_dt_utc(o.get("last_updated") or o.get("observed_at"))
+                for o in priced
+            )
+            if dt is not None
+        ]
+        if not obs_stamps:
+            mkt_obs = _parse_iso_dt_utc(market.get("newest_outcome_updated_at"))
+            if mkt_obs is not None:
+                obs_stamps.append(mkt_obs)
+        if obs_stamps and (now_dt - max(obs_stamps)) > timedelta(days=_MAX_LIVE_OUTCOME_AGE_DAYS):
+            return False
 
     shape = str(query.get("shape") or "any").lower()
     if shape == "two_way" and len(priced) != 2:
@@ -1171,6 +1995,35 @@ def _market_matches_query(market: Mapping[str, Any], query: Mapping[str, Any]) -
     if shape == "binary":
         names = {str(o.get("name") or "").strip().lower() for o in priced}
         if "yes" not in names and len(priced) != 1:
+            return False
+
+    max_lead_prob = query.get("max_lead_probability")
+    if isinstance(max_lead_prob, (int, float)) and not isinstance(max_lead_prob, bool):
+        max_lp = float(max_lead_prob)
+        max_pct = int(round(max_lp * 100))
+        canonical_rows, _, _ = _canonical_market_outcome_map(
+            raw_outcomes,
+            mutually_exclusive=bool(market.get("mutually_exclusive", True)),
+            question=str(market.get("name") or ""),
+        )
+        non_floor = [o for o in canonical_rows if 0.005 <= float(o["probability"]) <= 0.995]
+        min_needed = 2 if len(canonical_rows) == 2 else 1
+        valid_rows = non_floor if len(non_floor) >= min_needed else list(canonical_rows)
+        if not valid_rows:
+            return False
+        is_yes_shape = len(valid_rows) <= 2 and any(
+            str(o.get("name") or "").strip().lower() == "yes" for o in valid_rows
+        )
+        if is_yes_shape:
+            lead_row = next(
+                (o for o in valid_rows if str(o.get("name") or "").strip().lower() == "yes"),
+                valid_rows[0],
+            )
+        else:
+            lead_row = max(valid_rows, key=lambda o: float(o["probability"]))
+        lead_p = float(lead_row["probability"])
+        lead_pct = int(lead_row.get("rendered_percent") or _half_up_pct(lead_p))
+        if lead_p > max_lp or lead_pct > max_pct:
             return False
 
     return True
@@ -1246,15 +2099,181 @@ def _canonical_market_outcome_map(
     return rows, by_oid, by_key
 
 
+_MONTH_ABBREV_MAP: dict[str, str] = {
+    "january": "Jan",
+    "february": "Feb",
+    "march": "Mar",
+    "april": "Apr",
+    "may": "May",
+    "june": "June",
+    "july": "July",
+    "august": "Aug",
+    "september": "Sep",
+    "october": "Oct",
+    "november": "Nov",
+    "december": "Dec",
+}
+_FULL_MONTH_RE = re.compile(
+    r"\b(January|February|March|April|August|September|October|November|December)\b",
+    re.IGNORECASE,
+)
+_MONTH_TOKEN_PATTERN = (
+    r"(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|"
+    r"Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)"
+)
+_PREP_DATE_OUTCOME_RE = re.compile(r"^(before|by|after)\s+(.+)$", re.IGNORECASE)
+_AFTER_DATE_OUTCOME_RE = re.compile(r"^after\s+", re.IGNORECASE)
+_BARE_MONTH_DAY_RE = re.compile(
+    rf"^{_MONTH_TOKEN_PATTERN}\s+\d{{1,2}}(?:,\s*\d{{4}})?$",
+    re.IGNORECASE,
+)
+_BARE_MONTH_YEAR_OR_YEAR_RE = re.compile(
+    rf"^(?:{_MONTH_TOKEN_PATTERN}\s+20\d{{2}}|20\d{{2}})$",
+    re.IGNORECASE,
+)
+_RANK_RANGE_OUTCOME_RE = re.compile(r"^Rank\s+(\d+)\s+to\s+(\d+)$", re.IGNORECASE)
+
+
+def _format_rank_range_phrase(lead_ans: str) -> tuple[Optional[str], Optional[str]]:
+    """Turn a bucketed chart-rank answer like ``Rank 1 to 2`` into readable copy.
+
+    Returns ``(bare_phrase, with_article_phrase)`` — e.g. ``("top 2", "the top 2")``
+    when the range begins at 1, or ``("spots 3 to 4", "spots 3 to 4")`` otherwise.
+    Non-range answers (such as ``Rank 11 or lower`` or ``Not on chart``) return
+    ``(None, None)`` so callers fall back to the plain row and plain headline form.
+    """
+    ans = lead_ans.strip().rstrip("?").strip()
+    m = _RANK_RANGE_OUTCOME_RE.match(ans)
+    if m:
+        start = int(m.group(1))
+        end = int(m.group(2))
+        if start == 1:
+            return f"top {end}", f"the top {end}"
+        return f"spots {start} to {end}", f"spots {start} to {end}"
+    return None, None
+
+
+def _abbreviate_month_names(text: str) -> str:
+    return _FULL_MONTH_RE.sub(
+        lambda m: _MONTH_ABBREV_MAP.get(m.group(1).lower(), m.group(1)),
+        text,
+    )
+
+
+def _format_fun_lead_answer_label(
+    base_title: str,
+    lead_ans: str,
+    *,
+    fallback_base_title: Optional[str] = None,
+) -> tuple[str, bool]:
+    """Format a non-Yes/No fun market's leading answer onto its short label.
+
+    Returns ``(display_title, is_date_timing_row)``.
+    - Templates containing ``{rank_slot}`` / ``{the_rank_slot}`` render e.g.
+      ``top 2`` / ``the top 2`` (or ``spots 3 to 4``) inline without appending ``: ...``.
+      When ``lead_ans`` is not a ``Rank N to M`` range, they fall back to
+      ``fallback_base_title`` (plain ``<base>: <answer>`` formatting).
+    - Bare month+day answers (e.g. ``December 31``, ``March 31, 2027``) read
+      ``"<base> by Dec 31"`` / ``"<base> by Mar 31, 2027"`` (Fable Nov 20 look).
+    - Bare month+year or year answers (e.g. ``March 2027``, ``2027``) read
+      ``"<base> in Mar 2027"`` / ``"<base> in 2027"``.
+    - ``Before ...`` / ``By ...`` / ``After ...`` read ``"<base> before ..."``
+      with abbreviated month names and no awkward colon.
+    - Non-date answers (e.g. ``United States``) keep ``"<base>: United States"``
+      with ``is_date_timing_row = False``.
+    """
+    ans = lead_ans.strip().rstrip("?").strip()
+    if "{rank_slot}" in base_title or "{the_rank_slot}" in base_title:
+        rank_slot, the_rank_slot = _format_rank_range_phrase(ans)
+        if rank_slot and the_rank_slot:
+            return (
+                base_title.replace("{rank_slot}", rank_slot)
+                .replace("{the_rank_slot}", the_rank_slot)
+                .strip(),
+                False,
+            )
+        plain = (fallback_base_title or "").strip()
+        if plain and "{rank_slot}" not in plain and "{the_rank_slot}" not in plain:
+            base_title = plain
+        else:
+            base_title = (
+                base_title.replace("{rank_slot}", "").replace("{the_rank_slot}", "").strip()
+            )
+    if not ans or ans.lower() in {"yes", "no"}:
+        return base_title, False
+    m_prep = _PREP_DATE_OUTCOME_RE.match(ans)
+    if m_prep:
+        prep = m_prep.group(1).lower()
+        rest = _abbreviate_month_names(m_prep.group(2).strip())
+        if rest.lower() in base_title.lower():
+            return base_title, True
+        return f"{base_title} {prep} {rest}", True
+    if _BARE_MONTH_DAY_RE.match(ans):
+        short_date = _abbreviate_month_names(ans)
+        return f"{base_title} by {short_date}", True
+    if _BARE_MONTH_YEAR_OR_YEAR_RE.match(ans):
+        short_date = _abbreviate_month_names(ans)
+        return f"{base_title} in {short_date}", True
+    if ans.lower() in base_title.lower():
+        return base_title, False
+    return f"{base_title}: {ans}", False
+
+
+def _parse_outcome_deadline_date(name: str) -> Optional[date]:
+    """Parse cumulative date-ladder outcome labels (``Before Jan 1, 2027``, ``Dec 31, 2026``, ``Before 2028``)."""
+    raw = name.strip().rstrip("?").strip()
+    m_prep = _PREP_DATE_OUTCOME_RE.match(raw)
+    if m_prep:
+        if m_prep.group(1).lower() == "after":
+            return None
+        raw = m_prep.group(2).strip()
+    for fmt in ("%B %d, %Y", "%b %d, %Y", "%B %Y", "%b %Y", "%Y"):
+        try:
+            parsed = datetime.strptime(raw, fmt)
+            return date(parsed.year, parsed.month if "%b" in fmt or "%B" in fmt else 1, parsed.day if "%d" in fmt else 1)
+        except ValueError:
+            continue
+    return None
+
+
+def _pick_nearest_open_date_ladder_outcome(
+    outcomes: Sequence[Mapping[str, Any]],
+    *,
+    ref_date: date,
+) -> Optional[Mapping[str, Any]]:
+    """Select the earliest future tradeable deadline rung from a cumulative date ladder."""
+    dated: list[tuple[date, float, Mapping[str, Any]]] = []
+    for o in outcomes:
+        deadline = _parse_outcome_deadline_date(str(o.get("name") or ""))
+        if deadline is not None:
+            dated.append((deadline, float(o.get("probability") or 0.0), o))
+    if len(dated) < 2:
+        return None
+    future = [item for item in dated if item[0] >= ref_date]
+    if not future:
+        return None
+    future.sort(key=lambda item: (item[0], -item[1]))
+    return future[0][2]
+
+
 def _hydrate_market_visual_item(
     market: Mapping[str, Any],
     *,
     max_outcomes: int,
     resolver: SubjectArtResolver,
     content_kind: Optional[str] = None,
+    use_fun_short_label: bool = False,
+    fun_sub_tag: Optional[str] = None,
+    sport_key: Optional[str] = None,
+    allow_team_lookup: Optional[bool] = None,
+    now_dt: Optional[datetime] = None,
+    date_ladder_pick: Optional[str] = None,
 ) -> dict[str, Any]:
     mid = int(market["id"])
-    raw_outcomes = market.get("top_outcomes") or market.get("outcomes") or ()
+    if "top_outcomes" in market and isinstance(market["top_outcomes"], (list, tuple)):
+        raw_outcomes = market["top_outcomes"]
+    else:
+        raw_outcomes = market.get("outcomes") or ()
     mut_excl = bool(market.get("mutually_exclusive", True))
     canonical_rows, canon_by_oid, canon_by_key = _canonical_market_outcome_map(
         raw_outcomes,
@@ -1294,18 +2313,57 @@ def _hydrate_market_visual_item(
                 "name": "Yes",
                 "probability": p,
                 "rendered_percent": yes_pct,
-                "art": {
-                    "url": None,
-                    "kind": "none",
-                    "detail": "",
-                    "accent_color": "",
-                    "initials": "",
-                },
+                "art": {"url": None, "kind": "monogram", "detail": ""},
             }
         ]
     else:
-        kept = valid[:max_outcomes]
+        ordered_valid = list(valid)
+        # Fable Nov 20 preview look (Item 5i): on single-number fun strips, an
+        # "After <Date>" delay bucket (e.g. "GTA VI on PC: After March 2027 at 67%")
+        # reads as likely to arrive when it means the opposite. Prefer the leading
+        # non-"After" release-window outcome so the row ranks by actual arrival odds
+        # while keeping 100% member-page parity on its real outcome_id.
+        if (
+            use_fun_short_label
+            and max_outcomes == 1
+            and date_ladder_pick == "nearest_open"
+            and ordered_valid
+        ):
+            ref_d = (now_dt or datetime.now(timezone.utc)).date()
+            nearest = _pick_nearest_open_date_ladder_outcome(ordered_valid, ref_date=ref_d)
+            if nearest is not None:
+                ordered_valid = [nearest] + [o for o in ordered_valid if o is not nearest]
+        elif (
+            use_fun_short_label
+            and max_outcomes == 1
+            and ordered_valid
+            and _AFTER_DATE_OUTCOME_RE.match(str(ordered_valid[0].get("name") or "").strip())
+        ):
+            non_after = [
+                o
+                for o in ordered_valid
+                if not _AFTER_DATE_OUTCOME_RE.match(str(o.get("name") or "").strip())
+            ]
+            if non_after:
+                ordered_valid = non_after
+        kept = ordered_valid[:max_outcomes]
+        from app.utils.field_opening_coherence import field_openings_publishable
+
+        openings_ok = field_openings_publishable(
+            [o.get("opening_probability") for o in valid],
+            mutually_exclusive=bool(market.get("mutually_exclusive", True)),
+        )
         outcomes_out = []
+        eff_sport_key = (
+            sport_key
+            if sport_key is not None
+            else _infer_sports_key_for_market(market)
+        )
+        eff_allow_team_lookup = (
+            bool(allow_team_lookup)
+            if allow_team_lookup is not None
+            else _is_sports_context(market)
+        )
         for idx, o in enumerate(kept):
             o_name = _clean_outcome_label(str(o.get("name") or "").strip())
             p = float(o["probability"])
@@ -1316,7 +2374,21 @@ def _hydrate_market_visual_item(
             art = resolver.resolve(
                 o_name,
                 explicit_url=(str(o["image_url"]) if o.get("image_url") else None),
+                sport_key=eff_sport_key,
+                allow_team_lookup=eff_allow_team_lookup,
             )
+            if not art.get("url") and max_outcomes == 1 and fun_sub_tag:
+                from app.utils.discover_fun_tags import fun_market_art_subject
+
+                art_subj = fun_market_art_subject(mid, sub_tag=fun_sub_tag)
+                if art_subj:
+                    resolved_tag_art = resolver.resolve(
+                        art_subj,
+                        sport_key=eff_sport_key,
+                        allow_team_lookup=eff_allow_team_lookup,
+                    )
+                    if resolved_tag_art.get("url"):
+                        art = resolved_tag_art
             canon_subj = art.get("canonical_name")
             if canon_subj and _ascii_fold_key(canon_subj) == _ascii_fold_key(o_name):
                 o_name = str(canon_subj)
@@ -1330,7 +2402,9 @@ def _hydrate_market_visual_item(
                     "name": o_name,
                     "probability": p,
                     "rendered_percent": pct_val,
-                    "opening_probability": o.get("opening_probability"),
+                    "opening_probability": (
+                        o.get("opening_probability") if openings_ok else None
+                    ),
                     "art": art,
                 }
             )
@@ -1354,14 +2428,207 @@ def _hydrate_market_visual_item(
             "by_outcome_id": canon_by_oid,
             "by_outcome_key": canon_by_key,
         }
-    card_copy = dict(market)
+    from app.services.paired_metric_register import clean_card_face_title
+    from app.utils.market_display_name import fill_market_display_name_blank
+
+    lead_out_name = str(outcomes_out[0].get("name") or "") if outcomes_out else None
+    clean_raw_name = (
+        fill_market_display_name_blank(
+            clean_card_face_title(str(market.get("name") or "")),
+            lead_outcome_name=lead_out_name,
+            outcome_count=len(outcomes_out),
+        )
+        or ""
+    )
+    card_copy = {k: v for k, v in market.items() if k != "market_metadata"}
+    card_copy["name"] = clean_raw_name
     card_copy["content_kind"] = effective_kind
     card_copy["member_page_numbers"] = mpn
 
+    base_title: Optional[str] = None
+    plain_base_title: Optional[str] = None
+    if use_fun_short_label:
+        from app.utils.discover_fun_tags import (
+            fun_market_plain_short_label,
+            fun_market_short_label,
+        )
+
+        base_title = fun_market_short_label(mid, sub_tag=fun_sub_tag)
+        plain_base_title = fun_market_plain_short_label(mid, sub_tag=fun_sub_tag)
+    fallback_clean_title = clean_card_face_title(_clean_section_market_label(clean_raw_name))
+    if not base_title:
+        base_title = fallback_clean_title
+    if not plain_base_title:
+        plain_base_title = fallback_clean_title
+
+    display_title = base_title
+    is_date_timing_row = False
+    # On single-number fun strips (`fun_sub_tag` + `max_outcomes == 1`), a
+    # non-Yes/No ("when"/"which") market's row and headline must name its
+    # leading answer cleanly alongside the number (Item 5 / #13224).
+    if use_fun_short_label and max_outcomes == 1 and not shape_is_yes and outcomes_out:
+        lead_ans = str(outcomes_out[0].get("name") or "").strip()
+        display_title, is_date_timing_row = _format_fun_lead_answer_label(
+            display_title, lead_ans, fallback_base_title=plain_base_title
+        )
+        if is_date_timing_row:
+            out0_art = outcomes_out[0].get("art")
+            if isinstance(out0_art, dict) and not out0_art.get("url"):
+                date_subj = str(plain_base_title or display_title or clean_raw_name or f"Market {mid}")
+                out0_art["initials"] = _initials(date_subj)
+                out0_art["accent_color"] = _fallback_color(date_subj)
+
+    if shape_is_yes and outcomes_out:
+        subj_for_fallback = str(display_title or clean_raw_name or f"Market {mid}")
+        yes_art: dict[str, Any] = {
+            "url": None,
+            "kind": "monogram",
+            "detail": "",
+            "accent_color": _fallback_color(subj_for_fallback),
+            "initials": _initials(subj_for_fallback),
+        }
+        allow_tl = bool(allow_team_lookup) if allow_team_lookup is not None else None
+        if fun_sub_tag:
+            from app.utils.discover_fun_tags import fun_market_art_subject
+
+            art_subj = fun_market_art_subject(mid, sub_tag=fun_sub_tag)
+            if art_subj:
+                resolved_tag_art = resolver.resolve(
+                    art_subj,
+                    sport_key=sport_key,
+                    allow_team_lookup=allow_tl,
+                )
+                if resolved_tag_art.get("url"):
+                    yes_art = resolved_tag_art
+        if not yes_art.get("url"):
+            probe_candidates: list[str] = []
+            for cand_raw in (
+                display_title,
+                display_title.split(" & ", 1)[0] if " & " in display_title else None,
+                display_title.split(" & ", 1)[1] if " & " in display_title else None,
+                display_title.split(" and ", 1)[0] if " and " in display_title else None,
+                display_title.split(" and ", 1)[1] if " and " in display_title else None,
+            ):
+                cand = str(cand_raw or "").strip()
+                if cand and cand not in probe_candidates:
+                    probe_candidates.append(cand)
+            for cand in probe_candidates:
+                probed = resolver.resolve(
+                    cand,
+                    sport_key=sport_key,
+                    allow_team_lookup=allow_tl,
+                )
+                if probed.get("url"):
+                    yes_art = probed
+                    break
+        outcomes_out[0]["art"] = yes_art
+
+    # Portrait/subject gate (#13587): never serve a person's face on another subject's row.
+    if outcomes_out:
+        art_context_texts = (display_title, clean_raw_name)
+        for oc in outcomes_out:
+            oc["art"] = _gate_outcome_art(
+                str(oc.get("name") or ""),
+                art_context_texts,
+                oc.get("art") or {},
+                resolver=resolver,
+                fallback_subject=(
+                    str(display_title or clean_raw_name or f"Market {mid}")
+                    if shape_is_yes
+                    else str(oc.get("name") or display_title or clean_raw_name or f"Market {mid}")
+                ),
+            )
+
+    headline_phrase: Optional[str] = None
+    headline_with_phrase: Optional[str] = None
+    if fun_sub_tag:
+        from app.utils.discover_fun_tags import (
+            fun_market_headline_phrase,
+            fun_market_headline_with_phrase,
+        )
+
+        lead_ans_clean = (
+            str(outcomes_out[0].get("name") or "").strip().rstrip("?").strip()
+            if outcomes_out
+            else ""
+        )
+        m_prep_ans = _PREP_DATE_OUTCOME_RE.match(lead_ans_clean)
+        if m_prep_ans:
+            lead_ans_for_phrase = f"{m_prep_ans.group(1).lower()} {_abbreviate_month_names(m_prep_ans.group(2).strip())}"
+        elif _BARE_MONTH_DAY_RE.match(lead_ans_clean):
+            lead_ans_for_phrase = f"by {_abbreviate_month_names(lead_ans_clean)}"
+        elif _BARE_MONTH_YEAR_OR_YEAR_RE.match(lead_ans_clean):
+            lead_ans_for_phrase = f"in {_abbreviate_month_names(lead_ans_clean)}"
+        elif lead_ans_clean.startswith("<$"):
+            lead_ans_for_phrase = f"below {lead_ans_clean[1:].strip()}"
+        elif lead_ans_clean.startswith(">$"):
+            lead_ans_for_phrase = f"above {lead_ans_clean[1:].strip()}"
+        else:
+            if lead_ans_clean.strip().lower() in _MONTH_FULL_MAP:
+                lead_ans_for_phrase = _expand_month_token(lead_ans_clean)
+            else:
+                lead_ans_for_phrase = _abbreviate_month_names(lead_ans_clean)
+        _THE_COUNTRIES = frozenset(
+            {
+                "united states",
+                "u.s.",
+                "us",
+                "united kingdom",
+                "uk",
+                "netherlands",
+                "philippines",
+                "uae",
+                "united arab emirates",
+            }
+        )
+        ans_with_the = (
+            f"the {lead_ans_for_phrase}"
+            if lead_ans_for_phrase.lower() in _THE_COUNTRIES
+            else lead_ans_for_phrase
+        )
+        ans_cap_the = (
+            f"The {lead_ans_for_phrase}"
+            if lead_ans_for_phrase.lower() in _THE_COUNTRIES
+            else lead_ans_for_phrase
+        )
+
+        def _render_tpl(tpl: str) -> Optional[str]:
+            if any(tok in tpl for tok in ("{answer}", "{lower_answer}", "{the_answer}", "{cap_the_answer}", "{rank_slot}", "{the_rank_slot}")):
+                if not lead_ans_clean or lead_ans_clean.lower() in {"yes", "no"}:
+                    return None
+                needs_rank_slot = "{rank_slot}" in tpl or "{the_rank_slot}" in tpl
+                rank_slot, the_rank_slot = _format_rank_range_phrase(lead_ans_clean)
+                if needs_rank_slot and (not rank_slot or not the_rank_slot):
+                    return None
+                return (
+                    tpl.replace("{answer}", lead_ans_for_phrase)
+                    .replace("{lower_answer}", lead_ans_for_phrase.lower())
+                    .replace("{the_answer}", ans_with_the)
+                    .replace("{cap_the_answer}", ans_cap_the)
+                    .replace("{rank_slot}", rank_slot or "")
+                    .replace("{the_rank_slot}", the_rank_slot or "")
+                    .rstrip("?")
+                    .strip()
+                )
+            return tpl.rstrip("?").strip()
+
+        raw_phrase = str(fun_market_headline_phrase(mid, sub_tag=fun_sub_tag) or "").strip()
+        if raw_phrase:
+            headline_phrase = _render_tpl(raw_phrase)
+        raw_with_phrase = str(
+            fun_market_headline_with_phrase(mid, sub_tag=fun_sub_tag) or ""
+        ).strip()
+        if raw_with_phrase:
+            headline_with_phrase = _render_tpl(raw_with_phrase)
+
     return {
         "market_id": mid,
-        "title": _clean_section_market_label(str(market.get("name") or "")),
-        "raw_title": str(market.get("name") or ""),
+        "title": display_title,
+        "_short_label_base": base_title,
+        "headline_phrase": headline_phrase,
+        "headline_with_phrase": headline_with_phrase,
+        "raw_title": clean_raw_name,
+        "is_date_timing_row": is_date_timing_row,
         "href": f"/futures/{mid}",
         "source": str(market.get("source") or ""),
         "lead_prob": lead_prob,
@@ -1369,10 +2636,72 @@ def _hydrate_market_visual_item(
         "scale_ordered": scale_ordered,
         "content_kind": effective_kind,
         "closeness_to_50": abs(lead_prob - 0.5),
+        "_volume": float(
+            _effective_market_volume(
+                market.get("volume"),
+                volume_24h=market.get("volume_24h"),
+                market_metadata=market.get("market_metadata"),
+            )
+            or 0.0
+        ),
         "outcomes": outcomes_out,
         "member_page_numbers": mpn,
         "card": card_copy,
     }
+
+
+def _event_has_sportsbook(event: Any, *, hero_source: Optional[str] = None) -> bool:
+    """True when sportsbooks actually stand behind the event's hero chance (#9081, #12288).
+
+    Uses ``hero_sportsbook_count(event) > 0`` so games with 1–2 books below
+    ``BETTING_BOOK_FLOOR`` (whose ``betting`` reading is omitted from the blend)
+    are NOT counted as sportsbook-backed and cannot outrank true multi-book
+    games on sports slates (e.g. NBA).
+    """
+    from types import SimpleNamespace
+
+    from app.utils.hero_probability import hero_sportsbook_count
+
+    if isinstance(event, Mapping):
+        if event.get("has_sportsbook") is True:
+            return True
+        if event.get("has_sportsbook") is False:
+            return False
+        wps = event.get("win_probability_sources")
+        h_src = hero_source or event.get("hero_source")
+        if str(h_src or "").strip().lower() == "betting":
+            return True
+        if isinstance(wps, Mapping):
+            ev_ns = SimpleNamespace(
+                win_probability_sources=dict(wps),
+                status=event.get("status"),
+                sport=event.get("sport"),
+                commence_time=event.get("commence_time"),
+            )
+            sb_cnt = hero_sportsbook_count(ev_ns)
+            if sb_cnt is not None:
+                return sb_cnt > 0
+            # `hero_sportsbook_count` returns None only when `"betting"` IS in
+            # `effective_source_weights` without an explicit integer count.
+            betting_entry = wps.get("betting")
+            if isinstance(betting_entry, Mapping):
+                return any(
+                    isinstance(betting_entry.get(k), (int, float))
+                    for k in ("home", "away", "home_probability", "away_probability", "probability")
+                )
+            return isinstance(betting_entry, (int, float)) and not isinstance(betting_entry, bool)
+        bk = event.get("bookmaker_count")
+        if isinstance(bk, (int, float)) and not isinstance(bk, bool) and bk >= 3:
+            return True
+        odds = event.get("current_odds")
+        if isinstance(odds, Mapping):
+            obk = odds.get("bookmaker_count")
+            if isinstance(obk, (int, float)) and not isinstance(obk, bool) and obk >= 3:
+                return True
+        return False
+
+    sb_cnt = hero_sportsbook_count(event)
+    return bool(sb_cnt is not None and sb_cnt > 0)
 
 
 def _hydrate_event_visual_item(
@@ -1385,15 +2714,26 @@ def _hydrate_event_visual_item(
     if status in {"cancelled", "postponed"}:
         return None
     odds = event.get("current_odds") if isinstance(event.get("current_odds"), Mapping) else {}
+    hero_source = str(event.get("hero_probability_source") or event.get("hero_source") or "").strip().lower()
+    if status in {"completed", "final", "closed"} and hero_source == "final_unresolved":
+        # #13172 Option B: finished with no verified result never serves the last live price.
+        return None
     home_p = event.get("hero_probability")
     away_p = event.get("hero_probability_away")
+    draw_p = event.get("hero_probability_draw")
     if home_p is None:
         home_p = odds.get("home_probability")
     if away_p is None:
         away_p = odds.get("away_probability")
+    if draw_p is None:
+        draw_p = odds.get("draw_probability")
 
     pre = event.get("prematch_odds") if isinstance(event.get("prematch_odds"), Mapping) else {}
-    if status in {"completed", "final", "closed"} and (home_p is None or away_p is None):
+    if (
+        status in {"completed", "final", "closed"}
+        and hero_source == "settled"
+        and (home_p is None or away_p is None)
+    ):
         home_p = pre.get("home_probability")
         away_p = pre.get("away_probability")
 
@@ -1401,7 +2741,8 @@ def _hydrate_event_visual_item(
         return None
     hp = float(home_p)
     ap = float(away_p)
-    if hp <= 0.0 and ap <= 0.0:
+    dp = float(draw_p) if isinstance(draw_p, (int, float)) else None
+    if hp <= 0.0 and ap <= 0.0 and not (dp is not None and dp > 0.0):
         return None
 
     home_team = str(event.get("home_team") or "").strip()
@@ -1413,11 +2754,15 @@ def _hydrate_event_visual_item(
         home_team,
         explicit_url=home_td.get("logo_small") or home_td.get("logo_large") or event.get("home_image_url"),
         explicit_color=home_td.get("primary_color"),
+        sport_key=str(event.get("sport") or "").strip().lower() or None,
+        allow_team_lookup=True,
     )
     away_art = resolver.resolve(
         away_team,
         explicit_url=away_td.get("logo_small") or away_td.get("logo_large") or event.get("away_image_url"),
         explicit_color=away_td.get("primary_color"),
+        sport_key=str(event.get("sport") or "").strip().lower() or None,
+        allow_team_lookup=True,
     )
 
     # Ruling 253: A & Fable 8:35 PM Rule 1: print the exact pair the game's own
@@ -1447,11 +2792,21 @@ def _hydrate_event_visual_item(
     card_ev = dict(event)
     card_ev["hero_probability"] = hp
     card_ev["hero_probability_away"] = ap
+    if dp is not None:
+        card_ev["hero_probability_draw"] = dp
     card_odds = dict(odds) if isinstance(odds, Mapping) else {}
-    card_odds.setdefault("home_probability", hp)
-    card_odds.setdefault("away_probability", ap)
+    card_odds["home_probability"] = hp
+    card_odds["away_probability"] = ap
     card_odds["away_rendered_percent"] = away_pct
     card_odds["home_rendered_percent"] = home_pct
+    if dp is not None:
+        card_odds["draw_probability"] = dp
+        served_draw_pct = odds.get("draw_rendered_percent")
+        card_odds["draw_rendered_percent"] = (
+            int(served_draw_pct)
+            if isinstance(served_draw_pct, int)
+            else int(round(dp * 100))
+        )
     card_ev["current_odds"] = card_odds
     if not isinstance(card_ev.get("home_team_data"), Mapping) and (home_art.get("url") or home_art.get("accent_color")):
         card_ev["home_team_data"] = {
@@ -1469,16 +2824,27 @@ def _hydrate_event_visual_item(
 
     fav_prob = max(hp, ap)
     is_toss_up = max(away_pct, home_pct) <= int(round(TOSS_UP_MAX_SIDE_PROB * 100))
+    has_sportsbook = _event_has_sportsbook(event)
+    sport_str = str(event.get("sport") or "")
+    if is_college_sport(sport_str):
+        home_loc = home_td.get("location") if isinstance(home_td.get("location"), str) else None
+        away_loc = away_td.get("location") if isinstance(away_td.get("location"), str) else None
+        home_short = (school_label(home_team, home_loc) or home_team) if home_team else ""
+        away_short = (school_label(away_team, away_loc) or away_team) if away_team else ""
+    else:
+        home_short = home_team.split()[-1] if home_team else ""
+        away_short = away_team.split()[-1] if away_team else ""
+
     return {
         "event_id": eid,
         "href": f"/events/{eid}",
         "status": status,
         "commence_time": str(event.get("commence_time") or ""),
-        "sport": str(event.get("sport") or ""),
+        "sport": sport_str,
         "home_team": home_team,
         "away_team": away_team,
-        "home_short": home_team.split()[-1] if home_team else "",
-        "away_short": away_team.split()[-1] if away_team else "",
+        "home_short": home_short,
+        "away_short": away_short,
         "home_prob": hp,
         "away_prob": ap,
         "home_pct": home_pct,
@@ -1490,6 +2856,7 @@ def _hydrate_event_visual_item(
         "fav_prob": fav_prob,
         "is_toss_up": is_toss_up,
         "show_toss_up_tag": is_toss_up,
+        "has_sportsbook": has_sportsbook,
         "closeness_to_50": abs(hp - 0.5),
         "member_page_numbers": ev_mpn,
         "card": card_ev,
@@ -1590,11 +2957,13 @@ def _build_history_visual_item(
                 _PALETTE_FALLBACK[idx % len(_PALETTE_FALLBACK)],
             )
         used_colors.add(cand_color.lower())
+        net_val = (pts_clean[-1]["pct"] - pts_clean[0]["pct"]) if len(pts_clean) >= 2 else 0
         series_out.append(
             {
                 "outcome_id": oid,
                 "name": str(o["name"]),
                 "current_pct": cur_pct,
+                "net_move_pp": net_val,
                 "color": cand_color,
                 "art": dict(art),
                 "points": pts_clean,
@@ -1645,8 +3014,14 @@ _CATEGORY_LLM_POOL: dict[str, tuple[str, ...]] = {
         "pop_culture",
         "other",
     ),
+    "weather": ("weather", "climate", "science", "other"),
     "football": ("football", "nfl", "americanfootball_nfl", "other"),
-    "basketball": ("basketball", "nba", "basketball_nba", "other"),
+    "basketball": ("basketball", "nba", "basketball_nba", "basketball_ncaab", "other"),
+    "hockey": ("hockey", "nhl", "icehockey_nhl", "other"),
+    "golf": ("golf", "pga", "other"),
+    "mma": ("mma", "ufc", "boxing", "other"),
+    "soccer": ("soccer", "sports", "other"),
+    "tech": ("tech", "technology", "ai", "science", "other"),
 }
 
 
@@ -1655,9 +3030,16 @@ def _category_llm_pool_for_definition(
 ) -> Optional[tuple[str, ...]]:
     """Return the scoped ``llm_sport_category`` pool for ``ix_fm_feed_open_sports``."""
     cat = str(definition.get("category") or "").strip().lower()
+    rule = definition.get("rule") if isinstance(definition.get("rule"), Mapping) else {}
+    extras = tuple(
+        str(c).strip().lower()
+        for c in (rule.get("extra_llm_categories") or ())
+        if str(c).strip()
+    )
     if cat in _CATEGORY_LLM_POOL:
-        return _CATEGORY_LLM_POOL[cat]
-    sections_cfg = (definition.get("rule") or {}).get("sections") or ()
+        base = _CATEGORY_LLM_POOL[cat]
+        return tuple(dict.fromkeys([*base, *extras])) if extras else base
+    sections_cfg = rule.get("sections") or ()
     sport_keys = {
         str(sec["atom_query"].get("sport_key") or "").strip().lower()
         for sec in sections_cfg
@@ -1666,10 +3048,10 @@ def _category_llm_pool_for_definition(
         and sec["atom_query"].get("kind") == "events"
     }
     if any(sk.startswith("americanfootball_") for sk in sport_keys):
-        return _CATEGORY_LLM_POOL["football"]
+        return tuple(dict.fromkeys([*_CATEGORY_LLM_POOL["football"], *extras]))
     if any(sk.startswith("basketball_") for sk in sport_keys):
-        return _CATEGORY_LLM_POOL["basketball"]
-    return None
+        return tuple(dict.fromkeys([*_CATEGORY_LLM_POOL["basketball"], *extras]))
+    return extras or None
 
 
 def _market_title_matches_query(title: str, query: Mapping[str, Any]) -> bool:
@@ -1747,6 +3129,67 @@ def _build_scoped_open_market_scan_stmt(cat_pool: tuple[str, ...]):
     return union_all(arm_cat, arm_null)
 
 
+def _build_machinery_history_lateral_stmt(
+    wanted_oids: Sequence[int],
+    cutoff: datetime,
+    *,
+    per_outcome_limit: int = 96,
+):
+    """Per-outcome newest-``per_outcome_limit`` snapshot query via ``LATERAL`` (#13475).
+
+    Lets PostgreSQL run one backward index scan per ``outcome_id`` on
+    ``idx_fos_outcome_captured(outcome_id, captured_at)`` stopping at
+    ``LIMIT per_outcome_limit``, instead of materializing and sorting a full
+    168-hour ``ROW_NUMBER()`` window across every outcome before discarding ``rn > 96``.
+    """
+    from sqlalchemy import Integer, column, select, true, values
+
+    from app.models.models import FuturesOddsSnapshot
+
+    unique_oids = sorted({int(oid) for oid in wanted_oids})
+    if not unique_oids:
+        return (
+            select(
+                FuturesOddsSnapshot.outcome_id,
+                FuturesOddsSnapshot.captured_at,
+                FuturesOddsSnapshot.probability,
+            )
+            .where(FuturesOddsSnapshot.id == -1)
+        )
+    want = values(
+        column("outcome_id", Integer),
+        name="want_outcomes",
+    ).data([(oid,) for oid in unique_oids])
+    per_outcome = (
+        select(
+            FuturesOddsSnapshot.outcome_id.label("outcome_id"),
+            FuturesOddsSnapshot.captured_at.label("captured_at"),
+            FuturesOddsSnapshot.probability.label("probability"),
+        )
+        .where(
+            FuturesOddsSnapshot.outcome_id == want.c.outcome_id,
+            FuturesOddsSnapshot.captured_at >= cutoff,
+            FuturesOddsSnapshot.captured_at.isnot(None),
+        )
+        .order_by(FuturesOddsSnapshot.captured_at.desc())
+        .limit(int(per_outcome_limit))
+        .lateral("recent_history")
+    )
+    return (
+        select(
+            per_outcome.c.outcome_id,
+            per_outcome.c.captured_at,
+            per_outcome.c.probability,
+        )
+        .select_from(want)
+        .join(per_outcome, true())
+        .order_by(
+            per_outcome.c.outcome_id.asc(),
+            per_outcome.c.captured_at.asc(),
+        )
+    )
+
+
 async def _load_snapshot_from_db(
     db: Any,
     definition: Mapping[str, Any],
@@ -1754,7 +3197,12 @@ async def _load_snapshot_from_db(
 ) -> dict[str, Any]:
     """Load candidate events, open futures markets, paired sets, and outcome histories."""
     if isinstance(db, Mapping) and (
-        "events" in db or "markets" in db or "paired_sets" in db or "market_histories" in db
+        "events" in db
+        or "markets" in db
+        or "paired_sets" in db
+        or "market_histories" in db
+        or "team_lookup" in db
+        or "teams" in db
     ):
         raw_mh = db.get("market_histories") or {}
         norm_mh: dict[int, list[dict[str, Any]]] = {}
@@ -1764,17 +3212,21 @@ async def _load_snapshot_from_db(
                     norm_mh[int(k)] = [dict(x) for x in (v or ()) if isinstance(x, Mapping)]
                 except (TypeError, ValueError):
                     continue
+        snap_team_lookup = db.get("team_lookup")
+        if snap_team_lookup is None and isinstance(db.get("teams"), Sequence):
+            snap_team_lookup = _build_team_lookup_from_entries(db["teams"])
         return {
             "events": list(db.get("events") or ()),
             "markets": list(db.get("markets") or ()),
             "paired_sets": dict(db.get("paired_sets") or {}),
             "market_histories": norm_mh,
+            "team_lookup": snap_team_lookup,
         }
 
-    from sqlalchemy import and_, func, or_, select
+    from sqlalchemy import and_, or_, select
     from sqlalchemy.orm import joinedload
 
-    from app.models.models import Event, FuturesMarket, FuturesOddsSnapshot, Sport
+    from app.models.models import Event, FuturesMarket, Sport
     from app.routes.futures import (
         _apply_verified_title_to_detail,
         _fleet_newest_observation,
@@ -1822,14 +3274,15 @@ async def _load_snapshot_from_db(
             .order_by(Event.commence_time.asc())
             .limit(40)
         )
+        from app.utils.draw_priced_winner import sport_prices_a_draw
+        from app.utils.settled_hero import is_finished_status, settled_current_chance
+
         rows = (await db.execute(stmt)).scalars().all()
         for ev in rows:
             # Slice 6 Item 2b: use resolve_hero (same authority as GET /api/events/{id})
             hero = resolve_hero(ev)
             if hero is None:
                 continue
-            hp = float(hero.home_probability)
-            ap = float(hero.away_probability)
             sport_obj = getattr(ev, "sport", None)
             if isinstance(sport_obj, str):
                 sport_key_val = sport_obj
@@ -1840,11 +3293,28 @@ async def _load_snapshot_from_db(
             else:
                 sport_key_val = ""
                 sport_name_val = ""
-            # Exact same two lines as GET /api/events/{id} (`routes/events.py:20829-20837`).
-            canonical_ap = printable_away(ap, hp, sport_key_val)
-            away_pct_raw, home_pct_raw = rendered_duel_percents(canonical_ap, hp)
-            away_pct = int(away_pct_raw) if away_pct_raw is not None else _half_up_pct(ap)
-            home_pct = int(home_pct_raw) if home_pct_raw is not None else _half_up_pct(hp)
+            dp: Optional[float] = None
+            draw_pct: Optional[int] = None
+            if is_finished_status(ev.status):
+                _sc = settled_current_chance(hero, sport_key=sport_key_val)
+                if not _sc.resolved:
+                    # #13172 Option B: final_unresolved never serves a live price.
+                    continue
+                hp = float(_sc.home_probability)
+                ap = float(_sc.away_probability)
+                home_pct = int(_sc.home_rendered_percent)
+                away_pct = int(_sc.away_rendered_percent)
+                if sport_prices_a_draw(sport_key_val):
+                    dp = _sc.draw_probability
+                    draw_pct = _sc.draw_rendered_percent
+            else:
+                hp = float(hero.home_probability)
+                ap = float(hero.away_probability)
+                # Exact same two lines as GET /api/events/{id} (`routes/events.py:20829-20837`).
+                canonical_ap = printable_away(ap, hp, sport_key_val)
+                away_pct_raw, home_pct_raw = rendered_duel_percents(canonical_ap, hp)
+                away_pct = int(away_pct_raw) if away_pct_raw is not None else _half_up_pct(ap)
+                home_pct = int(home_pct_raw) if home_pct_raw is not None else _half_up_pct(hp)
             home_team_obj = getattr(ev, "home_team", None)
             away_team_obj = getattr(ev, "away_team", None)
             home_team_str = str(
@@ -1865,6 +3335,16 @@ async def _load_snapshot_from_db(
                 )
                 or ""
             )
+            ev_current_odds: dict[str, Any] = {
+                "home_probability": hp,
+                "away_probability": ap,
+                "away_rendered_percent": away_pct,
+                "home_rendered_percent": home_pct,
+            }
+            if dp is not None:
+                ev_current_odds["draw_probability"] = dp
+                ev_current_odds["draw_rendered_percent"] = draw_pct
+            computed_tags = _computed_event_tags(ev, sport_key_val)
             ev_dict: dict[str, Any] = {
                 "id": ev.id,
                 "sport": sport_key_val,
@@ -1877,17 +3357,15 @@ async def _load_snapshot_from_db(
                 "away_score": ev.away_score,
                 "hero_probability": hp,
                 "hero_probability_away": ap,
+                **({"hero_probability_draw": dp} if dp is not None else {}),
                 "hero_source": hero.source,
-                "current_odds": {
-                    "home_probability": hp,
-                    "away_probability": ap,
-                    "away_rendered_percent": away_pct,
-                    "home_rendered_percent": home_pct,
-                },
+                "has_sportsbook": _event_has_sportsbook(ev, hero_source=hero.source),
+                "current_odds": ev_current_odds,
                 "member_page_numbers": {
                     "away_pct": away_pct,
                     "home_pct": home_pct,
                 },
+                **({"_event_tags": computed_tags} if computed_tags else {}),
             }
             for td_key, team_obj in (("home_team_data", home_team_obj), ("away_team_data", away_team_obj)):
                 if team_obj is not None and not isinstance(team_obj, str):
@@ -1895,12 +3373,14 @@ async def _load_snapshot_from_db(
                     logo_lg = getattr(team_obj, "logo_url_large", None) or getattr(team_obj, "logo_url", None)
                     p_col = getattr(team_obj, "primary_color", None)
                     s_col = getattr(team_obj, "secondary_color", None)
-                    if any((logo_sm, logo_lg, p_col, s_col)):
+                    loc_val = getattr(team_obj, "location", None)
+                    if any((logo_sm, logo_lg, p_col, s_col, loc_val)):
                         ev_dict[td_key] = {
                             "logo_small": logo_sm,
                             "logo_large": logo_lg,
                             "primary_color": p_col,
                             "secondary_color": s_col,
+                            **({"location": loc_val} if loc_val else {}),
                         }
             events_out.append(ev_dict)
 
@@ -1958,7 +3438,25 @@ async def _load_snapshot_from_db(
         title_matched_mids: set[int] = set()
         title_volume_by_mid: dict[int, float] = {}
         if needs_markets and market_sections:
-            cat_pool = _category_llm_pool_for_definition(definition)
+            fun_tag_sections: list[Mapping[str, Any]] = []
+            non_fun_sections: list[Mapping[str, Any]] = []
+            for aq in market_sections:
+                if str(aq.get("fun_sub_tag") or "").strip():
+                    fun_tag_sections.append(aq)
+                else:
+                    non_fun_sections.append(aq)
+            if fun_tag_sections:
+                from app.utils.discover_fun_tags import fun_market_ids_for_sub_tag
+
+                for aq in fun_tag_sections:
+                    tag_ids = fun_market_ids_for_sub_tag(str(aq["fun_sub_tag"]).strip())
+                    title_matched_mids.update(int(mid_i) for mid_i in tag_ids)
+
+            cat_pool = (
+                _category_llm_pool_for_definition(definition)
+                if non_fun_sections
+                else None
+            )
             lightweight_rows: list[tuple[int, str, float]] = []
             if cat_pool is not None:
                 scan_rows = (
@@ -1975,7 +3473,7 @@ async def _load_snapshot_from_db(
                     )
 
             unmatched_sections: list[Mapping[str, Any]] = []
-            for aq in market_sections:
+            for aq in non_fun_sections:
                 has_tokens = bool(
                     (aq.get("title_all_tokens") or ())
                     or (aq.get("any_tokens") or ())
@@ -2098,26 +3596,32 @@ async def _load_snapshot_from_db(
                     "source": fm.source,
                     "mutually_exclusive": bool(getattr(fm, "mutually_exclusive", True)),
                     "market_type": getattr(fm, "market_type", None),
-                    "volume": float(fm.volume or 0.0),
+                    "volume": _effective_market_volume(
+                        fm.volume,
+                        volume_24h=getattr(fm, "volume_24h", None),
+                        market_metadata=getattr(fm, "market_metadata", None),
+                    ),
                     "image_url": fm.image_url,
                     "llm_sport_category": fm.llm_sport_category,
+                    "resolution_date": (
+                        res_dt_raw.isoformat()
+                        if isinstance((res_dt_raw := getattr(fm, "resolution_date", None)), (datetime, date))
+                        else res_dt_raw
+                    ),
+                    "event_date": (
+                        ev_dt_raw.isoformat()
+                        if isinstance((ev_dt_raw := getattr(fm, "event_date", None)), (datetime, date))
+                        else ev_dt_raw
+                    ),
                     "top_outcomes": top_outs,
                 }
             )
 
-        # Slice 6 Item 2b: format every candidate member market through the exact same
-        # verified_title detail pipeline as GET /api/futures/{id}?representation=verified_title
-        # so every number on a card or page equals the member's own page at the same moment.
-        candidate_mids: set[int] = set(paired_stage_mids)
-        for aq in market_sections:
-            cap_n = (
-                max(int(aq.get("max_items", 4)) + 3, 6)
-                if aq.get("kind") == "market_history"
-                else max(int(aq.get("max_items", 4)) + 2, 4)
-            )
-            matched_sec = [pm for pm in prelim_markets if _market_matches_query(pm, aq)]
-            for pm in matched_sec[:cap_n]:
-                candidate_mids.add(int(pm["id"]))
+        # Slice 6 Item 2b + #12288 pre-flip guard: format EVERY candidate member market
+        # through the exact same verified_title detail + withhold pipeline as
+        # GET /api/futures/{id}?representation=verified_title so no unscreened raw DB
+        # market (like past-ceremony #109566 with all 16 prices withheld) can slip through.
+        candidate_mids: set[int] = set(paired_stage_mids) | set(ordered_title_mids)
 
         detail_by_mid: dict[int, dict[str, Any]] = {}
         mpn_by_mid: dict[int, dict[str, Any]] = {}
@@ -2130,8 +3634,7 @@ async def _load_snapshot_from_db(
             withheld_by_mid = await withheld_price_outcome_ids_for_markets(
                 db, selected_vt_rows
             )
-            fleet_newest_cached: Any = None
-            fleet_newest_queried = False
+            fleet_newest_by_source: dict[str, Any] = {}
             for fm in selected_vt_rows:
                 unsupported_ids = withheld_by_mid.get(fm.id, set())
                 if getattr(fm, "source", None) == "polymarket" and not getattr(fm, "mutually_exclusive", True):
@@ -2140,13 +3643,10 @@ async def _load_snapshot_from_db(
                 else:
                     leg_sides = {}
                     lead_leg = None
-                if not fleet_newest_queried:
-                    fm_fleet = await _fleet_newest_observation(db, fm)
-                    if fm_fleet is not None:
-                        fleet_newest_cached = fm_fleet
-                        fleet_newest_queried = True
-                else:
-                    fm_fleet = fleet_newest_cached
+                src_key = str(getattr(fm, "source", None) or "").strip().lower()
+                if src_key not in fleet_newest_by_source:
+                    fleet_newest_by_source[src_key] = await _fleet_newest_observation(db, fm)
+                fm_fleet = fleet_newest_by_source[src_key]
                 detail = _format_market_detail(
                     fm,
                     None,
@@ -2167,6 +3667,8 @@ async def _load_snapshot_from_db(
                 by_fold: dict[str, tuple[float, int]] = {}
                 formatted_outs: list[dict[str, Any]] = []
                 img_by_oid = {o.id: getattr(o, "image_url", None) for o in (fm.outcomes or ())}
+                upd_by_oid = {o.id: getattr(o, "last_updated", None) for o in (fm.outcomes or ())}
+                newest_live_upd: Optional[datetime] = None
                 for idx, row in enumerate(d_outs):
                     prob = row.get("probability")
                     if prob is None or not isinstance(prob, (int, float)) or not math.isfinite(float(prob)):
@@ -2174,11 +3676,12 @@ async def _load_snapshot_from_db(
                     p_f = float(prob)
                     oid = int(row["id"])
                     rp = row.get("rendered_percent")
-                    if rp is None and idx < len(card_pcts) and card_pcts[idx] is not None:
-                        rp = int(card_pcts[idx])
-                    if rp is None:
-                        rp = _half_up_pct(p_f)
-                    pct_int = max(1, min(99, int(rp))) if 0.0 < p_f < 1.0 else int(rp)
+                    if rp is not None:
+                        pct_int = int(rp)
+                    else:
+                        card_pct = card_pcts[idx] if idx < len(card_pcts) else None
+                        rp = card_pct if card_pct is not None else _half_up_pct(p_f)
+                        pct_int = max(1, min(99, int(rp))) if 0.0 < p_f < 1.0 else int(rp)
                     by_oid[oid] = pct_int
                     r_name = str(row.get("name") or "")
                     for nk in (
@@ -2192,6 +3695,9 @@ async def _load_snapshot_from_db(
                     fk = fold_outcome_key(r_name)
                     if fk and fk not in by_fold:
                         by_fold[fk] = (p_f, pct_int)
+                    o_upd_dt = _parse_iso_dt_utc(upd_by_oid.get(oid))
+                    if o_upd_dt is not None and (newest_live_upd is None or o_upd_dt > newest_live_upd):
+                        newest_live_upd = o_upd_dt
                     formatted_outs.append(
                         {
                             "id": oid,
@@ -2200,6 +3706,7 @@ async def _load_snapshot_from_db(
                             "rendered_percent": pct_int,
                             "opening_probability": row.get("opening_probability"),
                             "image_url": img_by_oid.get(oid),
+                            "last_updated": o_upd_dt.isoformat() if o_upd_dt is not None else None,
                         }
                     )
                 mpn = {
@@ -2210,18 +3717,25 @@ async def _load_snapshot_from_db(
                 mpn_by_mid[fm.id] = mpn
                 detail_by_mid[fm.id] = {
                     "top_outcomes": formatted_outs,
+                    "newest_outcome_updated_at": newest_live_upd.isoformat() if newest_live_upd is not None else None,
                     "by_oid_prob_pct": {int(o["id"]): (float(o["probability"]), int(o["rendered_percent"])) for o in formatted_outs},
                     "by_fold_prob_pct": by_fold,
                 }
 
         for pm in prelim_markets:
             mid = int(pm["id"])
-            if mid in detail_by_mid:
-                pm["top_outcomes"] = detail_by_mid[mid]["top_outcomes"]
-                pm["member_page_numbers"] = mpn_by_mid[mid]
+            if mid not in detail_by_mid:
+                continue
+            screened_outs = detail_by_mid[mid]["top_outcomes"]
+            if not screened_outs:
+                continue
+            pm["top_outcomes"] = screened_outs
+            pm["newest_outcome_updated_at"] = detail_by_mid[mid]["newest_outcome_updated_at"]
+            pm["member_page_numbers"] = mpn_by_mid[mid]
             markets_out.append(pm)
 
-        # Sync paired_stage entries to their linked stage_1_market.id & stage_2_market.id member pages
+        # The paired loader already supplied the winner field's served values.
+        # Keep the separate nomination/qualification page matching here.
         for set_id, pset in paired_out.items():
             if not isinstance(pset, dict):
                 continue
@@ -2252,19 +3766,6 @@ async def _load_snapshot_from_db(
                             p_s1 if _half_up_pct(p_s1) == pct_s1 else round(pct_s1 / 100.0, 4)
                         )
                         entry["stage_1_rendered_percent"] = pct_s1
-                if s2_det:
-                    s2_oid = entry.get("stage_2_outcome_id")
-                    match_s2 = (
-                        s2_det["by_oid_prob_pct"].get(int(s2_oid))
-                        if isinstance(s2_oid, int) and s2_oid in s2_det["by_oid_prob_pct"]
-                        else s2_det["by_fold_prob_pct"].get(fk)
-                    )
-                    if match_s2 is not None:
-                        p_s2, pct_s2 = match_s2
-                        entry["stage_2_probability"] = (
-                            p_s2 if _half_up_pct(p_s2) == pct_s2 else round(pct_s2 / 100.0, 4)
-                        )
-                        entry["stage_2_rendered_percent"] = pct_s2
             # Re-sort entries by stage_2_probability desc, stage_1_probability desc, subject asc
             pset["entries"] = sorted(
                 [e for e in (pset.get("entries") or ()) if isinstance(e, dict)],
@@ -2304,33 +3805,8 @@ async def _load_snapshot_from_db(
                         wanted_oids.add(int(o_d["id"]))
             if wanted_oids:
                 cutoff = now_dt - timedelta(hours=max_hours)
-                # Partition by outcome_id so large outcome IDs are never starved behind a global row cap.
-                ranked_subq = (
-                    select(
-                        FuturesOddsSnapshot.outcome_id.label("outcome_id"),
-                        FuturesOddsSnapshot.captured_at.label("captured_at"),
-                        FuturesOddsSnapshot.probability.label("probability"),
-                        func.row_number()
-                        .over(
-                            partition_by=FuturesOddsSnapshot.outcome_id,
-                            order_by=FuturesOddsSnapshot.captured_at.desc(),
-                        )
-                        .label("rn"),
-                    )
-                    .where(
-                        FuturesOddsSnapshot.outcome_id.in_(sorted(wanted_oids)),
-                        FuturesOddsSnapshot.captured_at >= cutoff,
-                    )
-                    .subquery()
-                )
-                h_stmt = (
-                    select(
-                        ranked_subq.c.outcome_id,
-                        ranked_subq.c.captured_at,
-                        ranked_subq.c.probability,
-                    )
-                    .where(ranked_subq.c.rn <= 96)
-                    .order_by(ranked_subq.c.outcome_id.asc(), ranked_subq.c.captured_at.asc())
+                h_stmt = _build_machinery_history_lateral_stmt(
+                    sorted(wanted_oids), cutoff
                 )
                 for oid_val, cap_at, prob_val in (await db.execute(h_stmt)).all():
                     oid = int(oid_val)
@@ -2341,11 +3817,56 @@ async def _load_snapshot_from_db(
                         }
                     )
 
+    team_lookup_out: Any = None
+    sports_markets_for_lookup = [
+        m for m in markets_out if _is_sports_context(m, definition)
+    ]
+    if events_out or sports_markets_for_lookup or _is_sports_definition(definition):
+        candidate_team_names: list[str] = []
+        for ev_d in events_out:
+            for tk in ("home_team", "away_team"):
+                tv = str(ev_d.get(tk) or "").strip()
+                if tv:
+                    candidate_team_names.append(tv)
+        for m_d in sports_markets_for_lookup:
+            for o_d in m_d.get("top_outcomes") or m_d.get("outcomes") or ():
+                if not isinstance(o_d, Mapping):
+                    continue
+                raw_on = str(o_d.get("name") or o_d.get("outcome_name") or "").strip()
+                cleaned_on = _clean_outcome_label(raw_on)
+                for cand_on in (raw_on, cleaned_on, _OUTCOME_PROP_SUFFIX_RE.sub("", cleaned_on).strip()):
+                    if cand_on and cand_on.lower() not in {"yes", "no"}:
+                        candidate_team_names.append(cand_on)
+        dedup_names = list(dict.fromkeys(candidate_team_names))
+        if dedup_names or _is_sports_definition(definition):
+            try:
+                import app.routes.events as _events_mod
+
+                subset_lookup = await _events_mod._build_team_lookup(
+                    db, dedup_names or ["__all__"]
+                )
+                cached_full = getattr(_events_mod, "_team_cache", None)
+                if (
+                    getattr(_events_mod._build_team_lookup, "__module__", "")
+                    == "app.routes.events"
+                    and isinstance(cached_full, Mapping)
+                    and (cached_full or getattr(cached_full, "by_league", None))
+                ):
+                    team_lookup_out = _events_mod._as_lookup(cached_full)
+                else:
+                    team_lookup_out = subset_lookup
+            except Exception:
+                logger.debug(
+                    "container_machinery: team lookup load failed; falling back to static art",
+                    exc_info=True,
+                )
+
     return {
         "events": events_out,
         "markets": markets_out,
         "paired_sets": paired_out,
         "market_histories": histories_out,
+        "team_lookup": team_lookup_out,
     }
 
 
@@ -2368,27 +3889,63 @@ def _match_paired_set(
     return None
 
 
-def _twin_market_key(title: str) -> str:
-    """Canonicalize cross-venue twin titles (e.g. 'April 2027 Fed Decision' vs 'April Fed Decision')."""
-    low = title.strip().lower()
+def _twin_market_key(title: str, *, raw_title: str = "") -> str:
+    """Canonicalize cross-venue twin titles (e.g. 'Fed Decision in December?' vs 'Fed decision in Dec 2026?',
+    or reversed couple names on engagement markets across Kalshi and Polymarket)."""
+    low = re.sub(r"[?!.,]+$", "", title.strip().lower()).strip()
     m_fomc = re.match(r"^([a-z]+)(?:\s+\d{4})?\s+fed\s+decision$", low)
     if m_fomc:
-        return f"fomc:{m_fomc.group(1)}"
+        return f"fomc:{_expand_month_token(m_fomc.group(1)).lower()}"
+    m_fomc_in = re.match(r"^fed\s+decision\s+in\s+([a-z]+)(?:\s+\d{4})?$", low)
+    if m_fomc_in:
+        return f"fomc:{_expand_month_token(m_fomc_in.group(1)).lower()}"
     m_unemp = re.match(r"^([a-z]+)(?:\s+\d{4})?\s+u\.s\.\s+unemployment(?:\s+rate)?$", low)
     if m_unemp:
         return f"us_unemp:{_expand_month_token(m_unemp.group(1)).lower()}"
+    raw_low = (raw_title or title).strip().lower()
+    if "engaged" in raw_low and "hours" not in raw_low:
+        parts = [
+            _ascii_fold_key(p)
+            for p in re.split(r"\s+(?:&|and)\s+", title.strip(), flags=re.IGNORECASE)
+            if _ascii_fold_key(p)
+        ]
+        if parts:
+            return "engaged:" + "&".join(sorted(parts))
+    m_gdp = re.match(r"^u\.?s\.?\s+(?:real\s+)?gdp\s+growth\s+in\s+(.+)$", low)
+    if m_gdp:
+        return f"us_gdp:{_norm_key(m_gdp.group(1))}"
+    if re.search(r"\boscars?\b", low) and not re.search(r"\bnomin", low):
+        m_oscar_cat = re.search(
+            r"\b(best\s+(?:picture|director|supporting\s+actor|supporting\s+actress|actor|actress|"
+            r"animated\s+feature|international\s+feature|documentary\s+feature|original\s+score|"
+            r"adapted\s+screenplay|original\s+screenplay))\b",
+            low,
+        )
+        if m_oscar_cat:
+            oscar_cat = " ".join(m_oscar_cat.group(1).split())
+            return f"oscars:{oscar_cat}"
     return _norm_key(title)
 
 
 def _dedupe_twin_markets(markets: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Keep the highest-liquidity canonical market when two venues list the same cleaned title."""
-    seen_titles: set[str] = set()
+    """Keep the highest-liquidity canonical market when two venues list the same cleaned title.
+
+    Every deduplicated twin's ``market_id`` is recorded on the kept item under
+    ``_twin_market_ids`` so Discover pruning treats unlinked cross-venue twins as
+    covered members of the grouping instead of showing the same race twice (#12288).
+    """
+    by_key: dict[str, dict[str, Any]] = {}
     out: list[dict[str, Any]] = []
     for m in markets:
-        norm_t = _twin_market_key(str(m["title"]))
-        if norm_t in seen_titles:
+        norm_t = _twin_market_key(str(m["title"]), raw_title=str(m.get("raw_title") or ""))
+        existing = by_key.get(norm_t)
+        if existing is not None:
+            twins = existing.setdefault("_twin_market_ids", [])
+            mid = m.get("market_id")
+            if isinstance(mid, int) and not isinstance(mid, bool) and mid not in twins:
+                twins.append(mid)
             continue
-        seen_titles.add(norm_t)
+        by_key[norm_t] = m
         out.append(m)
     return out
 
@@ -2424,6 +3981,8 @@ def _resolve_section_heading(
 
     if aq_kind == "market_history":
         if form_id == "probability_history_chart":
+            if raw_note and sec_cfg.get("preserve_note"):
+                return raw_title, raw_note
             if len(shown_titles) >= 2:
                 note = f"7-day odds movement across {_join_human_list(shown_titles)}."
             elif len(shown_titles) == 1:
@@ -2530,6 +4089,7 @@ _PROPER_WORDS_KEEP = frozenset(
         "fomc",
         "gdp",
         "cpi",
+        "ipo",
         "nfl",
         "nba",
         "mlb",
@@ -2537,10 +4097,15 @@ _PROPER_WORDS_KEEP = frozenset(
         "wnba",
         "afc",
         "nfc",
+        "west",
+        "east",
+        "north",
+        "south",
         "oscar",
         "oscars",
         "senate",
         "house",
+        "ap",
         "january",
         "february",
         "march",
@@ -2567,6 +4132,23 @@ _PROPER_WORDS_KEEP = frozenset(
         "dec",
     }
 )
+
+_EXACT_CASE_TOKENS: dict[str, str] = {
+    "openai": "OpenAI",
+    "openai's": "OpenAI's",
+    "openai’s": "OpenAI’s",
+    "spacex": "SpaceX",
+    "spacex's": "SpaceX's",
+    "millennium": "Millennium",
+    "sec": "SEC",
+    "pac-12": "Pac-12",
+    "ryder": "Ryder",
+    "cup": "Cup",
+    "conor": "Conor",
+    "mcgregor": "McGregor",
+    "mcgregor's": "McGregor's",
+    "mcgregor’s": "McGregor’s",
+}
 
 
 def _prose_outcome_name(name: str) -> str:
@@ -2629,21 +4211,171 @@ def _prose_market_phrase(title: str, *, capitalize_first: bool = False) -> str:
         words = []
         for w in cleaned.split():
             core = w.strip("(),.:;")
-            if core.lower() in _PROPER_WORDS_KEEP or any(ch.isdigit() for ch in core):
-                if core.upper() in {"NFL", "NBA", "MLB", "NHL", "WNBA", "AFC", "NFC", "GDP", "CPI", "FOMC", "US"}:
+            exact_cased = _EXACT_CASE_TOKENS.get(core.lower())
+            if exact_cased is not None:
+                words.append(exact_cased + w[len(w.rstrip("(),.:;")) :])
+            elif core.lower() in _PROPER_WORDS_KEEP or any(ch.isdigit() for ch in core):
+                if core.upper() in {"NFL", "NBA", "MLB", "NHL", "WNBA", "AFC", "NFC", "GDP", "CPI", "FOMC", "IPO", "US", "AP"}:
                     words.append(w.upper())
                 elif core.lower() == "u.s.":
                     words.append("U.S.")
+                elif any(ch.isdigit() for ch in core) and not core[0].isalpha():
+                    words.append(w)
                 else:
                     words.append(core.capitalize())
             else:
                 words.append(w.lower())
         joined = " ".join(words)
-        out = joined if joined.lower().startswith(("the ", "a ", "an ")) else f"the {joined}"
+        joined = re.sub(r"\bbig\s+ten\b", "Big Ten", joined, flags=re.IGNORECASE)
+        has_leading_possessive = any("'" in tok or "’" in tok for tok in words[:2])
+        out = (
+            joined
+            if joined.lower().startswith(("the ", "a ", "an ")) or has_leading_possessive
+            else f"the {joined}"
+        )
 
     if capitalize_first and out:
         return out[0].upper() + out[1:]
     return out
+
+
+def _filter_card_benchmark_items(
+    items: Sequence[Mapping[str, Any]],
+    rule: Optional[Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
+    """Filter out markets configured as set-page-only on the Discover card."""
+    raw_omit = rule.get("card_omit_ids") if isinstance(rule, Mapping) else None
+    if not isinstance(raw_omit, Sequence) or isinstance(raw_omit, (str, bytes)):
+        return list(items)
+    omit_ids: set[int] = set()
+    for val in raw_omit:
+        try:
+            omit_ids.add(int(val))
+        except (TypeError, ValueError):
+            continue
+    if not omit_ids:
+        return list(items)
+    filtered = [it for it in items if int(it.get("market_id") or 0) not in omit_ids]
+    return filtered if len(filtered) >= 2 else list(items)
+
+
+_ABBR_MONTHS: tuple[tuple[str, str], ...] = (
+    ("January", "Jan"),
+    ("February", "Feb"),
+    ("August", "Aug"),
+    ("September", "Sep"),
+    ("October", "Oct"),
+    ("November", "Nov"),
+    ("December", "Dec"),
+)
+
+
+def _format_history_start_date(ts_iso: str) -> str:
+    raw = str(ts_iso or "").strip()
+    if not raw:
+        return ""
+    try:
+        dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        return f"{dt.strftime('%b')} {dt.day}"
+    except ValueError:
+        return ""
+
+
+def _format_valuation_range_phrase(raw_out: str) -> str:
+    """Turn bucket strings like `<$1T` or `$1.70-$2.00T` into readable prose."""
+    text = str(raw_out or "").strip()
+    if text.startswith("<"):
+        return f"below {text[1:].strip()}"
+    if text.startswith(">"):
+        return f"above {text[1:].strip()}"
+    if text.endswith("+"):
+        return f"at {text[:-1].strip()} or more"
+    if "–" in text or "-" in text:
+        parts = [p.strip() for p in re.split(r"[–-]", text, maxsplit=1)]
+        if len(parts) == 2:
+            lo_p, hi_p = parts
+            suffix_m = re.search(r"([TBM])\Z", hi_p)
+            if suffix_m and lo_p.startswith("$") and not re.search(r"[TBM]\Z", lo_p):
+                lo_p = f"{lo_p}{suffix_m.group(1)}"
+            return f"between {lo_p} and {hi_p}"
+    return f"at {text}"
+
+
+def _format_benchmark_row_title(
+    title: str,
+    lead_outcome_name: str,
+    *,
+    headline_phrase: Optional[str] = None,
+) -> str:
+    """Ensure multi-outcome benchmark rows name their leading outcome cleanly."""
+    clean_title = str(title or "").strip()
+    ans = str(lead_outcome_name or "").strip().rstrip("?").strip()
+    if not ans or ans.lower() in {"yes", "no"}:
+        return clean_title
+    if ans.lower() in clean_title.lower():
+        return clean_title
+    hp = str(headline_phrase or "").strip().rstrip("?").strip()
+    for suffix in (" at {pct}%", " ({pct}%)"):
+        if hp.endswith(suffix):
+            candidate = hp[: -len(suffix)].strip()
+            if candidate and "{pct}" not in candidate and "{" not in candidate:
+                return candidate
+    if ans.startswith("<"):
+        ans_for_row = f"below {ans[1:].strip()}"
+    elif ans.startswith(">"):
+        ans_for_row = f"above {ans[1:].strip()}"
+    else:
+        ans_for_row = ans
+    formatted, _ = _format_fun_lead_answer_label(clean_title, ans_for_row)
+    return formatted
+
+
+def _format_history_chance_clause(market_title: str, outcome_name: str) -> str:
+    raw_title = str(market_title or "").strip().rstrip("?")
+    low_title = raw_title.lower()
+    raw_out = str(outcome_name or "").strip()
+    for full_m, abbr_m in _ABBR_MONTHS:
+        raw_out = re.sub(rf"\b{full_m}\b", abbr_m, raw_out)
+
+    if "ipo valuation" in low_title or "openai's ipo" in low_title:
+        subject = "OpenAI" if "openai" in low_title else raw_title.split("'", 1)[0].strip()
+        val_phrase = _format_valuation_range_phrase(raw_out)
+        return f"The chance {subject} lists {val_phrase}"
+
+    if "market cap" in low_title and ("<" in raw_out or ">" in raw_out or "-" in raw_out or "–" in raw_out or "$" in raw_out):
+        val_phrase = _format_valuation_range_phrase(raw_out)
+        subject = "SpaceX" if "spacex" in low_title else _prose_market_phrase(raw_title, capitalize_first=True)
+        if "end of 2026" in low_title or "ends 2026" in low_title:
+            return f"The chance {subject} ends 2026 valued {val_phrase}"
+        return f"The chance {subject} closes valued {val_phrase}"
+
+    if "spacex" in low_title and "openai" in low_title and "ipo" in low_title:
+        out_low = raw_out.lower()
+        if "spacex" in out_low:
+            return "The chance SpaceX finishes with a higher IPO cap than OpenAI"
+        if "openai" in out_low:
+            return "The chance OpenAI finishes with a higher IPO cap than SpaceX"
+
+    if "millennium prize" in low_title:
+        if "openai" in low_title:
+            return f"The chance OpenAI solves a Millennium Prize problem by {raw_out}"
+        return f"The chance a Millennium Prize problem is solved by {raw_out}"
+
+    if _PREP_DATE_OUTCOME_RE.match(raw_out):
+        m_prep = _PREP_DATE_OUTCOME_RE.match(raw_out)
+        assert m_prep is not None
+        prep = m_prep.group(1).lower()
+        rest = m_prep.group(2).strip()
+        return f"The chance {raw_title} {prep} {rest}"
+    if _BARE_MONTH_DAY_RE.match(raw_out) or _BARE_MONTH_YEAR_OR_YEAR_RE.match(raw_out):
+        prep = "in" if _BARE_MONTH_YEAR_OR_YEAR_RE.match(raw_out) else "by"
+        return f"The chance {raw_title} {prep} {raw_out}"
+
+    phrase = _prose_market_phrase(raw_title, capitalize_first=False)
+    if raw_out.lower() in {"yes", "no", ""}:
+        trimmed = phrase[4:] if phrase.startswith("the ") else phrase
+        return f"The chance of {trimmed}"
+    return f"The chance {raw_out} leads {phrase}"
 
 
 def _build_dynamic_title_from_set(
@@ -2653,7 +4385,7 @@ def _build_dynamic_title_from_set(
     """Build a reader-facing title dynamically from the live set (Slice 3 Item 4).
 
     Every number and name comes directly from ``built_sections``:
-    - Paired-stage ceremony: ``"<Leader> leads <Category> at <W>%, with <N> contenders at 75%+ to be nominated"``
+    - Paired-stage ceremony: ``"<Leader> leads <Category> at <W>%, with <N> contenders at 75% or better to be nominated"``
     - Event-led slate: ``"<Away> at <Home> headlines <Dates>, with <N> toss-up games"`` (never a week number)
     - Duel + contender field: ``"<Leader> leads at <P>%, with <DuelLeader> at <D>%"``
     - Scale / market set: ``"<LeadOutcome> leads <LeadTitle> at <P>%, with <SecondTitle> at <Lead2> (<P2>%)"``
@@ -2670,9 +4402,9 @@ def _build_dynamic_title_from_set(
             if entries:
                 top = entries[0]
                 leader_name = str(top.get("subject") or "").strip()
-                win_pct = int(
-                    top.get("stage_2_rendered_percent")
-                    or _half_up_pct(float(top.get("stage_2_probability") or 0.0))
+                allocated = top.get("stage_2_rendered_percent")
+                win_pct = int(allocated) if allocated is not None else _half_up_pct(
+                    float(top.get("stage_2_probability") or 0.0)
                 )
                 strong_nom = sum(
                     1
@@ -2689,30 +4421,42 @@ def _build_dynamic_title_from_set(
                 else:
                     cat_label = re.sub(r":.*$", "", raw_sec_title).strip()
                 if strong_nom >= 2:
-                    return f"{leader_name} leads {cat_label} at {win_pct}%, with {strong_nom} contenders at 75%+ to be nominated"
+                    return f"{leader_name} leads {cat_label} at {win_pct}%, with {strong_nom} contenders at 75% or better to be nominated"
                 return f"{leader_name} leads {cat_label} at {win_pct}%"
 
     # 2. Event-led slate (e.g. NFL/NBA slate — named by biggest/closest game & dates, never week number)
-    # Ruling 253: A: count ONLY games inside the <=55% toss-up band across the slate;
-    # with fewer than 2 toss-ups, drop the ", with N toss-up games" clause entirely.
+    # Ruling 253: A: count ONLY games inside the <=55% toss-up band shown on the card,
+    # and lead with the closest visible game; with fewer than 2 toss-ups, drop the clause.
+    rule_dict_ev = definition.get("rule") if isinstance(definition.get("rule"), Mapping) else {}
+    card_sec_key_ev = str(rule_dict_ev.get("card_section_key") or "").strip()
+    card_rows_limit_ev = max(1, int(rule_dict_ev.get("card_rows") or 3))
     event_items: list[Mapping[str, Any]] = []
     seen_event_ids: set[int] = set()
-    tossup_count = 0
+    card_event_items: list[Mapping[str, Any]] = []
     for sec in built_sections:
         vb = sec.get("visual_block") or {}
         if vb.get("form_id") in {"coin_flip_matchups", "matchup_slate"}:
             its = [it for it in (vb.get("items") or ()) if isinstance(it, Mapping)]
+            sec_cls = str(sec.get("class") or "").strip()
+            if not card_event_items and (not card_sec_key_ev or sec_cls == card_sec_key_ev):
+                card_event_items = its[:card_rows_limit_ev]
             for it in its:
                 eid = int(it.get("event_id") or 0)
                 if eid > 0 and eid in seen_event_ids:
                     continue
                 if eid > 0:
                     seen_event_ids.add(eid)
-                if _is_event_toss_up(it):
-                    tossup_count += 1
-            event_items.extend(its)
+                event_items.append(it)
     if event_items:
-        lead_ev = event_items[0]
+        visible_events = card_event_items or event_items[:card_rows_limit_ev]
+        tossup_count = sum(1 for it in visible_events if _is_event_toss_up(it))
+        lead_ev = min(
+            visible_events,
+            key=lambda it: (
+                float(it.get("closeness_to_50", abs(float(it.get("home_prob", 0.5)) - 0.5))),
+                str(it.get("commence_time") or ""),
+            ),
+        )
         matchup = f"{lead_ev.get('away_short') or lead_ev.get('away_team')} at {lead_ev.get('home_short') or lead_ev.get('home_team')}"
         span = _format_event_date_span(event_items)
         span_clause = f" the {span} slate" if span else " this slate"
@@ -2720,10 +4464,14 @@ def _build_dynamic_title_from_set(
             return f"{matchup} headlines{span_clause}, with {tossup_count} toss-up games"
         return f"{matchup} headlines{span_clause}"
 
-    # 3. Market-led sets (duel + contender field, or numerical-scale rate set)
+    # 3. Market-led sets (duel + contender field, numerical-scale rate set,
+    # benchmark strip, or sibling field grid)
     duel_item: Optional[Mapping[str, Any]] = None
     spotlight_item: Optional[Mapping[str, Any]] = None
     sibling_items: list[Mapping[str, Any]] = []
+    benchmark_items: list[Mapping[str, Any]] = []
+    history_items: list[Mapping[str, Any]] = []
+    lead_sec_form = str((built_sections[0].get("visual_block") or {}).get("form_id") or "")
     for sec in built_sections:
         vb = sec.get("visual_block") or {}
         fid = vb.get("form_id")
@@ -2734,12 +4482,95 @@ def _build_dynamic_title_from_set(
             spotlight_item = its[0]
         elif fid == "sibling_fields_grid" and its:
             sibling_items.extend(its)
+        elif fid == "benchmark_strip" and its:
+            benchmark_items.extend(its)
+        elif fid == "probability_history_chart" and its:
+            history_items.extend(its)
 
     def _fav_outcome(m_item: Mapping[str, Any]) -> Optional[Mapping[str, Any]]:
         outs = [o for o in (m_item.get("outcomes") or ()) if isinstance(o, Mapping)]
         if not outs:
             return None
         return max(outs, key=lambda o: float(o.get("probability") or 0.0))
+
+    if spotlight_item is None and duel_item is not None and lead_sec_form == "duel_bar":
+        d_outs_all = sorted(
+            [o for o in (duel_item.get("outcomes") or ()) if isinstance(o, Mapping)],
+            key=lambda o: -float(o.get("probability") or 0.0),
+        )
+        d_non_draw = [
+            o
+            for o in d_outs_all
+            if str(o.get("name") or "").strip().lower() not in _DUEL_DRAW_OUTCOME_NAMES
+        ]
+        d_outs = d_non_draw if len(d_non_draw) >= 2 else d_outs_all
+        if len(d_outs) >= 2:
+            lead_name = _prose_outcome_name(str(d_outs[0]["name"]))
+            trail_name = _prose_outcome_name(str(d_outs[1]["name"]))
+            lead_p = int(d_outs[0]["rendered_percent"])
+            trail_p = int(d_outs[1]["rendered_percent"])
+            du_phrase = _prose_market_phrase(str(duel_item["title"]))
+            sep = " to " if len(d_outs_all) >= 3 else "–"
+            return f"{lead_name} leads {trail_name} {lead_p}%{sep}{trail_p}% in {du_phrase}"
+
+    if history_items and (
+        lead_sec_form == "probability_history_chart"
+        or (spotlight_item is None and not sibling_items and not benchmark_items)
+    ):
+        lead_h = history_items[0]
+        best_net = 0
+        best_series: Optional[Mapping[str, Any]] = None
+        best_start_iso = str(lead_h.get("start_iso") or "")
+        best_range_span = 0
+        best_range_lo = 0
+        best_range_hi = 0
+        best_range_series: Optional[Mapping[str, Any]] = None
+        best_range_start_iso = str(lead_h.get("start_iso") or "")
+        for hs in lead_h.get("series") or ():
+            if not isinstance(hs, Mapping):
+                continue
+            pts_raw = [
+                pt
+                for pt in (hs.get("points") or ())
+                if isinstance(pt, Mapping) and isinstance(pt.get("pct"), (int, float))
+            ]
+            if len(pts_raw) >= 2:
+                pcts_vals = [int(pt["pct"]) for pt in pts_raw]
+                net = pcts_vals[-1] - pcts_vals[0]
+                if abs(net) > abs(best_net):
+                    best_net = net
+                    best_series = hs
+                    best_start_iso = str(pts_raw[0].get("t") or best_start_iso)
+                lo_v = min(pcts_vals)
+                hi_v = max(pcts_vals)
+                span_v = hi_v - lo_v
+                if span_v > best_range_span:
+                    best_range_span = span_v
+                    best_range_lo = lo_v
+                    best_range_hi = hi_v
+                    best_range_series = hs
+                    best_range_start_iso = str(pts_raw[0].get("t") or best_range_start_iso)
+        if best_series is not None and abs(best_net) >= 10:
+            start_label = _format_history_start_date(best_start_iso)
+            clause = _format_history_chance_clause(
+                str(lead_h.get("title") or ""),
+                str(best_series.get("name") or ""),
+            )
+            direction = "rose" if best_net > 0 else "fell"
+            since_suffix = f" since {start_label}" if start_label else ""
+            return f"{clause} {direction} {abs(best_net)} points{since_suffix}"
+        if best_range_series is not None and best_range_span >= 1:
+            start_label = _format_history_start_date(best_range_start_iso)
+            clause = _format_history_chance_clause(
+                str(lead_h.get("title") or ""),
+                str(best_range_series.get("name") or ""),
+            )
+            since_suffix = f" since {start_label}" if start_label else ""
+            return f"{clause} has ranged from {best_range_lo}% to {best_range_hi}%{since_suffix}"
+        start_label = _format_history_start_date(best_start_iso)
+        h_phrase = _prose_market_phrase(str(lead_h.get("title") or ""), capitalize_first=True)
+        since_suffix = f" since {start_label}" if start_label else ""
+        return f"The chance on {h_phrase} shifted{since_suffix}"
 
     if spotlight_item is not None and duel_item is not None:
         sp_fav = _fav_outcome(spotlight_item)
@@ -2768,6 +4599,137 @@ def _build_dynamic_title_from_set(
         if sp_fav:
             sp_phrase = _prose_market_phrase(str(spotlight_item["title"]))
             return f"{_prose_rate_outcome(str(sp_fav['name']), capitalize_first=True)} leads {sp_phrase} at {sp_fav['rendered_percent']}%"
+
+    def _sibling_headline() -> Optional[str]:
+        if not sibling_items:
+            return None
+        lead_sib = sibling_items[0]
+        lead_o = _fav_outcome(lead_sib)
+        if lead_o is None:
+            return None
+        lead_name = _prose_outcome_name(str(lead_o["name"]))
+        lead_title = str(lead_sib.get("title") or "").strip()
+        lead_p = int(lead_o["rendered_percent"])
+        _CASTING_ROLES = {
+            "james bond",
+            "m",
+            "q",
+            "moneypenny",
+            "bond girl",
+            "villain",
+            "main villain",
+        }
+        if len(sibling_items) >= 2:
+            sec_sib = sibling_items[1]
+            sec_o = _fav_outcome(sec_sib)
+            if sec_o is not None:
+                sec_name = _prose_outcome_name(str(sec_o["name"]))
+                sec_title = str(sec_sib.get("title") or "").strip()
+                sec_p = int(sec_o["rendered_percent"])
+                sec_verb = (
+                    "to play"
+                    if sec_title.lower() in _CASTING_ROLES
+                    else "leading"
+                )
+                return f"{lead_name} leads {lead_title} at {lead_p}%, with {sec_name} {sec_verb} {sec_title} at {sec_p}%"
+        return f"{lead_name} leads {lead_title} at {lead_p}%"
+
+    if sibling_items and lead_sec_form == "sibling_fields_grid":
+        sib_hl = _sibling_headline()
+        if sib_hl:
+            return sib_hl
+
+    if benchmark_items:
+        rule_dict = definition.get("rule") if isinstance(definition.get("rule"), Mapping) else {}
+        headline_pool = _filter_card_benchmark_items(benchmark_items, rule_dict)
+        if rule_dict.get("headline_exclude_date_rows"):
+            non_date = [it for it in headline_pool if not it.get("is_date_timing_row")]
+            if non_date:
+                headline_pool = non_date
+        lead_bm = headline_pool[0]
+        lead_o = _fav_outcome(lead_bm)
+        group_name = str(definition.get("name") or "").strip().rstrip("?")
+        rule_pred = str(rule_dict.get("headline_predicate") or "").strip()
+        rule_secs = rule_dict.get("sections")
+        first_sec = rule_secs[0] if isinstance(rule_secs, Sequence) and rule_secs else {}
+        item_noun = str((first_sec.get("item_noun") if isinstance(first_sec, Mapping) else None) or "categories").strip()
+        if lead_o is not None:
+            lead_phrase = str(lead_bm.get("headline_phrase") or "").strip().rstrip("?").strip()
+            lead_t = (lead_phrase or str(lead_bm.get("title") or "").strip()).rstrip("?").strip()
+            lead_p = int(lead_o["rendered_percent"])
+            verb = "lead" if " & " in lead_t else "leads"
+            if lead_phrase and "{pct}" in lead_phrase:
+                lead_clause = lead_phrase.replace("{pct}", str(lead_p))
+            elif lead_phrase:
+                lead_clause = f"{lead_phrase} is at {lead_p}%"
+            elif rule_pred:
+                lead_clause = f"{lead_t} {rule_pred} at {lead_p}%"
+            elif group_name:
+                lead_clause = f"{lead_t} {verb} {group_name} at {lead_p}%"
+            else:
+                lead_clause = f"{lead_t} {verb} at {lead_p}%"
+            if len(headline_pool) >= 2:
+                lead_ans_raw = str(lead_o.get("name") or "").strip()
+                lead_ans_key = _norm_key(lead_ans_raw)
+                lead_is_date_or_bool = lead_ans_key in {"yes", "no"} or bool(
+                    _PREP_DATE_OUTCOME_RE.match(lead_ans_raw)
+                    or _BARE_MONTH_DAY_RE.match(lead_ans_raw)
+                    or _BARE_MONTH_YEAR_OR_YEAR_RE.match(lead_ans_raw)
+                )
+                sec_bm = headline_pool[1]
+                sec_o = _fav_outcome(sec_bm)
+
+                def _sec_text_for(item_bm: Mapping[str, Any]) -> str:
+                    return (
+                        str(item_bm.get("headline_with_phrase") or "").strip()
+                        or str(item_bm.get("headline_phrase") or "").strip()
+                        or str(item_bm.get("title") or "").strip()
+                    ).rstrip("?").strip()
+
+                sec_t_initial = _sec_text_for(sec_bm)
+                repeats_lead_answer = bool(
+                    lead_ans_key
+                    and not lead_is_date_or_bool
+                    and len(lead_ans_raw) >= 3
+                    and lead_ans_raw.lower() in lead_clause.lower()
+                    and lead_ans_raw.lower() in sec_t_initial.lower()
+                )
+                if repeats_lead_answer:
+                    for cand_bm in headline_pool[1:]:
+                        cand_o = _fav_outcome(cand_bm)
+                        if cand_o is None:
+                            continue
+                        cand_sec_t = _sec_text_for(cand_bm)
+                        if (
+                            _norm_key(str(cand_o.get("name") or "")) != lead_ans_key
+                            and lead_ans_raw.lower() not in cand_sec_t.lower()
+                        ):
+                            sec_bm = cand_bm
+                            sec_o = cand_o
+                            break
+                    else:
+                        same_count = sum(
+                            1
+                            for it in headline_pool
+                            if (_fav_outcome(it) or {}).get("name")
+                            and _norm_key(str((_fav_outcome(it) or {})["name"])) == lead_ans_key
+                        )
+                        if same_count >= 2:
+                            if lead_phrase or not rule_pred:
+                                return f"{lead_phrase or lead_t} is at {lead_p}%, leading {same_count} of {len(headline_pool)} {item_noun}"
+                            return f"{lead_t} {rule_pred} at {lead_p}%, with {lead_ans_raw} leading {same_count} of {len(headline_pool)} {item_noun}"
+                if sec_o is not None:
+                    sec_t = _sec_text_for(sec_bm)
+                    sec_p = int(sec_o["rendered_percent"])
+                    if "{pct}" in sec_t:
+                        return f"{lead_clause}, and {sec_t.replace('{pct}', str(sec_p))}"
+                    return f"{lead_clause}, with {sec_t} at {sec_p}%"
+            return lead_clause
+
+    if sibling_items:
+        sib_hl = _sibling_headline()
+        if sib_hl:
+            return sib_hl
 
     return str(definition.get("name") or definition.get("slug") or "Round-Up")
 
@@ -2841,13 +4803,22 @@ async def produce_container_machinery(
     from app.utils.roundup_containers import RoundupMembers, RoundupRefusal
 
     now_dt = now or datetime.now(timezone.utc)
-    resolver = _default_art_resolver()
+    base_resolver = _default_art_resolver()
     rule = definition.get("rule") if isinstance(definition.get("rule"), Mapping) else {}
     sections_cfg = rule.get("sections") or ()
     if not isinstance(sections_cfg, Sequence) or not sections_cfg:
         return RoundupRefusal((("container_machinery", "empty_sections"),))
 
     snapshot = await _load_snapshot_from_db(db, definition, now_dt)
+    snap_team_lookup = snapshot.get("team_lookup")
+    resolver = (
+        SubjectArtResolver(
+            team_lookup=snap_team_lookup,
+            _static_by_norm=base_resolver._by_norm,
+        )
+        if snap_team_lookup is not None
+        else base_resolver
+    )
     all_events = snapshot["events"]
     all_markets = snapshot["markets"]
     paired_sets = snapshot["paired_sets"]
@@ -2856,7 +4827,35 @@ async def produce_container_machinery(
     built_by_idx: dict[int, dict[str, Any]] = {}
     all_member_envelopes: list[dict[str, Any]] = []
     seen_member_keys: set[tuple[str, int]] = set()
+    seen_twin_keys: set[str] = set()
+    covered_twin_market_ids: list[int] = []
     lead_paired_set: Optional[dict[str, Any]] = None
+
+    def _record_covered_twins(item: Mapping[str, Any]) -> None:
+        t_key = _twin_market_key(str(item.get("title") or ""))
+        if t_key:
+            seen_twin_keys.add(t_key)
+        for twin_mid in item.get("_twin_market_ids") or ():
+            if (
+                isinstance(twin_mid, int)
+                and not isinstance(twin_mid, bool)
+                and twin_mid not in covered_twin_market_ids
+            ):
+                covered_twin_market_ids.append(twin_mid)
+                seen_member_keys.add((MEMBER_MARKET, twin_mid))
+
+    def _filter_unseen_twins(items_in: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+        kept: list[dict[str, Any]] = []
+        for it in items_in:
+            t_key = _twin_market_key(str(it.get("title") or ""))
+            if t_key and t_key in seen_twin_keys:
+                mid = it.get("market_id")
+                if isinstance(mid, int) and not isinstance(mid, bool) and mid not in covered_twin_market_ids:
+                    covered_twin_market_ids.append(mid)
+                _record_covered_twins(it)
+                continue
+            kept.append(it)
+        return kept
 
     indexed_cfg = [
         (idx, sec_cfg)
@@ -2888,7 +4887,10 @@ async def produce_container_machinery(
         initial_visible = min(3, int(aq.get("initial_visible_limit", 3)))
 
         if aq_kind == "paired_stage":
-            from app.services.paired_metric_register import fold_outcome_key
+            from app.services.paired_metric_register import (
+                clean_card_face_title,
+                fold_outcome_key,
+            )
 
             pset = _match_paired_set(paired_sets, aq)
             if pset is None:
@@ -2929,7 +4931,8 @@ async def produce_container_machinery(
                         p_val = e.get(prob_field)
                         if not isinstance(p_val, (int, float)) or not math.isfinite(float(p_val)):
                             continue
-                        pct_val = int(e.get(rp_field) or _half_up_pct(float(p_val)))
+                        allocated = e.get(rp_field)
+                        pct_val = int(allocated) if allocated is not None else _half_up_pct(float(p_val))
                         oid_val = e.get(oid_field)
                         if isinstance(oid_val, int):
                             by_oid[int(oid_val)] = pct_val
@@ -2947,7 +4950,7 @@ async def produce_container_machinery(
                     }
                 synthetic_card = {
                     "id": mid,
-                    "name": str(m_meta.get("name") or sec_title),
+                    "name": clean_card_face_title(str(m_meta.get("name") or sec_title)),
                     "status": "open",
                     "source": str(m_meta.get("source") or "kalshi"),
                     "content_kind": "futures",
@@ -2995,6 +4998,7 @@ async def produce_container_machinery(
         if aq_kind == "events":
             sport_req = str(aq.get("sport_key") or "").lower()
             include_completed = bool(aq.get("include_completed", False))
+            exclude_decided = bool(aq.get("exclude_decided", False))
             band = aq.get("probability_band")
             band_lo = float(band[0]) if isinstance(band, Sequence) and len(band) == 2 else 0.0
             band_hi = float(band[1]) if isinstance(band, Sequence) and len(band) == 2 else 1.0
@@ -3003,12 +5007,25 @@ async def produce_container_machinery(
                 if sport_req and str(raw_ev.get("sport") or "").lower() != sport_req:
                     continue
                 ev_status = str(raw_ev.get("status") or "").strip().lower()
-                if not include_completed and ev_status in {"completed", "final", "closed"}:
+                if not include_completed and ev_status in {
+                    "completed",
+                    "final",
+                    "closed",
+                    "finished",
+                    "cancelled",
+                    "postponed",
+                }:
                     continue
                 if (MEMBER_EVENT, int(raw_ev["id"])) in seen_member_keys:
                     continue
                 hyd = _hydrate_event_visual_item(raw_ev, resolver=resolver)
                 if hyd is None:
+                    continue
+                if (
+                    not include_completed
+                    and exclude_decided
+                    and max(int(hyd["away_pct"]), int(hyd["home_pct"])) >= 100
+                ):
                     continue
                 if not (band_lo <= hyd["home_prob"] <= band_hi):
                     continue
@@ -3030,7 +5047,18 @@ async def produce_container_machinery(
                 ]
                 if len(unstarted_items) >= min_items:
                     ev_items = unstarted_items
-                ev_items.sort(key=lambda x: (x["closeness_to_50"], x["commence_time"]))
+                # Goal Step 7 (#12288): do not lead with thin venue/ESPN-only games
+                # when games priced by sportsbooks exist on the slate.
+                sb_items = [it for it in ev_items if it.get("has_sportsbook")]
+                if len(sb_items) >= min_items:
+                    ev_items = sb_items
+                ev_items.sort(
+                    key=lambda x: (
+                        not bool(x.get("has_sportsbook")),
+                        x["closeness_to_50"],
+                        x["commence_time"],
+                    )
+                )
                 # Ruling 253: A — "Toss-up" means neither side above 55%.
                 # When >= 2 games are inside the band, feature ONLY those true toss-ups.
                 # With fewer than 2, rename the section to "Closest games", strip all
@@ -3070,17 +5098,30 @@ async def produce_container_machinery(
             sec_members = []
             for it in ev_items:
                 eid = it["event_id"]
-                env = {
-                    "type": MEMBER_EVENT,
-                    "id": eid,
-                    "destination": event_destination(eid),
-                    "card": it["card"],
-                    "event_id": eid,
+                public_card = {
+                    k: v for k, v in it["card"].items() if not str(k).startswith("_")
                 }
-                sec_members.append(env)
+                dest = event_destination(eid)
+                sec_members.append(
+                    {
+                        "type": MEMBER_EVENT,
+                        "id": eid,
+                        "destination": dest,
+                        "card": public_card,
+                        "event_id": eid,
+                    }
+                )
                 if (MEMBER_EVENT, eid) not in seen_member_keys:
                     seen_member_keys.add((MEMBER_EVENT, eid))
-                    all_member_envelopes.append(env)
+                    all_member_envelopes.append(
+                        {
+                            "type": MEMBER_EVENT,
+                            "id": eid,
+                            "destination": dest,
+                            "card": it["card"],
+                            "event_id": eid,
+                        }
+                    )
             built_by_idx[sec_idx] = {
                 "class": sec_key,
                 "title": sec_title,
@@ -3100,13 +5141,26 @@ async def produce_container_machinery(
 
         if aq_kind == "market_history":
             hours = int(aq.get("hours") or 168)
+            fun_sub_tag_val = str(aq.get("fun_sub_tag") or "").strip() or None
+            date_ladder_pick_val = str(aq.get("date_ladder_pick") or "").strip() or None
             matched_h = [
-                _hydrate_market_visual_item(m, max_outcomes=max_outcomes, resolver=resolver, content_kind="history")
+                _hydrate_market_visual_item(
+                    m,
+                    max_outcomes=max_outcomes,
+                    resolver=resolver,
+                    content_kind="history",
+                    use_fun_short_label=bool(fun_sub_tag_val),
+                    fun_sub_tag=fun_sub_tag_val,
+                    sport_key=_infer_sports_key_for_market(m, definition),
+                    allow_team_lookup=_is_sports_context(m, definition),
+                    now_dt=now_dt,
+                    date_ladder_pick=date_ladder_pick_val,
+                )
                 for m in all_markets
                 if (MEMBER_MARKET, int(m["id"])) not in seen_member_keys
-                and _market_matches_query(m, aq)
+                and _market_matches_query(m, aq, now_dt=now_dt)
             ]
-            matched_h = _dedupe_twin_markets(matched_h)
+            matched_h = _filter_unseen_twins(_dedupe_twin_markets(matched_h))
             order_by = str(aq.get("order_by") or "movement_desc")
             if order_by == "closeness_to_50":
                 matched_h.sort(key=lambda x: (x["closeness_to_50"], -x["lead_prob"]))
@@ -3114,11 +5168,18 @@ async def produce_container_machinery(
                 matched_h.sort(key=lambda x: (-x["lead_prob"], x["title"].casefold()))
             if len(matched_h) < min_items:
                 return RoundupRefusal((("container_machinery", f"too_few_history_markets:{sec_key}"),))
-            all_chart_items = [
-                _build_history_visual_item(hm, market_histories, now_dt=now_dt, hours=hours)
-                for hm in matched_h
+            all_chart_items = []
+            for hm in matched_h:
+                ci = _build_history_visual_item(hm, market_histories, now_dt=now_dt, hours=hours)
+                if hm.get("_twin_market_ids"):
+                    ci["_twin_market_ids"] = list(hm["_twin_market_ids"])
+                all_chart_items.append(ci)
+            rule_card_sec = str((definition.get("rule") or {}).get("card_section_key") or "").strip()
+            is_card_hist_sec = (sec_key == rule_card_sec) if rule_card_sec else (sec_idx == 0)
+            hist_min_swing = int(aq.get("min_swing_pp") or (10 if is_card_hist_sec else 3))
+            moving_charts = [
+                ci for ci in all_chart_items if _history_chart_moved(ci, min_swing_pp=hist_min_swing)
             ]
-            moving_charts = [ci for ci in all_chart_items if _history_chart_moved(ci)]
             if order_by == "movement_desc":
                 moving_charts.sort(
                     key=lambda ci: (-int(ci.get("max_swing_pp") or 0), ci["title"].casefold())
@@ -3137,6 +5198,7 @@ async def produce_container_machinery(
                 sec_members = []
                 for ci in chart_items:
                     mid = int(ci["market_id"])
+                    _record_covered_twins(ci)
                     env = {
                         "type": MEMBER_MARKET,
                         "id": mid,
@@ -3157,7 +5219,7 @@ async def produce_container_machinery(
                         "form_id": form_id,
                         "initial_visible_limit": initial_visible,
                         "items": [
-                            {k: v for k, v in ci.items() if k != "card"}
+                            {k: v for k, v in ci.items() if k not in ("card", "_twin_market_ids")}
                             for ci in chart_items
                         ],
                     },
@@ -3171,7 +5233,37 @@ async def produce_container_machinery(
                     fm_it["content_kind"] = "futures"
                     if isinstance(fm_it.get("card"), dict):
                         fm_it["card"]["content_kind"] = "futures"
-                form_id = choose_section_form("markets", fallback_matched)
+                sec_allow_3way_duel = bool(sec_cfg.get("allow_three_way_duel"))
+                form_id = choose_section_form(
+                    "markets",
+                    fallback_matched,
+                    allow_three_way_duel=sec_allow_3way_duel,
+                )
+                if form_id in {"sibling_fields_grid", "contender_spotlight"}:
+                    tile_cap = 3 if form_id == "contender_spotlight" else 1
+                    all_tiles_pictured = all(
+                        _has_verified_art(o)
+                        for fm_it in fallback_matched
+                        for o in (fm_it.get("outcomes") or ())[:tile_cap]
+                    )
+                    if not all_tiles_pictured:
+                        form_id = "benchmark_strip"
+                if form_id == "benchmark_strip" and max_outcomes > 1:
+                    for fm_it in fallback_matched:
+                        outs = list(fm_it.get("outcomes") or ())[:1]
+                        fm_it["outcomes"] = outs
+                        if outs:
+                            lead_name = str(outs[0].get("name") or "").strip()
+                            fm_it["title"] = _format_benchmark_row_title(
+                                str(fm_it.get("title") or ""),
+                                lead_name,
+                                headline_phrase=fm_it.get("headline_phrase"),
+                            )
+                        if isinstance(fm_it.get("card"), dict):
+                            fm_it["card"]["outcomes"] = [dict(o) for o in outs]
+                            fm_it["card"]["name"] = str(
+                                fm_it.get("title") or fm_it["card"].get("name") or ""
+                            )
                 eff_title, eff_note = _resolve_section_heading(
                     sec_cfg,
                     aq_kind="market_history",
@@ -3183,6 +5275,7 @@ async def produce_container_machinery(
                 sec_members = []
                 for fm_it in fallback_matched:
                     mid = int(fm_it["market_id"])
+                    _record_covered_twins(fm_it)
                     env = {
                         "type": MEMBER_MARKET,
                         "id": mid,
@@ -3203,7 +5296,11 @@ async def produce_container_machinery(
                         "form_id": form_id,
                         "initial_visible_limit": initial_visible,
                         "items": [
-                            {k: v for k, v in fm_it.items() if k != "card"}
+                            {
+                                k: v
+                                for k, v in fm_it.items()
+                                if k not in ("card", "_twin_market_ids", "_volume")
+                            }
                             for fm_it in fallback_matched
                         ],
                     },
@@ -3212,28 +5309,80 @@ async def produce_container_machinery(
 
         # aq_kind == "markets"
         explicit_ck = str(aq.get("content_kind") or "").strip().lower() or None
+        fun_sub_tag_val = str(aq.get("fun_sub_tag") or "").strip() or None
+        use_fun_short = bool(fun_sub_tag_val)
+        date_ladder_pick_val = str(aq.get("date_ladder_pick") or "").strip() or None
         matched = [
             _hydrate_market_visual_item(
                 m,
                 max_outcomes=max_outcomes,
                 resolver=resolver,
                 content_kind=explicit_ck,
+                use_fun_short_label=use_fun_short,
+                fun_sub_tag=fun_sub_tag_val,
+                sport_key=_infer_sports_key_for_market(m, definition),
+                allow_team_lookup=_is_sports_context(m, definition),
+                now_dt=now_dt,
+                date_ladder_pick=date_ladder_pick_val,
             )
             for m in all_markets
             if (MEMBER_MARKET, int(m["id"])) not in seen_member_keys
-            and _market_matches_query(m, aq)
+            and _market_matches_query(m, aq, now_dt=now_dt)
         ]
-        matched = _dedupe_twin_markets(matched)
+        matched = _filter_unseen_twins(_dedupe_twin_markets(matched))
         order_by = str(aq.get("order_by") or "lead_prob_desc")
         if order_by == "closeness_to_50":
             matched.sort(key=lambda x: (x["closeness_to_50"], -x["lead_prob"]))
+        elif order_by == "lead_prob_asc":
+            matched.sort(
+                key=lambda x: (
+                    x["lead_prob"],
+                    -float(x.get("_volume") or 0.0),
+                    x["title"].casefold(),
+                )
+            )
         else:
-            matched.sort(key=lambda x: (-x["lead_prob"], x["title"].casefold()))
+            matched.sort(
+                key=lambda x: (
+                    -x["lead_prob"],
+                    -float(x.get("_volume") or 0.0),
+                    x["title"].casefold(),
+                )
+            )
         matched = matched[:max_items]
         if len(matched) < min_items:
             return RoundupRefusal((("container_machinery", f"too_few_markets:{sec_key}"),))
+        if bool(aq.get("omit_shared_date_suffix_on_rows")) and matched:
+            shared_date_answers = {
+                _norm_key(str((it.get("outcomes") or [{}])[0].get("name") or ""))
+                for it in matched
+                if it.get("is_date_timing_row") and (it.get("outcomes") or ())
+            }
+            if len(shared_date_answers) == 1 and all(it.get("is_date_timing_row") for it in matched):
+                for it in matched:
+                    plain_lbl = str(it.get("_short_label_base") or "").strip()
+                    if plain_lbl:
+                        it["title"] = plain_lbl
 
-        form_id = choose_section_form("markets", matched)
+        sec_allow_3way_duel = bool(sec_cfg.get("allow_three_way_duel"))
+        form_id = choose_section_form(
+            "markets",
+            matched,
+            allow_three_way_duel=sec_allow_3way_duel,
+        )
+        if form_id == "duel_bar" and sec_allow_3way_duel:
+            for it in matched:
+                for out_item in it.get("outcomes") or ():
+                    if (
+                        isinstance(out_item, dict)
+                        and str(out_item.get("name") or "").strip().lower()
+                        in _DUEL_DRAW_OUTCOME_NAMES
+                    ):
+                        art = dict(out_item.get("art") or {})
+                        art["url"] = None
+                        art["kind"] = "monogram"
+                        art["accent_color"] = "#94A3B8"
+                        out_item["art"] = art
         eff_title, eff_note = _resolve_section_heading(
             sec_cfg,
             aq_kind="markets",
@@ -3245,6 +5394,7 @@ async def produce_container_machinery(
         sec_members = []
         for it in matched:
             mid = it["market_id"]
+            _record_covered_twins(it)
             env = {
                 "type": MEMBER_MARKET,
                 "id": mid,
@@ -3256,20 +5406,29 @@ async def produce_container_machinery(
                 seen_member_keys.add((MEMBER_MARKET, mid))
                 all_member_envelopes.append(env)
 
+        vb_payload: dict[str, Any] = {
+            "form_id": form_id,
+            "initial_visible_limit": initial_visible,
+            "items": [
+                {
+                    k: v
+                    for k, v in it.items()
+                    if k not in ("card", "_twin_market_ids", "_volume", "_short_label_base")
+                }
+                for it in matched
+            ],
+        }
+        sec_item_noun = str(sec_cfg.get("item_noun") or "").strip()
+        if sec_item_noun:
+            vb_payload["item_noun"] = sec_item_noun
+
         built_by_idx[sec_idx] = {
             "class": sec_key,
             "title": eff_title,
             "note": eff_note,
             "layout": form_id,
             "members": sec_members,
-            "visual_block": {
-                "form_id": form_id,
-                "initial_visible_limit": initial_visible,
-                "items": [
-                    {k: v for k, v in it.items() if k != "card"}
-                    for it in matched
-                ],
-            },
+            "visual_block": vb_payload,
         }
 
     built_sections = [built_by_idx[idx] for idx in sorted(built_by_idx)]
@@ -3290,6 +5449,15 @@ async def produce_container_machinery(
         (s for s in built_sections if s["class"] == preferred_card_key),
         built_sections[0],
     )
+    card_sec_cfg = next(
+        (
+            s
+            for s in ((rule.get("sections") or ()) if isinstance(rule, Mapping) else ())
+            if isinstance(s, Mapping) and str(s.get("key") or "").strip() == str(card_sec.get("class") or "")
+        ),
+        {},
+    )
+    card_allow_3way_duel = bool(card_sec_cfg.get("allow_three_way_duel"))
     vb = card_sec["visual_block"]
     vb_form = vb["form_id"]
     card_scale_ordered = False
@@ -3302,7 +5470,8 @@ async def produce_container_machinery(
         w_mid = int((pset.get("stage_2_market") or {}).get("id") or 1)
         for idx, e in enumerate((pset.get("entries") or ())[:card_rows_limit]):
             win_p = float(e.get("stage_2_probability") or 0.0)
-            win_pct = int(e.get("stage_2_rendered_percent") or _half_up_pct(win_p))
+            allocated = e.get("stage_2_rendered_percent")
+            win_pct = int(allocated) if allocated is not None else _half_up_pct(win_p)
             nom_p = e.get("stage_1_probability")
             row_d: dict[str, Any] = {
                 "market_id": w_mid,
@@ -3332,6 +5501,103 @@ async def produce_container_machinery(
                 }
             )
             card_visual_rows.append(it)
+    elif vb_form == "benchmark_strip" and len(vb.get("items") or ()) >= 2:
+        card_bm_items = _filter_card_benchmark_items(vb.get("items") or (), rule)
+        for bm in card_bm_items[:card_rows_limit]:
+            mid = int(bm.get("market_id") or 1)
+            outs = list(bm.get("outcomes") or ())
+            if not outs:
+                continue
+            yes = outs[0]
+            bm_title = str(bm.get("title") or yes.get("name") or "")
+            rows_out.append(
+                {
+                    "market_id": mid,
+                    "outcome_id": int(yes["outcome_id"]),
+                    "label": bm_title,
+                    "probability": float(yes["probability"]),
+                    "rendered_percent": int(yes["rendered_percent"]),
+                }
+            )
+            card_visual_rows.append(
+                {
+                    "market_id": mid,
+                    "href": bm.get("href") or f"/futures/{mid}",
+                    **yes,
+                    "name": bm_title,
+                }
+            )
+    elif vb_form == "sibling_fields_grid" and len(vb.get("items") or ()) >= 2:
+        for sib in (vb.get("items") or ())[:card_rows_limit]:
+            mid = int(sib.get("market_id") or 1)
+            outs = list(sib.get("outcomes") or ())
+            if not outs:
+                continue
+            lead = max(outs, key=lambda o: float(o.get("probability") or 0.0))
+            sib_label = f"{sib.get('title') or ''} · {lead.get('name') or ''}".strip(" ·")
+            rows_out.append(
+                {
+                    "market_id": mid,
+                    "outcome_id": int(lead["outcome_id"]),
+                    "label": sib_label,
+                    "probability": float(lead["probability"]),
+                    "rendered_percent": int(lead["rendered_percent"]),
+                }
+            )
+            card_visual_rows.append(
+                {
+                    "market_id": mid,
+                    "href": sib.get("href") or f"/futures/{mid}",
+                    **lead,
+                    "name": sib_label,
+                }
+            )
+    elif vb_form == "probability_history_chart":
+        chart_items = [
+            ch
+            for ch in (vb.get("items") or ())
+            if isinstance(ch, Mapping) and (ch.get("series") or ())
+        ]
+        card_scale_ordered = False
+        if len(chart_items) >= 2:
+            for ch in chart_items[:card_rows_limit]:
+                c_mid = int(ch.get("market_id") or 1)
+                series_list = [s for s in (ch.get("series") or ()) if isinstance(s, Mapping)]
+                lead_s = max(
+                    series_list,
+                    key=lambda s: (
+                        int(s.get("current_pct") or 0),
+                        abs(int(s.get("net_move_pp") or 0)),
+                        str(s.get("name") or ""),
+                    ),
+                )
+                cur_pct = int(lead_s.get("current_pct") or 0)
+                prob = round(cur_pct / 100.0, 4)
+                oid = int(lead_s.get("outcome_id") or 0)
+                ch_title = str(ch.get("title") or "").strip()
+                ans_name = str(lead_s.get("name") or "").strip()
+                label, _ = _format_fun_lead_answer_label(ch_title, ans_name)
+                art = lead_s.get("art") if isinstance(lead_s.get("art"), Mapping) else {}
+                rows_out.append(
+                    {
+                        "market_id": c_mid,
+                        "outcome_id": oid,
+                        "label": label,
+                        "probability": prob,
+                        "rendered_percent": cur_pct,
+                    }
+                )
+                card_visual_rows.append(
+                    {
+                        "market_id": c_mid,
+                        "outcome_id": oid,
+                        "href": ch.get("href") or f"/futures/{c_mid}",
+                        "name": label,
+                        "probability": prob,
+                        "rendered_percent": cur_pct,
+                        "art": dict(art),
+                    }
+                )
     else:
         lead_market = (vb.get("items") or [{}])[0]
         mid = int(lead_market.get("market_id") or 1)
@@ -3342,6 +5608,19 @@ async def produce_container_machinery(
             s_idx = numerical_scale_order_indices(sliced)
             chosen_outs = [sliced[i] for i in s_idx] if s_idx is not None else sliced
             card_scale_ordered = s_idx is not None
+        elif vb_form == "duel_bar" and card_allow_3way_duel:
+            non_draw_outs = [
+                o
+                for o in all_lead_outs
+                if str(o.get("name") or "").strip().lower() not in _DUEL_DRAW_OUTCOME_NAMES
+            ]
+            draw_outs = [
+                o
+                for o in all_lead_outs
+                if str(o.get("name") or "").strip().lower() in _DUEL_DRAW_OUTCOME_NAMES
+            ]
+            chosen_outs = (non_draw_outs + draw_outs)[:card_rows_limit]
+            card_scale_ordered = False
         else:
             chosen_outs = all_lead_outs[:card_rows_limit]
             card_scale_ordered = bool(lead_market.get("scale_ordered"))
@@ -3384,6 +5663,40 @@ async def produce_container_machinery(
     raw_footer = str(definition.get("footer") or "").strip()
     clean_footer = "" if _SETTLEMENT_FILLER_RE.search(raw_footer) else raw_footer
 
+    hide_row_art = bool(rule.get("hide_row_art"))
+    if hide_row_art and card_visual_rows:
+        card_visual_rows = _strip_visual_row_art(card_visual_rows)
+
+    # All-or-nothing row art parity with iOS (`GroupingMachineryViews12288`):
+    # a Discover card or set-page section gets row pictures only when every row
+    # it renders has a real verified picture (never letters beside photos).
+    if (
+        not hide_row_art
+        and card_visual_rows
+        and vb_form in {"benchmark_strip", "sibling_fields_grid", "leader_bars", "contender_spotlight", "probability_history_chart"}
+        and not card_scale_ordered
+    ):
+        row_has_url = [
+            isinstance(r, Mapping) and _has_verified_art(r) for r in card_visual_rows
+        ]
+        is_public_stage = (
+            str(definition.get("stage") or "").strip().lower() == "public"
+            or definition.get("stage") is None
+        )
+        if not all(row_has_url) and is_public_stage and _is_sports_definition(definition):
+            missing_subjects = [
+                _missing_art_subject_label(r, vb)
+                for r, has_art in zip(card_visual_rows, row_has_url)
+                if isinstance(r, Mapping) and not has_art
+            ]
+            logger.warning(
+                "Public sports card %s dropped row pictures; missing art for subjects=%s",
+                slug,
+                missing_subjects,
+            )
+        if any(row_has_url) and not all(row_has_url):
+            card_visual_rows = _strip_visual_row_art(card_visual_rows)
+
     has_card_art = any(_has_verified_art(r) for r in card_visual_rows if isinstance(r, Mapping))
     if vb_form == "paired_stage_bars" and lead_paired_set:
         has_card_art = any(
@@ -3395,32 +5708,93 @@ async def produce_container_machinery(
     # (never a different market from another section), and only when that market's number moved.
     mini_chart: Optional[dict[str, Any]] = None
     if (
-        not has_card_art
+        (vb_form == "probability_history_chart" or not has_card_art)
         and vb_form not in {"paired_stage_bars", "coin_flip_matchups", "matchup_slate"}
         and (vb.get("items") or ())
     ):
-        own_lead_market = vb["items"][0]
-        if isinstance(own_lead_market, Mapping) and own_lead_market.get("outcomes"):
-            own_chart = _build_history_visual_item(
-                own_lead_market, market_histories, now_dt=now_dt, hours=168
-            )
-            if _history_chart_moved(own_chart):
+        if vb_form == "probability_history_chart":
+            own_chart = vb["items"][0]
+            card_min_swing = int(((card_sec.get("atom_query") or {}).get("min_swing_pp")) or 10)
+            if isinstance(own_chart, Mapping) and _history_chart_moved(
+                own_chart, min_swing_pp=card_min_swing
+            ):
                 mini_chart = {k: v for k, v in own_chart.items() if k != "card"}
+        else:
+            own_lead_market = vb["items"][0]
+            if isinstance(own_lead_market, Mapping) and own_lead_market.get("outcomes"):
+                own_chart = _build_history_visual_item(
+                    own_lead_market, market_histories, now_dt=now_dt, hours=168
+                )
+                if _history_chart_moved(own_chart):
+                    mini_chart = {k: v for k, v in own_chart.items() if k != "card"}
 
+    suppress_card_photo = bool(rule.get("suppress_card_photo"))
+    if suppress_card_photo:
+        for env in all_member_envelopes:
+            if isinstance(env, dict) and isinstance(env.get("card"), dict):
+                env["card"]["image_url"] = None
+        for sec in built_sections:
+            for env in sec.get("members") or ():
+                if isinstance(env, dict) and isinstance(env.get("card"), dict):
+                    env["card"]["image_url"] = None
+
+    card_image_url = str(rule.get("card_image_url") or "").strip() or None
+    card_image_alt = str(rule.get("card_image_alt") or "").strip() or None
+    card_image_credit = str(rule.get("card_image_credit") or "").strip() or None
+    card_image_author = str(rule.get("card_image_author") or "").strip() or None
+    card_image_license = str(rule.get("card_image_license") or "").strip() or None
+    card_image_source_page = str(rule.get("card_image_source_page") or "").strip() or None
+    allow_card_header_image = bool(card_image_url) and not (
+        mini_chart is not None and vb_form == "probability_history_chart"
+    )
+    if allow_card_header_image and isinstance(vb, dict):
+        vb["hero_image_url"] = card_image_url
+        if card_image_alt:
+            vb["hero_image_alt"] = card_image_alt
+        if card_image_credit:
+            vb["hero_image_credit"] = card_image_credit
+        if card_image_author:
+            vb["hero_image_author"] = card_image_author
+        if card_image_license:
+            vb["hero_image_license"] = card_image_license
+        if card_image_source_page:
+            vb["hero_image_source_page"] = card_image_source_page
+
+    card_item_count, card_item_noun = _machinery_card_item_count_and_noun(vb)
     machinery_card: dict[str, Any] = {
         "slug": slug,
         "form_id": vb_form,
+        "stage": str(definition.get("stage") or "public"),
+        "look": str(definition.get("look") or "bars"),
         "kicker": str(definition.get("kicker") or "ROUND-UP"),
         "title": dynamic_title,
         "subtitle": str(card_sec.get("note") or ""),
         "footer": clean_footer,
         "scale_ordered": card_scale_ordered,
         "section_count": len(built_sections),
+        "item_count": card_item_count,
+        "item_noun": card_item_noun,
         "destination_href": dest_href,
         "rows": card_visual_rows,
     }
+    if suppress_card_photo:
+        machinery_card["suppress_card_photo"] = True
+    if allow_card_header_image:
+        machinery_card["image_url"] = card_image_url
+        if card_image_alt:
+            machinery_card["image_alt"] = card_image_alt
+        if card_image_credit:
+            machinery_card["image_credit"] = card_image_credit
+        if card_image_author:
+            machinery_card["image_author"] = card_image_author
+        if card_image_license:
+            machinery_card["image_license"] = card_image_license
+        if card_image_source_page:
+            machinery_card["image_source_page"] = card_image_source_page
     if mini_chart is not None:
         machinery_card["mini_chart"] = mini_chart
+
+    _enforce_section_all_or_nothing_art(built_sections, hide_row_art=hide_row_art)
 
     card_paired_set: Optional[dict[str, Any]] = None
     if vb_form == "paired_stage_bars" and lead_paired_set is not None:
@@ -3440,7 +5814,47 @@ async def produce_container_machinery(
         parent_name=definition.get("parent_name"),
         paired_metric_set=card_paired_set,
         machinery_card=machinery_card,
+        covered_market_ids=covered_twin_market_ids,
     )
+
+
+def _machinery_card_item_count_and_noun(vb: Mapping[str, Any]) -> tuple[int, str]:
+    """Return ``(item_count, item_noun)`` for a grouping Discover card CTA (#13234).
+
+    Matches the set page's ``ShowAllButton`` counts and item nouns so a single-section
+    grouping card can read ``See all 7 markets ›``, ``See all 11 cities ›``,
+    ``See all 16 couples ›``, etc.
+    """
+    form_id = str(vb.get("form_id") or "").strip()
+    explicit_noun = str(vb.get("item_noun") or "").strip()
+    if form_id == "paired_stage_bars":
+        paired = vb.get("paired_metric_set")
+        entries = paired.get("entries") if isinstance(paired, Mapping) else None
+        count = (
+            len(entries)
+            if isinstance(entries, Sequence) and not isinstance(entries, (str, bytes))
+            else 0
+        )
+        return count, explicit_noun or "contenders"
+    raw_items = vb.get("items")
+    item_list = (
+        list(raw_items)
+        if isinstance(raw_items, Sequence) and not isinstance(raw_items, (str, bytes))
+        else []
+    )
+    if form_id in {"coin_flip_matchups", "matchup_slate"}:
+        return len(item_list), explicit_noun or "games"
+    if form_id == "sibling_fields_grid":
+        return len(item_list), explicit_noun or "markets"
+    if form_id == "benchmark_strip":
+        return len(item_list), explicit_noun or "benchmarks"
+    if form_id == "probability_history_chart":
+        return len(item_list), explicit_noun or "charts"
+    if form_id == "stacked_bar_list" and len(item_list) == 1 and isinstance(item_list[0], Mapping):
+        outcomes = item_list[0].get("outcomes")
+        if isinstance(outcomes, Sequence) and not isinstance(outcomes, (str, bytes)):
+            return len(outcomes), explicit_noun or "outcomes"
+    return len(item_list), explicit_noun or "markets"
 
 
 def discover_machinery_candidate_paths() -> tuple[Path, ...]:
@@ -3503,6 +5917,8 @@ def build_container_machinery_producer(
         parent_slug=validated.get("parent_slug"),
         parent_name=validated.get("parent_name"),
         enabled=enabled if enabled is not None else container_machinery_enabled,
+        stage=validated.get("stage", "public"),
+        look=validated.get("look", "bars"),
     )
 
 
@@ -3543,6 +5959,110 @@ def is_machinery_candidate_slug(slug: str) -> bool:
     if not slug or "/" in slug or "\\" in slug or ".." in slug:
         return False
     return any(p.stem == slug for p in discover_machinery_candidate_paths())
+
+
+def _missing_art_subject_label(row: Mapping[str, Any], vb: Mapping[str, Any]) -> str:
+    """Resolve the true outcome subject name for missing-art warnings."""
+    row_mid = row.get("market_id")
+    row_oid = row.get("outcome_id")
+    for item in vb.get("items") or ():
+        if not isinstance(item, Mapping):
+            continue
+        if row_mid is not None and item.get("market_id") != row_mid:
+            continue
+        outs = item.get("outcomes") or ()
+        matched = next(
+            (o for o in outs if isinstance(o, Mapping) and o.get("outcome_id") == row_oid),
+            outs[0] if outs else None,
+        )
+        if isinstance(matched, Mapping):
+            cand = str(matched.get("name") or "").strip()
+            if cand and cand.lower() not in {"yes", "no"}:
+                return cand
+    return str(row.get("name") or "")
+
+
+def _strip_visual_row_art(rows: Sequence[Mapping[str, Any]]) -> list[dict[str, Any]]:
+    """Strip row picture URLs cleanly (all-or-nothing or ``rule.hide_row_art``)."""
+    stripped: list[dict[str, Any]] = []
+    for row in rows:
+        row_copy = dict(row)
+        art = row_copy.get("art")
+        if isinstance(art, Mapping):
+            art_copy = dict(art)
+            art_copy["url"] = None
+            art_copy["kind"] = "monogram"
+            row_copy["art"] = art_copy
+        stripped.append(row_copy)
+    return stripped
+
+
+def _enforce_section_all_or_nothing_art(
+    built_sections: Sequence[dict[str, Any]],
+    *,
+    hide_row_art: bool,
+) -> None:
+    """Enforce per-section all-or-nothing row art on set-page sections (#12288 Item 4).
+
+    Called AFTER ``card_visual_rows`` is built so a set-page section with some
+    unpictured rows strips its section row art cleanly without disturbing a
+    3/3 pictured Discover card from the same section.
+    """
+    for sec in built_sections:
+        sec_vb = sec.get("visual_block")
+        if not isinstance(sec_vb, dict):
+            continue
+        s_form = str(sec_vb.get("form_id") or "")
+        items = sec_vb.get("items")
+        if not isinstance(items, list) or not items:
+            continue
+
+        should_strip = False
+        if hide_row_art and s_form in {
+            "benchmark_strip",
+            "sibling_fields_grid",
+            "leader_bars",
+            "contender_spotlight",
+            "duel_bar",
+        }:
+            should_strip = True
+        elif s_form == "benchmark_strip":
+            has_urls = [
+                bool((it.get("outcomes") or ()) and _has_verified_art(it["outcomes"][0]))
+                for it in items
+                if isinstance(it, Mapping)
+            ]
+            should_strip = any(has_urls) and not all(has_urls)
+        elif s_form in {"sibling_fields_grid", "leader_bars", "contender_spotlight", "duel_bar"}:
+            has_urls = [
+                _has_verified_art(o)
+                for it in items
+                if isinstance(it, Mapping) and not it.get("scale_ordered")
+                for o in (it.get("outcomes") or ())
+                if isinstance(o, Mapping)
+                and not (
+                    s_form == "duel_bar"
+                    and str(o.get("name") or "").strip().lower() in _DUEL_DRAW_OUTCOME_NAMES
+                )
+            ]
+            should_strip = any(has_urls) and not all(has_urls)
+
+        if not should_strip:
+            continue
+
+        stripped_items: list[dict[str, Any]] = []
+        for it in items:
+            if not isinstance(it, Mapping):
+                continue
+            it_copy = dict(it)
+            if hide_row_art or not it_copy.get("scale_ordered"):
+                outs = it_copy.get("outcomes")
+                if isinstance(outs, Sequence) and not isinstance(outs, (str, bytes)):
+                    it_copy["outcomes"] = _strip_visual_row_art(
+                        [o for o in outs if isinstance(o, Mapping)]
+                    )
+            stripped_items.append(it_copy)
+        sec_vb["items"] = stripped_items
 
 
 def _has_verified_art(obj: Mapping[str, Any]) -> bool:
@@ -3858,7 +6378,8 @@ def _compute_member_number_parity(
                         {"location": f"card:paired_stage_1:{subj}", "market_id": s1_mid, "shown": shown_s1, "member_page": exp_s1}
                     )
             if isinstance(e.get("stage_2_probability"), (int, float)) and s2_mid in market_truth:
-                shown_s2 = int(e.get("stage_2_rendered_percent") or _half_up_pct(float(e["stage_2_probability"])))
+                allocated = e.get("stage_2_rendered_percent")
+                shown_s2 = int(allocated) if allocated is not None else _half_up_pct(float(e["stage_2_probability"]))
                 exp_s2 = _lookup_market_member_pct(
                     market_truth.get(s2_mid),
                     int(e["stage_2_outcome_id"]) if isinstance(e.get("stage_2_outcome_id"), int) else None,
@@ -3941,7 +6462,8 @@ def _compute_member_number_parity(
                             {"location": f"{sec_cls}:paired_stage_1:{subj}", "market_id": s1_mid, "shown": shown_s1, "member_page": exp_s1}
                         )
                 if isinstance(e.get("stage_2_probability"), (int, float)) and s2_mid in market_truth:
-                    shown_s2 = int(e.get("stage_2_rendered_percent") or _half_up_pct(float(e["stage_2_probability"])))
+                    allocated = e.get("stage_2_rendered_percent")
+                    shown_s2 = int(allocated) if allocated is not None else _half_up_pct(float(e["stage_2_probability"]))
                     exp_s2 = _lookup_market_member_pct(
                         market_truth.get(s2_mid),
                         int(e["stage_2_outcome_id"]) if isinstance(e.get("stage_2_outcome_id"), int) else None,

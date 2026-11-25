@@ -489,8 +489,9 @@ class TestDeterministicFuturesHeadlines:
         )
         assert headline == "Patrick Mahomes down 7 points today"
 
-    def test_binary_yes_mover_is_humanized_before_headline(self):
-        """Binary futures should name the subject, not the raw Yes/No side."""
+    def test_binary_yes_mover_stays_canonical_yes_before_headline(self):
+        """#13270 — Binary futures keep canonical 'Yes'/'No' and never fabricate
+        subject / 'Not <subject>' labels."""
         from app.utils.feed_reasons import (
             generate_futures_headline,
             generate_futures_reason,
@@ -524,7 +525,8 @@ class TestDeterministicFuturesHeadlines:
 
         assert result.top_mover_name == "Yes"
         display_mover = humanize_binary_outcome_name(result.top_mover_name, market_name)
-        assert display_mover == "Anthropic"
+        assert display_mover == "Yes"
+        assert humanize_binary_outcome_name("No", market_name) == "No"
 
         headline = generate_futures_headline(
             result.reasons,
@@ -537,11 +539,8 @@ class TestDeterministicFuturesHeadlines:
             top_mover_name=display_mover,
             top_mover_change=0.08,
         )
-        assert headline == "Anthropic up 8 points today"
-        assert reason == (
-            "Anthropic moved up 8 points today in "
-            "Will Anthropic IPO before OpenAI?"
-        )
+        assert "Not " not in headline
+        assert "Not " not in reason
 
     def test_source_disagreement_is_scored_but_never_narrated(self):
         """#4133/#4160 reversed this test's premise, and kept its scoring half.

@@ -1,0 +1,64 @@
+{
+  "slug": "machinery-march-madness-2027",
+  "stage": "public",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_event",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "SPORTS · COLLEGE BASKETBALL",
+  "name": "March Madness 2027",
+  "category": "basketball",
+  "tag": "SPORTS",
+  "section_title": "Final Four & Poll Favorites",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "card_rows": 3,
+    "card_section_key": "ap_poll_field",
+    "suppress_card_photo": true,
+    "sections": [
+      {
+        "key": "ap_poll_field",
+        "title": "Dec 7 AP Poll #1 Contenders",
+        "item_noun": "teams",
+        "note": "Full AP Poll #1 race alongside teams contending for the 2027 Final Four.",
+        "atom_query": {
+          "kind": "markets",
+          "sport_key": "basketball_ncaab",
+          "fun_sub_tag": "batch5-march-madness-ap-poll",
+          "shape": "field",
+          "order_by": "lead_prob_desc",
+          "min_items": 1,
+          "max_items": 1,
+          "max_outcomes": 6,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      },
+      {
+        "key": "march_madness_2027",
+        "title": "Final Four Contenders",
+        "item_noun": "teams",
+        "note": "Programs competing for the 2027 Final Four.",
+        "atom_query": {
+          "kind": "markets",
+          "sport_key": "basketball_ncaab",
+          "fun_sub_tag": "batch5-march-madness-final-four",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 10,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}

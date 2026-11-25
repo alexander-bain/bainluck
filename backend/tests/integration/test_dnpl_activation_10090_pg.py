@@ -26,6 +26,18 @@ pytestmark = [
 
 @pytest.fixture
 async def recovery(rig, redis_kwargs):  # noqa: F811
+    from sqlalchemy import text
+
+    # Warm asyncpg statement/pool state before timed authority controls run on
+    # loaded CI runners, mirroring `default_preview_redis` (#12698, #12624).
+    async with rig.maker() as warm:
+        tx = await warm.begin()
+        await warm.execute(text("SET LOCAL lock_timeout = '100ms'"))
+        await warm.execute(text("SET LOCAL statement_timeout = '100ms'"))
+        await tx.rollback()
+
+    prev_budget = rig.store.budget_s
+    rig.store.budget_s = 2.0
     client = Redis(**redis_kwargs, decode_responses=True)
     server = await client.info("server")
     repl = await client.info("replication")
@@ -47,9 +59,12 @@ async def recovery(rig, redis_kwargs):  # noqa: F811
             client=client,
             store=rig.store,
             prepare=prepare,
-            controller=activation.ActivationController(rig.store, client),
+            controller=activation.ActivationController(
+                rig.store, client, command_budget_s=2.0
+            ),
         )
     finally:
+        rig.store.budget_s = prev_budget
         await client.aclose()
 
 
@@ -88,7 +103,7 @@ async def test_command_preview_preserves_actual_recovery_state(recovery):
         )
         keys = sorted(await r.client.keys("*"))
         values = [await r.client.dump(key) for key in keys]
-        result = await preview(r.store, r.client, current, primary)
+        result = await preview(r.store, r.client, current, primary, budget_s=5.0)
         assert result["status"] == "SNAPSHOT_MATCH"
         assert result["mutation_permitted"] is False
         assert result["activation_step"] == before[1]
@@ -149,8 +164,8 @@ async def test_command_runner_real_lifecycle_and_uncertain_readback(
     original = activation.eval_once
     sends = []
 
-    async def transport(*args):
-        result = await original(*args)
+    async def transport(*args, **kwargs):
+        result = await original(*args, **kwargs)
         sends.append(args[1])
         if lost_reply and args[1] == activation.INITIALIZE_ONCE_SCRIPT:
             raise ConnectionError("reply lost after actual initialization")
@@ -165,6 +180,7 @@ async def test_command_runner_real_lifecycle_and_uncertain_readback(
             run_id=str(uuid4()),
             primary=primary,
             apps={},
+            preview_budget_s=5.0,
         )
         assert (
             await runner.run_step(
@@ -267,8 +283,8 @@ async def test_lost_initializer_reply_is_read_back_without_resend(
     original = activation.eval_once
     sent = []
 
-    async def lose_reply(*args):
-        result = await original(*args)
+    async def lose_reply(*args, **kwargs):
+        result = await original(*args, **kwargs)
         sent.append(args[1])
         if args[1] == activation.INITIALIZE_ONCE_SCRIPT:
             raise ConnectionError("initializer reply lost after successful write")
@@ -349,8 +365,8 @@ async def test_lost_cleanup_reply_keeps_durable_predecessor_until_verified(
     original = activation.eval_once
     deletions = []
 
-    async def lose_reply(*args):
-        result = await original(*args)
+    async def lose_reply(*args, **kwargs):
+        result = await original(*args, **kwargs)
         if args[1] == activation.CLEAN_PREDECESSOR_SCRIPT:
             deletions.append(args)
             raise ConnectionError("cleanup reply lost")
@@ -433,8 +449,8 @@ async def test_replacement_primary_frees_pending_predecessor_then_recovers(
             original = activation.eval_once
             deletions = []
 
-            async def maybe_lose(*args):
-                result = await original(*args)
+            async def maybe_lose(*args, **kwargs):
+                result = await original(*args, **kwargs)
                 if args[1] == activation.CLEAN_REPLACED_PREDECESSOR_SCRIPT:
                     deletions.append(args)
                     if lose_reply:

@@ -32,6 +32,10 @@ struct GamePlayCardView: View {
     /// tooltip. Nothing sits beneath a floating card, so no row holds a fixed
     /// height for a plot that must not move (see the two-line box in `body`).
     var floats = false
+    /// #12628 — single chart clock: wall-clock and `as of` times read from the
+    /// chart's `@Environment(\.timeZone)` so they match the x-axis ticks and
+    /// tapped reading slot outside Pacific Time.
+    @Environment(\.timeZone) private var timeZone
 
     private var point: GamePlayPoint? {
         selectedPoint ?? lastPoint
@@ -242,7 +246,10 @@ struct GamePlayCardView: View {
         }
         // #8651 — a floating card rides pre-game charts that span days, where a
         // bare "3:50 AM" names no day; the axis beneath it prints "Mon 1 AM".
-        let wallClock = floats ? point.datedWallClockDisplay : point.wallClockDisplay
+        // #12628 — format in the same `@Environment(\.timeZone)` as the axis.
+        let wallClock = floats
+            ? point.datedWallClockDisplay(in: timeZone)
+            : point.wallClockDisplay(in: timeZone)
         if !wallClock.isEmpty {
             Text(wallClock)
                 .font(.caption2)
@@ -251,7 +258,7 @@ struct GamePlayCardView: View {
                 .lineLimit(1)
                 .fixedSize()
         }
-        if let asOf = point.stateAsOfDisplay {
+        if let asOf = point.stateAsOfDisplay(in: timeZone) {
             Text(asOf)
                 .font(.caption2)
                 .monospacedDigit()
@@ -405,8 +412,12 @@ struct GamePlayPoint {
     /// the readout to say beside the score and the game clock. Empty when the
     /// timestamp does not parse, which is the card's cue to draw nothing.
     var wallClockDisplay: String {
+        wallClockDisplay(in: .current)
+    }
+
+    func wallClockDisplay(in timeZone: TimeZone) -> String {
         guard let date = timestamp.asDate else { return "" }
-        return Self.clockText(date)
+        return Self.clockText(date, timeZone: timeZone)
     }
 
     /// Which halves of the badge `liveStatusText` actually printed. Decided
@@ -439,6 +450,10 @@ struct GamePlayPoint {
     ///
     /// Reader copy, not implementation: it names a time, not a mechanism.
     var stateAsOfDisplay: String? {
+        stateAsOfDisplay(in: .current)
+    }
+
+    func stateAsOfDisplay(in timeZone: TimeZone) -> String? {
         var carried: [Date] = []
         if periodIsCarried, let d = periodObservedAt { carried.append(d) }
         if clockIsCarried, let d = clockObservedAt { carried.append(d) }
@@ -447,19 +462,25 @@ struct GamePlayPoint {
             carried.append(d)
         }
         guard let oldest = carried.min() else { return nil }
-        return "as of \(Self.asOfText(oldest, pointDate: timestamp.asDate))"
+        var calendar = Calendar.current
+        calendar.timeZone = timeZone
+        return "as of \(Self.asOfText(oldest, pointDate: timestamp.asDate, calendar: calendar, timeZone: timeZone))"
     }
 
     /// One clock format for both lines, so "7:44 PM" and "as of 7:41 PM" read as
     /// the same kind of time.
-    static func clockText(_ date: Date) -> String {
-        date.formatted(date: .omitted, time: .shortened)
+    static func clockText(_ date: Date, timeZone: TimeZone = .current) -> String {
+        date.formatted(Date.FormatStyle(date: .omitted, time: .shortened, timeZone: timeZone))
     }
 
     /// `wallClockDisplay` with its weekday ("Sun 6:06 PM"), for the floating card.
     var datedWallClockDisplay: String {
+        datedWallClockDisplay(in: .current)
+    }
+
+    func datedWallClockDisplay(in timeZone: TimeZone) -> String {
         guard let date = timestamp.asDate else { return "" }
-        return date.formatted(.dateTime.weekday(.abbreviated).hour().minute())
+        return date.formatted(Date.FormatStyle(timeZone: timeZone).weekday(.abbreviated).hour().minute())
     }
 
     /// The `as of` time, carrying a day only when it needs one.
@@ -485,11 +506,15 @@ struct GamePlayPoint {
     /// (`OddsChartView.labelStyle` / `.calendarDay`), so a reader who scrubs
     /// across midnight sees the same vocabulary on the axis and in the badge.
     static func asOfText(_ observed: Date, pointDate: Date?,
-                         calendar: Calendar = .current) -> String {
+                         calendar: Calendar = .current,
+                         timeZone: TimeZone? = nil) -> String {
+        let resolvedZone = timeZone ?? calendar.timeZone
         guard let pointDate, !calendar.isDate(observed, inSameDayAs: pointDate) else {
-            return clockText(observed)
+            return clockText(observed, timeZone: resolvedZone)
         }
-        return observed.formatted(.dateTime.month(.abbreviated).day().hour().minute())
+        return observed.formatted(
+            Date.FormatStyle(timeZone: resolvedZone).month(.abbreviated).day().hour().minute()
+        )
     }
 
     /// The badge above the score: the period, and the clock when the clock says

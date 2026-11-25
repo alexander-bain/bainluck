@@ -207,12 +207,12 @@ final class EventAtlasGolfTournament11666Tests: XCTestCase {
         XCTAssertEqual(input5.beforeColumnLabel, "Pregame")
         XCTAssertEqual(input5.win.before?.text, "18%")
         XCTAssertEqual(input5.win.recorded?.text, "24%")
-        XCTAssertEqual(input5.win.deltaText, "+6.0 pts since pregame")
+        XCTAssertEqual(input5.win.deltaText, "+6.0 points since pregame")
         XCTAssertTrue(input5.accessibilityValue(for: input5.win).contains("Pregame: 18%"))
-        XCTAssertTrue(input5.accessibilityValue(for: input5.win).contains("+6.0 pts since pregame"))
+        XCTAssertTrue(input5.accessibilityValue(for: input5.win).contains("+6.0 points since pregame"))
         XCTAssertEqual(input5.makeCut?.before?.text, "89%")
         XCTAssertEqual(input5.makeCut?.recorded?.text, "92%")
-        XCTAssertEqual(input5.makeCut?.deltaText, "+3.0 pts since pregame")
+        XCTAssertEqual(input5.makeCut?.deltaText, "+3.0 points since pregame")
         // Stale quote (>30m old during play) ages to nil with "No recent probability"
         XCTAssertNil(input5.top20.recorded)
         XCTAssertEqual(input5.top20.recordedMissing, "No recent probability")
@@ -503,5 +503,116 @@ final class EventAtlasGolfTournament11666Tests: XCTestCase {
             try png1.write(to: dirURL.appendingPathComponent("golf-tournament-atlas-default-390px.png"))
             try png2.write(to: dirURL.appendingPathComponent("golf-tournament-atlas-a11y-390px.png"))
         }
+    }
+
+    func testLoadAtlasDataPrefersBlendedTournamentTimelineAndFallsBackWhenEmptyOrErrored() async throws {
+        let dict: [String: Any] = [
+            "tournament": [
+                "name": "The Masters",
+                "slug": "the-masters",
+                "key": "the_masters",
+                "is_major": true,
+                "start_date": "2025-11-06",
+                "end_date": "2025-11-09",
+                "schedule_status": "in_progress",
+                "commence_time": "2025-11-06T12:00:00Z",
+            ],
+            "golfers": [
+                ["name": "Scottie Scheffler", "probability": 0.24, "opening_probability": 0.18, "rank": 1],
+            ],
+            "evolution_market_id": 9001,
+            "markets": [
+                ["type": "winner", "label": "Tournament Winner", "market_ids": [9001], "market_names": ["The Masters Winner"]],
+            ],
+            "round_top_groups": [],
+        ]
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let response = try decoder.decode(
+            GolfTournamentDetailResponse.self,
+            from: try JSONSerialization.data(withJSONObject: dict)
+        )
+        let winMarket = try makeMarket(
+            id: 9001,
+            name: "The Masters Winner",
+            outcomes: [try makeOutcome(id: 1, name: "Scottie Scheffler", probability: 0.24, openingProbability: 0.18, observedAt: freshISO)]
+        )
+
+        func makeTimeline(source: String, prob: Double, empty: Bool = false) throws -> ProbabilityTimelineResponse {
+            let timelineRows: [[String: Any]] = empty ? [] : [
+                ["timestamp": freshISO, "outcomes": ["Scottie Scheffler": prob]],
+            ]
+            let tlDict: [String: Any] = [
+                "market_id": 9001,
+                "market_name": "The Masters Winner",
+                "source": source,
+                "hours": 168,
+                "top": 20,
+                "bucket_seconds": 900,
+                "timeline": timelineRows,
+                "outcomes": [
+                    ["id": 1, "name": "Scottie Scheffler", "current_probability": prob],
+                ],
+            ]
+            return try decoder.decode(
+                ProbabilityTimelineResponse.self,
+                from: try JSONSerialization.data(withJSONObject: tlDict)
+            )
+        }
+
+        let blendedTL = try makeTimeline(source: "blend", prob: 0.24)
+        let singleTL = try makeTimeline(source: "kalshi", prob: 0.31)
+        let emptyBlendedTL = try makeTimeline(source: "blend", prob: 0.24, empty: true)
+
+        struct SimulatedNetworkError: Error {}
+
+        // 1. Non-empty tournament blended timeline wins and avoids single-market fallback.
+        var calledSingle = false
+        let preferred = await GolfTournamentViewModel.loadAtlasData(
+            for: response,
+            fetchMarket: { _ in winMarket },
+            fetchTimeline: { _ in
+                calledSingle = true
+                return singleTL
+            },
+            fetchTournamentTimeline: { slug in
+                XCTAssertEqual(slug, "the-masters")
+                return blendedTL
+            }
+        )
+        XCTAssertFalse(calledSingle)
+        XCTAssertFalse(preferred.winnerTimelineFailed)
+        XCTAssertEqual(preferred.winnerTimeline?.source, "blend")
+        XCTAssertEqual(preferred.winnerTimeline?.timeline.first?.outcomes["Scottie Scheffler"], 0.24)
+
+        // 2. When tournament blended timeline throws, single-market fallback succeeds cleanly.
+        let fallbackOnThrow = await GolfTournamentViewModel.loadAtlasData(
+            for: response,
+            fetchMarket: { _ in winMarket },
+            fetchTimeline: { _ in singleTL },
+            fetchTournamentTimeline: { _ in throw SimulatedNetworkError() }
+        )
+        XCTAssertFalse(fallbackOnThrow.winnerTimelineFailed)
+        XCTAssertEqual(fallbackOnThrow.winnerTimeline?.source, "kalshi")
+
+        // 3. When tournament blended timeline is empty, single-market fallback is used.
+        let fallbackOnEmpty = await GolfTournamentViewModel.loadAtlasData(
+            for: response,
+            fetchMarket: { _ in winMarket },
+            fetchTimeline: { _ in singleTL },
+            fetchTournamentTimeline: { _ in emptyBlendedTL }
+        )
+        XCTAssertFalse(fallbackOnEmpty.winnerTimelineFailed)
+        XCTAssertEqual(fallbackOnEmpty.winnerTimeline?.source, "kalshi")
+
+        // 4. When both fail, winnerTimelineFailed is true and winnerTimeline is nil.
+        let bothFailed = await GolfTournamentViewModel.loadAtlasData(
+            for: response,
+            fetchMarket: { _ in winMarket },
+            fetchTimeline: { _ in throw SimulatedNetworkError() },
+            fetchTournamentTimeline: { _ in throw SimulatedNetworkError() }
+        )
+        XCTAssertTrue(bothFailed.winnerTimelineFailed)
+        XCTAssertNil(bothFailed.winnerTimeline)
     }
 }

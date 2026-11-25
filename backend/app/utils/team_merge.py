@@ -316,6 +316,9 @@ _FK_STATEMENTS = [
      "AND u2.relation_type = uf.relation_type)"),
     "DELETE FROM user_favorites WHERE team_id = :src",
     "UPDATE team_identity_mapping SET team_id = :tgt WHERE team_id = :src",
+    # #13229: flatten any redirect chain whose canonical target is itself being
+    # folded into a newer canonical team before deleting the retired row.
+    "UPDATE retired_team_redirects SET canonical_team_id = :tgt WHERE canonical_team_id = :src",
 ]
 
 
@@ -337,6 +340,14 @@ async def _apply_merge(session, canonical, stub, sport_key) -> dict:
     counts = {}
     for stmt in _FK_STATEMENTS:
         table = stmt.split()[1]
+        if table == "retired_team_redirects":
+            # Minimal-schema historical integration fixtures (and pre-migration
+            # deploys) may not have `retired_team_redirects` yet.
+            exists = (
+                await s.execute(text("SELECT to_regclass('retired_team_redirects')"))
+            ).scalar()
+            if exists is None:
+                continue
         res = await s.execute(text(stmt), {"src": stub.id, "tgt": canonical.id})
         counts[table] = counts.get(table, 0) + (res.rowcount or 0)
 

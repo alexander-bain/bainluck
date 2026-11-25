@@ -9,10 +9,11 @@ import * as fs from "fs";
 import * as path from "path";
 
 const mockTrack = jest.fn();
+let mockPathname = "/";
 
 jest.mock("next/navigation", () => ({
   __esModule: true,
-  usePathname: () => "/",
+  usePathname: () => mockPathname,
 }));
 
 jest.mock("@/components/Analytics", () => ({
@@ -21,14 +22,18 @@ jest.mock("@/components/Analytics", () => ({
 }));
 
 import Footer from "@/components/Footer";
-import { APP_STORE_URL } from "@/lib/brandCopy";
+import { APP_STORE_CAMPAIGNS, APP_STORE_URL, appStoreCampaignUrl } from "@/lib/brandCopy";
 
 const REPO_ROOT = path.join(__dirname, "..", "..", "..");
 const FRONTEND_ROOT = path.join(__dirname, "..", "..");
 
+/** An href as static markup writes it (a tagged #12311 URL carries `&`). */
+const hrefAttr = (url: string) => `href="${url.replace(/&/g, "&amp;")}"`;
+
 describe("#12028 — App Store links on the website and Universal Links for both hosts", () => {
   beforeEach(() => {
     mockTrack.mockReset();
+    mockPathname = "/";
   });
 
   test("APP_STORE_URL points to the public App Store listing", () => {
@@ -43,7 +48,8 @@ describe("#12028 — App Store links on the website and Universal Links for both
       /<a\b[^>]*data-testid="footer-app-store-badge"[^>]*>([^<]*)<\/a>/,
     );
     expect(badgeMatch).not.toBeNull();
-    expect(badgeMatch![0]).toContain(`href="${APP_STORE_URL}"`);
+    // #12311: the listing, with this badge's campaign tag once the provider token is in.
+    expect(badgeMatch![0]).toContain(hrefAttr(appStoreCampaignUrl(APP_STORE_CAMPAIGNS.footerBadge)));
     expect(badgeMatch![1].trim()).toBe("Download on the App Store");
 
     // 2. "Get the app" line on phone widths (`md:hidden`)
@@ -57,8 +63,18 @@ describe("#12028 — App Store links on the website and Universal Links for both
       /<a\b[^>]*data-testid="footer-phone-get-the-app"[^>]*>([^<]*)<\/a>/,
     );
     expect(phoneLinkMatch).not.toBeNull();
-    expect(phoneLinkMatch![0]).toContain(`href="${APP_STORE_URL}"`);
+    expect(phoneLinkMatch![0]).toContain(
+      hrefAttr(appStoreCampaignUrl(APP_STORE_CAMPAIGNS.footerGetTheApp)),
+    );
     expect(phoneLinkMatch![1].trim()).toBe("Get the app");
+  });
+
+  test("Footer omits duplicate App Store links on /collections/[slug] shared-set landings (#13103)", () => {
+    mockPathname = "/collections/roundup-cfp-picture";
+    const html = renderToStaticMarkup(<Footer />);
+    expect(html).not.toContain('data-testid="footer-phone-get-the-app-row"');
+    expect(html).not.toContain('data-testid="footer-app-store-badge"');
+    expect(html).not.toContain(APP_STORE_URL);
   });
 
   test("RootLayout uses Safari's banner and removes the custom top bar", () => {
@@ -70,8 +86,12 @@ describe("#12028 — App Store links on the website and Universal Links for both
     expect(layoutSource).not.toContain('data-testid="phone-get-the-app-bar"');
     expect(layoutSource).not.toContain('data-testid="phone-get-the-app-link"');
     // Per-page context is supplied by the covered route's own metadata.
-    // A root app-argument would be inherited by every other page.
-    expect(layoutSource).toContain("itunes: { appId: APP_STORE_APP_ID }");
+    // A root app-argument would be inherited by every other page, so the call
+    // takes the campaign alone (#12311 moved the tag from `itunes` to `other`).
+    expect(layoutSource).toContain(
+      '"apple-itunes-app": smartAppBannerContent(APP_STORE_CAMPAIGNS.banner)',
+    );
+    expect(layoutSource).not.toMatch(/\bitunes:/);
   });
 
   test("both iOS and macOS entitlements claim applinks for bainluck.com and www.bainluck.com", () => {

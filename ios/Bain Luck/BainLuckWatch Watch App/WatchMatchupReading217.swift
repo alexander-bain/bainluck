@@ -1,8 +1,13 @@
 import Foundation
+import ImageIO
+#if canImport(UIKit)
+import UIKit
+#endif
 
-// Direction 217, wired: what the Watch's big rectangular slot draws in the
-// Matchup look, decided from the published selected-game snapshot. Foundation
-// only, so the complication, the Watch app and the iPhone tests compile it.
+// Direction 217, wired: what the Watch's big rectangular slot and iPhone
+// double-wide Lock Screen widget draw in the Matchup look. Foundation +
+// ImageIO only, so the Watch complication, iPhone/Mac widget extension, Watch
+// app, and tests compile one single source of truth.
 
 /// The extra facts the Matchup look needs, published beside the rectangular
 /// reading by the Watch app. Optional in the snapshot: a snapshot written by an
@@ -21,10 +26,17 @@ nonisolated struct WatchMatchupFacts217: Codable, Sendable, Equatable {
     let pregameAwayPercent: Int?
     /// The game clock as the app prints it ("Q3 4:12"); nil when there is none.
     let clock: String?
+    /// Optional 3-way match-winner fields (#13432: soccer Home / Draw / Away).
+    let drawPercent: Int?
+    let awayPercent: Int?
+    let pregameDrawPercent: Int?
+    let isThreeWay: Bool?
 
     init(homePrimary: String? = nil, homeSecondary: String? = nil, awayPrimary: String? = nil,
          awaySecondary: String? = nil, homeLogo: String? = nil, awayLogo: String? = nil,
-         pregameHomePercent: Int? = nil, pregameAwayPercent: Int? = nil, clock: String? = nil) {
+         pregameHomePercent: Int? = nil, pregameAwayPercent: Int? = nil, clock: String? = nil,
+         drawPercent: Int? = nil, awayPercent: Int? = nil, pregameDrawPercent: Int? = nil,
+         isThreeWay: Bool? = nil) {
         self.homePrimary = homePrimary
         self.homeSecondary = homeSecondary
         self.awayPrimary = awayPrimary
@@ -34,6 +46,10 @@ nonisolated struct WatchMatchupFacts217: Codable, Sendable, Equatable {
         self.pregameHomePercent = pregameHomePercent
         self.pregameAwayPercent = pregameAwayPercent
         self.clock = clock
+        self.drawPercent = drawPercent
+        self.awayPercent = awayPercent
+        self.pregameDrawPercent = pregameDrawPercent
+        self.isThreeWay = isThreeWay
     }
 }
 
@@ -43,6 +59,11 @@ nonisolated enum WatchMatchupCrests217 {
     static let appGroup = "group.com.bainluck.watch"
     static let maximumBytes = 256 * 1024
     static let keepFor: TimeInterval = 30 * 24 * 3600
+    /// #13339: bounded pixel ceiling for cached Watch crests and WidgetKit complication images.
+    /// WatchKit's archival cap for accessoryRectangular on 45 mm is ~91,158 px²; keeping cached
+    /// crests at <=96 px and complication thumbnails at <=64 px (@2x -> <=32 pt) stays well under it.
+    static let maxPixelSize = 96
+    static let complicationMaxPixelSize = 64
 
     static var directory: URL? {
         FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroup)?
@@ -60,19 +81,77 @@ nonisolated enum WatchMatchupCrests217 {
         return data
     }
 
-    /// Fetch each missing crest once. Returns true when a new crest was saved,
-    /// so the caller reloads the complication.
+    static func pixelDimensions(of bytes: Data) -> (width: Int, height: Int)? {
+        guard let source = CGImageSourceCreateWithData(bytes as CFData, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+              let width = props[kCGImagePropertyPixelWidth] as? Int,
+              let height = props[kCGImagePropertyPixelHeight] as? Int,
+              width > 0, height > 0 else { return nil }
+        return (width, height)
+    }
+
+    static func isWithinPixelLimit(_ bytes: Data, maxPixelSize: Int = maxPixelSize) -> Bool {
+        guard let dims = pixelDimensions(of: bytes) else { return true }
+        return max(dims.width, dims.height) <= maxPixelSize
+    }
+
+    static func downsampledPNG(_ bytes: Data, maxPixelSize: Int = maxPixelSize) -> Data? {
+        guard let image = complicationCGImage(from: bytes, maxPixelSize: maxPixelSize) else { return nil }
+        let out = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(out, "public.png" as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(destination, image, nil)
+        guard CGImageDestinationFinalize(destination) else { return nil }
+        let png = out as Data
+        return png.isEmpty ? nil : png
+    }
+
+    static func prepareForCache(_ bytes: Data, maxPixelSize: Int = maxPixelSize) -> Data {
+        if isWithinPixelLimit(bytes, maxPixelSize: maxPixelSize) { return bytes }
+        return downsampledPNG(bytes, maxPixelSize: maxPixelSize) ?? bytes
+    }
+
+    /// Cross-platform bounded CGImage decoder used by Watch, iOS, and macOS widget surfaces.
+    static func complicationCGImage(from bytes: Data, maxPixelSize: Int = complicationMaxPixelSize) -> CGImage? {
+        guard let source = CGImageSourceCreateWithData(bytes as CFData, nil) else { return nil }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: maxPixelSize,
+            kCGImageSourceShouldCacheImmediately: true,
+        ]
+        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+    }
+
+    #if canImport(UIKit)
+    static func complicationImage(from bytes: Data, maxPixelSize: Int = complicationMaxPixelSize) -> UIImage? {
+        guard let cgImage = complicationCGImage(from: bytes, maxPixelSize: maxPixelSize) else { return nil }
+        return UIImage(cgImage: cgImage, scale: 2.0, orientation: .up)
+    }
+    #endif
+
+    /// Fetch each missing crest once, and downsample any oversized cached PNGs in place.
+    /// Returns true when a new or shrunk crest was saved, so the caller reloads the complication.
     static func fetchMissing(_ wanted: [(teamID: Int, logo: String?)], directory: URL? = directory, now: Date = Date(),
                              fetch: @escaping @Sendable (URL) async -> Data? = download) async -> Bool {
         guard let directory else { return false }
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         var saved = false
         for (teamID, logo) in wanted where teamID > 0 {
-            guard data(teamID: teamID, directory: directory) == nil,
-                  let logo, let url = URL(string: logo), url.scheme == "https",
+            if let existing = data(teamID: teamID, directory: directory) {
+                if !isWithinPixelLimit(existing),
+                   let shrunk = downsampledPNG(existing),
+                   !shrunk.isEmpty, shrunk.count <= maximumBytes,
+                   (try? shrunk.write(to: file(teamID: teamID, in: directory), options: .atomic)) != nil {
+                    saved = true
+                }
+                continue
+            }
+            guard let logo, let url = URL(string: logo), url.scheme == "https",
                   let bytes = await fetch(url), !bytes.isEmpty, bytes.count <= maximumBytes,
                   isImage(bytes) else { continue }
-            if (try? bytes.write(to: file(teamID: teamID, in: directory), options: .atomic)) != nil { saved = true }
+            let prepared = prepareForCache(bytes)
+            guard !prepared.isEmpty, prepared.count <= maximumBytes else { continue }
+            if (try? prepared.write(to: file(teamID: teamID, in: directory), options: .atomic)) != nil { saved = true }
         }
         prune(directory, now: now)
         return saved
@@ -106,7 +185,8 @@ nonisolated enum WatchMatchupCrests217 {
 }
 
 /// Everything the Matchup slot draws, already decided. Built from the selected
-/// game by `WatchMatchupReading217.make` so the view holds no rules.
+/// game by `WatchMatchupReading217.make` or `SavedLockScreenMatchupAdapter13432`
+/// so the view holds no rules.
 nonisolated struct WatchMatchupReading217: Equatable, Sendable {
     enum Stage: String, Equatable, Sendable { case before, during, after }
 
@@ -122,6 +202,15 @@ nonisolated struct WatchMatchupReading217: Equatable, Sendable {
         let isWinner: Bool
     }
 
+    /// All three match-winner outcomes when a 3-way sport serves Home, Draw, and Away.
+    struct ThreeWay: Equatable, Sendable {
+        let homeLabel: String
+        let homeText: String
+        let drawText: String
+        let awayLabel: String
+        let awayText: String
+    }
+
     let stage: Stage
     let away: Side
     let home: Side
@@ -130,9 +219,30 @@ nonisolated struct WatchMatchupReading217: Equatable, Sendable {
     /// Whose number it is, so it takes that team's colour.
     let bigIsHome: Bool
     /// The one small line under it, naming whose number it is: "LAC · Sun 5:20 PM",
-    /// "BAL · Q3 4:12", "DET pregame · Final".
+    /// "BAL · Q3 4:12", "DET pregame · Final", or the clock alone when `threeWay` names all 3.
     let smallLine: String
     let accessibilityText: String
+    let threeWay: ThreeWay?
+
+    init(
+        stage: Stage,
+        away: Side,
+        home: Side,
+        bigText: String,
+        bigIsHome: Bool,
+        smallLine: String,
+        accessibilityText: String,
+        threeWay: ThreeWay? = nil
+    ) {
+        self.stage = stage
+        self.away = away
+        self.home = home
+        self.bigText = bigText
+        self.bigIsHome = bigIsHome
+        self.smallLine = smallLine
+        self.accessibilityText = accessibilityText
+        self.threeWay = threeWay
+    }
 
     var bigInkHex: String { bigIsHome ? home.inkHex : away.inkHex }
 
@@ -234,10 +344,53 @@ extension WatchMatchupReading217 {
         return now >= step
     }
 
+    /// Resolve two-way vs three-way odds for `.scheduledForecast` or `.liveForecast`.
+    static func resolveOutcomePresentation(
+        homePercent: Int,
+        homeName: String,
+        awayName: String,
+        homeAbbreviation: String,
+        awayAbbreviation: String,
+        isThreeWay: Bool,
+        drawPercent: Int?,
+        awayPercent: Int?
+    ) -> (bigText: String, bigIsHome: Bool, ownerAbbr: String, ownerName: String, threeWay: ThreeWay?) {
+        if isThreeWay {
+            if let drawPct = drawPercent, (0...100).contains(drawPct),
+               let awayPct = awayPercent, (0...100).contains(awayPct) {
+                let threeWay = ThreeWay(
+                    homeLabel: homeAbbreviation,
+                    homeText: "\(homePercent)%",
+                    drawText: "\(drawPct)%",
+                    awayLabel: awayAbbreviation,
+                    awayText: "\(awayPct)%"
+                )
+                if awayPct > homePercent && awayPct >= drawPct {
+                    return ("\(awayPct)%", false, awayAbbreviation, awayName, threeWay)
+                }
+                if drawPct > homePercent && drawPct > awayPct {
+                    return ("\(drawPct)%", true, "Draw", "Draw", threeWay)
+                }
+                return ("\(homePercent)%", true, homeAbbreviation, homeName, threeWay)
+            }
+            // #5271: Draw-priced without explicit draw/away — home stands alone, never invent 1 - home.
+            return ("\(homePercent)%", true, homeAbbreviation, homeName, nil)
+        }
+        let homeLeads = homePercent >= 50
+        let pct = homeLeads ? homePercent : 100 - homePercent
+        return (
+            "\(pct)%",
+            homeLeads,
+            homeLeads ? homeAbbreviation : awayAbbreviation,
+            homeLeads ? homeName : awayName,
+            nil
+        )
+    }
+
     /// The Matchup reading for this snapshot, or nil when the slot should keep
     /// today's card: an older snapshot without facts, a market pin, a missing
-    /// team, a game whose kickoff has passed without a new reading, a tie, or a
-    /// final with no pregame chance to show.
+    /// team, a game whose kickoff has passed without a new reading, an unpriced
+    /// tie, or a final with no pregame chance to show.
     static func make(snapshot: WatchComplicationSnapshot?, now: Date, timeZone: TimeZone = .current,
                      crest: (Int) -> Data? = { WatchMatchupCrests217.data(teamID: $0) }) -> WatchMatchupReading217? {
         guard let snapshot, let facts = snapshot.matchup,
@@ -252,8 +405,6 @@ extension WatchMatchupReading217 {
         switch r.kind {
         case .scheduledForecast:
             guard let homePct = r.homePercent, (0...100).contains(homePct) else { return nil }
-            let homeLeads = homePct >= 50
-            let pct = homeLeads ? homePct : 100 - homePct
             let when: String
             if let start = r.commenceTime {
                 guard start > now else { return nil } // The card says "Open to update".
@@ -261,20 +412,31 @@ extension WatchMatchupReading217 {
             } else {
                 when = "Pregame"
             }
-            let abbr = homeLeads ? homeID.abbreviation : awayID.abbreviation
-            let name = homeLeads ? r.homeName : r.awayName
+            let out = resolveOutcomePresentation(
+                homePercent: homePct,
+                homeName: r.homeName,
+                awayName: r.awayName,
+                homeAbbreviation: homeID.abbreviation,
+                awayAbbreviation: awayID.abbreviation,
+                isThreeWay: facts.isThreeWay == true,
+                drawPercent: facts.drawPercent,
+                awayPercent: facts.awayPercent
+            )
+            let smallLine = out.threeWay == nil ? "\(out.ownerAbbr) · \(when)" : when
+            let speech: String = {
+                if let tw = out.threeWay {
+                    return "\(matchup). \(r.homeName) \(tw.homeText), Draw \(tw.drawText), \(r.awayName) \(tw.awayText). \(when). Open your game in Bain Luck."
+                }
+                return "\(matchup). \(out.ownerName) \(out.bigText) to win. \(when). Open your game in Bain Luck."
+            }()
             return WatchMatchupReading217(
                 stage: .before,
                 away: side(awayID, facts.awayPrimary, facts.awaySecondary, score: nil, winner: false),
                 home: side(homeID, facts.homePrimary, facts.homeSecondary, score: nil, winner: false),
-                bigText: "\(pct)%", bigIsHome: homeLeads, smallLine: "\(abbr) · \(when)",
-                accessibilityText: "\(matchup). \(name) \(pct)% to win. \(when). Open your game in Bain Luck.")
+                bigText: out.bigText, bigIsHome: out.bigIsHome, smallLine: smallLine,
+                accessibilityText: speech, threeWay: out.threeWay)
         case .liveForecast:
             guard let homePct = r.homePercent, (0...100).contains(homePct) else { return nil }
-            let homeLeads = homePct >= 50
-            let pct = homeLeads ? homePct : 100 - homePct
-            let abbr = homeLeads ? homeID.abbreviation : awayID.abbreviation
-            let name = homeLeads ? r.homeName : r.awayName
             let when: String
             if r.isAgedLive(at: now) {
                 when = "As of \(WatchRectangularReading.asOfClock(r.observedAt, timeZone: timeZone))"
@@ -283,19 +445,45 @@ extension WatchMatchupReading217 {
             } else {
                 when = "Live"
             }
+            let out = resolveOutcomePresentation(
+                homePercent: homePct,
+                homeName: r.homeName,
+                awayName: r.awayName,
+                homeAbbreviation: homeID.abbreviation,
+                awayAbbreviation: awayID.abbreviation,
+                isThreeWay: facts.isThreeWay == true,
+                drawPercent: facts.drawPercent,
+                awayPercent: facts.awayPercent
+            )
+            let smallLine = out.threeWay == nil ? "\(out.ownerAbbr) · \(when)" : when
             let score: String = {
                 guard let a = r.awayScore, let h = r.homeScore else { return "" }
                 return " \(r.awayName) \(a), \(r.homeName) \(h)."
+            }()
+            let speech: String = {
+                if let tw = out.threeWay {
+                    return "\(matchup).\(score) \(r.homeName) \(tw.homeText), Draw \(tw.drawText), \(r.awayName) \(tw.awayText). \(when). Open your game in Bain Luck."
+                }
+                return "\(matchup).\(score) \(out.ownerName) \(out.bigText) to win now. \(when). Open your game in Bain Luck."
             }()
             return WatchMatchupReading217(
                 stage: .during,
                 away: side(awayID, facts.awayPrimary, facts.awaySecondary, score: r.awayScore, winner: false),
                 home: side(homeID, facts.homePrimary, facts.homeSecondary, score: r.homeScore, winner: false),
-                bigText: "\(pct)%", bigIsHome: homeLeads, smallLine: "\(abbr) · \(when)",
-                accessibilityText: "\(matchup).\(score) \(name) \(pct)% to win now. \(when). Open your game in Bain Luck.")
+                bigText: out.bigText, bigIsHome: out.bigIsHome, smallLine: smallLine,
+                accessibilityText: speech, threeWay: out.threeWay)
         case .finalResult:
-            guard let h = r.homeScore, let a = r.awayScore, h != a,
+            guard let h = r.homeScore, let a = r.awayScore,
                   now.timeIntervalSince(r.observedAt) < finalHoldSeconds else { return nil }
+            if h == a {
+                guard let drawPre = facts.pregameDrawPercent, (0...100).contains(drawPre) else { return nil }
+                return WatchMatchupReading217(
+                    stage: .after,
+                    away: side(awayID, facts.awayPrimary, facts.awaySecondary, score: a, winner: false),
+                    home: side(homeID, facts.homePrimary, facts.homeSecondary, score: h, winner: false),
+                    bigText: "\(drawPre)%", bigIsHome: true, smallLine: "Draw pregame · Final",
+                    accessibilityText: "Final. \(r.awayName) \(a), \(r.homeName) \(h). Draw had \(drawPre)% before the game. Open your game in Bain Luck.")
+            }
             let homeWon = h > a
             guard let pct = homeWon ? facts.pregameHomePercent : facts.pregameAwayPercent,
                   (0...100).contains(pct) else { return nil }
@@ -311,5 +499,48 @@ extension WatchMatchupReading217 {
         case .futureForecast:
             return nil
         }
+    }
+
+    /// Minimal timeline dates for a Matchup look so WidgetKit only archives the
+    /// entries where the Matchup face actually changes text or hands back.
+    static func timelineDates(
+        for snapshot: WatchComplicationSnapshot?,
+        now: Date,
+        timeZone: TimeZone = .current
+    ) -> [Date]? {
+        guard now.timeIntervalSinceReferenceDate.isFinite,
+              make(snapshot: snapshot, now: now, timeZone: timeZone) != nil,
+              let snapshot,
+              let r = snapshot.validatedRectangularReading(now: now) else { return nil }
+        var dates = [now]
+        switch r.kind {
+        case .scheduledForecast:
+            if let start = r.commenceTime, start > now {
+                var cal = Calendar(identifier: .gregorian)
+                cal.timeZone = timeZone
+                if !cal.isDate(start, inSameDayAs: now),
+                   let tomorrow = cal.date(byAdding: .day, value: 1, to: cal.startOfDay(for: now)),
+                   tomorrow > now, tomorrow < start {
+                    dates.append(tomorrow)
+                }
+                let startDay = cal.startOfDay(for: start)
+                if startDay > now, startDay < start {
+                    dates.append(startDay)
+                }
+                dates.append(start)
+            }
+        case .liveForecast:
+            let ageSwitch = r.observedAt.addingTimeInterval(WatchRectangularReading.liveAgeThresholdSeconds + 1)
+            if ageSwitch > now {
+                dates.append(ageSwitch)
+            }
+        case .finalResult:
+            if let step = finalStepAside(for: snapshot, now: now), step > now {
+                dates.append(step)
+            }
+        case .futureForecast:
+            return nil
+        }
+        return Array(Set(dates)).sorted()
     }
 }

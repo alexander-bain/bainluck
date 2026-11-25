@@ -13,8 +13,9 @@ import BottomNav from "@/components/BottomNav";
 import EmbedGate from "@/components/EmbedGate";
 import DesktopNav from "@/components/DesktopNav";
 import Footer from "@/components/Footer";
+import BainLuckMark from "@/components/BainLuckMark";
 import EventOpenIntent from "@/components/event/EventOpenIntent";
-import { APP_STORE_APP_ID } from "@/lib/brandCopy";
+import { APP_STORE_CAMPAIGNS, smartAppBannerContent } from "@/lib/brandCopy";
 import { BUILD_META_NAME, frontendCommitSha } from "@/lib/buildInfo";
 import { getSiteUrl } from "@/lib/siteUrl";
 import { Suspense } from "react";
@@ -81,7 +82,18 @@ export const metadata: Metadata = {
   // see `lib/siteUrl.ts` for the measurement and for why the literal lives once.
   metadataBase: new URL(getSiteUrl()),
   alternates: { canonical: "/" },
-  itunes: { appId: APP_STORE_APP_ID },
+  icons: {
+    icon: [
+      { url: "/favicon.ico", sizes: "any" },
+      { url: "/icon-16.png", sizes: "16x16", type: "image/png" },
+      { url: "/icon-32.png", sizes: "32x32", type: "image/png" },
+    ],
+    apple: [{ url: "/apple-icon.png", sizes: "180x180", type: "image/png" }],
+  },
+  // #12311: Safari's banner, written through `other` so it can carry campaign
+  // tags (`smartAppBannerContent` says why). No app-argument here: every page
+  // would inherit it; an event's own layout supplies its URL.
+  other: { "apple-itunes-app": smartAppBannerContent(APP_STORE_CAMPAIGNS.banner) },
   robots: { index: true, follow: true },
   openGraph: {
     type: "website",
@@ -209,7 +221,7 @@ export default function RootLayout({
                 <div className="max-w-content mx-auto px-4 md:px-6 py-3">
                   <div className="flex items-center justify-between gap-3 lg:gap-4">
                     <Link href="/" className="flex items-center gap-2.5 shrink-0 whitespace-nowrap">
-                      <span className="text-xl">🍀</span>
+                      <BainLuckMark size={24} />
                       <span className="text-lg font-semibold text-text-primary tracking-tight">
                         Bain Luck
                       </span>

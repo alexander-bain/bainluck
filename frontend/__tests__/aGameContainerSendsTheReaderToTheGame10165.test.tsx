@@ -92,6 +92,20 @@ describe("#10165 the container board redirects to its game", () => {
 
 /* ─────────────────────────────── the controls ───────────────────────────── */
 
+describe("#12530 the alternate address opens the verified Super Bowl board", () => {
+  it("redirects to the server's canonical futures market", async () => {
+    respondWith(200, { id: 129037, canonical_market_id: 86832 });
+    await expect(renderLayout("129037")).rejects.toThrow("NEXT_REDIRECT:/futures/86832");
+  });
+
+  it.each([86832, 0, 129037.5, "129037", null])("keeps the page when the target is %s", async (target) => {
+    respondWith(200, { id: 86832, canonical_market_id: target });
+    const out = await renderLayout("86832");
+    expect(mockRedirect).not.toHaveBeenCalled();
+    expect(out).toEqual(<>{CHILD}</>);
+  });
+});
+
 describe("#10165 every other board renders as it did", () => {
   it.each([
     ["null (not a container, or an unlinked one)", { container_of_event_id: null }],

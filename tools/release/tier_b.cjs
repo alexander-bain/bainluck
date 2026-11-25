@@ -222,15 +222,20 @@ async function publish(github,repo,sha,result) {
     output:{title:'Tier-B approval',summary:result.summary}});
 }
 
+const TRUSTED_WORKFLOW_RUNS = new Map([
+  ['Tier-B review', '.github/workflows/tier-b-review.yml'],
+  ['Tier-B policy trigger', '.github/workflows/tier-b-trigger.yml'],
+]);
+
 async function evaluate(github, context) {
   const repo=context.repo;
   const run=context.payload.workflow_run;
   if (context.eventName === 'workflow_run' && (
     context.payload.action !== 'completed' || run?.status !== 'completed' ||
-    run.name !== 'Tier-B review' || run.path !== '.github/workflows/tier-b-review.yml' ||
+    TRUSTED_WORKFLOW_RUNS.get(run.name) !== run.path ||
     run.event !== 'pull_request' || !Array.isArray(run.pull_requests) || run.pull_requests.length !== 1
   )) {
-    throw new Error('A completed installed Tier-B reviewer run with exactly one associated PR is required.');
+    throw new Error('A completed installed Tier-B workflow run with exactly one associated PR is required.');
   }
   const eventNumber=context.eventName === 'schedule' ? undefined : Number(
     context.eventName === 'workflow_run' ? run.pull_requests[0].number :

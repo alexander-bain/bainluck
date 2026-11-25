@@ -163,13 +163,15 @@ struct DiscoverRoundupCardView: View {
 
     @ViewBuilder
     private func standardRowView(_ row: DiscoverRoundupRowModel) -> some View {
-        let numberForSheet: Double? = row.sourceMark?.state == .settled ? nil : row.rawProbability
+        let isSettled = row.sourceMark?.state == .settled
+        let numberForSheet: Double? = isSettled ? nil : row.rawProbability
+        let renderedPercentForSheet: Int? = isSettled ? nil : row.renderedPercent
         let showsRowTenths = row.digits.contains(".")
         if dynamicTypeSize.isAccessibilitySize {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     percentView(marker: row.marker, digits: row.digits, font: .title3)
-                    if let srcMark = SourceMarkButton(row.sourceMark, number: numberForSheet, subject: row.label, numberSize: 16, compactRow: true, showsTenths: showsRowTenths) {
+                    if let srcMark = SourceMarkButton(row.sourceMark, number: numberForSheet, renderedPercent: renderedPercentForSheet, subject: row.label, numberSize: 16, compactRow: true, showsTenths: showsRowTenths) {
                         srcMark.buttonStyle(.borderless)
                     }
                     Spacer(minLength: 4)
@@ -184,7 +186,7 @@ struct DiscoverRoundupCardView: View {
             HStack(alignment: .top, spacing: 12) {
                 HStack(alignment: .firstTextBaseline, spacing: 2) {
                     percentView(marker: row.marker, digits: row.digits, font: .title3)
-                    if let srcMark = SourceMarkButton(row.sourceMark, number: numberForSheet, subject: row.label, numberSize: 16, compactRow: true, showsTenths: showsRowTenths) {
+                    if let srcMark = SourceMarkButton(row.sourceMark, number: numberForSheet, renderedPercent: renderedPercentForSheet, subject: row.label, numberSize: 16, compactRow: true, showsTenths: showsRowTenths) {
                         srcMark.buttonStyle(.borderless)
                     }
                 }
@@ -275,6 +277,7 @@ struct DiscoverRoundupCardView: View {
                     if let srcMark = SourceMarkButton(
                         row.sourceMark,
                         number: row.sourceMark?.state == .settled ? nil : row.rawProbability,
+                        renderedPercent: row.sourceMark?.state == .settled ? nil : row.renderedPercent,
                         subject: row.opponentLabel ?? row.label,
                         numberSize: 15,
                         compactRow: true,

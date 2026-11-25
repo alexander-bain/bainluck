@@ -2251,6 +2251,7 @@ class TailReceipts:
 def atomic_stamp_expression(
     source: str, value: float, stamped_at=None, eligibility=None,
     observed_basis=None, price_read_at=None,
+    away_value=None, draw_value=None,
 ):
     """The SET expression that stamps ONE source key WITHOUT reading it first.
 
@@ -2302,7 +2303,15 @@ def atomic_stamp_expression(
 
     from app.models.models import Event
     from app.utils.aggregation import (
-        OBSERVED_BASIS_KEY, OBSERVED_VALUE_KEY, PRICE_READ_KEY, make_price_read,
+        AWAY_VALUE_KEY,
+        DRAW_VALUE_KEY,
+        OBSERVED_BASIS_KEY,
+        OBSERVED_VALUE_KEY,
+        PRICE_READ_KEY,
+        THREE_WAY_AT_KEY,
+        THREE_WAY_HOME_VALUE_KEY,
+        make_price_read,
+        valid_three_way_side_values,
     )
     from app.utils.probability_eligibility import ELIGIBILITY_KEY
 
@@ -2319,6 +2328,13 @@ def atomic_stamp_expression(
     if observed_basis:
         entry[OBSERVED_BASIS_KEY] = dict(observed_basis)
         entry[OBSERVED_VALUE_KEY] = value
+    three_way_pair = valid_three_way_side_values(away_value, draw_value)
+    if three_way_pair is not None:
+        entry[AWAY_VALUE_KEY] = three_way_pair[0]
+        entry[DRAW_VALUE_KEY] = three_way_pair[1]
+        entry[THREE_WAY_HOME_VALUE_KEY] = value
+        if stamped_at is not None:
+            entry[THREE_WAY_AT_KEY] = stamped_at.isoformat()
 
     empty = cast(literal("{}"), JSONB)
 
@@ -2363,6 +2379,18 @@ def atomic_stamp_expression(
             (same_read, func.jsonb_build_object(PRICE_READ_KEY, prior_read)), else_=empty,
         )
     prior_entry = type_coerce(prior_entry.op("-")(cast(literal(PRICE_READ_KEY), Text)), JSONB)
+    # #13269: always clear any previous reading's three-way away/draw keys
+    # before merging this write so a new home reading never inherits stale
+    # away/draw values from an earlier write.
+    for key in (
+        AWAY_VALUE_KEY,
+        DRAW_VALUE_KEY,
+        THREE_WAY_HOME_VALUE_KEY,
+        THREE_WAY_AT_KEY,
+    ):
+        prior_entry = type_coerce(
+            prior_entry.op("-")(cast(literal(key), Text)), JSONB
+        )
     entry_expression = entry_expression.concat(read_fields)
     if not observed_basis:
         for key in (OBSERVED_BASIS_KEY, OBSERVED_VALUE_KEY):
@@ -7223,12 +7251,25 @@ class LiveBlendRefresher:
                             stamp = stamp.where(admits)
                         # #9051: the row's revision rides the same RETURNING,
                         # so the frame names exactly the write it reports.
+                        # #13269: carry the venue's own away & draw values from
+                        # the same reading as `value` (cleared when absent).
+                        from app.tasks.prediction_market_matching import _second_slot as _ws_second_slot
+
+                        _ws_away, _ws_draw = _ws_second_slot(reading, value)
                         stamp = stamp.values(
                             win_probability_sources=atomic_stamp_expression(
                                 self.source,
                                 value,
                                 eligibility=reading.eligibility,
                                 observed_basis=basis,
+                                **(
+                                    {
+                                        "away_value": round(_ws_away, 4),
+                                        "draw_value": round(_ws_draw, 4),
+                                    }
+                                    if _ws_draw is not None
+                                    else {}
+                                ),
                             )
                         ).returning(
                             Event.win_probability_sources,

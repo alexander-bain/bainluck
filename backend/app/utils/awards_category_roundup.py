@@ -718,6 +718,7 @@ async def _produce_registered_paired_award_category(
     rows_out: list[dict[str, Any]] = []
     for idx, e in enumerate(shown):
         win_p = float(e.get("stage_2_probability") or 0.0)
+        win_pct = e.get("stage_2_rendered_percent")
         nom_p = e.get("stage_1_probability")
         raw_oid = e.get("stage_2_outcome_id")
         outcome_id = int(raw_oid) if isinstance(raw_oid, int) and raw_oid > 0 else (w_mid * 100 + idx + 1)
@@ -727,7 +728,7 @@ async def _produce_registered_paired_award_category(
             "label": str(e.get("subject") or ""),
             "probability": win_p,
             "source_mark": e["stage_2_source_mark"],
-            "rendered_percent": _half_up_percent(win_p),
+            "rendered_percent": win_pct if win_pct is not None else _half_up_percent(win_p),
             "primary_bar_label": str(hydrated.get("stage_2_label") or "Wins"),
             "secondary_bar_label": str(hydrated.get("stage_1_label") or "Nominated"),
             "observed_at": as_of_obs,

@@ -215,4 +215,49 @@ final class WatchMatchupReading217Tests: XCTestCase {
         XCTAssertEqual(again.homeLogoURL, game.homeLogoURL)
         XCTAssertEqual(again.awayLogoURL, game.awayLogoURL)
     }
+
+    func testShortNamesAcceptAmpersandAndHyphenForMatchupLook13144() throws {
+        for valid in ["TA&M", "M-OH", "W&M", "A&M", "L-IL", "SF", "49RS"] {
+            XCTAssertTrue(WatchCompactTeamIdentity(teamID: 10, abbreviation: valid).isValid, valid)
+        }
+        for invalid in ["", "-", "&", "--", "-OH", "TA&", "bad!", "ta&m", "SACRED HEART"] {
+            XCTAssertFalse(WatchCompactTeamIdentity(teamID: 10, abbreviation: invalid).isValid, invalid)
+        }
+
+        let tam = WatchCompactTeamIdentity(teamID: 245, abbreviation: "TA&M")
+        let moh = WatchCompactTeamIdentity(teamID: 193, abbreviation: "M-OH")
+        let observed = now
+        let reading = WatchRectangularReading(
+            version: 1, eventID: 15351026, kind: .liveForecast,
+            homeName: "Texas A&M Aggies", awayName: "Miami (OH) RedHawks", home: tam, away: moh,
+            homePercent: 78, homeScore: 62, awayScore: 49, commenceTime: nil,
+            stateLabel: "Live", observedAt: observed, scoreObservedAt: observed)
+        let snapshot = WatchComplicationSnapshot(
+            eventID: 15351026, title: "Texas A&M Aggies win", detail: "78% · Live",
+            observedAt: observed, savedAt: now, rectangularReading: reading,
+            matchup: WatchMatchupFacts217(homePrimary: "#500000", homeSecondary: "#ffffff",
+                                          awayPrimary: "#c41230", awaySecondary: "#ffffff", clock: "2H 8:14"))
+        let matchup = try XCTUnwrap(WatchMatchupReading217.make(snapshot: snapshot, now: now, timeZone: utc, crest: { _ in nil }))
+        XCTAssertEqual(matchup.home.abbreviation, "TA&M")
+        XCTAssertEqual(matchup.away.abbreviation, "M-OH")
+        XCTAssertEqual(matchup.bigText, "78%")
+        XCTAssertEqual(matchup.smallLine, "TA&M · 2H 8:14")
+    }
+
+    func testHeaderLineUsesAvailableShortNameWithoutInventingMissingOne13144() {
+        let stan = WatchCompactTeamIdentity(teamID: 24, abbreviation: "STAN")
+        let partial = WatchRectangularReading(
+            version: 1, eventID: 15351032, kind: .liveForecast,
+            homeName: "Stanford Cardinal", awayName: "Sacramento St Hornets", home: stan, away: nil,
+            homePercent: 71, homeScore: 51, awayScore: 42, commenceTime: nil,
+            stateLabel: "Live", observedAt: now, scoreObservedAt: now)
+        XCTAssertEqual(partial.headerLine(preferCompact: true), "Sacramento St Hornets at STAN · 42–51")
+
+        let neither = WatchRectangularReading(
+            version: 1, eventID: 15351579, kind: .liveForecast,
+            homeName: "Wake Forest Demon Deacons", awayName: "Appalachian St Mountaineers", home: nil, away: nil,
+            homePercent: 64, homeScore: 71, awayScore: 68, commenceTime: nil,
+            stateLabel: "Live", observedAt: now, scoreObservedAt: now)
+        XCTAssertEqual(neither.headerLine(preferCompact: true), "Appalachian St Mountaineers at Wake Forest Demon Deacons · 68–71")
+    }
 }

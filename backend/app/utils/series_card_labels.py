@@ -50,6 +50,7 @@ from typing import Iterable, Mapping, MutableMapping, Optional
 from app.utils.game_market_club_names import repair_field_outcome_name
 from app.utils.kalshi_display_names import apply_name_repairs
 from app.utils.kalshi_threshold_label import market_threshold_label
+from app.utils.plain_rate_outcome import plain_rate_outcome_label
 
 #: ``KXMLBSERIESGAMES-26BOSNYYWC-3`` → rung 3. Anchored on the series family so a
 #: ``Yes`` from any other market (a Series Winner phrased as a question, a prop)
@@ -80,6 +81,8 @@ def reader_outcome_name(
     outcome_external_id: Optional[str],
     shipped_name: Optional[str],
     threshold_label: Optional[str] = None,
+    *,
+    market_name: Optional[str] = None,
 ) -> Optional[str]:
     """The printed name for one stored outcome, or ``None`` to print it as shipped.
 
@@ -105,12 +108,20 @@ def reader_outcome_name(
     outcome row keeps its name ``Yes`` for the consumers that key on it. The
     caller reads it off the market (:func:`market_threshold_label`); it only
     replaces a bare ``Yes``, so a label on any other row changes nothing.
+
+    #13196 adds plain-English basis-point rate labels (Ruling 244: A) from
+    :func:`plain_rate_outcome.plain_rate_outcome_label`, shared with the
+    grouping card so pages, ordinary cards, widgets, Watch, and search all
+    print "Quarter-point increase" instead of "25 bps increase" while keeping
+    the stored venue name intact for matching.
     """
     if threshold_label and (shipped_name or "").strip().lower() == "yes":
         return threshold_label
-    return series_games_rung_label(
-        outcome_external_id, shipped_name
-    ) or repair_field_outcome_name(outcome_external_id, shipped_name)
+    return (
+        series_games_rung_label(outcome_external_id, shipped_name)
+        or plain_rate_outcome_label(shipped_name, market_name=market_name)
+        or repair_field_outcome_name(outcome_external_id, shipped_name)
+    )
 
 
 def relabel_series_card(

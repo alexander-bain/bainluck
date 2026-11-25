@@ -1,0 +1,57 @@
+{
+  "slug": "machinery-big-tech-deals-hardware",
+  "stage": "public",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_event",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "TECH & BUSINESS",
+  "name": "Big Tech Deals & Hardware",
+  "category": "tech",
+  "tag": "TECH",
+  "section_title": "Deals, Launches & Leadership",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "extra_llm_categories": [
+      "economics",
+      "entertainment",
+      "culture"
+    ],
+    "card_rows": 3,
+    "card_section_key": "big_tech_deals_hardware",
+    "hide_row_art": true,
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/d/dd/OxidizedSiliconWafer.jpg/960px-OxidizedSiliconWafer.jpg",
+    "card_image_alt": "Reflective oxidized silicon semiconductor wafer with unbranded integrated-circuit patterns",
+    "card_image_credit": "90lbNose (CC0 1.0 Public Domain, Wikimedia Commons)",
+    "card_image_author": "90lbNose",
+    "card_image_license": "CC0 1.0 Public Domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:OxidizedSiliconWafer.jpg",
+    "sections": [
+      {
+        "key": "big_tech_deals_hardware",
+        "title": "Deals, Launches & Leadership",
+        "item_noun": "stories",
+        "note": "Major hardware launches, merger timelines, and executive turnover across big tech.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch5-big-tech-deals-hardware",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 10,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}

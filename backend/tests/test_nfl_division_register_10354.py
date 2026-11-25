@@ -286,6 +286,9 @@ class _FakeResult:
     def __init__(self, rows):
         self._rows = list(rows)
 
+    def unique(self):
+        return self
+
     def scalars(self):
         return _FakeScalars(self._rows)
 

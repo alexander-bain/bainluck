@@ -9,7 +9,7 @@ Follow Alex's current session instructions when they override references.
 Work in the isolated worktree selected for your task.
 Keep the shared master checkout available to its current owner.
 Use the gates in CLAUDE.md to verify your changes.
-Consult its linked docs for architecture and incident details.
+Read `docs/lessons.md` (weekly lessons) and `CLAUDE.md`'s linked reference docs.
 Read `docs/design/grouping-primitives.md` before grouping, container or Discover card work.
 GitHub Issues records priority and status.
 Keep secrets out of tracked files.

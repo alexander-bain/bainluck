@@ -113,6 +113,7 @@ finding rather than a leakage-free exclusion — the distinction is argued at
 
 from __future__ import annotations
 
+from functools import lru_cache
 import re
 from typing import Iterable, Mapping, Sequence
 
@@ -1058,6 +1059,7 @@ _QUESTION_RUNG_RE = re.compile(
     rf"(?P<word>{_UP_WORDS}|{_DOWN_WORDS})\s*_{{2,}}", re.I)
 
 
+@lru_cache(maxsize=4096)
 def question_ladder_direction(question: str | None) -> str | None:
     """The ladder direction a market QUESTION states, or ``None``.
 
@@ -1166,6 +1168,7 @@ _QUESTION_DATE_RE = re.compile(
     rf"(?<![a-z])(?P<dword>before|by|after)(?![a-z])\s*{_BLANK}", re.I)
 
 
+@lru_cache(maxsize=4096)
 def question_ladder_date_word(question: str | None) -> str | None:
     """The deadline word a market QUESTION states over a blank, or ``None``.
 
@@ -1240,6 +1243,7 @@ def parse_cumulative_leg(
     return None if parts is None else (parts[0], parts[1])
 
 
+@lru_cache(maxsize=16384)
 def _cumulative_leg_parts(
     text: str | None, *, dates: bool = False,
     question_direction: str | None = None,

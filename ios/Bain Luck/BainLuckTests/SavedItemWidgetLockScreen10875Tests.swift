@@ -23,14 +23,15 @@ final class SavedItemWidgetLockScreen10875Tests: XCTestCase {
     }
 
     private func game(status: String = "live", sport: String = "icehockey_nhl", homeScore: Int? = 2,
-                      awayScore: Int? = 1, extra: String = "", side: SavedWidgetGameSide10875? = nil) throws -> SavedWidgetReading10875 {
+                      awayScore: Int? = 1, source: String = "blend", extra: String = "",
+                      side: SavedWidgetGameSide10875? = nil) throws -> SavedWidgetReading10875 {
         let json = """
         {"id": 15327330, "sport": "\(sport)", "home_team": "Colorado Avalanche", "away_team": "Toronto Maple Leafs",
          "status": "\(status)", "commence_time": "\(iso(t0.addingTimeInterval(-3600)))",
          "home_score": \(homeScore.map(String.init) ?? "null"), "away_score": \(awayScore.map(String.init) ?? "null"),
          "home_team_data": {"abbreviation": "COL"}, "away_team_data": {"abbreviation": "TOR"},
          "current_odds": {"home_probability": 0.62, "away_probability": 0.38},
-         "hero_probability_source": "blend", "hero_probability_observed_at": "\(iso(t0.addingTimeInterval(-60)))"\(extra)}
+         "hero_probability_source": "\(source)", "hero_probability_observed_at": "\(iso(t0.addingTimeInterval(-60)))"\(extra)}
         """
         let e = try SavedWidgetDetailDecoding10875.decoder().decode(SavedWidgetEventDetail10875.self, from: Data(json.utf8))
         return SavedWidgetReadingRules10875.game(e, side: side, now: t0)
@@ -133,6 +134,28 @@ final class SavedItemWidgetLockScreen10875Tests: XCTestCase {
         XCTAssertEqual(SavedLockScreenFit10875.ringValue(gone), "—")
     }
 
+    func testAnOpeningLineHasNoCircularGaugeOrPercentage() throws {
+        let opening = try game(status: "scheduled", source: "opening",
+                               extra: ", \"hero_probability\": 0.60, \"hero_probability_away\": 0.40")
+        XCTAssertEqual(opening.phase, .openingLine)
+        XCTAssertEqual(opening.headline?.figure, "60%")
+        XCTAssertEqual(opening.priceCaption, "Opening line")
+        XCTAssertTrue(opening.spoken.contains("Opening line:"))
+        XCTAssertNil(SavedLockScreenFit10875.ringHeadline(opening))
+        XCTAssertEqual(SavedLockScreenFit10875.ringValue(opening), "—")
+        XCTAssertEqual(SavedLockScreenFit10875.ringHeadline(try game())?.figure, "62%")
+    }
+
+    func testALiveOpeningPayloadKeepsTheScoreAndWithholdsTheChance() throws {
+        let opening = try game(source: "opening",
+                               extra: ", \"hero_probability\": 0.60, \"hero_probability_away\": 0.40")
+        XCTAssertEqual(opening.phase, .unavailable)
+        XCTAssertEqual(opening.status, "Live · 1–2")
+        XCTAssertNil(opening.headline)
+        XCTAssertNil(opening.shares)
+        XCTAssertEqual(SavedLockScreenFit10875.ringValue(opening), "—")
+    }
+
     // MARK: - The rectangle
 
     func testALongVerdictGetsItsOwnLineAndTheNameMovesBelow() throws {
@@ -182,6 +205,10 @@ final class SavedItemWidgetLockScreen10875Tests: XCTestCase {
                       "the circular widget no longer draws its value through ringValue")
         XCTAssertTrue(source.contains("SavedLockScreenFit10875.rectangleOwnLineVerdict(reading)"),
                       "the rectangular widget no longer asks whether the verdict needs its own line")
+        let looks = try String(contentsOf: url.deletingLastPathComponent()
+            .appendingPathComponent("SavedWidgetLooks12466.swift"), encoding: .utf8)
+        XCTAssertTrue(looks.contains("if let headline = SavedLockScreenFit10875.ringHeadline(model.reading),"),
+                      "the circular gauge no longer checks if its figure can stand without a caption")
     }
 
     /// R2 — Native re-walked ae42c81d36 at real size: the venue-settled
@@ -249,5 +276,7 @@ final class SavedItemWidgetLockScreen10875Tests: XCTestCase {
                       "an offline reading with no clock no longer says just \"Offline\"")
         XCTAssertTrue(offlineArm.contains("\"Offline · \\($0)\""),
                       "an offline reading with a clock no longer shows that clock")
+        XCTAssertTrue(offlineArm.contains("if reading.phase == .openingLine { return \"Opening line · Offline\" }"),
+                      "the offline caption no longer identifies an opening line")
     }
 }

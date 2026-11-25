@@ -26,7 +26,13 @@ from app.utils.feed_market_quality import UFC_EVENT_STORY_PREFIX
 from app.utils.feed_market_quality import _story_key as compute_story_key
 from app.utils.feed_market_quality import classify_market_quality
 from app.utils.feed_market_quality import golf_tournament_display_name
+from app.utils.feed_market_quality import oscars_award_slot
+from app.utils.feed_market_quality import oscars_market_rank_key
 from app.utils.feed_market_quality import ufc_event_display_name
+from app.utils.market_display_name import (
+    _ANY_TEMPLATE_BLANK,
+    fill_market_display_name_blank,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -579,8 +585,36 @@ def _bundle_subtitle(measure: str, count: int) -> str:
     return f"What do these {count} markets say together?"
 
 
+def _bundle_member_single_row_label(data: Mapping[str, Any]) -> Optional[str]:
+    """Return the single level or deadline a collapsed bundle row displays."""
+    dc = data.get("discover_card")
+    if isinstance(dc, Mapping) and dc.get("suggested_format") == "threshold_heatmap":
+        raw_pts = dc.get("threshold_points") or ()
+        priced = [
+            pt
+            for pt in raw_pts
+            if isinstance(pt, Mapping) and pt.get("probability") is not None
+        ]
+        if len(priced) >= 2:
+            priced.sort(key=lambda pt: float(pt.get("value") or 0.0))
+            above50 = [pt for pt in priced if float(pt.get("probability") or 0.0) >= 0.5]
+            if above50:
+                is_date = all(str(pt.get("source") or "") == "date_bucket" for pt in priced)
+                chosen_pt = above50[0] if is_date else above50[-1]
+                lbl = str(chosen_pt.get("label") or "").strip()
+                if lbl:
+                    return lbl
+    top_outs = data.get("top_outcomes") or ()
+    if top_outs and isinstance(top_outs[0], Mapping):
+        lbl = str(top_outs[0].get("name") or "").strip()
+        if lbl:
+            return lbl
+    return None
+
+
 def _public_member_item(item: dict[str, Any]) -> dict[str, Any]:
-    return {
+    raw_name = item.get("_raw_market_name")
+    pub = {
         key: value
         for key, value in item.items()
         if not key.startswith("_")
@@ -593,6 +627,28 @@ def _public_member_item(item: dict[str, Any]) -> dict[str, Any]:
             "_review_decision_penalty",
         }
     }
+    data = pub.get("data")
+    if isinstance(data, Mapping):
+        template_source = (
+            raw_name
+            if isinstance(raw_name, str) and _ANY_TEMPLATE_BLANK.search(raw_name)
+            else data.get("name")
+        )
+        if isinstance(template_source, str) and _ANY_TEMPLATE_BLANK.search(template_source):
+            chosen_label = _bundle_member_single_row_label(data)
+            if chosen_label:
+                filled = fill_market_display_name_blank(
+                    template_source,
+                    chosen_label,
+                    single_row=True,
+                )
+                if filled:
+                    pub["data"] = {
+                        **data,
+                        "name": filled,
+                        "title_states_single_answer": True,
+                    }
+    return pub
 
 
 def _make_bundle_item(
@@ -602,9 +658,10 @@ def _make_bundle_item(
     sort_time = max(float(item.get("_sort_time") or 0) for item in items)
     title = _THEME_TITLES.get(theme, "Comparable market ranges")
     member_ids = [(_futures_data(item)).get("id") for item in items]
+    public_items = [_public_member_item(item) for item in items]
     entities = [
         _market_entity_name(str((_futures_data(item)).get("name") or ""), theme)
-        for item in items
+        for item in public_items
     ]
     subtitle = _bundle_subtitle(measure, len(items))
     return {
@@ -621,14 +678,14 @@ def _make_bundle_item(
             "comparison_theme": theme,
             "item_count": len(items),
             "member_ids": member_ids,
-            "items": [_public_member_item(item) for item in items],
+            "items": public_items,
             "entities": entities,
             "debug_bundles": {
                 "grouped_by": "discover_card.comparison_theme+measure",
                 "theme": theme,
                 "measure": measure,
                 "member_ids": member_ids,
-                "member_names": [(_futures_data(item)).get("name") for item in items],
+                "member_names": [(_futures_data(item)).get("name") for item in public_items],
                 "public_source_disagreement": False,
             },
         },
@@ -1178,7 +1235,12 @@ def _make_theme_bundle_item(
     """
     # Members ranked by feed score (most feed-worthy leads the mini-ranked-peek);
     # the bundle competes for ONE slot scored by its best member.
-    ranked = sorted(items, key=lambda it: float(it.get("score") or 0), reverse=True)
+    # Ruling 275 (#13100): the Oscars card leads with Best Picture, then Director,
+    # Actor and Actress where held, ahead of craft categories on tied scores.
+    if story_key == "story:oscars":
+        ranked = sorted(items, key=oscars_market_rank_key)
+    else:
+        ranked = sorted(items, key=lambda it: float(it.get("score") or 0), reverse=True)
     if is_congress_control_story_key(story_key):
         if congress_control_bundle_members(story_key, ranked) is None:
             return None
@@ -1226,6 +1288,7 @@ def _make_theme_bundle_item(
             },
         )
         return None
+    public_items = [_public_member_item(item) for item in ranked]
     return {
         "type": "bundle",
         "score": score,
@@ -1239,7 +1302,7 @@ def _make_theme_bundle_item(
             "shared_question": question,
             "item_count": len(ranked),
             "member_ids": member_ids,
-            "items": [_public_member_item(item) for item in ranked],
+            "items": public_items,
             "debug_bundles": {
                 "grouped_by": "story_key",
                 "story_key": story_key,
@@ -1247,7 +1310,7 @@ def _make_theme_bundle_item(
                 "question_source": question_source,
                 "member_ids": member_ids,
                 "member_names": [
-                    _futures_data(item).get("name") for item in ranked
+                    _futures_data(item).get("name") for item in public_items
                 ],
             },
         },
@@ -1976,10 +2039,31 @@ def assemble_story_theme_bundles(
         # one, which is what keeps the cap-1 and cap-2 dials (`drake_iceman`,
         # `russia_ukraine`, `ai`) meaning what they mean today.
         members = _with_story_overflow(members, story_key)
+        oscar_folded: list[dict[str, Any]] = []
+        if story_key == "story:oscars":
+            # Run Oscars major-slot dedup BEFORE `_dedupe_same_question_members`
+            # so a priced/newer market (e.g. 5869749) always beats an unpriced/older
+            # twin (e.g. 109566) claiming the same slot regardless of static score.
+            ordered_oscars = sorted(members, key=oscars_market_rank_key)
+            seen_oscar_slots: set[str] = set()
+            deduped_oscars: list[dict[str, Any]] = []
+            for oscar_item in ordered_oscars:
+                slot = oscars_award_slot(_futures_data(oscar_item).get("name"))
+                if slot is not None:
+                    if slot[1] in seen_oscar_slots:
+                        oscar_folded.append(oscar_item)
+                        continue
+                    seen_oscar_slots.add(slot[1])
+                deduped_oscars.append(oscar_item)
+            members = deduped_oscars
         # The same question from two venues is ONE row (#4446). Folded BEFORE the
         # cap so a duplicate does not spend a member slot the next distinct
         # question could have had.
         members, folded = _dedupe_same_question_members(members)
+        if oscar_folded:
+            folded = oscar_folded + folded
+        if story_key == "story:oscars":
+            members = sorted(members, key=oscars_market_rank_key)
         if is_congress_control_story_key(story_key):
             verified_members = congress_control_bundle_members(
                 story_key, members, folded
@@ -2831,6 +2915,20 @@ def reset_nfl_division_roundup_cache_for_tests() -> None:
     reset_roundup_cache_for_tests()
 
 
+def _nfl_club_source_mark(club: Any) -> dict[str, Any]:
+    """Explain the held blend; the register's row-touch age is not a read witness."""
+    from app.utils.futures_source_mark import verified_futures_source_mark
+
+    return verified_futures_source_mark(
+        (
+            ("kalshi", club.kalshi_probability),
+            ("polymarket", club.polymarket_probability),
+        ),
+        club.probability,
+        club.rule,
+    )
+
+
 def assemble_nfl_division_roundup(
     blends: list[Any],
     refusals: list[Any],
@@ -2878,10 +2976,16 @@ def assemble_nfl_division_roundup(
             if stamps and all(s is not None for s in stamps)
             else None
         )
+        source_mark = _nfl_club_source_mark(lead)
+        if len(tied) > 1:
+            # A printed-percent tie can join different exact numbers and inputs.
+            # The unchanged row number is the leader's; say whose inputs it uses.
+            source_mark["method"] += f" · Inputs for {lead.club}"
         rows.append({
             "market_id": int(b.kalshi_market_id),
             "label": f"{b.division}: {club_label}",
             "probability": float(lead.probability),
+            "source_mark": source_mark,
             "observed_at": row_observed_at,
             "pair": {"kalshi_market_id": int(b.kalshi_market_id), "polymarket_market_id": int(b.polymarket_market_id)},
         })
@@ -3003,7 +3107,11 @@ def _build_nfl_division_roundup_members(
         if div_blend is None or not isinstance(base_card, dict) or base_card.get("_withheld_reason"):
             return None, None
         blended_outcomes = [
-            {"name": c.club, "probability": float(c.probability)}
+            {
+                "name": c.club,
+                "probability": float(c.probability),
+                "source_mark": _nfl_club_source_mark(c),
+            }
             for c in sorted(div_blend.clubs, key=lambda c: -c.probability)
         ]
         if len(blended_outcomes) != 4:

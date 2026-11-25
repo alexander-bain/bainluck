@@ -107,6 +107,10 @@ def test_every_foreign_key_onto_teams_is_repointed():
         for table in Base.metadata.sorted_tables
         for fk in table.foreign_keys
         if fk.column.table.name == "teams"
+    } - {
+        # #13229: added after this September 2026 one-off repair ran; live
+        # merge repointing is enforced by test_team_merge.py::TestFkCoverage.
+        ("retired_team_redirects", "canonical_team_id"),
     }
     assert declared == set(m.REPOINTS)
 

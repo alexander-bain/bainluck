@@ -1,0 +1,57 @@
+{
+  "slug": "machinery-big-championships-2027",
+  "stage": "public",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_window",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "SPORTS · CHAMPIONSHIPS",
+  "name": "2026–27 Championship Races",
+  "category": "sports",
+  "tag": "SPORTS",
+  "section_title": "Major Titles & Awards",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "extra_llm_categories": [
+      "football",
+      "basketball",
+      "hockey",
+      "soccer"
+    ],
+    "card_rows": 3,
+    "card_section_key": "big_championships_2027",
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/0/0d/Cape_Town_Stadium%2C_Cape_Town%2C_South_Africa_%28Unsplash%29.jpg/960px-Cape_Town_Stadium%2C_Cape_Town%2C_South_Africa_%28Unsplash%29.jpg",
+    "card_image_alt": "Wide view of an empty championship stadium bowl and striped green pitch",
+    "card_image_credit": "Deklerk Basson (CC0 1.0 Public Domain, Wikimedia Commons)",
+    "card_image_author": "Deklerk Basson",
+    "card_image_license": "CC0 1.0 Public Domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Cape_Town_Stadium,_Cape_Town,_South_Africa_(Unsplash).jpg",
+    "sections": [
+      {
+        "key": "big_championships_2027",
+        "title": "Major Titles & Awards",
+        "item_noun": "races",
+        "note": "Current favorites across the Heisman, NBA MVP, Super Bowl, NBA Finals, Stanley Cup, and Champions League.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch4-big-championships-2027",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 10,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}

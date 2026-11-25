@@ -4,7 +4,7 @@ import React from "react";
 import { formatProbabilityPercent } from "@/lib/probabilityDisplay";
 import {
   ATLAS_STATE_COPY,
-  formatAtlasTimestampPT,
+  formatAtlasTimestampLocal,
 } from "@/components/atlas/atlasStateCopy";
 import type { SettlementResult } from "@/lib/chartSettlementPoints";
 
@@ -111,7 +111,7 @@ export function AtlasChartMarkKey({
         </span>
       )}
       <span className="text-text-muted">
-        Tap any reading for exact time (PT)
+        Tap any reading for exact time
       </span>
     </div>
   );
@@ -137,6 +137,7 @@ export function AtlasSeriesReadingMarks({
   solidMarkRadius = 3,
   selectedReading,
   onSelectReading,
+  timeZone,
 }: {
   outcomeId: number;
   outcomeName: string;
@@ -148,6 +149,7 @@ export function AtlasSeriesReadingMarks({
   solidMarkRadius?: number;
   selectedReading?: AtlasSelectedReading | null;
   onSelectReading?: (reading: AtlasSelectedReading) => void;
+  timeZone?: string;
 }) {
   if (points.length === 0) return null;
 
@@ -188,13 +190,13 @@ export function AtlasSeriesReadingMarks({
           return null;
         }
 
-        const exactPt =
-          formatAtlasTimestampPT(pt.timestamp, { includeSeconds: true }) ??
+        const exactTime =
+          formatAtlasTimestampLocal(pt.timestamp, { includeSeconds: true, timeZone }) ??
           pt.timestamp;
         const pctLabel = formatProbabilityPercent(pt.prob);
         const ariaLabel = `${outcomeName}: ${
           isOpening ? "Opening reading" : "Recorded reading"
-        } ${pctLabel} at ${exactPt}`;
+        } ${pctLabel} at ${exactTime}`;
 
         const handleSelect = (e: React.SyntheticEvent) => {
           e.stopPropagation();
@@ -341,14 +343,16 @@ export function AtlasResultWordMark({
 export function AtlasSelectedReadingReadout({
   reading,
   onClear,
+  timeZone,
 }: {
   reading: AtlasSelectedReading | null;
   onClear?: () => void;
+  timeZone?: string;
 }) {
   if (!reading) return null;
 
-  const exactTimePT =
-    formatAtlasTimestampPT(reading.timestamp, { includeSeconds: true }) ??
+  const exactTime =
+    formatAtlasTimestampLocal(reading.timestamp, { includeSeconds: true, timeZone }) ??
     reading.timestamp;
   const pctText = formatProbabilityPercent(reading.probability);
 
@@ -390,7 +394,7 @@ export function AtlasSelectedReadingReadout({
           data-testid="atlas-chart-selected-reading-time"
           className="font-mono text-text-secondary"
         >
-          {exactTimePT}
+          {exactTime}
         </span>
       </div>
       {onClear && (

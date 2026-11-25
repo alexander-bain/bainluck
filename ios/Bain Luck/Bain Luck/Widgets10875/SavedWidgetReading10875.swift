@@ -288,9 +288,8 @@ enum SavedWidgetReadingRules10875 {
                        spoken: "\(subject). \(caption): \(said).\(when) \(status).", shares: shares)
     }
 
-    /// The pair the hero prints — `OpeningLineHero.resolve`'s rule on this
-    /// decode. `nil` when the event carries no `current_odds` at all, which is
-    /// the hero's unavailable branch.
+    /// The pair the hero prints. Older detail bodies can still declare an
+    /// opening line. Only its explicitly historical pregame figure is usable.
     struct HeroPair: Equatable {
         let away: Double?
         let home: Double?
@@ -300,13 +299,13 @@ enum SavedWidgetReadingRules10875 {
     }
 
     static func heroPair(_ event: SavedWidgetEventDetail10875) -> HeroPair? {
-        guard let odds = event.currentOdds else { return nil }
-        if event.heroProbabilitySource == "opening",
-           event.status != "live", !EventState.isFinished(event.status),
-           let home = event.heroProbability, home.isFinite, home > 0, home < 1 {
+        if event.heroProbabilitySource == "opening" {
+            guard event.status != "live", !EventState.isFinished(event.status),
+                  let home = event.heroProbability, home.isFinite, home > 0, home < 1 else { return nil }
             return HeroPair(away: event.heroProbabilityAway.flatMap { $0.isFinite ? $0 : nil }, home: home,
                             awayRenderedPercent: nil, homeRenderedPercent: nil, isOpeningLine: true)
         }
+        guard let odds = event.currentOdds else { return nil }
         return HeroPair(away: odds.awayProbability, home: odds.homeProbability,
                         awayRenderedPercent: odds.awayRenderedPercent, homeRenderedPercent: odds.homeRenderedPercent,
                         isOpeningLine: false)
@@ -530,29 +529,26 @@ enum SavedWidgetReadingRules10875 {
 /// later is covered too. The spoken label keeps the full sentence.
 nonisolated enum SavedLockScreenFit10875 {
     /// The verdicts that share a line with the outcome name.
-    static let shortVerdicts: Set<String> = ["Won", "Lost", "Draw"]
+    static let shortVerdicts: Set<String> = LockScreenSmallSlotFit13430.shortVerdicts
     /// The longest word the circular widget's value line holds whole ("Unknown").
-    static let ringLimit = 7
+    static let ringLimit = LockScreenSmallSlotFit13430.ringLimit
+
+    /// The ring has space for a bare value. Opening lines need their caption.
+    static func ringHeadline(_ reading: SavedWidgetReading10875) -> SavedWidgetReading10875.Row? {
+        LockScreenSmallSlotFit13430.allowsRingValue(phase: reading.phase.smallSlotPhase13430) ? reading.headline : nil
+    }
 
     /// The circular widget's value: a figure, a verdict that fits, or a word
     /// standing for one that does not.
     static func ringValue(_ reading: SavedWidgetReading10875) -> String {
-        guard let headline = reading.headline else { return reading.phase == .noResult ? "Final" : "—" }
-        // Nothing to show for the choice (its label says why, e.g. "Not
-        // listed"): a dash, never a sentence squeezed into the circle.
-        if reading.phase == .unavailable { return "—" }
-        guard let verdict = headline.verdict else { return headline.figure ?? "—" }
-        if shortVerdicts.contains(verdict) || verdict.count <= ringLimit { return verdict }
-        // #698: settled, and the result is unknown.
-        if reading.phase == .noResult { return "Unknown" }
-        // The venue's words naming a side: that side's short name ("SEA").
-        // The server writes "{participant} wins" (venue_settlement
-        // WINNER_SENTENCE); the bare name is kept too.
-        if let side = reading.rows.first(where: { $0.label == verdict || $0.label + " wins" == verdict }),
-           side.shortLabel.count <= ringLimit {
-            return side.shortLabel
-        }
-        return "—"
+        let headline = ringHeadline(reading)
+        return LockScreenSmallSlotFit13430.ringValue(
+            phase: reading.phase.smallSlotPhase13430,
+            headlineExists: headline != nil,
+            figure: headline?.figure,
+            verdict: headline?.verdict,
+            rows: reading.rows.map { LockScreenSmallSlotRow13430(label: $0.label, shortLabel: $0.shortLabel) }
+        )
     }
 
     /// The rectangular widget's verdict when it needs its own line; nil when
@@ -570,5 +566,18 @@ nonisolated enum SavedLockScreenFit10875 {
         guard let name = reading.headline?.shortLabel, !name.isEmpty,
               name != caption, name != reading.status else { return caption }
         return "\(name) · \(caption)"
+    }
+}
+
+private extension SavedWidgetReading10875.Phase {
+    nonisolated var smallSlotPhase13430: LockScreenSmallSlotPhase13430 {
+        switch self {
+        case .current: return .current
+        case .lastRecorded: return .lastRecorded
+        case .openingLine: return .openingLine
+        case .result: return .result
+        case .noResult: return .noResult
+        case .unavailable: return .unavailable
+        }
     }
 }

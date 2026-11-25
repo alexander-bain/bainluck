@@ -9,6 +9,11 @@ on:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
+    inputs:
+      measure_picture:
+        description: Measure one picture for the meter
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -47,4 +52,14 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           LLM_MODEL_FACTORY_NOTES: gpt-6-luna
+          LLM_MODEL_FACTORY_PICTURE: gpt-image-2.6-flare
+          FACTORY_MEASURE_PICTURE: ${{ github.event_name == 'workflow_dispatch' && inputs.measure_picture }}
         run: python3 scripts/factory/collect.py --output /tmp/factory.json --publish
+      - name: Keep the measured picture for the receipt
+        if: github.event_name == 'workflow_dispatch' && inputs.measure_picture
+        uses: actions/upload-artifact@v4
+        with:
+          name: factory-measured-picture
+          path: /tmp/factory-measured-picture.webp
+          if-no-files-found: error
+          retention-days: 7

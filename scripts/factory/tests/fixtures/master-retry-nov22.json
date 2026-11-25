@@ -1,0 +1,79 @@
+{
+  "captured_at": "2026-11-22T23:36:58.642342Z",
+  "rerun_as_of_capture": {
+    "conclusion": null,
+    "head_sha": "db1c3e04996b9151764600ab23a11acf1050428c",
+    "id": 45082983839,
+    "name": "CI",
+    "run_attempt": 2,
+    "run_started_at": "2026-11-22T23:36:00Z",
+    "status": "in_progress",
+    "updated_at": "2026-11-22T23:36:00Z"
+  },
+  "previous_attempt": {
+    "conclusion": "failure",
+    "head_sha": "db1c3e04996b9151764600ab23a11acf1050428c",
+    "id": 45082983839,
+    "name": "CI",
+    "run_attempt": 1,
+    "run_started_at": "2026-11-22T23:23:15Z",
+    "status": "completed",
+    "updated_at": "2026-11-22T23:35:42Z"
+  },
+  "another_commit_passed": {
+    "conclusion": "success",
+    "head_sha": "ef8c2ecb936db5e37c89dc35d80abe4d1f4ded50",
+    "id": 45080156683,
+    "name": "CI",
+    "run_attempt": 1,
+    "run_started_at": "2026-11-22T22:52:50Z",
+    "status": "completed",
+    "updated_at": "2026-11-22T23:18:27Z"
+  },
+  "rerun_passed": {
+    "conclusion": "success",
+    "head_sha": "db1c3e04996b9151764600ab23a11acf1050428c",
+    "id": 45082983839,
+    "name": "CI",
+    "run_attempt": 2,
+    "run_started_at": "2026-11-22T23:36:00Z",
+    "status": "completed",
+    "updated_at": "2026-11-22T23:52:10Z"
+  },
+  "failed_attempt_jobs": {
+    "jobs": [
+      {
+        "conclusion": "failure",
+        "name": "backend-tests (8)"
+      },
+      {
+        "conclusion": "failure",
+        "name": "search-recall"
+      },
+      {
+        "conclusion": "skipped",
+        "name": "deploy"
+      }
+    ]
+  },
+  "pull": {
+    "merge_commit_sha": "db1c3e04996b9151764600ab23a11acf1050428c",
+    "merged_at": "2026-11-22T23:23:13Z",
+    "number": 13444,
+    "files": [
+      ".github/ci-postgres-groups.json",
+      ".github/workflows/ci.yml",
+      ".github/workflows/live-path-watchdog.yml",
+      "backend/app/routes/user.py",
+      "backend/app/services/onboarding_team_membership.py",
+      "backend/app/tasks/__init__.py",
+      "backend/app/utils/typeahead_beat_budget.py",
+      "backend/tests/integration/test_onboarding_team_search_13338_pg.py",
+      "backend/tests/test_celery_result_retention.py",
+      "backend/tests/test_ci_composition_promotion_10712.py",
+      "backend/tests/test_retired_team_redirects_and_guards_13229.py",
+      "backend/tests/test_tasks_wiring.py",
+      "backend/tests/test_typeahead_beat_budget.py"
+    ]
+  }
+}

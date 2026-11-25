@@ -135,6 +135,7 @@
 				Models/PredictionModels.swift,
 				Utilities/DrawPricedWinner.swift,
 				Utilities/GameContinuation.swift,
+				Utilities/LockScreenSmallSlotFit13430.swift,
 				Utilities/StoryContinuation.swift,
 				Utilities/PeriodLabel.swift,
 				Utilities/ProbabilityBarPalette.swift,
@@ -145,6 +146,7 @@
 				Utilities/TeamTextContrast.swift,
 				Utilities/WatchTelemetryProtocol.swift,
 				Utilities/WatchWristTile12616.swift,
+				Utilities/WidgetRelevanceRule254A.swift,
 			);
 			target = A70F40102FA6C20000170BF2 /* BainLuckWatch Watch App */;
 		};
@@ -170,6 +172,9 @@
 				WatchPinsModels12640.swift,
 				WatchSelectedGameModels.swift,
 				WatchMatchupReading217.swift,
+				WatchMatchupComplication217.swift,
+				WatchMatchupGamePageHero297A.swift,
+				WatchComplicationRelevance254A.swift,
 			);
 			target = A7C0000000000000000000E1 /* BainLuckTests */;
 		};
@@ -184,6 +189,7 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				WidgetFeedDecoding.swift,
+				SavedLockScreenMatchup13432.swift,
 			);
 			target = A7C0000000000000000000E1 /* BainLuckTests */;
 		};
@@ -196,6 +202,7 @@
 				WatchLaunchRoute.swift,
 				WatchMatchupComplication217.swift,
 				WatchMatchupReading217.swift,
+				WatchComplicationRelevance254A.swift,
 			);
 			target = A7C0000000000000000000D1 /* BainLuckComplication */;
 		};
@@ -203,8 +210,19 @@
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
 				Utilities/HeadlineStyleTable199.swift,
+				Utilities/WidgetRelevanceRule254A.swift,
+				Utilities/LockScreenSmallSlotFit13430.swift,
 			);
 			target = A7C0000000000000000000D1 /* BainLuckComplication */;
+		};
+		A7C0000000000000000000B3 /* Exceptions for "BainLuckWatch Watch App" folder in "BainLuckWidget" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				WatchComplicationSnapshot.swift,
+				WatchMatchupReading217.swift,
+				WatchMatchupComplication217.swift,
+			);
+			target = A7C0000000000000000000F1 /* BainLuckWidget */;
 		};
 		A7C0000000000000000000B1 /* Exceptions for "Bain Luck" folder in "BainLuckWidget" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
@@ -216,6 +234,7 @@
 				Utilities/EventHeadlineTenths10090.swift,
 				Utilities/GameContinuation.swift,
 				Utilities/HeadlineStyleTable199.swift,
+				Utilities/LockScreenSmallSlotFit13430.swift,
 				Utilities/RenderedPercent.swift,
 				Utilities/PeriodLabel.swift,
 				Utilities/SportVocab.swift,
@@ -235,6 +254,7 @@
 				Widgets10875/SavedWidgetDetail10875.swift,
 				Widgets10875/SavedWidgetReading10875.swift,
 				Widgets10875/SavedWidgetTimeline10875.swift,
+				Utilities/WidgetRelevanceRule254A.swift,
 			);
 			target = A7C0000000000000000000F1 /* BainLuckWidget */;
 		};
@@ -261,6 +281,7 @@
 				A7FF02752FA9AC0B00C82C55 /* Exceptions for "BainLuckWatch Watch App" folder in "BainLuckWatch Watch App" target */,
 				A7C0000000000000000000EC /* Exceptions for "BainLuckWatch Watch App" folder in "BainLuckTests" target */,
 				A7C0000000000000000000DE /* Exceptions for "BainLuckWatch Watch App" folder in "BainLuckComplication" target */,
+				A7C0000000000000000000B3 /* Exceptions for "BainLuckWatch Watch App" folder in "BainLuckWidget" target */,
 			);
 			path = "BainLuckWatch Watch App";
 			sourceTree = "<group>";
@@ -877,7 +898,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = BainLuckWatch;
-				MARKETING_VERSION = 1.0.7;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.bainluck.BainLuckWatch;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -894,7 +915,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				ENABLE_USER_SCRIPT_SANDBOXING = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = BainLuckWatch;
-				MARKETING_VERSION = 1.0.7;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.bainluck.BainLuckWatch;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -925,7 +946,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.7;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.bainluck.Bain-Luck.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -962,7 +983,7 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0.7;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = com.bainluck.Bain-Luck.watchkitapp;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -1130,7 +1151,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.2;
-				MARKETING_VERSION = 1.0.7;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.Bain-Luck";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -1178,7 +1199,7 @@
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/Frameworks";
 				"LD_RUNPATH_SEARCH_PATHS[sdk=macosx*]" = "@executable_path/../Frameworks";
 				MACOSX_DEPLOYMENT_TARGET = 26.2;
-				MARKETING_VERSION = 1.0.7;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.Bain-Luck";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				REGISTER_APP_GROUPS = YES;
@@ -1205,7 +1226,7 @@
 				DEVELOPMENT_TEAM = J893F72P4R;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.0.7;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.BainLuckTests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1227,7 +1248,7 @@
 				DEVELOPMENT_TEAM = J893F72P4R;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.0.7;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.BainLuckTests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1249,7 +1270,7 @@
 				DEVELOPMENT_TEAM = J893F72P4R;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.2;
-				MARKETING_VERSION = 1.0.7;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.BainLuckMacTests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
@@ -1270,7 +1291,7 @@
 				DEVELOPMENT_TEAM = J893F72P4R;
 				GENERATE_INFOPLIST_FILE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 26.2;
-				MARKETING_VERSION = 1.0.7;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.BainLuckMacTests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = macosx;
@@ -1301,12 +1322,13 @@
 					"@executable_path/../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.2;
-				MARKETING_VERSION = 1.0.7;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.Bain-Luck.BainLuckWidget";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
 				SKIP_INSTALL = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "BAINLUCK_WIDGET_EXTENSION $(inherited)";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -1338,12 +1360,13 @@
 					"@executable_path/../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 26.2;
-				MARKETING_VERSION = 1.0.7;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.Bain-Luck.BainLuckWidget";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
 				SKIP_INSTALL = YES;
 				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator macosx xros xrsimulator";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "BAINLUCK_WIDGET_EXTENSION $(inherited)";
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -1370,7 +1393,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.7;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.Bain-Luck.watchkitapp.SavedGlance";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -1402,7 +1425,7 @@
 					"@executable_path/Frameworks",
 					"@executable_path/../../Frameworks",
 				);
-				MARKETING_VERSION = 1.0.7;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.Bain-Luck.watchkitapp.SavedGlance";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -1428,7 +1451,7 @@
 				DEVELOPMENT_TEAM = J893F72P4R;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.0.7;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.BainLuckUITests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1449,7 +1472,7 @@
 				DEVELOPMENT_TEAM = J893F72P4R;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 1.0.7;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.BainLuckUITests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -1470,7 +1493,7 @@
 				DEVELOPMENT_TEAM = J893F72P4R;
 				GENERATE_INFOPLIST_FILE = YES;
 				WATCHOS_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 1.0.7;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.BainLuckWatchUITests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;
@@ -1492,7 +1515,7 @@
 				DEVELOPMENT_TEAM = J893F72P4R;
 				GENERATE_INFOPLIST_FILE = YES;
 				WATCHOS_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 1.0.7;
+				MARKETING_VERSION = 1.0.8;
 				PRODUCT_BUNDLE_IDENTIFIER = "com.bainluck.BainLuckWatchUITests";
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = watchos;

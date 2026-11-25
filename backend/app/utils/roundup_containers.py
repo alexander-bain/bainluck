@@ -20,10 +20,13 @@ import logging
 import re
 import time
 import zlib
+from collections import deque
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
+from decimal import Decimal
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence
+from uuid import UUID
 
 from app.utils.container_presentation import (
     MEMBER_MARKET,
@@ -36,14 +39,24 @@ __all__ = [
     "CLOSED_PERMISSION_LEVELS",
     "CONTAINERS_DATA_DIR",
     "HAND_LIST_ID_RULE_KEYS",
+    "MORE_SETS_BUDGET_SECONDS",
+    "MORE_SETS_LIMIT",
+    "MORE_SETS_MAX_LEAD_AGE_SECONDS",
     "OCCASION_ID_RULE_KEYS",
+    "ROUNDUP_BG_REFRESH_TIMEOUT_S",
     "ROUNDUP_CACHE_TTL_S",
     "ROUNDUP_NOVELTY_SEAT_CAP",
+    "ROUNDUP_PAGE_SWR_MAX_AGE_S",
     "ROUNDUP_PREWARM_STAGE_BUDGET_SECONDS",
+    "ROUNDUP_PREVIEW_PRODUCER_TIMEOUT_SECONDS",
+    "ROUNDUP_PREVIEW_STAGE_BUDGET_SECONDS",
     "ROUNDUP_PRODUCERS",
     "ROUNDUP_PRODUCER_TIMEOUT_SECONDS",
     "ROUNDUP_READ_BUDGET_SECONDS",
+    "ROUNDUP_READ_FAILURE_WINDOW_S",
     "ROUNDUP_SEAT_FLOOR",
+    "ROUNDUP_STANDING_LIVE_STALE_TTL_S",
+    "ROUNDUP_STANDING_NON_LIVE_STALE_TTL_S",
     "SELECTOR_RULE_KEYS",
     "RoundupMembers",
     "RoundupProducer",
@@ -54,6 +67,7 @@ __all__ = [
     "compose_roundup_container",
     "compose_roundup_feed_item",
     "evaluate_roundup_producer",
+    "get_roundup_read_failure_stats_10m",
     "insert_roundup_feed_items",
     "load_roundup_definition",
     "load_roundup_definitions_from_dir",
@@ -64,7 +78,9 @@ __all__ = [
     "roundup_feed_enabled",
     "roundup_feed_items",
     "roundup_revision",
+    "select_more_sets",
     "serve_roundup",
+    "summarize_more_set_card",
     "validate_roundup_definition",
 ]
 
@@ -98,6 +114,15 @@ CLOSED_PERMISSION_LEVELS: frozenset[str] = frozenset(
         "equivalent",
     }
 )
+
+#: Closed list of publication stages for computed groupings (#13097, Fable 2:03 PM PT).
+#: ``preview`` sets are served only when ``machinery=preview`` is requested (and by
+#: direct container URL) so Fable can inspect live numbers before one-line promotion
+#: to ``public``.
+CLOSED_GROUPING_STAGES: frozenset[str] = frozenset({"public", "preview"})
+
+#: Closed list of visual looks for computed groupings (Alex 1:18 PM PT / #13097).
+CLOSED_GROUPING_LOOKS: frozenset[str] = frozenset({"bars", "map", "faces"})
 
 #: Rule keys that select members by query/pattern/window (Decide 73-A).
 SELECTOR_RULE_KEYS: tuple[str, ...] = (
@@ -139,6 +164,15 @@ ROUNDUP_CACHE_TTL_S = 60.0
 ROUNDUP_PRODUCER_TIMEOUT_SECONDS = 0.5
 ROUNDUP_READ_BUDGET_SECONDS = 2.5
 ROUNDUP_PREWARM_STAGE_BUDGET_SECONDS = 10.0
+#: Best-effort budget for cold `"stage": "preview"` groupings on `machinery=preview`
+#: requests; kept strictly outside the public stage budget and public all-or-nothing gate.
+ROUNDUP_PREVIEW_PRODUCER_TIMEOUT_SECONDS = 3.5
+ROUNDUP_PREVIEW_STAGE_BUDGET_SECONDS = 12.0
+#: #13103 Part 3 item 3 — server-picked follow-on sets attached to GET /api/containers/{slug}.
+MORE_SETS_LIMIT = 2
+MORE_SETS_BUDGET_SECONDS = 0.35
+#: Maximum age of a follow-on set's first-row price observation (24 hours).
+MORE_SETS_MAX_LEAD_AGE_SECONDS = 86400.0
 #: Oct 7–8 Discover opening ruling (#4080 / #5100 / #5105): seats 1–10 (indices
 #: 0–9) are the dated why-now opening ten. Standing round-ups sit in page one's
 #: back half starting at index 10 (seat 11), with no ranking change.
@@ -151,6 +185,21 @@ ROUNDUP_NOVELTY_SEAT_CAP = 2
 _roundup_local_cache: dict[
     tuple[str, Any], tuple[float, Optional[dict[str, Any]], Optional[dict[str, Any]]]
 ] = {}
+_roundup_bg_refresh_tasks: dict[tuple[str, Any], asyncio.Task[Any]] = {}
+_roundup_inflight_builds: dict[
+    tuple[str, Any],
+    asyncio.Future[
+        tuple[
+            Optional[dict[str, Any]],
+            Optional[dict[str, Any]],
+            Optional[dict[str, Any]],
+        ]
+    ],
+] = {}
+
+
+class _RoundupBuildAbandoned(Exception):
+    """Internal signal when a singleflight roundup build is cancelled/abandoned."""
 
 
 @dataclass(frozen=True)
@@ -174,6 +223,7 @@ class RoundupMembers:
     children: tuple[dict[str, Any], ...] = ()
     paired_metric_set: Optional[dict[str, Any]] = None
     machinery_card: Optional[dict[str, Any]] = None
+    covered_market_ids: tuple[int, ...] = ()
 
     def __init__(
         self,
@@ -195,6 +245,7 @@ class RoundupMembers:
         children: Sequence[Mapping[str, Any]] = (),
         paired_metric_set: Optional[Mapping[str, Any]] = None,
         machinery_card: Optional[Mapping[str, Any]] = None,
+        covered_market_ids: Sequence[int] = (),
     ) -> None:
         object.__setattr__(self, "members", tuple(members))
         object.__setattr__(self, "rows", tuple(rows))
@@ -252,6 +303,11 @@ class RoundupMembers:
             copy.deepcopy(dict(machinery_card))
             if isinstance(machinery_card, Mapping)
             else None,
+        )
+        object.__setattr__(
+            self,
+            "covered_market_ids",
+            tuple(int(cid) for cid in (covered_market_ids or ())),
         )
 
 
@@ -321,6 +377,8 @@ class RoundupProducer:
     enabled: Optional[Callable[[], bool]] = None
     valid_from: Optional[float] = None
     valid_until: Optional[float] = None
+    stage: str = "public"
+    look: str = "bars"
 
     def __init__(
         self,
@@ -348,6 +406,8 @@ class RoundupProducer:
         children: Optional[Sequence[Mapping[str, Any]]] = None,
         score: float = 0.0,
         enabled: Optional[Callable[[], bool]] = None,
+        stage: Optional[str] = None,
+        look: Optional[str] = None,
     ) -> None:
         if produce is None:
             raise TypeError("RoundupProducer requires a 'produce' callable")
@@ -508,6 +568,28 @@ class RoundupProducer:
         start, end = _definition_window(rule or {})
         object.__setattr__(self, "valid_from", start)
         object.__setattr__(self, "valid_until", end)
+        # Publication stage (`public` / `preview`) lives at the top level of the
+        # definition, never in `rule["stage"]` (which ceremony producers use for
+        # award stages such as `"winner"` / `"nomination"`).
+        stage_clean = str(stage or "public").strip().lower()
+        if stage_clean not in CLOSED_GROUPING_STAGES:
+            raise ValueError(
+                f"RoundupProducer {slug!r} has invalid stage {stage!r}; "
+                f"allowed: {sorted(CLOSED_GROUPING_STAGES)}"
+            )
+        raw_look = (
+            look
+            if look is not None
+            else (rule.get("look") if isinstance(rule, Mapping) else None)
+        )
+        look_clean = str(raw_look or "bars").strip().lower()
+        if look_clean not in CLOSED_GROUPING_LOOKS:
+            raise ValueError(
+                f"RoundupProducer {slug!r} has invalid look {raw_look!r}; "
+                f"allowed: {sorted(CLOSED_GROUPING_LOOKS)}"
+            )
+        object.__setattr__(self, "stage", stage_clean)
+        object.__setattr__(self, "look", look_clean)
 
 
 def roundup_container_id(slug: str) -> int:
@@ -748,6 +830,17 @@ def compose_roundup_feed_item(
     rows = list(members.rows)
     normalized = [_normalize_member_entry(x) for x in members.members]
     member_ids = [int(m["id"]) for m in normalized]
+    all_member_ids = list(
+        dict.fromkeys(
+            [
+                *member_ids,
+                *(
+                    int(cid)
+                    for cid in (getattr(members, "covered_market_ids", None) or ())
+                ),
+            ]
+        )
+    )
     rev_ids = list(members.revision_ids) if members.revision_ids else member_ids
     item_id = producer.story_key or f"roundup:{producer.slug.removeprefix('roundup-')}"
     footer = members.footer or producer.footer
@@ -791,7 +884,7 @@ def compose_roundup_feed_item(
     collection_ref = {
         "slug": producer.slug,
         "href": effective_href,
-        "name": effective_title,
+        "name": producer.name or effective_title,
         "revision": roundup_revision(rev_ids),
         "collection_count": len(member_ids),
     }
@@ -859,7 +952,7 @@ def compose_roundup_feed_item(
             "story_key": item_id,
             "shared_question": None,
             "item_count": len(member_ids),
-            "member_ids": member_ids,
+            "member_ids": all_member_ids,
             "items": member_items,
             "collection_ref": collection_ref,
             "roundup": roundup_contract,
@@ -871,8 +964,102 @@ def _redis_cache_key(slug: str) -> str:
     return f"container_read:v1:{slug}"
 
 
+ROUNDUP_READ_FAILURE_WINDOW_S = 600.0
+#: Rolling 10-minute ledger of Discover round-up read outcomes when refresh
+#: times out, errors, or hits stage budget on this process:
+#: ``(ts, slug, outcome_kind, reason)`` where ``outcome_kind`` is one of
+#: ``"kept_last_good"``, ``"dropped_no_copy"``, or ``"had_nothing_to_show"``.
+#: Bounded so memory is O(1).
+_roundup_read_failures: deque[tuple[float, str, str, str]] = deque(maxlen=5000)
+#: Local companion marker for unexpired ``(ts, None, None)`` entries in
+#: ``_roundup_local_cache`` that came from a clean "nothing to show" refusal
+#: (never a timeout/error refusal), keyed identically to ``_roundup_local_cache``.
+_roundup_nothing_to_show_local: dict[tuple[str, Any], tuple[float, Optional[str]]] = {}
+
+
+def _prune_roundup_read_failures(now_ts: float) -> None:
+    cutoff = float(now_ts) - ROUNDUP_READ_FAILURE_WINDOW_S
+    while _roundup_read_failures and _roundup_read_failures[0][0] < cutoff:
+        _roundup_read_failures.popleft()
+
+
+def _record_roundup_read_failure(
+    slug: str,
+    *,
+    kept_last_good: bool,
+    reason: str,
+    had_nothing_to_show: bool = False,
+    now: Optional[float | datetime] = None,
+) -> dict[str, int]:
+    """Record a Discover round-up read fallback/loss and return rolling 10-minute counts."""
+    ts, _ = _normalize_roundup_now(now)
+    _prune_roundup_read_failures(ts)
+    if kept_last_good:
+        outcome_kind = "kept_last_good"
+    elif had_nothing_to_show:
+        outcome_kind = "had_nothing_to_show"
+    else:
+        outcome_kind = "dropped_no_copy"
+    _roundup_read_failures.append((ts, str(slug), outcome_kind, str(reason)))
+    return get_roundup_read_failure_stats_10m(now=ts)
+
+
+def get_roundup_read_failure_stats_10m(
+    now: Optional[float | datetime] = None,
+) -> dict[str, int]:
+    """Return Discover round-up read counts over the last 10 minutes (#13146).
+
+    Splits round-ups that cleanly had nothing to show from ones where a reader
+    actually lost a card, so ``dropped_no_copy > 0`` can be used as an alarm:
+
+    - ``failed``: ``kept_last_good + dropped_no_copy`` (reads where a card was
+      at risk or lost due to timeout, error, or stage budget).
+    - ``kept_last_good``: failed reads where a valid last good copy under its
+      keep-time was kept in the list instead of dropping the card.
+    - ``dropped_no_copy``: failed reads where a reader actually lost a card
+      (no last good copy under keep-time and not known to have nothing to show).
+    - ``had_nothing_to_show``: timed-out/errored/budget-exhausted reads whose
+      unexpired prior state cleanly had nothing to show (never inflates
+      ``dropped_no_copy`` or ``failed``).
+    """
+    ts, _ = _normalize_roundup_now(now)
+    _prune_roundup_read_failures(ts)
+    kept = 0
+    dropped = 0
+    nothing_to_show = 0
+    for _ev_ts, _slug, outcome_kind, _reason in _roundup_read_failures:
+        if outcome_kind == "kept_last_good":
+            kept += 1
+        elif outcome_kind == "had_nothing_to_show":
+            nothing_to_show += 1
+        else:
+            dropped += 1
+    return {
+        "window_seconds": int(ROUNDUP_READ_FAILURE_WINDOW_S),
+        "failed": kept + dropped,
+        "kept_last_good": kept,
+        "dropped_no_copy": dropped,
+        "had_nothing_to_show": nothing_to_show,
+    }
+
+
+def _reset_roundup_swr_state_for_tests() -> None:
+    """Clear in-flight background refreshes and singleflight futures between tests (#13475)."""
+    for task in list(_roundup_bg_refresh_tasks.values()):
+        try:
+            if not task.done():
+                task.cancel()
+        except Exception:  # noqa: BLE001
+            pass
+    _roundup_bg_refresh_tasks.clear()
+    _roundup_inflight_builds.clear()
+
+
 def reset_roundup_cache_for_tests() -> None:
     _roundup_local_cache.clear()
+    _roundup_nothing_to_show_local.clear()
+    _roundup_read_failures.clear()
+    _reset_roundup_swr_state_for_tests()
 
 
 _TRANSIENT_REFUSAL_TOKENS = (
@@ -900,12 +1087,36 @@ def _is_cacheable_refusal(reasons: Sequence[Any]) -> bool:
 
 
 ROUNDUP_MACHINERY_NON_LIVE_CACHE_TTL_S = 300.0
+#: Hard Redis retention (keep-time) for round-up and machinery snapshots so
+#: Discover feed builds (`ROUNDUP_PRODUCER_TIMEOUT_SECONDS = 0.5`) keep the
+#: last good copy across restarts, outages, and overnight quiet spells instead
+#: of dropping cards (#11259, #12288, #13146). Live-slate keep-time stays 5m.
+ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S = 21600.0
+ROUNDUP_MACHINERY_LIVE_STALE_TTL_S = 300.0
+ROUNDUP_STANDING_NON_LIVE_STALE_TTL_S = 21600.0
+ROUNDUP_STANDING_LIVE_STALE_TTL_S = 300.0
+#: #12529: Non-live standing round-ups warmed by Celery Beat hold a 300s fresh
+#: window (above the 120s host cadence) so cold Discover builds read Redis MGET
+#: with zero Postgres wait, while live standing round-ups keep the 60s ceiling.
+ROUNDUP_STANDING_PREWARM_FRESH_TTL_S = 300.0
+#: #13475: Set-page SWR bound for sets with no live game (30 minutes, matching 170-A).
+#: Copies aged < 1800s serve immediately and trigger one background rebuild.
+ROUNDUP_PAGE_SWR_MAX_AGE_S = 1800.0
+ROUNDUP_BG_REFRESH_TIMEOUT_S = 45.0
+#: Per-producer timeout for a genuinely cold public machinery grouping (no
+#: Redis copy, e.g. a live slate whose 5m TTL expired during an outage).
+ROUNDUP_MACHINERY_COLD_TIMEOUT_SECONDS = 1.5
 #: Redis hash tracking `machinery-*` slugs that currently hold a live game (or one
 #: starting within `MACHINERY_IMMINENT_START_WINDOW_S`), read by the 30s realtime
 #: republisher (`_prewarm_live_feed_shapes`) so live slates never expire between
 #: 120s host beats. TTL outlives the 120s host beat by 2.5x.
 MACHINERY_LIVE_SLUGS_KEY = "bainluck:roundup:machinery:live_slugs"
 MACHINERY_LIVE_SLUGS_TTL_S = 300
+#: Companion 30s-rail live-slug + armed-slug hashes for standing round-ups (#12529).
+STANDING_LIVE_SLUGS_KEY = "bainluck:roundup_standing:live_slugs"
+STANDING_LIVE_SLUGS_TTL_S = 300
+STANDING_WARM_SLUGS_KEY = "bainluck:roundup_standing:warm_slugs"
+STANDING_WARM_SLUGS_TTL_S = 86_400
 MACHINERY_IMMINENT_START_WINDOW_S = 180.0
 _TERMINAL_EVENT_STATUSES = frozenset(
     {"final", "completed", "closed", "cancelled", "canceled", "postponed"}
@@ -958,30 +1169,60 @@ def _roundup_payload_needs_live_rail(
             if st in _TERMINAL_EVENT_STATUSES:
                 continue
             raw_ct = card.get("commence_time")
-            if not isinstance(raw_ct, str) or not raw_ct.strip():
-                continue
-            try:
-                ct_dt = datetime.fromisoformat(raw_ct.replace("Z", "+00:00"))
-                if ct_dt.tzinfo is None:
-                    ct_dt = ct_dt.replace(tzinfo=timezone.utc)
+            if isinstance(raw_ct, datetime):
+                ct_dt = (
+                    raw_ct
+                    if raw_ct.tzinfo is not None
+                    else raw_ct.replace(tzinfo=timezone.utc)
+                )
                 ct_ts = ct_dt.timestamp()
-            except ValueError:
+            elif isinstance(raw_ct, str) and raw_ct.strip():
+                try:
+                    ct_dt = datetime.fromisoformat(raw_ct.replace("Z", "+00:00"))
+                    if ct_dt.tzinfo is None:
+                        ct_dt = ct_dt.replace(tzinfo=timezone.utc)
+                    ct_ts = ct_dt.timestamp()
+                except ValueError:
+                    continue
+            else:
                 continue
             if (ref_ts - 21600.0) <= ct_ts <= (ref_ts + MACHINERY_IMMINENT_START_WINDOW_S):
                 return True
     return False
 
 
-def _record_machinery_live_origin(
+def _roundup_effective_keep_seconds(
+    slug: str,
+    container_payload: Optional[Mapping[str, Any]],
+    *,
+    now_ts: float,
+    stored_stale_ttl: Optional[float] = None,
+) -> float:
+    """Judge a cached copy's keep-time by the clock at serve time (#13146).
+
+    If any non-final game in the cached copy has already started or starts
+    within ``MACHINERY_IMMINENT_START_WINDOW_S`` (3 min), cap keep-time to the
+    5-minute live window even when the copy was built before tip-off.
+    """
+    live_cap = (
+        ROUNDUP_MACHINERY_LIVE_STALE_TTL_S
+        if _is_machinery_producer_slug(slug)
+        else ROUNDUP_STANDING_LIVE_STALE_TTL_S
+    )
+    if _roundup_payload_needs_live_rail(container_payload, now_ts=now_ts):
+        return live_cap
+    if isinstance(stored_stale_ttl, (int, float)) and stored_stale_ttl > 0:
+        return float(stored_stale_ttl)
+    return _roundup_cache_stale_ttl_seconds(slug, container_payload)
+
+
+def _record_roundup_live_origin(
     built_at: float,
     slug: str,
     container_payload: Optional[Mapping[str, Any]],
 ) -> None:
-    """Feed a cached live machinery grouping's origin into the LAT-P230 age sink."""
-    if not (
-        _is_machinery_producer_slug(slug)
-        and _roundup_payload_has_live_event(container_payload)
-    ):
+    """Feed any cached live round-up or grouping's origin into the LAT-P230 age sink."""
+    if not _roundup_payload_has_live_event(container_payload):
         return
     try:
         from app.utils.principal_independent_cache import _age_sink_var
@@ -990,7 +1231,18 @@ def _record_machinery_live_origin(
         if sink is not None:
             sink.append(float(built_at))
     except Exception:  # noqa: BLE001 — telemetry sink is best-effort
-        pass
+        logger.debug("roundup_containers: live origin sink update skipped for %s", slug)
+
+
+def _record_machinery_live_origin(
+    built_at: float,
+    slug: str,
+    container_payload: Optional[Mapping[str, Any]],
+) -> None:
+    """Feed a cached live machinery grouping's origin into the LAT-P230 age sink."""
+    if not _is_machinery_producer_slug(slug):
+        return
+    _record_roundup_live_origin(built_at, slug, container_payload)
 
 
 def _roundup_cache_ttl_seconds(
@@ -1013,6 +1265,281 @@ def _roundup_cache_ttl_seconds(
     return ROUNDUP_CACHE_TTL_S
 
 
+def _roundup_cache_stale_ttl_seconds(
+    slug: str,
+    container_payload: Optional[Mapping[str, Any]],
+) -> float:
+    """Hard Redis retention TTL (keep-time / stale-while-revalidate window) for a roundup entry.
+
+    Applies to both standing round-ups and machinery groupings when a good copy
+    exists (``container_payload is not None``) so a timed-out refresh can keep
+    the last good copy instead of dropping the card (#13146). Negative refusals
+    (``container_payload is None``) stay on the short 60s TTL.
+    """
+    if container_payload is not None:
+        is_live = _roundup_payload_has_live_event(container_payload)
+        if _is_machinery_producer_slug(slug):
+            return (
+                ROUNDUP_MACHINERY_LIVE_STALE_TTL_S
+                if is_live
+                else ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S
+            )
+        return (
+            ROUNDUP_STANDING_LIVE_STALE_TTL_S
+            if is_live
+            else ROUNDUP_STANDING_NON_LIVE_STALE_TTL_S
+        )
+    return _roundup_cache_ttl_seconds(slug, container_payload)
+
+
+def _roundup_cache_json_default(obj: Any) -> Any:
+    """JSON fallback for roundup cache payloads containing non-primitive scalars."""
+    if isinstance(obj, (datetime, date)):
+        return obj.isoformat()
+    if isinstance(obj, Decimal):
+        return float(obj)
+    if isinstance(obj, UUID):
+        return str(obj)
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+def _encode_roundup_cache_entry(
+    *,
+    ts: float,
+    ttl_s: float,
+    stale_ttl_s: float,
+    feed_item: Optional[dict[str, Any]],
+    container_payload: Optional[dict[str, Any]],
+    clean_empty: bool = False,
+    clean_empty_reason: Optional[str] = None,
+    nothing_to_show: bool = False,
+    nothing_to_show_reason: Optional[str] = None,
+) -> str:
+    payload: dict[str, Any] = {
+        "built_at": ts,
+        "ttl_s": ttl_s,
+        "stale_ttl_s": stale_ttl_s,
+        "feed_item": feed_item,
+        "container_payload": container_payload,
+    }
+    if clean_empty:
+        payload["clean_empty"] = True
+        if clean_empty_reason:
+            payload["clean_empty_reason"] = str(clean_empty_reason)
+    if nothing_to_show:
+        payload["nothing_to_show"] = True
+        if nothing_to_show_reason:
+            payload["nothing_to_show_reason"] = str(nothing_to_show_reason)
+    return json.dumps(
+        payload,
+        separators=(",", ":"),
+        default=_roundup_cache_json_default,
+    )
+
+
+def store_roundup_cache_sync(
+    rc: Any,
+    slug: str,
+    ts: float,
+    feed_item: Optional[dict[str, Any]],
+    container_payload: Optional[dict[str, Any]],
+    *,
+    prewarm_fresh_ttl_s: Optional[float] = None,
+) -> bool:
+    """Publish a roundup cache entry + live-slug registration via sync Redis.
+
+    Used by Celery prewarm workers only (where `asyncio.run()` closes the event
+    loop between tasks and breaks process-global async Redis pools). Never
+    called from the web event loop (#969, #12288).
+    """
+    if rc is None or not hasattr(rc, "set"):
+        return False
+    prod = ROUNDUP_PRODUCERS.get(slug)
+    rule_cfg = prod.rule if (prod is not None and isinstance(prod.rule, Mapping)) else {}
+    if rule_cfg.get("cache") == "none" or rule_cfg.get("producer") == "yardstick_pair":
+        return False
+    ttl_s = _roundup_cache_ttl_seconds(slug, container_payload)
+    stale_ttl_s = _roundup_cache_stale_ttl_seconds(slug, container_payload)
+    if (
+        prewarm_fresh_ttl_s is not None
+        and not _is_machinery_producer_slug(slug)
+        and container_payload is not None
+        and not _roundup_payload_needs_live_rail(container_payload, now_ts=ts)
+    ):
+        ttl_s = min(float(stale_ttl_s), max(float(ttl_s), float(prewarm_fresh_ttl_s)))
+    try:
+        encoded = _encode_roundup_cache_entry(
+            ts=ts,
+            ttl_s=ttl_s,
+            stale_ttl_s=stale_ttl_s,
+            feed_item=feed_item,
+            container_payload=container_payload,
+        )
+        rc.set(_redis_cache_key(slug), encoded, ex=int(stale_ttl_s))
+        if container_payload is not None:
+            is_mach = _is_machinery_producer_slug(slug)
+            live_hash = MACHINERY_LIVE_SLUGS_KEY if is_mach else STANDING_LIVE_SLUGS_KEY
+            live_ttl = MACHINERY_LIVE_SLUGS_TTL_S if is_mach else STANDING_LIVE_SLUGS_TTL_S
+            if _roundup_payload_needs_live_rail(container_payload, now_ts=ts):
+                if hasattr(rc, "hset"):
+                    rc.hset(live_hash, slug, str(ts))
+                if hasattr(rc, "expire"):
+                    rc.expire(live_hash, live_ttl)
+            else:
+                if hasattr(rc, "hdel"):
+                    rc.hdel(live_hash, slug)
+        return True
+    except Exception:  # noqa: BLE001 — cache write is best-effort
+        logger.warning(
+            "roundup_containers: sync Redis cache write failed for %s",
+            slug,
+            exc_info=True,
+        )
+        return False
+
+
+def store_roundup_clean_empty_sync(
+    rc: Any,
+    slug: str,
+    ts: float,
+    *,
+    reason: Optional[str] = None,
+    ttl_s: float = ROUNDUP_MACHINERY_NON_LIVE_CACHE_TTL_S,
+    lifetime_s: float = ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S,
+) -> bool:
+    """Record a clean-empty marker in Redis when a grouping producer ran cleanly with nothing to show (#13183).
+
+    Used by Celery prewarm workers only (never on the web event loop — #969).
+    Lets `_publish_machinery_feed_from_prewarm_base` and `add_roundup_feed_items`
+    distinguish an intentionally quiet/out-of-season grouping from a failed or
+    expired one, carrying ``clean_empty_reason`` so data faults are visible in
+    logs instead of misread as a quiet night.
+    """
+    if rc is None or not hasattr(rc, "set"):
+        return False
+    try:
+        encoded = _encode_roundup_cache_entry(
+            ts=ts,
+            ttl_s=float(ttl_s),
+            stale_ttl_s=float(lifetime_s),
+            feed_item=None,
+            container_payload=None,
+            clean_empty=True,
+            clean_empty_reason=reason,
+        )
+        rc.set(_redis_cache_key(slug), encoded, ex=int(lifetime_s))
+        if hasattr(rc, "hdel"):
+            live_hash = (
+                MACHINERY_LIVE_SLUGS_KEY
+                if _is_machinery_producer_slug(slug)
+                else STANDING_LIVE_SLUGS_KEY
+            )
+            rc.hdel(live_hash, slug)
+        return True
+    except Exception:  # noqa: BLE001 — cache write is best-effort
+        logger.warning(
+            "roundup_containers: sync Redis clean-empty write failed for %s",
+            slug,
+            exc_info=True,
+        )
+        return False
+
+
+def store_roundup_nothing_to_show_sync(
+    rc: Any,
+    slug: str,
+    ts: float,
+    *,
+    reason: Optional[str] = None,
+    ttl_s: float = ROUNDUP_STANDING_PREWARM_FRESH_TTL_S,
+    lifetime_s: float = ROUNDUP_STANDING_NON_LIVE_STALE_TTL_S,
+) -> bool:
+    """Record a standing producer's cacheable empty result via sync Redis (#12529).
+
+    Used by Celery prewarm workers so cold Discover builds read the shared MGET
+    instead of spending per-producer DB time on intentionally empty round-ups.
+    """
+    if rc is None or not hasattr(rc, "set"):
+        return False
+    prod = ROUNDUP_PRODUCERS.get(slug)
+    rule_cfg = prod.rule if (prod is not None and isinstance(prod.rule, Mapping)) else {}
+    if rule_cfg.get("cache") == "none" or rule_cfg.get("producer") == "yardstick_pair":
+        return False
+    try:
+        encoded = _encode_roundup_cache_entry(
+            ts=ts,
+            ttl_s=float(ttl_s),
+            stale_ttl_s=float(lifetime_s),
+            feed_item=None,
+            container_payload=None,
+            nothing_to_show=True,
+            nothing_to_show_reason=reason,
+        )
+        rc.set(_redis_cache_key(slug), encoded, ex=int(lifetime_s))
+        if hasattr(rc, "hdel") and not _is_machinery_producer_slug(slug):
+            rc.hdel(STANDING_LIVE_SLUGS_KEY, slug)
+        return True
+    except Exception:  # noqa: BLE001 — cache write is best-effort
+        logger.warning(
+            "roundup_containers: sync Redis nothing-to-show write failed for %s",
+            slug,
+            exc_info=True,
+        )
+        return False
+
+
+def verify_roundup_cache_sync(
+    rc: Any,
+    slug: str,
+    *,
+    allow_clean_empty: bool = False,
+) -> tuple[bool, Optional[int]]:
+    """Read back a just-written roundup cache key via sync Redis and verify TTL + decode.
+
+    Used by Celery prewarm workers only (never on the web event loop — #969, #12288).
+    Returns ``(ok, ttl_seconds)`` where ``ok`` is True only when the key exists,
+    decodes through the same JSON reader path as ``evaluate_roundup_producer``,
+    carries both ``feed_item`` and ``container_payload`` (or a valid ``clean_empty``
+    marker when ``allow_clean_empty=True``), and (when ``rc.ttl`` is available)
+    has a positive TTL remaining.
+    """
+    if rc is None or not hasattr(rc, "get"):
+        return False, None
+    key = _redis_cache_key(slug)
+    try:
+        raw_val = rc.get(key)
+        if not raw_val:
+            return False, None
+        ttl_remaining: Optional[int] = None
+        if hasattr(rc, "ttl"):
+            raw_ttl = rc.ttl(key)
+            if isinstance(raw_ttl, (int, float)):
+                ttl_remaining = int(raw_ttl)
+                if ttl_remaining <= 0:
+                    return False, ttl_remaining
+        decoded = json.loads(
+            raw_val.decode("utf-8")
+            if isinstance(raw_val, (bytes, bytearray))
+            else raw_val
+        )
+        if not isinstance(decoded, dict):
+            return False, ttl_remaining
+        if not isinstance(decoded.get("built_at"), (int, float)):
+            return False, ttl_remaining
+        if allow_clean_empty and decoded.get("clean_empty") is True:
+            return True, ttl_remaining
+        if decoded.get("feed_item") is None or decoded.get("container_payload") is None:
+            return False, ttl_remaining
+        return True, ttl_remaining
+    except Exception:  # noqa: BLE001 — verification is best-effort
+        logger.warning(
+            "roundup_containers: sync Redis read-back failed for %s",
+            slug,
+            exc_info=True,
+        )
+        return False, None
+
+
 async def _store_roundup_cache_entry(
     cache_key: tuple[str, Any],
     slug: str,
@@ -1020,38 +1547,69 @@ async def _store_roundup_cache_entry(
     feed_item: Optional[dict[str, Any]],
     container_payload: Optional[dict[str, Any]],
     db: Any,
+    *,
+    keep_tombstone: bool = False,
+    nothing_to_show: bool = False,
+    nothing_to_show_reason: Optional[str] = None,
 ) -> None:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     ttl_s = _roundup_cache_ttl_seconds(slug, container_payload)
+    stale_ttl_s = _roundup_cache_stale_ttl_seconds(slug, container_payload)
+    redis_ex_s = stale_ttl_s
+    if container_payload is None and keep_tombstone:
+        # Keep a proper withdrawal note in Redis as long as copies are kept so
+        # another web dyno cannot resurrect an older local copy after the 60s
+        # retry window passes (#13146). Retry time (`ttl_s`) stays 60s.
+        redis_ex_s = max(
+            stale_ttl_s,
+            ROUNDUP_STANDING_NON_LIVE_STALE_TTL_S,
+            ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S,
+        )
     _roundup_local_cache[cache_key] = (
         ts,
         copy.deepcopy(feed_item),
         copy.deepcopy(container_payload),
     )
+    if feed_item is None and container_payload is None and nothing_to_show:
+        _roundup_nothing_to_show_local[cache_key] = (ts, nothing_to_show_reason)
+    else:
+        _roundup_nothing_to_show_local.pop(cache_key, None)
     if isinstance(db, AsyncSession):
+        try:
+            encoded = _encode_roundup_cache_entry(
+                ts=ts,
+                ttl_s=ttl_s,
+                stale_ttl_s=redis_ex_s,
+                feed_item=feed_item,
+                container_payload=container_payload,
+                nothing_to_show=bool(
+                    feed_item is None and container_payload is None and nothing_to_show
+                ),
+                nothing_to_show_reason=nothing_to_show_reason,
+            )
+        except (TypeError, ValueError):
+            logger.warning(
+                "roundup_containers: shared cache encode failed for %s",
+                slug,
+                exc_info=True,
+            )
+            return
+        wrote_async = False
         try:
             from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
 
-            encoded = json.dumps(
-                {
-                    "built_at": ts,
-                    "ttl_s": ttl_s,
-                    "feed_item": feed_item,
-                    "container_payload": container_payload,
-                },
-                separators=(",", ":"),
-            )
             client = await get_shared_async_redis()
-            await bounded_redis_call(
+            set_res = await bounded_redis_call(
                 lambda: client.set(
                     _redis_cache_key(slug),
                     encoded,
-                    ex=int(ttl_s),
+                    ex=int(redis_ex_s),
                 ),
                 treat_none_as_miss=False,
             )
-            if _is_machinery_producer_slug(slug) and container_payload is not None:
+            wrote_async = bool(set_res.is_ok)
+            if wrote_async and _is_machinery_producer_slug(slug) and container_payload is not None:
                 if _roundup_payload_needs_live_rail(container_payload, now_ts=ts):
                     await bounded_redis_call(
                         lambda: client.hset(MACHINERY_LIVE_SLUGS_KEY, slug, str(ts)),
@@ -1100,8 +1658,16 @@ async def _cache_roundup_timeout_refusal(
         "live" if isinstance(db, AsyncSession) else id(db),
     )
     effective_ts = time.time() if ts is None else float(ts)
+    prev = _roundup_local_cache.get(cache_key)
+    preserve_tombstone = prev is not None and prev[1] is None and prev[2] is None
     await _store_roundup_cache_entry(
-        cache_key, producer.slug, effective_ts, None, None, db
+        cache_key,
+        producer.slug,
+        effective_ts,
+        None,
+        None,
+        db,
+        keep_tombstone=preserve_tombstone,
     )
 
 
@@ -1117,6 +1683,433 @@ def _normalize_roundup_now(
     return ts, datetime.fromtimestamp(ts, tz=timezone.utc)
 
 
+_PREFETCH_UNSET = object()
+
+
+async def _prefetch_shared_roundup_entries(
+    producers: Sequence[RoundupProducer],
+    db: Any,
+) -> tuple[dict[str, Any], bool]:
+    """Fetch shared Redis entries for multiple round-up producers together (#13184 follow-up).
+
+    Uses one ``MGET`` when supported by the async Redis client (falling back to a
+    single ``asyncio.gather`` of ``get`` calls for minimal test doubles), wrapped
+    in one ``bounded_redis_call`` so the out-of-time branch never issues N serial
+    Redis round-trips.
+    """
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.utils.container_read_cache import container_read_cache_enabled
+
+    if not producers or isinstance(db, (list, tuple)) or not isinstance(db, AsyncSession):
+        return {}, True
+    if not container_read_cache_enabled():
+        return {}, True
+
+    eligible_slugs: list[str] = []
+    for p in producers:
+        rule_cfg = p.rule if isinstance(p.rule, Mapping) else {}
+        no_cache = (
+            rule_cfg.get("cache") == "none" or rule_cfg.get("producer") == "yardstick_pair"
+        )
+        if not no_cache:
+            eligible_slugs.append(p.slug)
+    if not eligible_slugs:
+        return {}, True
+
+    keys = [_redis_cache_key(slug) for slug in eligible_slugs]
+    try:
+        from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
+
+        client = await get_shared_async_redis()
+        if hasattr(client, "mget") and callable(client.mget):
+            res = await bounded_redis_call(
+                lambda: client.mget(keys),
+                treat_none_as_miss=False,
+            )
+        else:
+            res = await bounded_redis_call(
+                lambda: asyncio.gather(*(client.get(k) for k in keys)),
+                treat_none_as_miss=False,
+            )
+        if not res.is_ok or not isinstance(res.value, (list, tuple)):
+            return {}, False
+        return dict(zip(eligible_slugs, res.value)), True
+    except Exception:  # noqa: BLE001 — fail-closed signal returned to caller
+        logger.debug(
+            "roundup_containers: batch shared cache prefetch failed for %d slugs",
+            len(eligible_slugs),
+            exc_info=True,
+        )
+        return {}, False
+
+
+async def _load_last_good_roundup_copy(
+    producer: RoundupProducer,
+    db: Any,
+    *,
+    now: Optional[float | datetime] = None,
+    local_only: bool = False,
+    fail_closed_on_shared_error: bool = False,
+    prefetched_shared: Any = _PREFETCH_UNSET,
+    shared_read_ok: bool = True,
+    quiet_out: Optional[dict[str, Any]] = None,
+) -> Optional[tuple[dict[str, Any], dict[str, Any], float, float]]:
+    """Return ``(feed_item, container_payload, age_s, keep_s)`` for the last good cached copy.
+
+    Used when a Discover round-up refresh times out or errors so both standing
+    round-ups and machinery groupings keep their last good copy while it is
+    within its keep-time instead of disappearing from Discover (#13146).
+    Respects ``producer.enabled`` and ``valid_from`` / ``valid_until`` (65-A),
+    compares local vs shared Redis freshness so the newer entry always decides
+    (including newer proper withdrawals), and judges live keep-time by ``now``.
+    When ``quiet_out`` is provided and the winning shared entry is an unexpired
+    ``clean_empty`` marker (#13183/#13186), populates ``quiet_out["clean_empty"] = True``
+    and ``quiet_out["reason"]``.
+    """
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.utils.container_read_cache import container_read_cache_enabled
+
+    if quiet_out is not None:
+        quiet_out["clean_empty"] = False
+        quiet_out["nothing_to_show"] = False
+        quiet_out["reason"] = None
+
+    if producer.enabled is not None and not producer.enabled():
+        return None
+    ts, _now_dt = _normalize_roundup_now(now)
+    if (producer.valid_from is not None and ts < producer.valid_from) or (
+        producer.valid_until is not None and ts >= producer.valid_until
+    ):
+        return None
+    is_fixture_seq = isinstance(db, (list, tuple))
+    rule_cfg = producer.rule if isinstance(producer.rule, Mapping) else {}
+    no_cache = (
+        rule_cfg.get("cache") == "none" or rule_cfg.get("producer") == "yardstick_pair"
+    )
+    if is_fixture_seq or no_cache or not container_read_cache_enabled():
+        return None
+
+    cache_key = (
+        producer.slug,
+        "live" if isinstance(db, AsyncSession) else id(db),
+    )
+    # Candidate tuple: (built_at, feed_item, container_payload, stored_stale_ttl,
+    #                   from_shared, clean_empty, clean_empty_reason, nothing_to_show, nts_reason)
+    local_candidate: Optional[
+        tuple[
+            float,
+            Optional[dict[str, Any]],
+            Optional[dict[str, Any]],
+            Optional[float],
+            bool,
+            bool,
+            Optional[str],
+            bool,
+            Optional[str],
+        ]
+    ] = None
+    cached = _roundup_local_cache.get(cache_key)
+    if cached is not None:
+        local_nts = _roundup_nothing_to_show_local.get(cache_key)
+        is_local_nts = bool(
+            cached[1] is None
+            and cached[2] is None
+            and local_nts is not None
+            and float(local_nts[0]) == float(cached[0])
+        )
+        local_candidate = (
+            float(cached[0]),
+            cached[1],
+            cached[2],
+            None,
+            False,
+            False,
+            None,
+            is_local_nts,
+            local_nts[1] if is_local_nts and local_nts is not None else None,
+        )
+
+    shared_candidate: Optional[
+        tuple[
+            float,
+            Optional[dict[str, Any]],
+            Optional[dict[str, Any]],
+            Optional[float],
+            bool,
+            bool,
+            Optional[str],
+            bool,
+            Optional[str],
+        ]
+    ] = None
+    if not local_only and isinstance(db, AsyncSession):
+        raw_val: Any = None
+        if prefetched_shared is not _PREFETCH_UNSET:
+            if not shared_read_ok:
+                if fail_closed_on_shared_error:
+                    return None
+            else:
+                raw_val = prefetched_shared
+        else:
+            try:
+                from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
+
+                client = await get_shared_async_redis()
+                res = await bounded_redis_call(
+                    lambda: client.get(_redis_cache_key(producer.slug)),
+                    treat_none_as_miss=False,
+                )
+                if not res.is_ok:
+                    if fail_closed_on_shared_error:
+                        return None
+                else:
+                    raw_val = res.value
+            except Exception:  # noqa: BLE001 — stale fallback read fails open unless fail-closed
+                logger.debug(
+                    "roundup_containers: last-good shared cache read failed for %s",
+                    producer.slug,
+                    exc_info=True,
+                )
+                if fail_closed_on_shared_error:
+                    return None
+        if raw_val:
+            try:
+                raw = json.loads(
+                    raw_val.decode("utf-8")
+                    if isinstance(raw_val, (bytes, bytearray))
+                    else raw_val
+                )
+                if isinstance(raw, dict) and isinstance(raw.get("built_at"), (int, float)):
+                    raw_stale_ttl = raw.get("stale_ttl_s")
+                    shared_candidate = (
+                        float(raw["built_at"]),
+                        raw.get("feed_item"),
+                        raw.get("container_payload"),
+                        float(raw_stale_ttl)
+                        if isinstance(raw_stale_ttl, (int, float))
+                        else None,
+                        True,
+                        raw.get("clean_empty") is True,
+                        str(raw.get("clean_empty_reason"))
+                        if raw.get("clean_empty_reason")
+                        else None,
+                        raw.get("nothing_to_show") is True,
+                        str(raw.get("nothing_to_show_reason"))
+                        if raw.get("nothing_to_show_reason")
+                        else None,
+                    )
+            except Exception:  # noqa: BLE001 — malformed shared entry fails open/closed per flag
+                logger.debug(
+                    "roundup_containers: last-good shared cache decode failed for %s",
+                    producer.slug,
+                    exc_info=True,
+                )
+                if fail_closed_on_shared_error:
+                    return None
+
+    if shared_candidate is not None and local_candidate is not None:
+        chosen = (
+            shared_candidate
+            if shared_candidate[0] >= local_candidate[0]
+            else local_candidate
+        )
+    else:
+        chosen = shared_candidate if shared_candidate is not None else local_candidate
+
+    if chosen is None:
+        return None
+
+    (
+        built_at,
+        fi,
+        cp,
+        stored_stale_ttl,
+        from_shared,
+        is_clean_empty,
+        ce_reason,
+        is_nothing_to_show,
+        nts_reason,
+    ) = chosen
+    if fi is None or cp is None:
+        if from_shared:
+            _roundup_local_cache[cache_key] = (built_at, None, None)
+            if is_nothing_to_show:
+                _roundup_nothing_to_show_local[cache_key] = (built_at, nts_reason)
+            else:
+                _roundup_nothing_to_show_local.pop(cache_key, None)
+        if is_clean_empty and quiet_out is not None:
+            quiet_keep_s = (
+                float(stored_stale_ttl)
+                if isinstance(stored_stale_ttl, (int, float)) and stored_stale_ttl > 0
+                else ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S
+            )
+            if max(0.0, ts - built_at) < quiet_keep_s:
+                quiet_out["clean_empty"] = True
+                quiet_out["nothing_to_show"] = True
+                quiet_out["reason"] = ce_reason
+        elif is_nothing_to_show and quiet_out is not None:
+            nts_keep_s = (
+                float(stored_stale_ttl)
+                if isinstance(stored_stale_ttl, (int, float)) and stored_stale_ttl > 0
+                else ROUNDUP_STANDING_NON_LIVE_STALE_TTL_S
+            )
+            if max(0.0, ts - built_at) < nts_keep_s:
+                quiet_out["nothing_to_show"] = True
+                quiet_out["reason"] = nts_reason
+        return None
+
+    keep_s = _roundup_effective_keep_seconds(
+        producer.slug,
+        cp,
+        now_ts=ts,
+        stored_stale_ttl=stored_stale_ttl,
+    )
+    age_s = max(0.0, ts - built_at)
+    if age_s < keep_s:
+        if from_shared:
+            _roundup_local_cache[cache_key] = (built_at, fi, cp)
+        _record_roundup_live_origin(built_at, producer.slug, cp)
+        return copy.deepcopy(fi), copy.deepcopy(cp), age_s, keep_s
+    return None
+
+
+def _open_roundup_bg_session() -> Any:
+    """Open a standalone AsyncSession for detached SWR background rebuilds (#13475)."""
+    from app.services.database import async_session_maker
+
+    return async_session_maker()
+
+
+def _roundup_entry_swr_eligible(
+    container_payload: Optional[Mapping[str, Any]],
+    *,
+    age_s: float,
+    now_ts: float,
+    swr_max_age_s: float,
+) -> bool:
+    """True when an expired set copy holds no live game and sits under ``swr_max_age_s`` (#13475)."""
+    if container_payload is None or swr_max_age_s <= 0:
+        return False
+    if _roundup_payload_needs_live_rail(container_payload, now_ts=now_ts):
+        return False
+    return 0.0 <= float(age_s) < float(swr_max_age_s)
+
+
+def _trigger_roundup_bg_refresh(
+    cache_key: tuple[str, Any],
+    producer: RoundupProducer,
+    db: Any,
+    *,
+    now: Optional[float | datetime],
+    licences_registry: Optional[dict[str, Any]],
+    licences_path: Optional[Path | str],
+) -> None:
+    """Start at most one detached background rebuild per cache key on SWR hits (#13475)."""
+    if cache_key in _roundup_inflight_builds:
+        return
+    existing = _roundup_bg_refresh_tasks.get(cache_key)
+    if existing is not None and not existing.done():
+        return
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    is_async_session = isinstance(db, AsyncSession)
+
+    async def _runner() -> None:
+        try:
+            if is_async_session:
+                async with _open_roundup_bg_session() as bg_db:
+                    await asyncio.wait_for(
+                        evaluate_roundup_producer(
+                            producer,
+                            bg_db,
+                            now=now,
+                            licences_registry=licences_registry,
+                            licences_path=licences_path,
+                            force_refresh=True,
+                        ),
+                        timeout=ROUNDUP_BG_REFRESH_TIMEOUT_S,
+                    )
+            else:
+                await asyncio.wait_for(
+                    evaluate_roundup_producer(
+                        producer,
+                        db,
+                        now=now,
+                        licences_registry=licences_registry,
+                        licences_path=licences_path,
+                        force_refresh=True,
+                    ),
+                    timeout=ROUNDUP_BG_REFRESH_TIMEOUT_S,
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 — failed rebuild keeps existing copy untouched
+            logger.warning(
+                "roundup_containers: background SWR rebuild failed for %s; keeping copy",
+                producer.slug,
+                exc_info=True,
+            )
+        finally:
+            if _roundup_bg_refresh_tasks.get(cache_key) is task:
+                _roundup_bg_refresh_tasks.pop(cache_key, None)
+
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:
+        return
+    task = loop.create_task(_runner())
+    _roundup_bg_refresh_tasks[cache_key] = task
+
+
+async def _singleflight_roundup_build(
+    cache_key: tuple[str, Any],
+    builder: Callable[[], Any],
+    *,
+    outcome_meta: Optional[dict[str, Any]] = None,
+) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
+    """Coalesce simultaneous inline rebuilds onto one execution per cache key (#13475)."""
+    while True:
+        shared = _roundup_inflight_builds.get(cache_key)
+        if shared is None:
+            break
+        try:
+            fi, cp, meta_snapshot = await asyncio.shield(shared)
+            if outcome_meta is not None and isinstance(meta_snapshot, Mapping):
+                outcome_meta.update(meta_snapshot)
+            return copy.deepcopy(fi), copy.deepcopy(cp)
+        except _RoundupBuildAbandoned:
+            continue
+
+    loop = asyncio.get_running_loop()
+    shared = loop.create_future()
+    shared.add_done_callback(lambda f: f.cancelled() or f.exception())
+    _roundup_inflight_builds[cache_key] = shared
+    try:
+        fi, cp, meta_snapshot = await builder()
+    except Exception as exc:
+        if _roundup_inflight_builds.get(cache_key) is shared:
+            _roundup_inflight_builds.pop(cache_key, None)
+        if not shared.done():
+            shared.set_exception(exc)
+        raise
+    except BaseException:
+        if _roundup_inflight_builds.get(cache_key) is shared:
+            _roundup_inflight_builds.pop(cache_key, None)
+        if not shared.done():
+            shared.set_exception(_RoundupBuildAbandoned())
+        raise
+    if _roundup_inflight_builds.get(cache_key) is shared:
+        _roundup_inflight_builds.pop(cache_key, None)
+    if not shared.done():
+        shared.set_result((fi, cp, meta_snapshot))
+    if outcome_meta is not None and isinstance(meta_snapshot, Mapping):
+        outcome_meta.update(meta_snapshot)
+    return copy.deepcopy(fi), copy.deepcopy(cp)
+
+
 async def evaluate_roundup_producer(
     producer: RoundupProducer,
     db: Any,
@@ -1125,13 +2118,25 @@ async def evaluate_roundup_producer(
     licences_registry: Optional[dict[str, Any]] = None,
     licences_path: Optional[Path | str] = None,
     force_refresh: bool = False,
+    allow_stale: bool = False,
+    stale_while_revalidate_seconds: Optional[float] = None,
+    trigger_bg_refresh: bool = True,
+    prefetched_shared: Any = _PREFETCH_UNSET,
+    shared_read_ok: bool = True,
+    outcome_meta: Optional[dict[str, Any]] = None,
 ) -> tuple[Optional[dict[str, Any]], Optional[dict[str, Any]]]:
     """Run ``producer`` once and return ``(feed_item, container_payload)``, cached 60s per slug."""
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from app.utils.container_read_cache import container_read_cache_enabled
 
+    if outcome_meta is not None:
+        outcome_meta["clean_empty"] = False
+        outcome_meta["reason"] = None
+
     if producer.enabled is not None and not producer.enabled():
+        if outcome_meta is not None:
+            outcome_meta["reason"] = "disabled"
         return None, None
 
     is_fixture_seq = isinstance(db, (list, tuple))
@@ -1141,6 +2146,9 @@ async def evaluate_roundup_producer(
     if (producer.valid_from is not None and ts < producer.valid_from) or (
         producer.valid_until is not None and ts >= producer.valid_until
     ):
+        if outcome_meta is not None:
+            outcome_meta["clean_empty"] = True
+            outcome_meta["reason"] = "outside_window"
         return None, None
     rule_cfg = producer.rule if isinstance(producer.rule, Mapping) else {}
     producer_kind = str(rule_cfg.get("producer") or "").strip()
@@ -1159,6 +2167,8 @@ async def evaluate_roundup_producer(
             producer_kind in (active_licences.get("kinds") or {})
             and get_kind_licence_status(active_licences, producer_kind) == "SUSPENDED"
         ):
+            if outcome_meta is not None:
+                outcome_meta["reason"] = "suspended"
             logger.warning(
                 "flow_sentinel matching_defect: roundup %s skipped because kind %s is SUSPENDED",
                 producer.slug,
@@ -1174,142 +2184,340 @@ async def evaluate_roundup_producer(
         "live" if isinstance(db, AsyncSession) else id(db),
     )
 
+    swr_limit = (
+        float(stale_while_revalidate_seconds)
+        if stale_while_revalidate_seconds is not None and stale_while_revalidate_seconds > 0
+        else None
+    )
+
     if use_cache and not force_refresh:
+        local_stale_fallback: Optional[tuple[float, dict[str, Any], dict[str, Any]]] = None
+        local_swr_fallback: Optional[tuple[float, dict[str, Any], dict[str, Any]]] = None
+        chosen_swr: Optional[tuple[float, dict[str, Any], dict[str, Any]]] = None
         cached = _roundup_local_cache.get(cache_key)
         if cached is not None:
             local_ttl = _roundup_cache_ttl_seconds(producer.slug, cached[2])
             if (ts - cached[0]) < local_ttl:
-                _record_machinery_live_origin(cached[0], producer.slug, cached[2])
+                _record_roundup_live_origin(cached[0], producer.slug, cached[2])
                 return copy.deepcopy(cached[1]), copy.deepcopy(cached[2])
+            if (
+                allow_stale
+                and cached[1] is not None
+                and cached[2] is not None
+            ):
+                local_stale_ttl = _roundup_effective_keep_seconds(
+                    producer.slug,
+                    cached[2],
+                    now_ts=ts,
+                )
+                if max(0.0, ts - cached[0]) < local_stale_ttl:
+                    local_stale_fallback = (cached[0], cached[1], cached[2])
+            elif (
+                not allow_stale
+                and swr_limit is not None
+                and cached[1] is not None
+                and cached[2] is not None
+                and _roundup_entry_swr_eligible(
+                    cached[2],
+                    age_s=max(0.0, ts - cached[0]),
+                    now_ts=ts,
+                    swr_max_age_s=swr_limit,
+                )
+            ):
+                local_swr_fallback = (cached[0], cached[1], cached[2])
         if isinstance(db, AsyncSession):
             try:
-                from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
+                raw_val: Any = None
+                if prefetched_shared is not _PREFETCH_UNSET:
+                    if shared_read_ok:
+                        raw_val = prefetched_shared
+                else:
+                    from app.utils.request_cache import bounded_redis_call, get_shared_async_redis
 
-                client = await get_shared_async_redis()
-                res = await bounded_redis_call(
-                    lambda: client.get(_redis_cache_key(producer.slug))
-                )
-                if res.is_ok and res.value:
-                    raw = json.loads(
-                        res.value.decode("utf-8")
-                        if isinstance(res.value, (bytes, bytearray))
-                        else res.value
+                    client = await get_shared_async_redis()
+                    res = await bounded_redis_call(
+                        lambda: client.get(_redis_cache_key(producer.slug))
                     )
-                    raw_ttl = float(raw.get("ttl_s") or ROUNDUP_CACHE_TTL_S) if isinstance(raw, dict) else ROUNDUP_CACHE_TTL_S
-                    if (
-                        isinstance(raw, dict)
-                        and isinstance(raw.get("built_at"), (int, float))
-                        and (ts - float(raw["built_at"])) < raw_ttl
+                    if res.is_ok:
+                        raw_val = res.value
+                if raw_val:
+                    raw = json.loads(
+                        raw_val.decode("utf-8")
+                        if isinstance(raw_val, (bytes, bytearray))
+                        else raw_val
+                    )
+                    raw_ttl = (
+                        float(raw.get("ttl_s") or ROUNDUP_CACHE_TTL_S)
+                        if isinstance(raw, dict)
+                        else ROUNDUP_CACHE_TTL_S
+                    )
+                    if isinstance(raw, dict) and isinstance(
+                        raw.get("built_at"), (int, float)
                     ):
+                        built_at = float(raw["built_at"])
                         fi = raw.get("feed_item")
                         cp = raw.get("container_payload")
-                        _roundup_local_cache[cache_key] = (
-                            float(raw["built_at"]),
-                            fi,
-                            cp,
-                        )
-                        _record_machinery_live_origin(
-                            float(raw["built_at"]), producer.slug, cp
-                        )
-                        return copy.deepcopy(fi), copy.deepcopy(cp)
+                        age_s = max(0.0, ts - built_at)
+                        if age_s < raw_ttl:
+                            _roundup_local_cache[cache_key] = (built_at, fi, cp)
+                            _record_roundup_live_origin(built_at, producer.slug, cp)
+                            return copy.deepcopy(fi), copy.deepcopy(cp)
+                        if allow_stale:
+                            if fi is None or cp is None:
+                                if (
+                                    local_stale_fallback is not None
+                                    and built_at >= local_stale_fallback[0]
+                                ):
+                                    local_stale_fallback = None
+                                    _roundup_local_cache[cache_key] = (built_at, None, None)
+                            else:
+                                raw_stale_ttl = raw.get("stale_ttl_s")
+                                stale_max_s = _roundup_effective_keep_seconds(
+                                    producer.slug,
+                                    cp,
+                                    now_ts=ts,
+                                    stored_stale_ttl=(
+                                        float(raw_stale_ttl)
+                                        if isinstance(raw_stale_ttl, (int, float))
+                                        else None
+                                    ),
+                                )
+                                if age_s < stale_max_s and (
+                                    local_stale_fallback is None
+                                    or built_at >= local_stale_fallback[0]
+                                ):
+                                    _roundup_local_cache[cache_key] = (built_at, fi, cp)
+                                    _record_roundup_live_origin(
+                                        built_at, producer.slug, cp
+                                    )
+                                    return copy.deepcopy(fi), copy.deepcopy(cp)
+                        elif swr_limit is not None:
+                            if fi is None or cp is None:
+                                if (
+                                    local_swr_fallback is not None
+                                    and built_at >= local_swr_fallback[0]
+                                ):
+                                    local_swr_fallback = None
+                                    _roundup_local_cache[cache_key] = (built_at, None, None)
+                            elif _roundup_entry_swr_eligible(
+                                cp,
+                                age_s=age_s,
+                                now_ts=ts,
+                                swr_max_age_s=swr_limit,
+                            ) and (
+                                local_swr_fallback is None
+                                or built_at >= local_swr_fallback[0]
+                            ):
+                                _roundup_local_cache[cache_key] = (built_at, fi, cp)
+                                chosen_swr = (built_at, fi, cp)
             except Exception:  # noqa: BLE001 — cache read fails open
                 logger.debug(
                     "roundup_containers: shared cache read failed for %s",
                     producer.slug,
                     exc_info=True,
                 )
-
-    if now_dt is not None and "now" in inspect.signature(producer.produce).parameters:
-        outcome = producer.produce(db, now=now_dt)
-    else:
-        outcome = producer.produce(db)
-    if inspect.isawaitable(outcome):
-        outcome = await outcome
-
-    if outcome is None or isinstance(outcome, RoundupRefusal):
-        reasons = list(outcome.reasons) if isinstance(outcome, RoundupRefusal) else []
-        logger.warning(
-            "flow_sentinel matching_defect: roundup %s refused reasons=%s",
-            producer.slug,
-            reasons,
-        )
-        if use_cache and _is_cacheable_refusal(reasons):
-            await _store_roundup_cache_entry(
-                cache_key, producer.slug, ts, None, None, db
+        if local_stale_fallback is not None:
+            _record_roundup_live_origin(
+                local_stale_fallback[0], producer.slug, local_stale_fallback[2]
             )
-        return None, None
-
-    if not isinstance(outcome, RoundupMembers):
-        outcome = RoundupMembers(outcome)
-
-    container_payload = compose_roundup_container(producer, outcome)
-    feed_item = compose_roundup_feed_item(producer, outcome)
-    if (
-        _is_machinery_producer_slug(producer.slug)
-        and container_payload is not None
-        and _roundup_payload_has_live_event(container_payload)
-        and isinstance(feed_item, dict)
-        and isinstance(feed_item.get("data"), dict)
-    ):
-        # Stamp `status="live"` so `feed_cache.payload_contains_live_event`
-        # automatically bounds any Discover page carrying a live machinery slate
-        # to the 60s live ceiling (`FEED_RESPONSE_STALE_TTL_LIVE_SECONDS`).
-        feed_item["data"]["status"] = "live"
-    if container_payload is None or (
-        feed_item is None and not getattr(outcome, "suppress_feed_item", False)
-    ):
-        if use_cache:
-            await _store_roundup_cache_entry(
-                cache_key, producer.slug, ts, None, None, db
+            return copy.deepcopy(local_stale_fallback[1]), copy.deepcopy(
+                local_stale_fallback[2]
             )
-        return None, None
-
-    if producer_kind:
-        from app.utils.grouping_licences import (
-            detect_served_card_violation,
-            load_grouping_licences,
-            record_runtime_kind_suspension,
-        )
-
-        active_licences = (
-            licences_registry
-            if licences_registry is not None
-            else load_grouping_licences(licences_path)
-        )
-        if producer_kind in (active_licences.get("kinds") or {}):
-            allow_settled = producer_kind == "series_hub"
-            violation = detect_served_card_violation(
-                container_payload, allow_settled_members=allow_settled
-            ) or (
-                detect_served_card_violation(
-                    feed_item, allow_settled_members=allow_settled
-                )
-                if feed_item is not None
-                else None
-            )
-            if violation is not None:
-                bad_slug, bad_reason = violation
-                record_runtime_kind_suspension(
-                    producer_kind,
-                    wrong_card_slug=bad_slug or producer.slug,
-                    reason=bad_reason,
-                    registry=licences_registry,
+        swr_entry = chosen_swr or local_swr_fallback
+        if swr_entry is not None:
+            _record_roundup_live_origin(swr_entry[0], producer.slug, swr_entry[2])
+            if trigger_bg_refresh:
+                _trigger_roundup_bg_refresh(
+                    cache_key,
+                    producer,
+                    db,
+                    now=now,
+                    licences_registry=licences_registry,
                     licences_path=licences_path,
                 )
-                logger.warning(
-                    "flow_sentinel matching_defect: roundup %s suspended kind %s (%s)",
-                    producer.slug,
-                    producer_kind,
-                    bad_reason,
-                )
-                return None, None
+            return copy.deepcopy(swr_entry[1]), copy.deepcopy(swr_entry[2])
 
-    if use_cache:
-        await _store_roundup_cache_entry(
-            cache_key, producer.slug, ts, feed_item, container_payload, db
+    async def _produce_and_store() -> tuple[
+        Optional[dict[str, Any]],
+        Optional[dict[str, Any]],
+        Optional[dict[str, Any]],
+    ]:
+        local_meta: Optional[dict[str, Any]] = (
+            {"clean_empty": False, "reason": None}
+            if (outcome_meta is not None or (use_cache and not force_refresh))
+            else None
+        )
+        if now_dt is not None and "now" in inspect.signature(producer.produce).parameters:
+            outcome = producer.produce(db, now=now_dt)
+        else:
+            outcome = producer.produce(db)
+        if inspect.isawaitable(outcome):
+            outcome = await outcome
+
+        if outcome is None or isinstance(outcome, RoundupRefusal):
+            reasons = list(outcome.reasons) if isinstance(outcome, RoundupRefusal) else []
+            cacheable = _is_cacheable_refusal(reasons)
+            reason_text = ",".join(str(r) for r in reasons if r) or (
+                "clean_empty_refusal" if cacheable else "transient_refusal"
+            )
+            if local_meta is not None:
+                local_meta["clean_empty"] = bool(cacheable)
+                local_meta["reason"] = reason_text
+            logger.warning(
+                "flow_sentinel matching_defect: roundup %s refused reasons=%s",
+                producer.slug,
+                reasons,
+            )
+            if use_cache and cacheable:
+                await _store_roundup_cache_entry(
+                    cache_key,
+                    producer.slug,
+                    ts,
+                    None,
+                    None,
+                    db,
+                    keep_tombstone=True,
+                    nothing_to_show=True,
+                    nothing_to_show_reason=reason_text,
+                )
+            return None, None, local_meta
+
+        if not isinstance(outcome, RoundupMembers):
+            outcome = RoundupMembers(outcome)
+
+        container_payload = compose_roundup_container(producer, outcome)
+        feed_item = compose_roundup_feed_item(producer, outcome)
+        if (
+            _is_machinery_producer_slug(producer.slug)
+            and container_payload is not None
+            and _roundup_payload_has_live_event(container_payload)
+            and isinstance(feed_item, dict)
+            and isinstance(feed_item.get("data"), dict)
+        ):
+            # Stamp `status="live"` so `feed_cache.payload_contains_live_event`
+            # automatically bounds any Discover page carrying a live machinery slate
+            # to the 60s live ceiling (`FEED_RESPONSE_STALE_TTL_LIVE_SECONDS`).
+            feed_item["data"]["status"] = "live"
+        if container_payload is None or (
+            feed_item is None and not getattr(outcome, "suppress_feed_item", False)
+        ):
+            if local_meta is not None:
+                local_meta["clean_empty"] = True
+                local_meta["reason"] = "empty_payload"
+            if use_cache:
+                await _store_roundup_cache_entry(
+                    cache_key,
+                    producer.slug,
+                    ts,
+                    None,
+                    None,
+                    db,
+                    keep_tombstone=True,
+                    nothing_to_show=True,
+                    nothing_to_show_reason="empty_payload",
+                )
+            return None, None, local_meta
+
+        if producer_kind:
+            from app.utils.grouping_licences import (
+                detect_served_card_violation,
+                load_grouping_licences,
+                record_runtime_kind_suspension,
+            )
+
+            active_licences = (
+                licences_registry
+                if licences_registry is not None
+                else load_grouping_licences(licences_path)
+            )
+            if producer_kind in (active_licences.get("kinds") or {}):
+                allow_settled = producer_kind == "series_hub"
+                violation = detect_served_card_violation(
+                    container_payload, allow_settled_members=allow_settled
+                ) or (
+                    detect_served_card_violation(
+                        feed_item, allow_settled_members=allow_settled
+                    )
+                    if feed_item is not None
+                    else None
+                )
+                if violation is not None:
+                    bad_slug, bad_reason = violation
+                    record_runtime_kind_suspension(
+                        producer_kind,
+                        wrong_card_slug=bad_slug or producer.slug,
+                        reason=bad_reason,
+                        registry=licences_registry,
+                        licences_path=licences_path,
+                    )
+                    if local_meta is not None:
+                        local_meta["clean_empty"] = False
+                        local_meta["reason"] = "licence_violation"
+                    logger.warning(
+                        "flow_sentinel matching_defect: roundup %s suspended kind %s (%s)",
+                        producer.slug,
+                        producer_kind,
+                        bad_reason,
+                    )
+                    return None, None, local_meta
+
+        if (
+            _is_machinery_producer_slug(producer.slug)
+            and feed_item is not None
+            and isinstance(db, AsyncSession)
+        ):
+            # Ruling 188 (#11937, #12288): screen every machinery Discover feed card
+            # ONCE at build time before caching (covering BOTH Celery prewarm AND
+            # reader-path inline rebuilds), so no unscreened entry can ever land in
+            # Redis and hot `machinery_only` splices pay zero DB queries.
+            try:
+                from app.utils.not_trading import drop_not_trading_roundup_members
+
+                _screened = await drop_not_trading_roundup_members(
+                    db,
+                    [feed_item],
+                    now_dt or datetime.now(timezone.utc),
+                    _roundup_covered_market_ids,
+                )
+                feed_item = _screened[0] if _screened else None
+            except Exception:  # noqa: BLE001 — keep card on transient screen error
+                logger.warning(
+                    "roundup_containers: not-trading screen failed for %s; keeping card",
+                    producer.slug,
+                    exc_info=True,
+                )
+            if feed_item is None:
+                if local_meta is not None:
+                    local_meta["clean_empty"] = True
+                    local_meta["reason"] = "not_trading_screen_empty"
+                if use_cache:
+                    await _store_roundup_cache_entry(
+                        cache_key,
+                        producer.slug,
+                        ts,
+                        None,
+                        None,
+                        db,
+                        keep_tombstone=True,
+                    )
+                return None, None, local_meta
+
+        if use_cache:
+            await _store_roundup_cache_entry(
+                cache_key, producer.slug, ts, feed_item, container_payload, db
+            )
+
+        return feed_item, container_payload, local_meta
+
+    if use_cache and not force_refresh:
+        return await _singleflight_roundup_build(
+            cache_key, _produce_and_store, outcome_meta=outcome_meta
         )
 
-    return feed_item, container_payload
+    fi_out, cp_out, meta_out = await _produce_and_store()
+    if outcome_meta is not None and isinstance(meta_out, Mapping):
+        outcome_meta.update(meta_out)
+    return fi_out, cp_out
 
 
 def _strip_parent_from_payload(out: dict[str, Any]) -> None:
@@ -1329,6 +2537,388 @@ def ensure_optional_roundup_candidates() -> None:
     if flag in {"1", "true", "yes", "on"}:
         mod = importlib.import_module("app.utils.container_machinery")
         mod.register_machinery_slice1_candidates()
+
+
+def _parse_iso_timestamp(value: Any) -> Optional[datetime]:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    raw = value.strip()
+    if raw.endswith("Z"):
+        raw = raw[:-1] + "+00:00"
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc)
+
+
+def _first_present_iso(*values: Any) -> Optional[str]:
+    for val in values:
+        if isinstance(val, str) and val.strip() and _parse_iso_timestamp(val) is not None:
+            return val.strip()
+    return None
+
+
+def _valid_rendered_percent(value: Any) -> Optional[int]:
+    if isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 100:
+        return value
+    return None
+
+
+def _extract_more_set_lead(
+    payload: Mapping[str, Any],
+) -> tuple[Optional[str], Optional[float], Optional[int], Optional[str]]:
+    """Extract the lead (label, probability, rendered_percent, as_of) strictly from the set's own first row."""
+    sections = payload.get("sections")
+    if not isinstance(sections, Sequence) or isinstance(sections, (str, bytes)):
+        return None, None, None, None
+    first_member: Optional[Mapping[str, Any]] = None
+    for section in sections:
+        if not isinstance(section, Mapping):
+            continue
+        members = section.get("members")
+        if isinstance(members, Sequence) and not isinstance(members, (str, bytes)) and len(members) > 0:
+            candidate = members[0]
+            if isinstance(candidate, Mapping):
+                first_member = candidate
+            break
+    if first_member is None:
+        return None, None, None, None
+
+    card = first_member.get("card")
+    if not isinstance(card, Mapping):
+        return None, None, None, None
+    mtype = first_member.get("type")
+
+    if mtype == MEMBER_MARKET:
+        outcomes = card.get("top_outcomes")
+        if not isinstance(outcomes, Sequence) or isinstance(outcomes, (str, bytes)):
+            return None, None, None, None
+        valid_outcomes: list[tuple[Mapping[str, Any], str, float]] = []
+        for outcome in outcomes:
+            if not isinstance(outcome, Mapping):
+                continue
+            prob = outcome.get("probability")
+            if (
+                isinstance(prob, (int, float))
+                and not isinstance(prob, bool)
+                and 0.0 <= float(prob) <= 1.0
+            ):
+                valid_outcomes.append((outcome, str(outcome.get("name") or "").strip(), float(prob)))
+        if not valid_outcomes:
+            return None, None, None, None
+
+        card_name = str(card.get("name") or "").strip()
+        outcome_names_lower = {nm.lower() for _, nm, _ in valid_outcomes}
+        if outcome_names_lower.issubset({"yes", "no"}):
+            chosen_outcome, raw_name, prob = next(
+                (item for item in valid_outcomes if item[1].lower() == "yes"),
+                valid_outcomes[0],
+            )
+            label = card_name or raw_name
+        else:
+            chosen_outcome, raw_name, prob = max(valid_outcomes, key=lambda item: item[2])
+            label = raw_name or card_name
+        if not label:
+            return None, None, None, None
+
+        rendered_pct = _valid_rendered_percent(chosen_outcome.get("rendered_percent"))
+
+        source_obs: Optional[str] = None
+        smark = chosen_outcome.get("source_mark")
+        sources = smark.get("sources") if isinstance(smark, Mapping) else None
+        if isinstance(sources, Sequence) and not isinstance(sources, (str, bytes)):
+            for src in sources:
+                obs = src.get("observed_at") if isinstance(src, Mapping) else None
+                if isinstance(obs, str) and obs.strip():
+                    source_obs = obs.strip()
+                    break
+        as_of = _first_present_iso(
+            card.get("price_observed_at"),
+            card.get("prices_updated_at"),
+            card.get("newest_outcome_updated_at"),
+            source_obs,
+            card.get("updated_at"),
+            card.get("last_updated"),
+            card.get("odds_updated_at"),
+        )
+        return label, round(prob, 4), rendered_pct, as_of
+
+    if mtype == "event":
+        home = str(card.get("home_team") or "").strip()
+        away = str(card.get("away_team") or "").strip()
+        hp = card.get("hero_probability")
+        ap = card.get("hero_probability_away")
+        odds = card.get("current_odds") if isinstance(card.get("current_odds"), Mapping) else {}
+        if not (isinstance(hp, (int, float)) and not isinstance(hp, bool)):
+            hp = odds.get("home_win_probability")
+        if not (isinstance(ap, (int, float)) and not isinstance(ap, bool)):
+            ap = odds.get("away_win_probability")
+        pairs: list[tuple[str, float, Optional[int]]] = []
+        if home and isinstance(hp, (int, float)) and not isinstance(hp, bool) and 0.0 <= float(hp) <= 1.0:
+            pairs.append((home, float(hp), _valid_rendered_percent(odds.get("home_rendered_percent"))))
+        if away and isinstance(ap, (int, float)) and not isinstance(ap, bool) and 0.0 <= float(ap) <= 1.0:
+            pairs.append((away, float(ap), _valid_rendered_percent(odds.get("away_rendered_percent"))))
+        if not pairs:
+            return None, None, None, None
+        pairs.sort(key=lambda item: item[1], reverse=True)
+        label, prob, rendered_pct = pairs[0]
+        src_updated: Optional[str] = None
+        wps = card.get("win_probability_sources")
+        if isinstance(wps, Mapping):
+            for src in wps.values():
+                if isinstance(src, Mapping):
+                    u = src.get("updated_at")
+                    if isinstance(u, str) and u.strip():
+                        src_updated = u.strip()
+                        break
+        as_of = _first_present_iso(
+            card.get("hero_probability_observed_at"),
+            card.get("newest_outcome_updated_at"),
+            odds.get("updated_at"),
+            src_updated,
+            card.get("updated_at"),
+            card.get("last_updated"),
+        )
+        return label, round(prob, 4), rendered_pct, as_of
+
+    return None, None, None, None
+
+
+def summarize_more_set_card(
+    payload: Mapping[str, Any],
+    *,
+    now: Optional[float | datetime] = None,
+    max_age_seconds: float = MORE_SETS_MAX_LEAD_AGE_SECONDS,
+) -> Optional[dict[str, Any]]:
+    """Project a verified published container payload into a below-the-set link card (#13103).
+
+    Requires a real priced first row observed within ``max_age_seconds`` (24h).
+    Sets without a fresh first-row observation are never offered.
+    """
+    if not isinstance(payload, Mapping) or payload.get("state") != "published":
+        return None
+    container = payload.get("container")
+    if not isinstance(container, Mapping):
+        return None
+    slug = str(payload.get("slug") or container.get("slug") or "").strip()
+    name = str(container.get("name") or "").strip()
+    if not slug or not name:
+        return None
+    raw_count = payload.get("member_count")
+    member_count = (
+        int(raw_count)
+        if isinstance(raw_count, int) and not isinstance(raw_count, bool) and raw_count > 0
+        else 0
+    )
+    if member_count <= 0:
+        sections = payload.get("sections")
+        if isinstance(sections, Sequence) and not isinstance(sections, (str, bytes)):
+            member_count = sum(
+                len(sec.get("members") or ())
+                for sec in sections
+                if isinstance(sec, Mapping)
+                and isinstance(sec.get("members"), Sequence)
+                and not isinstance(sec.get("members"), (str, bytes))
+            )
+    if member_count <= 0:
+        return None
+
+    lead_label, lead_probability, lead_rendered_percent, as_of = _extract_more_set_lead(payload)
+    if not lead_label or lead_probability is None or not as_of:
+        return None
+    observed_dt = _parse_iso_timestamp(as_of)
+    if observed_dt is None:
+        return None
+    ts, _now_dt = _normalize_roundup_now(now)
+    age_s = ts - observed_dt.timestamp()
+    if age_s > max_age_seconds or age_s < -300.0:
+        return None
+
+    raw_dek = payload.get("dek") or payload.get("subtitle")
+    dek = raw_dek.strip() if isinstance(raw_dek, str) and raw_dek.strip() else None
+    raw_cat = container.get("category")
+    category = raw_cat.strip().lower() if isinstance(raw_cat, str) and raw_cat.strip() else None
+    out: dict[str, Any] = {
+        "slug": slug,
+        "name": name,
+        "href": f"/collections/{slug}",
+        "destination": container_destination(slug),
+        "category": category,
+        "dek": dek,
+        "member_count": member_count,
+        "lead_label": lead_label,
+        "lead_probability": lead_probability,
+        "as_of": as_of,
+    }
+    if lead_rendered_percent is not None:
+        out["lead_rendered_percent"] = lead_rendered_percent
+    return out
+
+
+def _pick_diverse_more_sets(
+    cards: Sequence[dict[str, Any]],
+    *,
+    current_slug: str,
+    current_category: Optional[str],
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Choose up to ``limit`` cards preferring distinct categories, live odds, and spread."""
+    chosen: list[dict[str, Any]] = []
+    remaining = list(cards)
+    used_categories: set[str] = set()
+    cur_cat = current_category.strip().lower() if isinstance(current_category, str) and current_category.strip() else None
+
+    def _tie(slug: str) -> int:
+        return zlib.crc32(f"{current_slug}:{slug}".encode("utf-8"))
+
+    while remaining and len(chosen) < limit:
+        best_idx = 0
+        best_key: tuple[int, int, int, int] = (-1, -1, -1, 0)
+        for idx, card in enumerate(remaining):
+            cat = card.get("category")
+            distinct_from_picked = 1 if (cat and cat not in used_categories) else 0
+            distinct_from_current = 1 if (cur_cat is None or (cat and cat != cur_cat)) else 0
+            prob = card.get("lead_probability")
+            competitive = (
+                1
+                if isinstance(prob, (int, float)) and 0.05 <= float(prob) <= 0.95
+                else 0
+            )
+            key = (distinct_from_picked, distinct_from_current, competitive, _tie(str(card.get("slug") or "")))
+            if key > best_key:
+                best_key = key
+                best_idx = idx
+        picked = remaining.pop(best_idx)
+        chosen.append(picked)
+        if picked.get("category"):
+            used_categories.add(str(picked["category"]))
+    return chosen
+
+
+async def select_more_sets(
+    db: Any,
+    *,
+    exclude_slugs: Sequence[str] | set[str] | frozenset[str],
+    current_slug: str = "",
+    current_category: Optional[str] = None,
+    limit: int = MORE_SETS_LIMIT,
+    budget_seconds: float = MORE_SETS_BUDGET_SECONDS,
+    now: Optional[float | datetime] = None,
+    evaluate_uncached: Optional[bool] = None,
+) -> list[dict[str, Any]]:
+    """Pick up to ``limit`` fresh published sets below a container page (#13103).
+
+    - Each offered set's own first row must be priced within the last 24 hours.
+    - Machinery sets are included whenever ``container_machinery_enabled()`` is on
+      (the exact gate the set's own page reads) and excluded only while off.
+    - Prefers warm process-local roundup cache entries (0 ms, zero extra DB
+      queries), then evaluates additional eligible producers within
+      ``budget_seconds`` on a live ``AsyncSession``, failing open.
+    """
+    import importlib
+
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    if limit <= 0:
+        return []
+
+    ensure_optional_roundup_candidates()
+    machinery_public = bool(
+        importlib.import_module("app.utils.container_machinery").container_machinery_enabled()
+    )
+    excluded = {str(s).strip() for s in exclude_slugs if str(s).strip()}
+    ts, _now_dt = _normalize_roundup_now(now)
+    cur_cat = current_category.strip().lower() if isinstance(current_category, str) and current_category.strip() else None
+    cache_db_key: Any = "live" if isinstance(db, AsyncSession) else id(db)
+
+    eligible: list[RoundupProducer] = []
+    for producer in ROUNDUP_PRODUCERS.values():
+        slug = producer.slug
+        if (
+            slug in excluded
+            or slug.startswith("for-scale-")
+            or (_is_machinery_producer_slug(slug) and not machinery_public)
+            or getattr(producer, "stage", "public") != "public"
+        ):
+            continue
+        if producer.enabled is not None and not producer.enabled():
+            continue
+        if (producer.valid_from is not None and ts < producer.valid_from) or (
+            producer.valid_until is not None and ts >= producer.valid_until
+        ):
+            continue
+        eligible.append(producer)
+
+    warm_cards: list[dict[str, Any]] = []
+    warm_slugs: set[str] = set()
+    cold_candidates: list[RoundupProducer] = []
+
+    for producer in sorted(
+        eligible,
+        key=lambda p: (
+            0 if (cur_cat and (p.category or "").strip().lower() != cur_cat) else 1,
+            -zlib.crc32(f"{current_slug}:{p.slug}".encode("utf-8")),
+        ),
+    ):
+        cached = _roundup_local_cache.get((producer.slug, cache_db_key))
+        if cached is not None:
+            local_ttl = _roundup_cache_ttl_seconds(producer.slug, cached[2])
+            if (ts - cached[0]) < local_ttl:
+                card = (
+                    summarize_more_set_card(cached[2], now=ts)
+                    if isinstance(cached[2], Mapping)
+                    else None
+                )
+                if card is not None:
+                    warm_cards.append(card)
+                    warm_slugs.add(producer.slug)
+                continue
+        cold_candidates.append(producer)
+
+    collected = list(warm_cards)
+    seen_slugs = set(warm_slugs)
+
+    should_eval_cold = (
+        bool(evaluate_uncached)
+        if evaluate_uncached is not None
+        else isinstance(db, AsyncSession)
+    )
+    if should_eval_cold and len(collected) < limit and cold_candidates and budget_seconds > 0:
+        deadline = time.monotonic() + budget_seconds
+        for producer in cold_candidates:
+            if len(collected) >= limit + 2:
+                break
+            remaining_s = deadline - time.monotonic()
+            if remaining_s <= 0.02:
+                break
+            try:
+                _fi, payload = await asyncio.wait_for(
+                    evaluate_roundup_producer(
+                        producer,
+                        db,
+                        now=now,
+                        stale_while_revalidate_seconds=ROUNDUP_PAGE_SWR_MAX_AGE_S,
+                        trigger_bg_refresh=False,
+                    ),
+                    timeout=min(remaining_s, ROUNDUP_PRODUCER_TIMEOUT_SECONDS),
+                )
+            except Exception:  # noqa: BLE001 — fail open, never break container read
+                logger.debug("select_more_sets: candidate %s skipped", producer.slug, exc_info=True)
+                continue
+            card = summarize_more_set_card(payload, now=ts) if isinstance(payload, Mapping) else None
+            if card is not None and card["slug"] not in seen_slugs:
+                collected.append(card)
+                seen_slugs.add(card["slug"])
+
+    return _pick_diverse_more_sets(
+        collected,
+        current_slug=current_slug,
+        current_category=cur_cat,
+        limit=limit,
+    )
 
 
 async def serve_roundup(
@@ -1353,7 +2943,12 @@ async def serve_roundup(
         raise HTTPException(
             status_code=404, detail={"state": READ_UNAVAILABLE, "slug": slug}
         )
-    _feed_item, payload = await evaluate_roundup_producer(producer, db, now=now)
+    _feed_item, payload = await evaluate_roundup_producer(
+        producer,
+        db,
+        now=now,
+        stale_while_revalidate_seconds=ROUNDUP_PAGE_SWR_MAX_AGE_S,
+    )
     if payload is None:
         raise HTTPException(
             status_code=404, detail={"state": READ_UNAVAILABLE, "slug": slug}
@@ -1371,7 +2966,12 @@ async def serve_roundup(
                 continue
             ch_prod = ROUNDUP_PRODUCERS.get(ch_slug)
             if ch_prod is not None:
-                _ch_fi, ch_payload = await evaluate_roundup_producer(ch_prod, db, now=now)
+                _ch_fi, ch_payload = await evaluate_roundup_producer(
+                    ch_prod,
+                    db,
+                    now=now,
+                    stale_while_revalidate_seconds=ROUNDUP_PAGE_SWR_MAX_AGE_S,
+                )
                 if ch_payload is None or ch_payload.get("state") != "published":
                     continue
                 ch_copy = dict(ch)
@@ -1396,7 +2996,12 @@ async def serve_roundup(
         p_slug = str(parent_obj.get("slug") or "").strip()
         p_prod = ROUNDUP_PRODUCERS.get(p_slug) if p_slug else None
         if p_prod is not None:
-            _p_fi, p_payload = await evaluate_roundup_producer(p_prod, db, now=now)
+            _p_fi, p_payload = await evaluate_roundup_producer(
+                p_prod,
+                db,
+                now=now,
+                stale_while_revalidate_seconds=ROUNDUP_PAGE_SWR_MAX_AGE_S,
+            )
             if p_payload is None or p_payload.get("state") != "published":
                 _strip_parent_from_payload(out)
         elif p_slug:
@@ -1408,6 +3013,27 @@ async def serve_roundup(
                 _strip_parent_from_payload(out)
         else:
             _strip_parent_from_payload(out)
+
+    excluded = {slug}
+    if isinstance(out.get("parent"), Mapping) and out["parent"].get("slug"):
+        excluded.add(str(out["parent"]["slug"]))
+    for ch in out.get("children") or ():
+        if isinstance(ch, Mapping) and ch.get("slug"):
+            excluded.add(str(ch["slug"]))
+    cur_cat = (
+        out.get("container", {}).get("category")
+        if isinstance(out.get("container"), Mapping)
+        else None
+    )
+    more_sets = await select_more_sets(
+        db,
+        exclude_slugs=excluded,
+        current_slug=slug,
+        current_category=cur_cat,
+        now=now,
+    )
+    if more_sets:
+        out["more_sets"] = more_sets
     return out
 
 
@@ -1484,12 +3110,12 @@ def _roundup_covered_market_ids(roundup_item: Mapping[str, Any]) -> set[int]:
 
 
 def _is_roundup_bundle_card(card: Any) -> bool:
-    return (
-        isinstance(card, Mapping)
-        and card.get("type") == "bundle"
-        and isinstance(card.get("data"), Mapping)
-        and card["data"].get("kind") == "roundup"
-    )
+    if type(card) is not dict and not isinstance(card, Mapping):
+        return False
+    if card.get("type") != "bundle":
+        return False
+    data = card.get("data")
+    return (type(data) is dict or isinstance(data, Mapping)) and data.get("kind") == "roundup"
 
 
 def _opening_eligible_floor_index(
@@ -1877,7 +3503,7 @@ _CLIENT_SPORT_CATEGORIES: frozenset[str] = frozenset(
 
 def _is_grouped_feed_card(item: Any) -> bool:
     """Return True when ``item`` is any grouped feed card (bundle, collection, or round-up)."""
-    if not isinstance(item, Mapping):
+    if type(item) is not dict and not isinstance(item, Mapping):
         return False
     if item.get("type") in ("bundle", "collection"):
         return True
@@ -1885,11 +3511,11 @@ def _is_grouped_feed_card(item: Any) -> bool:
 
 
 def _client_sport_category(item: Any) -> str:
-    if not isinstance(item, Mapping):
+    if type(item) is not dict and not isinstance(item, Mapping):
         return "other"
     item_type = item.get("type")
     data = item.get("data")
-    if not isinstance(data, Mapping):
+    if type(data) is not dict and not isinstance(data, Mapping):
         return "other"
     if item_type == "event":
         sport = str(data.get("sport") or "")
@@ -1898,45 +3524,67 @@ def _client_sport_category(item: Any) -> str:
         return str(data.get("llm_sport_category") or "other")
     if item_type == "bundle":
         members = data.get("items")
-        if isinstance(members, Sequence) and members:
+        if (type(members) is list or isinstance(members, Sequence)) and members:
             return _client_sport_category(members[0])
         return "other"
     return "golf"
 
 
-def _client_space_by_sport(
-    items: Sequence[Mapping[str, Any]],
-) -> list[Mapping[str, Any]]:
-    if len(items) <= 2:
-        return list(items)
-    non_sports_count = sum(
-        1 for it in items if _client_sport_category(it) not in _CLIENT_SPORT_CATEGORIES
-    )
+def _space_sport_tags(
+    tagged: Sequence[tuple[str, bool, Any]],
+) -> list[tuple[str, bool, Any]]:
+    """O(M) per-category FIFO deque equivalent of ``_client_space_by_sport`` (#13445)."""
+    n = len(tagged)
+    if n <= 2:
+        return list(tagged)
+    non_sport_q: deque[tuple[int, tuple[str, bool, Any]]] = deque()
+    sport_qs: dict[str, deque[tuple[int, tuple[str, bool, Any]]]] = {}
+    for orig_idx, entry in enumerate(tagged):
+        cat, is_sport, _ = entry
+        if is_sport:
+            q = sport_qs.get(cat)
+            if q is None:
+                q = deque()
+                sport_qs[cat] = q
+            q.append((orig_idx, entry))
+        else:
+            non_sport_q.append((orig_idx, entry))
+
+    non_sports_count = len(non_sport_q)
     max_sports_run = 2 if non_sports_count >= 4 else 3
-    remaining = list(items)
-    result: list[Mapping[str, Any]] = []
+    result: list[tuple[str, bool, Any]] = []
     last_sport = ""
     sports_since_non_sport = 0
-    while remaining:
-        pick = -1
-        for idx, it in enumerate(remaining):
-            cat = _client_sport_category(it)
-            if cat not in _CLIENT_SPORT_CATEGORIES or (
-                sports_since_non_sport < max_sports_run and cat != last_sport
-            ):
-                pick = idx
-                break
-        if pick == -1:
-            for idx, it in enumerate(remaining):
-                if _client_sport_category(it) != last_sport:
-                    pick = idx
-                    break
-        if pick == -1:
-            pick = 0
-        chosen = remaining.pop(pick)
-        cat = _client_sport_category(chosen)
+
+    for _ in range(n):
+        best_idx = n
+        best_q: deque[tuple[int, tuple[str, bool, Any]]] | None = None
+        if non_sport_q:
+            best_idx = non_sport_q[0][0]
+            best_q = non_sport_q
+        if sports_since_non_sport < max_sports_run:
+            for cat, q in sport_qs.items():
+                if q and cat != last_sport and q[0][0] < best_idx:
+                    best_idx = q[0][0]
+                    best_q = q
+        if best_q is None:
+            for cat, q in sport_qs.items():
+                if q and cat != last_sport and q[0][0] < best_idx:
+                    best_idx = q[0][0]
+                    best_q = q
+        if best_q is None:
+            if non_sport_q and non_sport_q[0][0] < best_idx:
+                best_idx = non_sport_q[0][0]
+                best_q = non_sport_q
+            for q in sport_qs.values():
+                if q and q[0][0] < best_idx:
+                    best_idx = q[0][0]
+                    best_q = q
+        assert best_q is not None
+        _, chosen = best_q.popleft()
+        cat, is_sport, _ = chosen
         result.append(chosen)
-        if cat in _CLIENT_SPORT_CATEGORIES:
+        if is_sport:
             last_sport = cat
             sports_since_non_sport += 1
         else:
@@ -1945,19 +3593,44 @@ def _client_space_by_sport(
     return result
 
 
+def _client_space_by_sport(
+    items: Sequence[Mapping[str, Any]],
+) -> list[Mapping[str, Any]]:
+    if len(items) <= 2:
+        return list(items)
+    tagged = []
+    for it in items:
+        cat = _client_sport_category(it)
+        tagged.append((cat, cat in _CLIENT_SPORT_CATEGORIES, it))
+    return [entry[2] for entry in _space_sport_tags(tagged)]
+
+
+def _spaced_tags_have_adjacent_roundup(
+    tagged: Sequence[tuple[str, bool, tuple[bool, bool]]],
+) -> bool:
+    spaced = _space_sport_tags(_space_sport_tags(tagged))
+    for i in range(len(spaced) - 1):
+        a_grp, a_rnd = spaced[i][2]
+        b_grp, b_rnd = spaced[i + 1][2]
+        if a_grp and b_grp and (a_rnd or b_rnd):
+            return True
+    return False
+
+
 def _spaced_has_adjacent_roundup(
     items: Sequence[Mapping[str, Any]],
 ) -> bool:
-    spaced = _client_space_by_sport(_client_space_by_sport(items))
-    for i in range(len(spaced) - 1):
-        a, b = spaced[i], spaced[i + 1]
-        if (
-            _is_grouped_feed_card(a)
-            and _is_grouped_feed_card(b)
-            and (_is_roundup_bundle_card(a) or _is_roundup_bundle_card(b))
-        ):
-            return True
-    return False
+    tagged = []
+    for it in items:
+        cat = _client_sport_category(it)
+        tagged.append(
+            (
+                cat,
+                cat in _CLIENT_SPORT_CATEGORIES,
+                (_is_grouped_feed_card(it), _is_roundup_bundle_card(it)),
+            )
+        )
+    return _spaced_tags_have_adjacent_roundup(tagged)
 
 
 def _find_non_adjacent_roundup_seat(
@@ -1971,22 +3644,266 @@ def _find_non_adjacent_roundup_seat(
     """Find the earliest insertion index ``pos >= max(floor_idx, start_idx)`` where neither neighbour is a grouped card (Decision 123-A)."""
     start_pos = max(int(floor_idx), int(start_idx))
     n = len(items)
+    if start_pos > n:
+        return None
+    if candidate_item is None:
+        item_grouped = [_is_grouped_feed_card(it) for it in items]
+        pos = start_pos
+        while pos <= n:
+            prev_is_grouped = pos > 0 and item_grouped[pos - 1]
+            next_is_grouped = pos < n and item_grouped[pos]
+            if not prev_is_grouped and not next_is_grouped:
+                return pos
+            pos += 1
+        return None
+
+    item_tags: list[tuple[str, bool, tuple[bool, bool]]] = []
+    for it in items:
+        cat = _client_sport_category(it)
+        item_tags.append(
+            (
+                cat,
+                cat in _CLIENT_SPORT_CATEGORIES,
+                (_is_grouped_feed_card(it), _is_roundup_bundle_card(it)),
+            )
+        )
+    cand_cat = _client_sport_category(candidate_item)
+    cand_tag = (
+        cand_cat,
+        cand_cat in _CLIENT_SPORT_CATEGORIES,
+        (
+            _is_grouped_feed_card(candidate_item),
+            _is_roundup_bundle_card(candidate_item),
+        ),
+    )
+
     first_raw_non_adjacent: Optional[int] = None
     pos = start_pos
+    win_floor = int(page_window)
     while pos <= n:
-        prev_is_grouped = pos > 0 and _is_grouped_feed_card(items[pos - 1])
-        next_is_grouped = pos < n and _is_grouped_feed_card(items[pos])
+        prev_is_grouped = pos > 0 and item_tags[pos - 1][2][0]
+        next_is_grouped = pos < n and item_tags[pos][2][0]
         if not prev_is_grouped and not next_is_grouped:
             if first_raw_non_adjacent is None:
                 first_raw_non_adjacent = pos
-            if candidate_item is None:
-                return pos
-            trial = [*items[:pos], candidate_item, *items[pos:]]
-            window_slice = trial[: max(int(page_window), pos + 2)]
-            if not _spaced_has_adjacent_roundup(window_slice):
+            win_end = max(win_floor, pos + 2)
+            window_tags = item_tags[:pos] + [cand_tag] + item_tags[pos : win_end - 1]
+            if not _spaced_tags_have_adjacent_roundup(window_tags):
                 return pos
         pos += 1
     return first_raw_non_adjacent
+
+
+def _roundup_item_slug(item: Mapping[str, Any]) -> str:
+    data = item.get("data")
+    if not isinstance(data, Mapping):
+        return ""
+    cref = data.get("collection_ref")
+    if isinstance(cref, Mapping):
+        slug = str(cref.get("slug") or "").strip()
+        if slug:
+            return slug
+    raw_id = str(data.get("id") or "").strip()
+    if raw_id.startswith("roundup:"):
+        return raw_id.removeprefix("roundup:")
+    return raw_id
+
+
+def _is_machinery_roundup_item(item: Mapping[str, Any]) -> bool:
+    """Return True only for container-machinery groupings (#12288), never standing round-ups."""
+    slug = _roundup_item_slug(item)
+    if not slug:
+        return False
+    prod = ROUNDUP_PRODUCERS.get(slug)
+    rule = prod.rule if prod is not None and isinstance(prod.rule, Mapping) else None
+    if isinstance(rule, Mapping) and rule.get("producer") == "container_machinery":
+        return True
+    return slug.startswith("machinery-")
+
+
+def _is_preview_producer(producer: RoundupProducer) -> bool:
+    """Return True when a producer is staged as ``preview`` (never on public Discover)."""
+    return str(getattr(producer, "stage", "public") or "public").strip().lower() == "preview"
+
+
+def _roundup_lesser_soccer_penalty(item: Mapping[str, Any]) -> int:
+    """Return ``MINOR_LEAGUE_PENALTY`` or ``OBSCURE_SOCCER_PENALTY`` for lesser soccer cards (#13093).
+
+    Multi-row soccer round-ups and sibling families carry no individual market
+    score before insertion, so they otherwise inherit their anchor neighbour's
+    high seat on Discover. Matches single-market futures parity in
+    ``app.utils.futures_highlights``: minor-league regex pays ``-15``, any
+    non-top-tier soccer competition pays ``-20``, and top-tier leagues
+    (Champions League, Premier League, La Liga, Bundesliga, Serie A, Ligue 1,
+    Europa League, MLS, World Cup, Liga MX, etc.) pay ``0``.
+    """
+    from app.utils.futures_highlights import (
+        MINOR_LEAGUE_PENALTY,
+        OBSCURE_SOCCER_PENALTY,
+        is_minor_league_market,
+        is_top_tier_soccer_market,
+    )
+
+    if not isinstance(item, Mapping):
+        return 0
+    slug = _roundup_item_slug(item)
+    prod = ROUNDUP_PRODUCERS.get(slug) if slug else None
+    data = item.get("data") if isinstance(item.get("data"), Mapping) else {}
+    roundup = data.get("roundup") if isinstance(data.get("roundup"), Mapping) else {}
+    tag = str(roundup.get("tag") or "").strip().lower()
+    kicker = str(roundup.get("kicker") or "").strip().lower()
+    children = [
+        ch.get("data")
+        for ch in (data.get("items") or ())
+        if isinstance(ch, Mapping) and isinstance(ch.get("data"), Mapping)
+    ]
+    child_cats = [str(ch.get("llm_sport_category") or "").strip().lower() for ch in children]
+    is_soccer = (
+        (prod is not None and str(prod.category or "").strip().lower() == "soccer")
+        or ("soccer" in tag or "soccer" in kicker)
+        or (len(child_cats) > 0 and all(cat == "soccer" for cat in child_cats))
+    )
+    if not is_soccer:
+        return 0
+
+    texts: list[str] = []
+    for raw in (
+        data.get("title"),
+        item.get("headline"),
+        prod.name if prod is not None else None,
+    ):
+        if raw and str(raw).strip():
+            texts.append(str(raw).strip())
+    for ch in children:
+        for key in ("name", "title"):
+            val = ch.get(key)
+            if val and str(val).strip():
+                texts.append(str(val).strip())
+    for row in roundup.get("rows") or ():
+        if isinstance(row, Mapping):
+            for key in ("market_name", "title", "subtitle"):
+                val = row.get(key)
+                if val and str(val).strip():
+                    texts.append(str(val).strip())
+
+    def _grade_text(text: str) -> int:
+        if is_minor_league_market(text):
+            return int(MINOR_LEAGUE_PENALTY)
+        if is_top_tier_soccer_market(text):
+            return 0
+        return int(OBSCURE_SOCCER_PENALTY)
+
+    return max(
+        (_grade_text(text) for text in texts),
+        default=int(OBSCURE_SOCCER_PENALTY),
+    )
+
+
+def _penalized_roundup_score(
+    item: Mapping[str, Any],
+    anchor: Optional[Mapping[str, Any]],
+    penalty: int,
+) -> float:
+    base = float(item.get("score") or 0.0)
+    if base <= 0.0 and isinstance(anchor, Mapping):
+        base = float(anchor.get("score") or 0.0)
+    return max(0.0, base + float(penalty))
+
+
+def _score_demoted_seat_index(
+    items: Sequence[Mapping[str, Any]],
+    min_idx: int,
+    penalized_score: float,
+) -> int:
+    """Seat index at/after ``min_idx`` placing a penalized card alongside equal-or-lower scores."""
+    last_higher = max(
+        (
+            i
+            for i in range(max(0, min_idx), len(items))
+            if float(items[i].get("score") or 0.0) > penalized_score
+        ),
+        default=None,
+    )
+    return max(min_idx, (last_higher + 1) if last_higher is not None else min_idx)
+
+
+def _is_preview_roundup_item(item: Mapping[str, Any]) -> bool:
+    """Return True when a composed feed item belongs to a ``stage="preview"`` grouping."""
+    slug = _roundup_item_slug(item)
+    if slug:
+        prod = ROUNDUP_PRODUCERS.get(slug)
+        if prod is not None and _is_preview_producer(prod):
+            return True
+    data = item.get("data") if isinstance(item.get("data"), Mapping) else None
+    roundup = (
+        data.get("roundup")
+        if isinstance(data, Mapping) and isinstance(data.get("roundup"), Mapping)
+        else None
+    )
+    card = (
+        roundup.get("machinery_card")
+        if isinstance(roundup, Mapping) and isinstance(roundup.get("machinery_card"), Mapping)
+        else None
+    )
+    return isinstance(card, Mapping) and str(card.get("stage") or "").strip().lower() == "preview"
+
+
+def _roundup_slug_variants(slug: str) -> set[str]:
+    clean = str(slug or "").strip().lower()
+    if not clean:
+        return set()
+    variants = {clean}
+    if clean.startswith("roundup-"):
+        variants.add(clean.removeprefix("roundup-"))
+    else:
+        variants.add(f"roundup-{clean}")
+    return variants
+
+
+def _roundup_replaces_spec(item: Mapping[str, Any]) -> tuple[set[str], set[str]]:
+    """Return ``(replaces_themes, replaces_roundup_variants)`` declared on ``item``'s producer rule."""
+    slug = _roundup_item_slug(item)
+    prod = ROUNDUP_PRODUCERS.get(slug) if slug else None
+    rule = prod.rule if prod is not None and isinstance(prod.rule, Mapping) else None
+    if not isinstance(rule, Mapping):
+        return set(), set()
+    themes = {
+        str(t or "").strip().lower()
+        for t in (rule.get("replaces_themes") or ())
+        if str(t or "").strip()
+    }
+    roundups: set[str] = set()
+    for r in rule.get("replaces") or ():
+        roundups.update(_roundup_slug_variants(str(r or "")))
+    return themes, roundups
+
+
+def _item_replaced_by_spec(
+    item: Mapping[str, Any],
+    replaces_themes: set[str],
+    replaces_roundups: set[str],
+) -> bool:
+    if not isinstance(item, Mapping) or item.get("type") != "bundle":
+        return False
+    data = item.get("data")
+    if not isinstance(data, Mapping):
+        return False
+    kind = str(data.get("kind") or "").strip().lower()
+    if replaces_themes and kind == "theme":
+        raw_id = str(data.get("id") or "").strip().lower()
+        story_key = str(data.get("story_key") or item.get("story_key") or "").strip().lower()
+        for t in replaces_themes:
+            if (
+                raw_id == f"theme:{t}"
+                or raw_id.startswith(f"theme:{t}:")
+                or story_key == t
+            ):
+                return True
+    if replaces_roundups and _is_roundup_bundle_card(item):
+        slug = _roundup_item_slug(item)
+        if slug and (_roundup_slug_variants(slug) & replaces_roundups):
+            return True
+    return False
 
 
 def insert_roundup_feed_items(
@@ -2001,6 +3918,7 @@ def insert_roundup_feed_items(
     seen_futures_ids: Optional[Sequence[int] | set[int]] = None,
     seen_event_ids: Optional[Sequence[int] | set[int]] = None,
     novelty_seat_cap: int = ROUNDUP_NOVELTY_SEAT_CAP,
+    preserve_existing_roundups: bool = False,
 ) -> list[dict[str, Any]]:
     """Place served round-up cards on Discover in page one's back half without changing scores.
 
@@ -2033,13 +3951,83 @@ def insert_roundup_feed_items(
     if not valid_roundups:
         return items
 
+    replaces_by_rid: dict[Any, tuple[set[str], set[str]]] = {}
+    all_replaces_roundups: set[str] = set()
+    for r in valid_roundups:
+        r_themes, r_roundups = _roundup_replaces_spec(r)
+        if r_themes or r_roundups:
+            replaces_by_rid[r["data"].get("id")] = (r_themes, r_roundups)
+            all_replaces_roundups.update(r_roundups)
+    if all_replaces_roundups:
+        valid_roundups = [
+            r
+            for r in valid_roundups
+            if not _item_replaced_by_spec(r, set(), all_replaces_roundups)
+        ]
+
+    reg_order = {slug: i for i, slug in enumerate(ROUNDUP_PRODUCERS.keys())}
+
     raw_items = list(items)
     initial_floor_idx = _opening_eligible_floor_index(raw_items, seat_floor, now=now)
+
+    # #12288 (Fable 2:41 PM PT): when splicing machinery groupings onto a base feed
+    # that already has standing round-ups seated, never extract or shift any non-replaced
+    # standing round-up. Replace each target card IN-PLACE at its exact seat, and place
+    # non-replacing groupings strictly after the last standing round-up.
+    use_in_place_splice = preserve_existing_roundups or (
+        bool(valid_roundups)
+        and all(_is_machinery_roundup_item(r) for r in valid_roundups)
+        and any(_is_roundup_bundle_card(it) for it in raw_items)
+    )
+    if use_in_place_splice:
+        return _splice_machinery_in_place(
+            raw_items,
+            valid_roundups,
+            replaces_by_rid=replaces_by_rid,
+            reg_order=reg_order,
+            initial_floor_idx=initial_floor_idx,
+            seat_floor=seat_floor,
+            page_window=page_window,
+            now=now,
+            returning_reader=returning_reader,
+            seen_card_keys=seen_card_keys,
+            seen_futures_ids=seen_futures_ids,
+            seen_event_ids=seen_event_ids,
+            novelty_seat_cap=novelty_seat_cap,
+        )
+
     preexisting_post_opening_roundups: list[Mapping[str, Any]] = []
     preexisting_target_by_id: dict[Any, int] = {}
+    opening_takeover_seat_by_id: dict[Any, int] = {}
+    replaced_reg_rank_by_id: dict[Any, int] = {}
+    replaced_non_sib_ids: set[Any] = set()
     result: list[dict[str, Any]] = []
     changed = False
     for idx, it in enumerate(raw_items):
+        matched_replacer_id: Any = None
+        for r_id, (r_themes, r_roundups) in replaces_by_rid.items():
+            if _item_replaced_by_spec(it, r_themes, r_roundups):
+                matched_replacer_id = r_id
+                break
+        if matched_replacer_id is not None:
+            # A replacing grouping inherits the replaced card's seat, registry turn,
+            # and non-sibling queue bucket (Fable 9:57 AM & 10:45 AM PT on #12288).
+            if idx < initial_floor_idx:
+                prev_open = opening_takeover_seat_by_id.get(matched_replacer_id)
+                if prev_open is None or idx < prev_open:
+                    opening_takeover_seat_by_id[matched_replacer_id] = idx
+            prev_seat = preexisting_target_by_id.get(matched_replacer_id)
+            if prev_seat is None or idx < prev_seat:
+                preexisting_target_by_id[matched_replacer_id] = idx
+            old_slug = _roundup_item_slug(it)
+            if old_slug in reg_order:
+                prev_rank = replaced_reg_rank_by_id.get(matched_replacer_id)
+                if prev_rank is None or reg_order[old_slug] < prev_rank:
+                    replaced_reg_rank_by_id[matched_replacer_id] = reg_order[old_slug]
+            if not _is_sibling_family_bundle(it):
+                replaced_non_sib_ids.add(matched_replacer_id)
+            changed = True
+            continue
         if idx >= initial_floor_idx and _is_roundup_bundle_card(it):
             preexisting_post_opening_roundups.append(it)
             preexisting_target_by_id[it.get("data", {}).get("id")] = idx
@@ -2063,17 +4051,13 @@ def insert_roundup_feed_items(
     ]
 
     if preexisting_post_opening_roundups:
-        reg_order = {slug: i for i, slug in enumerate(ROUNDUP_PRODUCERS.keys())}
 
         def _reg_sort_key(pair: tuple[int, Mapping[str, Any]]) -> tuple[int, int]:
             idx_in_combined, item = pair
-            cref = item.get("data", {}).get("collection_ref")
-            slug = (
-                str(cref.get("slug") or "").strip() if isinstance(cref, Mapping) else ""
-            )
-            if not slug:
-                raw_id = str(item.get("data", {}).get("id") or "").strip()
-                slug = raw_id.removeprefix("roundup:")
+            item_id = item.get("data", {}).get("id")
+            if item_id in replaced_reg_rank_by_id:
+                return (replaced_reg_rank_by_id[item_id], idx_in_combined)
+            slug = _roundup_item_slug(item)
             return (reg_order.get(slug, 10_000 + idx_in_combined), idx_in_combined)
 
         combined_raw = [*preexisting_post_opening_roundups, *valid_roundups]
@@ -2083,8 +4067,13 @@ def insert_roundup_feed_items(
     else:
         sorted_combined = list(valid_roundups)
 
-    non_sibs = [it for it in sorted_combined if not _is_sibling_family_bundle(it)]
-    sibs = [it for it in sorted_combined if _is_sibling_family_bundle(it)]
+    def _is_effective_sib(item: Mapping[str, Any]) -> bool:
+        if item.get("data", {}).get("id") in replaced_non_sib_ids:
+            return False
+        return _is_sibling_family_bundle(item)
+
+    non_sibs = [it for it in sorted_combined if not _is_effective_sib(it)]
+    sibs = [it for it in sorted_combined if _is_effective_sib(it)]
     if non_sibs and sibs:
         candidate_queue: list[Mapping[str, Any]] = []
         ns_idx = 0
@@ -2125,8 +4114,10 @@ def insert_roundup_feed_items(
         return items
 
     earliest_seat_by_id: dict[Any, Optional[int]] = {}
+    dissolved_post_opening_seat_by_id: dict[Any, int] = {}
     for r_item in accepted_roundups:
         r_id = r_item["data"].get("id")
+        is_machinery = _is_machinery_roundup_item(r_item)
         covered_ids = _roundup_covered_market_ids(r_item)
         earliest_post_opening_seat: Optional[int] = None
         if covered_ids:
@@ -2164,25 +4155,34 @@ def insert_roundup_feed_items(
                         )
                     ]
                     if len(kept_children) != len(orig_children):
-                        changed = True
-                        if (
-                            earliest_post_opening_seat is None
-                            and seat_floor <= idx < page_window
+                        # Ruling 275 (#13100): a card never loses a row to a card seated
+                        # below it. Only full dissolution where a machinery grouping takes
+                        # over the card's own seat (e.g. Fed & Rates -> Fed & U.S. Macro)
+                        # or a post-opening bundle dissolves runs before seating; partial
+                        # overlap is pruned after final seats are known, and ONLY against
+                        # round-ups seated strictly above the bundle.
+                        if len(kept_children) < 2 and (
+                            is_machinery or idx >= initial_floor_idx
                         ):
-                            earliest_post_opening_seat = idx
-                        if len(kept_children) < 2:
+                            changed = True
+                            if (
+                                earliest_post_opening_seat is None
+                                and seat_floor <= idx < page_window
+                            ):
+                                earliest_post_opening_seat = idx
+                            # Absorbing an older bundle's markets so it dissolves takes
+                            # over that card's seat for machinery groupings only; standing
+                            # round-ups seat identically to master (Fable 12:16 PM PT, #12288).
+                            if is_machinery:
+                                if idx < initial_floor_idx:
+                                    prev_open = opening_takeover_seat_by_id.get(r_id)
+                                    if prev_open is None or idx < prev_open:
+                                        opening_takeover_seat_by_id[r_id] = idx
+                                else:
+                                    prev_post = dissolved_post_opening_seat_by_id.get(r_id)
+                                    if prev_post is None or idx < prev_post:
+                                        dissolved_post_opening_seat_by_id[r_id] = idx
                             continue
-                        updated_existing = copy.deepcopy(dict(existing))
-                        updated_existing["data"]["items"] = kept_children
-                        updated_existing["data"]["item_count"] = len(kept_children)
-                        if isinstance(updated_existing["data"].get("member_ids"), list):
-                            updated_existing["data"]["member_ids"] = [
-                                mid
-                                for mid in updated_existing["data"]["member_ids"]
-                                if mid not in covered_ids
-                            ]
-                        filtered.append(updated_existing)
-                        continue
                 filtered.append(existing)
             result = filtered
         earliest_seat_by_id[r_id] = (
@@ -2191,31 +4191,127 @@ def insert_roundup_feed_items(
             else preexisting_target_by_id.get(r_id)
         )
 
+    def _hydrate_card_at_seat(
+        r_item: Mapping[str, Any],
+        target_idx: int,
+        *,
+        penalty: int = 0,
+        anchor_override: Optional[Mapping[str, Any]] = None,
+    ) -> dict[str, Any]:
+        card = copy.deepcopy(dict(r_item))
+        if result:
+            anchor = (
+                anchor_override
+                if anchor_override is not None
+                else (result[target_idx] if target_idx < len(result) else result[-1])
+            )
+            if penalty < 0:
+                card["score"] = _penalized_roundup_score(card, anchor, penalty)
+                if "_rank_score" in anchor and "_rank_score" not in card:
+                    card["_rank_score"] = max(
+                        0.0, float(anchor["_rank_score"] or 0.0) + float(penalty)
+                    )
+            else:
+                if not card.get("score"):
+                    card["score"] = float(anchor.get("score", 0.0) or 0.0)
+                if "_rank_score" in anchor and "_rank_score" not in card:
+                    card["_rank_score"] = anchor["_rank_score"]
+            if "_sort_time" in anchor and "_sort_time" not in card:
+                card["_sort_time"] = anchor["_sort_time"]
+            for child in card.get("data", {}).get("items") or ():
+                if isinstance(child, dict) and (penalty < 0 or not child.get("score")):
+                    child["score"] = card["score"]
+        elif penalty < 0:
+            card["score"] = _penalized_roundup_score(card, None, penalty)
+            for child in card.get("data", {}).get("items") or ():
+                if isinstance(child, dict):
+                    child["score"] = card["score"]
+        return card
+
+    # Seat any grouping that took over an opening-seat card right back at the
+    # replaced card's seat first, so opening seats do not shift and `seat_opening`
+    # honors the inherited opening seat.
+    opening_takeovers = sorted(
+        [
+            r_item
+            for r_item in accepted_roundups
+            if r_item["data"].get("id") in opening_takeover_seat_by_id
+        ],
+        key=lambda r_item: opening_takeover_seat_by_id[r_item["data"].get("id")],
+    )
+    post_opening_roundups = [
+        r_item
+        for r_item in accepted_roundups
+        if r_item["data"].get("id") not in opening_takeover_seat_by_id
+    ]
+    # Track each post-opening round-up's natural unpenalized turn before
+    # ordering unpenalized round-ups first so any penalized lesser-soccer card
+    # computes its penalized score from its true pre-penalty seat anchor rather
+    # than whichever tail item happens to follow all later round-ups.
+    post_opening_turns = [
+        (idx, r_item, _roundup_lesser_soccer_penalty(r_item))
+        for idx, r_item in enumerate(post_opening_roundups)
+    ]
+    post_opening_ordered = [
+        *[t for t in post_opening_turns if t[2] == 0],
+        *[t for t in post_opening_turns if t[2] < 0],
+    ]
+    for r_item in opening_takeovers:
+        r_id = r_item["data"].get("id")
+        target_idx = min(max(0, opening_takeover_seat_by_id[r_id]), len(result))
+        card = _hydrate_card_at_seat(r_item, target_idx)
+        card["data"]["inherited_opening_seat"] = True
+        result.insert(target_idx, card)
+        changed = True
+
     inserted_count = 0
-    for r_item in accepted_roundups:
+    max_inserted_idx = -1
+    for natural_turn, r_item, lesser_soccer_pen in post_opening_ordered:
         r_id = r_item["data"].get("id")
         is_sibling_card = _is_sibling_family_bundle(r_item)
         floor_idx = _opening_eligible_floor_index(result, seat_floor, now=now)
         default_seat = floor_idx + inserted_count
+        if preexisting_post_opening_roundups and max_inserted_idx >= 0:
+            default_seat = max(default_seat, max_inserted_idx + 2)
         earliest_post_opening_seat = earliest_seat_by_id.get(r_id)
         target_seat = (
             earliest_post_opening_seat
             if earliest_post_opening_seat is not None
             else default_seat
         )
+        # Absorbing a card that sits later than the grouping's own seat never moves
+        # the grouping later (Fable 12:16 PM PT, #12288).
+        if r_id in dissolved_post_opening_seat_by_id:
+            target_seat = min(target_seat, dissolved_post_opening_seat_by_id[r_id])
         if is_sibling_card and len(seated_sibling_roundups) >= MAX_SIBLING_FAMILY_IN_TOP_20:
             target_seat = max(target_seat, page_window)
 
         desired_idx = min(max(floor_idx, target_seat), len(result))
-        non_adj_idx = _find_non_adjacent_roundup_seat(
-            result,
-            desired_idx,
-            floor_idx=max(
+        anchor_override: Optional[Mapping[str, Any]] = None
+        if lesser_soccer_pen < 0 and result:
+            anchor_seat = (
+                earliest_post_opening_seat
+                if earliest_post_opening_seat is not None
+                else floor_idx + (2 * natural_turn)
+            )
+            anchor_idx = min(max(floor_idx, anchor_seat), len(result) - 1)
+            anchor_override = result[anchor_idx]
+            pen_score = _penalized_roundup_score(r_item, anchor_override, lesser_soccer_pen)
+            desired_idx = _score_demoted_seat_index(result, floor_idx, pen_score)
+        effective_floor = (
+            max(floor_idx, desired_idx)
+            if lesser_soccer_pen < 0
+            else max(
                 floor_idx,
                 page_window
                 if (is_sibling_card and len(seated_sibling_roundups) >= MAX_SIBLING_FAMILY_IN_TOP_20)
                 else floor_idx,
-            ),
+            )
+        )
+        non_adj_idx = _find_non_adjacent_roundup_seat(
+            result,
+            desired_idx,
+            floor_idx=effective_floor,
             candidate_item=r_item,
             page_window=page_window,
         )
@@ -2229,23 +4325,20 @@ def insert_roundup_feed_items(
         ):
             continue
 
-        card = copy.deepcopy(dict(r_item))
-        if result:
-            anchor = result[target_idx] if target_idx < len(result) else result[-1]
-            if not card.get("score"):
-                card["score"] = float(anchor.get("score", 0.0) or 0.0)
-            if "_rank_score" in anchor and "_rank_score" not in card:
-                card["_rank_score"] = anchor["_rank_score"]
-            if "_sort_time" in anchor and "_sort_time" not in card:
-                card["_sort_time"] = anchor["_sort_time"]
-            for child in card.get("data", {}).get("items") or ():
-                if isinstance(child, dict) and not child.get("score"):
-                    child["score"] = card["score"]
+        card = _hydrate_card_at_seat(
+            r_item,
+            target_idx,
+            penalty=lesser_soccer_pen,
+            anchor_override=anchor_override,
+        )
 
         result.insert(target_idx, card)
+        if lesser_soccer_pen == 0 and target_idx > max_inserted_idx:
+            max_inserted_idx = target_idx
         if is_sibling_card and target_idx < page_window:
             seated_sibling_roundups.append(card)
-        inserted_count += 1
+        if lesser_soccer_pen == 0:
+            inserted_count += 1
         changed = True
 
     if not changed:
@@ -2263,7 +4356,68 @@ def insert_roundup_feed_items(
             now=now,
         )
 
-    return result
+    # Ruling 275 (#13100): a card never loses a row to a card seated below it.
+    # Prune overlapping rows from surviving theme bundles ONLY when an accepted
+    # round-up covering those markets ended up seated strictly ABOVE the bundle.
+    accepted_ids = {r["data"].get("id") for r in accepted_roundups}
+    return _prune_bundles_below_roundups(result, accepted_ids)
+
+
+def _prune_bundles_below_roundups(
+    result: list[dict[str, Any]],
+    accepted_ids: set[Any],
+) -> list[dict[str, Any]]:
+    """Prune overlapping rows from theme bundles seated strictly BELOW accepted round-ups (Ruling 275)."""
+    if not accepted_ids:
+        return result
+    covered_above: set[int] = set()
+    pruned_result: list[dict[str, Any]] = []
+    for card in result:
+        if (
+            isinstance(card, Mapping)
+            and card.get("type") == "bundle"
+            and isinstance(card.get("data"), Mapping)
+            and card["data"].get("id") in accepted_ids
+        ):
+            covered_above.update(_roundup_covered_market_ids(card))
+            pruned_result.append(card)
+            continue
+        if (
+            covered_above
+            and isinstance(card, Mapping)
+            and card.get("type") == "bundle"
+            and isinstance(card.get("data"), Mapping)
+            and card["data"].get("kind") != "roundup"
+            and isinstance(card["data"].get("items"), list)
+        ):
+            orig_children = card["data"]["items"]
+            kept_children = [
+                ch
+                for ch in orig_children
+                if not (
+                    isinstance(ch, Mapping)
+                    and ch.get("type") == "futures"
+                    and isinstance(ch.get("data"), Mapping)
+                    and ch["data"].get("id") in covered_above
+                )
+            ]
+            if len(kept_children) != len(orig_children):
+                if len(kept_children) < 2:
+                    continue
+                updated_card = copy.deepcopy(dict(card))
+                updated_card["data"]["items"] = kept_children
+                updated_card["data"]["item_count"] = len(kept_children)
+                if isinstance(updated_card["data"].get("member_ids"), list):
+                    updated_card["data"]["member_ids"] = [
+                        mid
+                        for mid in updated_card["data"]["member_ids"]
+                        if mid not in covered_above
+                    ]
+                pruned_result.append(updated_card)
+                continue
+        pruned_result.append(card)
+
+    return pruned_result
 
 
 def _is_machinery_producer_slug(slug: Any) -> bool:
@@ -2286,6 +4440,8 @@ async def add_roundup_feed_items(
     novelty_seat_cap: int = ROUNDUP_NOVELTY_SEAT_CAP,
     include_machinery: bool = False,
     machinery_only: bool = False,
+    include_preview: bool = False,
+    apply_opening_mix: bool = False,
 ) -> list[dict[str, Any]]:
     """Evaluate registered round-up producers and place their cards on Discover.
 
@@ -2293,6 +4449,10 @@ async def add_roundup_feed_items(
     included when ``include_machinery=True`` (sent by website and iOS 1.0.7+
     via ``machinery=1``), so older App Store versions (1.0.6) never receive
     machinery cards on the Discover feed.
+
+    Under #13097 (Fable 2:03 PM PT), groupings with ``stage="preview"`` are
+    omitted unless ``include_preview=True`` (``machinery=preview``), so new
+    sets never reach public Discover before Fable inspects them with live numbers.
     """
     if not items or len(items) < seat_floor:
         return items
@@ -2321,27 +4481,175 @@ async def add_roundup_feed_items(
         producers = [
             p for p in ROUNDUP_PRODUCERS.values() if not _is_machinery_producer_slug(p.slug)
         ]
+    if not include_preview:
+        producers = [p for p in producers if not _is_preview_producer(p)]
     if not producers:
         return items
-    produced: list[dict[str, Any]] = []
-    for idx, producer in enumerate(producers):
+    # Keep public producers strictly ahead of preview producers so a slow or
+    # cold preview set can never consume the public stage budget or trigger
+    # the public all-or-nothing drop.
+    if include_preview:
+        public_producers = [p for p in producers if not _is_preview_producer(p)]
+        preview_producers = [p for p in producers if _is_preview_producer(p)]
+    else:
+        public_producers = producers
+        preview_producers = []
+    now_ts, _ = _normalize_roundup_now(now)
+    # #12529: Skip disabled and out-of-window producers up front so seasonal
+    # retired producers never burn stage budget or trigger false `dropped_no_copy`.
+    public_producers = [
+        p
+        for p in public_producers
+        if (p.enabled is None or p.enabled())
+        and (p.valid_from is None or now_ts >= p.valid_from)
+        and (p.valid_until is None or now_ts < p.valid_until)
+    ]
+    machinery_producers = [
+        p
+        for p in public_producers
+        if _is_machinery_producer_slug(p.slug) and (p.enabled is None or p.enabled())
+    ]
+    machinery_incomplete = False
+    # #12529: Evaluate intentionally uncacheable producers (e.g. `yardstick_pair`,
+    # rule `cache == "none"`) first so cached round-ups can never starve them into
+    # `dropped_no_copy`, while placing every card back into `public_producers` order.
+    def _is_no_cache_producer(prod: RoundupProducer) -> bool:
+        rcfg = prod.rule if isinstance(prod.rule, Mapping) else {}
+        return rcfg.get("cache") == "none" or rcfg.get("producer") == "yardstick_pair"
+
+    indexed_public = list(enumerate(public_producers))
+    eval_order = [
+        *(pair for pair in indexed_public if _is_no_cache_producer(pair[1])),
+        *(pair for pair in indexed_public if not _is_no_cache_producer(pair[1])),
+    ]
+    slot_results: dict[int, dict[str, Any]] = {}
+    # One batched Redis MGET up front hydrates every warm machinery grouping
+    # and standing round-up across a cold dyno restart in a single round-trip
+    # instead of 20+ sequential Redis GETs and serial 0.5s DB timeouts.
+    public_prefetched, public_shared_ok = await _prefetch_shared_roundup_entries(
+        public_producers, db
+    )
+    for loop_idx, (orig_idx, producer) in enumerate(eval_order):
         elapsed = time.perf_counter() - started
         remaining = stage_budget - elapsed
         if remaining <= 0:
+            kept_after_budget = 0
+            quiet_after_budget = 0
+            dropped_after_budget = 0
+            rem_entries = eval_order[loop_idx:]
+            rem_producers = [p for _, p in rem_entries]
+            if public_shared_ok:
+                prefetched_shared, shared_read_ok = public_prefetched, True
+            else:
+                prefetched_shared, shared_read_ok = await _prefetch_shared_roundup_entries(
+                    rem_producers, db
+                )
+            for rem_idx, rem_producer in rem_entries:
+                quiet_meta: dict[str, Any] = {}
+                last_good = await _load_last_good_roundup_copy(
+                    rem_producer,
+                    db,
+                    now=now,
+                    local_only=False,
+                    fail_closed_on_shared_error=True,
+                    prefetched_shared=prefetched_shared.get(rem_producer.slug),
+                    shared_read_ok=shared_read_ok,
+                    quiet_out=quiet_meta,
+                )
+                if last_good is not None:
+                    fi_lg, _cp_lg, _age_lg, _keep_lg = last_good
+                    slot_results[rem_idx] = fi_lg
+                    kept_after_budget += 1
+                    _record_roundup_read_failure(
+                        rem_producer.slug,
+                        kept_last_good=True,
+                        reason="budget_exhausted",
+                        now=now_ts,
+                    )
+                elif quiet_meta.get("clean_empty") is True:
+                    # #13184/#13186 follow-up: an unexpired quiet mark means the
+                    # grouping is properly empty, not missing/incomplete.
+                    quiet_after_budget += 1
+                    _record_roundup_read_failure(
+                        rem_producer.slug,
+                        kept_last_good=False,
+                        had_nothing_to_show=True,
+                        reason="budget_exhausted",
+                        now=now_ts,
+                    )
+                elif quiet_meta.get("nothing_to_show") is True and not (
+                    _is_machinery_producer_slug(rem_producer.slug)
+                    and (rem_producer.enabled is None or rem_producer.enabled())
+                ):
+                    # Standing round-up cleanly had nothing to show — split from
+                    # dropped_no_copy so dropped_no_copy alarms only on lost cards.
+                    quiet_after_budget += 1
+                    _record_roundup_read_failure(
+                        rem_producer.slug,
+                        kept_last_good=False,
+                        had_nothing_to_show=True,
+                        reason="budget_exhausted",
+                        now=now_ts,
+                    )
+                else:
+                    if _is_machinery_producer_slug(rem_producer.slug) and (
+                        rem_producer.enabled is None or rem_producer.enabled()
+                    ):
+                        machinery_incomplete = True
+                    dropped_after_budget += 1
+                    _record_roundup_read_failure(
+                        rem_producer.slug,
+                        kept_last_good=False,
+                        reason="budget_exhausted",
+                        now=now_ts,
+                    )
+            stats_10m = get_roundup_read_failure_stats_10m(now=now_ts)
             logger.warning(
                 "Discover round-up stage budget exhausted after %d/%d producers "
-                "(budget_seconds=%.3f, stage_budget=%.3f, produced=%d)",
-                idx,
-                len(producers),
+                "(budget_seconds=%.3f, stage_budget=%.3f, produced=%d, "
+                "kept_last_good=%d, quiet=%d, dropped_no_copy=%d, failed_10m=%d, "
+                "dropped_10m=%d, nothing_to_show_10m=%d)",
+                loop_idx,
+                len(eval_order),
                 budget_seconds,
                 stage_budget,
-                len(produced),
+                len(slot_results),
+                kept_after_budget,
+                quiet_after_budget,
+                dropped_after_budget,
+                stats_10m["failed"],
+                stats_10m["dropped_no_copy"],
+                stats_10m["had_nothing_to_show"],
             )
             break
+        is_mach_prod = _is_machinery_producer_slug(producer.slug) and (
+            producer.enabled is None or producer.enabled()
+        )
+        pref_val = public_prefetched.get(producer.slug)
         per_timeout = min(remaining, ROUNDUP_PRODUCER_TIMEOUT_SECONDS)
+        # On a fresh process after a restart (`_roundup_local_cache` empty for
+        # this slug), let standing round-ups reuse their warm shared Redis copy
+        # immediately rather than burning DB budget and dropping cards.
+        standing_cold_restart = (
+            not is_mach_prod
+            and public_shared_ok
+            and pref_val is not None
+            and (producer.slug, "live") not in _roundup_local_cache
+        )
         try:
+            eval_coro = evaluate_roundup_producer(
+                producer,
+                db,
+                now=now,
+                allow_stale=(
+                    _is_machinery_producer_slug(producer.slug)
+                    or standing_cold_restart
+                ),
+                prefetched_shared=pref_val if public_shared_ok else _PREFETCH_UNSET,
+                shared_read_ok=public_shared_ok,
+            )
             feed_item, container_payload = await asyncio.wait_for(
-                evaluate_roundup_producer(producer, db, now=now),
+                eval_coro,
                 timeout=per_timeout,
             )
         except asyncio.TimeoutError:
@@ -2349,15 +4657,78 @@ async def add_roundup_feed_items(
                 try:
                     await db.rollback()
                 except Exception:  # noqa: BLE001
-                    pass
+                    logger.debug(
+                        "roundup_containers: rollback after timeout failed for %s",
+                        producer.slug,
+                    )
+            timeout_quiet: dict[str, Any] = {}
+            last_good = await _load_last_good_roundup_copy(
+                producer,
+                db,
+                now=now,
+                prefetched_shared=pref_val if public_shared_ok else _PREFETCH_UNSET,
+                shared_read_ok=public_shared_ok,
+                quiet_out=timeout_quiet,
+            )
+            if last_good is not None:
+                fi_lg, _cp_lg, age_lg, keep_lg = last_good
+                slot_results[orig_idx] = fi_lg
+                stats_10m = _record_roundup_read_failure(
+                    producer.slug,
+                    kept_last_good=True,
+                    reason="timeout",
+                    now=now_ts,
+                )
+                logger.warning(
+                    "Discover round-up read timed out for %s; kept last good copy "
+                    "(age=%.1fs, keep_s=%.0f, failed_10m=%d, kept_10m=%d, dropped_10m=%d)",
+                    producer.slug,
+                    age_lg,
+                    keep_lg,
+                    stats_10m["failed"],
+                    stats_10m["kept_last_good"],
+                    stats_10m["dropped_no_copy"],
+                )
+                continue
+            if timeout_quiet.get("clean_empty") is True or (
+                timeout_quiet.get("nothing_to_show") is True and not is_mach_prod
+            ):
+                stats_10m = _record_roundup_read_failure(
+                    producer.slug,
+                    kept_last_good=False,
+                    had_nothing_to_show=True,
+                    reason="timeout",
+                    now=now_ts,
+                )
+                logger.info(
+                    "Discover round-up read timed out for %s; prior copy had nothing to show "
+                    "(reason=%s, nothing_to_show_10m=%d, dropped_10m=%d)",
+                    producer.slug,
+                    timeout_quiet.get("reason") or "nothing_to_show",
+                    stats_10m["had_nothing_to_show"],
+                    stats_10m["dropped_no_copy"],
+                )
+                continue
+            if is_mach_prod:
+                machinery_incomplete = True
             if (
                 per_timeout >= ROUNDUP_PRODUCER_TIMEOUT_SECONDS
                 and not _is_machinery_producer_slug(producer.slug)
             ):
-                await _cache_roundup_timeout_refusal(producer, db)
-            logger.warning(
-                "Discover round-up read failed for %s; keeping ordinary cards",
+                await _cache_roundup_timeout_refusal(producer, db, ts=now_ts)
+            stats_10m = _record_roundup_read_failure(
                 producer.slug,
+                kept_last_good=False,
+                reason="timeout",
+                now=now_ts,
+            )
+            logger.warning(
+                "Discover round-up read failed for %s; keeping ordinary cards "
+                "(no last good copy under keep-time, failed_10m=%d, kept_10m=%d, dropped_10m=%d)",
+                producer.slug,
+                stats_10m["failed"],
+                stats_10m["kept_last_good"],
+                stats_10m["dropped_no_copy"],
                 exc_info=True,
             )
             continue
@@ -2366,31 +4737,219 @@ async def add_roundup_feed_items(
                 try:
                     await db.rollback()
                 except Exception:  # noqa: BLE001
-                    pass
-            logger.warning(
-                "Discover round-up read failed for %s; keeping ordinary cards",
+                    logger.debug(
+                        "roundup_containers: rollback after error failed for %s",
+                        producer.slug,
+                    )
+            error_quiet: dict[str, Any] = {}
+            last_good = await _load_last_good_roundup_copy(
+                producer, db, now=now, quiet_out=error_quiet
+            )
+            if last_good is not None:
+                fi_lg, _cp_lg, age_lg, keep_lg = last_good
+                slot_results[orig_idx] = fi_lg
+                stats_10m = _record_roundup_read_failure(
+                    producer.slug,
+                    kept_last_good=True,
+                    reason="error",
+                    now=now_ts,
+                )
+                logger.warning(
+                    "Discover round-up read errored for %s; kept last good copy "
+                    "(age=%.1fs, keep_s=%.0f, failed_10m=%d, kept_10m=%d, dropped_10m=%d)",
+                    producer.slug,
+                    age_lg,
+                    keep_lg,
+                    stats_10m["failed"],
+                    stats_10m["kept_last_good"],
+                    stats_10m["dropped_no_copy"],
+                    exc_info=True,
+                )
+                continue
+            if error_quiet.get("clean_empty") is True or (
+                error_quiet.get("nothing_to_show") is True and not is_mach_prod
+            ):
+                stats_10m = _record_roundup_read_failure(
+                    producer.slug,
+                    kept_last_good=False,
+                    had_nothing_to_show=True,
+                    reason="error",
+                    now=now_ts,
+                )
+                logger.info(
+                    "Discover round-up read errored for %s; prior copy had nothing to show "
+                    "(reason=%s, nothing_to_show_10m=%d, dropped_10m=%d)",
+                    producer.slug,
+                    error_quiet.get("reason") or "nothing_to_show",
+                    stats_10m["had_nothing_to_show"],
+                    stats_10m["dropped_no_copy"],
+                )
+                continue
+            if is_mach_prod:
+                machinery_incomplete = True
+            stats_10m = _record_roundup_read_failure(
                 producer.slug,
+                kept_last_good=False,
+                reason="error",
+                now=now_ts,
+            )
+            logger.warning(
+                "Discover round-up read failed for %s; keeping ordinary cards "
+                "(no last good copy under keep-time, failed_10m=%d, kept_10m=%d, dropped_10m=%d)",
+                producer.slug,
+                stats_10m["failed"],
+                stats_10m["kept_last_good"],
+                stats_10m["dropped_no_copy"],
                 exc_info=True,
             )
             continue
         if feed_item is not None and container_payload is not None:
-            produced.append(feed_item)
+            slot_results[orig_idx] = feed_item
+    produced: list[dict[str, Any]] = [
+        slot_results[idx] for idx in sorted(slot_results)
+    ]
+
+    # Goal Step 7 (#12288): all-or-nothing during cold-restart warm-up for PUBLIC
+    # machinery groupings. If any registered public machinery grouping timed out,
+    # errored, or was skipped by stage budget exhaustion, drop all partial public
+    # machinery cards (standing round-ups stay untouched). Preview groupings run
+    # separately below and never trigger this drop.
+    if machinery_incomplete and machinery_producers:
+        ready_mach = sum(
+            1
+            for it in produced
+            if _is_machinery_roundup_item(it) and not _is_preview_roundup_item(it)
+        )
+        if ready_mach > 0:
+            produced = [
+                it
+                for it in produced
+                if not (_is_machinery_roundup_item(it) and not _is_preview_roundup_item(it))
+            ]
+            logger.warning(
+                "Discover machinery groupings incomplete (%d/%d ready); serving none until all ready",
+                ready_mach,
+                len(machinery_producers),
+            )
+
+    # Best-effort preview pass (`machinery=preview`): serve every warm preview
+    # copy first via batched MGET, then build cold preview sets under a bounded
+    # preview budget. A slow or failing preview set is skipped without dropping
+    # the six public groupings or any other preview set that built.
+    if preview_producers:
+        prefetched_preview, preview_shared_ok = await _prefetch_shared_roundup_entries(
+            preview_producers, db
+        )
+        cold_preview_producers: list[RoundupProducer] = []
+        for prev_prod in preview_producers:
+            if prev_prod.enabled is not None and not prev_prod.enabled():
+                continue
+            prev_quiet: dict[str, Any] = {}
+            warm_copy = await _load_last_good_roundup_copy(
+                prev_prod,
+                db,
+                now=now,
+                local_only=False,
+                fail_closed_on_shared_error=True,
+                prefetched_shared=prefetched_preview.get(prev_prod.slug),
+                shared_read_ok=preview_shared_ok,
+                quiet_out=prev_quiet,
+            )
+            if warm_copy is not None:
+                fi_warm, _cp_warm, _age_warm, _keep_warm = warm_copy
+                produced.append(fi_warm)
+            elif prev_quiet.get("clean_empty") is True:
+                continue
+            else:
+                cold_preview_producers.append(prev_prod)
+
+        if cold_preview_producers:
+            preview_started = time.perf_counter()
+            preview_budget = min(
+                max(0.0, float(budget_seconds) - (preview_started - started)),
+                max(stage_cap, ROUNDUP_PREVIEW_STAGE_BUDGET_SECONDS),
+            )
+            for prev_prod in cold_preview_producers:
+                prev_remaining = preview_budget - (time.perf_counter() - preview_started)
+                if prev_remaining <= 0:
+                    logger.warning(
+                        "Discover preview grouping %s skipped (preview budget exhausted); "
+                        "keeping built groupings",
+                        prev_prod.slug,
+                    )
+                    break
+                prev_timeout = min(
+                    prev_remaining, ROUNDUP_PREVIEW_PRODUCER_TIMEOUT_SECONDS
+                )
+                try:
+                    prev_fi, prev_cp = await asyncio.wait_for(
+                        evaluate_roundup_producer(
+                            prev_prod, db, now=now, allow_stale=True
+                        ),
+                        timeout=prev_timeout,
+                    )
+                except asyncio.TimeoutError:
+                    if hasattr(db, "rollback") and callable(db.rollback):
+                        try:
+                            await db.rollback()
+                        except Exception:  # noqa: BLE001
+                            logger.debug(
+                                "roundup_containers: rollback after preview timeout failed for %s",
+                                prev_prod.slug,
+                            )
+                    logger.warning(
+                        "Discover preview grouping %s timed out after %.2fs; "
+                        "keeping public and built preview groupings",
+                        prev_prod.slug,
+                        prev_timeout,
+                    )
+                    continue
+                except Exception:  # noqa: BLE001
+                    if hasattr(db, "rollback") and callable(db.rollback):
+                        try:
+                            await db.rollback()
+                        except Exception:  # noqa: BLE001
+                            logger.debug(
+                                "roundup_containers: rollback after preview error failed for %s",
+                                prev_prod.slug,
+                            )
+                    logger.warning(
+                        "Discover preview grouping %s failed on preview build; "
+                        "keeping public and built preview groupings",
+                        prev_prod.slug,
+                        exc_info=True,
+                    )
+                    continue
+                if prev_fi is not None and prev_cp is not None:
+                    produced.append(prev_fi)
 
     if not produced:
+        if apply_opening_mix:
+            from app.utils.discover_opening_mix import apply_discover_opening_mix
+
+            return apply_discover_opening_mix(items, now=now, page_window=page_window)
         return items
     # Ruling 188 (#11937): a market nobody is trading is not featured, and a
     # round-up is rated by its stalest member, so those members leave the card.
-    try:
-        from app.utils.not_trading import drop_not_trading_roundup_members
+    # For `machinery_only=True` splices, `_prewarm_machinery_roundups` already
+    # runs this screen once on the worker before saving each grouping to Redis,
+    # so reader requests do not pay a ~580 ms PostgreSQL query on every hit.
+    if not machinery_only:
+        try:
+            from app.utils.not_trading import drop_not_trading_roundup_members
 
-        produced = await drop_not_trading_roundup_members(
-            db, produced, now or datetime.now(timezone.utc), _roundup_covered_market_ids
-        )
-    except Exception:  # noqa: BLE001 — one failed read must not empty the page (gotcha #42)
-        logger.warning("Discover round-up not-trading check failed; keeping the cards", exc_info=True)
+            produced = await drop_not_trading_roundup_members(
+                db, produced, now or datetime.now(timezone.utc), _roundup_covered_market_ids
+            )
+        except Exception:  # noqa: BLE001 — one failed read must not empty the page (gotcha #42)
+            logger.warning("Discover round-up not-trading check failed; keeping the cards", exc_info=True)
     if not produced:
+        if apply_opening_mix:
+            from app.utils.discover_opening_mix import apply_discover_opening_mix
+
+            return apply_discover_opening_mix(items, now=now, page_window=page_window)
         return items
-    return insert_roundup_feed_items(
+    result = insert_roundup_feed_items(
         items,
         produced,
         seat_floor=seat_floor,
@@ -2401,7 +4960,441 @@ async def add_roundup_feed_items(
         seen_futures_ids=seen_futures_ids,
         seen_event_ids=seen_event_ids,
         novelty_seat_cap=novelty_seat_cap,
+        preserve_existing_roundups=machinery_only,
     )
+    if apply_opening_mix:
+        from app.utils.discover_opening_mix import apply_discover_opening_mix
+
+        result = apply_discover_opening_mix(result, now=now, page_window=page_window)
+    return result
+
+
+def render_machinery_prewarm_bundle(
+    *,
+    mach_base: dict[str, Any],
+    produced: list[dict[str, Any]],
+    oldest_live_built_at: Optional[float],
+    now_ts: float,
+) -> Optional[dict[str, Any]]:
+    """Pure-Python render of `machinery=1` page + `:machinery` page base + edition manifest (#12288).
+
+    Lives in `utils/roundup_containers.py` so `precompute_category_pages.py` stays
+    agnostic to opening seating (`#5105`) and `routes/feed.py` keeps a single
+    `_publish_feed_item` call site inside `get_feed` (`#6444`).
+    """
+    from app.routes.feed import (
+        DISCOVER_COMPOSITION_WINDOW,
+        _apply_opening_envelope,
+        _publish_feed_item,
+    )
+    from app.utils.discover_opening_edition import compose_opening_edition
+    from app.utils.feed_cache import (
+        FEED_EDITION_FIELD,
+        FEED_PAGE_BASE_BUILT_AT_FIELD,
+        build_feed_cache_metadata,
+        dumps_feed_cache,
+        feed_edition_token,
+        feed_machinery_page_base_key,
+        feed_response_cache_key,
+        feed_response_cache_ttls,
+        live_stale_ceiling_seconds,
+        payload_contains_live_event,
+        render_feed_page_from_base,
+    )
+    from app.utils.feed_editions import (
+        EDITION_LEASE_SECONDS,
+        build_edition_manifest,
+        edition_manifest_cache_key,
+    )
+
+    base_body = mach_base["page_base_body"]
+    base_items = list(base_body.get("items") or [])
+    if not base_items:
+        return None
+
+    use_opening = bool(mach_base.get("opening_seating"))
+    now_dt = datetime.fromtimestamp(now_ts, tz=timezone.utc)
+    spliced_items = insert_roundup_feed_items(
+        copy.deepcopy(base_items),
+        produced,
+        page_window=DISCOVER_COMPOSITION_WINDOW,
+        now=now_dt,
+        preserve_existing_roundups=True,
+    )
+    if use_opening:
+        from app.utils.discover_opening_mix import apply_discover_opening_mix
+
+        spliced_items = apply_discover_opening_mix(
+            spliced_items,
+            now=now_dt,
+            page_window=DISCOVER_COMPOSITION_WINDOW,
+        )
+    for item in spliced_items:
+        _publish_feed_item(item)
+
+    base_age_origin = float(mach_base.get("age_origin") or now_ts)
+    mach_age_origin = (
+        min(base_age_origin, oldest_live_built_at)
+        if oldest_live_built_at is not None
+        else base_age_origin
+    )
+    edition_policy = str(mach_base.get("edition_policy") or "default")
+    limit = int(mach_base.get("limit") or 20)
+    offset = int(mach_base.get("offset") or 0)
+
+    mach_base_body = dict(base_body)
+    mach_base_body["items"] = spliced_items
+    mach_base_body["total"] = len(spliced_items)
+    mach_base_body[FEED_PAGE_BASE_BUILT_AT_FIELD] = mach_age_origin
+
+    manifest_key = None
+    manifest_obj = None
+    if use_opening:
+        opening = compose_opening_edition(
+            spliced_items,
+            None,
+            requested_token=None,
+            requested_policy=edition_policy,
+            now=now_dt,
+        )
+        if not opening.usable:
+            return None
+        for _per_req in (FEED_EDITION_FIELD, "continuation_start"):
+            mach_base_body.pop(_per_req, None)
+        if opening.token is not None:
+            mach_base_body[FEED_EDITION_FIELD] = opening.token
+            if opening.continuation_start is not None:
+                mach_base_body["continuation_start"] = opening.continuation_start
+            if opening.manifest is not None:
+                manifest_key = edition_manifest_cache_key(
+                    token=opening.token, policy=edition_policy
+                )
+                manifest_obj = opening.manifest
+        page_payload = render_feed_page_from_base(
+            {
+                **mach_base_body,
+                "items": opening.items,
+                "total": len(opening.items),
+            },
+            limit=limit,
+            offset=offset,
+        )
+        if page_payload is not None:
+            _apply_opening_envelope(page_payload, opening, requested=False)
+    else:
+        ed_token = feed_edition_token(spliced_items)
+        if ed_token is not None:
+            mach_base_body[FEED_EDITION_FIELD] = ed_token
+            manifest_obj = build_edition_manifest(
+                spliced_items,
+                token=ed_token,
+                policy=edition_policy,
+                built_at=now_ts,
+            )
+            if manifest_obj is not None:
+                manifest_key = edition_manifest_cache_key(
+                    token=ed_token, policy=edition_policy
+                )
+        page_payload = render_feed_page_from_base(
+            mach_base_body, limit=limit, offset=offset
+        )
+
+    if page_payload is None:
+        return None
+
+    mach_live = payload_contains_live_event(mach_base_body)
+    mach_input_age_s = (
+        max(0.0, float(now_ts) - float(mach_age_origin)) if mach_live else 0.0
+    )
+    m_ttl, m_stale_ttl = feed_response_cache_ttls(
+        my_teams_only=False,
+        identified=False,
+        live=mach_live,
+        oldest_artifact_age_s=mach_input_age_s,
+        live_stale_ceiling_s=live_stale_ceiling_seconds(mach_base_body),
+    )
+    if mach_live and (m_ttl <= 0 or m_stale_ttl <= 0):
+        return None
+    page_payload["cache"] = build_feed_cache_metadata(
+        "miss",
+        ttl_seconds=m_ttl,
+        stale_ttl_seconds=m_stale_ttl,
+        live=mach_live,
+        built_at=mach_age_origin,
+    )
+
+    cache_shape = dict(mach_base["cache_shape"])
+    cache_shape["machinery"] = True
+    mach_cache_key = feed_response_cache_key(
+        user_id=None, session_id=None, **cache_shape
+    )
+    mach_pb_key = feed_machinery_page_base_key(str(mach_base["page_base_key"]))
+
+    return {
+        "live": mach_live,
+        "ttl": m_ttl,
+        "stale_ttl": m_stale_ttl,
+        "cache_key": mach_cache_key,
+        "page_base_key": mach_pb_key,
+        "page_json": dumps_feed_cache(page_payload),
+        "page_base_json": dumps_feed_cache(mach_base_body),
+        "manifest_key": manifest_key,
+        "manifest_json": dumps_feed_cache(manifest_obj) if manifest_obj is not None else None,
+        "manifest_ttl": EDITION_LEASE_SECONDS,
+    }
+
+
+def _splice_machinery_in_place(
+    raw_items: list[dict[str, Any]],
+    valid_roundups: Sequence[Mapping[str, Any]],
+    *,
+    replaces_by_rid: Mapping[Any, tuple[set[str], set[str]]],
+    reg_order: Mapping[str, int],
+    initial_floor_idx: int,
+    seat_floor: int,
+    page_window: int,
+    now: Optional[datetime],
+    returning_reader: bool,
+    seen_card_keys: Optional[Sequence[str] | set[str]],
+    seen_futures_ids: Optional[Sequence[int] | set[int]],
+    seen_event_ids: Optional[Sequence[int] | set[int]],
+    novelty_seat_cap: int,
+) -> list[dict[str, Any]]:
+    """Splice machinery groupings onto a seated Discover deck without moving standing round-ups.
+
+    * Every non-replaced standing round-up keeps its exact index from ``raw_items``.
+    * Each replacing machinery grouping overwrites its replaced card (standing round-up,
+      dissolved theme bundle, or first covered standalone market) IN-PLACE at that exact seat.
+    * Non-replacing machinery groupings (e.g. NBA Night, NFL Week) seat strictly after the
+      last standing round-up with non-adjacent spacing so zero standing round-ups shift.
+    """
+    result: list[dict[str, Any]] = list(raw_items)
+    existing_ids = {
+        it.get("data", {}).get("id")
+        for it in result
+        if isinstance(it, Mapping)
+        and it.get("type") == "bundle"
+        and isinstance(it.get("data"), Mapping)
+    }
+
+    def _reg_key(pair: tuple[int, Mapping[str, Any]]) -> tuple[int, int]:
+        idx_in, item = pair
+        slug = _roundup_item_slug(item)
+        return (reg_order.get(slug, 10_000 + idx_in), idx_in)
+
+    ordered_roundups: list[Mapping[str, Any]] = []
+    seen_rids: set[Any] = set()
+    for _, r_item in sorted(enumerate(valid_roundups), key=_reg_key):
+        r_id = r_item["data"].get("id")
+        if r_id in existing_ids or r_id in seen_rids:
+            continue
+        seen_rids.add(r_id)
+        ordered_roundups.append(r_item)
+
+    if not ordered_roundups:
+        return raw_items
+
+    def _hydrate_at(
+        r_item: Mapping[str, Any],
+        target_idx: int,
+        *,
+        penalty: int = 0,
+        anchor_override: Optional[Mapping[str, Any]] = None,
+    ) -> dict[str, Any]:
+        card = copy.deepcopy(dict(r_item))
+        if result:
+            anchor = (
+                anchor_override
+                if anchor_override is not None
+                else (result[target_idx] if target_idx < len(result) else result[-1])
+            )
+            if penalty < 0:
+                card["score"] = _penalized_roundup_score(card, anchor, penalty)
+                if "_rank_score" in anchor and "_rank_score" not in card:
+                    card["_rank_score"] = max(
+                        0.0, float(anchor["_rank_score"] or 0.0) + float(penalty)
+                    )
+            else:
+                if not card.get("score"):
+                    card["score"] = float(anchor.get("score", 0.0) or 0.0)
+                if "_rank_score" in anchor and "_rank_score" not in card:
+                    card["_rank_score"] = anchor["_rank_score"]
+            if "_sort_time" in anchor and "_sort_time" not in card:
+                card["_sort_time"] = anchor["_sort_time"]
+            for child in card.get("data", {}).get("items") or ():
+                if isinstance(child, dict) and (penalty < 0 or not child.get("score")):
+                    child["score"] = card["score"]
+        elif penalty < 0:
+            card["score"] = _penalized_roundup_score(card, None, penalty)
+            for child in card.get("data", {}).get("items") or ():
+                if isinstance(child, dict):
+                    child["score"] = card["score"]
+        return card
+
+    placed_rids: set[Any] = set()
+    remove_indices: set[int] = set()
+    changed = False
+
+    # Pass 1: Explicit `replaces` / `replaces_themes` -> exact in-place replacement.
+    by_rid = {r["data"].get("id"): r for r in ordered_roundups}
+    for idx, existing in enumerate(result):
+        matched_rid: Any = None
+        for r_id, (r_themes, r_roundups) in replaces_by_rid.items():
+            if r_id in by_rid and _item_replaced_by_spec(existing, r_themes, r_roundups):
+                matched_rid = r_id
+                break
+        if matched_rid is None:
+            continue
+        changed = True
+        if matched_rid not in placed_rids:
+            card = _hydrate_at(by_rid[matched_rid], idx)
+            if idx < initial_floor_idx:
+                card["data"]["inherited_opening_seat"] = True
+            result[idx] = card
+            placed_rids.add(matched_rid)
+        else:
+            remove_indices.add(idx)
+
+    # Pass 2: Covered standalone futures and theme bundles -> in-place takeover on dissolution
+    # or first covered standalone card ONLY when it sits at or above where non-replacing
+    # groupings would seat on their own (Fable 12:16 PM PT & 4:37 AM PT on #12288:
+    # absorbing a far-down card like seat 95 never drags a grouping down to seat 95).
+    pre_pass2_standing_last = max(
+        (
+            i
+            for i, it in enumerate(result)
+            if _is_roundup_bundle_card(it)
+            and not _is_machinery_roundup_item(it)
+            and _roundup_lesser_soccer_penalty(it) == 0
+        ),
+        default=-1,
+    )
+    own_seat_ceiling = max(initial_floor_idx, pre_pass2_standing_last + 2)
+    for r_item in ordered_roundups:
+        if _roundup_lesser_soccer_penalty(r_item) < 0:
+            continue
+        r_id = r_item["data"].get("id")
+        covered_ids = _roundup_covered_market_ids(r_item)
+        if not covered_ids:
+            continue
+        for idx, existing in enumerate(result):
+            if idx in remove_indices or not isinstance(existing, Mapping):
+                continue
+            if _is_roundup_bundle_card(existing):
+                continue
+            if (
+                existing.get("type") == "futures"
+                and isinstance(existing.get("data"), Mapping)
+                and existing["data"].get("id") in covered_ids
+            ):
+                changed = True
+                if r_id not in placed_rids and idx <= own_seat_ceiling:
+                    card = _hydrate_at(r_item, idx)
+                    if idx < initial_floor_idx:
+                        card["data"]["inherited_opening_seat"] = True
+                    result[idx] = card
+                    placed_rids.add(r_id)
+                else:
+                    remove_indices.add(idx)
+                continue
+            if (
+                existing.get("type") == "bundle"
+                and isinstance(existing.get("data"), Mapping)
+                and existing["data"].get("kind") != "roundup"
+                and isinstance(existing["data"].get("items"), list)
+            ):
+                orig_children = existing["data"]["items"]
+                kept_children = [
+                    ch
+                    for ch in orig_children
+                    if not (
+                        isinstance(ch, Mapping)
+                        and ch.get("type") == "futures"
+                        and isinstance(ch.get("data"), Mapping)
+                        and ch["data"].get("id") in covered_ids
+                    )
+                ]
+                if len(kept_children) != len(orig_children) and len(kept_children) < 2:
+                    # Ruling 275 (#13100): only full dissolution runs before seating;
+                    # partial overlap is pruned after final seats are settled via
+                    # `_prune_bundles_below_roundups` so a card never loses a row to
+                    # a machinery grouping seated below it.
+                    changed = True
+                    if r_id not in placed_rids and idx <= own_seat_ceiling:
+                        card = _hydrate_at(r_item, idx)
+                        if idx < initial_floor_idx:
+                            card["data"]["inherited_opening_seat"] = True
+                        result[idx] = card
+                        placed_rids.add(r_id)
+                    else:
+                        remove_indices.add(idx)
+
+    if remove_indices:
+        for idx in sorted(remove_indices, reverse=True):
+            result.pop(idx)
+
+    # Pass 3: Non-replacing machinery groupings seat strictly after the last standing
+    # round-up (never counting already-placed machinery groupings or score-demoted
+    # lesser-soccer round-ups!) with non-adjacent spacing so zero standing round-ups shift.
+    unplaced = [r for r in ordered_roundups if r["data"].get("id") not in placed_rids]
+    if unplaced:
+        floor_idx = _opening_eligible_floor_index(result, seat_floor, now=now)
+        last_standing_idx = max(
+            (
+                i
+                for i, it in enumerate(result)
+                if _is_roundup_bundle_card(it)
+                and not _is_machinery_roundup_item(it)
+                and _roundup_lesser_soccer_penalty(it) == 0
+            ),
+            default=-1,
+        )
+        next_desired = max(floor_idx, last_standing_idx + 2)
+        for r_item in unplaced:
+            lesser_soccer_pen = _roundup_lesser_soccer_penalty(r_item)
+            desired_idx = min(next_desired, len(result))
+            anchor_override = None
+            if lesser_soccer_pen < 0 and result:
+                anchor_idx = min(desired_idx, len(result) - 1)
+                anchor_override = result[anchor_idx]
+                pen_score = _penalized_roundup_score(r_item, anchor_override, lesser_soccer_pen)
+                desired_idx = _score_demoted_seat_index(result, desired_idx, pen_score)
+            non_adj = _find_non_adjacent_roundup_seat(
+                result,
+                desired_idx,
+                floor_idx=desired_idx,
+                candidate_item=r_item,
+                page_window=page_window,
+            )
+            target_idx = non_adj if non_adj is not None else len(result)
+            card = _hydrate_at(
+                r_item,
+                target_idx,
+                penalty=lesser_soccer_pen,
+                anchor_override=anchor_override,
+            )
+            result.insert(target_idx, card)
+            if lesser_soccer_pen == 0:
+                next_desired = target_idx + 2
+            changed = True
+
+    if not changed:
+        return raw_items
+
+    if returning_reader and novelty_seat_cap > 0:
+        result = apply_novelty_seats(
+            result,
+            returning_reader=returning_reader,
+            seen_card_keys=seen_card_keys,
+            seen_futures_ids=seen_futures_ids,
+            seen_event_ids=seen_event_ids,
+            seat_floor=seat_floor,
+            novelty_seat_cap=novelty_seat_cap,
+            now=now,
+        )
+
+    accepted_ids = {r["data"].get("id") for r in ordered_roundups}
+    return _prune_bundles_below_roundups(result, accepted_ids)
 
 
 ROUNDUP_PRODUCERS: dict[str, RoundupProducer] = {}
@@ -2520,9 +5513,26 @@ def validate_roundup_definition(
     out["slug"] = slug
     out["relations"] = list(relations_list)
     out["level"] = level_clean
+    raw_stage = data.get("stage") if "stage" in data else None
+    stage_clean = str(raw_stage or "public").strip().lower()
+    if stage_clean not in CLOSED_GROUPING_STAGES:
+        raise ValueError(
+            f"Round-up definition {slug!r}{loc} has invalid 'stage' {raw_stage!r}; "
+            f"allowed: {sorted(CLOSED_GROUPING_STAGES)}"
+        )
+    raw_look = data.get("look") if "look" in data else rule_raw.get("look")
+    look_clean = str(raw_look or "bars").strip().lower()
+    if look_clean not in CLOSED_GROUPING_LOOKS:
+        raise ValueError(
+            f"Round-up definition {slug!r}{loc} has invalid 'look' {raw_look!r}; "
+            f"allowed: {sorted(CLOSED_GROUPING_LOOKS)}"
+        )
+    out["stage"] = stage_clean
+    out["look"] = look_clean
     rule_copy = dict(rule_raw)
     rule_copy["relations"] = list(relations_list)
     rule_copy["level"] = level_clean
+    rule_copy["look"] = look_clean
     parent_slug = str(
         data.get("parent_slug") or rule_raw.get("parent_slug") or ""
     ).strip()

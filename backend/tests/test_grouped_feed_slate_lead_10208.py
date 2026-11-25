@@ -185,10 +185,25 @@ class TestTheSlateRead:
         await grouped_feed_slate(session, [], 20)
         sql = _sql(session.statements[0])
         assert "llm_importance IN ('playoff', 'championship')" in sql
-        assert f"rn <= {SLATE_MARKETS_PER_EVENT}" in sql
+        assert f"LIMIT {SLATE_MARKETS_PER_EVENT}" in sql
         assert f"league_rank <= {SLATE_EVENTS_PER_LEAGUE}" in sql
-        assert re.search(r"ORDER BY anon_1\.postseason, anon_1\.tier, anon_1\.commence_time", sql)
+        assert re.search(
+            r"ORDER BY grouped_slate_games\.postseason, grouped_slate_games\.tier, "
+            r"grouped_slate_games\.commence_time",
+            sql,
+        )
         assert sql.rstrip().endswith("LIMIT 20")
+
+    async def test_only_games_with_eligible_markets_take_the_league_slots(self):
+        session = _SlateSession([])
+        await grouped_feed_slate(session, [], 20)
+        sql = _sql(session.statements[0])
+        assert "grouped_slate_games AS MATERIALIZED" in sql
+        assert "futures_markets.event_id = events.id" in sql
+        assert "LIMIT 1) IS NOT NULL" in " ".join(sql.split())
+        assert sql.index(f"league_rank <= {SLATE_EVENTS_PER_LEAGUE}") < sql.index("JOIN LATERAL")
+        assert "futures_markets.event_id = grouped_slate_games.event_id" in sql
+        assert f"LIMIT {SLATE_MARKETS_PER_EVENT}" in sql
 
     async def test_only_unfinished_tier_1_and_2_games_and_never_the_game_card_question(self):
         session = _SlateSession([])
@@ -263,11 +278,11 @@ class _RouteSession:
         self._slate_rows = slate_rows
         self._pool = pool
         self.pool_statements = []
-        self.slate_reads = 0
+        self.slate_statements = []
 
     async def execute(self, stmt):
         if is_slate_read(stmt):
-            self.slate_reads += 1
+            self.slate_statements.append(stmt)
             return _Rows(self._slate_rows)
         self.pool_statements.append(stmt)
         if len(self.pool_statements) > 1:
@@ -316,7 +331,7 @@ class TestThroughTheRoute:
     async def test_the_slate_game_leads_the_served_strip(self):
         session = _RouteSession([(63812910, ATL_LAD)], _pool())
         payload = await _serve(session)
-        assert session.slate_reads == 1
+        assert len(session.slate_statements) == 1
         assert _names(payload)[0] == (
             "Will the game go to extra innings?: Atlanta Braves vs. Los Angeles Dodgers"
         )
@@ -338,6 +353,16 @@ class TestThroughTheRoute:
         # which forces Postgres to scan all of futures_markets via a hashed SubPlan.
         assert not re.search(r"futures_markets\.id IN \(SELECT futures_markets\.id\s", sql)
 
+    async def test_finished_game_check_stays_on_the_pool(self):
+        session = _RouteSession([(63812910, ATL_LAD)], _pool())
+        await _serve(session)
+        slate_sql = _sql(session.slate_statements[0])
+        pool_sql = _sql(session.pool_statements[0])
+        assert "events.status IN ('scheduled', 'live')" in slate_sql
+        assert "EXISTS (" not in slate_sql
+        assert "EXISTS (" in pool_sql
+        assert "events.id = futures_markets.event_id" in pool_sql
+
     async def test_THE_CONTROL_no_slate_means_the_old_pool_statement_and_the_old_order(self):
         session = _RouteSession([], _pool())
         payload = await _serve(session)
@@ -349,10 +374,10 @@ class TestThroughTheRoute:
     async def test_a_narrower_filter_never_reads_the_slate(self):
         session = _RouteSession([(63812910, ATL_LAD)], _pool())
         await _serve(session, sport="baseball")
-        assert session.slate_reads == 0
+        assert not session.slate_statements
         session = _RouteSession([(63812910, ATL_LAD)], _pool())
         await _serve(session, sports_only=False)
-        assert session.slate_reads == 0
+        assert not session.slate_statements
 
 
 def _ladder_market():

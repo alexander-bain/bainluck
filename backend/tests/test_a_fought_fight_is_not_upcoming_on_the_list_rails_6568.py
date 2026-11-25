@@ -585,10 +585,13 @@ def test_the_correction_runs_before_the_fold_on_both_rails():
     """
     import inspect
 
-    for route in (search_events, list_events):
+    for route, fold_marker in (
+        (search_events, "load_unified_game_reads("),
+        (list_events, "load_unified_game_reads("),
+    ):
         body = inspect.getsource(route)
         assert body.index("await recover_kalshi_expiration_starts(db, events)") < (
-            body.index("fold_twin_events(events)")
+            body.index(fold_marker)
         ), (
             f"in {route.__name__} the correction moved after the twin fold; the "
             "fold's minute key is now computed on a fabricated minute"

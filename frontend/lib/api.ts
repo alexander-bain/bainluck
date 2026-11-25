@@ -395,6 +395,9 @@ export async function fetchEvents(params?: {
   status?: string;
   days?: number;
   past_days?: number;
+  limit?: number;
+  offset?: number;
+  league_page?: boolean;
 }): Promise<EventsResponse> {
   const searchParams = new URLSearchParams();
 
@@ -402,6 +405,9 @@ export async function fetchEvents(params?: {
   if (params?.status) searchParams.set("status", params.status);
   if (params?.days) searchParams.set("days", params.days.toString());
   if (params?.past_days !== undefined) searchParams.set("past_days", params.past_days.toString());
+  if (params?.limit !== undefined) searchParams.set("limit", params.limit.toString());
+  if (params?.offset) searchParams.set("offset", params.offset.toString());
+  if (params?.league_page) searchParams.set("league_page", "true");
 
   const query = searchParams.toString();
   return apiFetch<EventsResponse>(`/api/events${query ? `?${query}` : ""}`);
@@ -712,11 +718,21 @@ export interface TeamFutureItem {
  */
 export type TeamDecidedState = "eliminated" | "won";
 
+export interface ChampionshipPathComponent {
+  market_id: number;
+  outcome_id: number | null;
+  source: string | null;
+  probability: number;
+  observed_at?: string | null;
+}
+
 export interface ChampionshipPathEntry {
   tier: number;
   label: string;
   market_name: string;
   market_id: number;
+  market_ids?: number[];
+  components?: ChampionshipPathComponent[];
   probability: number | null;
   rank: number | null;
   movement: number | null;
@@ -804,10 +820,32 @@ export interface TeamPageResponse {
   recent_events: TeamGameBrief[];
   futures: TeamFutureItem[];
   championship_path: ChampionshipPathEntry[];
+  championship_path_market_ids?: number[];
+}
+
+export interface TeamChampionshipPathResponse {
+  team_id: number;
+  championship_path: ChampionshipPathEntry[];
+  stream_market_ids: number[];
+  built_at: number;
 }
 
 export async function fetchTeamPage(identifier: string): Promise<TeamPageResponse> {
   return apiFetch<TeamPageResponse>(`/api/teams/${encodeURIComponent(identifier)}`);
+}
+
+export async function fetchTeamChampionshipPath(
+  identifier: number | string,
+  signal?: AbortSignal,
+): Promise<TeamChampionshipPathResponse> {
+  const res = await fetch(
+    `${API_URL}/api/teams/${encodeURIComponent(String(identifier))}/championship-path`,
+    { cache: "no-store", signal },
+  );
+  if (!res.ok) {
+    throw new Error(`Team championship path fetch failed (${res.status})`);
+  }
+  return res.json() as Promise<TeamChampionshipPathResponse>;
 }
 
 // Prop families (#242 backend / L2-167 card): a team's futures/prop markets grouped
@@ -882,7 +920,9 @@ export const fetchPulseRankings = fetchEIRankings;
  * Format probability as percentage string
  */
 export async function fetchEventConcept(key: string): Promise<EventConceptResponse> {
-  return apiFetch<EventConceptResponse>(`/api/event/${encodeURIComponent(key)}`);
+  return apiFetch<EventConceptResponse>(`/api/event/${encodeURIComponent(key)}`, {
+    cache: "no-store",
+  });
 }
 
 export function formatProbability(
@@ -1022,7 +1062,17 @@ export async function fetchFuturesMarket(
   const qs = params.toString();
   const detail = await apiFetch<FuturesMarketDetailResponse>(`/api/futures/${id}${qs ? `?${qs}` : ""}`,
     options?.fresh ? { cache: "no-store", maxRetries: 0, signal: options.signal } : undefined);
-  return verified ? sanitizeVerifiedTitleDetail(detail) : detail;
+  // Out rows carry a terminal value for installed apps. The web uses their
+  // grade for display and excludes that value from current-price calculations.
+  const visibleDetail = detail.outcomes?.some((outcome) => outcome.is_out === true)
+    ? {
+        ...detail,
+        outcomes: detail.outcomes.map((outcome) =>
+          outcome.is_out === true ? { ...outcome, probability: null } : outcome,
+        ),
+      }
+    : detail;
+  return verified ? sanitizeVerifiedTitleDetail(visibleDetail) : visibleDetail;
 }
 
 /**
@@ -3224,6 +3274,7 @@ export async function fetchPairedMetricsByCeremony(
 ): Promise<{ sets: import("@/lib/discover/visualForms").PairedMetricSet[]; count: number }> {
   return apiFetch(`/api/paired-metrics?ceremony=${encodeURIComponent(ceremony)}`, {
     signal,
+    cache: "no-store",
   });
 }
 

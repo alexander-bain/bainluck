@@ -1,0 +1,57 @@
+{
+  "slug": "machinery-ai-math-and-data-centers",
+  "stage": "public",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_event",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "TECH · AI & COMPUTE",
+  "name": "AI Math & Data Centers",
+  "category": "tech",
+  "tag": "TECH",
+  "section_title": "Proofs, Hardware & Moratoriums",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "extra_llm_categories": [
+      "economics",
+      "culture"
+    ],
+    "card_rows": 3,
+    "card_section_key": "ai_compute",
+    "hide_row_art": true,
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/c/cc/Circuit_image_on_Rubylith.jpg/960px-Circuit_image_on_Rubylith.jpg",
+    "card_image_alt": "Engineer inspecting an integrated circuit layout mask on glowing red Rubylith",
+    "card_image_credit": "TSgt. Bob Wickley, U.S. Air Force (Public domain, Wikimedia Commons)",
+    "card_image_author": "TSgt. Bob Wickley",
+    "card_image_license": "Public domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Circuit_image_on_Rubylith.jpg",
+    "sections": [
+      {
+        "key": "ai_compute",
+        "title": "Proofs, Hardware & Moratoriums",
+        "item_noun": "markets",
+        "note": "Millennium Prize AI forecasts, state data center pauses, orbital clusters, and flagship hardware.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch8-ai-math-and-data-centers",
+          "date_ladder_pick": "nearest_open",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 10,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}

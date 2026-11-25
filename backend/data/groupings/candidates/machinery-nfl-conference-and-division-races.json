@@ -1,0 +1,51 @@
+{
+  "slug": "machinery-nfl-conference-and-division-races",
+  "stage": "public",
+  "look": "bars",
+  "membership": "computed-produced",
+  "kind": "roundup",
+  "relations": [
+    "same_window",
+    "sibling"
+  ],
+  "level": "member",
+  "kicker": "SPORTS · NFL RACES",
+  "name": "NFL Division & Seed Races",
+  "category": "football",
+  "tag": "NFL",
+  "section_title": "Conference, Division & Seed Leaders",
+  "footer": "",
+  "rule": {
+    "producer": "container_machinery",
+    "refusal": "all-or-nothing",
+    "materialize": "read-time",
+    "card_rows": 3,
+    "card_section_key": "nfl_races",
+    "suppress_card_photo": true,
+    "card_image_url": "https://thumb.wikimedia.org/wikipedia/commons/thumb/1/13/Sherman%2C_United_States_%28Unsplash%29.jpg/960px-Sherman%2C_United_States_%28Unsplash%29.jpg",
+    "card_image_alt": "Football kickoff on striped turf field as coverage unit sprints downfield",
+    "card_image_credit": "Keith Johnston (CC0 1.0 Public Domain, Wikimedia Commons)",
+    "card_image_author": "Keith Johnston",
+    "card_image_license": "CC0 1.0 Public Domain",
+    "card_image_source_page": "https://commons.wikimedia.org/wiki/File:Sherman,_United_States_(Unsplash).jpg",
+    "sections": [
+      {
+        "key": "nfl_races",
+        "title": "Conference, Division & Seed Leaders",
+        "item_noun": "races",
+        "note": "Leading NFL clubs in conference, division, and #1 seed markets.",
+        "atom_query": {
+          "kind": "markets",
+          "fun_sub_tag": "batch8-nfl-conference-division-races",
+          "shape": "any",
+          "order_by": "lead_prob_desc",
+          "min_items": 3,
+          "max_items": 8,
+          "max_outcomes": 1,
+          "initial_visible_limit": 3,
+          "min_lifetime_volume": 1
+        }
+      }
+    ]
+  }
+}

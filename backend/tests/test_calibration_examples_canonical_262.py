@@ -96,25 +96,25 @@ async def _seed_binary(session, mid, source, *, op, win, res_src="api_settlement
 
     await session.execute(
         text(
-            "INSERT INTO futures_markets (id, source, status, mutually_exclusive, "
+            "INSERT INTO futures_markets (id, source, external_id, category, status, mutually_exclusive, "
             "market_type, llm_sport_category, volume, name) VALUES "
-            "(:id, :src, 'resolved', false, 'binary', 'politics', 100, :nm)"
+            "(:id, :src, :ext, 'championship', 'resolved', false, 'binary', 'politics', 100, :nm)"
         ),
-        {"id": mid, "src": source, "nm": f"Question {mid}?"},
+        {"id": mid, "src": source, "ext": f"cal-ex-m-{mid}", "nm": f"Question {mid}?"},
     )
     oid = mid * 1000
     await session.execute(
         text(
-            "INSERT INTO futures_outcomes (id, market_id, name, opening_probability, "
+            "INSERT INTO futures_outcomes (id, market_id, external_id, name, opening_probability, "
             "calibration_probability, is_winner, resolution_source, volume) VALUES "
-            "(:id, :mid, 'Yes', :op, :op, :win, :src, 10)"
+            "(:id, :mid, :ext, 'Yes', :op, :op, :win, :src, 10)"
         ),
-        {"id": oid, "mid": mid, "op": op, "win": win, "src": res_src},
+        {"id": oid, "mid": mid, "ext": f"cal-ex-o-{oid}", "op": op, "win": win, "src": res_src},
     )
     await session.execute(
         text(
-            "INSERT INTO futures_odds_snapshots (outcome_id, bookmaker, probability, "
-            "yes_bid, last_price) VALUES (:oid, 'test', :p, :p, :p)"
+            "INSERT INTO futures_odds_snapshots (outcome_id, bookmaker, probability, reading_count, "
+            "yes_bid, last_price) VALUES (:oid, 'test', :p, 1, :p, :p)"
         ),
         {"oid": oid, "p": op},
     )

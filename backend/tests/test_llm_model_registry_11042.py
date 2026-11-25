@@ -29,12 +29,15 @@ import pytest
 
 from app.services import llm_models
 from app.services.llm_models import (
+    CLAUDE_OPUS_MODEL,
+    CLAUDE_SONNET_MODEL,
     LEGACY_MODEL,
     MODELS,
     REPLACEMENT_MODEL,
     TASKS,
     UnsupportedModelError,
     chat_request_kwargs,
+    default_model_for_task,
     estimate_cost_usd,
     resolve_model,
 )
@@ -66,7 +69,7 @@ def _clean_model_env(monkeypatch):
 # --------------------------------------------------------------------------
 
 _FORBIDDEN_KWARGS = {"model", "max_tokens", "max_completion_tokens", "reasoning_effort"}
-_MODEL_ID = re.compile(r"(gpt-\d[\w.\-]*|o\d(-mini|-pro)?|chatgpt-[\w.\-]+)")
+_MODEL_ID = re.compile(r"(gpt-\d[\w.\-]*|o\d(-mini|-pro)?|chatgpt-[\w.\-]+|claude-[\w.\-]+)")
 #: Slice 3: the one file allowed to send a completion. Everything else calls
 #: ``complete_chat``/``complete_chat_detailed`` with a literal registered task.
 REQUEST_LAYER = APP / "services" / "llm_request.py"
@@ -81,7 +84,9 @@ def _is_completion_call(node: ast.AST) -> bool:
     if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
         return False
     chain = ast.unparse(node.func)
-    return node.func.attr == "create" and ("completions" in chain or "responses" in chain)
+    return node.func.attr == "create" and (
+        "completions" in chain or "responses" in chain or "messages" in chain
+    )
 
 
 def _entry_task(node: ast.AST) -> str | None:
@@ -128,7 +133,8 @@ def test_every_completion_call_goes_through_the_request_layer():
 
 def test_only_the_request_layer_sends_a_completion():
     tree = ast.parse(REQUEST_LAYER.read_text())
-    assert sum(1 for n in ast.walk(tree) if _is_completion_call(n)) == 1
+    # One OpenAI chat.completions.create site + one Anthropic messages.create site.
+    assert sum(1 for n in ast.walk(tree) if _is_completion_call(n)) == 2
     callers = [
         (str(p.relative_to(APP.parent)), n.lineno)
         for p in _app_files() if p != REQUEST_LAYER
@@ -198,9 +204,12 @@ def test_the_static_guard_bites_on_a_hard_coded_call(tmp_path, monkeypatch):
 
 def test_with_no_config_every_task_keeps_todays_model_and_request_shape():
     for task in TASKS:
+        expected_model = default_model_for_task(task)
         assert chat_request_kwargs(task, max_output_tokens=50, temperature=0, today=BEFORE_SHUTDOWN) == {
-            "model": LEGACY_MODEL, "max_tokens": 50, "temperature": 0,
+            "model": expected_model, "max_tokens": 50, "temperature": 0,
         }
+    assert default_model_for_task("fun_scout_sets") == CLAUDE_SONNET_MODEL
+    assert CLAUDE_OPUS_MODEL in MODELS
 
 
 def test_replacement_gets_a_non_reasoning_reasoning_model_request(monkeypatch):
@@ -345,7 +354,7 @@ def _profiles(write_session):
     out = []
     for stmt, _ in write_session.executed:
         try:
-            md = stmt.compile().params.get("market_metadata")
+            md = stmt.compile().params.get("cu_profile_patch")
         except Exception:
             continue
         if isinstance(md, dict) and DISCOVER_LLM_METADATA_KEY in md:

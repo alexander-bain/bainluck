@@ -1,0 +1,57 @@
+import type { CSSProperties } from "react";
+import { Check, Minus, Truck, X } from "lucide-react";
+import Worker from "./Worker";
+import { stations } from "./activity";
+import { crewAction } from "./crewMotion";
+import type { FloorEvent } from "./types";
+import styles from "./factory.module.css";
+
+export default function EventScene({
+  event,
+  clipMs,
+  foreman,
+}: {
+  event: FloorEvent;
+  clipMs: number;
+  foreman: string;
+}) {
+  const start = stations.indexOf(event.from ?? event.station);
+  const end = stations.indexOf(event.station);
+  const color = event.builder ? styles[`builder${event.builder}`] : undefined;
+  const crew = crewAction(event);
+  return (
+    <div
+      aria-hidden="true"
+      className={styles.eventScene}
+      data-event={event.kind}
+      data-event-id={event.id}
+      data-transfer={start !== end || undefined}
+      style={{
+        "--event-start": start,
+        "--event-steps": end - start,
+        "--event-length": `${clipMs}ms`,
+      } as CSSProperties}
+    >
+      <div className={styles.eventAction}>
+        {crew && <Worker {...crew} onFloor />}
+        {(event.kind === "live" || event.kind === "deploy" || event.kind === "merge") && (
+          <Truck size={20} />
+        )}
+        {event.kind === "check" && (
+          event.outcome === "failed" ? <X size={15} /> :
+            event.outcome === "passed" ? <Check size={15} /> : <Minus size={15} />
+        )}
+        {(event.kind === "bot" || event.kind === "fable") && (
+          <Check size={15} />
+        )}
+        <span className={`${styles.eventCrate} ${color ?? ""}`}>
+          #{event.number}
+        </span>
+        {event.kind === "check" && <span>{event.done} of {event.total}</span>}
+        {event.kind === "bot" && <span>Bot</span>}
+        {event.kind === "fable" && <span>{foreman}</span>}
+        {event.kind === "returned" && <span>Sent back</span>}
+      </div>
+    </div>
+  );
+}

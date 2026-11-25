@@ -33,6 +33,10 @@ const LAYOUT_CODE = code(LAYOUT);
 const ABOUT_CODE = code(ABOUT_PAGE);
 
 describe("the root layout gates every piece of chrome native photographed", () => {
+  test("the standalone Factory uses the same gate for site chrome and the consent pair", () => {
+    expect(code(GATE)).toMatch(/return pathname === "\/factory" \|\| isEmbeddedAbout\(pathname, embedValue\) \? null/);
+  });
+
   test("EmbedGate is imported and used, not merely present in the tree", () => {
     expect(LAYOUT_CODE).toContain('from "@/components/EmbedGate"');
     // Four wraps: header, Footer, BottomNav, and the TelemetryGate/ConsentBanner

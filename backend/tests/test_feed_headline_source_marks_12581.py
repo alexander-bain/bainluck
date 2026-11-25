@@ -97,9 +97,13 @@ async def test_verified_final_marks_both_results_without_listing_old_quotes():
 @pytest.mark.asyncio
 async def test_a_draw_priced_game_does_not_claim_a_complemented_away_quote():
     data = await _card({"kalshi": _quote(.62)}, sport="soccer_epl")
-    assert data["source_mark"]["state"] == "single"
+    assert data["hero_probability"] is None
+    assert data["hero_probability_away"] is None
+    assert data["source_mark"] == {
+        "state": "none", "sources": [], "reason": "no_probability",
+    }
     assert data["away_source_mark"] == {
-        "state": "none", "sources": [], "reason": "away_unavailable",
+        "state": "none", "sources": [], "reason": "no_probability",
     }
 
 
@@ -133,4 +137,10 @@ async def test_price_card_refresh_advances_evidence_even_when_the_price_is_uncha
     for key in ("source_mark", "away_source_mark"):
         assert before[key]["sources"][0]["observed_at"] == (NOW - timedelta(minutes=3)).isoformat().replace("+00:00", "Z")
         assert after[key]["sources"][0]["observed_at"] == (NOW - timedelta(minutes=1)).isoformat().replace("+00:00", "Z")
-    assert db.execute.await_count == 2  # One existing event read per request.
+    event_reads = [
+        call for call in db.execute.await_args_list
+        if "from events" in str(call.args[0]).lower()
+        and "odds_bookmakers" not in str(call.args[0]).lower()
+    ]
+    assert len(event_reads) == 2  # One existing event read per request.
+    assert db.execute.await_count <= 6

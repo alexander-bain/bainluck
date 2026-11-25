@@ -18,7 +18,7 @@ final class GameActivitySnapshotTests: XCTestCase {
 
     func testNumericalExtremesDoNotEndLiveActivity() throws {
         for probability in [0.0, 1.0] {
-            let value = try snapshot(home: probability, away: 1 - probability)
+            let value = try snapshot(home: probability, away: 1 - probability, priceClock: probabilityClock)
             XCTAssertFalse(value.isTerminal)
             XCTAssertEqual(value.lifecycle, .live)
             XCTAssertNotNil(value.probabilityLabel)
@@ -31,6 +31,13 @@ final class GameActivitySnapshotTests: XCTestCase {
         XCTAssertNil(missing.scoreObservedAt)
         XCTAssertNil(missing.probabilityObservedAt)
         XCTAssertNil(missing.scoreAge(at: scoreClock))
+        XCTAssertNil(missing.homeRenderedPercent)
+        XCTAssertNil(missing.awayRenderedPercent)
+        XCTAssertNil(missing.homeHeadlineTenths)
+        let payload = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(missing)) as? [String: Any])
+        for key in ["homeRenderedPercent", "awayRenderedPercent", "homeHeadlineTenths", "probabilityObservedAt"] {
+            XCTAssertNil(payload[key], key)
+        }
         let value = try snapshot(scoreClock: scoreClock, priceClock: probabilityClock)
         XCTAssertEqual(value.scoreObservedAt, scoreClock)
         XCTAssertEqual(value.probabilityObservedAt, probabilityClock)
@@ -61,9 +68,11 @@ final class GameActivitySnapshotTests: XCTestCase {
     }
 
     func testDrawAndUnknownSportKeepScalarRounding() throws {
-        let pair = try snapshot()
+        let pair = try snapshot(priceClock: probabilityClock)
         XCTAssertEqual(pair.homeRenderedPercent, renderedDuelPercents(away: 0.545, home: 0.455)[1])
-        for value in [try snapshot(sport: "soccer_epl"), try snapshot(draw: 0.1), try snapshot(sport: nil)] {
+        for value in [try snapshot(sport: "soccer_epl", priceClock: probabilityClock),
+                      try snapshot(draw: 0.1, priceClock: probabilityClock),
+                      try snapshot(sport: nil, priceClock: probabilityClock)] {
             XCTAssertEqual(value.homeRenderedPercent, renderedPercent(0.455))
             XCTAssertEqual(value.probabilityLabel, "Giants win · 46%")
         }
@@ -82,21 +91,54 @@ final class GameActivitySnapshotTests: XCTestCase {
         XCTAssertEqual(final.resultText, "Final score unavailable")
     }
 
-    func testCodableRoundTripRetainsIdentityAndProducerTimes() throws {
-        let value = try snapshot(scoreClock: scoreClock, priceClock: probabilityClock)
-        let restored = try JSONDecoder().decode(GameActivitySnapshot.self, from: JSONEncoder().encode(value))
-        XCTAssertEqual(restored, value)
-        XCTAssertEqual(restored.eventID, 101)
-        XCTAssertEqual(restored.probabilityObservedAt, probabilityClock)
+    func testDatedFreshAndStaleChancesRoundTripWithTheirProducerTimes() throws {
+        for age in [0.0, 1_800.0] {
+            let clock = probabilityClock.addingTimeInterval(-age)
+            let value = try snapshot(scoreClock: scoreClock, priceClock: clock)
+            let restored = try JSONDecoder().decode(GameActivitySnapshot.self, from: JSONEncoder().encode(value))
+            XCTAssertEqual(restored, value)
+            XCTAssertEqual(restored.eventID, 101)
+            XCTAssertEqual(restored.scoreObservedAt, scoreClock)
+            XCTAssertEqual(restored.probabilityObservedAt, clock)
+            XCTAssertEqual(restored.probabilityAge(at: probabilityClock), age)
+            XCTAssertEqual(restored.headlineNowText(home: true), "45.5%")
+            XCTAssertEqual(restored.headlineNowText(home: false), "54.5%")
+        }
+    }
+
+    func testRestoredUndatedChanceKeepsTheLiveScoreAndItsClock() throws {
+        // The old producer could encode this exact state for an opening or a blend.
+        let json = """
+        {"eventID":7,"homeTeam":"Chiefs","awayTeam":"Jets","lifecycle":"live",
+         "homeScore":7,"awayScore":9,"scoreObservedAt":\(scoreClock.timeIntervalSinceReferenceDate),
+         "homeRenderedPercent":77,"awayRenderedPercent":23,"homeHeadlineTenths":768,
+         "periodLabel":"Q2","projectedHomeScore":26,"projectedAwayScore":19,"projectionLabel":"Projected final"}
+        """
+        let restored = try JSONDecoder().decode(GameActivitySnapshot.self, from: Data(json.utf8))
+        XCTAssertEqual(restored.lifecycle, .live)
+        XCTAssertEqual(restored.homeScore, 7)
+        XCTAssertEqual(restored.awayScore, 9)
+        XCTAssertEqual(restored.scoreObservedAt, scoreClock)
+        XCTAssertEqual(restored.periodLabel, "Q2")
+        XCTAssertEqual(restored.projectedHomeScore, 26)
+        XCTAssertEqual(restored.projectedAwayScore, 19)
+        XCTAssertEqual(restored.projectionLabel, "Projected final")
+        XCTAssertNil(restored.homeRenderedPercent)
+        XCTAssertNil(restored.awayRenderedPercent)
+        XCTAssertNil(restored.homeHeadlineTenths)
+        XCTAssertNil(restored.probabilityObservedAt)
+        XCTAssertNil(restored.probabilityText)
+        XCTAssertNil(restored.headlineNowText(home: true))
     }
 
     func testDecodedTerminalForecastAndInvalidPercentageAreRejected() throws {
-        let value = try snapshot()
+        let value = try snapshot(priceClock: probabilityClock)
         var payload = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) as? [String: Any])
         payload["lifecycle"] = "final"
         XCTAssertThrowsError(try JSONDecoder().decode(GameActivitySnapshot.self,
             from: JSONSerialization.data(withJSONObject: payload)))
         payload["lifecycle"] = "live"
+        payload.removeValue(forKey: "probabilityObservedAt")
         payload["homeRenderedPercent"] = 101
         XCTAssertThrowsError(try JSONDecoder().decode(GameActivitySnapshot.self,
             from: JSONSerialization.data(withJSONObject: payload)))
@@ -116,7 +158,7 @@ final class GameActivitySnapshotTests: XCTestCase {
     /// decodes, and a bad display field never costs the reader the score and chance.
     func testDisplayFieldsAreOptionalAndCleanedNeverFatal() throws {
         let legacy = #"{"eventID":7,"homeTeam":"Chiefs","awayTeam":"Jets","lifecycle":"live","#
-            + #""homeScore":7,"awayScore":9,"homeRenderedPercent":77}"#
+            + #""homeScore":7,"awayScore":9,"homeRenderedPercent":77,"probabilityObservedAt":800000000}"#
         let old = try JSONDecoder().decode(GameActivitySnapshot.self, from: Data(legacy.utf8))
         XCTAssertEqual(old.homeRenderedPercent, 77)
         XCTAssertNil(old.awayRenderedPercent)
@@ -124,7 +166,7 @@ final class GameActivitySnapshotTests: XCTestCase {
         XCTAssertNil(old.periodLabel)
         XCTAssertNil(old.projectionLabel)
         let bad = #"{"eventID":7,"homeTeam":"Chiefs","awayTeam":"Jets","lifecycle":"live","homeRenderedPercent":77,"#
-            + #""awayRenderedPercent":140,"homeColorHex":"red","awayColorHex":"125740","homeAbbreviation":"","#
+            + #""awayRenderedPercent":140,"probabilityObservedAt":800000000,"homeColorHex":"red","awayColorHex":"125740","homeAbbreviation":"","#
             + #""periodLabel":4,"projectedHomeScore":26}"#
         let cleaned = try JSONDecoder().decode(GameActivitySnapshot.self, from: Data(bad.utf8))
         XCTAssertEqual(cleaned.homeRenderedPercent, 77)
@@ -140,7 +182,8 @@ final class GameActivitySnapshotTests: XCTestCase {
     func testProjectedFinalIsWholeAndLiveOnly() throws {
         let live = try XCTUnwrap(GameActivitySnapshot(eventID: 7, homeTeam: "Chiefs", awayTeam: "Jets",
             lifecycle: .live, homeScore: 7, awayScore: 9, homeProbability: 0.77, awayProbability: 0.23,
-            sport: "americanfootball_nfl", projectedHomeScore: 26, projectedAwayScore: 19,
+            sport: "americanfootball_nfl", probabilityObservedAt: probabilityClock,
+            projectedHomeScore: 26, projectedAwayScore: 19,
             projectionLabel: "Projected final"))
         XCTAssertEqual(live.awayRenderedPercent, 23)
         XCTAssertEqual(live.projectedHomeScore, 26)
@@ -158,14 +201,14 @@ final class GameActivitySnapshotTests: XCTestCase {
     func testHeadlineTenthsMatchThePageHeadlinePair() throws {
         let value = try XCTUnwrap(GameActivitySnapshot(eventID: 101, homeTeam: "Lions", awayTeam: "Patriots",
             status: "live", homeScore: 21, awayScore: 17, homeProbability: 0.662,
-            awayProbability: 0.338, sport: "americanfootball_nfl"))
+            awayProbability: 0.338, sport: "americanfootball_nfl", probabilityObservedAt: probabilityClock))
         let page = EventHeadlineTenths10090.pair(home: 0.662, away: 0.338)
         XCTAssertEqual(value.headlineNowText(home: true), page.home)
         XCTAssertEqual(value.headlineNowText(home: false), page.away)
         XCTAssertEqual(value.headlineNowText(home: true), "66.2%")
         XCTAssertEqual(value.headlineNowText(home: false), "33.8%")
         // A pair that sums off 100 is normalised exactly as the page normalises it.
-        let loose = try snapshot(home: 0.5, away: 0.505, sport: "americanfootball_nfl")
+        let loose = try snapshot(home: 0.5, away: 0.505, sport: "americanfootball_nfl", priceClock: probabilityClock)
         XCTAssertEqual(loose.headlineNowText(home: true),
                        EventHeadlineTenths10090.pair(home: 0.5, away: 0.505).home)
         let restored = try JSONDecoder().decode(GameActivitySnapshot.self, from: JSONEncoder().encode(value))
@@ -173,24 +216,27 @@ final class GameActivitySnapshotTests: XCTestCase {
     }
 
     func testHeadlineTenthsAbsentWhereThePageHasNoPair() throws {
-        XCTAssertNil(try snapshot(home: 0.5, away: 0.3, draw: 0.2).headlineNowText(home: true),
+        XCTAssertNil(try snapshot(home: 0.5, away: 0.3, draw: 0.2, priceClock: probabilityClock).headlineNowText(home: true),
                      "A draw-priced reading keeps whole numbers")
-        XCTAssertNil(try snapshot(home: 0.62, away: 0.30).headlineNowText(home: true),
+        XCTAssertNil(try snapshot(home: 0.62, away: 0.30, priceClock: probabilityClock).headlineNowText(home: true),
                      "A pair outside 99-101% has no single tenths line")
-        XCTAssertNil(try snapshot(status: "completed", home: 1, away: 0).headlineNowText(home: true))
-        XCTAssertEqual(try snapshot(home: 0.9997, away: 0.0003).headlineNowText(home: true), ">99%",
+        XCTAssertNil(try snapshot(status: "completed", home: 1, away: 0, priceClock: probabilityClock).headlineNowText(home: true))
+        let extreme = try snapshot(home: 0.9997, away: 0.0003, priceClock: probabilityClock)
+        XCTAssertEqual(extreme.headlineNowText(home: true), ">99%",
                        "A live reading never prints certainty")
-        XCTAssertEqual(try snapshot(home: 0.9997, away: 0.0003).headlineNowText(home: false), "<1%")
+        XCTAssertEqual(extreme.headlineNowText(home: false), "<1%")
     }
 
     // Fable's 6:36 PM look on #12768: whole percents before kickoff (39%, 61%),
     // tenths only once play starts, as #12822 / #12837 set for the page.
     func testBeforeKickoffTheChanceIsWholeAndTenthsStartWithPlay() throws {
-        let before = try snapshot(status: "scheduled", home: 0.614, away: 0.386, sport: "americanfootball_nfl")
+        let before = try snapshot(status: "scheduled", home: 0.614, away: 0.386,
+                                  sport: "americanfootball_nfl", priceClock: probabilityClock)
         XCTAssertNotNil(before.homeHeadlineTenths, "the tenths still ride along for kickoff")
         XCTAssertNil(before.headlineNowText(home: true), "so the views print the whole percent")
         XCTAssertNil(before.headlineNowText(home: false))
-        let live = try snapshot(status: "live", home: 0.614, away: 0.386, sport: "americanfootball_nfl")
+        let live = try snapshot(status: "live", home: 0.614, away: 0.386,
+                                sport: "americanfootball_nfl", priceClock: probabilityClock)
         XCTAssertEqual(live.headlineNowText(home: true), "61.4%")
     }
 
@@ -219,7 +265,7 @@ final class GameActivitySnapshotTests: XCTestCase {
     }
 
     func testDecodedHeadlineTenthsOutOfRangeOrOneSidedAreDropped() throws {
-        let value = try snapshot(sport: "americanfootball_nfl")
+        let value = try snapshot(sport: "americanfootball_nfl", priceClock: probabilityClock)
         var payload = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(value)) as? [String: Any])
         payload["homeHeadlineTenths"] = 1001
         var decoded = try JSONDecoder().decode(GameActivitySnapshot.self, from: JSONSerialization.data(withJSONObject: payload))

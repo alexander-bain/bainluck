@@ -63,6 +63,8 @@ def futures_outcome_source_mark(
         and type(grade) is bool
         and authority in _RESULT_SOURCES
     ):
+        if row.get("is_out"):
+            return settled_source_mark(authority, "Out")
         return settled_source_mark(authority, "Won" if grade else "Lost")
     status = getattr(market, "status", None)
     # Retracting a grade leaves an open venue quote eligible. A closed result
@@ -70,7 +72,10 @@ def futures_outcome_source_mark(
     if (
         served_settled is True
         or status == "resolved"
-        or (authority == RETRACTED_SOURCE and (status != "open" or grade is True))
+        or (
+            authority == RETRACTED_SOURCE
+            and (status not in {"active", "open"} or grade is True)
+        )
     ):
         return no_source_mark("result_unknown")
     if row.get("probability") is None:

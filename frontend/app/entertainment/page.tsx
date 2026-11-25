@@ -12,7 +12,7 @@ import { renderedDuelPercents } from "@/lib/renderedPercent";
 import { namedPairLabels, twoLegCardPair } from "@/lib/twoLegCardPair";
 import { eventPath } from "@/lib/eventKey";
 import { formatResolvesLabel } from "@/lib/gameTimeLabel";
-import { formatAsOfStamp } from "@/lib/asOfStamp";
+import { AsOfStamp } from "@/components/AsOfStamp";
 import { parseNumericBucketSortKey } from "@/components/economics/atoms";
 import type {
   EntertainmentData,
@@ -1637,14 +1637,17 @@ export default function EntertainmentPage() {
             </b>{" "}
             active markets
           </span>
-          {formatAsOfStamp(data.updated_at) && (
-            <>
-              <span>·</span>
-              <span>
-                <b className={s.metaNum}>{formatAsOfStamp(data.updated_at)}</b>
-              </span>
-            </>
-          )}
+          <AsOfStamp
+            iso={data.updated_at}
+            render={(label) => (
+              <>
+                <span>·</span>
+                <span>
+                  <b className={s.metaNum}>{label}</b>
+                </span>
+              </>
+            )}
+          />
         </div>
       </div>
 

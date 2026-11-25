@@ -78,6 +78,17 @@ def fold_outcome_key(text: str | None) -> str:
     return re.sub(r"\s+", " ", cleaned).strip()
 
 
+def clean_card_face_title(title: str | None) -> str:
+    """Strip internal merge notes, venue server notes, and market ID annotations (#5165726) from row titles (#12288)."""
+    raw = str(title or "").strip()
+    if not raw:
+        return ""
+    cleaned = re.sub(r"\s*\([^)]*(?:#\d+|averaged\s+across\s+venues|on\s+server)[^)]*\)", "", raw, flags=re.IGNORECASE)
+    cleaned = re.sub(r"\s*\(#\d+(?:\s*\+\s*#\d+)*\)", "", cleaned)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" ·")
+    return cleaned
+
+
 def clean_card_face_subtitle(subtitle: str | None) -> str:
     """Strip internal market ID annotations (#5165726) and venue implementation notes."""
     raw = str(subtitle or "").strip()
@@ -324,7 +335,7 @@ def _compose_live_paired_title(
         and float(e["stage_1_probability"]) >= 0.75
     )
     if high_s1 >= 2:
-        return f"{leader} leads {cat_label}, with {high_s1} {unit} at 75%+ {s1_verb}"
+        return f"{leader} leads {cat_label}, with {high_s1} {unit} at 75% or better {s1_verb}"
     if len(ranked) >= 2:
         runner_up = str(ranked[1].get("subject") or "").strip()
         if runner_up:
@@ -461,6 +472,12 @@ def hydrate_paired_metric_set_from_markets(
                 stage_2_winner_subject = str(entry.get("subject") or "")
 
         hydrated_entry = hydrate_paired_metric_entry(entry, verified_sources=verified_sources)
+        if out_s2 is not None and (display := out_s2.get("detail_display")) is not None:
+            hydrated_entry["stage_2_probability"] = display.get("probability")
+            hydrated_entry["stage_2_rendered_percent"] = display.get("rendered_percent")
+            hydrated_entry["stage_2_source_mark"] = (
+                display.get("source_mark") or no_source_mark("no_probability")
+            )
         for stage, settled, outcome in (
             ("stage_1", stage_1_settled, out_s1_k),
             ("stage_2", stage_2_settled, out_s2),
@@ -506,6 +523,10 @@ def hydrate_paired_metric_set_from_markets(
         cleaned_sub
         or f"{raw_set.get('stage_1_label', 'Nominated')} % and {raw_set.get('stage_2_label', 'Wins')} % side by side"
     )
+    for mkey in ("stage_1_market", "stage_2_market"):
+        m_obj = hydrated.get(mkey)
+        if isinstance(m_obj, dict) and m_obj.get("name"):
+            m_obj["name"] = clean_card_face_title(str(m_obj["name"]))
     if observed_stamps:
         # #7785 floor rule: oldest observed timestamp across rendered contenders
         hydrated["as_of"] = min(observed_stamps)
@@ -552,10 +573,7 @@ async def load_live_paired_metric_sets(
     prefix: str | None = None,
     register_path: Path | None = None,
 ) -> dict[str, dict[str, Any]]:
-    """Query PostgreSQL once for all referenced markets and return live-hydrated paired sets."""
-    from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
-
+    """Hydrate the paired sets, taking each winner column from its full market field."""
     from app.models.models import FuturesMarket
 
     target = register_path or PAIRED_METRIC_REGISTER_PATH
@@ -592,12 +610,48 @@ async def load_live_paired_metric_sets(
             and not isinstance(m.get("id"), bool)
         }
     elif hasattr(db, "execute"):
-        stmt = (
-            select(FuturesMarket)
-            .options(selectinload(FuturesMarket.outcomes))
-            .where(FuturesMarket.id.in_(sorted(market_ids)))
+        from app.routes.futures import (
+            _apply_verified_title_to_detail,
+            _fleet_newest_observation,
+            _format_market_detail,
+            _resolve_verified_title,
+            _verified_title_market_stmt,
+            out_legs_by_market,
+            withheld_price_outcome_ids_for_markets,
         )
-        rows = (await db.execute(stmt)).scalars().all()
+
+        stmt = _verified_title_market_stmt().where(FuturesMarket.id.in_(sorted(market_ids)))
+        rows = (await db.execute(stmt)).unique().scalars().all()
+        winner_ids = {
+            (sdata.get("stage_2_market") or {}).get("id") for sdata in selected_raw.values()
+        }
+        winner_ids.update(
+            entry.get("stage_2_market_id")
+            for sdata in selected_raw.values()
+            for entry in sdata.get("entries") or ()
+            if isinstance(entry, Mapping)
+        )
+        winner_markets = [
+            fm for fm in rows
+            if not isinstance(fm, Mapping)
+            and fm.id in winner_ids
+            and fm.status in {"open", "active"}
+            and fm.mutually_exclusive is True
+        ]
+        displayed_fields = {}
+        if winner_markets:
+            withheld = await withheld_price_outcome_ids_for_markets(db, winner_markets)
+            fleet = await _fleet_newest_observation(db, *winner_markets)
+            out_divisions = await out_legs_by_market(winner_markets)
+            for fm in winner_markets:
+                detail = _format_market_detail(
+                    fm, None, withheld.get(fm.id, set()),
+                    fleet_newest_observation=fleet,
+                    out_division_labels=out_divisions.get(fm.id),
+                    normalize_numbers=False,
+                )
+                _apply_verified_title_to_detail(detail, await _resolve_verified_title(db, fm), fm)
+                displayed_fields[fm.id] = {row["id"]: row for row in detail["outcomes"]}
         for fm in rows:
             if isinstance(fm, Mapping):
                 mid = fm.get("id")
@@ -606,7 +660,11 @@ async def load_live_paired_metric_sets(
             elif getattr(fm, "id", None) is not None:
                 mid = int(fm.id)
                 if mid in market_ids:
-                    markets_by_id[mid] = serialize_futures_market_for_pairing(fm)
+                    serialized = serialize_futures_market_for_pairing(fm)
+                    if (displayed := displayed_fields.get(mid)) is not None:
+                        for row in serialized["outcomes"]:
+                            row["detail_display"] = displayed.get(row["id"], {})
+                    markets_by_id[mid] = serialized
 
     hydrated_sets: dict[str, dict[str, Any]] = {}
     for sid, sdata in selected_raw.items():

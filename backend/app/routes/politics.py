@@ -39,7 +39,12 @@ from app.utils.futures_liveness import (
     market_reads_settled,
 )
 from app.utils.kalshi_retention import PROVABLY_PURGED_AGE_DAYS
-from app.utils.market_display_name import clean_served_questions
+from app.utils.market_display_name import (
+    PRESIDENTIAL_ELECTION_CALL_2028_ID,
+    PRESIDENTIAL_INAUGURATION_2029_ID,
+    clean_served_questions,
+    futures_reader_name,
+)
 from app.utils.market_staleness import (
     expired_ladder_rungs,
     should_exclude_from_featured,
@@ -847,7 +852,7 @@ def _market_row(market: FuturesMarket, *, now: datetime) -> dict | None:
     ] or outcomes
 
     return {
-        "q": market.name,
+        "q": futures_reader_name(market),
         # #6255 — the `if top_outcomes else 0` sentinel is REMOVED, not kept as
         # insurance. `priced` is non-empty by the refusal above, so this list
         # cannot be empty, and #2950's own note in `economics._market_row` rules
@@ -1367,11 +1372,15 @@ def _build_presidential(
             if src in ("kalshi", "polymarket"):
                 contenders.append({
                     "src": src,
-                    "contest": _contest_key(name_lower),
+                    "contest": (
+                        "inauguration"
+                        if src == "kalshi" and m.id == PRESIDENTIAL_INAUGURATION_2029_ID
+                        else _contest_key(name_lower)
+                    ),
                     "market": m,
                     "entry": {
                         "market_id": m.id,
-                        "q": m.name,
+                        "q": futures_reader_name(m),
                         "outcomes": outcomes,
                         "market": m,
                     },
@@ -1390,19 +1399,23 @@ def _build_presidential(
             return None
         return max(pool, key=lambda c: len(c["entry"]["outcomes"]))
 
-    # Kalshi still establishes the contest when it has one, so the card keeps the
-    # headline it has today; what changes is that Polymarket is now answered from
-    # the SAME race rather than from whichever of its fields happened to be
-    # widest. When Kalshi is absent the poly headline sets the contest, which is
-    # the previous behaviour for that case unchanged.
-    best_kalshi = _largest("kalshi", None)
-    if best_kalshi is not None:
-        # Kalshi sets the contest, so re-filtering the Kalshi side by it would
-        # return `best_kalshi` again by construction. Only the poly side is
-        # actually constrained here.
-        best_poly = _largest("polymarket", best_kalshi["contest"])
+    # The two registered boards answer different events. When both are present,
+    # their roles must survive a wider nomination field and the side-row cap.
+    election_call = next(
+        (c for c in contenders if c["src"] == "polymarket"
+         and c["market"].id == PRESIDENTIAL_ELECTION_CALL_2028_ID),
+        None,
+    )
+    election_pair = election_call is not None and any(
+        c["contest"] == "inauguration" for c in contenders
+    )
+    if election_pair:
+        best_kalshi, best_poly = None, election_call
     else:
-        best_poly = _largest("polymarket", None)
+        best_kalshi = _largest("kalshi", None)
+        best_poly = _largest(
+            "polymarket", best_kalshi["contest"] if best_kalshi is not None else None
+        )
 
     chosen = [c for c in (best_kalshi, best_poly) if c]
     chosen_ids = {id(c) for c in chosen}
@@ -1422,7 +1435,12 @@ def _build_presidential(
         if row and not (row["outcome_count"] <= 2 and row["prob"] > 95):
             side_markets.append((row, c["market"]))
 
-    side_markets.sort(key=lambda rm: _by_uncertainty(*rm))
+    side_markets.sort(
+        key=lambda rm: (
+            election_pair and rm[1].id != PRESIDENTIAL_INAUGURATION_2029_ID,
+            _by_uncertainty(*rm),
+        )
+    )
 
     # #7228: the contest is the party evidence for every name in its field. Both
     # chosen headlines settle the same race by construction (`best_poly` is

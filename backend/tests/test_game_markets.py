@@ -481,6 +481,10 @@ class TestGetGameMarketsFormatting:
             {
                 "threshold": 105.5,
                 "over_probability": 0.52,
+                # #13529 — every game-market row carries its pregame mark and
+                # provenance ('opening' fallback here since no kickoff pin was captured).
+                "pregame_mark": 0.47,
+                "pregame_mark_source": "opening",
                 "source": "kalshi",
                 "market_type": "half_total",
                 "market_name": "Celtics at Knicks",
@@ -553,6 +557,9 @@ class TestGetGameMarketsFormatting:
                 "observed_at": None,
                 "threshold": 3.5,
                 "probability": 0.54,
+                # #13529 — pregame baseline and source ('kickoff_pin' | 'opening' | None).
+                "pregame_mark": None,
+                "pregame_mark_source": None,
                 "source": "kalshi",
                 "market_type": "half_spread",
                 "period": "2H",
@@ -743,6 +750,9 @@ class TestGetGameMarketsFormatting:
                 "observed_at": None,
                 "threshold": 2.5,
                 "probability": 0.49,
+                # #13529 — pregame baseline and source ('kickoff_pin' | 'opening' | None).
+                "pregame_mark": None,
+                "pregame_mark_source": None,
                 "source": "kalshi",
                 "market_type": "half_spread",
                 "period": "2H",

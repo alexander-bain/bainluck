@@ -1,4 +1,4 @@
-import type { Change, FactoryData, Line, Station, Stop } from "./types";
+import type { Change, FactoryData, FloorEvent, Line, Station, Stop } from "./types";
 
 export const stations: Station[] = [
   "Write",
@@ -17,6 +17,32 @@ export const stationNames: Record<Station, string> = {
   Ship: "Truck",
   Live: "Live",
 };
+
+const pacificDate = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Los_Angeles",
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+const pacificHour = new Intl.DateTimeFormat("en-US", {
+  timeZone: "America/Los_Angeles",
+  hour: "numeric",
+  hourCycle: "h23",
+});
+
+export function workshopLight(value: string) {
+  const hour = Number(pacificHour.format(new Date(value)));
+  return hour >= 6 && hour < 18 ? "day" : "night";
+}
+
+export function pacificDay(value: string) {
+  return pacificDate.format(new Date(value));
+}
+
+export function transferId(event: Omit<FloorEvent, "id">) {
+  return `transfer:${event.line}:${event.number}:${event.from}:${event.station}:${Date.parse(event.at)}:${Date.parse(event.observed_at)}`;
+}
 
 export function time(value: string) {
   return new Intl.DateTimeFormat("en-US", {
@@ -73,22 +99,25 @@ export function readerBehind(data: FactoryData, now: string) {
   return Date.parse(now) > deadline;
 }
 
-export function stopText(stop: Stop, now: string) {
-  const age = duration((Date.parse(now) - Date.parse(stop.since)) / 1000);
+export function stopWaitText(stop: Stop, now: string) {
   const minutes = stop.waiting_since
     ? Math.max(
         0,
         Math.floor((Date.parse(now) - Date.parse(stop.waiting_since)) / 60_000),
       )
     : null;
-  const waited =
-    stop.number && minutes !== null
-      ? `#${stop.number} has waited ${minutes < 60 ? `${minutes} ${minutes === 1 ? "minute" : "minutes"}` : duration(minutes * 60)} for ${stop.station === "Review" ? "inspection" : "a turn at the loading dock"}.`
-      : null;
+  return stop.number && minutes !== null
+    ? `#${stop.number} has waited ${minutes < 60 ? `${minutes} ${minutes === 1 ? "minute" : "minutes"}` : duration(minutes * 60)} for ${stop.station === "Review" ? "inspection" : "a merge"}.`
+    : null;
+}
+
+export function stopText(stop: Stop, now: string) {
+  const age = duration((Date.parse(now) - Date.parse(stop.since)) / 1000);
+  const waited = stopWaitText(stop, now);
   if (stop.kind === "line-stalled")
     return waited
       ? `${stop.line}: nothing merged for ${age}. ${waited}`
-      : `${stop.line} loading dock has stalled.`;
+      : `${stop.line} loading dock is waiting for a merge.`;
   if (stop.kind === "announced")
     return stop.number
       ? `#${stop.number} was announced for a merge at ${time(stop.since)} PT and is still waiting.`
@@ -96,26 +125,36 @@ export function stopText(stop: Stop, now: string) {
   if (stop.kind === "hold")
     return `${stop.line} on HOLD since ${time(stop.since)} PT.${waited ? ` ${waited}` : ""}`;
   if (stop.kind === "master")
-    return `Shared checks failed at ${time(stop.since)} PT.`;
+    return stop.station === "Ship" && stop.line === "Server" && stop.number
+      ? `The server release for #${stop.number} is on hold because a server test failed.`
+      : `Shared checks failed at ${time(stop.since)} PT.`;
   return waited ?? `${stop.line} inspection needs attention.`;
 }
 
-export function machineText(queue: Stop["machines"]) {
-  return (
-    queue &&
-    `Waiting for GitHub’s test machines. ${queue.running} jobs running, ${queue.waiting} waiting in this repo.`
-  );
-}
-
-function recentlyActive(at: string, now: string) {
+export function recentlyActive(at: string, now: string) {
   const age = Date.parse(now) - Date.parse(at);
   return age >= 0 && age <= 15 * 60_000;
+}
+
+export function recentLaneUpdate(at: string, now: string) {
+  const age = Date.parse(now) - Date.parse(at);
+  return age >= 0 && age <= 3 * 60 * 60_000;
 }
 
 export function recentTransfers(data: FactoryData, now: string) {
   if (readerBehind(data, now)) return [];
   return (data.transitions ?? []).filter((t) =>
     recentlyActive(t.observed_at ?? t.at, now),
+  );
+}
+
+export function onActiveFloor(change: Change) {
+  return (
+    change.station !== "Live" &&
+    !change.side_track &&
+    !change.bot_update &&
+    !change.parked &&
+    !change.held_for_108
   );
 }
 
@@ -129,7 +168,10 @@ export function crewActivity(
   );
   const carrying = changes.find((change) =>
     moves.some(
-      (move) => move.number === change.number && move.to === change.station,
+      (move) =>
+        move.number === change.number &&
+        move.line === change.line &&
+        move.to === change.station,
     ),
   );
   if (carrying) return { pose: "carrying", change: carrying } as const;
@@ -210,8 +252,7 @@ export function beltFlowing(
         change.line === line &&
         change.station === "Test" &&
         change.checks_running &&
-        !change.side_track &&
-        !change.bot_update,
+        onActiveFloor(change),
     )
   )
     return true;

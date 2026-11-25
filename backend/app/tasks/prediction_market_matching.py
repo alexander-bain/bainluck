@@ -1256,7 +1256,7 @@ async def leagues_by_side_for_matchup(
         # #8100: Polymarket's "South East Melbourne Phoenix" is teams 2919
         # "S.E. Melbourne Phoenix". Without this the Phoenix alone of the ten
         # NBL clubs was placed in `basketball_other`, beside its league row.
-        known |= venue_spellings_of(name)
+        known |= venue_spellings_of(name, sport_key=league)
         for index, side in enumerate(lowered):
             if side in known:
                 leagues_by_side[index].add(league)
@@ -3620,8 +3620,8 @@ def _second_slot(reading, home_prob: float) -> tuple:
     here because there is no specimen: it would be an untested branch dressed as
     a fix, and the narrow hole is named in the issue instead.
     """
-    away = reading.away_probability
-    draw = reading.draw_probability
+    away = getattr(reading, "away_probability", None)
+    draw = getattr(reading, "draw_probability", None)
     if away is None or draw is None:
         return 1.0 - home_prob, None
     # "Did it flip" is asked as "which of the two candidates is this closer to",
@@ -5527,6 +5527,21 @@ def _market_sport_prefix(market) -> Optional[str]:
     if not market_sport and market.llm_sport_category:
         market_sport = _SPORT_CATEGORY_TO_KEY_PREFIX.get(market.llm_sport_category)
     return market_sport
+
+
+def _market_is_wbb(market, sport_prefix: Optional[str] = None) -> bool:
+    """True when the market belongs to women's college basketball (#13142)."""
+    prefix = sport_prefix if sport_prefix is not None else _market_sport_prefix(market)
+    if prefix == "basketball_wncaab":
+        return True
+    meta = getattr(market, "market_metadata", None)
+    slug = meta.get(POLYMARKET_EVENT_SLUG_KEY) if isinstance(meta, dict) else None
+    if polymarket_league_code(slug) == "cwbb":
+        return True
+    name = (getattr(market, "name", None) or "").lower()
+    if "(w)" in name or "women's" in name or "wncaab" in name:
+        return True
+    return str(getattr(market, "llm_sport_category", "") or "").lower() == "basketball_wncaab"
 
 
 def _sport_family(sport_key: Optional[str]) -> Optional[str]:
@@ -8055,6 +8070,8 @@ async def _phase2_persist_group_reading(
         ),
         eligibility=reading.eligibility,
         observed_basis=basis,
+        away_value=None if draw_prob is None else round(away_prob, 4),
+        draw_value=None if draw_prob is None else round(draw_prob, 4),
     )
     # #10090 item 4: as the two-minute poll's stamp, published once committed.
     written = await session.execute(
@@ -9077,22 +9094,44 @@ async def _find_matching_event(
             checked.
     """
     from app.models.models import Event, Sport
+    from app.utils.prediction_market_matching import (
+        _college_state_search_variants,
+        wbb_mascot_variants,
+    )
 
     # Build team name search patterns
     teams_to_search = [matchup.team_a]
     if matchup.team_b:
         teams_to_search.append(matchup.team_b)
 
+    is_wbb_market = _market_is_wbb(market)
+
     # Create ILIKE conditions for team names.
     # _expand_team_search_terms produces multiple patterns for abbreviated
     # names (e.g., "WSH Capitals" → ["WSH Capitals", "Capitals"]) so that
     # ILIKE '%Capitals%' matches "Washington Capitals" in the events table.
-    ilike_conditions = []
+    expanded_search_terms: list[str] = []
+    seen_terms: set[str] = set()
     for team in teams_to_search:
         for search_term in _expand_team_search_terms(team):
-            pattern = f"%{_escape_like(search_term)}%"
-            ilike_conditions.append(Event.home_team_name.ilike(pattern))
-            ilike_conditions.append(Event.away_team_name.ilike(pattern))
+            if search_term not in seen_terms:
+                seen_terms.add(search_term)
+                expanded_search_terms.append(search_term)
+            if is_wbb_market:
+                for mascot_variant in wbb_mascot_variants(search_term):
+                    if mascot_variant not in seen_terms:
+                        seen_terms.add(mascot_variant)
+                        expanded_search_terms.append(mascot_variant)
+                    for state_variant in _college_state_search_variants(mascot_variant):
+                        if state_variant not in seen_terms:
+                            seen_terms.add(state_variant)
+                            expanded_search_terms.append(state_variant)
+
+    ilike_conditions = []
+    for search_term in expanded_search_terms:
+        pattern = f"%{_escape_like(search_term)}%"
+        ilike_conditions.append(Event.home_team_name.ilike(pattern))
+        ilike_conditions.append(Event.away_team_name.ilike(pattern))
     # #6720: the ILIKE above is accent-SENSITIVE and Kalshi writes every club in
     # ASCII, so "%Leganes%" never reached our "Leganés" and the market minted a
     # second row for the game (production 2026-09-25: KXLALIGA2GAME-26SEP28LEGCAS
@@ -9103,8 +9142,7 @@ async def _find_matching_event(
     # accents, so what is ACCEPTED is unchanged.
     windowed_conditions = ilike_conditions + [
         condition
-        for team in teams_to_search
-        for search_term in _expand_team_search_terms(team)
+        for search_term in expanded_search_terms
         for condition in _folded_name_contains_conditions(search_term)
     ]
 
@@ -9657,6 +9695,78 @@ async def _record_no_match_reason(
     )
 
 
+#: Maximum kickoff gap between two rows representing the same fixture (#13142).
+#: Back-to-back games in a series routinely sit 18–24 hours apart, so normal
+#: timestamps require a tight 4-hour window; only an id-less row carrying a
+#: date-only/midnight placeholder stamp gets a wider 16-hour window (strictly
+#: below 18 hours so back-to-back games can never cross).
+_SAME_FIXTURE_TWIN_WINDOW_SECONDS = 4 * 3600
+_SAME_FIXTURE_PLACEHOLDER_WINDOW_SECONDS = 16 * 3600
+_OPEN_TWIN_STATUSES = frozenset({"scheduled", "live"})
+
+
+def _is_sportsbook_row(event) -> bool:
+    """True when ``event`` is anchored to a real sportsbook/Odds API id.
+
+    Legacy ``pm_*`` strings are Polymarket placeholders, not sportsbook rows.
+    """
+    ext = getattr(event, "external_id", None)
+    return bool(ext) and not str(ext).startswith("pm_")
+
+
+def _is_placeholder_start(event) -> bool:
+    """True when an id-less row's start time is a date-only/midnight placeholder."""
+    tags = getattr(event, "event_tags", None) or ()
+    if any(
+        isinstance(t, str) and "placeholder" in t.lower()
+        for t in tags
+    ):
+        return True
+    src = getattr(event, "commence_time_source", None)
+    if isinstance(src, str) and src in (
+        TICKER_DERIVED_COMMENCE_SOURCE,
+        KALSHI_TICKER_TIME_COMMENCE_SOURCE,
+    ):
+        return True
+    t = getattr(event, "commence_time", None)
+    return (
+        t is not None
+        and t.hour == 0
+        and t.minute == 0
+        and t.second == 0
+    )
+
+
+def _same_fixture_twin(idless_event, sportsbook_event) -> bool:
+    """True when two name-matched candidates are twins of one game (#13142).
+
+    A finished row is never the twin of an open game, missing start times
+    never match, normal starts must fall within 4 hours, and a placeholder
+    midnight/date-only stamp on the id-less row allows up to 16 hours.
+    """
+    sport_a = idless_event.sport.key if getattr(idless_event, "sport", None) else None
+    sport_b = sportsbook_event.sport.key if getattr(sportsbook_event, "sport", None) else None
+    if sport_a and sport_b and sport_a != sport_b:
+        return False
+
+    status_a = getattr(idless_event, "status", None)
+    status_b = getattr(sportsbook_event, "status", None)
+    if (status_a in _OPEN_TWIN_STATUSES) != (status_b in _OPEN_TWIN_STATUSES):
+        return False
+
+    t_a = getattr(idless_event, "commence_time", None)
+    t_b = getattr(sportsbook_event, "commence_time", None)
+    if t_a is None or t_b is None:
+        return False
+
+    max_gap = (
+        _SAME_FIXTURE_PLACEHOLDER_WINDOW_SECONDS
+        if _is_placeholder_start(idless_event)
+        else _SAME_FIXTURE_TWIN_WINDOW_SECONDS
+    )
+    return abs((t_a - t_b).total_seconds()) <= max_gap
+
+
 def _score_candidates(
     candidates, matchup, market, now, game_date_override=None, *, receipt=None,
     allow_unclassified_bucket: bool = False,
@@ -9670,6 +9780,9 @@ def _score_candidates(
     """
     if not candidates:
         return None
+
+    from app.utils.prediction_market_matching import MatchupInfo, normalize_wbb_mascot
+    from app.utils.proven_duplicates import canonical_id_from_tags
 
     traces: list[CandidateTrace] = []
 
@@ -9713,11 +9826,29 @@ def _score_candidates(
     # Ticker-derived prefix (Kalshi) is most reliable. Falls back to
     # llm_sport_category (Polymarket and Kalshi without parseable ticker).
     sport_prefix = _market_sport_prefix(market)
+    is_wbb_market = _market_is_wbb(market, sport_prefix)
+    wbb_matchup = (
+        MatchupInfo(
+            normalize_wbb_mascot(matchup.team_a),
+            normalize_wbb_mascot(matchup.team_b) if matchup.team_b else None,
+            normalize_wbb_mascot(matchup.yes_team),
+            matchup.format_type,
+        )
+        if is_wbb_market
+        else None
+    )
 
     best_match = None
+    best_event = None
     best_score = -1
+    considered_matches: list[tuple[Any, dict[str, Any]]] = []
 
     for event in candidates:
+        # #13142: a row tagged `provenance:duplicate-of:<id>` is suppressed on
+        # every public surface; never attach new markets to it.
+        if canonical_id_from_tags(getattr(event, "event_tags", None)) is not None:
+            _trace(event, "duplicate_of")
+            continue
         # #9117 / #9427: a row #4965's fixture guard would refuse is a
         # different game however it scores. The guard refuses it after the
         # fact, and the +8 for an Odds API id (32h of proximity) let Game 1's
@@ -9732,6 +9863,15 @@ def _score_candidates(
         # "Bulls vs. Pistons" (Thunder ≠ Bulls), or "Pistons vs. Bulls"
         # matching "Georgia Southern Eagles vs South Florida Bulls"
         # (Pistons ≠ Georgia Southern Eagles).
+        use_wbb_mascot = (
+            is_wbb_market
+            and wbb_matchup is not None
+            and event.sport is not None
+            and event.sport.key == "basketball_wncaab"
+        )
+        eval_matchup = matchup
+        eval_home = event.home_team_name
+        eval_away = event.away_team_name
         if matchup.team_b:
             # #9584: and on OPPOSITE sides. Both halves of "Sun vs. Sun"
             # (Yingqun Sun v Junlu Sun) match the one `Sun` of Tomic v Sun.
@@ -9739,25 +9879,49 @@ def _score_candidates(
                 matchup.team_a, matchup.team_b,
                 event.home_team_name, event.away_team_name,
             ):
-                # Coverage is what separates a rejected candidate from a row
-                # the ILIKE happened to return on one shared token — and it is
-                # measured INDEPENDENTLY of the side test above, which is the
-                # verdict being explained. "CLE Browns vs JAC Jaguars" against
-                # Jacksonville Jaguars / Cleveland Browns fails both halves here
-                # and covers both sides; that is a name-gate bug of ours, not an
-                # upstream absence (CERT-783).
-                _trace(
-                    event, _receipts.REJECT_NAME_MISMATCH, measure_coverage=True,
-                )
-                continue
+                if use_wbb_mascot and _names_both_sides(
+                    wbb_matchup.team_a,
+                    wbb_matchup.team_b,
+                    normalize_wbb_mascot(event.home_team_name),
+                    normalize_wbb_mascot(event.away_team_name),
+                ):
+                    eval_matchup = wbb_matchup
+                    eval_home = normalize_wbb_mascot(event.home_team_name)
+                    eval_away = normalize_wbb_mascot(event.away_team_name)
+                else:
+                    # Coverage is what separates a rejected candidate from a row
+                    # the ILIKE happened to return on one shared token — and it is
+                    # measured INDEPENDENTLY of the side test above, which is the
+                    # verdict being explained. "CLE Browns vs JAC Jaguars" against
+                    # Jacksonville Jaguars / Cleveland Browns fails both halves here
+                    # and covers both sides; that is a name-gate bug of ours, not an
+                    # upstream absence (CERT-783).
+                    _trace(
+                        event, _receipts.REJECT_NAME_MISMATCH, measure_coverage=True,
+                    )
+                    continue
 
         # Check team name matching (determine yes/no home/away mapping)
         team_match = match_teams_to_event(
-            matchup,
-            event.home_team_name,
-            event.away_team_name,
+            eval_matchup,
+            eval_home,
+            eval_away,
             external_id=market.external_id or "",
         )
+        if not team_match and use_wbb_mascot and eval_matchup is matchup:
+            wbb_home = normalize_wbb_mascot(event.home_team_name)
+            wbb_away = normalize_wbb_mascot(event.away_team_name)
+            wbb_team_match = match_teams_to_event(
+                wbb_matchup,
+                wbb_home,
+                wbb_away,
+                external_id=market.external_id or "",
+            )
+            if wbb_team_match:
+                eval_matchup = wbb_matchup
+                eval_home = wbb_home
+                eval_away = wbb_away
+                team_match = wbb_team_match
         if not team_match:
             # A two-sided matchup that reaches here already cleared the gate
             # above, so its coverage is full: this IS the documented
@@ -9773,17 +9937,29 @@ def _score_candidates(
         # actually matches an event team
         if matchup.format_type == "will_win" and not matchup.team_b:
             if not (
-                _fuzzy_team_match(matchup.team_a, event.home_team_name)
-                or _fuzzy_team_match(matchup.team_a, event.away_team_name)
+                _fuzzy_team_match(eval_matchup.team_a, eval_home)
+                or _fuzzy_team_match(eval_matchup.team_a, eval_away)
             ):
-                # The market named one side and the gate says this row does not
-                # carry it. Measure independently before calling it a
-                # coincidence — the gate cannot match a name of three
-                # characters or fewer at all.
-                _trace(
-                    event, _receipts.REJECT_NAME_MISMATCH, measure_coverage=True,
-                )
-                continue
+                if use_wbb_mascot and (
+                    _fuzzy_team_match(
+                        wbb_matchup.team_a,
+                        normalize_wbb_mascot(event.home_team_name),
+                    )
+                    or _fuzzy_team_match(
+                        wbb_matchup.team_a,
+                        normalize_wbb_mascot(event.away_team_name),
+                    )
+                ):
+                    pass
+                else:
+                    # The market named one side and the gate says this row does not
+                    # carry it. Measure independently before calling it a
+                    # coincidence — the gate cannot match a name of three
+                    # characters or fewer at all.
+                    _trace(
+                        event, _receipts.REJECT_NAME_MISMATCH, measure_coverage=True,
+                    )
+                    continue
 
         # Score: prefer closer to now + live games
         score = 0
@@ -9806,8 +9982,8 @@ def _score_candidates(
         if matchup.team_b:
             score += 10
 
-        # Prefer Odds API events (external_id set) over auto-created ones
-        if event.external_id:
+        # Prefer Odds API events (sportsbook external_id set) over auto-created ones
+        if _is_sportsbook_row(event):
             score += 8
 
         # Sport validation: hard-reject events from the wrong sport.
@@ -9838,16 +10014,42 @@ def _score_candidates(
 
         _trace(event, "considered", score=score)
 
-        if score > best_score:
+        candidate_entry = {
+            "event_id": event.id,
+            "home_team": event.home_team_name,
+            "away_team": event.away_team_name,
+            "yes_is_home": team_match["yes_is_home"],
+            "score": score,
+            "sport_id": event.sport_id,
+        }
+        considered_matches.append((event, candidate_entry))
+
+        if score > best_score or (
+            score == best_score
+            and best_event is not None
+            and _is_sportsbook_row(event)
+            and not _is_sportsbook_row(best_event)
+            and _same_fixture_twin(best_event, event)
+        ):
             best_score = score
-            best_match = {
-                "event_id": event.id,
-                "home_team": event.home_team_name,
-                "away_team": event.away_team_name,
-                "yes_is_home": team_match["yes_is_home"],
-                "score": score,
-                "sport_id": event.sport_id,
-            }
+            best_event = event
+            best_match = candidate_entry
+
+    # #13142: when both an auto-created id-less row and a sportsbook-anchored
+    # row exist for the same game (within 24h), always prefer the sportsbook
+    # row even if the id-less row happened to score higher on time proximity or
+    # live status. Separate dates of a multi-game series (>24h apart) are left
+    # alone so today's id-less game is never overridden by next week's slate.
+    if best_event is not None and not _is_sportsbook_row(best_event):
+        sportsbook_twins = [
+            (alt_event, alt_entry)
+            for alt_event, alt_entry in considered_matches
+            if _is_sportsbook_row(alt_event) and _same_fixture_twin(best_event, alt_event)
+        ]
+        if sportsbook_twins:
+            best_event, best_match = max(
+                sportsbook_twins, key=lambda pair: pair[1]["score"]
+            )
 
     # When we have no sport prefix (no ticker sport, no llm_sport_category),
     # require a higher confidence threshold to prevent cross-sport mismatches.
@@ -9937,6 +10139,12 @@ async def _find_event_by_sport_and_time(session, market, now, game_date_override
         .limit(20)
     )
     candidates = event_result.scalars().all()
+    from app.utils.proven_duplicates import canonical_id_from_tags
+
+    candidates = [
+        ev for ev in candidates
+        if canonical_id_from_tags(getattr(ev, "event_tags", None)) is None
+    ]
 
     if len(candidates) == 1:
         # Unambiguous COUNT — exactly one event in that sport + time window.
@@ -9983,14 +10191,19 @@ async def _find_event_by_sport_and_time(session, market, now, game_date_override
             abbrev_a, abbrev_b, _ = fragments
             best_event = None
             best_score = 0
+            best_is_sportsbook = False
             for event in candidates:
                 score = _score_fragment_match(
                     abbrev_a, abbrev_b,
                     event.home_team_name, event.away_team_name,
                 )
-                if score > best_score:
+                is_sb = _is_sportsbook_row(event)
+                if score > best_score or (
+                    score == best_score and score >= 2 and is_sb and not best_is_sportsbook
+                ):
                     best_score = score
                     best_event = event
+                    best_is_sportsbook = is_sb
             if best_score >= 2 and best_event:
                 logger.info(
                     "Fragment-matched %s → event %d (%s vs %s) [fragments=%s/%s, score=%d]",
@@ -10413,15 +10626,20 @@ async def _polymarket_group_sibling_event_id(session, market) -> Optional[int]:
                     Event.external_id,
                     Event.statpal_fixture_id,
                     Event.status,
+                    Event.event_tags,
                 ).where(Event.id.in_(accepted))
             )
         ).all()
         if not rows:
             return None
+        from app.utils.proven_duplicates import canonical_id_from_tags
+
         preferred = min(
             rows,
             key=lambda r: (
+                canonical_id_from_tags(getattr(r, "event_tags", None)) is not None,
                 r.status not in _GROUP_SIBLING_OPEN_STATUSES,
+                not _is_sportsbook_row(r),
                 r.espn_id is None
                 and r.external_id is None
                 and r.statpal_fixture_id is None,
@@ -13104,6 +13322,8 @@ async def _poll_live_prediction_market_prices():
                         reading.contributing_outcomes or (reading.outcome,),
                         committed_price_reads,
                     ),
+                    away_value=None if draw_prob is None else round(away_prob, 4),
+                    draw_value=None if draw_prob is None else round(draw_prob, 4),
                 )
                 # #10090 item 4: this commit published nothing, so the move
                 # reached an open page only when another writer next published

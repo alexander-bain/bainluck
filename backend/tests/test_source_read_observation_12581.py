@@ -149,7 +149,7 @@ def test_headline_trace_cannot_borrow_a_sources_clock_for_other_price():
 
 @pytest.mark.parametrize("valid_age", [True, False])
 def test_reversed_club_fold_preserves_number_and_only_its_bound_age(valid_age):
-    from app.utils.event_twin_fold import _flipped_reading
+    from app.utils.proven_duplicates import _flipped_reading
 
     original = received()["kalshi"]
     if not valid_age:

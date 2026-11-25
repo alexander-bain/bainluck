@@ -10,6 +10,11 @@ from typing import Any
 
 from app.utils.aggregation import parse_source_entry
 from app.utils.game_state import authority_stoppage_label, normalize_live_game_state
+from app.utils.draw_priced_winner import (
+    printable_away,
+    rendered_three_way_percents,
+    sport_prices_a_draw,
+)
 from app.utils.graded_card import rendered_duel_percents
 from app.utils.prematch_reading import serialize_prematch_odds
 from app.utils.scheduled_start import start_is_from_schedule
@@ -428,6 +433,8 @@ def format_event_data(
     hero: Any | None = None,
     stored_tags: Any | None = None,
     commence_time_source: str | None = None,
+    current_draw_prob: float | None = None,
+    bookmaker_count: int | None = None,
 ) -> dict:
     """Build the compact event data dict for the feed response.
 
@@ -491,68 +498,143 @@ def format_event_data(
         if stoppage:
             data["espn"] = {"period": stoppage}
 
-    if current_home_prob is not None:
-        # UX-P114: the card prints BOTH of these side by side, and `feed.py` derives
-        # the away side as `1 - home`, so they are an exact complement pair — which
-        # made every client that rounds them independently print 101 whenever the
-        # blend landed on a half-percent (34 of 414 live/upcoming events, 2026-08-21).
-        #
-        # The decision is made ONCE, here, rather than in each of the four surfaces
-        # that draw this strip: web `EventCard`, native `DiscoverEventCard`, the
-        # macOS menu bar, and the home-screen widget — the last two read this very
-        # payload and re-derive `1 - home` themselves. Ruling 021: share the
-        # DECISION, not the ingredient. The probabilities below are UNCHANGED; these
-        # are two extra integers, so nothing that ranks or filters on a probability
-        # can see this change at all.
-        away_pct, home_pct = rendered_duel_percents(current_away_prob, current_home_prob)
-        odds_data = {
-            "home_probability": current_home_prob,
-            "away_probability": current_away_prob,
-            "home_rendered_percent": home_pct,
-            "away_rendered_percent": away_pct,
-        }
-        if prob_source:
-            odds_data["source"] = prob_source
-        data["current_odds"] = odds_data
+    _is_settled_hero = hero is not None and hero.source == "settled"
+    _draw_priced = sport_prices_a_draw(sport_key)
+    from app.utils.settled_hero import is_finished_status, settled_current_chance
 
-    # ── THE ONE NUMBER, ON THE CARD (#4971 / D136 rung 3) ───────────────────
-    #
-    # `current_odds` above is the MARKET number and nothing else. The number a
-    # reader is owed for "who wins this question" is the `resolve_hero` cascade
-    # — settled, then blend, then opening — and until now the card payload did
-    # not carry it, so every card-shaped surface re-derived the cascade itself
-    # and the three of them drifted apart:
-    #
-    #   `FeedCard`              finished -> `opening_odds`
-    #   Discover `EventCard`    finished -> `prematchReading(data)`
-    #   `RelatedByTag`          finished -> raw `current_odds`, no state at all
-    #
-    # MEASURED on production 2026-09-12 08:30Z, the 100 events that finished in
-    # the preceding 48h and carry sources: 95 serve a card probability, and on
-    # 11 of them the raw blend names the LOSER as the favourite. Kansas 21-38
-    # Missouri (14792834) served `current_odds.home_probability = 0.001` while
-    # `/api/events/14792834` served `hero_probability = 0.0, source=settled`;
-    # Athletics 6-5 Mariners (15309702) served 0.61 against a settled 1.0.
-    # Median card->page gap 6.1pt, max 76.1pt.
-    #
-    # So the cascade is RESOLVED ONCE, by the same function the event page
-    # calls, and served under the same four key names the event detail payload
-    # uses — a client that can read one can read the other. This is additive:
-    # `current_odds` is unchanged, so nothing that ranks, filters or scores on a
-    # probability can see it (ruling 021 — share the DECISION, not the
-    # ingredient).
-    #
-    # The caller resolves the hero rather than this function doing it, because
-    # the settled arm needs `completed_at` as a TRUST GATE (a finished row with
-    # no `completed_at` must not resolve) and this serializer is pure and does
-    # not take it. Passing the resolved reading also means the card and the page
-    # cannot call the cascade with different inputs.
-    if hero is not None:
-        data["hero_probability"] = hero.home_probability
-        data["hero_probability_away"] = hero.away_probability
-        data["hero_probability_source"] = hero.source
-        if hero.settled_result is not None:
-            data["hero_settled_result"] = hero.settled_result
+    if is_finished_status(status):
+        # #13172 Option B — finished games serve their resolved result in
+        # current_odds (draw 100 / home 0 / away 0 for draw-priced draws) and
+        # omit current_odds when final_unresolved. Scoring and reason lines ran
+        # before format_event_data and stay completely unchanged.
+        _sc = settled_current_chance(hero, sport_key=sport_key)
+        if _sc.resolved:
+            odds_data: dict[str, Any] = {
+                "home_probability": _sc.home_probability,
+                "away_probability": _sc.away_probability,
+                "home_rendered_percent": _sc.home_rendered_percent,
+                "away_rendered_percent": _sc.away_rendered_percent,
+            }
+            if _draw_priced:
+                odds_data["draw_probability"] = _sc.draw_probability
+                odds_data["draw_rendered_percent"] = _sc.draw_rendered_percent
+            if prob_source:
+                odds_data["source"] = prob_source
+            if bookmaker_count is not None:
+                odds_data["bookmaker_count"] = bookmaker_count
+            data["current_odds"] = odds_data
+
+        if hero is not None:
+            if _sc.resolved:
+                data["hero_probability"] = _sc.home_probability
+                data["hero_probability_away"] = _sc.away_probability
+                if _draw_priced:
+                    data["hero_probability_draw"] = _sc.draw_probability
+            else:
+                data["hero_probability"] = hero.home_probability
+                data["hero_probability_away"] = (
+                    printable_away(hero.away_probability, hero.home_probability, sport_key)
+                    if _draw_priced
+                    else hero.away_probability
+                )
+            data["hero_probability_source"] = hero.source
+            if hero.settled_result is not None:
+                data["hero_settled_result"] = hero.settled_result
+    else:
+        # #13131: on a draw-priced sport, a non-settled list card must show all
+        # three numbers (home, draw, away) or none — never one orphan home
+        # percentage or a two-way 1 - home complement without a draw.
+        _suppress_incomplete_three_way = _draw_priced and not _is_settled_hero
+
+        if current_home_prob is not None:
+            if (
+                _draw_priced
+                and not _is_settled_hero
+                and current_draw_prob is not None
+                and current_away_prob is not None
+            ):
+                home_pct, draw_pct, away_pct = rendered_three_way_percents(
+                    current_home_prob, current_draw_prob, current_away_prob
+                )
+                odds_data = {
+                    "home_probability": current_home_prob,
+                    "away_probability": current_away_prob,
+                    "draw_probability": current_draw_prob,
+                    "home_rendered_percent": home_pct,
+                    "away_rendered_percent": away_pct,
+                    "draw_rendered_percent": draw_pct,
+                }
+            elif _suppress_incomplete_three_way:
+                odds_data = {
+                    "home_probability": None,
+                    "away_probability": None,
+                    "draw_probability": None,
+                    "home_rendered_percent": None,
+                    "away_rendered_percent": None,
+                    "draw_rendered_percent": None,
+                }
+            else:
+                away_pct, home_pct = rendered_duel_percents(current_away_prob, current_home_prob)
+                _served_away = (
+                    printable_away(current_away_prob, current_home_prob, sport_key)
+                    if (_draw_priced and not _is_settled_hero)
+                    else current_away_prob
+                )
+                odds_data = {
+                    "home_probability": current_home_prob,
+                    "away_probability": _served_away,
+                    "home_rendered_percent": home_pct,
+                    "away_rendered_percent": away_pct if _served_away is not None else None,
+                }
+                if _draw_priced and not _is_settled_hero:
+                    odds_data["draw_probability"] = None
+                    odds_data["draw_rendered_percent"] = None
+            if prob_source:
+                odds_data["source"] = prob_source
+            if bookmaker_count is not None:
+                odds_data["bookmaker_count"] = bookmaker_count
+            data["current_odds"] = odds_data
+        elif _suppress_incomplete_three_way and (hero is not None or prob_source):
+            # Preserve `current_odds` key with nulled chance fields when suppressed.
+            odds_data = {
+                "home_probability": None,
+                "away_probability": None,
+                "draw_probability": None,
+                "home_rendered_percent": None,
+                "away_rendered_percent": None,
+                "draw_rendered_percent": None,
+            }
+            if prob_source:
+                odds_data["source"] = prob_source
+            if bookmaker_count is not None:
+                odds_data["bookmaker_count"] = bookmaker_count
+            data["current_odds"] = odds_data
+
+        if hero is not None:
+            if _draw_priced and not _is_settled_hero:
+                if (
+                    current_home_prob is not None
+                    and current_away_prob is not None
+                    and current_draw_prob is not None
+                ):
+                    data["hero_probability"] = current_home_prob
+                    data["hero_probability_away"] = current_away_prob
+                    data["hero_probability_draw"] = current_draw_prob
+                elif _suppress_incomplete_three_way:
+                    data["hero_probability"] = None
+                    data["hero_probability_away"] = None
+                    data["hero_probability_draw"] = None
+                else:
+                    data["hero_probability"] = hero.home_probability
+                    data["hero_probability_away"] = printable_away(
+                        hero.away_probability, hero.home_probability, sport_key
+                    )
+            else:
+                data["hero_probability"] = hero.home_probability
+                data["hero_probability_away"] = hero.away_probability
+            data["hero_probability_source"] = hero.source
+            if hero.settled_result is not None:
+                data["hero_settled_result"] = hero.settled_result
 
     if opening_home_prob is not None:
         data["opening_odds"] = {

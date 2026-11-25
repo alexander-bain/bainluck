@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import Link from "next/link";
 import { fetchTeamPage, fetchChampionshipGrid } from "@/lib/api";
-import type { TeamFutureItem, TeamPageResponse } from "@/lib/api";
+import type { ChampionshipPathEntry, TeamFutureItem, TeamPageResponse } from "@/lib/api";
 import type { ChampionshipGridResponse } from "@/lib/types";
 import { usePageTracking, useScrollDepth, useEngagementTime } from "@/hooks";
 import { useTeamPropRaces } from "@/hooks/useTeamPropRaces";
@@ -31,8 +31,10 @@ import { TeamDivisionRace } from "@/components/TeamDivisionRace";
 import { TeamPropFamilies } from "@/components/TeamPropFamilies";
 import { TeamFutureRow } from "@/components/TeamFutureRow";
 import { useTeamOutcomeStream } from "@/hooks/useTeamOutcomeStream";
+import { useTeamChampionshipStream } from "@/hooks/useTeamChampionshipStream";
 
 const NO_FUTURES: TeamFutureItem[] = [];
+const NO_CHAMPIONSHIP_PATH: ChampionshipPathEntry[] = [];
 
 export default function TeamPage() {
   const params = useParams();
@@ -108,9 +110,14 @@ export default function TeamPage() {
   // (#2311), keyed on the resolved slug; see the hook for the reset contract.
   const propRaces = useTeamPropRaces(resolvedSlug);
 
-  // #10090: the season-futures rows re-price live by outcome id when their
-  // market moves; the championship path keeps its served value.
+  // #10090: the season-futures rows re-price live by outcome id, and the
+  // championship path re-prices live across all candidate markets.
   const patchFuture = useTeamOutcomeStream(data?.futures ?? NO_FUTURES);
+  const championship_path = useTeamChampionshipStream(
+    data?.team?.id,
+    data?.championship_path ?? NO_CHAMPIONSHIP_PATH,
+    data?.championship_path_market_ids,
+  );
 
   // Document title
   useEffect(() => {
@@ -151,7 +158,7 @@ export default function TeamPage() {
     );
   }
 
-  const { team, upcoming_events, recent_events, futures: servedFutures, championship_path, season } =
+  const { team, upcoming_events, recent_events, futures: servedFutures, season } =
     data;
   const futures = servedFutures.map(patchFuture);
   const leaguePath = `/sport/${sport}/${league}`;
@@ -356,7 +363,7 @@ export default function TeamPage() {
                   headline.movement! > 0 ? "text-accent-live" : "text-accent-danger"
                 }`}
               >
-                {headline.movement! > 0 ? "↑" : "↓"} {formatMovementPoints(headline.movement)} pts today
+                {headline.movement! > 0 ? "↑" : "↓"} {formatMovementPoints(headline.movement)} points today
               </span>
             )}
           </div>

@@ -116,13 +116,23 @@ nonisolated struct WatchFeedEvent: Decodable, Identifiable, Sendable {
     let sportName: String?
     let commenceTime: String?
     let temporalBadge: String?
+    let heroProbabilitySource: String?
     let currentOdds: WatchCurrentOdds?
     let homeTeamData: WatchTeamData?
     let awayTeamData: WatchTeamData?
     let espn: WatchESPNData?
 
     var isLive: Bool { status == "live" }
-    var isSettled: Bool { status == "completed" || status == "closed" }
+    var isSettled: Bool { status == "completed" || status == "closed" || heroProbabilitySource == "settled" }
+
+    var currentHomeProbability: Double? {
+        heroProbabilitySource == "opening" ? nil : currentOdds?.homeProbability
+    }
+
+    var scoreline: String? {
+        guard isLive || isSettled, let awayScore, let homeScore else { return nil }
+        return "\(awayScore)–\(homeScore)"
+    }
 
     /// Short live-game clock string ("Q3 4:21" / "T7"), when available.
     ///

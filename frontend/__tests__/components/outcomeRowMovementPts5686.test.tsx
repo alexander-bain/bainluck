@@ -113,8 +113,8 @@ describe("#5686 the outcome row prints its move in points", () => {
     expect(src.match(PCT_AGAINST_POINTS)).toBeNull();
   });
 
-  it("…and it prints ' pts', so the rule above cannot pass by deleting the badge", () => {
-    const printed = src.match(/\{formatMovementPoints\([^)]*\)\}\s*pts/g) ?? [];
+  it("…and it prints ' points', so the rule above cannot pass by deleting the badge", () => {
+    const printed = src.match(/\{formatMovementPoints\([^)]*\)\}\s*points/g) ?? [];
     expect(printed).toHaveLength(1);
   });
 
@@ -124,7 +124,7 @@ describe("#5686 the outcome row prints its move in points", () => {
     // relabel and not a change of arithmetic.
     const html = draw();
     const change = testIdText(html, "outcome-change");
-    expect(change).toBe("-71.5 pts");
+    expect(change).toBe("-71.5 points");
     expect(change).not.toContain("%");
   });
 
@@ -172,7 +172,7 @@ describe("#5686 the outcome row prints its move in points", () => {
     try {
       const html = draw();
       expect(badges(html)).toBe(before - 1);
-      expect(html).not.toContain("0.0 pts");
+      expect(html).not.toContain("0.0 points");
       expect(html).not.toContain("0.0%");
     } finally {
       ACTIVE_MARKET = market109441;

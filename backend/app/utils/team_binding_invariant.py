@@ -90,12 +90,23 @@ WHERE THIS IS APPLIED, AND THE ONE SITE DELIBERATELY LEFT ALONE
 from __future__ import annotations
 
 import logging
+import re
+import unicodedata
 from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 CROSS_CLUB = "cross_club"
 WRONG_SPORT = "wrong_sport"
+
+_TEAM_KEY_WORD_EXPANSIONS: dict[str, str] = {
+    "mt": "mount",
+    "ft": "fort",
+    "n": "north",
+    "s": "south",
+    "e": "east",
+    "w": "west",
+}
 
 
 def normalize_club_name(value: Optional[str]) -> str:
@@ -107,6 +118,50 @@ def normalize_club_name(value: Optional[str]) -> str:
     comparison is the loosest possible reading of that).
     """
     return "".join(ch for ch in (value or "").lower() if ch.isalnum())
+
+
+def normalize_event_team_key(value: Optional[str]) -> str:
+    """Fold case, diacritics, and punctuation while preserving all digits."""
+    if not value:
+        return ""
+    ascii_val = (
+        unicodedata.normalize("NFKD", value).encode("ascii", "ignore").decode("ascii")
+    )
+    cleaned = re.sub(r"[^a-z0-9\s]", " ", ascii_val.lower().strip())
+    return re.sub(r"\s+", " ", cleaned).strip()
+
+
+def expand_event_team_key(value: Optional[str]) -> str:
+    """Exact spelling expansion over ``normalize_event_team_key``.
+
+    Non-leading ``st`` expands to ``state`` (preserving leading ``St. Louis`` /
+    ``St. John's`` as Saint), and ``mt``/``ft``/cardinal letters expand as
+    whole words. Digits and all other words stay intact.
+    """
+    basic = normalize_event_team_key(value)
+    if not basic:
+        return ""
+    tokens = basic.split()
+    out: list[str] = []
+    for idx, tok in enumerate(tokens):
+        if idx > 0 and tok == "st":
+            out.append("state")
+        else:
+            out.append(_TEAM_KEY_WORD_EXPANSIONS.get(tok, tok))
+    return " ".join(out)
+
+
+def event_team_names_equivalent(
+    name_a: Optional[str], name_b: Optional[str]
+) -> bool:
+    """True iff two team names denote the exact same club/school spelling."""
+    basic_a = normalize_event_team_key(name_a)
+    basic_b = normalize_event_team_key(name_b)
+    if not basic_a or not basic_b:
+        return False
+    if basic_a == basic_b:
+        return True
+    return expand_event_team_key(basic_a) == expand_event_team_key(basic_b)
 
 
 def binding_defect(
@@ -123,7 +178,9 @@ def binding_defect(
     """
     if bound_name is None:
         return None
-    if normalize_club_name(bound_name) != normalize_club_name(row_name):
+    if normalize_club_name(bound_name) != normalize_club_name(
+        row_name
+    ) and not event_team_names_equivalent(row_name, bound_name):
         return CROSS_CLUB
     if (
         bound_sport_id is not None
