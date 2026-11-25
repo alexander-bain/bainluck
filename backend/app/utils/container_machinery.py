@@ -3719,11 +3719,13 @@ async def _load_snapshot_from_db(
                             "name": r_name,
                             "probability": p_f,
                             "rendered_percent": pct_int,
-                            **({"kalshi_no_bid": row["kalshi_no_bid"]}
-                               if "kalshi_no_bid" in row else {}),
                             "opening_probability": row.get("opening_probability"),
                             "image_url": img_by_oid.get(oid),
                             "last_updated": o_upd_dt.isoformat() if o_upd_dt is not None else None,
+                            **(
+                                {"kalshi_no_bid": row["kalshi_no_bid"]}
+                                if "kalshi_no_bid" in row else {}
+                            ),
                         }
                     )
                 mpn = {
