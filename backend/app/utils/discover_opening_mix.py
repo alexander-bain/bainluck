@@ -129,11 +129,30 @@ _ODD_SLUGS: frozenset[str] = frozenset(
     {
         *_PURE_ODD_SLUGS,
         "machinery-white-christmas",
+    }
+)
+_OPENING_EXCLUDED_WEATHER_SLUGS: frozenset[str] = frozenset(
+    {
         "roundup-tomorrows-highs",
         "roundup-will-it-snow",
         "for-scale-snow-in-dc",
     }
 )
+
+
+def is_opening_weather_excluded_roundup(item: Mapping[str, Any]) -> bool:
+    """Weather forecast roundups (e.g. ``roundup-tomorrows-highs``) sit outside seats 1..10 (#13645)."""
+    if not isinstance(item, Mapping):
+        return False
+    slug = (_roundup_item_slug(item) or "").strip().lower()
+    if slug in _OPENING_EXCLUDED_WEATHER_SLUGS:
+        return True
+    data = item.get("data")
+    if isinstance(data, Mapping):
+        raw_id = str(data.get("id") or data.get("story_key") or "").strip().lower()
+        if raw_id in {"roundup:tomorrows-highs", "roundup:will-it-snow", "roundup:for-scale-snow-in-dc"}:
+            return True
+    return False
 _ENTERTAINMENT_SLUGS: frozenset[str] = frozenset(
     {
         "machinery-2026-summed-up",
@@ -1040,6 +1059,7 @@ def apply_discover_opening_mix(
         and _is_grouped_feed_card(it)
         and it.get("type") != "concept"
         and not is_same_deadline_roundup(it)
+        and not is_opening_weather_excluded_roundup(it)
         and not _contains_live_event_signal(it, now=effective_now)
         and _is_roundup_opening_eligible(it, items, now=effective_now)
     ]

@@ -1536,10 +1536,111 @@ _MACRO_EVENT_RE = re.compile(
 )
 
 
+_NON_EQUITY_TICKER_ACRONYMS = frozenset(
+    {
+        "US",
+        "UK",
+        "EU",
+        "UN",
+        "NBA",
+        "NFL",
+        "NHL",
+        "MLB",
+        "UFC",
+        "MLS",
+        "EPL",
+        "CFP",
+        "GDP",
+        "CPI",
+        "PPI",
+        "FOMC",
+        "ECB",
+        "BOJ",
+        "BOE",
+        "BOC",
+        "RBA",
+        "RBNZ",
+        "LOW",
+        "HIGH",
+        "YOY",
+        "QOQ",
+        "MOM",
+        "Q1",
+        "Q2",
+        "Q3",
+        "Q4",
+        "ET",
+        "EDT",
+        "EST",
+        "PT",
+        "PDT",
+        "PST",
+        "UTC",
+        "CEO",
+        "IPO",
+        "AI",
+        "EV",
+        "GOP",
+        "DNC",
+        "PM",
+        "AM",
+        "PC",
+        "TV",
+        "NY",
+        "LA",
+        "DC",
+        "WTO",
+        "WHO",
+        "DOJ",
+        "SEC",
+        "FCC",
+        "FDA",
+        "FTC",
+        "FBI",
+        "CIA",
+        "IRS",
+        "IMF",
+        "NATO",
+        "OPEC",
+        "SPAC",
+    }
+)
+_EQUITY_TICKER_PAREN_RE = re.compile(
+    r"\b[A-Z][A-Za-z0-9.&',\-\s]{1,40}\s*\(([A-Z]{1,5})\)"
+)
+_WEEKLY_STOCK_PRICE_RE = re.compile(
+    r"(?:\bcloses?\s+(?:the\s+)?week\s+of\b"
+    r"|\bfinish(?:es)?\s+the\s+week(?:\s+of)?\b"
+    r"|\bhit\s+\((?:low|high)\)\s*\$\s?[\d,]+(?:\.\d+)?[^?]{0,40}\bweek\s+of\b"
+    r"|\bweek\s+of\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{1,2}\b)",
+    re.IGNORECASE,
+)
+
+
+def _equity_ticker_from_name(name: str) -> str | None:
+    """Extract a parenthesized stock ticker like ``Micron (MU)`` (#13645)."""
+    for match in _EQUITY_TICKER_PAREN_RE.finditer(name or ""):
+        ticker = match.group(1)
+        if ticker not in _NON_EQUITY_TICKER_ACRONYMS:
+            return ticker
+    return None
+
+
+def _is_weekly_single_stock_price(name: str) -> bool:
+    """Weekly single-stock price close/range/low-high cards (#13645, R2)."""
+    if re.search(r"\bipo\b", name, re.IGNORECASE):
+        return False
+    if not _WEEKLY_STOCK_PRICE_RE.search(name):
+        return False
+    return bool(_equity_ticker_from_name(name) or _ASSET_CONTEXT_RE.search(name))
+
+
 def _is_asset_price_level(name: str) -> bool:
-    """R2 — asset price-LEVEL market (stocks/crypto/commodities ' above $X')."""
+    """R2 — asset price-LEVEL market (stocks/crypto/commodities ' above $X' or weekly stock ladders)."""
     if _MACRO_EVENT_RE.search(name):
         return False
+    if _is_weekly_single_stock_price(name):
+        return True
     return bool(_ASSET_CONTEXT_RE.search(name)) and bool(
         _PRICE_THRESHOLD_RE.search(name)
     )
@@ -2643,6 +2744,54 @@ _NON_US_JURISDICTION_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+_NON_US_CENTRAL_BANK_POLICY_RE = re.compile(
+    r"\b("
+    r"bank of canada|boc|reserve bank of (?:new zealand|australia|india)|"
+    r"rbnz|rba|rbi|bank of england|boe|bank of japan|boj|"
+    r"ecb|european central bank|banxico|bank of mexico|"
+    r"snb|swiss national bank|riksbank|norges bank|"
+    r"pboc|people'?s bank of china|"
+    r"central bank of (?:brazil|turkey|t[uü]rkiye|russia|chile|colombia|argentina|indonesia|korea)"
+    r")\b",
+    re.IGNORECASE,
+)
+_MINOR_CONF_NAME_RE = re.compile(
+    r"\b("
+    r"sun belt|mid-american|mac|conference usa|c-?usa|mountain west|"
+    r"american athletic|aac|missouri valley|big sky|colonial athletic|"
+    r"swac|meac|ivy league|patriot league|southern conference|socon|"
+    r"big south|ohio valley|southland|horizon league|summit league|"
+    r"maac|america east|big west"
+    r")\b",
+    re.IGNORECASE,
+)
+_MINOR_CONF_TITLE_BERTH_PHRASE_RE = re.compile(
+    r"\b(?:championship game|title game|conference championship|"
+    r"(?:advance|qualify)\s+(?:to|for)\s+[^?]*championship)\b",
+    re.IGNORECASE,
+)
+_POWER_CONF_OR_CFP_RE = re.compile(
+    r"\b(college football playoff|cfp|national championship|"
+    r"sec|big ten|big 10|big 12|big xii|acc|march madness|ncaa tournament)\b",
+    re.IGNORECASE,
+)
+_REGIONAL_CONFLICT_TACTICAL_RE = re.compile(
+    r"(?:"
+    r"\bhouthis?\s+(?:enter|capture|seize|target|strike|attack|successfully\s+target)\b"
+    r"|\benter\s+aden\b"
+    r"|\btarget\s+shipping\b"
+    r"|\bmilitary\s+action\s+against\s+yemen\b"
+    r")",
+    re.IGNORECASE,
+)
+_HEADLINE_CEASEFIRE_RE = re.compile(
+    r"\b(ceasefire|peace deal|end (?:the )?war|regime falls?)\b",
+    re.IGNORECASE,
+)
+EQUITY_TICKER_STORY_PREFIX = "story:equity_ticker:"
+NON_US_MACRO_PENALTY = -20
+MINOR_CONF_BERTH_PENALTY = -20
+REGIONAL_CONFLICT_TACTICAL_PENALTY = -15
 
 # #8742. `story:us_federal_power` is headed "Who holds power in Washington?", so
 # its membership rule has to be about Washington — #7494's lesson, second family.
@@ -2949,7 +3098,7 @@ _OFFICE_NOUNS = frozenset(
 
 
 _STORY_MIDEAST_RE = re.compile(
-    r"\b(iran|iranian|israel|hormuz|uranium|enrichment|nuclear deal|airspace|gaza)\b"
+    r"\b(iran|iranian|israel|hormuz|uranium|enrichment|nuclear deal|airspace|gaza|houthi|houthis|yemen|aden|red sea)\b"
 )
 _STORY_PUTIN_RE = re.compile(r"\b(putin|president|regime|fall|collapse)\b")
 _STORY_2028_RE = re.compile(r"\b(president|presidential|nominee|election)\b")
@@ -3185,6 +3334,10 @@ def _story_key(name: str, category: str) -> str | None:
     if national_presidential is not None:
         return national_presidential
 
+    equity_ticker = _equity_ticker_from_name(name)
+    if equity_ticker is not None and not re.search(r"\bipo\b", lower):
+        return f"{EQUITY_TICKER_STORY_PREFIX}{equity_ticker.lower()}"
+
     return None
 
 
@@ -3274,6 +3427,22 @@ def classify_market_quality(
 
     low_signal_sport = bool(_LOW_SIGNAL_SPORT_RE.search(name))
     episode_level = bool(_EPISODE_LEVEL_RE.search(name))
+    non_us_macro_downrank = (
+        bool(_NON_US_CENTRAL_BANK_POLICY_RE.search(name)) and not _US_CENTRAL_BANK_RE.search(name)
+    ) or (
+        bool(re.search(r"\bgdp\b", name, re.IGNORECASE))
+        and bool(_NON_US_JURISDICTION_RE.search(name))
+        and not bool(re.search(r"\b(?:u\.?s\.?|united states|american?)\b", name, re.IGNORECASE))
+    )
+    minor_conf_title_berth = (
+        bool(_MINOR_CONF_NAME_RE.search(name))
+        and bool(_MINOR_CONF_TITLE_BERTH_PHRASE_RE.search(name))
+        and not bool(_POWER_CONF_OR_CFP_RE.search(name))
+    )
+    regional_conflict_operational = (
+        bool(_REGIONAL_CONFLICT_TACTICAL_RE.search(name))
+        and not bool(_HEADLINE_CEASEFIRE_RE.search(name))
+    )
 
     # #1872: anonymized-at-source option sets ("Person B / Person K"). The
     # predicate is shared with the labeling sampler via `card_integrity` rather
@@ -3350,6 +3519,12 @@ def classify_market_quality(
         reasons.append("resolved_sports")
     if novel_sports:
         reasons.append("novel_sports_framing")
+    if non_us_macro_downrank:
+        reasons.append("non_us_macro_downrank")
+    if minor_conf_title_berth:
+        reasons.append("minor_conf_title_berth")
+    if regional_conflict_operational:
+        reasons.append("regional_conflict_operational")
 
     compelling = bool(_COMPELLING_RE.search(name))
     personnel = _has_sports_personnel_context(name, category) and has_salient
@@ -3489,6 +3664,8 @@ def classify_market_quality(
     computed_story_key = congress_story_key or _story_key(name, category)
     if computed_story_key is not None and (
         computed_story_key.startswith(GOLF_TOURNAMENT_STORY_PREFIX)
+        or computed_story_key.startswith(EQUITY_TICKER_STORY_PREFIX)
+        or computed_story_key == "story:middle_east_conflict"
         or is_national_presidential_election_story_key(computed_story_key)
         or is_congress_control_story_key(computed_story_key)
     ):
@@ -3512,6 +3689,14 @@ def classify_market_quality(
 
 def quality_score_adjustment(quality: MarketQuality) -> int:
     """Score adjustment applied after highlight scoring."""
+    downrank_penalty = 0
+    if "non_us_macro_downrank" in quality.reasons:
+        downrank_penalty += NON_US_MACRO_PENALTY
+    if "minor_conf_title_berth" in quality.reasons:
+        downrank_penalty += MINOR_CONF_BERTH_PENALTY
+    if "regional_conflict_operational" in quality.reasons:
+        downrank_penalty += REGIONAL_CONFLICT_TACTICAL_PENALTY
+
     if quality.quality_class == "compelling":
         boost = 12
         if "health_outbreak" in quality.reasons:
@@ -3520,15 +3705,15 @@ def quality_score_adjustment(quality: MarketQuality) -> int:
             boost += 10
         if "absurd_but_real" in quality.reasons:
             boost += 8
-        return boost
+        return boost + downrank_penalty
     if quality.quality_class == "low_quality":
         penalty = -35
         if quality.is_narrow_range:
             penalty -= 15
-        return penalty
+        return penalty + downrank_penalty
     if quality.quality_class == "suppress":
         return -100
-    return 0
+    return downrank_penalty
 
 
 def editorial_archetype(
@@ -5686,6 +5871,8 @@ def diversify_quality_families(
         # and splitting the key must not quietly raise it to the default 5.
         UFC_EVENT_STORY_PREFIX: 3,
         US_CONGRESS_CONTROL_STORY_PREFIX: 2,
+        # #13645: one-per-subject across weekly/single-stock templates for a ticker.
+        EQUITY_TICKER_STORY_PREFIX: 1,
     }
 
     def _cap_for(story_key: str) -> int:
