@@ -28,7 +28,7 @@ final class AnalyticsPrivacyTests: XCTestCase {
         XCTAssertEqual(params["results_count"] as? Int, 12, "approved telemetry survives")
     }
 
-    func testResultClickCarriesNoRawQuery() {
+    func testResultClickCarriesNoRawQueryOrResultId() {
         let sanitized = AnalyticsPrivacy.sanitize(
             event: "search_result_click",
             parameters: [
@@ -41,9 +41,11 @@ final class AnalyticsPrivacyTests: XCTestCase {
         let params = try! XCTUnwrap(sanitized)
 
         XCTAssertNil(params["query"])
+        XCTAssertNil(params["result_id"])
         XCTAssertNotNil(params["query_hash"])
+        XCTAssertNotNil(params["query_length"])
+        XCTAssertNotNil(params["query_word_count"])
         XCTAssertEqual(params["result_type"] as? String, "futures")
-        XCTAssertEqual(params["result_id"] as? String, "1234")
         XCTAssertEqual(params["position"] as? Int, 2)
     }
 

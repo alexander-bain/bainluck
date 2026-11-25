@@ -657,9 +657,7 @@ struct SearchView: View {
                     switch suggestion.type {
                     case "team":
                         if let slug = suggestion.teamSlug {
-                            let targetId = suggestion.teamId.map(String.init)
-                                ?? FirstWeekTelemetry13261.hashedResultId(slug)
-                            trackSearchTap(type: "team", resultId: targetId, position: 0)
+                            trackSearchTap(type: "team", position: 0)
                             path.append(Route.teamDetail(slug: slug))
                         } else {
                             viewModel.query = suggestion.text
@@ -667,7 +665,7 @@ struct SearchView: View {
                         }
                     case "event":
                         if let eventId = suggestion.eventId {
-                            trackSearchTap(type: "event", resultId: String(eventId), position: 0)
+                            trackSearchTap(type: "event", position: 0)
                             path.append(Route.eventDetail(id: eventId))
                         } else {
                             viewModel.query = suggestion.text
@@ -675,7 +673,7 @@ struct SearchView: View {
                         }
                     case "futures":
                         if let marketId = suggestion.marketId {
-                            trackSearchTap(type: "futures", resultId: String(marketId), position: 0)
+                            trackSearchTap(type: "futures", position: 0)
                             path.append(Route.futuresDetail(id: marketId))
                         }
                     default:
@@ -855,11 +853,10 @@ struct SearchView: View {
 
     // MARK: - Search Results
 
-    private func trackSearchTap(type: String, resultId: String, position: Int) {
+    private func trackSearchTap(type: String, position: Int) {
         AnalyticsService.trackSearchResultClick(
             query: viewModel.query,
             resultType: type,
-            resultId: resultId,
             position: position
         )
     }
@@ -881,11 +878,7 @@ struct SearchView: View {
                             searchTournamentRow(hub)
                         }
                         .simultaneousGesture(TapGesture().onEnded {
-                            trackSearchTap(
-                                type: "tournament",
-                                resultId: FirstWeekTelemetry13261.hashedResultId(hub.slug),
-                                position: idx
-                            )
+                            trackSearchTap(type: "tournament", position: idx)
                         })
                         .macKeyboardRow(.tournamentHub(slug: hub.slug, name: hub.title), in: keyboardSelection)
                     }
@@ -907,11 +900,7 @@ struct SearchView: View {
                             SearchCollectionRow(entry: entry)
                         }
                         .simultaneousGesture(TapGesture().onEnded {
-                            trackSearchTap(
-                                type: "collection",
-                                resultId: String(entry.collection.id),
-                                position: idx
-                            )
+                            trackSearchTap(type: "collection", position: idx)
                         })
                         .macKeyboardRow(entry.route, in: keyboardSelection)
                         .macResultMenu(entry.route)
@@ -947,7 +936,7 @@ struct SearchView: View {
                                 searchTeamRow(team)
                             }
                             .simultaneousGesture(TapGesture().onEnded {
-                                trackSearchTap(type: "team", resultId: String(team.id), position: idx)
+                                trackSearchTap(type: "team", position: idx)
                             })
                             .macKeyboardRow(.teamDetail(slug: slug), in: keyboardSelection)
                         }
@@ -985,7 +974,7 @@ struct SearchView: View {
                         iPadCardGrid(results.results) { event in
                             Button {
                                 let pos = results.results.firstIndex(where: { $0.id == event.id }) ?? 0
-                                trackSearchTap(type: "event", resultId: String(event.id), position: pos)
+                                trackSearchTap(type: "event", position: pos)
                                 path.append(Route.eventDetail(id: event.id))
                             } label: {
                                 searchEventCard183A(event)
@@ -1000,7 +989,7 @@ struct SearchView: View {
                                 searchEventCard183A(event)
                             }
                             .simultaneousGesture(TapGesture().onEnded {
-                                trackSearchTap(type: "event", resultId: String(event.id), position: idx)
+                                trackSearchTap(type: "event", position: idx)
                             })
                             .macKeyboardRow(.eventDetail(id: event.id), in: keyboardSelection)
                             .macResultMenu(.eventDetail(id: event.id))
@@ -1040,7 +1029,7 @@ struct SearchView: View {
                         searchFamilyRow(family.headline, prominent: true)
                     }
                     .simultaneousGesture(TapGesture().onEnded {
-                        trackSearchTap(type: "futures", resultId: String(family.headline.id), position: famIdx)
+                        trackSearchTap(type: "futures", position: famIdx)
                     })
                     .macKeyboardRow(.futuresDetail(id: family.headline.id), in: keyboardSelection)
                     .macResultMenu(.futuresDetail(id: family.headline.id))
@@ -1049,7 +1038,7 @@ struct SearchView: View {
                             searchFamilyRow(member, prominent: false)
                         }
                         .simultaneousGesture(TapGesture().onEnded {
-                            trackSearchTap(type: "futures", resultId: String(member.id), position: memIdx + 1)
+                            trackSearchTap(type: "futures", position: memIdx + 1)
                         })
                         .macKeyboardRow(.futuresDetail(id: member.id), in: keyboardSelection)
                         .macResultMenu(.futuresDetail(id: member.id))
@@ -1098,7 +1087,7 @@ struct SearchView: View {
                                 searchConceptRow(concept)
                             }
                             .simultaneousGesture(TapGesture().onEnded {
-                                trackSearchTap(type: "event_concept", resultId: String(marketId), position: idx)
+                                trackSearchTap(type: "event_concept", position: idx)
                             })
                             .macKeyboardRow(.futuresDetail(id: marketId), in: keyboardSelection)
                             .macResultMenu(.futuresDetail(id: marketId))
@@ -1122,7 +1111,7 @@ struct SearchView: View {
                         iPadCardGrid(flatFutures) { market in
                             Button {
                                 let pos = flatFutures.firstIndex(where: { $0.id == market.id }) ?? 0
-                                trackSearchTap(type: "futures", resultId: String(market.id), position: pos)
+                                trackSearchTap(type: "futures", position: pos)
                                 path.append(Route.futuresDetail(id: market.id))
                             } label: {
                                 searchFuturesRow(market)
@@ -1137,7 +1126,7 @@ struct SearchView: View {
                                 searchFuturesRow(market)
                             }
                             .simultaneousGesture(TapGesture().onEnded {
-                                trackSearchTap(type: "futures", resultId: String(market.id), position: idx)
+                                trackSearchTap(type: "futures", position: idx)
                             })
                             .macKeyboardRow(.futuresDetail(id: market.id), in: keyboardSelection)
                             .macResultMenu(.futuresDetail(id: market.id))

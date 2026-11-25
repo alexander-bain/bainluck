@@ -73,7 +73,7 @@ final class FirstWeekTelemetry13261Tests: XCTestCase {
     private func fireEveryRow6To8Path() {
         AnalyticsService.trackPinItem(action: "pin", itemType: "event", itemId: 15300001, surface: "iphone")
         AnalyticsService.trackFollowTeam(action: "follow", sport: "basketball_nba", relationType: "follow", surface: "onboarding")
-        AnalyticsService.trackSearchResultClick(query: "Boston Celtics", resultType: "team", resultId: "42", position: 0)
+        AnalyticsService.trackSearchResultClick(query: "Boston Celtics", resultType: "team", position: 0)
 
         let manager = PinManager(defaults: defaults)
         manager.togglePin(type: "event", id: 15300001)
@@ -231,15 +231,13 @@ final class FirstWeekTelemetry13261Tests: XCTestCase {
 
     // MARK: - Row 8: search_result_click
 
-    func testSearchResultClickDropsRawQueryTextAndUsesHashedOrOpaqueIds() {
+    func testSearchResultClickDropsRawQueryAndResultId() {
         TelemetryConsent.shared.set(.analytics)
 
         let rawQuery = "Jane Doe Lakers user@example.com"
-        let hashedTournamentId = FirstWeekTelemetry13261.hashedResultId("us-open-2026")
         AnalyticsService.trackSearchResultClick(
             query: rawQuery,
             resultType: "tournament",
-            resultId: hashedTournamentId,
             position: 0
         )
 
@@ -248,12 +246,11 @@ final class FirstWeekTelemetry13261Tests: XCTestCase {
         let params = clicks[0].params
         XCTAssertNil(params["query"])
         XCTAssertNil(params["search_term"])
+        XCTAssertNil(params["result_id"])
         XCTAssertEqual(params["query_hash"] as? String, AnalyticsPrivacy.hashQuery(rawQuery))
         XCTAssertEqual(params["query_length"] as? Int, rawQuery.utf16.count)
         XCTAssertEqual(params["query_word_count"] as? Int, 4)
         XCTAssertEqual(params["result_type"] as? String, "tournament")
-        XCTAssertEqual(params["result_id"] as? String, hashedTournamentId)
-        XCTAssertFalse((params["result_id"] as? String ?? "").contains("us-open"))
         XCTAssertEqual(params["position"] as? Int, 0)
     }
 }

@@ -29,13 +29,6 @@ nonisolated enum FirstWeekTelemetry13261 {
         "follow", "local", "alma_mater", "rival",
     ]
 
-    /// Device-scoped, non-reversible keyed HMAC token (`404: B`) for string
-    /// result identifiers such as tournament slugs so team/event/person names
-    /// never leave the device.
-    static func hashedResultId(_ raw: String) -> String {
-        "h_\(AnalyticsPrivacy.hashQuery(raw))"
-    }
-
     static func normalizedRelationType(_ raw: String) -> String {
         let lower = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return allowedRelations.contains(lower) ? lower : "unknown"

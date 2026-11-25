@@ -235,6 +235,7 @@ enum AnalyticsPrivacy {
     /// instead; the rest are pure drops.
     static let hardDropKeys: Set<String> = [
         "query", "search_term", "q", "text", "raw_query",
+        "result_id",
         "email", "user_email", "username", "name", "full_name",
         "token", "id_token", "access_token", "auth", "authorization", "password",
         "url", "link", "href", "referrer", "path",
@@ -255,7 +256,7 @@ enum AnalyticsPrivacy {
         // Follow & pin (#13261)
         "relation_type",
         // Entities (opaque ids and categorical labels — joinable, not personal)
-        "event_id", "market_id", "item_id", "item_type", "result_type", "result_id",
+        "event_id", "market_id", "item_id", "item_type", "result_type",
         "sport", "category", "status", "entry_method", "range", "surface", "source",
         // Auth / onboarding
         "method", "step", "step_name", "teams_count",

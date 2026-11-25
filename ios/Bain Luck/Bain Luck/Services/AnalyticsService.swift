@@ -601,12 +601,11 @@ enum AnalyticsService {
 
     /// As with `trackSearch`, the raw `query` is reduced to bounded metadata at
     /// the boundary — the shared `query_hash` is what joins this click back to
-    /// the search that produced it.
-    nonisolated static func trackSearchResultClick(query: String, resultType: String, resultId: String, position: Int) {
+    /// the search that produced it without revealing which result was tapped.
+    nonisolated static func trackSearchResultClick(query: String, resultType: String, position: Int) {
         log("search_result_click", [
             "query": query,
             "result_type": resultType,
-            "result_id": resultId,
             "position": position,
         ])
     }
