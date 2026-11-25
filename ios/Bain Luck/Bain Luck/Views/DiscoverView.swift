@@ -312,6 +312,8 @@ struct DiscoverView: View {
     @State private var profileVersion = 0
     @State private var orderingProfileVersion = 0
     @State private var pullEpoch = 0
+    @State private var firstRunPreferences = FirstRunPreferences212A.load()
+    @State private var firstRunPrefsVersion = 0
 
     /// How many times the reader's pull-to-refresh has actually run.
     ///
@@ -1715,7 +1717,7 @@ struct DiscoverView: View {
     ///     grouping is split by. It changes only beside an `items` reassign, but
     ///     naming it keeps a record change from ever reusing a flat memo.
     private var presentationSignature: String {
-        "\(vm.itemsVersion)|\(dismissVersion)|\(orderingProfileVersion)|\(pullEpoch)|\(vm.acceptedSeatedEdition ?? "")"
+        "\(vm.itemsVersion)|\(dismissVersion)|\(orderingProfileVersion)|\(pullEpoch)|\(firstRunPrefsVersion)|\(vm.acceptedSeatedEdition ?? "")"
     }
 
     /// Cards already admitted in the current sitting since the last pull-to-refresh
@@ -1804,6 +1806,7 @@ struct DiscoverView: View {
             dismissVersion: dismissVersion,
             dismissedAt: dismissedAt,
             profile: orderingProfile ?? interactionProfile,
+            firstRunPreferences: firstRunPreferences,
             sectionOf: vm.seatedSection(of:)
         )
     }
@@ -1825,6 +1828,7 @@ struct DiscoverView: View {
         dismissVersion: Int,
         dismissedAt: [String: TimeInterval],
         profile: DiscoverInteractionProfile?,
+        firstRunPreferences: FirstRunPreferences212A = .empty,
         now: Date = Date(),
         sectionOf: (FeedItem) -> FeedSection? = { _ in nil }
     ) -> GroupedPresentation {
@@ -1989,6 +1993,29 @@ struct DiscoverView: View {
                 spaceGrouped(personalizeGrouped(Array(floored[boundary...]), profile: profile)),
                 now: now
             )
+            if !firstRunPreferences.isEmpty {
+                let matchesFirstRun: (DiscoverGroupedItem) -> Bool = { grouped in
+                    guard let item = primaryFeedItem(grouped) else { return false }
+                    return FirstRunDiscoverBoost212A.itemMatches(
+                        item,
+                        category: groupedCategoryStatic(grouped),
+                        preferences: firstRunPreferences
+                    )
+                }
+                let promotedFromOpening = openingItems.filter(matchesFirstRun)
+                let promotedFromCont = continuationItems.filter(matchesFirstRun)
+                let remainingOpening = openingItems.filter { !matchesFirstRun($0) }
+                let remainingCont = continuationItems.filter { !matchesFirstRun($0) }
+                let boostedOpening = promotedFromOpening + promotedFromCont + remainingOpening
+                return GroupedPresentation(
+                    items: boostedOpening + remainingCont,
+                    continuationStart: remainingCont.isEmpty ? nil : boostedOpening.count,
+                    admittedIds: admitted,
+                    pullEpoch: pullEpoch,
+                    dismissVersion: dismissVersion,
+                    sourceItemIds: allSourceIds
+                )
+            }
             return GroupedPresentation(
                 items: openingItems + continuationItems,
                 continuationStart: openingItems.count,
@@ -1999,7 +2026,7 @@ struct DiscoverView: View {
             )
         }
         var unused = 0
-        let fullItems = DiscoverPageTeamSeat11985.seatItems(
+        let baseFullItems = DiscoverPageTeamSeat11985.seatItems(
             spaceGrouped(
                 personalizeGrouped(
                     enforceGroupFloorTarget(
@@ -2012,6 +2039,19 @@ struct DiscoverView: View {
             ),
             now: now
         )
+        let fullItems: [DiscoverGroupedItem]
+        if firstRunPreferences.isEmpty {
+            fullItems = baseFullItems
+        } else {
+            fullItems = FirstRunDiscoverBoost212A.promotePreferredItems(baseFullItems, preferences: firstRunPreferences) { grouped, prefs in
+                guard let item = primaryFeedItem(grouped) else { return false }
+                return FirstRunDiscoverBoost212A.itemMatches(
+                    item,
+                    category: groupedCategoryStatic(grouped),
+                    preferences: prefs
+                )
+            }
+        }
         return GroupedPresentation(
             items: fullItems,
             continuationStart: nil,
@@ -2521,6 +2561,7 @@ struct DiscoverView: View {
                     }
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 60)
+                    .noteReviewPromptTrouble12304()
                 }
 
                 // Honest staleness banner (#1465): we are showing the last-good
@@ -2554,6 +2595,7 @@ struct DiscoverView: View {
                     .accessibilityElement(children: .combine)
                     .accessibilityLabel("Showing recent markets. Couldn't refresh.")
                     .accessibilityHint("Double-tap Retry to reload the latest feed")
+                    .noteReviewPromptTrouble12304()
                 }
 
                 // Swipe hint (shown once)
@@ -2748,6 +2790,7 @@ struct DiscoverView: View {
                         .accessibilityElement(children: .combine)
                         .accessibilityLabel("Couldn't find fresh markets")
                         .accessibilityHint("Double-tap to retry")
+                        .noteReviewPromptTrouble12304()
                     } else if vm.hasMore {
                         VStack(spacing: 12) {
                             ProgressView()
@@ -3007,8 +3050,17 @@ struct DiscoverView: View {
             await refreshFeed()
         }
         .sheet(isPresented: $showOnboarding) {
-            WelcomeView()
-                .onDisappear { UserDefaults.standard.set(true, forKey: "discover_onboarded") }
+            FirstRunChecklistRootView364A(arrivedHeadline: FirstRunLinkHandoffBridge212A.currentHeadline()) {
+                firstRunPreferences = FirstRunPreferences212A.load()
+                firstRunPrefsVersion &+= 1
+                pullEpoch &+= 1
+            }
+            .onDisappear {
+                UserDefaults.standard.set(true, forKey: FirstRunStorageKeys212A.onboardedKey)
+                firstRunPreferences = FirstRunPreferences212A.load()
+                firstRunPrefsVersion &+= 1
+                pullEpoch &+= 1
+            }
         }
         .sheet(isPresented: $showFeedbackSignIn) {
             MyStuffView()
