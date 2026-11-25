@@ -603,6 +603,9 @@ async def test_http_nuggets_and_admin_grading_scorecard_e2e(
     monkeypatch.setattr(events_route, "get_team_progression", AsyncMock(return_value=tp))
     monkeypatch.setattr(eval_route, "_check_admin_secret", lambda *_a, **_kw: None)
 
+    from app.utils import game_nuggets_cache
+    game_nuggets_cache.clear_l1()
+
     prior = dict(app.dependency_overrides)
     app.dependency_overrides[get_db] = _db_override
     app.dependency_overrides[get_db_rw] = _db_override
@@ -624,6 +627,15 @@ async def test_http_nuggets_and_admin_grading_scorecard_e2e(
             # Deck must never walk games or trigger get_game_markets/related_futures builds
             assert events_route.get_game_markets.await_count == 1
 
+            # Opening a cached event hits game_nuggets_cache first; clear L1 to test
+            # the cold per-game admin read builds via get_game_markets cleanly (#13650).
+            r_game_cached = await client.get(
+                f"/api/admin/ranking/game-nuggets/games/14780582?limit=8&slate={deck['slate_id']}"
+            )
+            assert r_game_cached.status_code == 200, r_game_cached.text
+            assert events_route.get_game_markets.await_count == 1
+
+            game_nuggets_cache.clear_l1()
             r_game = await client.get(
                 f"/api/admin/ranking/game-nuggets/games/14780582?limit=8&slate={deck['slate_id']}"
             )

@@ -160,9 +160,11 @@ async def _compute_league_context(
     teams_data = grid_data.get("teams", [])
     if not teams_data:
         # Try grouped_teams (conference split)
-        grouped = grid_data.get("grouped_teams", {})
-        for group_teams in grouped.values():
-            teams_data.extend(group_teams)
+        grouped = grid_data.get("grouped_teams") or {}
+        if isinstance(grouped, dict):
+            for group_teams in grouped.values():
+                if group_teams:
+                    teams_data.extend(group_teams)
 
     teams: dict[str, TeamLeagueContext] = {}
     for team in teams_data:
@@ -251,7 +253,8 @@ async def get_league_context(
         r = get_redis_client()
         cached = r.get(cache_key)
         if cached:
-            return LeagueContext.from_json(cached.decode())
+            raw = cached.decode() if isinstance(cached, bytes) else cached
+            return LeagueContext.from_json(raw)
     except Exception:
         pass  # Redis unavailable — compute fresh
 
@@ -297,39 +300,30 @@ async def get_team_context(
     return None
 
 
-async def enrich_event_with_context(
+def read_cached_league_context(league_slug: str) -> Optional[LeagueContext]:
+    """Read-only Redis lookup for ``LeagueContext`` (never triggers grid compute)."""
+    from app.tasks.redis_state import get_redis_client
+
+    cache_key = f"bainluck:league_context:{league_slug}"
+    try:
+        r = get_redis_client(fast_fail=True)
+        cached = r.get(cache_key)
+        if cached:
+            raw = cached.decode() if isinstance(cached, bytes) else cached
+            return LeagueContext.from_json(raw)
+    except Exception:
+        return None
+    return None
+
+
+def _format_event_league_context(
     event,
-    db: AsyncSession,
+    config,
+    ctx: LeagueContext,
 ) -> Optional[dict]:
-    """Add league context to an event for the API response.
-
-    Returns a dict with league_context data for both teams,
-    or None if the event's sport doesn't have a league config.
-    """
-    # Resolve event's sport to a league
-    sport_key = None
-    if event.sport_id:
-        from app.models import Sport
-        from sqlalchemy import select
-        sport_result = await db.execute(
-            select(Sport.key).where(Sport.id == event.sport_id)
-        )
-        sport_key = sport_result.scalar()
-
-    if not sport_key:
-        return None
-
-    config = get_league_for_sport_key(sport_key)
-    if not config:
-        return None
-
-    ctx = await get_league_context(config.slug, db)
-    if not ctx:
-        return None
-
-    # Look up both teams
-    home_name = event.home_team_name or ""
-    away_name = event.away_team_name or ""
+    """Match an event's home/away teams against a resolved ``LeagueContext``."""
+    home_name = getattr(event, "home_team_name", None) or ""
+    away_name = getattr(event, "away_team_name", None) or ""
 
     home_ctx = None
     away_ctx = None
@@ -352,16 +346,22 @@ async def enrich_event_with_context(
     away_norm = normalize_name(away_name)
 
     for cached_norm, team_ctx in ctx.teams.items():
-        if not home_ctx and (home_norm == cached_norm or home_norm in cached_norm or cached_norm in home_norm):
+        if not home_ctx and (
+            home_norm == cached_norm or home_norm in cached_norm or cached_norm in home_norm
+        ):
             home_ctx = team_ctx
-        if not away_ctx and (away_norm == cached_norm or away_norm in cached_norm or cached_norm in away_norm):
+        if not away_ctx and (
+            away_norm == cached_norm or away_norm in cached_norm or cached_norm in away_norm
+        ):
             away_ctx = team_ctx
 
     if not home_ctx and not away_ctx:
         return None
 
     sport_group = LEAGUE_TO_SPORT.get(config.slug, "")
-    league_page_url = f"/{sport_group}/{config.slug}" if sport_group else f"/playoffs/{config.slug}"
+    league_page_url = (
+        f"/{sport_group}/{config.slug}" if sport_group else f"/playoffs/{config.slug}"
+    )
 
     result = {
         "league_slug": config.slug,
@@ -411,3 +411,52 @@ async def enrich_event_with_context(
         }
 
     return result
+
+
+def enrich_event_with_cached_context(
+    event,
+    sport_key: Optional[str],
+) -> Optional[dict]:
+    """Return cached league context for an event with zero DB queries (#13650)."""
+    if not sport_key:
+        return None
+    config = get_league_for_sport_key(sport_key)
+    if not config:
+        return None
+    ctx = read_cached_league_context(config.slug)
+    if not ctx:
+        return None
+    return _format_event_league_context(event, config, ctx)
+
+
+async def enrich_event_with_context(
+    event,
+    db: AsyncSession,
+) -> Optional[dict]:
+    """Add league context to an event for the API response.
+
+    Returns a dict with league_context data for both teams,
+    or None if the event's sport doesn't have a league config.
+    """
+    # Resolve event's sport to a league
+    sport_key = None
+    if event.sport_id:
+        from app.models import Sport
+        from sqlalchemy import select
+        sport_result = await db.execute(
+            select(Sport.key).where(Sport.id == event.sport_id)
+        )
+        sport_key = sport_result.scalar()
+
+    if not sport_key:
+        return None
+
+    config = get_league_for_sport_key(sport_key)
+    if not config:
+        return None
+
+    ctx = await get_league_context(config.slug, db)
+    if not ctx:
+        return None
+
+    return _format_event_league_context(event, config, ctx)
