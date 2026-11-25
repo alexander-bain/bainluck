@@ -183,7 +183,7 @@ async def test_load_snapshot_from_db_executes_lateral_history_and_collects_point
     monkeypatch.setattr("app.routes.futures._resolve_verified_title", _fake_vt)
     monkeypatch.setattr("app.routes.futures._format_market_detail", _fake_format)
     monkeypatch.setattr(
-        "app.routes.futures._apply_verified_title_to_detail", lambda d, v, fm_arg: None
+        "app.routes.futures._apply_verified_title_to_detail", lambda d, v, fm_arg, **kwargs: None
     )
 
     snapshot = await _load_snapshot_from_db(_FakeDB(), defn, now_dt)
