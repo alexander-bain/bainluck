@@ -137,12 +137,17 @@ final class DuelBarDiscoverCard13551Tests: XCTestCase {
             try FileManager.default.createDirectory(atPath: outDir, withIntermediateDirectories: true)
         }
 
-        let configs: [(tag: String, card: MachineryCardContract, scheme: ColorScheme, typeSize: DynamicTypeSize, height: CGFloat)] = [
-            ("after-reg-light", twoWayCard, .light, .large, 340),
-            ("after-reg-dark", twoWayCard, .dark, .large, 340),
-            ("after-ax5-light", twoWayCard, .light, .accessibility5, 580),
-            ("after-ax5-dark", twoWayCard, .dark, .accessibility5, 580),
-            ("after-3way-light", threeWayCard, .light, .large, 340),
+        let configs: [(tag: String, width: CGFloat, card: MachineryCardContract, scheme: ColorScheme, typeSize: DynamicTypeSize, height: CGFloat)] = [
+            ("after-reg-light-390", 390, twoWayCard, .light, .large, 340),
+            ("after-reg-dark-390", 390, twoWayCard, .dark, .large, 340),
+            ("after-ax5-light-390", 390, twoWayCard, .light, .accessibility5, 580),
+            ("after-ax5-dark-390", 390, twoWayCard, .dark, .accessibility5, 580),
+            ("after-3way-light-390", 390, threeWayCard, .light, .large, 340),
+            ("after-3way-dark-390", 390, threeWayCard, .dark, .large, 340),
+            ("after-reg-light-320", 320, twoWayCard, .light, .large, 360),
+            ("after-reg-dark-320", 320, twoWayCard, .dark, .large, 360),
+            ("after-ax5-light-320", 320, twoWayCard, .light, .accessibility5, 660),
+            ("after-3way-light-320", 320, threeWayCard, .light, .large, 360),
         ]
 
         for cfg in configs {
@@ -150,7 +155,7 @@ final class DuelBarDiscoverCard13551Tests: XCTestCase {
                 MachineryDiscoverCardView(card: cfg.card)
                     .padding(16)
             }
-            let img = await render390(view: view, scheme: cfg.scheme, typeSize: cfg.typeSize, height: cfg.height)
+            let img = await renderCard(view: view, width: cfg.width, scheme: cfg.scheme, typeSize: cfg.typeSize, height: cfg.height)
             let ocr = try ocrLines(img).joined(separator: " ")
 
             if cfg.card.slug == "machinery-afc-west-duel" {
@@ -164,21 +169,22 @@ final class DuelBarDiscoverCard13551Tests: XCTestCase {
             XCTAssertFalse(ocr.contains("…"), "\(cfg.tag) truncated text with ellipsis: \(ocr)")
 
             if let outDir, !outDir.isEmpty, let png = img.pngData() {
-                try png.write(to: URL(fileURLWithPath: outDir).appendingPathComponent("\(cfg.tag)-390.png"))
+                try png.write(to: URL(fileURLWithPath: outDir).appendingPathComponent("\(cfg.tag).png"))
             }
         }
     }
 
-    private func render390<V: View>(
+    private func renderCard<V: View>(
         view: V,
+        width: CGFloat,
         scheme: ColorScheme,
         typeSize: DynamicTypeSize,
         height: CGFloat
     ) async -> UIImage {
-        let frame = CGRect(x: 0, y: 0, width: 390, height: height)
+        let frame = CGRect(x: 0, y: 0, width: width, height: height)
         let bg = scheme == .dark ? Color.black : Color(UIColor.systemGroupedBackground)
         let wrapped = view
-            .frame(width: 390, height: height, alignment: .topLeading)
+            .frame(width: width, height: height, alignment: .topLeading)
             .background(bg)
             .environment(\.horizontalSizeClass, .compact)
             .environment(\.colorScheme, scheme)
