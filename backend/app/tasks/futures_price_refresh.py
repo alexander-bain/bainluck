@@ -243,7 +243,7 @@ from app.utils.futures_quote_freshness import (
     price_refresh_due_sql,
     registered_price_refresh_market_ids,
 )
-from app.utils.kalshi_empty_book import ASK_ONLY_TRUSTED_MAX
+from app.utils.kalshi_empty_book import ASK_ONLY_TRUSTED_MAX, ask_with_zero_bid
 from app.utils.kalshi_resolution_window import derive_resolution_window  # #8871
 from app.utils.kalshi_threshold_label import (  # #9543
     THRESHOLD_LABEL_KEY,
@@ -1728,8 +1728,13 @@ async def _write_prices(
             answered.append(item)
             continue
         if item.get("venue_quotes_no_price"):
-            ask = item.get("yes_ask")
-            if bookmaker == "kalshi" and item.get("yes_bid") == 0 and ask is not None and ask > 0:
+            ask = ask_with_zero_bid(item.get("yes_bid"), item.get("yes_ask"))
+            if bookmaker == "kalshi" and ask is not None:
+                if poll is not None:
+                    outcome_id = existing.get(item["external_id"])
+                    if outcome_id is not None and poll.admit(outcome_id, None, 0, ask, stats):
+                        ask_ceilings[item["external_id"]] = ask
+                    continue
                 if ask <= ASK_ONLY_TRUSTED_MAX:
                     ask_ceilings[item["external_id"]] = ask
                     continue
@@ -2040,16 +2045,22 @@ async def _write_prices(
     # So a leg the venue stops quoting keeps its last price for a week. That is
     # deliberate: a quiet book is the normal state of a season future, and one
     # unpriced pass is not evidence of anything.
-    if (ask_ceilings or high_asks) and poll is None:
+    if ask_ceilings or high_asks:
         from app.tasks.kalshi import record_kalshi_ask_ceilings
 
-        await record_kalshi_ask_ceilings(
-            session, market_id, ask_ceilings, observed_at=now
-        )
-        await record_kalshi_ask_ceilings(
-            session, market_id, high_asks,
-            observed_at=now, preserve_previous_price=True,
-        )
+        if poll is None:
+            await record_kalshi_ask_ceilings(
+                session, market_id, ask_ceilings, observed_at=now
+            )
+            await record_kalshi_ask_ceilings(
+                session, market_id, high_asks,
+                observed_at=now, preserve_previous_price=True,
+            )
+        else:
+            poll.withdrawn.update(await record_kalshi_ask_ceilings(
+                session, market_id, ask_ceilings, observed_at=now,
+                poll_fetched_at=poll.fetched_at,
+            ))
 
     if written and unpriced:
         stale_before = now - timedelta(days=OBSERVATION_LAG_DAYS)

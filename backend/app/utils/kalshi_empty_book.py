@@ -1,10 +1,10 @@
 """A lone ask on an empty Kalshi book is not a price — the shared predicate.
 
 WHY THIS FILE EXISTS. ``_kalshi_yes_probability`` (``app/tasks/kalshi.py``)
-learned this on 2026-07-13 in ``52eee9b6`` (Queue #182): an ask-only book is
-trusted only up to :data:`ASK_ONLY_TRUSTED_MAX`, and above it the poller stores
-nothing rather than publish the ask. The guard works — since that commit there
-is not one stored Kalshi opening whose book was a lone ask above 0.50.
+first bounded ask-only prices on 2026-07-13 in ``52eee9b6`` (Queue #182).
+That write limit was :data:`ASK_ONLY_TRUSTED_MAX`. #11995 now records
+an ask-only book as a ceiling. The legacy limit still identifies the
+historical snapshots that the opening promotion must refuse.
 
 But it guards the WRITE, and nothing guarded the PROMOTION. ``backfill_winners``
 Phase 0c-repair copies a resolved outcome's earliest snapshot into
@@ -56,10 +56,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-#: Highest ask an ask-only book may carry and still be trusted as a price.
-#: Bound to ``app.tasks.kalshi._kalshi_yes_probability`` rule 3 by
-#: ``tests/test_kalshi_empty_book.py``; changing one without the other is the
-#: drift this constant exists to make loud.
+#: Highest legacy ask retained for reader labels while the display is under review.
 ASK_ONLY_TRUSTED_MAX = 0.50
 
 #: ``futures_odds_snapshots.bookmaker`` for the venue this rule is about. The
@@ -67,6 +64,15 @@ ASK_ONLY_TRUSTED_MAX = 0.50
 #: source's snapshots, and this policy is Kalshi's alone — see
 #: :func:`lone_ask_on_empty_book_sql`.
 KALSHI_BOOKMAKER = "kalshi"
+
+
+def ask_with_zero_bid(
+    yes_bid: Optional[float], yes_ask: Optional[float]
+) -> Optional[float]:
+    """Return the ask a venue read explicitly pairs with a zero bid."""
+    if yes_bid == 0 and yes_ask is not None and 0 < yes_ask <= 1:
+        return yes_ask
+    return None
 
 
 def _is_ask_only_book(
@@ -107,11 +113,8 @@ def is_lone_ask_on_empty_book(
 ) -> bool:
     """True when this book carries no price, only an untaken offer.
 
-    Behaviour is unchanged by #6846's refactor: :func:`_is_ask_only_book` already
-    requires ``yes_ask > 0``, so the ``> ASK_ONLY_TRUSTED_MAX`` term below is
-    what it always was and this function answers exactly what it answered
-    before. The write side is bound to it — ``_kalshi_yes_probability`` rule 3 —
-    so it does not move.
+    The cap distinguishes historical upper bounds written before #11995.
+    New writes keep an asking ceiling without producing a quote.
     """
     if not _is_ask_only_book(yes_bid, yes_ask, last_price):
         return False

@@ -421,10 +421,12 @@ def display_probability_divisor(
 ) -> float | None:
     """One venue-blind served-number rule; never turn unknown mass into zero.
 
-    Use the full eligible field before slicing a preview. A recorded Kalshi
-    zero bid gives the ask no share. A missing price without that evidence
-    keeps the field incomplete. The supported mass must be between 100% and
-    160% for an allocation, so a low total cannot inflate a quoted chance.
+    Alex's clarification: normalize a healthy, complete one-winner field to
+    100%, using the full field before slicing a preview. A recorded Kalshi
+    zero bid gives the ask no share. A field with a no-bid row can only scale
+    down, and an unpriced row without book evidence keeps the field incomplete.
+    A raw sum above 160% refuses conversion without identifying a stale leg.
+    Legacy one-cent upper bounds retain their existing exclusion.
     A cumulative ladder is refused even if its stored exclusivity flag is wrong.
     """
     import math
@@ -449,7 +451,10 @@ def display_probability_divisor(
     raw_mass = math.fsum(float(p) for p in values)
     book_backed = any("kalshi_no_bid" in row for row in outcomes)
     if mutually_exclusive and book_backed:
-        return raw_mass if 1 <= raw_mass <= _FIELD_SUM_MAX else None
+        has_no_bid = len(values) < len(outcomes)
+        if raw_mass > _FIELD_SUM_MAX or (has_no_bid and raw_mass < 1):
+            return None
+        return raw_mass or None
     # Historical and other readers that do not carry the Kalshi book keep the
     # existing scale. A legacy one-cent value is not evidence of a current bid.
     mass = raw_mass if mutually_exclusive is None else display_divisor_mass(values)

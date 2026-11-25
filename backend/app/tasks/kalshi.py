@@ -31,7 +31,7 @@ from app.utils.sport_keys import (  # noqa: E402
 from app.utils.editorial_patterns import (
     matches_editorial_recall as _matches_editorial_recall,
 )  # noqa: E402
-from app.utils.kalshi_empty_book import book_refutes_price  # noqa: E402  # #5121, moved #6532
+from app.utils.kalshi_empty_book import ask_with_zero_bid, book_refutes_price  # noqa: E402
 from app.utils.kalshi_market_status import (  # noqa: E402
     all_terminal,
     graded_columns,
@@ -549,10 +549,12 @@ async def record_kalshi_ask_ceilings(
     session, market_id: int, asks_by_ticker: dict[str, float | None], *,
     observed_at: datetime,
     preserve_previous_price: bool = False,
-) -> None:
+    poll_fetched_at: datetime | None = None,
+    changed_only: bool = False,
+) -> dict[int, datetime]:
     """Record positive evidence of a zero bid without writing a price snapshot."""
     if not asks_by_ticker:
-        return
+        return {}
     from app.models import FuturesOutcome
     from app.utils.price_change_stamp import price_changed_at_value
 
@@ -575,17 +577,35 @@ async def record_kalshi_ask_ceilings(
         )
         .values(current_yes_bid=0, current_yes_ask=ask)
     )
+    if poll_fetched_at is not None:
+        lockable = FuturesOutcome.__table__.alias("ask_ceiling_lockable")
+        statement = statement.where(
+            or_(
+                FuturesOutcome.last_updated.is_(None),
+                FuturesOutcome.last_updated < poll_fetched_at,
+            ),
+            or_(
+                FuturesOutcome.price_changed_at.is_(None),
+                FuturesOutcome.price_changed_at < poll_fetched_at,
+            ),
+            FuturesOutcome.id.in_(
+                select(lockable.c.id)
+                .where(
+                    lockable.c.market_id == market_id,
+                    lockable.c.external_id.in_(asks_by_ticker),
+                )
+                .order_by(lockable.c.id)
+                .with_for_update(skip_locked=True, key_share=True)
+            ),
+        )
     if preserve_previous_price:
         # The existing price keeps its own observation time until it expires.
         statement = statement.where(book_changed)
     else:
-        statement = statement.where(
-            or_(
-                book_changed,
-                FuturesOutcome.current_probability.is_not(None),
-                FuturesOutcome.last_updated < observed_at,
-            ),
-        ).values(
+        changes = [book_changed, FuturesOutcome.current_probability.is_not(None)]
+        if not changed_only:
+            changes.append(FuturesOutcome.last_updated < observed_at)
+        statement = statement.where(or_(*changes)).values(
             current_probability=None,
             current_american_odds=None,
             probability_change_24h=None,
@@ -594,7 +614,13 @@ async def record_kalshi_ask_ceilings(
                 FuturesOutcome.current_probability, FuturesOutcome.price_changed_at, None
             ),
         )
-    await session.execute(statement)
+    if poll_fetched_at is None and not changed_only:
+        await session.execute(statement)
+        return {}
+    result = await session.execute(
+        statement.returning(FuturesOutcome.id, FuturesOutcome.last_updated)
+    )
+    return dict(result.all())
 
 
 #: The venue status of a leg Kalshi has WITHDRAWN. Not a lifecycle state the
@@ -4739,6 +4765,14 @@ async def _refresh_linked_game_books(deadline_s: float | None = None) -> dict:
                         )
                         if prob is None and not withdrawn:
                             stats["books_unreadable"] += 1
+                            ask_ceiling = ask_with_zero_bid(venue_market.yes_bid, venue_market.yes_ask)
+                            if ask_ceiling is not None and venue_market.ticker in existing:
+                                observations = await record_kalshi_ask_ceilings(
+                                    session, row.id, {venue_market.ticker: ask_ceiling},
+                                    observed_at=now, changed_only=True,
+                                )
+                                stats["outcomes_repriced"] += len(observations)
+                                continue
                         american = (
                             probability_to_american(prob)
                             if prob is not None and 0 < prob < 1

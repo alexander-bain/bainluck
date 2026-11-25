@@ -1301,7 +1301,7 @@ async def test_load_snapshot_from_db_executes_every_query_for_every_candidate_de
     assert "row_number() over (partition by futures_odds_snapshots.outcome_id" not in joined_sql
 
 
-@pytest.mark.parametrize("new_probability, expected_percent", [(0.41, 41), (0.46, 44)])
+@pytest.mark.parametrize("new_probability, expected_percent", [(0.41, 42), (0.46, 44)])
 async def test_paired_discover_card_and_set_match_the_market_pages_allocation(
     pg_machinery, new_probability, expected_percent
 ):

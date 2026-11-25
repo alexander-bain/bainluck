@@ -24,6 +24,7 @@ stored value is read back from an engine, not inferred from a parameter dict.
 """
 
 import json
+from datetime import datetime, timezone
 
 import pytest
 from sqlalchemy import create_engine, insert, select
@@ -39,6 +40,8 @@ from tests.test_a_settled_leg_takes_no_live_price_5411 import (
     _CapturingSession,
     _Frames,
     _NoopRefresher,
+    _Result,
+    _sets_the_price,
 )
 from tests._kalshi_price_session import bind_sessions
 from tests._sqlite_returned_clock import install_returned_clock
@@ -89,9 +92,21 @@ async def _price_updates(monkeypatch, frame) -> list[tuple[Update, dict | None]]
 
         return _Ctx()
 
+    class _Session(_CapturingSession):
+        async def execute(self, stmt, params=None):
+            if (
+                params is None
+                and isinstance(stmt, Update)
+                and stmt.table.name == "futures_outcomes"
+                and _sets_the_price(stmt)
+            ):
+                captured.append((stmt, None))
+                return _Result([])
+            return await super().execute(stmt, params)
+
     class _SessionCtx:
         async def __aenter__(self):
-            return _CapturingSession(batches, captured, 1)
+            return _Session(batches, captured, 1)
 
         async def __aexit__(self, *_exc):
             return False
@@ -112,7 +127,7 @@ async def _price_updates(monkeypatch, frame) -> list[tuple[Update, dict | None]]
     return captured
 
 
-def _stored_after(write) -> tuple[float, float, float]:
+def _stored_after(write, seed=(SEEDED_PRICE, SEEDED_BID, SEEDED_ASK)):
     """Execute the captured UPDATE on one seeded SQLite row; read the row back."""
     engine = create_engine("sqlite://")
     install_returned_clock(engine)
@@ -124,9 +139,10 @@ def _stored_after(write) -> tuple[float, float, float]:
             market_id=MARKET_ID,
             external_id=TICKER,
             name="Indiana scores first TD",
-            current_probability=SEEDED_PRICE,
-            current_yes_bid=SEEDED_BID,
-            current_yes_ask=SEEDED_ASK,
+            current_probability=seed[0],
+            current_yes_bid=seed[1],
+            current_yes_ask=seed[2],
+            last_updated=datetime(2026, 9, 25, tzinfo=timezone.utc),
         ))
         # #9484: the UPDATE RETURNS the row it wrote; consume it (SQLite
         # holds the statement open until the rows are read).
@@ -139,7 +155,7 @@ def _stored_after(write) -> tuple[float, float, float]:
                 table.c.current_yes_ask,
             ).where(table.c.id == OUTCOME_ID)
         ).one()
-    return tuple(float(v) for v in row)
+    return tuple(float(v) if v is not None else None for v in row)
 
 
 async def _stored_for(monkeypatch, frame) -> tuple[float, float, float]:
@@ -224,17 +240,26 @@ async def test_the_socket_stores_exactly_what_the_rest_writer_would(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("bid,ask,last", [("0.0200", "0.8000", "0.9600"),
-                                         ("0.0000", "0.0900", "0.5200")])
-async def test_a_book_with_only_an_ask_or_refuted_trade_writes_no_price(
-    monkeypatch, bid, ask, last
-):
+async def test_a_refuted_trade_without_a_zero_bid_writes_no_price(monkeypatch):
+    bid, ask, last = "0.0200", "0.8000", "0.9600"
     assert _kalshi_yes_probability(float(bid), float(ask), float(last)) is None
     updates = await _price_updates(
         monkeypatch,
         _tick(price_dollars=last, yes_bid_dollars=bid, yes_ask_dollars=ask),
     )
     assert updates == [], "a book with no price in it was written as one"
+
+
+@pytest.mark.asyncio
+async def test_the_socket_clears_a_price_above_the_new_lone_ask(monkeypatch):
+    updates = await _price_updates(
+        monkeypatch,
+        _tick(price_dollars="0.0600", yes_bid_dollars="0.0000", yes_ask_dollars="0.0300"),
+    )
+    assert len(updates) == 1
+    price, bid, ask = _stored_after(updates[0], seed=(0.06, 0.05, 0.07))
+    assert price is None
+    assert (bid, ask) == pytest.approx((0.0, 0.03))
 
 
 @pytest.mark.asyncio

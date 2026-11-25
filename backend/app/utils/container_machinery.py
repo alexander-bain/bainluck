@@ -2049,6 +2049,7 @@ def _canonical_market_outcome_map(
     already_has_rendered = False
     field_complete = True
     book_backed = False
+    has_no_bid = False
     for idx, o in enumerate(raw_outcomes):
         if not isinstance(o, Mapping):
             continue
@@ -2056,6 +2057,7 @@ def _canonical_market_outcome_map(
         if not name or is_placeholder_outcome_name(name) or _PLACEHOLDER_OUTCOME_RE.match(name):
             continue
         book_backed |= "kalshi_no_bid" in o
+        has_no_bid |= bool(o.get("kalshi_no_bid"))
         prob = o.get("probability")
         if not isinstance(prob, (int, float)) or not math.isfinite(float(prob)):
             field_complete &= bool(o.get("kalshi_no_bid"))
@@ -2080,7 +2082,7 @@ def _canonical_market_outcome_map(
     supported_sum = math.fsum(float(r["probability"]) for r in rows if not r.get("kalshi_no_bid"))
     if (
         rows and not already_has_rendered and mutually_exclusive
-        and (supported_sum > 1.005 or (book_backed and supported_sum >= 1))
+        and (supported_sum > 1.005 or (book_backed and (supported_sum >= 1 or not has_no_bid)))
     ):
         normalize_display_probs(
             rows,

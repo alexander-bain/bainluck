@@ -814,6 +814,8 @@ class PollWrite:
     stored: dict[int, tuple]
     allowed: frozenset[int]
     moved: list[tuple[int, dict]] = field(default_factory=list)
+    #: Quote withdrawals update rank and clear deferred chart work.
+    withdrawn: set[int] = field(default_factory=set)
     #: outcome_id → (probability, yes_bid, yes_ask) read unchanged.
     unchanged: dict[int, tuple] = field(default_factory=dict)
     #: The history bound. The defaults are this poll's; the 3-minute
@@ -832,7 +834,8 @@ class PollWrite:
             and _same(bid, held[1], _BOOK_EPS)
             and _same(ask, held[2], _BOOK_EPS)
         ):
-            self.unchanged[outcome_id] = (prob, bid, ask)
+            if prob is not None:
+                self.unchanged[outcome_id] = (prob, bid, ask)
             stats["legs_unchanged"] = stats.get("legs_unchanged", 0) + 1
             return False
         return True
@@ -932,14 +935,14 @@ async def write_market(
     from app.utils.odds_math import probability_to_american
 
     await _write_prices(session, market_id, venue, priced, stats, poll=poll)
-    if poll.moved:
-        stats["rows_updated"] = stats.get("rows_updated", 0) + len(poll.moved)
+    if poll.moved or poll.withdrawn:
+        stats["rows_updated"] = stats.get("rows_updated", 0) + len(poll.moved) + len(poll.withdrawn)
         await session.execute(rerank_market_field_skip_locked_stmt(market_id))
         stats["markets_moved"] = stats.get("markets_moved", 0) + 1
     carrying = [oid for oid in poll.unchanged if oid in deferred.members]
     #: merged into `deferred` only once this market's commit has landed
     defer: set[int] = set()
-    undefer: set[int] = set()
+    undefer: set[int] = set(poll.withdrawn)
     last = await load_last_points(session, [oid for oid, _s in poll.moved] + carrying)
 
     async def point(outcome_id, side, counter):
@@ -990,10 +993,11 @@ async def write_market(
 
 
 def kalshi_items(service, raw_markets: list[dict], stats: dict) -> dict[str, dict]:
-    """TICKER → priced item, under the 2-hour poll's own Kalshi rules."""
+    """TICKER → price or explicit ask ceiling under the shared Kalshi rule."""
     from app.services.kalshi_api import venue_volume_24h
     from app.tasks.kalshi import _is_withdrawn_leg, _kalshi_yes_probability
     from app.utils.futures_liveness import venue_answered
+    from app.utils.kalshi_empty_book import ask_with_zero_bid
 
     volume = {
         str(m.get("ticker") or "").upper(): venue_volume_24h(m)
@@ -1012,9 +1016,12 @@ def kalshi_items(service, raw_markets: list[dict], stats: dict) -> dict[str, dic
             stats["refused_withdrawn"] = stats.get("refused_withdrawn", 0) + 1
             continue
         prob = _kalshi_yes_probability(km.yes_bid, km.yes_ask, km.last_price)
+        ask_ceiling = False
         if prob is None:
             stats["no_price"] = stats.get("no_price", 0) + 1
-            continue
+            ask_ceiling = ask_with_zero_bid(km.yes_bid, km.yes_ask) is not None
+            if not ask_ceiling:
+                continue
         items[ticker] = {
             "probability": prob,
             "yes_bid": km.yes_bid,
@@ -1022,6 +1029,8 @@ def kalshi_items(service, raw_markets: list[dict], stats: dict) -> dict[str, dic
             "last_price": km.last_price,
             "volume_24h": volume.get(ticker),
         }
+        if ask_ceiling:
+            items[ticker]["venue_quotes_no_price"] = True
     return items
 
 

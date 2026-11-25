@@ -51,6 +51,31 @@ def test_kalshi_zero_bids_have_no_share_on_the_page_set_or_card(raw, normalize):
     assert all("rendered_percent" not in r for r in page[-2:])
 
 
+def test_complete_kalshi_book_at_97_percent_is_normalized_on_all_surfaces():
+    from app.utils.container_machinery import _canonical_market_outcome_map
+    from app.utils.outcome_display import mark_kalshi_ask_ceilings
+
+    market = SimpleNamespace(source="kalshi", status="open")
+    complete = [
+        SimpleNamespace(id=1, name="Alice", current_probability=0.60, current_yes_bid=0.59),
+        SimpleNamespace(id=2, name="Bob", current_probability=0.37, current_yes_bid=0.36),
+    ]
+    page = [
+        {"id": row.id, "name": row.name, "probability": row.current_probability}
+        for row in complete
+    ]
+    card = deepcopy(page)
+    mark_kalshi_ask_ceilings(market, page, {row.id: row for row in complete})
+    set_rows, *_ = _canonical_market_outcome_map(page)
+    assert normalize_display_probs(page)
+    _normalize_feed_probabilities(card, complete, market=market, mutually_exclusive=True)
+    for surface in (page, set_rows, card):
+        assert [row["probability"] for row in surface] == pytest.approx(
+            [0.60 / 0.97, 0.37 / 0.97]
+        )
+        assert sum(row["rendered_percent"] for row in surface) == 100
+
+
 def test_kalshi_ask_only_ceiling_is_never_a_price_input():
     from app.tasks.kalshi import _kalshi_yes_probability
 
