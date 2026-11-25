@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from starlette.requests import Request
@@ -15,6 +16,8 @@ from app.utils.scout_morning_deck import (
     build_scout_morning_deck,
 )
 from scripts.promote_kept_scout_sets import apply_scout_promotions, plan_scout_promotions
+
+FROZEN_NOW = datetime(2026, 11, 26, 15, 0, tzinfo=timezone.utc)
 
 
 class _MemoryRedis:
@@ -148,6 +151,7 @@ async def test_blind_deck_mixes_equally_and_keeps_key_strictly_in_redis(monkeypa
         deck_date="2026-11-26",
         redis_client=rc,
         public_override=[_public_fixture(1), _public_fixture(2)],
+        now=FROZEN_NOW,
     )
     assert deck["status"] == "ready"
     assert deck["staged_count"] == 2
@@ -161,6 +165,7 @@ async def test_blind_deck_mixes_equally_and_keeps_key_strictly_in_redis(monkeypa
         deck_date="2026-11-26",
         redis_client=rc,
         public_override=[_public_fixture(1), _public_fixture(2)],
+        now=FROZEN_NOW,
     )
     assert [i["item_id"] for i in deck["items"]] == [i["item_id"] for i in deck2["items"]]
     assert [i["title"] for i in deck["items"]] == [i["title"] for i in deck2["items"]]
