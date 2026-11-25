@@ -78,6 +78,7 @@ struct SearchView: View {
     @FocusState private var isSearchFocused: Bool
     @Environment(\.horizontalSizeClass) private var sizeClass
     @Environment(\.colorScheme) private var colorScheme
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @State private var path: NavigationPath
     /// #10878 — the Mac window's kept place for this screen: the query and
     /// results (the view model), the open detail and the results' scroll
@@ -336,7 +337,10 @@ struct SearchView: View {
             Image(systemName: "magnifyingglass")
                 .font(.subheadline)
                 .foregroundStyle(isSearchFocused ? .primary : .secondary)
-            TextField("Search teams, games, futures...", text: $viewModel.query)
+            TextField(
+                dynamicTypeSize.isAccessibilitySize ? "Search" : "Search teams, games, futures...",
+                text: $viewModel.query
+            )
                 .textFieldStyle(.plain)
                 .autocorrectionDisabled()
                 .focused($isSearchFocused)
