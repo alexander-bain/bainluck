@@ -10,6 +10,7 @@
  */
 
 import {
+  _resetBrowserQuerySecretForTests,
   sanitizeEvent,
   scrubString,
   hashQuery,
@@ -265,27 +266,96 @@ describe('taxonomy integrity', () => {
 });
 
 // ============================================================================
-// Cross-surface hash contract (L2-219 Item 2 / #1453)
+// Per-browser keyed hash contract (Decision 404: B)
 // ============================================================================
 
-describe('hashQuery — cross-surface contract with native', () => {
-  /**
-   * The native rail (`AnalyticsPrivacy.hashQuery` in
-   * `ios/Bain Luck/Bain Luck/Services/AnalyticsPrivacy.swift`) pins these exact
-   * values. Both sides must agree or the search funnel silently stops joining
-   * web ↔ iOS. Change one, change both — and expect both suites to fail first.
-   */
-  it('pins the values the Swift implementation asserts', () => {
-    expect(hashQuery('')).toBe('ztntfp');
-    expect(hashQuery('lakers')).toBe('1ghlcvp');
-    expect(hashQuery('Lakers vs Celtics')).toBe('sn4x6t');
-    expect(hashQuery('super bowl')).toBe('4gxf0');
+describe('hashQuery — Decision 404: B per-browser random secret', () => {
+  const SECRET_STORAGE_KEY = 'bainluck_search_hash_secret_v1';
+  const ORIGINAL_WINDOW = (globalThis as { window?: unknown }).window;
+
+  function installMockLocalStorage(): Map<string, string> {
+    const store = new Map<string, string>();
+    (globalThis as { window?: unknown }).window = {
+      localStorage: {
+        getItem: (k: string) => store.get(k) ?? null,
+        setItem: (k: string, v: string) => {
+          store.set(k, v);
+        },
+      },
+    };
+    return store;
+  }
+
+  beforeEach(() => {
+    _resetBrowserQuerySecretForTests();
   });
 
-  it('normalizes trim + case the same way native does', () => {
+  afterEach(() => {
+    _resetBrowserQuerySecretForTests();
+    if (ORIGINAL_WINDOW === undefined) {
+      delete (globalThis as { window?: unknown }).window;
+    } else {
+      (globalThis as { window?: unknown }).window = ORIGINAL_WINDOW;
+    }
+  });
+
+  it('persists one random secret in localStorage and stays stable across calls and reloads in the same browser', () => {
+    const store = installMockLocalStorage();
+    const first = hashQuery('lakers');
+    const persisted = store.get(SECRET_STORAGE_KEY);
+    expect(persisted).toMatch(/^[0-9a-f]{32}$/);
+    expect(hashQuery('lakers')).toBe(first);
+
+    // Simulate reload in the same browser (module cache cleared, localStorage kept).
+    _resetBrowserQuerySecretForTests();
+    expect(hashQuery('lakers')).toBe(first);
+    expect(store.get(SECRET_STORAGE_KEY)).toBe(persisted);
+  });
+
+  it('produces different hashes across browsers and does not match legacy unsalted FNV-1a vectors', () => {
+    const storeA = installMockLocalStorage();
+    const hashA = hashQuery('lakers');
+    const secretA = storeA.get(SECRET_STORAGE_KEY);
+    expect(hashA).not.toBe('1ghlcvp');
+    expect(hashQuery('')).not.toBe('ztntfp');
+    expect(hashQuery('Lakers vs Celtics')).not.toBe('sn4x6t');
+    expect(hashQuery('super bowl')).not.toBe('4gxf0');
+
+    _resetBrowserQuerySecretForTests();
+    const storeB = installMockLocalStorage();
+    const hashB = hashQuery('lakers');
+    expect(storeB.get(SECRET_STORAGE_KEY)).not.toBe(secretA);
+    expect(hashB).not.toBe(hashA);
+  });
+
+  it('normalizes trim + case identically within one browser and never leaks secret or raw query', () => {
+    const store = installMockLocalStorage();
     const canonical = hashQuery('Lakers');
     for (const variant of ['lakers', '  lakers  ', 'LAKERS', '\tLakers\n']) {
       expect(hashQuery(variant)).toBe(canonical);
     }
+    const secret = store.get(SECRET_STORAGE_KEY)!;
+    const evt = sanitizeEvent('search_submit', { query: 'Lakers' });
+    expect(evt).not.toBeNull();
+    expect(evt!.params.query_hash).toBe(canonical);
+    const serialized = JSON.stringify(evt);
+    expect(serialized).not.toContain('Lakers');
+    expect(serialized).not.toContain(secret);
+  });
+
+  it('falls back cleanly to an in-memory secret when localStorage throws', () => {
+    (globalThis as { window?: unknown }).window = {
+      localStorage: {
+        getItem: () => {
+          throw new Error('SecurityError');
+        },
+        setItem: () => {
+          throw new Error('SecurityError');
+        },
+      },
+    };
+    const h = hashQuery('lakers');
+    expect(h).toMatch(/^[0-9a-z]{14}$/);
+    expect(hashQuery('LAKERS')).toBe(h);
   });
 });

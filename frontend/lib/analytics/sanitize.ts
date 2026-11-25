@@ -622,21 +622,73 @@ function coerceParamValue(value: unknown): unknown {
 // Query → bounded metadata
 // ============================================================================
 
-/**
- * Stable, non-reversible 32-bit hash (FNV-1a) of the normalized query, base36.
- * Lets the same query be joined across search_submit → result_click →
- * destination_engaged WITHOUT ever sending the raw text. Not cryptographic —
- * it exists to bucket/join, not to secure.
- */
-export function hashQuery(raw: string): string {
-  const norm = raw.trim().toLowerCase();
-  let h = 0x811c9dc5;
-  for (let i = 0; i < norm.length; i++) {
-    h ^= norm.charCodeAt(i);
+const SEARCH_HASH_SECRET_STORAGE_KEY = 'bainluck_search_hash_secret_v1';
+
+let cachedBrowserQuerySecret: string | null = null;
+
+function generateBrowserSecretHex(): string {
+  const bytes = new Uint8Array(16);
+  const webCrypto = typeof globalThis !== 'undefined' ? globalThis.crypto : undefined;
+  if (webCrypto && typeof webCrypto.getRandomValues === 'function') {
+    webCrypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i++) {
+      bytes[i] = Math.floor(Math.random() * 256);
+    }
+  }
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+function getBrowserQuerySecret(): string {
+  if (cachedBrowserQuerySecret) return cachedBrowserQuerySecret;
+
+  let stored: string | null = null;
+  try {
+    if (typeof window !== 'undefined' && window.localStorage) {
+      const existing = window.localStorage.getItem(SEARCH_HASH_SECRET_STORAGE_KEY);
+      if (existing && /^[0-9a-f]{32,128}$/i.test(existing.trim())) {
+        stored = existing.trim().toLowerCase();
+      } else {
+        const fresh = generateBrowserSecretHex();
+        window.localStorage.setItem(SEARCH_HASH_SECRET_STORAGE_KEY, fresh);
+        stored = fresh;
+      }
+    }
+  } catch {
+    // localStorage disabled, quota-full, or SSR: keep an ephemeral per-tab secret.
+  }
+
+  cachedBrowserQuerySecret = stored ?? generateBrowserSecretHex();
+  return cachedBrowserQuerySecret;
+}
+
+/** Test-only reset for the cached per-browser search hash secret. */
+export function _resetBrowserQuerySecretForTests(): void {
+  cachedBrowserQuerySecret = null;
+}
+
+function fnv1a32(input: string, seed: number): number {
+  let h = seed >>> 0;
+  for (let i = 0; i < input.length; i++) {
+    h ^= input.charCodeAt(i);
     // 32-bit FNV prime multiply
     h = Math.imul(h, 0x01000193);
   }
-  return (h >>> 0).toString(36);
+  return h >>> 0;
+}
+
+/**
+ * Decision 404: B — keyed 64-bit hash (two salted FNV-1a lanes, base36) using a
+ * random 128-bit secret stored only in this browser (`localStorage`). Lets the same
+ * query be joined within one browser across search_submit → result_click →
+ * destination_engaged WITHOUT sending raw text OR sharing hashes across devices/iOS.
+ */
+export function hashQuery(raw: string): string {
+  const norm = raw.trim().toLowerCase();
+  const secret = getBrowserQuerySecret();
+  const h1 = fnv1a32(`${secret}\u0000${norm}`, 0x811c9dc5);
+  const h2 = fnv1a32(`${norm}\u0000${secret}`, 0x9e3779b9);
+  return `${h1.toString(36).padStart(7, '0')}${h2.toString(36).padStart(7, '0')}`;
 }
 
 /** Bounded, non-PII replacement fields for a raw `query`. */
