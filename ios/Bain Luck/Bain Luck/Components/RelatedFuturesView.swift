@@ -396,23 +396,46 @@ func relatedFutureSides(away: [RelatedFuture], home: [RelatedFuture]) -> [Int: R
 
 typealias AwardPlayerGroup = (name: String, awards: [(label: String, prob: Double, future: RelatedFuture)])
 
+private func canonicalAwardPlayerKey(_ future: RelatedFuture) -> String {
+    if let espnId = future.matchedPlayer?.espnId?
+        .trimmingCharacters(in: .whitespacesAndNewlines),
+       !espnId.isEmpty {
+        return "espn:\(espnId)"
+    }
+    let normalizedName = future.outcomeName
+        .split(whereSeparator: \.isWhitespace)
+        .joined(separator: " ")
+        .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+    return "name:\(normalizedName)"
+}
+
 /// The AWARDS rows: one per player, strongest award first, split by the side
-/// each award was filed on (#8684). An outcome that arrives twice is counted once.
+/// each award was filed on (#8684). An outcome that arrives twice is counted once,
+/// and multiple awards for the same player group onto a single row via `espnId`
+/// or normalized name (#13753).
 func awardPlayerGroups(
     _ awards: [RelatedFuture],
     sides: [Int: RelatedFutureSide]
 ) -> (away: [AwardPlayerGroup], home: [AwardPlayerGroup]) {
     func group(_ side: RelatedFutureSide) -> [AwardPlayerGroup] {
         var order: [String] = []
+        var displayName: [String: String] = [:]
         var map: [String: [(label: String, prob: Double, future: RelatedFuture)]] = [:]
         var seen: Set<Int> = []
         for a in awards where (sides[a.outcomeId] ?? .away) == side && seen.insert(a.outcomeId).inserted {
+            let key = canonicalAwardPlayerKey(a)
             let entry = (label: shortAwardLabel(a.marketName, cleanLabel: a.cleanLabel), prob: a.probability ?? 0, future: a)
-            map[a.outcomeName, default: []].append(entry)
-            if !order.contains(a.outcomeName) { order.append(a.outcomeName) }
+            map[key, default: []].append(entry)
+            if displayName[key] == nil {
+                let candidate = a.outcomeName
+                    .split(whereSeparator: \.isWhitespace)
+                    .joined(separator: " ")
+                displayName[key] = candidate.isEmpty ? a.outcomeName : candidate
+                order.append(key)
+            }
         }
         return order
-            .map { (name: $0, awards: map[$0]!.sorted { $0.prob > $1.prob }) }
+            .map { (name: displayName[$0]!, awards: map[$0]!.sorted { $0.prob > $1.prob }) }
             .sorted { $0.awards.first?.prob ?? 0 > $1.awards.first?.prob ?? 0 }
     }
     return (away: group(.away), home: group(.home))
