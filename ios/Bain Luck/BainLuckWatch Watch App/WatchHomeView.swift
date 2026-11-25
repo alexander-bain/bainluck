@@ -42,7 +42,7 @@ struct WatchHomeView: View {
                 .padding(.horizontal, 4)
             }
         }
-        .navigationTitle("🍀 Bain Luck")
+        .navigationTitle("Bain Luck")
         .task { await vm.load() }
         .task(id: "home-refresh") {
             while !Task.isCancelled {
