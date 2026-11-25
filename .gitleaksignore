@@ -168,3 +168,10 @@ d6ebef9997e3cb2aec9d2c5947855748b67b5d09:evals/ranking/grades/2026-11-10-groupin
 67845ab2138ce91077ff5fb1351a9cd857aef194:backend/tests/test_wbb_auto_create_orientation.py:generic-api-key:50
 998be6c45d912dc041d74d840f3e80eb8ba929de:ios/Bain Luck/Bain Luck/Utilities/FirstRunModels212A.swift:generic-api-key:28
 998be6c45d912dc041d74d840f3e80eb8ba929de:ios/Bain Luck/Bain Luck/Utilities/FirstRunModels212A.swift:generic-api-key:1112
+
+# #12569 / #13684: made-up device-token stand-in in superseded commit d23076ccf7
+# (renamed to low-entropy strings at bb00563ce4); Fable's 4:48 PM PT look confirmed
+# it is a test fixture string, not a secret:
+# https://github.com/alexander-bain/bainluck/pull/13684#issuecomment-7148892716
+# Exact finding from gitleaks run 45546255168 on PR #13684.
+d23076ccf7f6d89ec2bcaeab539516176c29ec5c:ios/Bain Luck/BainLuckTests/SignOutDeviceDetach12569Tests.swift:generic-api-key:104

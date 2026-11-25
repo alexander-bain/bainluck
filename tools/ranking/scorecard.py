@@ -55,6 +55,7 @@ MOVED_24H_MIN = 0.01
 UNKNOWN = "UNKNOWN"
 REPO = Path(__file__).resolve().parents[2]
 DEFAULT_GRADES_DIR = REPO / "evals" / "ranking" / "grades"
+FIXED_CASES_PATH = REPO / "evals" / "ranking" / "fixed_cases.json"
 
 
 # ── inputs ──────────────────────────────────────────────────────────────────
@@ -235,6 +236,34 @@ def truth_gate(cards: list[dict]) -> dict:
     return out
 
 
+def score_fixed_cases(ranking: list[str], cases_path: Path = FIXED_CASES_PATH) -> Optional[dict]:
+    """Score a ranked key order against repository fixed cases (#13645)."""
+    try:
+        doc = load_json(cases_path)
+    except (OSError, ValueError):
+        return None
+    cases = doc.get("cases") if isinstance(doc, dict) else None
+    if not isinstance(cases, list) or not cases:
+        return None
+    pos_by_key = {key: idx + 1 for idx, key in enumerate(ranking)}
+    checked = 0
+    violations: list[str] = []
+    for case in cases:
+        if not isinstance(case, dict):
+            continue
+        limit = case.get("max_preferred_top_n")
+        if not isinstance(limit, int) or limit < 1:
+            continue
+        keys = [str(k) for k in (case.get("item_keys") or ()) if k]
+        hit_pos = min((pos_by_key[k] for k in keys if k in pos_by_key), default=None)
+        if hit_pos is None:
+            continue
+        checked += 1
+        if hit_pos <= limit:
+            violations.append(f"{case.get('case_id')}@{hit_pos}<={limit}")
+    return {"checked": checked, "violations": len(violations), "details": violations}
+
+
 def score_ranking(ranking: list[str], slate: dict, grades: list[dict], previous: Optional[dict]) -> dict:
     by_key = {c.get("item_key"): c for c in slate.get("candidates") or ()}
     cards = [by_key.get(key, {"item_key": key}) for key in ranking[:TOP]]
@@ -249,6 +278,7 @@ def score_ranking(ranking: list[str], slate: dict, grades: list[dict], previous:
         "sameness": sameness(ranking, previous),
         "freshness": freshness(cards),
         "truth_gate": truth_gate(cards),
+        "fixed_cases": score_fixed_cases(ranking),
     }
 
 
@@ -389,6 +419,20 @@ def _cells(s: dict) -> dict[str, str]:
             )
         ),
         "Settled, shown with result (info)": str(t["settled_with_result"]),
+        **(
+            {
+                "Fixed cases (#13645) violations": (
+                    f"{s['fixed_cases']['violations']}/{s['fixed_cases']['checked']}"
+                    + (
+                        f" ({', '.join(s['fixed_cases']['details'])})"
+                        if s["fixed_cases"]["details"]
+                        else ""
+                    )
+                )
+            }
+            if isinstance(s.get("fixed_cases"), dict) and s["fixed_cases"].get("checked")
+            else {}
+        ),
     }
 
 
