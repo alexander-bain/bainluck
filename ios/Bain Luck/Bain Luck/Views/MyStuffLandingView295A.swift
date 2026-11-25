@@ -121,6 +121,7 @@ private struct MyStuffLandingBody295A: View {
                             .stroke(cardBorder, lineWidth: 1)
                     )
                     .accessibilityIdentifier("myStuff295A.loadErrorBanner")
+                    .noteReviewPromptTrouble12304()
                 }
 
                 if !landingVM.loadFailed && landingVM.teamFuturesFailed && !landingVM.loading {
@@ -163,6 +164,7 @@ private struct MyStuffLandingBody295A: View {
                         .disabled(landingVM.teamFuturesRetrying)
                         .accessibilityIdentifier("myStuff295A.retryTeamFutures")
                     }
+                    .noteReviewPromptTrouble12304()
                     .padding(.horizontal, 14)
                     .padding(.vertical, 12)
                     .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(cardSurface))

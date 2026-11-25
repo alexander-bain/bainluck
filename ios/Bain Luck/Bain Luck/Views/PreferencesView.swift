@@ -148,6 +148,7 @@ struct PreferencesView: View {
                     systemImage: "wifi.exclamationmark",
                     description: Text(error)
                 )
+                .noteReviewPromptTrouble12304()
             } else {
                 preferencesContent
             }

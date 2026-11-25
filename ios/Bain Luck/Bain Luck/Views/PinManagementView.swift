@@ -197,6 +197,7 @@ struct PinManagementView: View {
                             .font(.caption).foregroundStyle(.secondary)
                         Button("Retry details") { Task { await vm.load(pinManager.savedPins, retryFailed: true) } }
                             .font(.caption)
+                            .noteReviewPromptTrouble12304()
                     default:
                         Text("Loading details…").font(.caption).foregroundStyle(.secondary)
                     }

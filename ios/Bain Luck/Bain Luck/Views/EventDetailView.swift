@@ -507,6 +507,7 @@ struct EventDetailView: View {
                     systemImage: "exclamationmark.triangle",
                     description: Text(error)
                 )
+                .noteReviewPromptTrouble12304()
             }
         }
         return stackBoundary12278 {
