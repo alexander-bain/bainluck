@@ -10,6 +10,7 @@ struct MyStuffView: View {
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @EnvironmentObject private var pinManager: PinManager
     @Environment(\.followManager295A) private var followManager
+    @Environment(\.firstRunChecklistStore364A) private var checklistStore
     @StateObject private var vm: MyStuffViewModel
     @StateObject private var pinContent: SavedPinContentViewModel
     @StateObject private var landingVM: MyStuffLandingViewModel295A
@@ -17,6 +18,7 @@ struct MyStuffView: View {
     @State private var path: NavigationPath
     @State private var showOnboarding = false
     @State private var showPinManagement = false
+    @State private var checklistStepToOpen364A: FirstRunChecklistRowID364A? = nil
     /// Width available to the iPad card grid (#3709), kept so `DiscoverMasonry`
     /// measures the actual card-area width and never emits a multi-column layout on Split View.
     @State private var gridWidth: CGFloat = 0
@@ -138,6 +140,19 @@ struct MyStuffView: View {
                     .frame(maxWidth: .infinity)
                     .accessibilityIdentifier("myStuffManagePins")
                 }
+                if !usesLandingView295A && checklistStore.state.showsInMyStuff {
+                    let bannerBinding = Binding<FirstRunChecklistState364A>(
+                        get: { checklistStore.state },
+                        set: { checklistStore.state = $0 }
+                    )
+                    MyStuffChecklistBanner364A(
+                        state: bannerBinding,
+                        onOpenRow: { checklistStepToOpen364A = $0 },
+                        onDismiss: { checklistStore.dismissFromMyStuff() }
+                    )
+                    .padding(.horizontal, 16)
+                    .padding(.top, 8)
+                }
                 SiriProbabilityTip12315()
                 Group {
                     if usesLandingView295A {
@@ -179,7 +194,12 @@ struct MyStuffView: View {
                                         signedInTeamFutures: nil
                                     )
                                 }
-                            }
+                            },
+                            showsEarnedSignIn212A: !authManager.isAuthenticated,
+                            onAppleSignIn212A: { authManager.signInWithApple() },
+                            onGoogleSignIn212A: { authManager.signInWithGoogle() },
+                            showsChecklistBanner364A: true,
+                            onOpenChecklistRow364A: { checklistStepToOpen364A = $0 }
                         )
                         .task(id: authManager.activeFeedUserId) {
                             guard authManager.isAuthenticated else { return }
@@ -239,6 +259,13 @@ struct MyStuffView: View {
         .sheet(isPresented: $showPinManagement) {
             PinManagementView().environmentObject(pinManager)
         }
+        .sheet(item: $checklistStepToOpen364A) { row in
+            FirstRunChecklistRootView364A(initialStep: row)
+                .environmentObject(authManager)
+                .environmentObject(pinManager)
+                .environment(\.followManager295A, followManager)
+                .environment(\.firstRunChecklistStore364A, checklistStore)
+        }
         // #10011 — pinned content is read from the saved IDs themselves, so it
         // never depends on the team feed, onboarding or sign-in state.
         .task(id: pinManager.savedPins) { await pinContent.load(pinManager.savedPins) }
@@ -250,6 +277,15 @@ struct MyStuffView: View {
         }
         .onAppear {
             AnalyticsService.trackScreen(name: "my_stuff", type: "my_stuff")
+            checklistStore.syncFollowCount(followManager.subjects.count)
+            checklistStore.syncAuthState(isAuthenticated: authManager.isAuthenticated)
+            checklistStore.syncAlertsState(isEnabled: GameAlertsPreference13083.shared.isEnabled)
+        }
+        .onChange(of: followManager.subjects.count) { _, newCount in
+            checklistStore.syncFollowCount(newCount)
+        }
+        .onChange(of: authManager.isAuthenticated) { _, authed in
+            checklistStore.syncAuthState(isAuthenticated: authed)
         }
         .task {
             predictionStats = try? await APIClient.shared.fetchPredictionStats()
