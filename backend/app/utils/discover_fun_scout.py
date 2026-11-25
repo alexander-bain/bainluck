@@ -1991,12 +1991,90 @@ def build_fun_scout_set_producer(definition: Mapping[str, Any]) -> Any:
     selector = rule.get("selector") if isinstance(rule.get("selector"), Mapping) else {}
     fun_tag = str(selector.get("fun_tag") or "").strip()
     title_ilike = str(rule.get("title_ilike") or selector.get("title_ilike") or "").strip()
+    scout_meta = validated.get("scout") if isinstance(validated.get("scout"), Mapping) else {}
+    graded_ids = [
+        int(mid)
+        for mid in (scout_meta.get("graded_member_ids") or ())
+        if isinstance(mid, int) and mid > 0
+    ]
+    allow_rule_additions = bool(rule.get("allow_rule_additions"))
     min_members = max(1, int(rule.get("min_numbered_members") or SCOUT_MIN_LIVE_MEMBERS))
     card_rows = max(1, int(rule.get("card_rows") or 4))
     open_status = "open"
 
     async def _produce(db: Any) -> RoundupMembers | RoundupRefusal:
-        if title_ilike:
+        if graded_ids:
+            graded_stmt = (
+                select(FuturesMarket)
+                .options(selectinload(FuturesMarket.outcomes))
+                .where(
+                    FuturesMarket.status == open_status,
+                    FuturesMarket.id.in_(graded_ids),
+                )
+            )
+            graded_rows = list((await db.execute(graded_stmt)).scalars().all())
+            graded_order = {mid: idx for idx, mid in enumerate(graded_ids)}
+            graded_rows.sort(
+                key=lambda m: (
+                    graded_order.get(int(getattr(m, "id", 0) or 0), len(graded_order)),
+                    int(getattr(m, "id", 0) or 0),
+                )
+            )
+            market_rows = list(graded_rows)
+            if allow_rule_additions and (title_ilike or fun_tag):
+                detector = globals().get("detect_scout_split_set")
+                row_cls = globals().get("ScoutMarketRow")
+                if callable(detector) and row_cls is not None:
+                    extra_rows: list[Any] = []
+                    if title_ilike:
+                        extra_stmt = (
+                            select(FuturesMarket)
+                            .options(selectinload(FuturesMarket.outcomes))
+                            .where(
+                                FuturesMarket.status == open_status,
+                                FuturesMarket.name.ilike(title_ilike),
+                            )
+                            .limit(50)
+                        )
+                        extra_rows = list((await db.execute(extra_stmt)).scalars().all())
+                    elif fun_tag:
+                        extra_ids = [int(mid) for mid in fun_market_ids_for_sub_tag(fun_tag)]
+                        if extra_ids:
+                            extra_stmt = (
+                                select(FuturesMarket)
+                                .options(selectinload(FuturesMarket.outcomes))
+                                .where(
+                                    FuturesMarket.status == open_status,
+                                    FuturesMarket.id.in_(extra_ids),
+                                )
+                            )
+                            extra_rows = list((await db.execute(extra_stmt)).scalars().all())
+                    seen_mids = {int(getattr(m, "id")) for m in market_rows}
+                    default_cat = str(validated.get("category") or "culture")
+                    extra_rows.sort(
+                        key=lambda m: (
+                            -(float(getattr(m, "volume", None) or 0.0)),
+                            int(getattr(m, "id", 0) or 0),
+                        )
+                    )
+                    for extra in extra_rows:
+                        eid = int(getattr(extra, "id"))
+                        if eid in seen_mids:
+                            continue
+                        trial_markets = market_rows + [extra]
+                        trial_scout_rows = [
+                            row_cls(
+                                market_id=int(getattr(m, "id")),
+                                title=str(getattr(m, "question", None) or getattr(m, "name", None) or "").strip(),
+                                category=str(getattr(m, "category", None) or default_cat),
+                                source=str(getattr(m, "source", None) or "kalshi"),
+                            )
+                            for m in trial_markets
+                        ]
+                        if detector(str(validated["name"]), trial_scout_rows) is None:
+                            market_rows = trial_markets
+                            seen_mids.add(eid)
+        elif title_ilike:
             stmt = (
                 select(FuturesMarket)
                 .options(selectinload(FuturesMarket.outcomes))
@@ -2007,6 +2085,12 @@ def build_fun_scout_set_producer(definition: Mapping[str, Any]) -> Any:
                 .limit(50)
             )
             market_rows = list((await db.execute(stmt)).scalars().all())
+            market_rows.sort(
+                key=lambda m: (
+                    -(float(getattr(m, "volume", None) or 0.0)),
+                    int(getattr(m, "id", 0) or 0),
+                )
+            )
         elif fun_tag:
             candidate_ids = [int(mid) for mid in fun_market_ids_for_sub_tag(fun_tag)]
             if not candidate_ids:
@@ -2020,15 +2104,15 @@ def build_fun_scout_set_producer(definition: Mapping[str, Any]) -> Any:
                 )
             )
             market_rows = list((await db.execute(stmt)).scalars().all())
+            market_rows.sort(
+                key=lambda m: (
+                    -(float(getattr(m, "volume", None) or 0.0)),
+                    int(getattr(m, "id", 0) or 0),
+                )
+            )
         else:
             return RoundupRefusal(("missing_fun_scout_selector",))
 
-        market_rows.sort(
-            key=lambda m: (
-                -(float(getattr(m, "volume", None) or 0.0)),
-                int(getattr(m, "id", 0) or 0),
-            )
-        )
         if len(market_rows) < min_members:
             return RoundupRefusal(
                 (f"too_few_live_members:{len(market_rows)}<{min_members}",)
@@ -2049,12 +2133,36 @@ def build_fun_scout_set_producer(definition: Mapping[str, Any]) -> Any:
                     -(float(getattr(o, "current_probability", None) or 0.0)),
                 ),
             )
-            lead = outs[0] if outs else None
-            raw_prob = getattr(lead, "current_probability", None) if lead else None
-            prob = float(raw_prob) if raw_prob is not None else 0.5
-            raw_delta = getattr(lead, "probability_change_24h", None) if lead else None
-            delta = float(raw_delta) if raw_delta is not None else None
-            lead_name = str(getattr(lead, "name", None) or "Yes") if lead else "Yes"
+            # No made-up numbers (196-A): never invent 0.5 / "Yes" for missing prices/outcomes.
+            lead = None
+            prob: float | None = None
+            lead_name = ""
+            delta: float | None = None
+            for cand_out in outs:
+                cand_name = str(getattr(cand_out, "name", None) or "").strip()
+                raw_prob = getattr(cand_out, "current_probability", None)
+                if not cand_name or raw_prob is None:
+                    continue
+                try:
+                    p_val = float(raw_prob)
+                except (TypeError, ValueError):
+                    continue
+                if not math.isfinite(p_val) or not (0.0 <= p_val <= 1.0):
+                    continue
+                lead = cand_out
+                prob = p_val
+                lead_name = cand_name
+                raw_delta = getattr(cand_out, "probability_change_24h", None)
+                if raw_delta is not None:
+                    try:
+                        d_val = float(raw_delta)
+                        if math.isfinite(d_val):
+                            delta = d_val
+                    except (TypeError, ValueError):
+                        delta = None
+                break
+            if lead is None or prob is None or not lead_name:
+                continue
             member_cards.append(
                 {
                     "id": mid,

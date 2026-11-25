@@ -507,6 +507,11 @@ async def build_scout_morning_deck(
                 "slug": str(s.get("slug") or ""),
                 "name": card["title"],
                 "category": card["category"],
+                "member_ids": [
+                    int(m["market_id"])
+                    for m in (s.get("members") or ())
+                    if isinstance(m, Mapping) and isinstance(m.get("market_id"), int)
+                ],
                 "rule_definition": dict(s.get("rule_definition") or {}),
                 "card": card,
             }
@@ -557,13 +562,16 @@ async def build_scout_morning_deck(
         card = dict(entry["card"])
         card["item_id"] = item_id
         items.append(card)
-        key_entries[item_id] = {
+        entry_record: dict[str, Any] = {
             "origin": entry["origin"],
             "slug": entry["slug"],
             "name": entry["name"],
             "category": entry["category"],
             "rule_definition": entry["rule_definition"],
         }
+        if entry.get("member_ids"):
+            entry_record["member_ids"] = list(entry["member_ids"])
+        key_entries[item_id] = entry_record
 
     canonical_entries = json.dumps(key_entries, separators=(",", ":"), sort_keys=True)
     sealed_sha256 = hashlib.sha256(canonical_entries.encode("utf-8")).hexdigest()

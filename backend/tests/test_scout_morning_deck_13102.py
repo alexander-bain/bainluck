@@ -182,6 +182,7 @@ async def test_blind_deck_mixes_equally_and_keeps_key_strictly_in_redis(monkeypa
         '"origin"',
         '"slug"',
         '"market_id"',
+        '"member_ids"',
     ):
         assert forbidden not in serialized, forbidden
 
@@ -191,6 +192,8 @@ async def test_blind_deck_mixes_equally_and_keeps_key_strictly_in_redis(monkeypa
     sealed = json.loads(raw_key)
     origins = {v["origin"] for v in sealed["entries"].values()}
     assert origins == {"scout", "public"}
+    scout_key_entries = [v for v in sealed["entries"].values() if v["origin"] == "scout"]
+    assert {tuple(v["member_ids"]) for v in scout_key_entries} == {(11, 12, 13), (21, 22, 23)}
 
 
 async def test_admin_route_validates_date_and_returns_clean_empty_state(monkeypatch):
@@ -255,3 +258,145 @@ def test_keep_promotion_ignores_decoys_and_validates_container_files(tmp_path):
     assert built_producer.slug == promoted_doc["slug"]
     assert callable(built_producer.produce)
     assert callable(ROUNDUP_PRODUCERS["roundup-tomorrows-highs"].produce)
+
+
+async def test_public_producer_omits_unpriced_or_nameless_members_and_refuses_below_min(monkeypatch):
+    from app.utils import discover_fun_scout as dfs
+    from app.utils import discover_fun_tags as dft
+    from app.utils.roundup_containers import RoundupMembers, RoundupRefusal
+
+    monkeypatch.setattr(dft, "fun_market_ids_for_sub_tag", lambda _tag: [101, 102, 103, 104])
+    defn = _staged_fixture(9)["rule_definition"]
+    defn["stage"] = "public"
+    defn["rule"]["min_numbered_members"] = 3
+
+    def _row(mid: int, name: str | None, prob: float | None, volume: float = 100.0):
+        return SimpleNamespace(
+            id=mid,
+            status="open",
+            volume=volume,
+            name=f"Market {mid}",
+            question=f"Market {mid}?",
+            category="culture",
+            outcomes=[] if (name is None and prob is None) else [
+                SimpleNamespace(name=name, current_probability=prob, probability_change_24h=0.01, rank=1)
+            ],
+        )
+
+    # 2 valid + 1 unpriced (prob=None) + 1 empty outcome name -> refuses rather than inventing "Yes 50%"
+    refused_rows = [
+        _row(101, "Alpha", 0.62, 400.0),
+        _row(102, "Beta", 0.38, 300.0),
+        _row(103, "Gamma", None, 200.0),
+        _row(104, "", 0.50, 100.0),
+    ]
+    producer = dfs.build_fun_scout_set_producer(defn)
+    res_refused = await producer.produce(_FakeDB(refused_rows))
+    assert isinstance(res_refused, RoundupRefusal)
+    assert res_refused.reasons == ("too_few_live_members:2<3",)
+
+    # 3 valid + 1 unpriced -> omits unpriced row cleanly without synthesizing 0.5 / "Yes"
+    passing_rows = [
+        _row(101, "Alpha", 0.62, 400.0),
+        _row(102, "Beta", 0.38, 300.0),
+        _row(103, "Gamma", 0.25, 250.0),
+        _row(104, "Delta", None, 999.0),
+    ]
+    res_ok = await producer.produce(_FakeDB(passing_rows))
+    assert isinstance(res_ok, RoundupMembers)
+    assert [m["id"] for m in res_ok.members] == [101, 102, 103]
+    assert all(r["label"] != "Market 104?" for r in res_ok.rows)
+
+
+async def test_public_producer_pins_graded_member_ids_and_gates_rule_additions(monkeypatch):
+    from app.utils import discover_fun_scout as dfs
+    from app.utils.roundup_containers import RoundupMembers
+
+    staged = _staged_fixture(4)
+    sealed_key = {
+        "deck_date": "2026-11-26",
+        "entries": {
+            "s01": {
+                "origin": "scout",
+                "slug": staged["slug"],
+                "name": staged["name"],
+                "member_ids": [41, 42, 43],
+                "rule_definition": staged["rule_definition"],
+            }
+        },
+    }
+    judgments = [
+        {
+            "market_name": "s01",
+            "label": "Keep",
+            "notes": "ship these 3",
+            "label_metadata": {"deck_date": "2026-11-26", "item_id": "s01", "grade": "Keep"},
+        }
+    ]
+    plan = plan_scout_promotions(judgments, sealed_key, deck_date="2026-11-26")
+    promoted_def = plan["promote"][0]["definition"]
+    assert promoted_def["scout"]["graded_member_ids"] == [41, 42, 43]
+    promoted_def["rule"] = {
+        "producer": "fun_scout_set",
+        "min_numbered_members": 3,
+        "card_rows": 4,
+        "title_ilike": "%Anything%",
+    }
+
+    rows_by_id = {
+        mid: SimpleNamespace(
+            id=mid,
+            status="open",
+            volume=100.0 * mid,
+            name=f"Graded {mid}",
+            question=f"Graded {mid}?",
+            category="culture",
+            source="kalshi",
+            outcomes=[SimpleNamespace(name="Yes", current_probability=0.45, probability_change_24h=0.0, rank=1)],
+        )
+        for mid in (41, 42, 43, 99, 88)
+    }
+
+    class _InspectDB:
+        def __init__(self) -> None:
+            self.sqls: list[str] = []
+
+        async def execute(self, stmt):
+            sql = str(stmt)
+            self.sqls.append(sql)
+            if "ILIKE" in sql.upper() or "LIKE" in sql.upper():
+                out = [rows_by_id[41], rows_by_id[42], rows_by_id[43], rows_by_id[99], rows_by_id[88]]
+            else:
+                out = [rows_by_id[41], rows_by_id[42], rows_by_id[43]]
+            return SimpleNamespace(scalars=lambda: SimpleNamespace(all=lambda: out))
+
+    db_pinned = _InspectDB()
+    producer_pinned = build_roundup_producer_from_definition(promoted_def)
+    res_pinned = await producer_pinned.produce(db_pinned)
+    assert isinstance(res_pinned, RoundupMembers)
+    assert [m["id"] for m in res_pinned.members] == [41, 42, 43]
+    assert not any("LIKE" in s.upper() for s in db_pinned.sqls)
+
+    # allow_rule_additions fails closed when split-set gate is absent, and admits only gate-clean rows when present.
+    def_with_additions = json.loads(json.dumps(promoted_def))
+    def_with_additions["rule"]["allow_rule_additions"] = True
+    producer_add = build_roundup_producer_from_definition(def_with_additions)
+
+    monkeypatch.delattr(dfs, "detect_scout_split_set", raising=False)
+    res_no_gate = await producer_add.produce(_InspectDB())
+    assert [m["id"] for m in res_no_gate.members] == [41, 42, 43]
+
+    class _Row:
+        def __init__(self, market_id, title, category, source):
+            self.market_id = market_id
+            self.title = title
+
+    monkeypatch.setattr(dfs, "ScoutMarketRow", _Row, raising=False)
+    monkeypatch.setattr(
+        dfs,
+        "detect_scout_split_set",
+        lambda _name, rows: SimpleNamespace(reason="split") if any(r.market_id == 99 for r in rows) else None,
+        raising=False,
+    )
+    res_gated = await producer_add.produce(_InspectDB())
+    assert [m["id"] for m in res_gated.members] == [41, 42, 43, 88]

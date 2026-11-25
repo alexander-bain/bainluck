@@ -106,6 +106,19 @@ def plan_scout_promotions(
             scout_meta = dict(raw_def.get("scout") or {})
             scout_meta["requires_fable_look"] = False
             scout_meta["promoted_from_deck_date"] = target_date
+            graded_member_ids = [
+                int(mid)
+                for mid in (key_entry.get("member_ids") or ())
+                if isinstance(mid, int) and mid > 0
+            ]
+            if not graded_member_ids:
+                graded_member_ids = [
+                    int(mid)
+                    for mid in (scout_meta.get("graded_member_ids") or ())
+                    if isinstance(mid, int) and mid > 0
+                ]
+            if graded_member_ids:
+                scout_meta["graded_member_ids"] = graded_member_ids
             raw_def["scout"] = scout_meta
             validated = validate_roundup_definition(raw_def)
             to_promote.append({"item_id": item_id, "slug": slug, "definition": validated})
