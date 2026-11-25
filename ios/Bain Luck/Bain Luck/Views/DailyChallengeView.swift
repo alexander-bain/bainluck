@@ -22,6 +22,7 @@ struct DailyChallengeView: View {
                     Button("Retry") { Task { await vm.load() } }
                         .buttonStyle(.borderedProminent)
                 }
+                .noteReviewPromptTrouble12304()
             }
         }
         .navigationTitle("Daily Challenge")
