@@ -33,7 +33,7 @@ _MARKET_ROW_BUCKETS = (
     "other",
     "matchups",
 )
-_CLOSED_MARKET_STATUSES = frozenset({"resolved", "settled", "closed"})
+_CLOSED_MARKET_STATUSES = frozenset({"resolved", "settled"})
 
 # event_id -> (stored_at_ts, is_final, build_id, full_payload)
 _l1_cache: dict[int, tuple[float, bool, str, dict[str, Any]]] = {}
