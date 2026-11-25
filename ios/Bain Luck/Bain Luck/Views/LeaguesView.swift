@@ -221,14 +221,8 @@ struct LeaguesView: View {
                     route: .dailyChallenge
                 )
             }
-            // A hub whose edition is over, or that nobody dated. It sits below
-            // the destinations that are useful in any week and above "About",
-            // which is the grid's footer rather than a place to go — a finished
-            // tournament's results and title odds are still content, so last
-            // place would be a demotion further than the defect warranted.
-            ForEach(hubs.trailing) { tournament in
-                featuredHubCard(tournament, asOf: now)
-            }
+            // Finished featured hubs (`hubs.trailing`, e.g. finished US Open) are no longer
+            // promoted on Browse (#13662 item 8 / #13671); only live/active hubs appear above.
             BrowseFeatureCard(
                 title: "About Bain Luck",
                 subtitle: "Sources and methodology",

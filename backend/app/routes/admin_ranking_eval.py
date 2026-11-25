@@ -2513,3 +2513,20 @@ async def get_game_nugget_grades(
         **summary,
     }
 
+
+@router.get("/scout-deck")
+async def get_scout_morning_deck(
+    request: Request,
+    date: str | None = Query(None, max_length=10),
+    secret: str = Query(None),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Return the blind equal-mix morning scout deck (sealed key kept in Redis only, #13102)."""
+    from app.utils.scout_morning_deck import DATE_PARAM_RE, build_scout_morning_deck
+
+    _check_admin_secret(secret, request=request)
+    if date is not None and not DATE_PARAM_RE.match(date.strip()):
+        raise HTTPException(status_code=422, detail="date must match YYYY-MM-DD")
+    clean_date = date.strip() if date is not None else None
+    return await build_scout_morning_deck(db, deck_date=clean_date)
+

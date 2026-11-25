@@ -523,7 +523,8 @@ struct ScoreDifferentialChartView: View {
         let ticks = OddsChartView.xAxisContextTicks(
             for: domain, plan: plan,
             plotWidth: OddsChartView.axisPlanWidth(own: plotWidth, pageNarrowest: pageAxisPlotWidth),
-            labelScale: axisFontSize / 9)
+            labelScale: axisFontSize / 9,
+            dataRange: OddsChartView.dataDateRange(of: dataPoints.map(\.date)))
         let actualDiffs = dataPoints.compactMap(\.actualDiff)
         let projDiffs = dataPoints.compactMap(\.projectedDiff)
         let allDiffs = actualDiffs + projDiffs
@@ -649,7 +650,8 @@ struct ScoreDifferentialChartView: View {
                         }
                     },
                     plotWidth: plotFrame.width,
-                    metrics: .score
+                    metrics: .score,
+                    clearTrailingBoundary: true
                 )
                 Color.clear
                     .preference(key: PlotWidthPreferenceKey.self, value: plotFrame.width)
@@ -659,6 +661,7 @@ struct ScoreDifferentialChartView: View {
                     Text(periodMarkers[placement.key].label)
                         .font(.system(size: 8, weight: .semibold))
                         .foregroundStyle(.secondary.opacity(0.7))
+                        .fixedSize()
                         .padding(.horizontal, 3)
                         .padding(.vertical, 1)
                         .background(.ultraThinMaterial)
