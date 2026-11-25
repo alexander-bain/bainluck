@@ -200,6 +200,7 @@ async def test_championships_barcelona_row_3_keeps_all_three_row_pictures() -> N
 
 @pytest.mark.asyncio
 async def test_benchmark_strip_drops_partial_row_art_instead_of_leaving_empty_slot() -> None:
+    """Decision 387:A (#13605): verified sibling rows keep pictures while missing row falls back to monogram."""
     paths_by_slug = {p.stem: p for p in discover_machinery_candidate_paths()}
     defn = load_machinery_definition(paths_by_slug["machinery-big-championships-2027"])
     markets = _sample_batch4_markets()
@@ -210,5 +211,8 @@ async def test_benchmark_strip_drops_partial_row_art_instead_of_leaving_empty_sl
     res = await produce_container_machinery(db, defn, now=NOW)
     card_rows = res.machinery_card["rows"]
     assert len(card_rows) == 3
-    assert all((r.get("art") or {}).get("url") is None for r in card_rows)
-    assert all((r.get("art") or {}).get("kind") == "monogram" for r in card_rows)
+    assert str((card_rows[0].get("art") or {}).get("url") or "").strip()
+    assert str((card_rows[1].get("art") or {}).get("url") or "").strip()
+    assert (card_rows[2].get("art") or {}).get("url") is None
+    assert (card_rows[2].get("art") or {}).get("kind") == "monogram"
+    assert str((card_rows[2].get("art") or {}).get("initials") or "").strip()
