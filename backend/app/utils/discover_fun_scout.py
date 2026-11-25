@@ -1591,7 +1591,7 @@ def fill_missing_scout_members(
             continue
         if _SCOUT_MECHANICAL_FAMILY_RE.search(cand.title or ""):
             continue
-        if look == "map" and not _title_names_map_place(cand.title or ""):
+        if look == "map" and not _extract_specific_places(cand.title or ""):
             continue
 
         cand_stripped = _strip_quoted_substrings(cand.title or "")
