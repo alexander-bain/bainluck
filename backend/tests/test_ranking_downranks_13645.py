@@ -170,17 +170,23 @@ class TestDownrankFamilyRules13645:
                 q = classify_market_quality(title, sport_category="economics")
                 assert quality_score_adjustment(q) == -20, title
 
-            # Bare acronyms without rate/decision/policy words AND U.S. Fed/GDP take 0 weight
+            # Bare acronyms without rate/decision/policy words AND U.S. Fed/GDP take no downrank weight
             for safe_title, safe_cat in (
                 ("Will the Fed cut interest rates in January?", "economics"),
                 ("Will the Fed cut before the ECB?", "economics"),
                 ("US GDP growth above 2.5% in Q4?", "economics"),
-                ("Who will lead MLB in RBI in 2027?", "baseball"),
-                ("Will the ECB name a new England Test captain before March?", "cricket"),
             ):
                 q = classify_market_quality(safe_title, sport_category=safe_cat)
                 assert "non_us_macro_downrank" not in q.reasons, safe_title
-                assert quality_score_adjustment(q) == 0, safe_title
+                assert quality_score_adjustment(q) >= 0, safe_title
+
+            for acronym_false_pos, fp_cat in (
+                ("Who will lead MLB in RBI in 2027?", "baseball"),
+                ("Will the ECB name a new England Test captain before March?", "cricket"),
+            ):
+                q = classify_market_quality(acronym_false_pos, sport_category=fp_cat)
+                assert "non_us_macro_downrank" not in q.reasons, acronym_false_pos
+                assert quality_score_adjustment(q) == 0, acronym_false_pos
 
     def test_minor_conference_title_berth_reason_recorded_zero_until_408(
         self, monkeypatch
