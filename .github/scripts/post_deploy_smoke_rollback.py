@@ -688,7 +688,6 @@ def run_smoke_check(
     if health_boot_results is not None:
         results = health_boot_results
         failed = results
-        empties = ()
         detail_block = "\n".join(_failing_summary_lines(results))
     else:
         if initial_delay_seconds > 0:
