@@ -152,6 +152,7 @@ def main() -> int:
         f"  ({served['non_futures_in_window']} non-futures cards in the window:"
         f" {served['types']})"
     )
+    print(f"variety [SERVED — #13551]: {served['variety_summary']['summary_line']}")
     for row in served["boring"]:
         print(f"    OFFENDER ON THE SERVED PAGE: {row['name']}  {row['reasons']}")
     print()

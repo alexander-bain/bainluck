@@ -23,6 +23,7 @@ import json
 import logging
 import os
 import re
+from collections.abc import Mapping
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -205,7 +206,14 @@ def _load_retired_sets_durable(
     Fails closed (raises) if Redis is unreadable so a retired set can never be
     silently re-proposed after a dyno restart.
     """
-    retired = set(load_retired_scout_sets(path))
+    retired: set[str] = set()
+    for item in load_retired_scout_sets(path):
+        if isinstance(item, Mapping):
+            cleaned = str(item.get("slug") or item.get("name") or "").strip().lower()
+        else:
+            cleaned = str(item or "").strip().lower()
+        if cleaned:
+            retired.add(cleaned)
     from app.tasks.redis_state import get_redis_client
 
     raw = get_redis_client().get(_RETIRED_SETS_REDIS_KEY)
