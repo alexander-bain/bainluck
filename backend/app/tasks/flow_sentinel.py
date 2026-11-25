@@ -38,8 +38,6 @@ from typing import Any
 
 import httpx
 
-from app.utils.futures_field_coverage import has_limited_field_price_coverage
-
 logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
@@ -867,7 +865,7 @@ def feed_item_is_renderable(item: Any, depth: int = 0, now: Any = None) -> bool:
         # plus a status/score, never a bare tile.
         return True
     if kind == "futures":
-        if data.get("top_outcomes") or has_limited_field_price_coverage(data):
+        if data.get("top_outcomes"):
             return True
         # Settled-but-open is the normal Kalshi shape (gotcha #33), and a
         # result-carrying card is renderable — "settled means settled".

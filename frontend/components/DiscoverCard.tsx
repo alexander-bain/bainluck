@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { ThumbsUp, ThumbsDown } from "lucide-react";
 import { trackEvent } from "@/lib/analytics";
 import { getDiscoverItemAnalytics, recordDiscoverInteraction, sendDiscoverInteraction } from "@/lib/discoverInteractions";
+import { isHeldFieldCoverageNotice } from "@/lib/discover/priceRefresh";
 import type { FeedItem, FeedBundleData, FeedConceptData, FeedEventData, FeedFuturesData, FeedTournamentData } from "@/lib/types";
 import type { DiscoverGroupedItem } from "./discover/types";
 import { isTrending, suppressBareZeroFuturesCard, feedItemHasRenderableContent, feedItemHref } from "./discover/utils";
@@ -161,7 +162,7 @@ function SingleCard({ item, onDismiss, positionIndex, showProbabilityHint, pinFo
   // boundary in the feed pages already drops empty predictive envelopes, but guard
   // the leaf too so a concept/bundle/tournament/futures with neither a renderable
   // probability nor an authoritative result can never render as a bare tile.
-  if (!feedItemHasRenderableContent(item)) return null;
+  if (!isHeldFieldCoverageNotice(item) && !feedItemHasRenderableContent(item)) return null;
 
   return (
     <div

@@ -4,6 +4,7 @@ from collections.abc import Iterable, Mapping
 from decimal import Decimal
 from math import fsum, isfinite
 import re
+from typing import Any
 
 
 _CHAMPIONSHIP_FINALISTS = re.compile(
@@ -54,3 +55,42 @@ def field_leader_is_unsupported(
     # Half the field's mass is a floor. In a partial field even above that
     # floor, the unaccounted mass can still hide a favorite or a tied leader.
     return omitted_contender and remaining_places - total >= max(priced)
+
+
+def grouped_field_leader_is_unsupported(
+    detail: Mapping[str, Any], *, expected_winners: int | None, group_type: str | None
+) -> bool:
+    """Check a grouped member's screened prices before display allocation."""
+    from app.utils.discover_card_archetypes import classify_discover_card_archetype
+    from app.utils.futures_unsupported_price import row_carries_a_verdict
+
+    if (
+        detail.get("status") != "open"
+        or detail.get("market_type") not in ("field", "participation")
+        or detail.get("ladder_treatment_refused")
+    ):
+        return False
+
+    outcomes = detail["outcomes"]
+    card = classify_discover_card_archetype(
+        name=detail["name"], category=detail.get("llm_sport_category"),
+        outcomes=outcomes, outcome_count=len(outcomes),
+        source_count=1, sources=[detail["source"]], group_id=detail.get("group_id"),
+        group_type=group_type, canonical_market_key=detail.get("canonical_market_key"),
+        status=detail["status"], resolution_date=detail.get("resolution_date"),
+    )
+    if card["suggested_format"] != "outcome_distribution":
+        return False
+
+    places = field_winner_places(detail["name"], detail.get("mutually_exclusive"), expected_winners)
+    open_prices = []
+    for row in outcomes:
+        settled = (row.get("source_mark") or {}).get("state") == "settled"
+        if settled or row_carries_a_verdict(row.get("resolution_source")):
+            if places is not None and row.get("is_winner") is True:
+                places -= 1
+        else:
+            open_prices.append(row["probability"])
+    return field_leader_is_unsupported(
+        open_prices, places, omitted_contender=bool(detail.get("prices_withheld"))
+    )

@@ -270,15 +270,6 @@
       "item": { "type": "futures", "data": { "name": "m", "top_outcomes": [] } },
       "expected_reason": "empty_futures"
     },
-    {
-      "id": "futures.explicit_limited_price_coverage",
-      "why": "A market with an explicit coverage notice still gives the reader a market link and explains the missing leader.",
-      "item": {
-        "type": "futures", "context_summary": "Limited price coverage",
-        "data": { "id": 65677910, "name": "NBA Cup finalists", "status": "open", "top_outcomes": [], "field_price_coverage_incomplete": true }
-      },
-      "expected_reason": null
-    },
 
     {
       "id": "tournament.with_golfers",

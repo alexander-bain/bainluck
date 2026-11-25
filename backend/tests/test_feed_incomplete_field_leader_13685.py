@@ -72,7 +72,7 @@ def _board(market_id, name, category, exclusive, quoted, unpriced=()):
 
 
 @pytest.mark.parametrize("path", ["discover", "sports", "price_refresh"])
-async def test_card_keeps_link_and_retires_the_unsupported_leader(monkeypatch, path):
+async def test_fresh_feed_drops_the_field_and_refresh_retires_its_leader(monkeypatch, path):
     cup = _board(
         65677910, CUP, "basketball", False,
         [
@@ -121,19 +121,22 @@ async def test_card_keeps_link_and_retires_the_unsupported_leader(monkeypatch, p
             *args, preloaded_base={"markets": markets, "curator_ids": set()},
             price_refresh=path == "price_refresh",
         )
-    assert feed._suppress_zero_probability_cards(items) == (items, 0)
     by_id = {item["data"]["id"]: item for item in items}
-    for board in (cup, abu_dhabi):
-        item = by_id[board.id]
-        data = item["data"]
-        assert data["name"] == board.name
-        assert data["outcome_count"] == len(board.outcomes)
-        assert data["field_price_coverage_incomplete"] is True
-        assert data["top_outcomes"] == []
-        assert "discover_card" not in data
-        assert data["hook_description"] is None
-        assert item["headline"] is None
-        assert item["context_summary"] == "Limited price coverage"
+    if path == "price_refresh":
+        for board in (cup, abu_dhabi):
+            item = by_id[board.id]
+            data = item["data"]
+            assert data["name"] == board.name
+            assert data["outcome_count"] == len(board.outcomes)
+            assert data["field_price_coverage_incomplete"] is True
+            assert data["top_outcomes"] == []
+            assert "discover_card" not in data
+            assert data["hook_description"] is None
+            assert item["headline"] is None
+            assert item["context_summary"] == "Limited price coverage"
+        assert feed._suppress_zero_probability_cards(items) == ([by_id[qatar.id]], 2)
+    else:
+        assert list(by_id) == [qatar.id]
     qatar_data = by_id[qatar.id]["data"]
     assert qatar_data["field_price_coverage_incomplete"] is False
     assert qatar_data["top_outcomes"][0]["name"] == "Max Verstappen"

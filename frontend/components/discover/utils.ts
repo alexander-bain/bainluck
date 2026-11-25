@@ -318,8 +318,9 @@ function _conceptBoutIsUsable(
  * content. Rules (fail closed — an unknown/empty card is dropped, never shown bare):
  *  - `event`: always kept — an event card shows a real matchup + status/score, never
  *    a bare tile.
- *  - `futures`: kept with an outcome row, an authoritative result, or an explicit
- *    limited-coverage notice on an open field.
+ *  - `futures`: kept when it carries ≥1 outcome row OR an authoritative result
+ *    (resolved / named winner / settled status / past resolution_date). A
+ *    zero-outcome, unsettled futures → `"empty_futures"`.
  *  - `tournament`: kept when it carries ≥1 golfer OR a settled marquee result;
  *    otherwise → `"empty_tournament"`.
  *  - `concept`: hub cards carry NO inline outcomes by design, so a concept is kept
@@ -374,7 +375,6 @@ export function feedItemSuppressionReason(
     case "futures": {
       const d = item.data as FeedFuturesData;
       if ((d.top_outcomes?.length ?? 0) > 0) return null;
-      if (d.status === "open" && d.field_price_coverage_incomplete === true) return null;
       if (_futuresIsSettled(d, now)) return null;
       return "empty_futures";
     }

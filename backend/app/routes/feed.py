@@ -3185,8 +3185,7 @@ def _suppress_zero_probability_cards(feed_items: list[dict]) -> tuple[list[dict]
     violation (#240 Item 4; extended by Queue 282 / C79).
 
     A LIVE prediction card must have at least one card-renderable outcome carrying
-    a non-null, positive probability. An open field carrying an explicit coverage
-    notice can also offer its market link. Two failure modes are suppressed:
+    a non-null, positive probability. Two failure modes are suppressed:
 
     * ALL-0% cards (#240 Item 4): typically stale/settled markets that leaked with
       status still 'open' (gotcha #33) — e.g. post-tournament golf FIELD markets
@@ -3211,9 +3210,6 @@ def _suppress_zero_probability_cards(feed_items: list[dict]) -> tuple[list[dict]
     for item in feed_items:
         if item.get("type") in ("futures", "comparison"):
             data = item.get("data") or {}
-            if item["type"] == "futures" and has_limited_field_price_coverage(data):
-                kept.append(item)
-                continue
             # Result-first settled envelopes render a winner, not a live line.
             if data.get("resolved") or data.get("winner"):
                 kept.append(item)
@@ -3451,6 +3447,12 @@ def _dedupe_futures_by_group_id(
     "Who wins Best Picture?") should appear as one card, not 10.  Markets
     without a group_id pass through unchanged.
     """
+    # A withdrawn leader must not become the representative or a saved sibling.
+    # The bundle assemblers apply their minimum to the candidates that remain.
+    futures_items = [
+        item for item in futures_items
+        if not has_limited_field_price_coverage(item.get("data") or {})
+    ]
     if any(
         item.get("_q8_family_only_admission")
         or any(

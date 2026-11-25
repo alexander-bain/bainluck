@@ -549,7 +549,7 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
     }
 
     @MainActor
-    func testOpenFieldWithExplicitCoverageNoticeKeepsItsCard() throws {
+    func testOpenFieldWithCoverageNoticeDoesNotEnterAFreshPage() throws {
         let card = """
         {
           "type": "futures", "score": 80, "context_summary": "Limited price coverage",
@@ -559,8 +559,7 @@ final class DiscoverViewModelPaginationTests: XCTestCase {
         """
         let response = try Self.pageOfRawItems([card], offset: 0, hasMore: false)
         let item = try XCTUnwrap(response.items.first)
-        XCTAssertNil(DiscoverViewModel.suppressionReason(item))
-        XCTAssertEqual(item.contextSummary, "Limited price coverage")
+        XCTAssertEqual(DiscoverViewModel.suppressionReason(item), "empty_futures")
     }
 
     @MainActor
