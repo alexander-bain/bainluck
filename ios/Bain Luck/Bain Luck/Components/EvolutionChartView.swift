@@ -859,7 +859,7 @@ struct EvolutionChartView: View {
                 return
             }
             if let seconds = FuturesPriceReadCooldown.timelineRetrySeconds(for: apiError) {
-                self.error = "Prices are temporarily unavailable. Trying again shortly."
+                self.error = "Probabilities are temporarily unavailable. Trying again shortly."
                 errorIsRetryable = true
                 loading = false
                 // A successful detail must not strand its chart after the last
@@ -1456,7 +1456,7 @@ struct EvolutionChartView: View {
         guard !EvolutionFullRange.earliestPointIsUnproven(historyRange) else { return nil }
         guard let covered = coverageHours, covered >= 0, requestedHours > 0 else { return nil }
         guard covered < Double(requestedHours) * 0.5 else { return nil }
-        return "Prices only go back \(coverageSpanWord(covered))"
+        return "Readings only go back \(coverageSpanWord(covered))"
     }
 
     /// #10141 — *Will the Iranian regime fall before 2027?* (113200) on Alex's build 34:

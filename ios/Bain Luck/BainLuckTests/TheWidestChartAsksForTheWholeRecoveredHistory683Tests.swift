@@ -222,7 +222,7 @@ final class TheWidestChartAsksForTheWholeRecoveredHistory683Tests: XCTestCase {
             EvolutionChartView.coverageNote(
                 coverageHours: 720, observationTimes: 200, requestedHours: 4320, historyRange: range)
         }
-        let today = "Prices only go back 30d"
+        let today = "Readings only go back 30d"
         XCTAssertEqual(note(nil), today, "no block = today's sentence")
         XCTAssertNil(note(block("archive_first_interval", "incomplete")),
                      "an incomplete import's first interval is not the question's open")
@@ -263,7 +263,7 @@ final class TheWidestChartAsksForTheWholeRecoveredHistory683Tests: XCTestCase {
         let note = EvolutionChartView.coverageNote(
             coverageHours: payload.coverageHours, observationTimes: payload.observationTimes,
             requestedHours: 4320, historyRange: payload.historyRange)
-        XCTAssertEqual(note, "Some older prices aren't shown")
+        XCTAssertEqual(note, "Some older readings aren't shown")
         XCTAssertFalse(try XCTUnwrap(note).contains(where: \.isNumber), "no counts on the reader's screen")
     }
 
@@ -273,7 +273,7 @@ final class TheWidestChartAsksForTheWholeRecoveredHistory683Tests: XCTestCase {
             EvolutionChartView.coverageNote(
                 coverageHours: 4600, observationTimes: seen, requestedHours: 4320, historyRange: range)
         }
-        let partial = "Some older prices aren't shown"
+        let partial = "Some older readings aren't shown"
         XCTAssertEqual(note(FuturesHistoryRange(requested: "full", servedHistory: "partial")), partial)
         XCTAssertNil(note(FuturesHistoryRange(requested: "full", servedHistory: "complete")))
         XCTAssertNil(note(FuturesHistoryRange(requested: "full")), "an older server = complete")
@@ -332,7 +332,7 @@ final class TheWidestChartAsksForTheWholeRecoveredHistory683Tests: XCTestCase {
         XCTAssertTrue(payload.timeline.isEmpty, "nothing is drawn, nothing is invented")
         XCTAssertEqual(
             card(payload, points: 0),
-            .sparse(.init(note: "Some older prices aren't shown", hint: nil)))
+            .sparse(.init(note: "Some older readings aren't shown", hint: nil)))
     }
 
     /// One served price: still too few to draw, and "Only one reading seen so far" is
@@ -346,7 +346,7 @@ final class TheWidestChartAsksForTheWholeRecoveredHistory683Tests: XCTestCase {
         XCTAssertEqual(payload.timeline.count, 1)
         XCTAssertEqual(
             card(payload, points: 1),
-            .sparse(.init(note: "Some older prices aren't shown", hint: nil)))
+            .sparse(.init(note: "Some older readings aren't shown", hint: nil)))
     }
 
     /// The instant/point split #7350 pinned: two served instants that draw one point
@@ -357,7 +357,7 @@ final class TheWidestChartAsksForTheWholeRecoveredHistory683Tests: XCTestCase {
             EvolutionChartView.cardBody(
                 windowPoints: 1, windowInstants: 2, totalInstants: 2,
                 windowWord: EvolutionChartView.windowWord(for: .season), historyRange: partial),
-            .sparse(.init(note: "Some older prices aren't shown", hint: nil)))
+            .sparse(.init(note: "Some older readings aren't shown", hint: nil)))
     }
 
     /// Controls: everything that is not a served partial full read keeps today's words.

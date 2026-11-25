@@ -1798,25 +1798,29 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
         </>
       )}
 
-      {thresholdEntries.map(([stem, outcomes], i) => (
-        <QuantityGroup
-          key={stem}
-          title={thresholdLadderHeadings[i]}
-          rungs={buildThresholdRungs(outcomes)}
-          atlas={atlasEnabled}
-          onRungSelect={
-            atlasEnabled
-              ? (rung) => {
-                  if (typeof rung.key === "number") {
-                    setAtlasSelectedOutcomeId(rung.key);
-                    didInitSelection.current = true;
-                    setSelectedOutcomes(new Set([rung.key]));
+      {thresholdEntries.map(([stem, outcomes], i) => {
+        const rungs = buildThresholdRungs(outcomes).filter(hasCurrentPrice);
+        if (rungs.length === 0) return null;
+        return (
+          <QuantityGroup
+            key={stem}
+            title={thresholdLadderHeadings[i]}
+            rungs={rungs}
+            atlas={atlasEnabled}
+            onRungSelect={
+              atlasEnabled
+                ? (rung) => {
+                    if (typeof rung.key === "number") {
+                      setAtlasSelectedOutcomeId(rung.key);
+                      didInitSelection.current = true;
+                      setSelectedOutcomes(new Set([rung.key]));
+                    }
                   }
-                }
-              : undefined
-          }
-        />
-      ))}
+                : undefined
+            }
+          />
+        );
+      })}
 
       {/* Q478 — the same ladder for a market whose OWN outcomes are the rungs.
           Rungs already carry their final position in `value`, so QuantityGroup's
@@ -1893,7 +1897,7 @@ export default function FuturesDetailPage({ params }: FuturesDetailPageProps) {
               source: m.source,
               group_position: m.group_position,
               status: m.status,
-              outcomes: m.outcomes.map((o) => ({
+              outcomes: m.outcomes.filter(hasCurrentPrice).map((o) => ({
                 id: o.id,
                 name: o.name,
                 probability: o.probability,

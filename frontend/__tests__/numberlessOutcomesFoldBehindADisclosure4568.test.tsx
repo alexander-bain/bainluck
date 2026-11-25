@@ -51,6 +51,7 @@ jest.mock("next/navigation", () => ({
 }));
 
 let ACTIVE_MARKET: unknown = null;
+let ACTIVE_GROUP: unknown = null;
 
 jest.mock("swr", () => ({
   __esModule: true,
@@ -61,6 +62,7 @@ jest.mock("swr", () => ({
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       return { data: ACTIVE_MARKET as any, error: null, isLoading: false, mutate: () => {} };
     }
+    if (tag === "futures-group") return { data: ACTIVE_GROUP };
     return { data: undefined, error: null, isLoading: false, mutate: () => {} };
   },
 }));
@@ -81,8 +83,9 @@ import { partitionOutcomesByPrice } from "@/lib/futuresDetailDisplay";
 
 /* ────────────────────────────── the harness ────────────────────────────── */
 
-function render(market: unknown, id: string): string {
+function render(market: unknown, id: string, group: unknown = null): string {
   ACTIVE_MARKET = market;
+  ACTIVE_GROUP = group;
   return renderToStaticMarkup(<FuturesDetailPage params={{ id }} />);
 }
 
@@ -468,4 +471,20 @@ describe("#11980 — missing prices on the real numeric detail branch", () => {
     expect(html).not.toContain("No current price");
     expect(html).not.toContain("others: no recent probability");
   });
+});
+
+it("omits a numberless related threshold while retaining the market's own disclosure", () => {
+  const market = { ...starlinkIpo(), group_id: "ipo-window" };
+  const html = render(market, "108555", {
+    markets: [],
+    threshold_groups: {
+      window: [
+        { outcome_id: 700, name: "First window", label: "Supported window", probability: 0.2, threshold_value: 1 },
+        { outcome_id: 701, name: "Second window", label: "Unsupported window", probability: null, threshold_value: 2 },
+      ],
+    },
+  });
+  expect(html).toContain("Supported window");
+  expect(html).not.toContain("Unsupported window");
+  expect(html).toContain("5 others: no recent probability");
 });

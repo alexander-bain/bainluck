@@ -46,7 +46,7 @@ final class AHeldSteadyChartSaysUnchanged10141Tests: XCTestCase {
         XCTAssertNil(EvolutionChartView.heldSteadyNote(series: [:], windowInstants: 50, windowWord: week))
     }
 
-    /// The coverage sentence keeps priority: "Prices only go back 2d" is the more
+    /// The coverage sentence keeps priority: "Readings only go back 2d" is the more
     /// important truth when the window is mostly empty.
     func testTheCardAsksForTheNoteOnlyAfterTheCoverageSentence() throws {
         let source = try String(contentsOf: Self.repoFile("ios/Bain Luck/Bain Luck/Components/EvolutionChartView.swift"), encoding: .utf8)

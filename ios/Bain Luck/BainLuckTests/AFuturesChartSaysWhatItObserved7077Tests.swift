@@ -179,7 +179,7 @@ final class AFuturesChartSaysWhatItObserved7077Tests: XCTestCase {
         XCTAssertEqual(
             EvolutionChartView.coverageNote(
                 coverageHours: 20.0, observationTimes: 9, requestedHours: 168),
-            "Prices only go back 20h")
+            "Readings only go back 20h")
     }
 
     func testTheMetaChartLeadsWithTheCountBecauseTwoPointsAreNotALine() {

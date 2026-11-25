@@ -887,12 +887,6 @@ export default function FuturesShapeBody({
         </button>
       )}
 
-      <p className="mt-2.5 text-xs text-text-secondary">
-        {isQualifier
-          ? "Each contender can qualify. These chances do not add to 100%."
-          : "Full-field shares. Every outcome prints the server's number."}
-      </p>
-
       {mounted &&
         sheetOpen &&
         typeof document !== "undefined" &&
