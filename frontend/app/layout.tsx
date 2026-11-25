@@ -15,7 +15,7 @@ import DesktopNav from "@/components/DesktopNav";
 import Footer from "@/components/Footer";
 import BainLuckMark from "@/components/BainLuckMark";
 import EventOpenIntent from "@/components/event/EventOpenIntent";
-import { APP_STORE_APP_ID } from "@/lib/brandCopy";
+import { APP_STORE_CAMPAIGNS, smartAppBannerContent } from "@/lib/brandCopy";
 import { BUILD_META_NAME, frontendCommitSha } from "@/lib/buildInfo";
 import { getSiteUrl } from "@/lib/siteUrl";
 import { Suspense } from "react";
@@ -90,7 +90,10 @@ export const metadata: Metadata = {
     ],
     apple: [{ url: "/apple-icon.png", sizes: "180x180", type: "image/png" }],
   },
-  itunes: { appId: APP_STORE_APP_ID },
+  // #12311: Safari's banner, written through `other` so it can carry campaign
+  // tags (`smartAppBannerContent` says why). No app-argument here: every page
+  // would inherit it; an event's own layout supplies its URL.
+  other: { "apple-itunes-app": smartAppBannerContent(APP_STORE_CAMPAIGNS.banner) },
   robots: { index: true, follow: true },
   openGraph: {
     type: "website",

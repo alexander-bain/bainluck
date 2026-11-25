@@ -158,6 +158,10 @@ struct DiscoverView: View {
     }
     @Environment(\.scenePhase) private var priceScenePhase
     @State private var priceViewVisible = false
+
+    private var shouldDeliverLivePrices: Bool {
+        priceViewVisible && priceScenePhase == .active && navigationPath.isEmpty
+    }
     @EnvironmentObject private var authManager: AuthManager
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @State private var visibleCount: Int
@@ -1147,6 +1151,34 @@ struct DiscoverView: View {
                                 navigationPath.append(Route.containerHub(slug: slug, name: name))
                             }
                         )
+                    } else if KitCardStandInSwitch366B.isEnabled,
+                              kind == "roundup",
+                              let roundupBundle = Self.resolveRoundupBundle(
+                                  title: title,
+                                  collectionRef: collectionRef,
+                                  groupItems: items,
+                                  feedItems: vm.items
+                              ),
+                              case .kit(let kitSpec) = KitCardStandInSwitch366B.resolveDiscoverStandIn(
+                                  contract: roundupBundle.roundupContract
+                              ),
+                              let kitView = KitCardView366B(
+                                  spec: kitSpec,
+                                  onRoute: { kitRoute in
+                                      if let primary = items.first {
+                                          recordInteraction(for: primary, action: .detailOpen, source: "card")
+                                      }
+                                      if let dest = KitCardStandInSwitch366B.resolveRoute(
+                                          kitRoute,
+                                          fallbackCollectionRef: roundupBundle.roundupCollectionRef ?? collectionRef,
+                                          fallbackTitle: roundupBundle.title,
+                                          kitCardHeadline: kitSpec.commonHeadline
+                                      ) {
+                                          navigationPath.append(dest)
+                                      }
+                                  }
+                              ) {
+                        kitView
                     } else if kind == "roundup",
                               let roundupBundle = Self.resolveRoundupBundle(
                                   title: title,
@@ -2876,10 +2908,13 @@ struct DiscoverView: View {
             #endif
             AnalyticsService.trackScreen(name: "discover", type: "discover")
             priceViewVisible = true
-            vm.setPriceDeliveryActive(priceScenePhase == .active)
+            vm.setPriceDeliveryActive(shouldDeliverLivePrices)
         }
-        .onChange(of: priceScenePhase) { _, phase in
-            vm.setPriceDeliveryActive(priceViewVisible && phase == .active)
+        .onChange(of: priceScenePhase) { _, _ in
+            vm.setPriceDeliveryActive(shouldDeliverLivePrices)
+        }
+        .onChange(of: navigationPath.isEmpty) { _, _ in
+            vm.setPriceDeliveryActive(shouldDeliverLivePrices)
         }
         .task {
             if vm.items.isEmpty {
@@ -3901,33 +3936,43 @@ struct NativeGroupCard: View {
             return event.sportName ?? sportDisplayName(for: event.sport)
         }()
         let isAX = dynamicTypeSize.isAccessibilitySize
-        let rowLayout = isAX
-            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 6))
-            : AnyLayout(HStackLayout(alignment: .center, spacing: 12))
-        return rowLayout {
-            VStack(alignment: .leading, spacing: 4) {
-                Text("\(short.away) at \(short.home)")
-                    .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(primaryInk)
-                    .lineLimit(isAX ? nil : 2)
-                    .fixedSize(horizontal: false, vertical: true)
-                Text(subtitle)
-                    .font(.caption)
-                    .foregroundStyle(secondaryInk)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
+        return VStack(alignment: .leading, spacing: 4) {
             if let awayProb = cardOdds?.awayProbability, let homeProb = cardOdds?.homeProbability {
                 let awayText = formatProbability(awayProb, renderedPercent: cardOdds?.awayRenderedPercent)
                 let homeText = formatProbability(homeProb, renderedPercent: cardOdds?.homeRenderedPercent)
-                Text("\(awayText) · \(homeText)")
-                    .font(.subheadline.weight(.bold).monospacedDigit())
+                if isAX {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("\(short.away)\u{00A0}\(awayText)")
+                            .font(.subheadline.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(primaryInk)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("\(short.home)\u{00A0}\(homeText)")
+                            .font(.subheadline.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(primaryInk)
+                            .lineLimit(nil)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                } else {
+                    Text("\(short.away)\u{00A0}\(awayText) · \(short.home)\u{00A0}\(homeText)")
+                        .font(.subheadline.weight(.semibold).monospacedDigit())
+                        .foregroundStyle(primaryInk)
+                        .lineLimit(nil)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            } else {
+                Text("\(short.away) at \(short.home)")
+                    .font(.subheadline.weight(.semibold))
                     .foregroundStyle(primaryInk)
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
+                    .lineLimit(nil)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(secondaryInk)
+                .fixedSize(horizontal: false, vertical: true)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
         .onTapGesture {
             if let collectionRef {

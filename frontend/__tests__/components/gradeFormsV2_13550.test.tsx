@@ -185,4 +185,16 @@ describe("#13550 (363: A) — /grade/forms v2 pile sort", () => {
       expect(label.length).toBeLessThanOrEqual(10);
     }
   });
+
+  test("mobile quick-place pile buttons show the first card thumbnail when a pile is non-empty", () => {
+    const pageSrc = fs.readFileSync(
+      path.resolve(__dirname, "../../app/grade/forms/page.tsx"),
+      "utf-8",
+    );
+    expect(pageSrc).toContain("const firstCard = pile.item_ids[0] ? byId[pile.item_ids[0]] : null");
+    expect(pageSrc).toContain('data-testid={`quick-place-${pile.pile_id}`}');
+    expect(pageSrc).toContain('data-testid={`quick-place-thumb-${pile.pile_id}`}');
+    expect(pageSrc).toContain("src={firstCard.image_url}");
+    expect(pageSrc).toContain("draggable={false}");
+  });
 });
