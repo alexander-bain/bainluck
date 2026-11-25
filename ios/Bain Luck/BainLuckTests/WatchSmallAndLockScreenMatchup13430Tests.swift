@@ -642,8 +642,8 @@ final class WatchSmallAndLockScreenMatchup13430Tests: XCTestCase {
             ("2-during", try matchupTile(liveE, away: "lac", home: "bal")),
             ("3-aged", try matchupTile(agedE, away: "lac", home: "bal")),
             ("4-soccer-3way", try matchupTile(soccerE, away: "mci", home: "ars")),
-            ("5-final", try matchupTile(finalE, away: "tor", home: "det")),
-            ("6-post-final-3h", try matchupTile(finalE, away: "tor", home: "det", at: finalObs.addingTimeInterval(3 * 3600))),
+            ("5-final", try matchupTile(finalE, away: "tor", home: "det_nba")),
+            ("6-post-final-3h", try matchupTile(finalE, away: "tor", home: "det_nba", at: finalObs.addingTimeInterval(3 * 3600))),
             ("7-market", marketView),
             ("8-cannot-show", cannotShowView),
         ]

@@ -131,11 +131,13 @@ struct WatchMatchupLookSheet217: View {
     /// Builds a published snapshot exactly as the Watch app writes it and draws
     /// it through `WatchMatchupReading217.make`, the same path the complication uses.
     static func reading(_ stage: String, logos: String?, now: Date = Date()) -> WatchMatchupReading217? {
-        let teams: [Int: (abbr: String, name: String, primary: String, secondary: String)] = [
-            1: ("NE", "New England Patriots", "#002a5c", "#c60c30"),
-            2: ("LAC", "Los Angeles Chargers", "#0080c6", "#ffc20e"),
-            3: ("BAL", "Baltimore Ravens", "#241773", "#9e7c0c"),
-            4: ("DET", "Detroit Lions", "#0076b6", "#b0b7bc"),
+        let teams: [Int: (abbr: String, name: String, primary: String, secondary: String, logo: String)] = [
+            1: ("NE", "New England Patriots", "#002a5c", "#c60c30", "ne"),
+            2: ("LAC", "Los Angeles Chargers", "#0080c6", "#ffc20e", "lac"),
+            3: ("BAL", "Baltimore Ravens", "#241773", "#9e7c0c", "bal"),
+            4: ("DET", "Detroit Lions", "#0076b6", "#b0b7bc", "det"),
+            8: ("DET", "Detroit Pistons", "#c8102e", "#1d42ba", "det_nba"),
+            28: ("TOR", "Toronto Raptors", "#ce1141", "#000000", "tor"),
         ]
         func id(_ n: Int) -> WatchCompactTeamIdentity { WatchCompactTeamIdentity(teamID: n, abbreviation: teams[n]!.abbr) }
         func facts(away: Int, home: Int, pregameHome: Int? = nil, clock: String? = nil) -> WatchMatchupFacts217 {
@@ -217,7 +219,7 @@ struct WatchMatchupLookSheet217: View {
             return nil
         }
         return WatchMatchupReading217.make(snapshot: snapshot, now: now) { teamID in
-            teams[teamID].flatMap { crest($0.abbr, in: logos) }
+            teams[teamID].flatMap { crest($0.logo, in: logos) }
         }
     }
 }
