@@ -18,7 +18,6 @@ from app.utils.grouping_families import (
     Atom,
     Family,
     build_families,
-    family_fingerprint,
     uncovered_families,
 )
 from app.utils.kit_container_page_builder import (
@@ -527,7 +526,6 @@ def propose_top_containers(
                 family_fingerprint=fam.fingerprint,
             )
 
-        accepted = bool(outcome.get("accepted")) and len(pages) < max_proposals
         entry: dict[str, Any] = {
             "rank": rank_idx,
             "family_fingerprint": fam.fingerprint,
