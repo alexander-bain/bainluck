@@ -2043,9 +2043,12 @@ async def _write_prices(
     if (ask_ceilings or high_asks) and poll is None:
         from app.tasks.kalshi import record_kalshi_ask_ceilings
 
-        await record_kalshi_ask_ceilings(session, market_id, ask_ceilings)
         await record_kalshi_ask_ceilings(
-            session, market_id, high_asks, preserve_previous_price=True,
+            session, market_id, ask_ceilings, observed_at=now
+        )
+        await record_kalshi_ask_ceilings(
+            session, market_id, high_asks,
+            observed_at=now, preserve_previous_price=True,
         )
 
     if written and unpriced:

@@ -547,6 +547,7 @@ def _kalshi_yes_probability(
 
 async def record_kalshi_ask_ceilings(
     session, market_id: int, asks_by_ticker: dict[str, float | None], *,
+    observed_at: datetime,
     preserve_previous_price: bool = False,
 ) -> None:
     """Record positive evidence of a zero bid without writing a price snapshot."""
@@ -558,6 +559,10 @@ async def record_kalshi_ask_ceilings(
     ask = case(asks_by_ticker, value=FuturesOutcome.external_id).cast(
         FuturesOutcome.current_yes_ask.type
     )
+    book_changed = or_(
+        FuturesOutcome.current_yes_bid.is_distinct_from(0),
+        FuturesOutcome.current_yes_ask.is_distinct_from(ask),
+    )
     statement = (
         sa_update(FuturesOutcome)
         .where(
@@ -566,19 +571,27 @@ async def record_kalshi_ask_ceilings(
             FuturesOutcome.is_winner.is_not(True),
             FuturesOutcome.resolution_source.is_(None),
             FuturesOutcome.calibration_probability.is_(None),
-            or_(
-                FuturesOutcome.current_yes_bid.is_distinct_from(0),
-                FuturesOutcome.current_yes_ask.is_distinct_from(ask),
-                False if preserve_previous_price else FuturesOutcome.current_probability.is_not(None),
-            ),
         )
         .values(current_yes_bid=0, current_yes_ask=ask)
     )
-    if not preserve_previous_price:
-        statement = statement.values(
-            current_probability=None, current_american_odds=None, probability_change_24h=None,
+    if preserve_previous_price:
+        # The existing price keeps its own observation time until it expires.
+        statement = statement.where(book_changed)
+    else:
+        statement = statement.where(
+            FuturesOutcome.last_updated <= observed_at,
+            or_(
+                book_changed,
+                FuturesOutcome.current_probability.is_not(None),
+                FuturesOutcome.last_updated < observed_at,
+            ),
+        ).values(
+            current_probability=None,
+            current_american_odds=None,
+            probability_change_24h=None,
+            last_updated=observed_at,
             price_changed_at=price_changed_at_value(
-                FuturesOutcome.current_probability, FuturesOutcome.price_changed_at, None,
+                FuturesOutcome.current_probability, FuturesOutcome.price_changed_at, None
             ),
         )
     await session.execute(statement)
@@ -2595,7 +2608,9 @@ async def _poll_kalshi_markets(event_ticker: Optional[str] = None):
                                 )
                             )
                         stats["unpriced_outcomes_recorded"] += len(unpriced_data)
-                    await record_kalshi_ask_ceilings(session, futures_market_id, ask_ceilings)
+                    await record_kalshi_ask_ceilings(
+                        session, futures_market_id, ask_ceilings, observed_at=now
+                    )
 
                     # #6598. The three passes above each numbered their OWN
                     # population: the priced upsert ranked `outcome_data` 1..N,
