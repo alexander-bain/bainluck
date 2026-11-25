@@ -12,6 +12,7 @@ The things only the ROUTE can get wrong:
   - admin reads that are not actually admin-gated
 """
 
+import asyncio
 from datetime import date, timedelta
 import json
 import time
@@ -71,6 +72,14 @@ def _body(**overrides):
     return body
 
 
+class _ScalarResult:
+    def __init__(self, value):
+        self._value = value
+
+    def scalar(self):
+        return self._value
+
+
 class _RecordingSession:
     """Captures what the route tried to persist and execute.
 
@@ -78,12 +87,13 @@ class _RecordingSession:
     the route BUILD" and "when does it SWEEP", both route-side.
     """
 
-    def __init__(self, fail_on_commit: bool = False):
+    def __init__(self, fail_on_commit: bool = False, persisted_today_bytes: int = 0):
         self.added: list = []
         self.executed: list = []
         self.commits = 0
         self.rolled_back = False
         self._fail = fail_on_commit
+        self.persisted_today_bytes = persisted_today_bytes
 
     def add(self, row):
         self.added.append(row)
@@ -97,8 +107,35 @@ class _RecordingSession:
         self.rolled_back = True
 
     async def execute(self, statement, params=None):
-        self.executed.append((str(statement), params))
+        sql = str(statement)
+        self.executed.append((sql, params))
+        if "SUM(payload_bytes)" in sql:
+            return _ScalarResult(
+                self.persisted_today_bytes + sum(r.payload_bytes for r in self.added)
+            )
         return []
+
+
+class _FakeAsyncRedis:
+    """Minimal shared async Redis stand-in for daily ceiling tests across workers."""
+
+    def __init__(self):
+        self.counts: dict[str, int] = {}
+        self.ttls: dict[str, int] = {}
+
+    async def incrby(self, key: str, amount: int) -> int:
+        val = self.counts.get(key, 0) + amount
+        self.counts[key] = val
+        return val
+
+    async def decrby(self, key: str, amount: int) -> int:
+        val = self.counts.get(key, 0) - amount
+        self.counts[key] = val
+        return val
+
+    async def expire(self, key: str, seconds: int) -> bool:
+        self.ttls[key] = seconds
+        return True
 
 
 def _client(db):
@@ -113,11 +150,15 @@ def _client(db):
 @pytest_asyncio.fixture
 async def client_and_db():
     db = _RecordingSession()
+    fake_redis = _FakeAsyncRedis()
+    db.fake_redis = fake_redis
     # The sweep is its own test; here it has just run.
     metrickit._last_prune = time.monotonic()
-    metrickit._daily_bytes_day = None
-    metrickit._daily_bytes_stored = 0
-    with patch("app.main.init_db", new_callable=AsyncMock):
+    metrickit._reset_daily_bytes_state()
+    with (
+        patch("app.main.init_db", new_callable=AsyncMock),
+        patch.object(metrickit, "_get_daily_bytes_redis", AsyncMock(return_value=fake_redis)),
+    ):
         async with _client(db) as ac:
             yield ac, db
     app.dependency_overrides.clear()
@@ -287,21 +328,27 @@ async def test_an_oversized_body_without_a_length_is_refused_as_it_streams(clien
 
 
 @pytest.mark.asyncio
-async def test_a_failed_save_answers_503_so_the_phone_keeps_it():
+async def test_a_failed_save_answers_503_so_the_phone_keeps_it(monkeypatch):
     """Gotcha #53: a 2xx here would make the phone delete a payload never stored."""
     db = _RecordingSession(fail_on_commit=True)
+    fake_redis = _FakeAsyncRedis()
+    day_one = date(2026, 11, 24)
+    key = metrickit._daily_bytes_redis_key(day_one)
     metrickit._last_prune = time.monotonic()
-    metrickit._daily_bytes_day = None
-    metrickit._daily_bytes_stored = 0
+    metrickit._reset_daily_bytes_state()
+    monkeypatch.setattr(metrickit, "_utc_today", lambda: day_one)
     try:
-        with patch("app.main.init_db", new_callable=AsyncMock):
+        with (
+            patch("app.main.init_db", new_callable=AsyncMock),
+            patch.object(metrickit, "_get_daily_bytes_redis", AsyncMock(return_value=fake_redis)),
+        ):
             async with _client(db) as ac:
                 with patch.object(metrickit.logger, "exception") as logged:
                     resp = await ac.post(INGEST, json=_body())
         assert resp.status_code == 503
         assert db.rolled_back
         assert db.commits == 0
-        assert metrickit._daily_bytes_stored == 0
+        assert fake_redis.counts.get(key, 0) == 0
         logged.assert_called_once()
     finally:
         app.dependency_overrides.clear()
@@ -318,6 +365,7 @@ async def test_the_daily_stored_bytes_ceiling_rejects_excess_with_429_and_resets
     monkeypatch.setattr(metrickit, "MAX_DAILY_STORED_BYTES", payload_bytes * 2)
     day_one = date(2026, 11, 24)
     day_two = day_one + timedelta(days=1)
+    key_one = f"{metrickit.DAILY_BYTES_REDIS_KEY_PREFIX}{day_one.isoformat()}"
     monkeypatch.setattr(metrickit, "_utc_today", lambda: day_one)
 
     assert (await ac.post(INGEST, json=_body())).status_code == 202
@@ -326,10 +374,166 @@ async def test_the_daily_stored_bytes_ceiling_rejects_excess_with_429_and_resets
     assert over.status_code == 429
     assert "too many" in over.json()["detail"].lower()
     assert len(db.added) == 2
+    assert db.fake_redis.ttls[key_one] == 2 * 86400
+    assert db.fake_redis.counts[key_one] == payload_bytes * 2
 
     monkeypatch.setattr(metrickit, "_utc_today", lambda: day_two)
     assert (await ac.post(INGEST, json=_body())).status_code == 202
     assert len(db.added) == 3
+
+
+@pytest.mark.asyncio
+async def test_daily_ceiling_still_refuses_after_module_memory_cleared_restart(
+    client_and_db, monkeypatch
+):
+    """Fable 7:45 PM PT: worker restart / module memory reset must not lift the day's ceiling."""
+    ac, db = client_and_db
+    payload_bytes = len(json.dumps(HANG, separators=(",", ":")).encode())
+    monkeypatch.setattr(metrickit, "MAX_DAILY_STORED_BYTES", payload_bytes * 2)
+    day_one = date(2026, 11, 24)
+    monkeypatch.setattr(metrickit, "_utc_today", lambda: day_one)
+
+    assert (await ac.post(INGEST, json=_body())).status_code == 202
+    assert (await ac.post(INGEST, json=_body())).status_code == 202
+
+    # Simulate web_supervisor worker recycle clearing module globals.
+    metrickit._reset_daily_bytes_state()
+
+    over = await ac.post(INGEST, json=_body())
+    assert over.status_code == 429
+    assert len(db.added) == 2
+
+
+@pytest.mark.asyncio
+async def test_daily_ceiling_enforced_when_two_workers_each_believe_they_are_under(
+    client_and_db, monkeypatch
+):
+    """Fable 7:45 PM PT: shared Redis counter stops two workers from splitting the ceiling."""
+    ac, db = client_and_db
+    payload_bytes = len(json.dumps(HANG, separators=(",", ":")).encode())
+    day_one = date(2026, 11, 24)
+    monkeypatch.setattr(metrickit, "_utc_today", lambda: day_one)
+
+    # (a) Sequential two-worker scenario with ceiling = 2 * payload_bytes:
+    # Worker A stores 1, Worker B starts fresh (believes 0) and stores 1, then
+    # Worker A (still believing only 1 stored) tries a 2nd -> 429.
+    monkeypatch.setattr(metrickit, "MAX_DAILY_STORED_BYTES", payload_bytes * 2)
+    assert (await ac.post(INGEST, json=_body())).status_code == 202
+    worker_a_state = (
+        metrickit._db_fallback_day,
+        metrickit._db_fallback_read_at,
+        metrickit._db_fallback_bytes,
+    )
+    metrickit._reset_daily_bytes_state()  # Worker B process state
+    assert (await ac.post(INGEST, json=_body())).status_code == 202
+
+    # Restore Worker A's process state (believing it is under ceiling).
+    (
+        metrickit._db_fallback_day,
+        metrickit._db_fallback_read_at,
+        metrickit._db_fallback_bytes,
+    ) = worker_a_state
+    assert (await ac.post(INGEST, json=_body())).status_code == 429
+    assert len(db.added) == 2
+
+    # (b) Concurrent dual-worker burst on ceiling = 1 * payload_bytes: exactly one 202, one 429.
+    db_concurrent = _RecordingSession()
+    shared_redis = _FakeAsyncRedis()
+    monkeypatch.setattr(metrickit, "MAX_DAILY_STORED_BYTES", payload_bytes)
+    with (
+        patch("app.main.init_db", new_callable=AsyncMock),
+        patch.object(metrickit, "_get_daily_bytes_redis", AsyncMock(return_value=shared_redis)),
+    ):
+        async with _client(db_concurrent) as ac1, _client(db_concurrent) as ac2:
+            resps = await asyncio.gather(
+                ac1.post(INGEST, json=_body()),
+                ac2.post(INGEST, json=_body()),
+            )
+    assert sorted(r.status_code for r in resps) == [202, 429]
+    assert len(db_concurrent.added) == 1
+
+
+@pytest.mark.asyncio
+async def test_redis_unreachable_falls_back_to_table_sum_cached_60s_and_survives_restart(
+    monkeypatch
+):
+    """When Redis is unreachable, fall back to metrickit_payloads daily sum cached <=60s."""
+    payload_bytes = len(json.dumps(HANG, separators=(",", ":")).encode())
+    db = _RecordingSession()
+    now = 1000.0
+    day_one = date(2026, 11, 24)
+    metrickit._last_prune = now
+    metrickit._reset_daily_bytes_state()
+    monkeypatch.setattr(metrickit, "MAX_DAILY_STORED_BYTES", payload_bytes * 2)
+    monkeypatch.setattr(metrickit, "_utc_today", lambda: day_one)
+    monkeypatch.setattr(metrickit.time, "monotonic", lambda: now)
+
+    try:
+        with (
+            patch("app.main.init_db", new_callable=AsyncMock),
+            patch.object(
+                metrickit,
+                "_get_daily_bytes_redis",
+                AsyncMock(side_effect=ConnectionError("redis down")),
+            ),
+        ):
+            async with _client(db) as ac:
+                assert (await ac.post(INGEST, json=_body())).status_code == 202
+                assert (await ac.post(INGEST, json=_body())).status_code == 202
+
+                sum_queries = [
+                    (sql, params) for sql, params in db.executed if "SUM(payload_bytes)" in sql
+                ]
+                assert len(sum_queries) == 1, "DB fallback sum should be cached for 60s"
+                sql, params = sum_queries[0]
+                assert "received_at >= :day_start AND received_at < :day_end" in sql
+                assert params["day_start"].isoformat() == "2026-11-24T00:00:00+00:00"
+                assert params["day_end"].isoformat() == "2026-11-25T00:00:00+00:00"
+
+                # Over ceiling in cache -> 429 without extra DB query.
+                assert (await ac.post(INGEST, json=_body())).status_code == 429
+                assert len([q for q in db.executed if "SUM(payload_bytes)" in q[0]]) == 1
+
+                # Worker restart clears memory -> re-reads DB sum and still refuses 429.
+                metrickit._reset_daily_bytes_state()
+                assert (await ac.post(INGEST, json=_body())).status_code == 429
+                assert len([q for q in db.executed if "SUM(payload_bytes)" in q[0]]) == 2
+
+                # Another worker persists bytes; once 60s TTL passes, refresh sees total -> 429.
+                monkeypatch.setattr(metrickit, "MAX_DAILY_STORED_BYTES", payload_bytes * 3)
+                db.persisted_today_bytes = payload_bytes  # 2 local + 1 peer == 3 total
+                now += metrickit.DAILY_BYTES_DB_CACHE_SECONDS + 1.0
+                metrickit._last_prune = now
+                assert (await ac.post(INGEST, json=_body())).status_code == 429
+                assert len([q for q in db.executed if "SUM(payload_bytes)" in q[0]]) == 3
+    finally:
+        app.dependency_overrides.clear()
+
+
+@pytest.mark.asyncio
+async def test_redis_and_db_sum_unavailable_answers_503_never_no_ceiling(monkeypatch):
+    """If Redis is down and DB table-sum also fails, refuse 503 rather than fail-open."""
+    db = _RecordingSession()
+    metrickit._last_prune = time.monotonic()
+    metrickit._reset_daily_bytes_state()
+
+    async def boom(statement, params=None):
+        raise RuntimeError("simulated DB fallback failure")
+
+    db.execute = boom
+    try:
+        with (
+            patch("app.main.init_db", new_callable=AsyncMock),
+            patch.object(metrickit, "_get_daily_bytes_redis", AsyncMock(return_value=None)),
+            patch.object(metrickit.logger, "exception") as logged,
+        ):
+            async with _client(db) as ac:
+                resp = await ac.post(INGEST, json=_body())
+        assert resp.status_code == 503
+        assert db.added == []
+        logged.assert_called_once()
+    finally:
+        app.dependency_overrides.clear()
 
 
 # ---------------------------------------------------------------------------

@@ -30,7 +30,7 @@ most once per `PRUNE_EVERY_SECONDS` per process.
 
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 import json
 import logging
 import time
@@ -58,18 +58,24 @@ ACCEPTED_KINDS = frozenset({"crash", "hang", "cpu_exception", "disk_write", "lau
 #: sending (`MetricKitRecord12309.maxBodyBytes`, the same number).
 MAX_BODY_BYTES = 512 * 1024
 
-#: Daily stored-bytes ceiling across all senders per UTC day (per worker
-#: process). Once reached, ingest answers 429 so consenting phones retain
-#: queued diagnostics (`isPermanentRefusal(429) == false`) and retry later.
+#: Daily stored-bytes ceiling across all workers and restarts per UTC day.
+#: Shared via Redis (`DAILY_BYTES_REDIS_KEY_PREFIX` + YYYY-MM-DD, 2-day TTL)
+#: with a 60s-cached DB `SUM(payload_bytes)` fallback when Redis is unreachable.
+#: Once reached, ingest answers 429 so consenting phones retain queued
+#: diagnostics (`isPermanentRefusal(429) == false`) and retry tomorrow.
 MAX_DAILY_STORED_BYTES = 50 * 1024 * 1024
+DAILY_BYTES_REDIS_KEY_PREFIX = "bainluck:metrickit:daily_bytes:"
+DAILY_BYTES_REDIS_TTL_SECONDS = 2 * 86400
+DAILY_BYTES_DB_CACHE_SECONDS = 60
 
 RETENTION_DAYS = 30
 PRUNE_EVERY_SECONDS = 3600
 
 #: `time.monotonic()` of the last retention sweep in this process (`None` = never swept).
 _last_prune: Optional[float] = None
-_daily_bytes_day: Optional[date] = None
-_daily_bytes_stored: int = 0
+_db_fallback_day: Optional[date] = None
+_db_fallback_read_at: Optional[float] = None
+_db_fallback_bytes: int = 0
 
 RECENT_DIAGNOSTICS = 25
 MAX_SUMMARY_ROWS = 200
@@ -118,19 +124,112 @@ def _utc_today() -> date:
     return datetime.now(timezone.utc).date()
 
 
-def _current_daily_stored_bytes(today: Optional[date] = None) -> int:
-    global _daily_bytes_day, _daily_bytes_stored
-    day = today or _utc_today()
-    if _daily_bytes_day != day:
-        _daily_bytes_day = day
-        _daily_bytes_stored = 0
-    return _daily_bytes_stored
+def _reset_daily_bytes_state() -> None:
+    """Clear the process-local DB-fallback cache (used across tests/restart simulations)."""
+    global _db_fallback_day, _db_fallback_read_at, _db_fallback_bytes
+    _db_fallback_day = None
+    _db_fallback_read_at = None
+    _db_fallback_bytes = 0
 
 
-def _record_daily_stored_bytes(nbytes: int, today: Optional[date] = None) -> None:
-    global _daily_bytes_stored
-    _current_daily_stored_bytes(today)
-    _daily_bytes_stored += nbytes
+def _daily_bytes_redis_key(today: date) -> str:
+    return f"{DAILY_BYTES_REDIS_KEY_PREFIX}{today.isoformat()}"
+
+
+async def _get_daily_bytes_redis() -> Any:
+    """Return the process-shared async Redis client, or None if unavailable."""
+    try:
+        from app.utils.request_cache import get_shared_async_redis
+
+        return await get_shared_async_redis()
+    except Exception as exc:
+        logger.warning("metrickit daily bytes Redis unavailable: %s", exc)
+        return None
+
+
+async def _release_daily_bytes_redis(today: date, payload_bytes: int) -> None:
+    """Best-effort decrement when a reserved Redis byte slice was not stored."""
+    try:
+        from app.utils.request_cache import bounded_redis_call
+
+        client = await _get_daily_bytes_redis()
+        if client is None:
+            return
+        key = _daily_bytes_redis_key(today)
+        await bounded_redis_call(lambda: client.decrby(key, payload_bytes), treat_none_as_miss=False)
+    except Exception:
+        logger.debug("metrickit daily bytes Redis release failed", exc_info=True)
+
+
+async def _try_reserve_daily_bytes_redis(today: date, payload_bytes: int) -> Optional[bool]:
+    """Reserve ``payload_bytes`` against the shared Redis UTC-day counter.
+
+    Returns ``True`` when reserved under ceiling, ``False`` when over ceiling,
+    or ``None`` when Redis is unreachable so the caller falls back to Postgres.
+    """
+    from app.utils.request_cache import bounded_redis_call
+
+    try:
+        client = await _get_daily_bytes_redis()
+    except Exception as exc:
+        logger.warning("metrickit daily bytes Redis unavailable: %s", exc)
+        return None
+    if client is None:
+        return None
+
+    key = _daily_bytes_redis_key(today)
+    res = await bounded_redis_call(
+        lambda: client.incrby(key, payload_bytes),
+        treat_none_as_miss=False,
+    )
+    if not res.is_ok or res.value is None:
+        return None
+
+    await bounded_redis_call(
+        lambda: client.expire(key, DAILY_BYTES_REDIS_TTL_SECONDS),
+        treat_none_as_miss=False,
+    )
+    if int(res.value) > MAX_DAILY_STORED_BYTES:
+        await _release_daily_bytes_redis(today, payload_bytes)
+        return False
+    return True
+
+
+async def _check_daily_bytes_db_fallback(db: AsyncSession, today: date, payload_bytes: int) -> bool:
+    """Fallback daily ceiling check reading today's DB sum at most once per minute."""
+    global _db_fallback_day, _db_fallback_read_at, _db_fallback_bytes
+
+    now = time.monotonic()
+    cache_expired = (
+        _db_fallback_day != today
+        or _db_fallback_read_at is None
+        or (now - _db_fallback_read_at) >= DAILY_BYTES_DB_CACHE_SECONDS
+    )
+    if cache_expired:
+        day_start = datetime(today.year, today.month, today.day, tzinfo=timezone.utc)
+        day_end = day_start + timedelta(days=1)
+        try:
+            res = await db.execute(
+                text(
+                    "SELECT COALESCE(SUM(payload_bytes), 0) "
+                    "FROM metrickit_payloads "
+                    "WHERE received_at >= :day_start AND received_at < :day_end"
+                ),
+                {"day_start": day_start, "day_end": day_end},
+            )
+            total = int(res.scalar() or 0)
+        except Exception:
+            try:
+                await db.rollback()
+            except Exception:
+                pass
+            logger.exception("metrickit daily ceiling DB fallback check failed")
+            raise HTTPException(status_code=503, detail="Not stored; try again later")
+        _db_fallback_day = today
+        _db_fallback_read_at = now
+        _db_fallback_bytes = total
+
+    return (_db_fallback_bytes + payload_bytes) <= MAX_DAILY_STORED_BYTES
 
 
 async def _maybe_prune(db: AsyncSession) -> None:
@@ -192,11 +291,18 @@ async def ingest_metrickit(
 
     payload_bytes = len(json.dumps(submission.payload, separators=(",", ":")).encode())
     today = _utc_today()
-    if _current_daily_stored_bytes(today) + payload_bytes > MAX_DAILY_STORED_BYTES:
+    redis_reserved = await _try_reserve_daily_bytes_redis(today, payload_bytes)
+    if redis_reserved is False:
         raise HTTPException(
             status_code=429,
             detail="Too many MetricKit bytes stored today; try again tomorrow",
         )
+    if redis_reserved is None:
+        if not await _check_daily_bytes_db_fallback(db, today, payload_bytes):
+            raise HTTPException(
+                status_code=429,
+                detail="Too many MetricKit bytes stored today; try again tomorrow",
+            )
 
     row = MetricKitPayload(
         kind=submission.kind,
@@ -212,10 +318,14 @@ async def ingest_metrickit(
         await db.commit()
     except Exception:
         await db.rollback()
+        if redis_reserved is True:
+            await _release_daily_bytes_redis(today, payload_bytes)
         logger.exception("metrickit ingest failed to persist one %s payload", submission.kind)
         raise HTTPException(status_code=503, detail="Not stored; try again later")
 
-    _record_daily_stored_bytes(payload_bytes, today)
+    if redis_reserved is None and _db_fallback_day == today:
+        global _db_fallback_bytes
+        _db_fallback_bytes += payload_bytes
     await _maybe_prune(db)
     return {"stored": 1}
 
