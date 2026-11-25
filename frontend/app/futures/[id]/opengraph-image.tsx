@@ -1,5 +1,6 @@
 /* eslint-disable @next/next/no-img-element */
 import { ImageResponse } from "next/og";
+import { BRAND_DRAWING_DATA_URI } from "@/lib/og/brandDrawingDataUri";
 import type { FuturesMarketDetailResponse, FuturesOutcome } from "@/lib/types";
 import { UnfurlCard } from "@/components/og/UnfurlCard";
 import { truncateShareText } from "@/lib/share";
@@ -237,7 +238,13 @@ export default async function Image({ params }: { params: { id: string } }) {
           {/* Header */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <span style={{ fontSize: 34 }}>🍀</span>
+              <img
+                src={BRAND_DRAWING_DATA_URI}
+                alt=""
+                width={34}
+                height={34}
+                style={{ borderRadius: 8 }}
+              />
               <span style={{ fontSize: 28, fontWeight: 800 }}>Bain Luck</span>
             </div>
             <div

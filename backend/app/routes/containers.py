@@ -283,25 +283,17 @@ async def _assemble_event_cards(
     db: AsyncSession, events: list, *, references: Optional[asyncio.Task] = None,
     compact: bool = False,
 ) -> tuple[dict, dict]:
-    from collections import defaultdict
     from datetime import datetime, timedelta, timezone
 
     from app.routes.events import (
-        _filter_stale_bookmaker_snapshots,
         _format_event_with_aggregated_odds,
-        aggregate_bookmaker_odds,
-        detect_reversed_bookmakers,
         latest_odds_per_bookmaker_query,
     )
     from app.utils.proven_duplicates import folded_card_numbers_batch
     from app.utils.settled_hero import resolve_settled_hero
+    from app.utils.unified_game_read import load_unified_game_reads
     from app.utils.venue_settlement_reader import attach_venue_settlement
 
-    # The compact finished card draws the verified score and the dedicated
-    # pre-match reading, with the recorded opening as its historical fallback.
-    # Once the recent-finish highlight window has passed, there is no reason to
-    # load a finished game's latest sportsbook table just to draw that card.
-    # Unresolved, recent and still-playing games keep the ordinary enrichment.
     finish_cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
     bookmaker_event_ids = [
         event.id for event in events
@@ -318,56 +310,33 @@ async def _assemble_event_cards(
             ) is not None
         )
     ]
-    snapshots_by_event: dict = defaultdict(list)
-    with _time_stage("bookmaker_odds"):
-        snapshots = []
-        if bookmaker_event_ids:
-            snapshots = (
-                await db.execute(latest_odds_per_bookmaker_query(bookmaker_event_ids))
-            ).scalars().all()
-    for snap in snapshots:
-        snapshots_by_event[snap.event_id].append(snap)
 
-    by_id = {e.id: e for e in events}
-    # #12938 / ruling 233: A: live games project from current lines only.
-    from app.utils.live_line_clock import apply_live_line_projection, event_state_clock
+    async def _timed_fold_cards(sess, evs):
+        with _time_stage("folded_numbers"):
+            return await folded_card_numbers_batch(sess, evs)
 
-    live_clocks = {e.id: event_state_clock(e) for e in events}
-    clock_now = datetime.now(timezone.utc)
-    odds_map: dict = {}
-    for event_id, snaps in snapshots_by_event.items():
-        ev = by_id.get(event_id)
-        filtered = _filter_stale_bookmaker_snapshots(
-            snaps,
-            event_status=(ev.status if ev else "scheduled"),
-            commence_time=(ev.commence_time if ev else None),
-        )
-        reversed_bks = detect_reversed_bookmakers(filtered)
-        agg = [s for s in filtered if s.bookmaker not in reversed_bks] if reversed_bks else filtered
-        odds_map[event_id] = {
-            "snapshots": filtered,
-            "all_snapshots": snaps,
-            "aggregated": apply_live_line_projection(
-                aggregate_bookmaker_odds(agg if agg else filtered),
-                agg if agg else filtered,
-                now=clock_now, state_changed_at=live_clocks.get(event_id),
-            ),
-            "captured_at": max(s.captured_at for s in filtered) if filtered else None,
-        }
-    # #12595: a scheduled game's pair comes from recent line readings.
-    from app.utils.recent_line_readings import apply_recent_line_projections
-
-    with _time_stage("recent_lines"):
-        await apply_recent_line_projections(db, events, odds_map)
+    _unified_cards = await load_unified_game_reads(
+        db,
+        events,
+        collapse_in_page=False,
+        include_same_league_external=True,
+        include_odds=True,
+        odds_event_id_filter=set(bookmaker_event_ids),
+        include_live_projections=True,
+        include_recent_projections=True,
+        fold_card_fn=_timed_fold_cards,
+        odds_query_fn=latest_odds_per_bookmaker_query,
+        stage_timer_fn=_time_stage,
+        fault_tolerant_external=True,
+        fault_tolerant_odds=False,
+    )
+    odds_map = _unified_cards.odds_map
+    folded_map = _unified_cards.folded_card_map
 
     if references is None:
         names = {n for e in events for n in (e.home_team_name, e.away_team_name) if n}
         gei_percentiles, team_lookup = await _load_event_card_references(db, sorted(names))
-        with _time_stage("folded_numbers"):
-            folded_map = await folded_card_numbers_batch(db, events)
     else:
-        with _time_stage("folded_numbers"):
-            folded_map = await folded_card_numbers_batch(db, events)
         with _time_stage("reference_wait"):
             gei_percentiles, team_lookup = await references
 
@@ -377,16 +346,28 @@ async def _assemble_event_cards(
     formatted = []
     for e in events:
         folded = folded_map.get(e.id)
+        _unified_ev = _unified_cards.by_id.get(e.id)
         # Gotcha #42: one row the serializer cannot draw is withheld with a
         # reason; it never takes the rest of the hub down with it.
         try:
             card = _format_event_with_aggregated_odds(
                 e,
-                odds_map.get(e.id),
+                _unified_ev.odds_data if _unified_ev is not None else odds_map.get(e.id),
                 gei_percentiles,
                 team_lookup=team_lookup,
-                folded_sources=folded.win_probability_sources if folded is not None else None,
-                folded_opening=folded.opening if folded is not None else None,
+                folded_sources=(
+                    _unified_ev.folded_sources
+                    if _unified_ev is not None
+                    else (folded.win_probability_sources if folded is not None else None)
+                ),
+                folded_opening=(
+                    _unified_ev.folded_opening
+                    if _unified_ev is not None
+                    else (folded.opening if folded is not None else None)
+                ),
+                three_way_books=(
+                    _unified_ev.three_way_books if _unified_ev is not None else None
+                ),
             )
         except Exception:  # noqa: BLE001 — per-item guard, logged loudly
             logger.exception("container hub: event %s card failed", e.id)
