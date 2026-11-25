@@ -53,15 +53,18 @@ final class SiriTip12315Tests: XCTestCase {
                       "Ask About a Team no longer marks the Siri hint used")
     }
 
-    /// #12461 — the hint must advertise a non-parameterized phrase registered in
-    /// `BainLuckShortcuts10873` ("Ask Bain Luck about a game"), never the removed
-    /// "Get a probability from Bain Luck" and never a parameterized shortcut whose
-    /// `SiriTipView` renders raw `${team}` template syntax.
+    /// #12461 / #13662 Item 11 — the hint models a real conversational phrase
+    /// backed by `BainLuckShortcuts10873`, never the removed "Get a probability
+    /// from Bain Luck" phrase, and never raw `${team}` template syntax.
     func testTheHintUsesARegisteredNonParameterizedShortcutPhrase() throws {
         let tipSource = try String(contentsOf: Self.appDir.appendingPathComponent("Tips/SiriProbabilityTip12315.swift"),
                                    encoding: .utf8)
-        XCTAssertTrue(tipSource.contains("SiriTipView(intent: GetProbabilityIntent10873()"),
-                      "The Siri hint must point to GetProbabilityIntent10873 so SiriTipView renders a plain-English phrase")
+        XCTAssertTrue(SiriProbabilityTip12315.examplePhraseText.contains("Bain Luck"),
+                      "The Siri hint copy must name Bain Luck")
+        XCTAssertFalse(SiriProbabilityTip12315.examplePhraseText.contains("${"),
+                       "The Siri hint copy must never expose template syntax")
+        XCTAssertTrue(tipSource.contains("MyStuffSiriTipsSheet12315"),
+                      "Tapping the Siri hint must present the short Tips sheet")
         XCTAssertFalse(tipSource.contains("Get a probability from Bain Luck"),
                        "The removed phrase must not appear in the Siri hint source")
 
@@ -69,10 +72,12 @@ final class SiriTip12315Tests: XCTestCase {
                                        encoding: .utf8)
         let shortcuts = try XCTUnwrap(intentsSource.range(of: "struct BainLuckShortcuts10873"))
         let shortcutsBody = intentsSource[shortcuts.lowerBound...]
+        XCTAssertTrue(shortcutsBody.contains("intent: TeamChanceIntent208B()"),
+                      "TeamChanceIntent208B must be registered in BainLuckShortcuts10873")
+        XCTAssertTrue(shortcutsBody.contains("Ask \\(.applicationName) if the \\(\\.$team) will win"),
+                      "Expected registered team phrase in BainLuckShortcuts10873")
         XCTAssertTrue(shortcutsBody.contains("intent: GetProbabilityIntent10873()"),
                       "GetProbabilityIntent10873 must be registered in BainLuckShortcuts10873")
-        XCTAssertTrue(shortcutsBody.contains("Ask \\(.applicationName) about a game"),
-                      "Expected registered non-parameterized phrase in BainLuckShortcuts10873")
     }
 
     private static var appDir: URL {

@@ -41,4 +41,23 @@ final class ASiriTipInMyStuffStaysDismissed12315Tests: XCTestCase {
         XCTAssertFalse(app.staticTexts.matching(identifier: hintID).firstMatch.waitForExistence(timeout: 5),
                        "a closed hint came back after a relaunch")
     }
+
+    func testTappingTheTipOpensTheTipsSheetAndDoneClosesIt() {
+        continueAfterFailure = false
+        let app = launchToMyStuff(tips: "reset")
+        let openCard = app.buttons["myStuffSiriTipOpenSheet12315"].firstMatch
+        XCTAssertTrue(openCard.waitForExistence(timeout: 10), "tappable Siri tip card never appeared")
+        openCard.tap()
+
+        let tipsNav = app.navigationBars["Tips"]
+        XCTAssertTrue(tipsNav.waitForExistence(timeout: 10), "tapping the Siri tip did not open the Tips sheet")
+        let phrasePredicate = NSPredicate(format: "label CONTAINS[c] %@", "Ask Bain Luck if the Lakers will win")
+        XCTAssertTrue(app.staticTexts.containing(phrasePredicate).firstMatch.waitForExistence(timeout: 5),
+                      "Tips sheet did not display the conversational Siri phrase")
+
+        tipsNav.buttons["Done"].tap()
+        XCTAssertTrue(tipsNav.waitForNonExistence(timeout: 5), "Done did not close the Tips sheet")
+        XCTAssertTrue(app.staticTexts.matching(identifier: hintID).firstMatch.exists,
+                      "closing Tips should keep the tip visible until dismissed")
+    }
 }
