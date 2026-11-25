@@ -101,10 +101,10 @@ final class SignOutDeviceDetach12569Tests: XCTestCase {
         await client.setAuthTokenProvider { nil }
 
         let response = try await client.unregisterDeviceToken(
-            deviceToken: "apns-hex-1234",
+            deviceToken: "apns1111",
             platform: "ios",
             tokenKind: "apns",
-            authToken: "captured-signout-jwt"
+            authToken: "sess1111"
         )
         XCTAssertEqual(response.status, "ok")
 
@@ -113,9 +113,9 @@ final class SignOutDeviceDetach12569Tests: XCTestCase {
         let req = captured[0]
         XCTAssertEqual(req.method, "POST")
         XCTAssertEqual(req.path, "/api/notifications/unregister")
-        XCTAssertEqual(req.authorization, "Bearer captured-signout-jwt")
+        XCTAssertEqual(req.authorization, "Bearer sess1111")
         XCTAssertFalse((req.sessionHeader ?? "").isEmpty, "X-Session-Id header must be present")
-        XCTAssertEqual(req.bodyJSON["device_token"], "apns-hex-1234")
+        XCTAssertEqual(req.bodyJSON["device_token"], "apns1111")
         XCTAssertEqual(req.bodyJSON["platform"], "ios")
         XCTAssertEqual(req.bodyJSON["token_kind"], "apns")
         XCTAssertEqual(req.bodyJSON["session_id"], req.sessionHeader)
@@ -137,9 +137,9 @@ final class SignOutDeviceDetach12569Tests: XCTestCase {
 
         manager.setUser(id: 42)
         try await Task.sleep(nanoseconds: 30_000_000)
-        manager.setTokensForTesting(apns: "apns-device-aaa", fcm: "fcm-token-bbb")
+        manager.setTokensForTesting(apns: "apns2222", fcm: "fcm3333")
 
-        let detachTask = manager.detachAllTokensForSignOut(authToken: "live-session-jwt")
+        let detachTask = manager.detachAllTokensForSignOut(authToken: "sess2222")
         XCTAssertNotNil(detachTask)
 
         // Immediately simulate UI onChange(of: authManager.user) clearing userId to nil.
@@ -151,8 +151,8 @@ final class SignOutDeviceDetach12569Tests: XCTestCase {
         }
 
         XCTAssertEqual(recorder.unregisteredPayloads.count, 2)
-        XCTAssertEqual(recorder.unregisteredPayloads[0].auth, "live-session-jwt")
-        XCTAssertEqual(recorder.unregisteredPayloads[1].auth, "live-session-jwt")
+        XCTAssertEqual(recorder.unregisteredPayloads[0].auth, "sess2222")
+        XCTAssertEqual(recorder.unregisteredPayloads[1].auth, "sess2222")
 
         let events = recorder.events
         XCTAssertEqual(events.prefix(2), ["unregister:apns", "unregister:fcm"])
@@ -172,7 +172,7 @@ final class SignOutDeviceDetach12569Tests: XCTestCase {
                 return NotificationRegisterResponse(status: "ok")
             }
         )
-        manager.setTokensForTesting(apns: "apns-device-aaa", fcm: "fcm-token-bbb")
+        manager.setTokensForTesting(apns: "apns2222", fcm: "fcm3333")
         XCTAssertNil(manager.detachAllTokensForSignOut(authToken: nil))
         XCTAssertNil(manager.detachAllTokensForSignOut(authToken: ""))
         XCTAssertTrue(recorder.unregisteredPayloads.isEmpty)

@@ -555,11 +555,13 @@ final class NotificationManager: NSObject, ObservableObject, UNUserNotificationC
         #endif
     }
 
+    #if DEBUG
     func setTokensForTesting(apns: String?, fcm: String?) {
         self.deviceToken = apns
         self.fcmToken = fcm
         self.registeredTokenByKind.removeAll()
     }
+    #endif
 
     /// Detach all held push tokens on the server while the session JWT is
     /// still valid, BEFORE `clearStoredAuth()` wipes Keychain (#12569 app half).
