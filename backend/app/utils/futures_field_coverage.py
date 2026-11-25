@@ -91,6 +91,6 @@ def grouped_field_leader_is_unsupported(
                 places -= 1
         else:
             open_prices.append(row["probability"])
-    return field_leader_is_unsupported(
-        open_prices, places, omitted_contender=bool(detail.get("prices_withheld"))
-    )
+    # The full set has already received its verified prices. A previously
+    # withheld row can have an accepted price after the venue composition.
+    return field_leader_is_unsupported(open_prices, places, omitted_contender=False)

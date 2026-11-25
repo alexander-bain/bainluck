@@ -10,6 +10,7 @@ from app.routes import feed
 from app.utils.futures_field_coverage import (
     field_leader_is_unsupported,
     field_winner_places,
+    grouped_field_leader_is_unsupported,
 )
 from app.utils.personalization import PersonalizationContext
 from tests.test_card_and_page_share_the_withheld_set_7632 import (
@@ -28,6 +29,24 @@ def test_places_come_from_the_contract():
     assert field_winner_places(ABU_DHABI, True) == 1
     assert field_winner_places("Team to reach a semifinal", False) is None
     assert field_winner_places("Finish in the top 3", False, 3) == 3
+
+
+def test_group_coverage_uses_the_full_field_after_price_composition():
+    detail = {
+        "status": "open",
+        "market_type": "field",
+        "name": "Award winner",
+        "source": "kalshi",
+        "mutually_exclusive": True,
+        "prices_withheld": 1,
+        "outcomes": [
+            {"name": name, "probability": price}
+            for name, price in zip(("Alice", "Beatrice", "Carmen", "Diana"), (0.20, 0.19, 0.17, 0.15))
+        ],
+    }
+    assert not grouped_field_leader_is_unsupported(detail, expected_winners=None, group_type=None)
+    detail["outcomes"][-1]["probability"] = None
+    assert grouped_field_leader_is_unsupported(detail, expected_winners=None, group_type=None)
 
 
 @pytest.mark.parametrize(
