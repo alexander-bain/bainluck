@@ -5,6 +5,7 @@ import { usePathname } from "next/navigation";
 import { useAnalyticsContext } from "@/components/Analytics";
 import { isSharedSetLandingPath } from "@/lib/analytics/consentBanner";
 import { APP_STORE_URL, BRAND_TAGLINE } from "@/lib/brandCopy";
+import BainLuckMark from "@/components/BainLuckMark";
 
 const FOOTER_LINKS: { heading: string; links: { label: string; href: string }[] }[] = [
   {
@@ -88,7 +89,7 @@ export default function Footer() {
           {/* Brand + one-liner */}
           <div className="space-y-3 md:col-span-1">
             <Link href="/about" onClick={() => onClick("/about")} className="flex items-center gap-2">
-              <span className="text-xl">🍀</span>
+              <BainLuckMark size={22} />
               <span className="text-body-strong text-text-primary">Bain Luck</span>
             </Link>
             {/* Queue 309: shared with the Discover first-run orientation line so
