@@ -49,6 +49,7 @@ from app.utils.discover_fun_scout import (
     is_fun_scout_enabled,
     load_reader_dismissed_sets,
     load_retired_scout_sets,
+    normalize_retired_scout_sets,
     run_nightly_fun_scout,
 )
 
@@ -200,29 +201,42 @@ def save_licence_state_durable(state: ScoutLicenceState) -> tuple[bool, Optional
 
 def _load_retired_sets_durable(
     path: Path = SCOUT_RETIRED_SETS_PATH,
-) -> set[str]:
-    """Load retired set slugs from checked-in file UNION durable Redis.
+) -> list[dict[str, Any]]:
+    """Load retired sets from checked-in file UNION durable Redis as normalized dicts.
 
     Fails closed (raises) if Redis is unreadable so a retired set can never be
     silently re-proposed after a dyno restart.
     """
-    retired = set(load_retired_scout_sets(path))
+    file_entries: list[dict[str, Any]] = load_retired_scout_sets(path)
     from app.tasks.redis_state import get_redis_client
 
     raw = get_redis_client().get(_RETIRED_SETS_REDIS_KEY)
+    redis_entries: list[Any] = []
     if raw is not None:
         parsed = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else raw)
         if isinstance(parsed, list):
-            for slug in parsed:
-                cleaned = str(slug or "").strip().lower()
-                if cleaned:
-                    retired.add(cleaned)
+            for item in parsed:
+                if isinstance(item, dict):
+                    redis_entries.append(item)
+                else:
+                    cleaned = str(item or "").strip().lower()
+                    if cleaned:
+                        redis_entries.append(
+                            {"slug": cleaned, "name": cleaned, "reason": "retired"}
+                        )
         elif isinstance(parsed, dict):
+            for item in parsed.get("retired_sets") or []:
+                if isinstance(item, dict):
+                    redis_entries.append(item)
             for slug in parsed.get("retired_slugs") or []:
                 cleaned = str(slug or "").strip().lower()
                 if cleaned:
-                    retired.add(cleaned)
-    return retired
+                    redis_entries.append(
+                        {"slug": cleaned, "name": cleaned, "reason": "retired"}
+                    )
+    normalized = normalize_retired_scout_sets([*file_entries, *redis_entries])
+    normalized.sort(key=lambda r: (str(r.get("slug") or ""), str(r.get("name") or "")))
+    return normalized
 
 
 def retire_scout_set_durable(slug: str) -> tuple[bool, Optional[str]]:
