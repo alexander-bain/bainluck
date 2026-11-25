@@ -849,6 +849,7 @@ async def test_condition4_cold_miss_since_start_fallback_and_kill_switch(monkeyp
             assert body["pre_window_omitted"] is True
             assert body["served_range"] == "since_start"
             assert body["range_fallback"] == "since_start"
+            assert resp.headers.get("cache-control") == "no-store"
             assert resp.headers["x-history-served-range"] == "since_start"
             assert resp.headers["x-history-range-fallback"] == "since_start"
             assert len(enqueued) == 1
@@ -865,6 +866,7 @@ async def test_condition4_cold_miss_since_start_fallback_and_kill_switch(monkeyp
                 136061, hours=48, chart_range="all", response=Response(), db=db, fresh=False
             )
             assert json.loads(resp2.body)["range_fallback"] == "since_start"
+            assert resp2.headers.get("cache-control") == "no-store"
             assert len(enqueued) == 1
 
         # Explicit `read_through`: `hours` collapse shares one L1 finished key without fallback marker
@@ -877,6 +879,7 @@ async def test_condition4_cold_miss_since_start_fallback_and_kill_switch(monkeyp
                 136061, hours=168, chart_range="all", response=Response(), db=db, fresh=False
             )
             assert r24.headers["x-feed-cache"] == "miss"
+            assert r24.headers.get("cache-control") == "public, max-age=3600, stale-while-revalidate=300"
             assert "x-history-range-fallback" not in r24.headers
             assert r168.headers["x-feed-cache"] == "hit"
             r24_body = json.loads(r24.body)
@@ -890,7 +893,7 @@ async def test_condition4_cold_miss_since_start_fallback_and_kill_switch(monkeyp
         ehc._reset_for_tests()
         async with maker() as db:
             read_calls = []
-            monkeypatch.setattr(feh, "read_finished_event_history", lambda *a, **k: read_calls.append(1))
+            monkeypatch.setattr(feh, "read_finished_event_history_with_status", lambda *a, **k: read_calls.append(1))
             r_off = await events_route.get_event_odds_history_cached(
                 136061, hours=48, chart_range="all", response=Response(), db=db, fresh=False
             )
@@ -900,6 +903,53 @@ async def test_condition4_cold_miss_since_start_fallback_and_kill_switch(monkeyp
         await engine.dispose()
         ehc._reset_for_tests()
         feh._reset_claims_for_tests()
+
+
+@pytest.mark.asyncio
+async def test_durable_unavailable_fails_open_for_range_all_without_enqueue(monkeypatch):
+    from app.utils.durable_state import failed_read
+
+    ehc._reset_for_tests()
+    feh._reset_claims_for_tests()
+    now = datetime.now(UTC).replace(second=0, microsecond=0)
+    engine, maker = await _sqlite_session_factory()
+    try:
+        sport, event, odds, wps, espn, scores, plays, moments, fm, fo = _seed_finished_fixture_sync_data(now)
+        async with maker() as db:
+            db.add_all([sport, event, *odds, *wps, *espn, *scores, *plays, *moments, fm, fo])
+            await db.commit()
+
+        _install_sqlite_durable_store(monkeypatch)
+        monkeypatch.setattr(
+            ds_mod,
+            "read_snapshot",
+            lambda *a, **k: _async_return(failed_read(ds_mod.TIER_DURABLE, RuntimeError("no durable table"))),
+        )
+        enqueued: list[dict] = []
+        monkeypatch.setattr(
+            "app.tasks.materialize_finished_event_charts",
+            SimpleNamespace(apply_async=lambda **kw: enqueued.append(kw)),
+            raising=False,
+        )
+        monkeypatch.delenv("FINISHED_EVENT_HISTORY_COLD_MISS_MODE", raising=False)
+
+        async with maker() as db:
+            resp = await events_route.get_event_odds_history_cached(
+                136061, hours=48, chart_range="all", response=Response(), db=db, fresh=False
+            )
+            body = json.loads(resp.body)
+            assert body["pre_window_omitted"] is False
+            assert body["served_range"] == "all"
+            assert body["range_fallback"] is None
+            assert enqueued == []
+    finally:
+        await engine.dispose()
+        ehc._reset_for_tests()
+        feh._reset_claims_for_tests()
+
+
+async def _async_return(val):
+    return val
 
 
 def test_celery_task_routing_beat_and_result_retention_registered():

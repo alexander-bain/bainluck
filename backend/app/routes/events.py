@@ -33883,11 +33883,16 @@ def _omit_pre_kickoff_points(
     for bookmaker in list(bookmaker_history):
         bookmaker_history[bookmaker] = _since_kickoff(bookmaker_history[bookmaker])
     for source in list(win_prob_history):
-        win_prob_history[source] = _since_kickoff(win_prob_history[source])
-        # Keep the advertised count honest — it is rendered.
-        if source in win_prob_sources_meta:
-            win_prob_sources_meta[source]["snapshot_count"] = len(
-                win_prob_history[source]
+        before_len = len(win_prob_history[source])
+        kept = _since_kickoff(win_prob_history[source])
+        win_prob_history[source] = kept
+        # Keep the advertised count honest — count stored readings, never the
+        # synthesized terminal `final` point (#8514 / #7878).
+        if source in win_prob_sources_meta and len(kept) < before_len:
+            win_prob_sources_meta[source]["snapshot_count"] = sum(
+                1
+                for p in kept
+                if (p.get("evidence") or {}).get("kind") != "final"
             )
 
     return omitted > 0
@@ -34756,6 +34761,9 @@ async def get_event_odds_history_cached(
     from app.utils import event_history_cache as ehc
     from app.utils import request_cache as _rc
 
+    if not isinstance(chart_range, str):
+        chart_range = EVENT_HISTORY_RANGE_ALL
+
     key = ehc.cache_key(event_id, hours, chart_range)
     finished_key = ehc.finished_cache_key(event_id, chart_range)
 
@@ -34887,6 +34895,9 @@ async def get_event_odds_history(
     from app.utils.history_coverage import served_history_coverage
 
     _local_partial = False
+
+    if not isinstance(chart_range, str):
+        chart_range = EVENT_HISTORY_RANGE_ALL
 
     def _history_mark_partial() -> None:
         nonlocal _local_partial
@@ -35165,7 +35176,7 @@ async def get_event_odds_history(
                 derive_since_start_payload as _derive_finished_since_start,
                 durable_enabled as _finished_durable_enabled,
                 is_durable_bypassed as _finished_durable_bypassed,
-                read_finished_event_history as _read_finished_durable,
+                read_finished_event_history_with_status as _read_finished_durable_status,
                 session_supports_durable as _session_supports_finished_durable,
                 write_finished_event_history as _write_finished_durable,
             )
@@ -35178,6 +35189,7 @@ async def get_event_odds_history(
                 _finished_durable_active = True
                 _finished_write_fn = _write_finished_durable
                 _finished_write_source = FINISHED_HISTORY_READ_THROUGH_SOURCE
+                _durable_status = "unavailable"
                 _tables_fp = await _compute_small_tables_fp(
                     db, event_id, series_event_ids
                 )
@@ -35185,9 +35197,12 @@ async def get_event_odds_history(
                     _finished_fp = _build_finished_fp(
                         event, absorbed, series_event_ids, _tables_fp
                     )
-                    _stored = await _read_finished_durable(db, event_id)
+                    _durable_status, _stored = await _read_finished_durable_status(
+                        db, event_id
+                    )
                     if (
-                        _stored is not None
+                        _durable_status == "hit"
+                        and _stored is not None
                         and _stored.get("fingerprint") == _finished_fp
                         and isinstance(_stored.get("payload"), dict)
                     ):
@@ -35203,40 +35218,44 @@ async def get_event_odds_history(
 
                         return _copy.deepcopy(_stored_payload)
 
-                _miss_mode = _finished_cold_miss_mode()
-                if (
-                    chart_range == EVENT_HISTORY_RANGE_SINCE_START
-                    or _miss_mode == COLD_MISS_SINCE_START_FALLBACK
-                ) and _claim_finished_materialize(event_id):
-                    try:
-                        from app.tasks import materialize_finished_event_charts
+                if _durable_status != "unavailable":
+                    _miss_mode = _finished_cold_miss_mode()
+                    if (
+                        chart_range == EVENT_HISTORY_RANGE_SINCE_START
+                        or _miss_mode == COLD_MISS_SINCE_START_FALLBACK
+                    ) and _claim_finished_materialize(event_id):
+                        try:
+                            from app.tasks import materialize_finished_event_charts
 
-                        materialize_finished_event_charts.apply_async(
-                            kwargs={"event_ids": [event_id]},
-                            queue="background",
-                        )
-                    except Exception as _exc:  # noqa: BLE001
-                        logger.warning(
-                            "finished_event_history: cold enqueue failed for %s: %s",
-                            event_id, _exc,
-                        )
-                if (
-                    chart_range != EVENT_HISTORY_RANGE_SINCE_START
-                    and _miss_mode == COLD_MISS_SINCE_START_FALLBACK
-                    and event.commence_time is not None
-                    and not _commence_time_is_venue_expiration(event)
-                    and _series_single_id is not None
-                ):
-                    chart_range = EVENT_HISTORY_RANGE_SINCE_START
-                    _cold_miss_since_start_fallback = True
-                    _history_mark_skip_cache()
-                    if response is not None:
-                        response.headers["X-History-Served-Range"] = (
-                            EVENT_HISTORY_RANGE_SINCE_START
-                        )
-                        response.headers["X-History-Range-Fallback"] = (
-                            EVENT_HISTORY_RANGE_SINCE_START
-                        )
+                            materialize_finished_event_charts.apply_async(
+                                kwargs={"event_ids": [event_id]},
+                                queue="background",
+                                retry=False,
+                                ignore_result=True,
+                            )
+                        except Exception as _exc:  # noqa: BLE001
+                            logger.warning(
+                                "finished_event_history: cold enqueue failed for %s: %s",
+                                event_id, _exc,
+                            )
+                    if (
+                        chart_range != EVENT_HISTORY_RANGE_SINCE_START
+                        and _miss_mode == COLD_MISS_SINCE_START_FALLBACK
+                        and event.commence_time is not None
+                        and not _commence_time_is_venue_expiration(event)
+                        and _series_single_id is not None
+                    ):
+                        chart_range = EVENT_HISTORY_RANGE_SINCE_START
+                        _cold_miss_since_start_fallback = True
+                        _history_mark_skip_cache()
+                        if response is not None:
+                            response.headers["Cache-Control"] = "no-store"
+                            response.headers["X-History-Served-Range"] = (
+                                EVENT_HISTORY_RANGE_SINCE_START
+                            )
+                            response.headers["X-History-Range-Fallback"] = (
+                                EVENT_HISTORY_RANGE_SINCE_START
+                            )
 
         query = select(OddsSnapshot).where(
             OddsSnapshot.event_id.in_(oriented_series_ids)

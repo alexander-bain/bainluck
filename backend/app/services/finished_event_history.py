@@ -346,14 +346,19 @@ def build_fingerprint(
     }
 
 
-async def read_finished_event_history(
+async def read_finished_event_history_with_status(
     db: AsyncSession,
     event_id: int,
-) -> Optional[dict[str, Any]]:
-    """Read durable `"all"` envelope wrapper (`{"v": 1, "fingerprint": ..., "payload": ...}`),
-    using a rolled-back savepoint so `SET LOCAL statement_timeout` never leaks.
+) -> tuple[str, Optional[dict[str, Any]]]:
+    """Read durable `"all"` envelope wrapper and return `(status, body)`.
+
+    Status is `"hit"` (valid envelope dict with payload+fingerprint), `"miss"`
+    (genuinely missing/corrupt/version-mismatched row in an accessible store),
+    or `"unavailable"` (store errored or table absent -> fail open).
+    Uses a rolled-back savepoint so `SET LOCAL statement_timeout` never leaks.
     """
     from app.services.durable_snapshots import read_snapshot
+    from app.utils.durable_state import UNAVAILABLE as DS_UNAVAILABLE
 
     nested = None
     read = None
@@ -370,7 +375,7 @@ async def read_finished_event_history(
             "finished_event_history: durable read failed for %s: %s",
             event_id, str(exc)[:160],
         )
-        return None
+        return "unavailable", None
     finally:
         if nested is not None:
             try:
@@ -378,13 +383,24 @@ async def read_finished_event_history(
             except Exception:  # noqa: BLE001
                 pass
 
-    if read is None or not read.ok or read.envelope is None:
-        return None
+    if read is None or getattr(read, "status", None) == DS_UNAVAILABLE:
+        return "unavailable", None
+    if not read.ok or read.envelope is None:
+        return "miss", None
     body = read.envelope.payload
     if not isinstance(body, dict):
-        return None
+        return "miss", None
     if not isinstance(body.get("payload"), dict) or not isinstance(body.get("fingerprint"), dict):
-        return None
+        return "miss", None
+    return "hit", body
+
+
+async def read_finished_event_history(
+    db: AsyncSession,
+    event_id: int,
+) -> Optional[dict[str, Any]]:
+    """Read durable `"all"` envelope wrapper (`{"v": 1, "fingerprint": ..., "payload": ...}`)."""
+    _, body = await read_finished_event_history_with_status(db, event_id)
     return body
 
 
