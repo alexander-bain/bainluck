@@ -622,49 +622,53 @@ function coerceParamValue(value: unknown): unknown {
 // Query → bounded metadata
 // ============================================================================
 
-const SEARCH_HASH_SECRET_STORAGE_KEY = 'bainluck_search_hash_secret_v1';
+const SEARCH_HASH_SALT_STORAGE_KEY = 'bainluck_search_hash_salt_v1';
 
-let cachedBrowserQuerySecret: string | null = null;
+let cachedBrowserQuerySalt: string | null = null;
 
-function generateBrowserSecretHex(): string {
-  const bytes = new Uint8Array(16);
-  const webCrypto = typeof globalThis !== 'undefined' ? globalThis.crypto : undefined;
-  if (webCrypto && typeof webCrypto.getRandomValues === 'function') {
-    webCrypto.getRandomValues(bytes);
-  } else {
-    for (let i = 0; i < bytes.length; i++) {
-      bytes[i] = Math.floor(Math.random() * 256);
+function createBrowserHashSalt(): string {
+  try {
+    const webCrypto = typeof globalThis !== 'undefined' ? globalThis.crypto : undefined;
+    if (webCrypto && typeof webCrypto.randomUUID === 'function') {
+      return webCrypto.randomUUID().replace(/-/g, '');
     }
+    if (webCrypto && typeof webCrypto.getRandomValues === 'function') {
+      const bytes = new Uint8Array(16);
+      webCrypto.getRandomValues(bytes);
+      return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+    }
+  } catch {
+    // Fall through to non-crypto per-tab fallback below.
   }
-  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 14)}`;
 }
 
-function getBrowserQuerySecret(): string {
-  if (cachedBrowserQuerySecret) return cachedBrowserQuerySecret;
+function getBrowserQuerySalt(): string {
+  if (cachedBrowserQuerySalt) return cachedBrowserQuerySalt;
 
   let stored: string | null = null;
   try {
     if (typeof window !== 'undefined' && window.localStorage) {
-      const existing = window.localStorage.getItem(SEARCH_HASH_SECRET_STORAGE_KEY);
-      if (existing && /^[0-9a-f]{32,128}$/i.test(existing.trim())) {
+      const existing = window.localStorage.getItem(SEARCH_HASH_SALT_STORAGE_KEY);
+      if (existing && /^[0-9a-z]{12,128}$/i.test(existing.trim())) {
         stored = existing.trim().toLowerCase();
       } else {
-        const fresh = generateBrowserSecretHex();
-        window.localStorage.setItem(SEARCH_HASH_SECRET_STORAGE_KEY, fresh);
+        const fresh = createBrowserHashSalt();
+        window.localStorage.setItem(SEARCH_HASH_SALT_STORAGE_KEY, fresh);
         stored = fresh;
       }
     }
   } catch {
-    // localStorage disabled, quota-full, or SSR: keep an ephemeral per-tab secret.
+    // localStorage disabled, quota-full, or SSR: keep an ephemeral per-tab salt.
   }
 
-  cachedBrowserQuerySecret = stored ?? generateBrowserSecretHex();
-  return cachedBrowserQuerySecret;
+  cachedBrowserQuerySalt = stored ?? createBrowserHashSalt();
+  return cachedBrowserQuerySalt;
 }
 
-/** Test-only reset for the cached per-browser search hash secret. */
-export function _resetBrowserQuerySecretForTests(): void {
-  cachedBrowserQuerySecret = null;
+/** Test-only reset for the cached per-browser search hash salt. */
+export function _resetBrowserQuerySaltForTests(): void {
+  cachedBrowserQuerySalt = null;
 }
 
 function fnv1a32(input: string, seed: number): number {
@@ -679,15 +683,15 @@ function fnv1a32(input: string, seed: number): number {
 
 /**
  * Decision 404: B — keyed 64-bit hash (two salted FNV-1a lanes, base36) using a
- * random 128-bit secret stored only in this browser (`localStorage`). Lets the same
+ * random 128-bit browser-scoped salt kept only in `localStorage`. Lets the same
  * query be joined within one browser across search_submit → result_click →
  * destination_engaged WITHOUT sending raw text OR sharing hashes across devices/iOS.
  */
 export function hashQuery(raw: string): string {
   const norm = raw.trim().toLowerCase();
-  const secret = getBrowserQuerySecret();
-  const h1 = fnv1a32(`${secret}\u0000${norm}`, 0x811c9dc5);
-  const h2 = fnv1a32(`${norm}\u0000${secret}`, 0x9e3779b9);
+  const salt = getBrowserQuerySalt();
+  const h1 = fnv1a32(`${salt}\u0000${norm}`, 0x811c9dc5);
+  const h2 = fnv1a32(`${norm}\u0000${salt}`, 0x9e3779b9);
   return `${h1.toString(36).padStart(7, '0')}${h2.toString(36).padStart(7, '0')}`;
 }
 

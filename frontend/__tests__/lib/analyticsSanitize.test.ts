@@ -10,7 +10,7 @@
  */
 
 import {
-  _resetBrowserQuerySecretForTests,
+  _resetBrowserQuerySaltForTests,
   sanitizeEvent,
   scrubString,
   hashQuery,
@@ -269,8 +269,8 @@ describe('taxonomy integrity', () => {
 // Per-browser keyed hash contract (Decision 404: B)
 // ============================================================================
 
-describe('hashQuery — Decision 404: B per-browser random secret', () => {
-  const SECRET_STORAGE_KEY = 'bainluck_search_hash_secret_v1';
+describe('hashQuery — Decision 404: B per-browser random salt', () => {
+  const SALT_STORAGE_KEY = 'bainluck_search_hash_salt_v1';
   const ORIGINAL_WINDOW = (globalThis as { window?: unknown }).window;
 
   function installMockLocalStorage(): Map<string, string> {
@@ -287,11 +287,11 @@ describe('hashQuery — Decision 404: B per-browser random secret', () => {
   }
 
   beforeEach(() => {
-    _resetBrowserQuerySecretForTests();
+    _resetBrowserQuerySaltForTests();
   });
 
   afterEach(() => {
-    _resetBrowserQuerySecretForTests();
+    _resetBrowserQuerySaltForTests();
     if (ORIGINAL_WINDOW === undefined) {
       delete (globalThis as { window?: unknown }).window;
     } else {
@@ -299,51 +299,51 @@ describe('hashQuery — Decision 404: B per-browser random secret', () => {
     }
   });
 
-  it('persists one random secret in localStorage and stays stable across calls and reloads in the same browser', () => {
+  it('persists one random salt in localStorage and stays stable across calls and reloads in the same browser', () => {
     const store = installMockLocalStorage();
     const first = hashQuery('lakers');
-    const persisted = store.get(SECRET_STORAGE_KEY);
-    expect(persisted).toMatch(/^[0-9a-f]{32}$/);
+    const persisted = store.get(SALT_STORAGE_KEY);
+    expect(persisted).toMatch(/^[0-9a-z]{12,64}$/);
     expect(hashQuery('lakers')).toBe(first);
 
     // Simulate reload in the same browser (module cache cleared, localStorage kept).
-    _resetBrowserQuerySecretForTests();
+    _resetBrowserQuerySaltForTests();
     expect(hashQuery('lakers')).toBe(first);
-    expect(store.get(SECRET_STORAGE_KEY)).toBe(persisted);
+    expect(store.get(SALT_STORAGE_KEY)).toBe(persisted);
   });
 
   it('produces different hashes across browsers and does not match legacy unsalted FNV-1a vectors', () => {
     const storeA = installMockLocalStorage();
     const hashA = hashQuery('lakers');
-    const secretA = storeA.get(SECRET_STORAGE_KEY);
+    const saltA = storeA.get(SALT_STORAGE_KEY);
     expect(hashA).not.toBe('1ghlcvp');
     expect(hashQuery('')).not.toBe('ztntfp');
     expect(hashQuery('Lakers vs Celtics')).not.toBe('sn4x6t');
     expect(hashQuery('super bowl')).not.toBe('4gxf0');
 
-    _resetBrowserQuerySecretForTests();
+    _resetBrowserQuerySaltForTests();
     const storeB = installMockLocalStorage();
     const hashB = hashQuery('lakers');
-    expect(storeB.get(SECRET_STORAGE_KEY)).not.toBe(secretA);
+    expect(storeB.get(SALT_STORAGE_KEY)).not.toBe(saltA);
     expect(hashB).not.toBe(hashA);
   });
 
-  it('normalizes trim + case identically within one browser and never leaks secret or raw query', () => {
+  it('normalizes trim + case identically within one browser and never leaks salt or raw query', () => {
     const store = installMockLocalStorage();
     const canonical = hashQuery('Lakers');
     for (const variant of ['lakers', '  lakers  ', 'LAKERS', '\tLakers\n']) {
       expect(hashQuery(variant)).toBe(canonical);
     }
-    const secret = store.get(SECRET_STORAGE_KEY)!;
+    const salt = store.get(SALT_STORAGE_KEY)!;
     const evt = sanitizeEvent('search_submit', { query: 'Lakers' });
     expect(evt).not.toBeNull();
     expect(evt!.params.query_hash).toBe(canonical);
     const serialized = JSON.stringify(evt);
     expect(serialized).not.toContain('Lakers');
-    expect(serialized).not.toContain(secret);
+    expect(serialized).not.toContain(salt);
   });
 
-  it('falls back cleanly to an in-memory secret when localStorage throws', () => {
+  it('falls back cleanly to an in-memory salt when localStorage throws', () => {
     (globalThis as { window?: unknown }).window = {
       localStorage: {
         getItem: () => {
