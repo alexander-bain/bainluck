@@ -8,6 +8,8 @@ name: Nightly iPhone Tests (Proposal)
 on:
   schedule:
     # 2:30 AM PT in winter, 3:30 AM in summer (10:30 UTC) — quiet runner window after 01:00/01:15 AM scheduled jobs.
+    # Note: GitHub Actions can trigger scheduled runs 1-2.5 hours late under queue load (starting near 5:00 AM PT)
+    # and hosted `xcode-27` jobs can wait 24-61 minutes for a machine; a late start is normal and not a failure.
     - cron: "30 10 * * *"
   workflow_dispatch: {}
 
@@ -76,18 +78,20 @@ jobs:
           PREFIX="Failed check: nightly iPhone test suite ("
           TITLE="${PREFIX}${RUN_DATE})"
           BODY_FILE="$(mktemp)"
-          {
-            echo "Nightly full \`BainLuckTests\` run on \`${SHA}\` failed."
-            echo
-            echo "- CI run: ${RUN_URL}"
-            echo "- Receipt:"
-            if [ -f build/nightly-iphone-tests/receipt.json ]; then
-              cat build/nightly-iphone-tests/receipt.json
-            else
-              echo "(receipt.json not produced)"
-            fi
-          } > "$BODY_FILE"
+          PRIOR_JSON="$(mktemp)"
           EXISTING="$(gh issue list -R "$REPO" --state open --search "Failed check: nightly iPhone test suite in:title" --json number,title --jq ".[] | select(.title | startswith(\"${PREFIX}\")) | .number" | head -n1)"
+          EXTRA_ARGS=()
+          if [ -n "$EXISTING" ]; then
+            gh issue view "$EXISTING" -R "$REPO" --json body,comments > "$PRIOR_JSON"
+            EXTRA_ARGS=(--previous-issue-json "$PRIOR_JSON")
+          fi
+          python3 tools/nightly_iphone_issue.py \
+            --receipt build/nightly-iphone-tests/receipt.json \
+            --run-date "$RUN_DATE" \
+            --sha "$SHA" \
+            --run-url "$RUN_URL" \
+            ${EXTRA_ARGS[@]+"${EXTRA_ARGS[@]}"} \
+            --output "$BODY_FILE"
           if [ -n "$EXISTING" ]; then
             gh issue comment "$EXISTING" -R "$REPO" --body-file "$BODY_FILE"
           else
