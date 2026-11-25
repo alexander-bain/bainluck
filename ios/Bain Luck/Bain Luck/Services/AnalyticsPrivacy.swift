@@ -1,25 +1,142 @@
+import CryptoKit
 import Foundation
+import Security
 
-/// The native analytics privacy boundary (L2-219, Item 2 / #1453).
+/// Device-only backing store for the on-device search hash secret (`404: B`).
+protocol SearchHashKeyStorage {
+    func load() -> Data?
+    @discardableResult
+    func save(_ key: Data) -> Bool
+    func delete()
+}
+
+struct SearchHashKeychainStorage: SearchHashKeyStorage {
+    static let service = "com.bainluck.analytics.search-hash"
+    static let account = "bainluck_search_hash_secret_v1"
+
+    static var baseQuery: [String: Any] {
+        [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+        ]
+    }
+
+    static func saveAttributes(for key: Data) -> [String: Any] {
+        var attrs = baseQuery
+        attrs[kSecValueData as String] = key
+        attrs[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
+        return attrs
+    }
+
+    func load() -> Data? {
+        var query = Self.baseQuery
+        query[kSecReturnData as String] = true
+        query[kSecMatchLimit as String] = kSecMatchLimitOne
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        guard status == errSecSuccess, let data = result as? Data, data.count == 32 else {
+            return nil
+        }
+        return data
+    }
+
+    @discardableResult
+    func save(_ key: Data) -> Bool {
+        SecItemDelete(Self.baseQuery as CFDictionary)
+        let status = SecItemAdd(Self.saveAttributes(for: key) as CFDictionary, nil)
+        return status == errSecSuccess
+    }
+
+    func delete() {
+        SecItemDelete(Self.baseQuery as CFDictionary)
+    }
+}
+
+final class SearchHashSecretStore: @unchecked Sendable {
+    static let shared = SearchHashSecretStore()
+
+    private let lock = NSLock()
+    private var cachedPersistedKey: Data?
+    private var ephemeralKey: Data?
+    private let storage: any SearchHashKeyStorage
+    private let isConsentGranted: () -> Bool
+    private let randomKeyProvider: () -> Data
+
+    init(
+        storage: any SearchHashKeyStorage = SearchHashKeychainStorage(),
+        isConsentGranted: @escaping () -> Bool = { TelemetryConsent.shared.isGranted },
+        randomKeyProvider: @escaping () -> Data = SearchHashSecretStore.generateRandomKey
+    ) {
+        self.storage = storage
+        self.isConsentGranted = isConsentGranted
+        self.randomKeyProvider = randomKeyProvider
+    }
+
+    static func generateRandomKey() -> Data {
+        var bytes = [UInt8](repeating: 0, count: 32)
+        if SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes) == errSecSuccess {
+            return Data(bytes)
+        }
+        return SymmetricKey(size: .bits256).withUnsafeBytes { Data($0) }
+    }
+
+    func currentKey() -> Data {
+        // Evaluate consent before taking `lock` so lock ordering stays acyclic.
+        let consented = isConsentGranted()
+        lock.lock()
+        defer { lock.unlock() }
+
+        if consented {
+            if let cachedPersistedKey {
+                return cachedPersistedKey
+            }
+            if let existing = storage.load() {
+                cachedPersistedKey = existing
+                return existing
+            }
+            let generated = randomKeyProvider()
+            _ = storage.save(generated)
+            cachedPersistedKey = generated
+            return generated
+        }
+
+        if let ephemeralKey {
+            return ephemeralKey
+        }
+        let generated = randomKeyProvider()
+        ephemeralKey = generated
+        return generated
+    }
+
+    func reset() {
+        lock.lock()
+        cachedPersistedKey = nil
+        ephemeralKey = nil
+        lock.unlock()
+        storage.delete()
+    }
+}
+
+/// The native analytics privacy boundary (L2-219, Item 2 / #1453, updated for 404: B).
 ///
 /// BEFORE: `AnalyticsService.trackSearch` sent the user's RAW search text as
 /// Firebase's `search_term`, and `trackSearchResultClick` sent it again as
 /// `query`. Anything a user typed — an email, a phone number, a pasted URL or
-/// token — went to Firebase verbatim and was retained there. The web rail had
-/// already closed this hole (`lib/analytics/sanitize.ts`); native had not.
+/// token — went to Firebase verbatim and was retained there.
 ///
 /// NOW: every native event passes through `sanitize` before it reaches
-/// Firebase. Raw query text is replaced with bounded, non-reversible metadata,
+/// Firebase. Raw query text is replaced with bounded, keyed HMAC metadata,
 /// and only allowlisted parameter keys survive — so a new caller cannot leak a
 /// raw field by forgetting to think about it. The boundary is enforced by
 /// omission (unknown keys are dropped), not by a denylist we would have to keep
 /// ahead of.
 ///
-/// The hash is deliberately bit-identical to the web implementation
-/// (`hashQuery` in `lib/analytics/sanitize.ts`): FNV-1a over UTF-16 code units
-/// of the trimmed, lowercased text, rendered base36. The same query typed on
-/// web and on iOS therefore produces the same `query_hash`, which is what makes
-/// the search funnel joinable across surfaces without ever sending the text.
+/// Per Ruling `404: B`, `query_hash` uses CryptoKit `HMAC<SHA256>` with a random
+/// 256-bit key held strictly on this device (`ThisDeviceOnly` Keychain when
+/// telemetry consent is granted, ephemeral in-memory otherwise), truncated to
+/// 64 bits (16 lowercase hex chars). Queries remain joinable within one device
+/// while never leaving the device or exposing dictionary lookups across users.
 enum AnalyticsPrivacy {
     // MARK: - Bounds
 
@@ -33,20 +150,27 @@ enum AnalyticsPrivacy {
 
     // MARK: - Query → bounded metadata
 
-    /// Stable, non-reversible 32-bit FNV-1a hash of the normalized query,
-    /// base36. Not cryptographic — it exists to bucket and join, not to secure.
+    /// Keyed, non-reversible 64-bit truncated HMAC-SHA-256 of the normalized
+    /// query, rendered as 16 lowercase hex characters (`404: B`).
     ///
-    /// Normalization (trim + lowercase) and the UTF-16 iteration order match the
-    /// web implementation exactly; changing either silently breaks cross-surface
-    /// joins, so `AnalyticsPrivacyTests` pins known values.
+    /// Uses a random 256-bit secret that never leaves the device (stored in
+    /// device-only Keychain only after `"Allow"` consent, or ephemeral in memory
+    /// when unconsented).
     static func hashQuery(_ raw: String) -> String {
+        hashQuery(raw, keyData: SearchHashSecretStore.shared.currentKey())
+    }
+
+    static func hashQuery(_ raw: String, keyData: Data) -> String {
         let normalized = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        var hash: UInt32 = 0x811c_9dc5
-        for unit in normalized.utf16 {
-            hash ^= UInt32(unit)
-            hash = hash &* 0x0100_0193
-        }
-        return String(hash, radix: 36)
+        let key = SymmetricKey(data: keyData)
+        let mac = HMAC<SHA256>.authenticationCode(for: Data(normalized.utf8), using: key)
+        return mac.prefix(8).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Delete the persisted device-only search hash key and rotate any cached
+    /// secret when analytics consent is declined or revoked (`404: B`).
+    static func resetSearchHashSecret() {
+        SearchHashSecretStore.shared.reset()
     }
 
     /// The bounded, non-PII replacement for a raw query: a joinable hash, a

@@ -29,8 +29,9 @@ nonisolated enum FirstWeekTelemetry13261 {
         "follow", "local", "alma_mater", "rival",
     ]
 
-    /// Stable non-reversible FNV-1a token for string result identifiers such as
-    /// tournament slugs so team/event/person names never leave the device.
+    /// Device-scoped, non-reversible keyed HMAC token (`404: B`) for string
+    /// result identifiers such as tournament slugs so team/event/person names
+    /// never leave the device.
     static func hashedResultId(_ raw: String) -> String {
         "h_\(AnalyticsPrivacy.hashQuery(raw))"
     }
