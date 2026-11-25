@@ -58,19 +58,20 @@ describe("#6579 — the movement chip is the item that does NOT yield", () => {
 });
 
 describe("#6579 — the OTHER side: the outcome name is still the item that yields", () => {
-  test("the Discover futures row keeps a shrinkable, truncating name cell", () => {
+  test("the Discover futures row keeps a shrinkable, wrapping name cell (#13720)", () => {
     // Read off the source rather than a render, because the claim is about the
-    // pair of siblings in one flex row: a fix that made BOTH unshrinkable would
-    // pass every assertion above and push the percentage column off the card.
+    // pair of siblings in one flex row: #13720 switches long non-person outcome
+    // labels from CSS `truncate` to `break-words` so music/party names do not
+    // clip while `min-w-0` still yields width to the `shrink-0` MovementBadge.
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const src: string = require("fs").readFileSync(
       require("path").join(process.cwd(), "components/discover/FuturesCard.tsx"),
       "utf8",
     );
     const row = src.match(
-      /<div className="flex items-center gap-1\.5">[\s\S]{0,900}?<MovementBadge/,
+      /<div className="flex items-start gap-1\.5">[\s\S]{0,900}?<MovementBadge/,
     );
     expect(row).not.toBeNull();
-    expect(row![0]).toContain("min-w-0 truncate");
+    expect(row![0]).toContain("min-w-0 break-words");
   });
 });

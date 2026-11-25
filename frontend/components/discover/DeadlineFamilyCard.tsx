@@ -13,6 +13,7 @@ import { resolveDiscoverFuturesVisual } from "@/lib/discover/discoverEntityVisua
 import type { FeedFuturesData, FeedItem } from "@/lib/types";
 import { BundleActionBar } from "./BundleActionBar";
 import { BundleHeader } from "./BundleHeader";
+import { chipCategory } from "./constants";
 import { QuietFillPercentBox } from "./QuietFillPercentBox";
 import { MovementBadge } from "./shared";
 
@@ -98,7 +99,7 @@ export function DeadlineFamilyCard({
       }
     >
       <BundleHeader
-        title={model.title}
+        title={model.sharedQuestion ? (chipCategory(model.category) ?? "Markets") : model.title}
         sharedQuestion={model.sharedQuestion}
         fallbackCount={`· ${model.representedCount} deadlines`}
         category={model.category}
@@ -114,8 +115,8 @@ export function DeadlineFamilyCard({
         data-market-id={rep.marketId}
         data-outcome-id={rep.yesOutcomeId}
       >
-        <div className="flex items-center justify-between gap-2 mb-2">
-          <div className="flex items-center gap-2 min-w-0">
+        <div className="flex flex-wrap items-center justify-between gap-x-2 gap-y-1 mb-2">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-0">
             <span
               className="inline-flex items-center px-2 py-0.5 rounded-md text-xs font-semibold bg-surface-elevated text-text-primary border border-surface-border"
               data-testid="deadline-family-hero-deadline"
@@ -123,7 +124,7 @@ export function DeadlineFamilyCard({
               {rep.deadlineLabel}
             </span>
             <span
-              className="text-[11px] font-medium text-text-muted truncate"
+              className="text-[11px] font-medium leading-snug text-text-muted"
               data-testid="deadline-family-selection-badge"
             >
               {model.selectionBadgeText}
