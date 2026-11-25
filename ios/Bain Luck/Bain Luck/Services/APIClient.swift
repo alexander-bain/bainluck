@@ -796,19 +796,29 @@ actor APIClient {
 
     // MARK: - Generic POST (Dictionary body)
 
-    private func post<T: Decodable & Sendable>(_ path: String, body: [String: String?]) async throws -> sending T {
+    private func post<T: Decodable & Sendable>(
+        _ path: String,
+        body: [String: String?],
+        explicitAuthToken: String? = nil,
+        includeSessionHeader: Bool = false
+    ) async throws -> sending T {
         guard let url = URL(string: baseURL + path) else { throw APIError.invalidURL }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("application/json", forHTTPHeaderField: "Accept")
+        if includeSessionHeader {
+            request.setValue(sessionId, forHTTPHeaderField: "X-Session-Id")
+        }
 
         // Filter nil values and encode
         let filtered = body.compactMapValues { $0 }
         request.httpBody = try JSONSerialization.data(withJSONObject: filtered)
 
-        if let provider = authTokenProvider, let token = await provider() {
+        if let explicitAuthToken {
+            request.setValue("Bearer \(explicitAuthToken)", forHTTPHeaderField: "Authorization")
+        } else if let provider = authTokenProvider, let token = await provider() {
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         }
 
@@ -1150,6 +1160,11 @@ actor APIClient {
     /// Fetches cached trending search suggestions for the search UI.
     func fetchTrendingSearches() async throws -> TrendingSearchesResponse {
         return try await fetch("/api/events/search/trending", cacheTTL: 300)
+    }
+
+    /// Fetches live search suggestions (live/upcoming games and major championship subjects).
+    func fetchSearchSuggestions() async throws -> SearchSuggestionsResponse212A {
+        return try await fetch("/api/events/search-suggestions", cacheTTL: 120)
     }
 
     // MARK: - Team Page
@@ -1746,5 +1761,28 @@ actor APIClient {
             body["user_id"] = String(userId)
         }
         return try await post("/api/notifications/register", body: body)
+    }
+
+    /// Detach a push token from the signed-in account while still holding the
+    /// live session JWT (#12569 app half). Sends `Authorization: Bearer` plus
+    /// `X-Session-Id` so unsigned `/register` calls can leave account-bound rows alone.
+    func unregisterDeviceToken(
+        deviceToken: String,
+        platform: String,
+        tokenKind: String = "apns",
+        authToken: String
+    ) async throws -> NotificationRegisterResponse {
+        let body: [String: String?] = [
+            "device_token": deviceToken,
+            "platform": platform,
+            "session_id": sessionId,
+            "token_kind": tokenKind,
+        ]
+        return try await post(
+            "/api/notifications/unregister",
+            body: body,
+            explicitAuthToken: authToken,
+            includeSessionHeader: true
+        )
     }
 }

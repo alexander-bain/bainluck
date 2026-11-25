@@ -77,6 +77,7 @@ struct SearchView: View {
     @EnvironmentObject private var navCoordinator: NavigationCoordinator
     @FocusState private var isSearchFocused: Bool
     @Environment(\.horizontalSizeClass) private var sizeClass
+    @Environment(\.colorScheme) private var colorScheme
     @State private var path: NavigationPath
     /// #10878 — the Mac window's kept place for this screen: the query and
     /// results (the view model), the open detail and the results' scroll
@@ -424,8 +425,22 @@ struct SearchView: View {
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 6)
-                        .background(isSelected ? Color.blue.opacity(0.15) : Color.cardBackgroundDark)
-                        .foregroundStyle(isSelected ? .blue : .primary)
+                        .background(
+                            Capsule().fill(
+                                isSelected
+                                    ? Color.blue.opacity(0.15)
+                                    : (colorScheme == .dark ? Color.cardBackground : DS.cardBg)
+                            )
+                        )
+                        .overlay(
+                            Capsule().stroke(
+                                isSelected
+                                    ? Color.blue.opacity(0.45)
+                                    : (colorScheme == .dark ? Color.white.opacity(0.14) : DS.border),
+                                lineWidth: 1
+                            )
+                        )
+                        .foregroundStyle(isSelected ? .blue : (colorScheme == .dark ? Color.primary : DS.textPrimary))
                         .clipShape(Capsule())
                     }
                 }
@@ -443,17 +458,13 @@ struct SearchView: View {
                 if !viewModel.recentSearches.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
                         HStack {
-                            Text("Recent")
-                                .font(.subheadline)
-                                .fontWeight(.semibold)
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 4)
+                            emptySectionHeader13672("Recent")
                             Spacer()
                             Button {
                                 viewModel.clearRecentSearches()
                             } label: {
                                 Text("Clear")
-                                    .font(.caption)
+                                    .font(.caption.weight(.semibold))
                                     .foregroundStyle(.blue)
                             }
                         }
@@ -503,11 +514,7 @@ struct SearchView: View {
                 let activeTournaments = featuredTournaments.filter { $0.isBeingPlayed() }
                 if !activeTournaments.isEmpty {
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Tournaments")
-                            .font(.subheadline)
-                            .fontWeight(.semibold)
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 4)
+                        emptySectionHeader13672("Tournaments")
 
                         FlowLayout(spacing: 8) {
                             ForEach(activeTournaments) { hub in
@@ -521,11 +528,7 @@ struct SearchView: View {
 
                 // Quick Search by Sport
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Browse by Sport")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 4)
+                    emptySectionHeader13672("Browse by Sport")
 
                     FlowLayout(spacing: 8) {
                         ForEach(quickSearches) { item in
@@ -539,11 +542,7 @@ struct SearchView: View {
 
                 // Categories (navigate to dedicated views)
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Categories")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 4)
+                    emptySectionHeader13672("Categories")
 
                     FlowLayout(spacing: 8) {
                         ForEach(categoryLinks) { item in
@@ -556,11 +555,7 @@ struct SearchView: View {
 
                 // Trending / Explore
                 VStack(alignment: .leading, spacing: 10) {
-                    Text(viewModel.trendingSearches.isEmpty ? "Explore" : "Trending")
-                        .font(.subheadline)
-                        .fontWeight(.semibold)
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 4)
+                    emptySectionHeader13672(viewModel.trendingSearches.isEmpty ? "Explore" : "Trending")
 
                     FlowLayout(spacing: 8) {
                         if viewModel.trendingSearches.isEmpty {
@@ -600,23 +595,51 @@ struct SearchView: View {
             .padding(.horizontal)
             .padding(.top, 12)
         }
+        .background(colorScheme == .dark ? Color.groupedBackground : DS.surface)
+    }
+
+    private func emptySectionHeader13672(_ title: String) -> some View {
+        Text(title)
+            .font(.caption.weight(.semibold))
+            .textCase(.uppercase)
+            .tracking(0.5)
+            .foregroundStyle(colorScheme == .dark ? Color.secondary : DS.textSecondary)
+            .padding(.horizontal, 4)
     }
 
     private func quickSearchChip(icon: String, label: String, action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 5) {
+            HStack(spacing: 6) {
                 Image(systemName: icon)
-                    .font(.system(size: 11))
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(colorScheme == .dark ? Color.secondary : DS.textSecondary)
                 Text(label)
-                    .font(.subheadline)
-                    .fontWeight(.medium)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(colorScheme == .dark ? Color.primary : DS.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .background(Color.cardBackgroundDark)
-            .clipShape(Capsule())
+            .padding(.horizontal, 14)
+            .padding(.vertical, 9)
+            .frame(minHeight: 38)
+            .background(
+                Capsule().fill(colorScheme == .dark ? Color.cardBackground : DS.cardBg)
+            )
+            .overlay(
+                Capsule().stroke(
+                    colorScheme == .dark ? Color.white.opacity(0.14) : DS.border,
+                    lineWidth: 1
+                )
+            )
+            .shadow(
+                color: colorScheme == .dark ? .clear : Color.black.opacity(0.03),
+                radius: 2,
+                x: 0,
+                y: 1
+            )
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("search.quickChip.\(label)")
     }
 
     // MARK: - Suggestions
@@ -1156,6 +1179,7 @@ struct SearchView: View {
                     .buttonStyle(.borderedProminent)
                 }
                 .listRowBackground(Color.clear)
+                .noteReviewPromptTrouble12304()
 
             case .empty:
                 ContentUnavailableView(

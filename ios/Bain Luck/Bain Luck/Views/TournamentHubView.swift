@@ -664,5 +664,6 @@ private struct TournamentHubErrorView: View {
                 .buttonStyle(.borderedProminent)
         }
         .padding(30)
+        .noteReviewPromptTrouble12304()
     }
 }

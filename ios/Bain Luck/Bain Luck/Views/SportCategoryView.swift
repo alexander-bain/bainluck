@@ -54,6 +54,7 @@ struct SportCategoryView: View {
                     Spacer()
                 }
                 .padding(.horizontal, 40)
+                .noteReviewPromptTrouble12304()
             } else if viewModel.drawsNoRows {
                 // #1471: `viewModel.items.isEmpty` used to gate this, which asks
                 // whether the PAYLOAD was empty rather than whether the page can

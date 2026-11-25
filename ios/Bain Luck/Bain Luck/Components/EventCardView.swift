@@ -804,21 +804,24 @@ struct EventCardView: View {
                 )
             }
 
-            if !compactScheduleStyle {
-                if let finalForecast = finalForecast11296 {
-                    if usesFinishedAccessibilityLayout {
-                        FinalForecastLine11296(
-                            comparison: finalForecast, awayName: event.awayTeam, homeName: event.homeTeam)
-                            // Under the team names, past the 24pt crest and the row's 8pt gap.
-                            .padding(.leading, 32)
-                    } else {
-                        CompactProjectedContextLine12616(
-                            text: CompactGameCard12616.finalContextText(finalForecast),
-                            spokenText: FinalForecastComparison11296.spokenText(
-                                finalForecast, awayName: event.awayTeam, homeName: event.homeTeam),
-                            accessibilityId: FinalForecastLine11296.accessibilityIdentifier
-                        )
-                    }
+            if !compactScheduleStyle, let finalForecast = finalForecast11296 {
+                if usesFinishedAccessibilityLayout {
+                    FinalForecastLine11296(
+                        comparison: finalForecast, awayName: event.awayTeam, homeName: event.homeTeam)
+                        // Under the team names, past the 24pt crest and the row's 8pt gap.
+                        .padding(.leading, 32)
+                } else {
+                    LivePregameSummaryRow214A1(
+                        summary: LivePregameCardSummary213A.resolveFinished(
+                            comparison: finalForecast,
+                            event: event
+                        ),
+                        surface: .card,
+                        colors: (away: awayColor, home: homeColor),
+                        spokenText: FinalForecastComparison11296.spokenText(
+                            finalForecast, awayName: event.awayTeam, homeName: event.homeTeam),
+                        accessibilityIdentifier: FinalForecastLine11296.accessibilityIdentifier
+                    )
                 }
             }
         }
