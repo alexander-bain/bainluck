@@ -524,11 +524,13 @@ def feed_page_base_cache_key(
     not one, and no principal appears because the base is only ever the
     anonymous build (see the block comment above).
 
-    ``limit`` IS a build input and stays in the key —
-    ``apply_discover_display_chain``'s own docstring says so ("Several stages
-    size their windows from it, so it is part of the build, not just the
-    slice"). Native (50) and web (20) therefore get one base each, which is
-    honest: they are two different lists, not two windows onto one.
+    ``limit`` stays in the key for backward-compatible key isolation (and
+    ``tests/test_feed_page_base_p141.py`` below pins this signature against
+    ``get_feed``'s ``_cache_shape``), even though since #5101
+    ``apply_discover_display_chain`` composes over a fixed window of 20
+    independent of ``limit`` — so native (50) and web (20) produce the same
+    ordered list (`#13445` Option 2 derives the ``limit=20`` sibling from the
+    ``limit=50`` parent's page base).
 
     ``tests/test_feed_page_base_p141.py`` pins this signature against
     ``get_feed``'s ``_cache_shape`` so a build input added to the response key

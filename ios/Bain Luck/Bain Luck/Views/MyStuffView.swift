@@ -664,7 +664,7 @@ struct MyStuffView: View {
             ContentUnavailableView {
                 Label("Couldn't Load Your Teams' Futures", systemImage: "exclamationmark.triangle")
             } description: {
-                Text("Your followed teams are still saved — this read didn't finish.")
+                Text("Your teams are still saved. This part didn't load.")
             } actions: {
                 Button {
                     Task { await vm.retryTeamFutures() }
@@ -713,7 +713,7 @@ struct MyStuffView: View {
                         VStack(alignment: .leading, spacing: 2) {
                             Text("Couldn't load your teams' futures")
                                 .font(.subheadline.weight(.semibold))
-                            Text("Your followed teams are still saved — this read didn't finish.")
+                            Text("Your teams are still saved. This part didn't load.")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                         }
@@ -754,7 +754,7 @@ struct MyStuffView: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Couldn't load your teams' futures")
                         .font(.subheadline.weight(.semibold))
-                    Text("Your followed teams are still saved — this read didn't finish.")
+                    Text("Your teams are still saved. This part didn't load.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

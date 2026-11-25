@@ -340,7 +340,7 @@ final class NoOpeningAsCurrentChance12824Tests: XCTestCase {
         XCTAssertEqual(openDiscoverModel.rows.map { $0.primaryCell }, [.none, .none])
         XCTAssertEqual(openDiscoverModel.rows.map { $0.scoreText }, ["72", "68"])
 
-        let blendDiscoverModel = DiscoverSingleGameCard190C.build(event: blendFeedEvent, prematch: prematch)
+        let blendDiscoverModel = DiscoverSingleGameCard190C.build(event: blendFeedEvent, prematch: prematch, showsLiveTenths: true)
         XCTAssertEqual(blendDiscoverModel.headers.primary, "Now")
         XCTAssertEqual(blendDiscoverModel.rows.map { $0.primaryCell }, [.probability("36.0%"), .probability("64.0%")])
 

@@ -1,0 +1,221 @@
+{
+  "schema_version": 1,
+  "description": "Curated preview grouping sets for Batch 9 (#12288): Golf Majors & Ryder Cup (duel_bar), UFC Next Fights & Boxing (contender_spotlight), Live Music/Broadway/Box Office (probability_history_chart), Critics Choice & Oscars (sibling_fields_grid), Tech Shocks & AI Bankruptcies (benchmark_strip), Big One & Cosmic Risks (benchmark_strip).",
+  "sets": {
+    "batch9-cosmic-history": {
+      "entries": [
+        {
+          "id": 114132,
+          "short_label": "A 5-kiloton meteor strike in 2026",
+          "headline_phrase": "a 5-kiloton meteor strike in 2026",
+          "headline_with_phrase": "a 5-kiloton meteor strike this year"
+        }
+      ]
+    },
+    "batch9-cosmic-slate": {
+      "entries": [
+        {
+          "id": 112828,
+          "short_label": "Major meteor strike before 2030",
+          "headline_phrase": "a major meteor impact before 2030",
+          "headline_with_phrase": "a major meteor strike before 2030"
+        },
+        {
+          "id": 114131,
+          "short_label": "10kt+ meteor strike in 2026",
+          "headline_phrase": "a 10kt+ meteor strike in 2026",
+          "headline_with_phrase": "a major meteor impact this year"
+        },
+        {
+          "id": 114162,
+          "short_label": "1-megaton meteor impact in 2026",
+          "headline_phrase": "a 1-megaton meteor impact in 2026",
+          "headline_with_phrase": "a megaton impact this year"
+        }
+      ]
+    },
+    "batch9-tech-shocks-ai-bankruptcies": {
+      "entries": [
+        {
+          "id": 61321725,
+          "short_label": "CoreWeave",
+          "art_subject": "CoreWeave",
+          "headline_phrase": "CoreWeave bankruptcy {answer}",
+          "headline_with_phrase": "CoreWeave"
+        },
+        {
+          "id": 61321727,
+          "short_label": "Anthropic",
+          "art_subject": "Anthropic",
+          "headline_phrase": "Anthropic bankruptcy {answer}",
+          "headline_with_phrase": "Anthropic"
+        },
+        {
+          "id": 61321742,
+          "short_label": "OpenAI",
+          "art_subject": "OpenAI",
+          "headline_phrase": "OpenAI bankruptcy {answer}",
+          "headline_with_phrase": "OpenAI"
+        },
+        {
+          "id": 61321726,
+          "short_label": "NuScale",
+          "headline_phrase": "NuScale bankruptcy {answer}",
+          "headline_with_phrase": "NuScale"
+        }
+      ]
+    },
+    "batch9-critics-oscars-people": {
+      "entries": [
+        {
+          "id": 65536357,
+          "short_label": "Critics Choice Director",
+          "headline_phrase": "{answer} winning Critics Choice Best Director",
+          "headline_with_phrase": "{answer} directing the Critics Choice winner"
+        },
+        {
+          "id": 58495125,
+          "short_label": "Supporting Actor",
+          "headline_phrase": "{answer} winning Best Supporting Actor at the Oscars",
+          "headline_with_phrase": "{answer} taking Oscars Supporting Actor"
+        }
+      ]
+    },
+    "batch9-critics-oscars-craft": {
+      "entries": [
+        {
+          "id": 58492242,
+          "short_label": "Oscars Best International Feature",
+          "headline_phrase": "{answer} winning Best International Feature",
+          "headline_with_phrase": "{answer} taking International Feature"
+        },
+        {
+          "id": 58492241,
+          "short_label": "Oscars Best Original Score",
+          "headline_phrase": "{answer} winning Best Original Score",
+          "headline_with_phrase": "{answer} taking Original Score"
+        },
+        {
+          "id": 65536307,
+          "short_label": "Critics Choice Best Picture",
+          "headline_phrase": "{answer} winning Critics Choice Best Picture",
+          "headline_with_phrase": "{answer} taking Critics Choice Best Picture"
+        },
+        {
+          "id": 58495122,
+          "short_label": "Oscars Best Adapted Screenplay",
+          "headline_phrase": "{answer} winning Best Adapted Screenplay",
+          "headline_with_phrase": "{answer} taking Adapted Screenplay"
+        }
+      ]
+    },
+    "batch9-live-music-slate": {
+      "entries": [
+        {
+          "id": 71652319,
+          "short_label": "Grammys Song of the Year",
+          "headline_phrase": "{answer} winning Song of the Year",
+          "headline_with_phrase": "{answer} taking Song of the Year"
+        },
+        {
+          "id": 62368098,
+          "short_label": "Grammys Best R&B Solo",
+          "headline_phrase": "{answer} winning Best R&B Solo",
+          "headline_with_phrase": "{answer} taking R&B Solo"
+        },
+        {
+          "id": 71652300,
+          "short_label": "Grammys Pop Vocal Album",
+          "headline_phrase": "{answer} winning Best Pop Vocal Album",
+          "headline_with_phrase": "{answer} taking Pop Vocal Album"
+        },
+        {
+          "id": 71652304,
+          "short_label": "Grammys Best Rock Album",
+          "headline_phrase": "{answer} winning Best Rock Album",
+          "headline_with_phrase": "{answer} taking Rock Album"
+        }
+      ]
+    },
+    "batch9-ryder-cup-duel": {
+      "entries": [
+        {
+          "id": 3970169,
+          "short_label": "2027 Ryder Cup winner",
+          "headline_phrase": "{answer} winning the 2027 Ryder Cup",
+          "headline_with_phrase": "{answer} taking the Ryder Cup"
+        }
+      ]
+    },
+    "batch9-golf-majors": {
+      "entries": [
+        {
+          "id": 61056094,
+          "short_label": "2027 Masters champion",
+          "headline_phrase": "{answer} winning the 2027 Masters",
+          "headline_with_phrase": "{answer} claiming a green jacket"
+        },
+        {
+          "id": 11224673,
+          "short_label": "LIV Golf shuts down in 2026",
+          "headline_phrase": "LIV Golf shutting down in 2026",
+          "headline_with_phrase": "a LIV Golf shutdown"
+        },
+        {
+          "id": 176,
+          "short_label": "Scottie Scheffler career Grand Slam before 2028",
+          "headline_phrase": "Scottie Scheffler finishing the career Grand Slam before 2028",
+          "headline_with_phrase": "Scheffler completing the Grand Slam"
+        }
+      ]
+    },
+    "batch9-mcgregor-next-fight": {
+      "entries": [
+        {
+          "id": 58852162,
+          "short_label": "Conor McGregor's next opponent",
+          "headline_phrase": "Conor McGregor fighting {answer} next",
+          "headline_with_phrase": "{answer} drawing McGregor next"
+        }
+      ]
+    },
+    "batch9-ufc-next-opponents": {
+      "entries": [
+        {
+          "id": 20565989,
+          "short_label": "Sean Strickland's next opponent",
+          "headline_phrase": "Sean Strickland fighting {answer} next",
+          "headline_with_phrase": "{answer} facing Strickland next"
+        },
+        {
+          "id": 10603290,
+          "short_label": "Carlos Ulberg's next opponent",
+          "headline_phrase": "Carlos Ulberg fighting {answer} next",
+          "headline_with_phrase": "{answer} facing Ulberg next"
+        },
+        {
+          "id": 57284647,
+          "short_label": "Magomed Ankalaev's next opponent",
+          "headline_phrase": "Magomed Ankalaev fighting {answer} next",
+          "headline_with_phrase": "{answer} facing Ankalaev next"
+        }
+      ]
+    },
+    "batch9-boxing-and-ufc": {
+      "entries": [
+        {
+          "id": 10437337,
+          "short_label": "Tyson Fury vs. Anthony Joshua in 2026",
+          "headline_phrase": "Tyson Fury and Anthony Joshua fighting in 2026",
+          "headline_with_phrase": "Fury facing Joshua in 2026"
+        },
+        {
+          "id": 61141844,
+          "short_label": "Jean Silva's next opponent",
+          "headline_phrase": "Jean Silva fighting {answer} next",
+          "headline_with_phrase": "{answer} facing Jean Silva next"
+        }
+      ]
+    }
+  }
+}
