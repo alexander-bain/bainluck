@@ -5380,7 +5380,9 @@ def _overlay_current(row: dict, overlay, prob_key: str) -> bool:
     return True
 
 
-def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
+def _apply_verified_title_to_detail(
+    detail: dict, verdict, market, *, check_grouped_field_coverage: bool = False
+) -> None:
     """Effective verified mode uses the shared current values and club names.
 
     Outcome ids, array order, `source` and `bookmakers` stay the
@@ -5410,6 +5412,16 @@ def _apply_verified_title_to_detail(detail: dict, verdict, market) -> None:
                     row["probability"],
                     overlay.aggregation_rule if overlay is not None else "unsupported",
                 )
+    if check_grouped_field_coverage:
+        from app.utils.futures_field_coverage import grouped_field_leader_is_unsupported
+
+        metadata = getattr(market, "market_metadata", None)
+        shape = metadata.get("shape") if isinstance(metadata, dict) else None
+        detail["field_price_coverage_incomplete"] = grouped_field_leader_is_unsupported(
+            detail,
+            expected_winners=shape.get("expected_winners") if isinstance(shape, dict) else None,
+            group_type=getattr(market, "group_type", None),
+        )
     # A source-only/refused composition can retain complete references. A
     # changed blend has no historical field with those same contributors;
     # its old source-only references are still withheld by _overlay_current.

@@ -340,6 +340,12 @@ from app.utils.labeling_queue import (
     review_key_for_feed_item as _review_key_for_feed_item,
 )
 from app.utils.duplicate_condition_outcomes import drop_duplicate_legs
+from app.utils.futures_field_coverage import (
+    field_leader_is_unsupported,
+    field_winner_places,
+    has_limited_field_price_coverage,
+)
+from app.utils.futures_unsupported_price import row_carries_a_verdict
 from app.utils.event_twin_fold import fold_twin_events
 from app.utils.name_normalization import names_match as _team_name_matches
 from app.utils.sport_keys import SPORT_LEAGUE_MAP, sport_display_name
@@ -3491,6 +3497,12 @@ def _dedupe_futures_by_group_id(
     "Who wins Best Picture?") should appear as one card, not 10.  Markets
     without a group_id pass through unchanged.
     """
+    # A withdrawn leader must not become the representative or a saved sibling.
+    # The bundle assemblers apply their minimum to the candidates that remain.
+    futures_items = [
+        item for item in futures_items
+        if not has_limited_field_price_coverage(item.get("data") or {})
+    ]
     if any(
         item.get("_q8_family_only_admission")
         or any(
@@ -9301,6 +9313,56 @@ def _field_has_withheld_legs(
 #: read above stays a `__dict__` read on every shape. Module-level and never
 #: written to, the same construction `futures_market_snapshot` uses.
 _NO_MARKET_DICT: dict = {}
+
+
+def _withhold_unsupported_field_leader(
+    item: dict, market, screened_outcomes: list, *, field_incomplete: bool
+) -> None:
+    """Keep the market link when the full screened field cannot support a leader."""
+    data = item["data"]
+    card = data.get("discover_card") or {}
+    if (
+        data["status"] != "open"
+        or data["market_type"] not in ("field", "participation")
+        or card.get("suggested_format") != "outcome_distribution"
+        or card.get("ladder_treatment_refused")
+    ):
+        return
+
+    metadata = market.market_metadata
+    shape = metadata.get("shape") if isinstance(metadata, dict) else None
+    expected = shape.get("expected_winners") if isinstance(shape, dict) else None
+    places = field_winner_places(market.name, _market_exclusivity(market), expected)
+    field_outcomes = drop_duplicate_legs(market.outcomes, lambda outcome: outcome.external_id)
+    graded = {
+        outcome.id: getattr(outcome, "is_winner", None) is True
+        for outcome in field_outcomes
+        if row_carries_a_verdict(getattr(outcome, "resolution_source", None))
+    }
+    if places is not None:
+        places -= sum(graded.values())
+    incomplete = field_leader_is_unsupported(
+        (outcome.current_probability for outcome in screened_outcomes if outcome.id not in graded),
+        places,
+        open_outcome_count=len(field_outcomes) - len(graded),
+        omitted_contender=field_incomplete,
+    )
+    data["field_price_coverage_incomplete"] = incomplete
+    if not incomplete:
+        return
+
+    notice = "Limited price coverage"
+    item.update(headline=None, reason=notice, context_summary=notice)
+    data.update(
+        top_outcomes=[],
+        hook_description=None,
+        price_observed_at=None,
+        card_sum_reason=None,
+    )
+    # Both card formats and their share text pick a leader from these rows.
+    data.pop("discover_card", None)
+    data.pop("full_field_rendered", None)
+    data.pop("matched_outcomes", None)
 
 
 def _card_price_observed_at(displayed_outcomes: list) -> str | None:
@@ -15213,6 +15275,9 @@ async def _score_sports_mode_futures(
             ),
             "outcome_names": [str(n) for n in outcome_names],
         }
+        _withhold_unsupported_field_leader(
+            item, market, card_outcomes, field_incomplete=_field_incomplete
+        )
         scored_items.append(item)
 
     if not _from_shared_cache:
@@ -17582,6 +17647,9 @@ async def _score_futures(
             if is_recycled:
                 item["recycled"] = True
 
+            _withhold_unsupported_field_leader(
+                item, market, card_outcomes, field_incomplete=_field_incomplete
+            )
             scored_items.append(item)
             # LAT-P105: on the fused path `scored_items` is the RELAXED pool, so
             # the strict pool is collected alongside it in the same candidate
