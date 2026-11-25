@@ -2540,6 +2540,7 @@ async def _prewarm_machinery_roundups(
                                 cp,
                                 reason=eval_meta.get("reason") or "all_members_settled",
                                 fixed_members=bool(eval_meta.get("fixed_members")),
+                                long_skip=bool(eval_meta.get("long_skip")),
                             )
                     elif not ok and eval_meta.get("clean_empty") is True:
                         # #13183: strictly opt-in clean-empty marker. Only recorded
@@ -3336,6 +3337,7 @@ async def _prewarm_standing_roundups(
                             cp,
                             reason=eval_meta.get("reason") or "all_members_settled",
                             fixed_members=bool(eval_meta.get("fixed_members")),
+                            long_skip=bool(eval_meta.get("long_skip")),
                         )
                 elif not ok and eval_meta.get("clean_empty") is True:
                     outcome_label = "nothing_to_show"

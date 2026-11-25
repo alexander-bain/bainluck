@@ -1175,9 +1175,16 @@ STANDING_RETIRED_SLUGS_KEY = "bainluck:roundup:retired_settled_slugs:v1"
 STANDING_RETIRED_SLUGS_TTL_S = 86_400
 ROUNDUP_SETTLED_RETIRED_TTL_S = 86_400.0
 MACHINERY_IMMINENT_START_WINDOW_S = 180.0
-_SETTLED_MEMBER_STATUSES = frozenset(
-    {"settled", "closed", "completed", "final", "finished", "graded", "resolved"}
+# True terminal/resulted statuses (#13718 + Fable ask 2): ONLY these qualify a
+# fixed-member standing set for the 24-hour Discover retirement skip. A market
+# with status == "closed" and no result yet is temporarily halted/non-trading
+# (`_NON_TRADING_MEMBER_STATUSES`) and must keep the ordinary short cache TTL so
+# it recovers automatically if trading resumes.
+_RESULT_MEMBER_STATUSES = frozenset(
+    {"settled", "completed", "final", "finished", "graded", "resolved"}
 )
+_NON_TRADING_MEMBER_STATUSES = _RESULT_MEMBER_STATUSES | {"closed"}
+_SETTLED_MEMBER_STATUSES = _RESULT_MEMBER_STATUSES
 _ROLLING_DISCOVER_PRODUCER_KINDS = frozenset(
     {
         "window_events_closest",
@@ -1194,12 +1201,20 @@ _TERMINAL_EVENT_STATUSES = frozenset(
 )
 
 
-def _roundup_all_members_settled(
+def _roundup_members_settlement_state(
     container_payload: Optional[Mapping[str, Any]],
-) -> bool:
-    """True when a built container has >=1 members and every member is settled (#13718)."""
+) -> Optional[str]:
+    """Return ``'all_settled'``, ``'all_closed'``, or ``None`` for a built container (#13718).
+
+    - ``'all_settled'``: >=1 members and every member carries a settled/resulted
+      status (or ``baseline_status == 'settled_preserved'``).
+    - ``'all_closed'``: >=1 members and every member is non-trading, with at least
+      one ``status == 'closed'`` lacking a result yet (eligible to hide from
+      Discover briefly, NEVER for the 24-hour standing retirement skip).
+    - ``None``: empty container or at least one active/open/scheduled member.
+    """
     if not isinstance(container_payload, Mapping):
-        return False
+        return None
     members: list[Mapping[str, Any]] = []
     for sec in container_payload.get("sections") or ():
         if isinstance(sec, Mapping):
@@ -1211,15 +1226,31 @@ def _roundup_all_members_settled(
             if isinstance(m, Mapping):
                 members.append(m)
     if not members:
-        return False
+        return None
+    saw_closed_without_result = False
     for m in members:
         card = m.get("card")
         if not isinstance(card, Mapping):
-            return False
+            return None
         st = str(card.get("status") or "").strip().lower()
-        if st not in _SETTLED_MEMBER_STATUSES and card.get("baseline_status") != "settled_preserved":
-            return False
-    return True
+        has_result = (
+            st in _RESULT_MEMBER_STATUSES
+            or card.get("baseline_status") == "settled_preserved"
+        )
+        if has_result:
+            continue
+        if st == "closed":
+            saw_closed_without_result = True
+            continue
+        return None
+    return "all_closed" if saw_closed_without_result else "all_settled"
+
+
+def _roundup_all_members_settled(
+    container_payload: Optional[Mapping[str, Any]],
+) -> bool:
+    """True when a built container has >=1 members and every member has a result (#13718)."""
+    return _roundup_members_settlement_state(container_payload) == "all_settled"
 
 
 def _producer_has_fixed_members(producer: RoundupProducer) -> bool:
@@ -1436,6 +1467,7 @@ def _encode_roundup_cache_entry(
     nothing_to_show: bool = False,
     nothing_to_show_reason: Optional[str] = None,
     settled_retired: bool = False,
+    long_skip: bool = False,
 ) -> str:
     payload: dict[str, Any] = {
         "built_at": ts,
@@ -1454,6 +1486,8 @@ def _encode_roundup_cache_entry(
             payload["nothing_to_show_reason"] = str(nothing_to_show_reason)
     if settled_retired:
         payload["settled_retired"] = True
+        if long_skip:
+            payload["long_skip"] = True
     return json.dumps(
         payload,
         separators=(",", ":"),
@@ -1512,6 +1546,8 @@ def store_roundup_cache_sync(
             else:
                 if hasattr(rc, "hdel"):
                     rc.hdel(live_hash, slug)
+            if not is_mach and feed_item is not None and hasattr(rc, "hdel"):
+                rc.hdel(STANDING_RETIRED_SLUGS_KEY, slug)
         return True
     except Exception:  # noqa: BLE001 — cache write is best-effort
         logger.warning(
@@ -1620,8 +1656,9 @@ def store_roundup_settled_retired_sync(
     *,
     reason: Optional[str] = "all_members_settled",
     fixed_members: bool = True,
+    long_skip: Optional[bool] = None,
 ) -> bool:
-    """Cache a settled round-up as retired from Discover while keeping its container page (#13718)."""
+    """Cache a settled/closed round-up as hidden from Discover while keeping its page (#13718)."""
     if rc is None or not hasattr(rc, "set") or container_payload is None:
         return False
     prod = ROUNDUP_PRODUCERS.get(slug)
@@ -1629,11 +1666,19 @@ def store_roundup_settled_retired_sync(
     if rule_cfg.get("cache") == "none" or rule_cfg.get("producer") == "yardstick_pair":
         return False
     is_mach = _is_machinery_producer_slug(slug)
-    ttl_s = (
-        ROUNDUP_SETTLED_RETIRED_TTL_S
-        if fixed_members and not is_mach
-        else (ROUNDUP_MACHINERY_NON_LIVE_CACHE_TTL_S if is_mach else ROUNDUP_STANDING_PREWARM_FRESH_TTL_S)
+    effective_long_skip = (
+        bool(fixed_members and not is_mach and reason != "all_members_closed")
+        if long_skip is None
+        else bool(long_skip and fixed_members and not is_mach)
     )
+    if effective_long_skip:
+        ttl_s = ROUNDUP_SETTLED_RETIRED_TTL_S
+    elif is_mach:
+        ttl_s = ROUNDUP_MACHINERY_NON_LIVE_CACHE_TTL_S
+    elif reason == "all_members_closed":
+        ttl_s = ROUNDUP_CACHE_TTL_S
+    else:
+        ttl_s = ROUNDUP_STANDING_PREWARM_FRESH_TTL_S
     stale_ttl_s = max(
         ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S if is_mach else ROUNDUP_STANDING_NON_LIVE_STALE_TTL_S,
         float(ttl_s),
@@ -1650,6 +1695,7 @@ def store_roundup_settled_retired_sync(
             nothing_to_show=True,
             nothing_to_show_reason=reason,
             settled_retired=True,
+            long_skip=effective_long_skip,
         )
         rc.set(_redis_cache_key(slug), encoded, ex=int(stale_ttl_s))
         if hasattr(rc, "hdel"):
@@ -1658,7 +1704,9 @@ def store_roundup_settled_retired_sync(
             else:
                 rc.hdel(STANDING_LIVE_SLUGS_KEY, slug)
                 rc.hdel(STANDING_WARM_SLUGS_KEY, slug)
-        if fixed_members and not is_mach:
+                if not effective_long_skip:
+                    rc.hdel(STANDING_RETIRED_SLUGS_KEY, slug)
+        if effective_long_skip:
             if hasattr(rc, "hset"):
                 rc.hset(STANDING_RETIRED_SLUGS_KEY, slug, str(ts))
             if hasattr(rc, "expire"):
@@ -1738,6 +1786,7 @@ async def _store_roundup_cache_entry(
     nothing_to_show_reason: Optional[str] = None,
     settled_retired: bool = False,
     fixed_members: bool = False,
+    long_skip: Optional[bool] = None,
     ttl_override_s: Optional[float] = None,
 ) -> None:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -1770,7 +1819,16 @@ async def _store_roundup_cache_entry(
         _roundup_nothing_to_show_local[cache_key] = (ts, nothing_to_show_reason)
     else:
         _roundup_nothing_to_show_local.pop(cache_key, None)
-    is_fixed_retired = bool(settled_retired and fixed_members and not _is_machinery_producer_slug(slug))
+    is_fixed_retired = bool(
+        settled_retired
+        and fixed_members
+        and not _is_machinery_producer_slug(slug)
+        and (
+            (nothing_to_show_reason != "all_members_closed")
+            if long_skip is None
+            else bool(long_skip)
+        )
+    )
     if is_fixed_retired:
         _roundup_settled_retired_local[cache_key] = ts
     else:
@@ -1788,6 +1846,7 @@ async def _store_roundup_cache_entry(
                 nothing_to_show=is_nts_flag,
                 nothing_to_show_reason=nothing_to_show_reason if is_nts_flag else None,
                 settled_retired=bool(settled_retired),
+                long_skip=is_fixed_retired,
             )
         except (TypeError, ValueError):
             logger.warning(
@@ -1825,6 +1884,11 @@ async def _store_roundup_cache_entry(
                 )
                 await bounded_redis_call(
                     lambda: client.hdel(STANDING_WARM_SLUGS_KEY, slug),
+                    treat_none_as_miss=False,
+                )
+            elif wrote_async and not _is_machinery_producer_slug(slug) and (feed_item is not None or settled_retired):
+                await bounded_redis_call(
+                    lambda: client.hdel(STANDING_RETIRED_SLUGS_KEY, slug),
                     treat_none_as_miss=False,
                 )
             elif wrote_async and _is_machinery_producer_slug(slug) and container_payload is not None and not settled_retired:
@@ -2020,7 +2084,7 @@ async def _load_last_good_roundup_copy(
     )
     # Candidate tuple: (built_at, feed_item, container_payload, stored_stale_ttl,
     #                   from_shared, clean_empty, clean_empty_reason, nothing_to_show, nts_reason,
-    #                   settled_retired)
+    #                   settled_retired, settled_long_skip)
     local_candidate: Optional[
         tuple[
             float,
@@ -2033,16 +2097,30 @@ async def _load_last_good_roundup_copy(
             bool,
             Optional[str],
             bool,
+            bool,
         ]
     ] = None
     cached = _roundup_local_cache.get(cache_key)
     if cached is not None:
         local_nts = _roundup_nothing_to_show_local.get(cache_key)
-        is_local_settled = bool(
+        is_local_settled_long = bool(
             cached[1] is None
             and cached[2] is not None
             and cache_key in _roundup_settled_retired_local
             and float(_roundup_settled_retired_local[cache_key]) == float(cached[0])
+        )
+        local_nts_reason = (
+            local_nts[1]
+            if local_nts is not None and float(local_nts[0]) == float(cached[0])
+            else None
+        )
+        is_local_settled = bool(
+            is_local_settled_long
+            or (
+                cached[1] is None
+                and cached[2] is not None
+                and local_nts_reason in ("all_members_settled", "all_members_closed")
+            )
         )
         is_local_nts = bool(
             cached[1] is None
@@ -2056,14 +2134,11 @@ async def _load_last_good_roundup_copy(
             None,
             False,
             is_local_settled,
-            "all_members_settled" if is_local_settled else None,
+            local_nts_reason if is_local_settled else None,
             is_local_nts,
-            (
-                local_nts[1]
-                if local_nts is not None and float(local_nts[0]) == float(cached[0])
-                else ("all_members_settled" if is_local_settled else None)
-            ),
+            local_nts_reason or ("all_members_settled" if is_local_settled_long else None),
             is_local_settled,
+            is_local_settled_long,
         )
 
     shared_candidate: Optional[
@@ -2077,6 +2152,7 @@ async def _load_last_good_roundup_copy(
             Optional[str],
             bool,
             Optional[str],
+            bool,
             bool,
         ]
     ] = None
@@ -2119,7 +2195,18 @@ async def _load_last_good_roundup_copy(
                 )
                 if isinstance(raw, dict) and isinstance(raw.get("built_at"), (int, float)):
                     raw_stale_ttl = raw.get("stale_ttl_s")
+                    raw_ttl = raw.get("ttl_s")
                     is_sr = raw.get("settled_retired") is True
+                    is_sr_long = bool(
+                        is_sr
+                        and (
+                            raw.get("long_skip") is True
+                            or (
+                                isinstance(raw_ttl, (int, float))
+                                and float(raw_ttl) >= ROUNDUP_SETTLED_RETIRED_TTL_S
+                            )
+                        )
+                    )
                     shared_candidate = (
                         float(raw["built_at"]),
                         raw.get("feed_item"),
@@ -2137,6 +2224,7 @@ async def _load_last_good_roundup_copy(
                         if raw.get("nothing_to_show_reason")
                         else ("all_members_settled" if is_sr else None),
                         is_sr,
+                        is_sr_long,
                     )
             except Exception:  # noqa: BLE001 — malformed shared entry fails open/closed per flag
                 logger.debug(
@@ -2170,6 +2258,7 @@ async def _load_last_good_roundup_copy(
         is_nothing_to_show,
         nts_reason,
         is_settled_retired,
+        is_settled_long_skip,
     ) = chosen
     if fi is None or cp is None:
         if from_shared:
@@ -2181,16 +2270,26 @@ async def _load_last_good_roundup_copy(
                 )
             else:
                 _roundup_nothing_to_show_local.pop(cache_key, None)
-            if is_settled_retired and _producer_has_fixed_members(producer):
+            if (
+                is_settled_long_skip
+                and _producer_has_fixed_members(producer)
+                and not _is_machinery_producer_slug(producer.slug)
+            ):
                 _roundup_settled_retired_local[cache_key] = built_at
+            else:
+                _roundup_settled_retired_local.pop(cache_key, None)
         if (is_clean_empty or is_settled_retired) and quiet_out is not None:
             quiet_keep_s = (
                 float(stored_stale_ttl)
                 if isinstance(stored_stale_ttl, (int, float)) and stored_stale_ttl > 0
                 else (
                     ROUNDUP_SETTLED_RETIRED_TTL_S
-                    if is_settled_retired
-                    else ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S
+                    if is_settled_long_skip
+                    else (
+                        ROUNDUP_MACHINERY_NON_LIVE_STALE_TTL_S
+                        if _is_machinery_producer_slug(producer.slug)
+                        else ROUNDUP_STANDING_NON_LIVE_STALE_TTL_S
+                    )
                 )
             )
             if max(0.0, ts - built_at) < quiet_keep_s:
@@ -2537,8 +2636,21 @@ async def evaluate_roundup_producer(
                             _roundup_local_cache[cache_key] = (built_at, fi, cp)
                             if is_sr and fi is None:
                                 _roundup_nothing_to_show_local[cache_key] = (built_at, sr_reason)
-                                if raw_ttl >= ROUNDUP_SETTLED_RETIRED_TTL_S and not _is_machinery_producer_slug(producer.slug):
+                                is_sr_long = bool(
+                                    (
+                                        raw.get("long_skip") is True
+                                        or raw_ttl >= ROUNDUP_SETTLED_RETIRED_TTL_S
+                                    )
+                                    and raw_ttl >= ROUNDUP_SETTLED_RETIRED_TTL_S
+                                    and _producer_has_fixed_members(producer)
+                                    and not _is_machinery_producer_slug(producer.slug)
+                                )
+                                if is_sr_long:
                                     _roundup_settled_retired_local[cache_key] = built_at
+                                else:
+                                    _roundup_settled_retired_local.pop(cache_key, None)
+                            elif fi is not None:
+                                _roundup_settled_retired_local.pop(cache_key, None)
                             _record_roundup_live_origin(built_at, producer.slug, cp)
                             return copy.deepcopy(fi), copy.deepcopy(cp)
                         if allow_stale:
@@ -2701,8 +2813,14 @@ async def evaluate_roundup_producer(
                 )
             return None, None, local_meta
 
-        all_settled = _roundup_all_members_settled(container_payload)
-        settled_suppressed = all_settled or bool(getattr(outcome, "suppress_feed_item", False))
+        settlement_state = _roundup_members_settlement_state(container_payload)
+        all_settled = settlement_state == "all_settled"
+        all_closed = settlement_state == "all_closed"
+        settled_suppressed = (
+            all_settled
+            or all_closed
+            or bool(getattr(outcome, "suppress_feed_item", False))
+        )
         if settled_suppressed:
             feed_item = None
 
@@ -2751,18 +2869,21 @@ async def evaluate_roundup_producer(
 
         if settled_suppressed:
             fixed_members = _producer_has_fixed_members(producer)
-            sr_reason = "all_members_settled" if all_settled else "suppressed_feed_item"
+            is_mach = _is_machinery_producer_slug(producer.slug)
+            sr_reason = (
+                "all_members_settled"
+                if all_settled
+                else ("all_members_closed" if all_closed else "suppressed_feed_item")
+            )
+            long_skip = bool(all_settled and fixed_members and not is_mach)
             if local_meta is not None:
                 local_meta["clean_empty"] = True
                 local_meta["settled_retired"] = True
                 local_meta["fixed_members"] = fixed_members
+                local_meta["long_skip"] = long_skip
                 local_meta["reason"] = sr_reason
             if use_cache:
-                ttl_ov = (
-                    ROUNDUP_SETTLED_RETIRED_TTL_S
-                    if (fixed_members and not _is_machinery_producer_slug(producer.slug))
-                    else None
-                )
+                ttl_ov = ROUNDUP_SETTLED_RETIRED_TTL_S if long_skip else None
                 await _store_roundup_cache_entry(
                     cache_key,
                     producer.slug,
@@ -2775,6 +2896,7 @@ async def evaluate_roundup_producer(
                     nothing_to_show_reason=sr_reason,
                     settled_retired=True,
                     fixed_members=fixed_members,
+                    long_skip=long_skip,
                     ttl_override_s=ttl_ov,
                 )
             return None, container_payload, local_meta
@@ -4879,10 +5001,18 @@ async def add_roundup_feed_items(
                     ):
                         pref_built_at = float(raw_pref["built_at"])
                         pref_ttl = float(raw_pref.get("ttl_s") or ROUNDUP_CACHE_TTL_S)
+                        is_pref_long = bool(
+                            raw_pref.get("long_skip") is True
+                            or pref_ttl >= ROUNDUP_SETTLED_RETIRED_TTL_S
+                        )
                         if 0.0 <= (now_ts - pref_built_at) < pref_ttl:
-                            if pref_ttl >= ROUNDUP_SETTLED_RETIRED_TTL_S:
+                            if is_pref_long and pref_ttl >= ROUNDUP_SETTLED_RETIRED_TTL_S:
                                 _roundup_settled_retired_local[sr_key] = pref_built_at
+                            else:
+                                _roundup_settled_retired_local.pop(sr_key, None)
                             continue
+                        if not is_pref_long:
+                            _roundup_settled_retired_local.pop(sr_key, None)
                 except Exception:  # noqa: BLE001 — fail open to normal evaluation
                     pass
         elapsed = time.perf_counter() - started

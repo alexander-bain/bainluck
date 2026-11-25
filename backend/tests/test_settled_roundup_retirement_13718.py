@@ -185,7 +185,7 @@ async def test_settled_retirement_skips_discover_and_keeps_collection_page(
                     "card": {
                         "id": 9102,
                         "name": "Market B settled",
-                        "status": "closed",
+                        "status": "final",
                         "top_outcome": "No",
                         "probability": 0.0,
                         "outcomes": [{"name": "No", "probability": 0.0}],
@@ -222,12 +222,16 @@ async def test_settled_retirement_skips_discover_and_keeps_collection_page(
     assert fi_s is None and cp_s is not None
     assert meta_s["settled_retired"] is True
     assert meta_s["fixed_members"] is True
+    assert meta_s["long_skip"] is True
+    assert meta_s["reason"] == "all_members_settled"
 
     meta_g: dict[str, Any] = {}
     fi_g, cp_g = await rc_mod.evaluate_roundup_producer(p_generic, object(), now=now, outcome_meta=meta_g)
     assert fi_g is None and cp_g is not None
     assert meta_g["settled_retired"] is True
     assert meta_g["fixed_members"] is True
+    assert meta_g["long_skip"] is True
+    assert meta_g["reason"] == "all_members_settled"
 
     # Reset counts for Discover stage test
     series_calls = 0
@@ -498,3 +502,380 @@ async def test_health_exposes_roundup_reads_10m_by_slug_without_breaking_aggrega
         "had_nothing_to_show",
     }
     assert "roundup_reads_10m_by_slug" in body
+
+
+@pytest.mark.asyncio
+async def test_all_settled_fixed_set_gets_24h_long_skip_and_retired_hash(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Truly settled/resolved fixed sets (including settled_preserved) earn the 24h long skip."""
+    import contextlib
+    from datetime import datetime, timezone
+
+    from app.tasks import precompute_category_pages as precompute_mod
+
+    rc_mod.reset_roundup_cache_for_tests()
+    calls = 0
+    frozen_now = datetime(2026, 10, 5, 18, 0, tzinfo=timezone.utc)
+
+    def _produce_settled(_db: Any) -> rc_mod.RoundupMembers:
+        nonlocal calls
+        calls += 1
+        return rc_mod.RoundupMembers(
+            members=[
+                {
+                    "id": 9301,
+                    "type": "market",
+                    "destination": {"href": "/futures/9301"},
+                    "card": {
+                        "id": 9301,
+                        "name": "Market Resolved",
+                        "status": "resolved",
+                        "top_outcome": "Yes",
+                        "probability": 1.0,
+                        "outcomes": [{"name": "Yes", "probability": 1.0}],
+                    },
+                },
+                {
+                    "id": 9302,
+                    "type": "market",
+                    "destination": {"href": "/futures/9302"},
+                    "card": {
+                        "id": 9302,
+                        "name": "Market Preserved",
+                        "status": "closed",
+                        "baseline_status": "settled_preserved",
+                        "top_outcome": "No",
+                        "probability": 0.0,
+                        "outcomes": [{"name": "No", "probability": 0.0}],
+                    },
+                },
+            ],
+            rows=[
+                {"market_id": 9301, "label": "Market Resolved", "probability": 1.0, "rendered_percent": 100},
+                {"market_id": 9302, "label": "Market Preserved", "probability": 0.0, "rendered_percent": 0},
+            ],
+            title="Settled With Preserved Member",
+        )
+
+    kv: dict[str, tuple[str, int | None]] = {}
+    hashes: dict[str, dict[str, str]] = {}
+
+    class _SyncRedis:
+        def get(self, key: str) -> str | None:
+            item = kv.get(key)
+            return item[0] if item else None
+
+        def set(self, key: str, value: str, ex: int | None = None) -> bool:
+            kv[key] = (value, ex)
+            return True
+
+        def ttl(self, key: str) -> int:
+            item = kv.get(key)
+            return int(item[1] or -1) if item else -2
+
+        def hset(self, key: str, field: str, value: str) -> int:
+            hashes.setdefault(key, {})[field] = value
+            return 1
+
+        def hdel(self, key: str, *fields: str) -> int:
+            bucket = hashes.get(key, {})
+            return sum(1 for f in fields if bucket.pop(f, None) is not None)
+
+        def hgetall(self, key: str) -> dict[str, str]:
+            return dict(hashes.get(key, {}))
+
+        def expire(self, _key: str, _ttl: int) -> bool:
+            return True
+
+    fake_rc = _SyncRedis()
+    p_settled = _register_test_producer(
+        slug="settled-preserved-fixed",
+        rule={"producer": "custom_fixed", "market_ids": [9301, 9302]},
+        produce_fn=_produce_settled,
+    )
+    monkeypatch.setattr(rc_mod, "ROUNDUP_PRODUCERS", {p_settled.slug: p_settled})
+    monkeypatch.setattr(rc_mod, "ensure_optional_roundup_candidates", lambda: None)
+    monkeypatch.setattr("app.routes.containers.containers_read_enabled", lambda: True)
+    monkeypatch.setattr(
+        "app.tasks.base.get_task_session",
+        lambda **_kw: contextlib.nullcontext(object()),
+    )
+    monkeypatch.setattr("time.time", lambda: frozen_now.timestamp())
+
+    res1 = await precompute_mod._prewarm_standing_roundups(rc=fake_rc)
+    assert calls == 1
+    assert res1["slugs"]["settled-preserved-fixed"]["outcome"] == "settled_retired"
+
+    raw = json.loads(kv[rc_mod._redis_cache_key("settled-preserved-fixed")][0])
+    assert raw["settled_retired"] is True
+    assert raw["long_skip"] is True
+    assert raw["nothing_to_show_reason"] == "all_members_settled"
+    assert float(raw["ttl_s"]) == rc_mod.ROUNDUP_SETTLED_RETIRED_TTL_S
+    assert "settled-preserved-fixed" in hashes.get(rc_mod.STANDING_RETIRED_SLUGS_KEY, {})
+
+    res2 = await precompute_mod._prewarm_standing_roundups(rc=fake_rc)
+    assert calls == 1
+    assert res2["slugs"]["settled-preserved-fixed"]["outcome"] == "settled_retired"
+
+
+@pytest.mark.asyncio
+async def test_all_closed_without_result_keeps_short_ttl_and_no_retired_marker(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Halted/closed sets without a result keep short cache TTL and never set the 24h skip marker."""
+    import contextlib
+    from datetime import datetime, timezone
+
+    from app.tasks import precompute_category_pages as precompute_mod
+
+    rc_mod.reset_roundup_cache_for_tests()
+    calls = 0
+    frozen_now = datetime(2026, 10, 5, 18, 0, tzinfo=timezone.utc)
+
+    def _produce_closed(_db: Any) -> rc_mod.RoundupMembers:
+        nonlocal calls
+        calls += 1
+        return rc_mod.RoundupMembers(
+            members=[
+                {
+                    "id": 9401,
+                    "type": "market",
+                    "destination": {"href": "/futures/9401"},
+                    "card": {
+                        "id": 9401,
+                        "name": "Halted Market A",
+                        "status": "closed",
+                        "top_outcome": "Yes",
+                        "probability": 0.52,
+                        "outcomes": [{"name": "Yes", "probability": 0.52}],
+                    },
+                },
+                {
+                    "id": 9402,
+                    "type": "market",
+                    "destination": {"href": "/futures/9402"},
+                    "card": {
+                        "id": 9402,
+                        "name": "Settled Market B",
+                        "status": "final",
+                        "top_outcome": "No",
+                        "probability": 0.0,
+                        "outcomes": [{"name": "No", "probability": 0.0}],
+                    },
+                },
+            ],
+            rows=[
+                {"market_id": 9401, "label": "Halted Market A", "probability": 0.52, "rendered_percent": 52},
+                {"market_id": 9402, "label": "Settled Market B", "probability": 0.0, "rendered_percent": 0},
+            ],
+            title="Temporarily Closed Set",
+        )
+
+    kv: dict[str, tuple[str, int | None]] = {}
+    hashes: dict[str, dict[str, str]] = {}
+
+    class _SyncRedis:
+        def get(self, key: str) -> str | None:
+            item = kv.get(key)
+            return item[0] if item else None
+
+        def set(self, key: str, value: str, ex: int | None = None) -> bool:
+            kv[key] = (value, ex)
+            return True
+
+        def ttl(self, key: str) -> int:
+            item = kv.get(key)
+            return int(item[1] or -1) if item else -2
+
+        def hset(self, key: str, field: str, value: str) -> int:
+            hashes.setdefault(key, {})[field] = value
+            return 1
+
+        def hdel(self, key: str, *fields: str) -> int:
+            bucket = hashes.get(key, {})
+            return sum(1 for f in fields if bucket.pop(f, None) is not None)
+
+        def hgetall(self, key: str) -> dict[str, str]:
+            return dict(hashes.get(key, {}))
+
+        def expire(self, _key: str, _ttl: int) -> bool:
+            return True
+
+    fake_rc = _SyncRedis()
+    p_closed = _register_test_producer(
+        slug="closed-fixed-set",
+        rule={"producer": "custom_fixed", "market_ids": [9401, 9402]},
+        produce_fn=_produce_closed,
+    )
+    monkeypatch.setattr(rc_mod, "ROUNDUP_PRODUCERS", {p_closed.slug: p_closed})
+    monkeypatch.setattr(rc_mod, "ensure_optional_roundup_candidates", lambda: None)
+
+    meta: dict[str, Any] = {}
+    fi, cp = await rc_mod.evaluate_roundup_producer(p_closed, object(), now=frozen_now, outcome_meta=meta)
+    assert fi is None and cp is not None
+    assert meta["settled_retired"] is True
+    assert meta["long_skip"] is False
+    assert meta["reason"] == "all_members_closed"
+    assert rc_mod._roundup_settled_retired_local == {}
+
+    monkeypatch.setattr("app.routes.containers.containers_read_enabled", lambda: True)
+    monkeypatch.setattr(
+        "app.tasks.base.get_task_session",
+        lambda **_kw: contextlib.nullcontext(object()),
+    )
+    monkeypatch.setattr("time.time", lambda: frozen_now.timestamp())
+
+    calls = 0
+    await precompute_mod._prewarm_standing_roundups(rc=fake_rc)
+    assert calls == 1
+    raw = json.loads(kv[rc_mod._redis_cache_key("closed-fixed-set")][0])
+    assert raw["settled_retired"] is True
+    assert raw.get("long_skip") is not True
+    assert raw["nothing_to_show_reason"] == "all_members_closed"
+    assert float(raw["ttl_s"]) == rc_mod.ROUNDUP_CACHE_TTL_S
+    assert "closed-fixed-set" not in hashes.get(rc_mod.STANDING_RETIRED_SLUGS_KEY, {})
+
+    # Next standing prewarm pass must re-evaluate (NOT long-skipped).
+    await precompute_mod._prewarm_standing_roundups(rc=fake_rc)
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_closed_set_recovers_on_reopen_after_short_ttl(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When a closed-without-result set reopens after ROUNDUP_CACHE_TTL_S, Discover recovers it."""
+    from datetime import datetime, timedelta, timezone
+
+    rc_mod.reset_roundup_cache_for_tests()
+    t0 = datetime(2026, 10, 5, 18, 0, tzinfo=timezone.utc)
+    member_status = "closed"
+    calls = 0
+
+    def _produce(_db: Any) -> rc_mod.RoundupMembers:
+        nonlocal calls
+        calls += 1
+        return rc_mod.RoundupMembers(
+            members=[
+                {
+                    "id": 9501,
+                    "type": "market",
+                    "destination": {"href": "/futures/9501"},
+                    "card": {
+                        "id": 9501,
+                        "name": "Resumable Market",
+                        "status": member_status,
+                        "top_outcome": "Yes",
+                        "probability": 0.55,
+                        "outcomes": [{"name": "Yes", "probability": 0.55}],
+                    },
+                },
+                {
+                    "id": 9502,
+                    "type": "market",
+                    "destination": {"href": "/futures/9502"},
+                    "card": {
+                        "id": 9502,
+                        "name": "Closed Partner",
+                        "status": "closed",
+                        "top_outcome": "No",
+                        "probability": 0.45,
+                        "outcomes": [{"name": "No", "probability": 0.45}],
+                    },
+                },
+            ],
+            rows=[
+                {"market_id": 9501, "label": "Resumable Market", "probability": 0.55, "rendered_percent": 55},
+                {"market_id": 9502, "label": "Closed Partner", "probability": 0.45, "rendered_percent": 45},
+            ],
+            title="Reopenable Closed Set",
+        )
+
+    p = _register_test_producer(
+        slug="reopenable-closed-set",
+        rule={"producer": "custom_fixed", "market_ids": [9501, 9502]},
+        produce_fn=_produce,
+    )
+    monkeypatch.setattr(rc_mod, "ROUNDUP_PRODUCERS", {p.slug: p})
+    monkeypatch.setattr(rc_mod, "ensure_optional_roundup_candidates", lambda: None)
+    monkeypatch.setattr("app.routes.containers.containers_read_enabled", lambda: True)
+
+    fi0, cp0 = await rc_mod.evaluate_roundup_producer(p, object(), now=t0)
+    assert fi0 is None and cp0 is not None
+    assert calls == 1
+
+    # Within short TTL, cache keeps it hidden without hitting produce_fn.
+    member_status = "open"
+    fi_mid, _cp_mid = await rc_mod.evaluate_roundup_producer(
+        p, object(), now=t0 + timedelta(seconds=30)
+    )
+    assert fi_mid is None
+    assert calls == 1
+
+    # Right after ROUNDUP_CACHE_TTL_S expires, re-evaluation recovers the feed item.
+    t_reopen = t0 + timedelta(seconds=rc_mod.ROUNDUP_CACHE_TTL_S + 1)
+    fi_reopen, cp_reopen = await rc_mod.evaluate_roundup_producer(p, object(), now=t_reopen)
+    assert fi_reopen is not None and cp_reopen is not None
+    assert calls == 2
+
+    base_items = [
+        {"type": "futures", "score": 80 - i, "data": {"id": 6200 + i, "name": f"M{i}", "status": "open"}}
+        for i in range(12)
+    ]
+    out = await rc_mod.add_roundup_feed_items(object(), base_items, now=t_reopen)
+    bundles = [
+        it
+        for it in out
+        if it.get("type") == "bundle"
+        and ((it.get("data") or {}).get("collection_ref") or {}).get("slug")
+        == "reopenable-closed-set"
+    ]
+    assert len(bundles) == 1
+
+
+@pytest.mark.asyncio
+async def test_series_hub_loader_normalizes_lowercase_series_code() -> None:
+    """series_code anchored LIKE prefixes normalize lowercase/whitespace codes (#13718)."""
+    from sqlalchemy.dialects import postgresql
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from app.utils import series_hub as sh_mod
+
+    seen_sql: list[str] = []
+
+    class _EmptyRes:
+        def fetchall(self) -> list[Any]:
+            return []
+
+        def scalars(self) -> Any:
+            class _S:
+                def all(self) -> list[Any]:
+                    return []
+
+            return _S()
+
+    class _CaptureDB(AsyncSession):
+        def __init__(self) -> None:
+            pass
+
+        async def execute(self, stmt: Any, *_args: Any, **_kwargs: Any) -> _EmptyRes:
+            compiled = str(
+                stmt.compile(
+                    dialect=postgresql.dialect(),
+                    compile_kwargs={"literal_binds": True},
+                )
+            )
+            seen_sql.append(compiled)
+            return _EmptyRes()
+
+    await sh_mod._load_series_hub_from_db(
+        _CaptureDB(),
+        {"sport": "baseball_mlb", "series_code": " 26bosnyywc "},
+    )
+    joined = "\n".join(seen_sql)
+    assert "KXMLBSERIES-26BOSNYYWC%" in joined
+    assert "KXMLBSERIESSCORE-26BOSNYYWC%" in joined
+    assert "KXMLBSERIESGAMES-26BOSNYYWC%" in joined
+    assert "KXMLBSERIESSPREAD-26BOSNYYWC%" in joined
+    assert "LIKE '%" not in joined
