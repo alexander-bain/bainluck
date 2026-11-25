@@ -16,6 +16,7 @@ from app.utils.container_machinery import (
     CANDIDATE_2028_PRESIDENTIAL_PATH,
     CANDIDATE_NFL_WEEK_PATH,
     CANDIDATE_OSCARS_BEST_PICTURE_PATH,
+    _canonical_market_outcome_map,
     compute_visual_diversity_report,
     discover_machinery_candidate_paths,
     evaluate_machinery_candidates_preview,
@@ -31,6 +32,29 @@ CORE_FOUR_SLUGS = [
     "machinery-2028-presidential",
     "machinery-fed-and-macro",
 ]
+
+
+@pytest.mark.parametrize(
+    "probability,allocated,unfloored,legacy",
+    [(0.007, 0, 0, 1), (0.003, None, 0, 1), (0.997, 100, 100, 99), (0.997, None, 99, 99)],
+)
+def test_grouped_field_keeps_legacy_integer_and_passes_unfloored_allocation(
+    probability, allocated, unfloored, legacy,
+):
+    outcomes = [
+        {"id": 101, "name": "Contender", "probability": probability, "rendered_percent": allocated},
+        {"id": 102, "name": "Reference", "probability": 0.01, "rendered_percent": 1},
+        {"id": 103, "name": "Other", "probability": None},
+    ]
+    rows, by_id, by_name = _canonical_market_outcome_map(outcomes)
+    assert by_id == {101: legacy, 102: 1}
+    assert by_name["contender"] == legacy
+    assert rows[0]["probability"] == probability
+    assert rows[0]["rendered_percent"] == legacy
+    assert rows[0]["unfloored_percent"] == unfloored
+    # Hydration from the already serialized snapshot keeps the original allocation.
+    replay, _, _ = _canonical_market_outcome_map(rows)
+    assert replay == rows
 
 
 @pytest.mark.asyncio

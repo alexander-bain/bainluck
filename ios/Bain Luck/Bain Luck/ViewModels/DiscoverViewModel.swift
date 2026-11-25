@@ -1,5 +1,12 @@
 import Combine
 import Foundation
+import Network
+
+private final class DiscoverNetworkMonitorHolder13634 {
+    let monitor: NWPathMonitor
+    init(monitor: NWPathMonitor) { self.monitor = monitor }
+    deinit { monitor.cancel() }
+}
 
 /// Narrow feed-fetch seam so `DiscoverViewModel` pagination can be exercised by
 /// a deterministic fake client in tests (L2-192 Item 2). `APIClient` (an actor)
@@ -477,10 +484,16 @@ final class DiscoverViewModel: ObservableObject {
     /// collapsing to `hasMore = false` ("You're all caught up" at item 19).
     private var editionSkewRecoveries = 0
 
+    /// Matches the Sports tab's live refresh pace (#13634 / FeedViewModel.autoRefreshInterval).
+    static let liveRefreshInterval: TimeInterval = FeedViewModel.autoRefreshInterval
+
     // #9513: price delivery owns no editorial, pagination or impression state.
     private let priceClient: DiscoverPriceCardsProviding?
     private let makePriceMarketHandle: MarketStreamSubscription.Factory?
     private let makePriceEventHandle: (@MainActor (Int) throws -> LiveStreamHandle)?
+    private let priceTickInterval: TimeInterval
+    private let liveRefreshInterval: TimeInterval
+    private let monitorNetworkPath: Bool
     private var visiblePriceCards: [String: [FeedItem]] = [:]
     private var priceDeliveryActive = false
     private var priceDeliveryGeneration = 0
@@ -495,6 +508,14 @@ final class DiscoverViewModel: ObservableObject {
     private var marketPriceStreams: [MarketStreamSubscription] = []
     private var marketPriceIDs: [Int] = []
     private var eventPriceStreams: [Int: LiveStreamController] = [:]
+    private var lastPriceRefreshFailed = false
+    private var networkPathSatisfied = true
+    private var networkMonitorHolder: DiscoverNetworkMonitorHolder13634?
+
+    /// #13634 — True ONLY while live price refresh is running and healthy for Discover.
+    /// When paused, offline, cached-on-failure, or stopped, cards print whole percents
+    /// rather than a frozen tenth.
+    @Published private(set) var livePriceRefreshRunning = false
 
     /// #10090 — what a card in view shows of its venue's move at arrival: the
     /// streamed game cards' shown blend previews and the held markets' admitted
@@ -544,6 +565,49 @@ final class DiscoverViewModel: ObservableObject {
     }
 
     @MainActor
+    private func updateLivePriceRefreshRunning() {
+        let running = priceDeliveryActive
+            && priceClient != nil
+            && networkPathSatisfied
+            && !lastPriceRefreshFailed
+            && !isShowingCachedContent
+            && !refreshFailedShowingCache
+        if livePriceRefreshRunning != running {
+            livePriceRefreshRunning = running
+        }
+    }
+
+    @MainActor
+    private func startNetworkPathMonitorIfNeeded() {
+        guard monitorNetworkPath, networkMonitorHolder == nil else { return }
+        let monitor = NWPathMonitor()
+        monitor.pathUpdateHandler = { [weak self] path in
+            let satisfied = path.status == .satisfied
+            Task { @MainActor [weak self] in
+                self?.handleNetworkPathSatisfied(satisfied)
+            }
+        }
+        monitor.start(queue: DispatchQueue(label: "com.bainluck.discover.netpath"))
+        networkMonitorHolder = DiscoverNetworkMonitorHolder13634(monitor: monitor)
+    }
+
+    @MainActor
+    private func stopNetworkPathMonitor() {
+        networkMonitorHolder = nil
+    }
+
+    @MainActor
+    private func handleNetworkPathSatisfied(_ satisfied: Bool) {
+        let changed = networkPathSatisfied != satisfied
+        networkPathSatisfied = satisfied
+        updateLivePriceRefreshRunning()
+        if changed, satisfied, priceDeliveryActive {
+            reconcilePriceSubscriptions()
+            requestPriceRefresh()
+        }
+    }
+
+    @MainActor
     func setPriceDeliveryActive(_ active: Bool) {
         guard active != priceDeliveryActive else { return }
         priceDeliveryActive = active
@@ -552,26 +616,38 @@ final class DiscoverViewModel: ObservableObject {
             priceRequestTask?.cancel(); priceRequestTask = nil
             priceTickTask?.cancel(); priceTickTask = nil
             priceRequestPending = false
+            stopNetworkPathMonitor()
             marketPriceStreams.forEach { $0.stop() }; marketPriceStreams = []; marketPriceIDs = []
             eventPriceStreams.values.forEach { $0.stop() }; eventPriceStreams = [:]
             // #10090: no socket vouches for any preview now.
             eventPreviewViews = [:]; marketPreviewStates = [:]
             publishPreviews()
+            updateLivePriceRefreshRunning()
             return
         }
-        guard priceClient != nil else { return }
+        guard priceClient != nil else {
+            updateLivePriceRefreshRunning()
+            return
+        }
+        startNetworkPathMonitorIfNeeded()
+        if networkPathSatisfied {
+            lastPriceRefreshFailed = false
+        }
+        updateLivePriceRefreshRunning()
         reconcilePriceSubscriptions()
         requestPriceRefresh()
+        let tickSeconds = max(priceTickInterval, 0.01)
+        let tickNs = UInt64(tickSeconds * 1_000_000_000)
+        let ticksPerRefresh = max(1, Int((liveRefreshInterval / tickSeconds).rounded()))
         priceTickTask = Task { @MainActor [weak self] in
             var ticks = 0
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 5_000_000_000)
+                try? await Task.sleep(nanoseconds: tickNs)
                 guard !Task.isCancelled, let self, self.priceDeliveryActive else { return }
                 self.eventPriceStreams.values.forEach { $0.tick() }
                 ticks += 1
-                // Reconcile lost pubsub/terminal frames too. This is fallback,
-                // never evidence that a pushed quote was received.
-                if ticks % 12 == 0 {
+                // Reconcile lost pubsub/terminal frames at Sports tab pace (#13634).
+                if ticks % ticksPerRefresh == 0 {
                     self.reconcilePriceSubscriptions()
                     self.requestPriceRefresh()
                 }
@@ -804,16 +880,20 @@ final class DiscoverViewModel: ObservableObject {
                 for item in DiscoverPriceRefresh.leaves(items) where priceEpochs[item.id] != nil {
                     acceptedPriceCards[item.id] = item
                 }
+                lastPriceRefreshFailed = false
+                updateLivePriceRefreshRunning()
             }
         } catch {
             guard !Task.isCancelled, priceDeliveryActive, generation == priceDeliveryGeneration,
                   sequence == priceReadSequence else { return }
+            lastPriceRefreshFailed = true
+            updateLivePriceRefreshRunning()
             if priceReadPacer.observe(error, at: Date().timeIntervalSince1970) {
                 priceRequestPending = true
                 requestPriceRefresh()
             }
             // Keep last-good prices. Rate limits retry after their cooldown;
-            // other failures use the existing lost-publication reconciliation.
+            // other failures flip live tenths off until refresh recovers.
         }
     }
 
@@ -828,7 +908,10 @@ final class DiscoverViewModel: ObservableObject {
         retryBudget: TimeInterval = 6,
         seededRetryBudget: TimeInterval = 20,
         retryBackoff: TimeInterval = 1,
-        autoRecoveryDelays: [TimeInterval] = [2, 5, 10]
+        autoRecoveryDelays: [TimeInterval] = [2, 5, 10],
+        priceTickInterval: TimeInterval = 5,
+        liveRefreshInterval: TimeInterval = DiscoverViewModel.liveRefreshInterval,
+        monitorNetworkPath: Bool = true
     ) {
         self.client = client
         self.priceClient = priceClient ?? (client as? DiscoverPriceCardsProviding)
@@ -841,6 +924,9 @@ final class DiscoverViewModel: ObservableObject {
         self.seededRetryBudget = seededRetryBudget
         self.retryBackoff = retryBackoff
         self.autoRecoveryDelays = autoRecoveryDelays
+        self.priceTickInterval = priceTickInterval
+        self.liveRefreshInterval = liveRefreshInterval
+        self.monitorNetworkPath = monitorNetworkPath
     }
 
     /// #1883: one set, shared with the view (they were byte-identical copies).
@@ -946,6 +1032,7 @@ final class DiscoverViewModel: ObservableObject {
                     isShowingCachedContent = true
                     refreshFailedShowingCache = false
                     lastGoodStoredAt = cached.storedAt
+                    updateLivePriceRefreshRunning()
                     telemetry?(DiscoverFeedTelemetry(
                         outcome: .cacheHitServed, cacheDecodeMs: Self.elapsedMs(since: t0),
                         itemCount: renderable.count,
@@ -1089,6 +1176,7 @@ final class DiscoverViewModel: ObservableObject {
                     } else {
                         refreshFailedShowingCache = true
                         error = "Showing recent markets — couldn't refresh"
+                        updateLivePriceRefreshRunning()
                         telemetry?(DiscoverFeedTelemetry(
                             outcome: .revalidateFailedKeptCache,
                             networkMs: Self.elapsedMs(since: netStart),
@@ -1221,7 +1309,9 @@ final class DiscoverViewModel: ObservableObject {
                 loading = false
                 isShowingCachedContent = false
                 refreshFailedShowingCache = false
+                lastPriceRefreshFailed = false
                 lastGoodStoredAt = nil
+                updateLivePriceRefreshRunning()
                 // #7074: the rig's witness, set at the ONE terminal that published
                 // a list the server actually sent. Every other exit from this
                 // function leaves it alone — a cache seed, a kept-last-good banner
@@ -1282,12 +1372,14 @@ final class DiscoverViewModel: ObservableObject {
         if !items.isEmpty {
             refreshFailedShowingCache = true
             error = "Showing recent markets — couldn't refresh"
+            updateLivePriceRefreshRunning()
             telemetry?(DiscoverFeedTelemetry(
                 outcome: .revalidateFailedKeptCache,
                 networkMs: Self.elapsedMs(since: netStart), itemCount: items.count,
                 cacheAgeSeconds: lastGoodStoredAt.map { Date().timeIntervalSince($0) }))
         } else {
             error = "Couldn't load feed"
+            updateLivePriceRefreshRunning()
             telemetry?(DiscoverFeedTelemetry(
                 outcome: .revalidateFailedNoCache,
                 networkMs: Self.elapsedMs(since: netStart), itemCount: 0))

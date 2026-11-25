@@ -9,13 +9,10 @@ without a hawk") and part 3 §3 of #12221. Settled by Fable's answers on #12231
 (Nov 6, 9:28 PM) and the 9:35 PM addendum:
 
 * **Weekly**, Thursday 16:00 UTC (8 AM PT), background queue, rules only, $0.
-* **Report-only** (72-A) until **Thu Nov 26**. The two weeks start at the first
-  post on Nov 12. Until then this files nothing: the counts go to #12221 through
-  the rail's report path (``sentinel_filing.post_report``), once per week. From
-  Nov 26, ``reconcile_issue`` files at most five new issues a run, one per
-  uncovered family, and closes a family's issue once something covers it. The
-  weekly list already carries each family's fingerprint, so Nov 26 is a switch,
-  not a rewrite.
+* **Report-only** (decision 386: A replaces 72-A): the sentinel posts its
+  weekly count on #12221 through ``sentinel_filing.post_report`` and **files
+  nothing**, even on and after Thu Nov 26. Uncovered families feed the nightly
+  container proposer (#12221) instead of GitHub issue filing.
 
 The four counts:
 
@@ -89,9 +86,11 @@ MIN_AGE = timedelta(hours=48)
 NEW_SERIES_MIN_OPEN = 3
 NEW_SERIES_WINDOW = timedelta(days=7)
 
-#: The two report-only weeks start at the first post (Thu Nov 12), so the first
-#: run that may file is Thu Nov 26's (Fable, 9:28 PM). The boundary is the
-#: period anchor, so the 16:00 UTC run that day is inside it.
+#: Decision 386: A (Tue Nov 24, #12538) replaces 72-A's "five new issues a week
+#: from Thu Nov 26": the sentinel stays report-only and feeds uncovered families
+#: to the container proposer (#12221) instead of filing GitHub issues.
+FILING_ENABLED = False
+#: Original 72-A start boundary (retained behind FILING_ENABLED = False).
 FILING_STARTS_AT = datetime(2026, 11, 26, 12, 0, tzinfo=timezone.utc)
 #: 72-A: at most five NEW issues a week. A family already filed is commented on
 #: and does not count against the five.
@@ -406,7 +405,7 @@ def compose_report(
     """The weekly comment: counts first, then the would-be families, then the
     UNKNOWNs (Fable, 9:28 PM). Under 60 lines by construction."""
     week = period_start(now)
-    filing_open = now >= FILING_STARTS_AT
+    filing_open = FILING_ENABLED and now >= FILING_STARTS_AT
     by_kind: dict[str, int] = {}
     for fam in counts.uncovered:
         by_kind[fam.kind] = by_kind.get(fam.kind, 0) + 1
@@ -417,7 +416,7 @@ def compose_report(
         (
             "Filing is on (72-A): at most five new issues a run, one per uncovered family below."
             if filing_open
-            else "Report-only until Thu Nov 26 (72-A). From then, at most five new issues a week, one per uncovered family below."
+            else "Report-only (decision 386: A replaces 72-A): no issues are filed; uncovered families feed the container proposer (#12221)."
         ),
         "",
         (
@@ -474,7 +473,11 @@ def compose_report(
             f"{_n(counts.suppressed_markets)} markets, {_n(counts.excluded_families)} whole families."
         ),
         "",
-        "**Largest uncovered families**, the first to be filed (fingerprint · kind · key · markets · title):",
+        (
+            "**Largest uncovered families**, the first to be filed (fingerprint · kind · key · markets · title):"
+            if filing_open
+            else "**Largest uncovered families** (fingerprint · kind · key · markets · title):"
+        ),
     ]
     for i, fam in enumerate(counts.uncovered[:LISTED_FAMILIES], 1):
         lines.append(
@@ -797,11 +800,11 @@ def _terminal(stats: Mapping[str, Any]) -> str:
 
 
 async def _run_grouping_sentinel(
-    *, post: bool = True, file_issues: bool = True, now: datetime | None = None
+    *, post: bool = True, file_issues: bool = False, now: datetime | None = None
 ) -> dict[str, Any]:
     """One weekly run. ``post=False`` computes and composes without posting (the
-    body is returned in ``report_body``). ``file_issues=False`` never files, even
-    after Nov 26."""
+    body is returned in ``report_body``). ``FILING_ENABLED=False`` (decision
+    386: A) keeps the sentinel report-only even if ``file_issues=True``."""
     from sqlalchemy import text
 
     from app.tasks.base import get_task_session
@@ -852,7 +855,7 @@ async def _run_grouping_sentinel(
     )
 
     filing: dict[str, Any] | None = None
-    if file_issues and now >= FILING_STARTS_AT:
+    if FILING_ENABLED and file_issues and now >= FILING_STARTS_AT:
         paused = filing_paused(redis_client)
         if paused is None:
             filing = {

@@ -190,6 +190,7 @@
 			membershipExceptions = (
 				WidgetFeedDecoding.swift,
 				SavedLockScreenMatchup13432.swift,
+				GameLiveActivity.swift,
 			);
 			target = A7C0000000000000000000E1 /* BainLuckTests */;
 		};
